@@ -67,7 +67,8 @@ extension EvalRunner {
             task: testCase.query,
             workspace: workspace,
             maxIterations: exp.maxIterations ?? 10,
-            contextWindowOverride: exp.contextWindowOverride
+            contextWindowOverride: exp.contextWindowOverride,
+            stopOnToolRejection: exp.stopOnToolRejection ?? false
         )
 
         var verdicts: [CapabilityClaimsJudgement] = []
@@ -262,6 +263,24 @@ extension EvalRunner {
                 transcript.compacted,
                 pass: "compaction occurred",
                 fail: "expected compaction but the watermark never recorded one"
+            )
+        }
+        if exp.todoUpdatedBeforeComplete == true {
+            // "Mark items done as you go": some `todo` call carrying at
+            // least one checked box must precede the first `complete`
+            // call (or the end of the run when no `complete` fired). A
+            // single list creation with all boxes unchecked does NOT pass.
+            let completeIndex =
+                transcript.toolCalls.firstIndex(where: { $0.name == "complete" })
+                ?? transcript.toolCalls.count
+            let updated = transcript.toolCalls.prefix(completeIndex).contains { call in
+                call.name == "todo"
+                    && call.arguments.range(of: "[x]", options: .caseInsensitive) != nil
+            }
+            score.check(
+                updated,
+                pass: "todo updated (≥1 checked box) before complete",
+                fail: "no todo call with a checked box before complete/run end"
             )
         }
     }

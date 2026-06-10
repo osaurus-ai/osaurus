@@ -293,9 +293,12 @@ struct FloatingInputCard: View {
     /// compactable history, and the response reservation is included.
     private var budgetAssessment: AgentLoopBudget.Assessment {
         guard let maxCtx = maxContextTokens else { return .empty }
+        // Real per-agent max_tokens (not the 4096 default) so the chip's
+        // hard-overflow gate reserves exactly what the runtime loop will.
         return AgentLoopBudget.assess(
             breakdown: displayContextBreakdown,
-            contextWindow: maxCtx
+            contextWindow: maxCtx,
+            maxResponseTokens: agentManager.effectiveMaxTokens(for: effectiveAgentId)
         )
     }
 

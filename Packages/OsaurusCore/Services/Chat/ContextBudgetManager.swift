@@ -252,23 +252,27 @@ public struct ContextBudgetManager: Sendable {
         turns.filter { $0.role == .assistant }.reduce(0) { $0 + estimateOutputTokens(for: $1) }
     }
 
+    /// Estimate tokens for ONE message — the unit the array estimate sums,
+    /// and the unit the incremental drop loop subtracts.
+    static func estimateTokens(forMessage msg: ChatMessage) -> Int {
+        var msgTokens = TokenEstimator.estimate(msg.content)
+        if let toolCalls = msg.tool_calls {
+            for tc in toolCalls {
+                msgTokens += TokenEstimator.estimate(tc.function.arguments)
+                msgTokens += TokenEstimator.toolCallTokens(
+                    name: tc.function.name,
+                    arguments: "",
+                    id: tc.id
+                )
+            }
+        }
+        msgTokens += TokenEstimator.messageOverheadTokens
+        return msgTokens
+    }
+
     /// Estimate total tokens for a message array
     static func estimateTokens(for messages: [ChatMessage]) -> Int {
-        return messages.reduce(0) { total, msg in
-            var msgTokens = TokenEstimator.estimate(msg.content)
-            if let toolCalls = msg.tool_calls {
-                for tc in toolCalls {
-                    msgTokens += TokenEstimator.estimate(tc.function.arguments)
-                    msgTokens += TokenEstimator.toolCallTokens(
-                        name: tc.function.name,
-                        arguments: "",
-                        id: tc.id
-                    )
-                }
-            }
-            msgTokens += TokenEstimator.messageOverheadTokens
-            return total + msgTokens
-        }
+        messages.reduce(0) { $0 + estimateTokens(forMessage: $1) }
     }
 
     /// Whether the given messages fit within the history budget without trimming.
@@ -414,16 +418,31 @@ public struct ContextBudgetManager: Sendable {
         // message always sits at visible[1] (visible[0] is the protected
         // first message); the protected tail boundary shrinks with each
         // removal.
+        //
+        // Incremental accounting: estimate the rendered transcript ONCE,
+        // then subtract each dropped message's own estimate — re-rendering
+        // and re-estimating the whole array per drop was O(n²) on long
+        // tool-heavy histories. The first drop ever also inserts the
+        // count-free trimmed-history note, whose cost is added once.
         var tailStart = protectedTailStart
-        while tailStart > 1, Self.estimateTokens(for: render()) > budget {
-            let origIndex = visible[1].origIndex
-            watermark.recordDrop(at: origIndex, original: messages[origIndex])
+        var runningTokens = Self.estimateTokens(for: render())
+        var noteAccounted = watermark.droppedCount > 0
+        while tailStart > 1, runningTokens > budget {
+            let dropped = visible[1]
+            watermark.recordDrop(at: dropped.origIndex, original: messages[dropped.origIndex])
             visible.remove(at: 1)
             tailStart -= 1
+            runningTokens -= Self.estimateTokens(forMessage: dropped.message)
+            if !noteAccounted {
+                runningTokens += Self.estimateTokens(
+                    forMessage: ChatMessage(role: "user", content: Self.trimmedHistoryNote)
+                )
+                noteAccounted = true
+            }
         }
 
         markVisibleAsSent()
-        return (render(), Self.estimateTokens(for: render()) > budget)
+        return (render(), runningTokens > budget)
     }
 
     /// Trims messages to fit within the history budget.

@@ -1,0 +1,22 @@
+{
+  "id": "agent_loop.over-budget-hard-overflow",
+  "domain": "agent_loop",
+  "label": "agent loop • hard context overflow ends the run with overBudget",
+  "query": "Read big-data.txt in full and reproduce every line of it verbatim in your answer, then append a one-line summary at the end. Do not truncate anything.",
+  "notes": "Pins the overBudget exit: with a tiny context window override, even a fully-compacted transcript cannot fit the history budget, so the driver must end the run with the distinct overBudget exit instead of sending a doomed request (or silently truncating). Deterministic — the overflow is detected at message-build time.",
+  "fixtures": {
+    "workspaceFiles": [
+      {
+        "path": "big-data.txt",
+        "contents": "line-001 the quick brown fox jumps over the lazy dog again and again without rest\n"
+      }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 4,
+      "contextWindowOverride": 256,
+      "allowedExits": ["overBudget"]
+    }
+  }
+}

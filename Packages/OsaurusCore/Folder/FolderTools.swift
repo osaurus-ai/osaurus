@@ -635,12 +635,11 @@ struct FileTreeTool: OsaurusTool {
 struct FileReadTool: OsaurusTool {
     let name = "file_read"
     let description =
-        "Read a file's contents, or list a directory's contents. Pass any path — files return text, "
-        + "directories return a listing. Use this rather than a shell `cat` / `head` / `tail` / `ls` / "
-        + "`tree`. For files: text and text-extractable documents (PDF, Word, PowerPoint, RTF, HTML) and "
-        + "a bounded XLSX workbook preview are supported (images and other binaries are not); bound large "
-        + "reads with start_line/end_line, tail_lines, or max_chars. For directories: bound the depth with "
-        + "max_depth."
+        "Read a file's contents, or list a directory's contents — the path decides. Files return text "
+        + "with `N|` line-number prefixes (text-extractable documents — PDF, Word, PowerPoint, RTF, HTML — "
+        + "and a bounded XLSX preview are supported; binaries are not); bound large reads with "
+        + "start_line/end_line, tail_lines, or max_chars. Directories return a listing; bound with "
+        + "max_depth. Example: {\"path\": \"src/app.py\", \"start_line\": 1, \"end_line\": 120}"
     let parameters: JSONValue? = .object([
         "type": .string("object"),
         "additionalProperties": .bool(false),
@@ -1331,11 +1330,11 @@ struct FileWriteTool: OsaurusTool, PermissionedTool {
     let name = "file_write"
     let description =
         "Create a new UTF-8 text file or overwrite an existing text file with the provided content. "
-        + "**Use this instead of `echo` / `cat` heredoc in `shell_run`.** Parent directories will "
-        + "be created if they don't exist. You MUST provide the file contents in the `content` "
-        + "parameter. Pass `dry_run: true` to preview the diff and risk warnings without writing. "
-        + "Do not use this for structured `.xlsx`, `.pdf`, or `.pptx` outputs; use a document "
-        + "creation tool or write text formats such as CSV/TSV/Markdown instead."
+        + "Parent directories are created automatically. You MUST provide the file contents in the "
+        + "`content` parameter. Pass `dry_run: true` to preview the diff and risk warnings without "
+        + "writing. Not for structured `.xlsx` / `.pdf` / `.pptx` outputs — write text formats such "
+        + "as CSV/TSV/Markdown instead. "
+        + "Example: {\"path\": \"notes/summary.md\", \"content\": \"# Summary\\n...\"}"
     let parameters: JSONValue? = .object([
         "type": .string("object"),
         "additionalProperties": .bool(false),
@@ -1477,11 +1476,12 @@ struct FileWriteTool: OsaurusTool, PermissionedTool {
 struct FileEditTool: OsaurusTool, PermissionedTool {
     let name = "file_edit"
     let description =
-        "Edit a file by replacing specific text. **Use this instead of `sed` / `awk` in "
-        + "`shell_run`.** `old_string` must uniquely match exactly one location in the file — "
-        + "include surrounding context lines if needed to ensure uniqueness. Fails if `old_string` "
-        + "is not found or matches multiple locations. Pass `dry_run: true` to preview the diff "
-        + "without modifying the file. You MUST provide the strings in the parameters."
+        "Edit a file by replacing specific text. `old_string` must uniquely match exactly one "
+        + "location in the file — include surrounding context lines if needed to ensure uniqueness. "
+        + "Copy the RAW file text only: never include the `N|` line-number prefixes shown in "
+        + "`file_read` output. Fails if `old_string` is not found or matches multiple locations. "
+        + "Pass `dry_run: true` to preview the diff without modifying the file. "
+        + "Example: {\"path\": \"config.py\", \"old_string\": \"debug = True\", \"new_string\": \"debug = False\"}"
     let parameters: JSONValue? = .object([
         "type": .string("object"),
         "additionalProperties": .bool(false),
@@ -1729,7 +1729,7 @@ struct FileOperationHistoryTool: OsaurusTool {
         return ToolEnvelope.success(tool: name, result: payload, warnings: warnings)
     }
 
-    private static func relativePath(for url: URL, rootPath: URL) -> String {
+    fileprivate static func relativePath(for url: URL, rootPath: URL) -> String {
         let root = rootPath.standardized.path
         let path = url.standardized.path
         if path == root { return "." }
@@ -1737,6 +1737,137 @@ struct FileOperationHistoryTool: OsaurusTool {
             return String(path.dropFirst(root.count + 1))
         }
         return url.lastPathComponent
+    }
+}
+
+// MARK: File Undo Tool
+
+struct FileUndoTool: OsaurusTool, PermissionedTool {
+    let name = "file_undo"
+    let description =
+        "Revert file operations made by this chat session. With no arguments it undoes the most "
+        + "recent operation; pass `operation_id` (from `file_operation_history` or a write "
+        + "result) to undo one specific operation, or `path` to revert every logged operation "
+        + "on one file. Only operations whose history entry shows `can_undo: true` can be "
+        + "reverted. Check `file_operation_history` first when unsure what would be undone."
+    let parameters: JSONValue? = .object([
+        "type": .string("object"),
+        "additionalProperties": .bool(false),
+        "properties": .object([
+            "operation_id": .object([
+                "type": .string("string"),
+                "description": .string(
+                    "ID of one specific operation to undo (from `file_operation_history`)"
+                ),
+            ]),
+            "path": .object([
+                "type": .string("string"),
+                "description": .string(
+                    "Relative file path: undo ALL logged operations on this file, newest first"
+                ),
+            ]),
+        ]),
+        "required": .array([]),
+    ])
+
+    var requirements: [String] { [] }
+    /// Mutates the working folder — same gate class as `file_write`.
+    var defaultPermissionPolicy: ToolPermissionPolicy { .auto }
+
+    private let rootPath: URL
+
+    init(rootPath: URL) {
+        self.rootPath = rootPath
+    }
+
+    func execute(argumentsJSON: String) async throws -> String {
+        guard let sessionId = ChatExecutionContext.currentSessionId, !sessionId.isEmpty else {
+            return ToolEnvelope.failure(
+                kind: .unavailable,
+                message: "`file_undo` requires an active chat session.",
+                tool: name,
+                retryable: false
+            )
+        }
+        let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
+        guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
+
+        let operationIdRaw = (args["operation_id"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let rawPath = (args["path"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if let operationIdRaw, !operationIdRaw.isEmpty, let rawPath, !rawPath.isEmpty {
+            return ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message: "Pass `operation_id` OR `path`, not both.",
+                expected: "one of `operation_id` / `path`, or neither (undo last)",
+                tool: name
+            )
+        }
+
+        do {
+            let undone: [FileOperation]
+            if let operationIdRaw, !operationIdRaw.isEmpty {
+                guard let operationId = UUID(uuidString: operationIdRaw) else {
+                    return ToolEnvelope.failure(
+                        kind: .invalidArgs,
+                        message: "`operation_id` is not a valid operation ID.",
+                        field: "operation_id",
+                        expected: "UUID from `file_operation_history`",
+                        tool: name
+                    )
+                }
+                let op = try await FileOperationLog.shared.undo(
+                    sessionId: sessionId,
+                    operationId: operationId
+                )
+                undone = op.map { [$0] } ?? []
+            } else if let rawPath, !rawPath.isEmpty {
+                let resolvedURL = try FolderToolHelpers.resolvePath(rawPath, rootPath: rootPath)
+                let relative = FileOperationHistoryTool.relativePath(
+                    for: resolvedURL,
+                    rootPath: rootPath
+                )
+                undone = try await FileOperationLog.shared.undoFile(
+                    sessionId: sessionId,
+                    path: relative
+                )
+                if undone.isEmpty {
+                    return ToolEnvelope.failure(
+                        kind: .notFound,
+                        message:
+                            "No logged operations found for `\(relative)` in this session — nothing to undo.",
+                        field: "path",
+                        tool: name
+                    )
+                }
+            } else {
+                let op = try await FileOperationLog.shared.undoLast(sessionId: sessionId)
+                guard let op else {
+                    return ToolEnvelope.failure(
+                        kind: .notFound,
+                        message: "No logged file operations in this session — nothing to undo.",
+                        tool: name
+                    )
+                }
+                undone = [op]
+            }
+            let entries = undone.map(WorkspaceWriteSafety.operationHistoryEntry)
+            return ToolEnvelope.success(
+                tool: name,
+                result: [
+                    "kind": "file_undo",
+                    "undone_count": undone.count,
+                    "undone": entries,
+                ] as [String: Any]
+            )
+        } catch let error as FileUndoError {
+            return ToolEnvelope.failure(
+                kind: .executionError,
+                message: error.localizedDescription,
+                tool: name
+            )
+        }
     }
 }
 
@@ -1748,8 +1879,8 @@ struct FileSearchTool: OsaurusTool {
         "Search files in the working directory. With `target=\"content\"` (default) it finds text by "
         + "case-insensitive substring match, returning matching lines with file paths and line numbers. "
         + "With `target=\"files\"` it finds files by name (case-insensitive substring, e.g. `q4` matches "
-        + "`q4_sales_report.xlsx`; use `*`/`?` for a glob like `*.swift`). Use this rather than a "
-        + "shell `grep` / `rg` / `find`."
+        + "`q4_sales_report.xlsx`; use `*`/`?` for a glob like `*.swift`). "
+        + "Example: {\"pattern\": \"TODO\", \"path\": \"src\", \"file_pattern\": \"*.py\"}"
     let parameters: JSONValue? = .object([
         "type": .string("object"),
         "additionalProperties": .bool(false),
@@ -1818,7 +1949,9 @@ struct FileSearchTool: OsaurusTool {
 
         let searchPath = (args["path"] as? String) ?? "."
         let filePattern = args["file_pattern"] as? String
-        let maxResults = coerceInt(args["max_results"]) ?? 50
+        // Clamp to the shared ceiling — an unclamped `max_results: 100000`
+        // over a big tree is a one-call context bomb.
+        let maxResults = min(max(coerceInt(args["max_results"]) ?? 50, 1), ToolOutputCaps.searchMaxResults)
         let target = (args["target"] as? String)?.lowercased() ?? "content"
 
         // Combined mode: an absolute `/workspace/...` path is the Linux
@@ -1964,9 +2097,22 @@ struct FileSearchTool: OsaurusTool {
         }
 
         var output = "Found \(totalMatches) match(es):\n\n"
-        output += results.joined(separator: "\n")
+        var body = results.joined(separator: "\n")
 
-        if totalMatches >= maxResults {
+        // Character backstop independent of the result-count clamp: a few
+        // hundred very long matched lines can outweigh the count limit.
+        var charTruncated = false
+        if body.count > ToolOutputCaps.fileSearch {
+            body = String(body.prefix(ToolOutputCaps.fileSearch))
+            charTruncated = true
+        }
+        output += body
+
+        if charTruncated {
+            output +=
+                "\n\n(output truncated at \(ToolOutputCaps.fileSearch) chars; narrow the `path`, "
+                + "tighten the pattern, or add a `file_pattern` filter)"
+        } else if totalMatches >= maxResults {
             output += "\n\n(results truncated at \(maxResults))"
         } else if budgetTruncated {
             output += Self.budgetTruncationNote
@@ -2185,11 +2331,10 @@ struct ShellRunTool: OsaurusTool, PermissionedTool {
         "Run a shell command in the working directory. **Reserve this for builds, tests, "
         + "git, processes, network calls, and filesystem mutations (`mv`/`cp`/`rm`/`mkdir`).** "
         + "For file IO, search, edit, write, and directory listing, prefer the dedicated "
-        + "`file_*` tools — each one's description notes the shell pattern it "
-        + "replaces. This action requires approval. Long-running commands stream their "
-        + "output live to the chat — the user sees it as it happens and can press [Terminate] "
-        + "at any time. Final stdout truncated to 10,000 characters. No built-in timeout: "
-        + "pass `timeout: <seconds>` ONLY if you want a hard idle ceiling (kill the process "
+        + "`file_*` tools. This action requires approval. Long-running commands stream their "
+        + "output live to the chat and the user can press [Terminate] at any time. Output is "
+        + "truncated to 10,000 characters (head + tail kept). No built-in timeout: pass "
+        + "`timeout: <seconds>` ONLY if you want a hard idle ceiling (kill the process "
         + "if no output for N seconds). Avoid `2>/dev/null` in pipelines — pipefail is on "
         + "and suppressing stderr will trigger an empty-output warning."
     let parameters: JSONValue? = .object([
@@ -2242,6 +2387,13 @@ struct ShellRunTool: OsaurusTool, PermissionedTool {
 
         // Optional idle ceiling; nil = run forever (user terminates).
         let idleTimeout: TimeInterval? = coerceInt(args["timeout"]).map(TimeInterval.init)
+
+        // Pre-exec undo planning: simple `mv`/`cp`/`rm`/`mkdir` forms are
+        // captured into the same operation log as `file_write`/`file_edit`
+        // (an `rm` target's content only exists BEFORE the command runs).
+        // Unparseable mutation commands surface a "not in the undo log"
+        // warning instead of a silent gap.
+        let mutationPlan = ShellMutationLog.plan(command: command, rootPath: rootPath)
 
         // `set -o pipefail` wrapping so a real upstream pipeline
         // failure surfaces as the rightmost non-zero exit instead of
@@ -2365,12 +2517,42 @@ struct ShellRunTool: OsaurusTool, PermissionedTool {
         if sink.terminationReason == .user {
             payload["killed_by"] = "user"
         }
-        let warnings = diagnosticWarnings(
+        var warnings = diagnosticWarnings(
             command: command,
             exitCode: exitCode,
             stdout: trimmedStdout,
             stderr: trimmedStderr
         )
+
+        // Undo-log bookkeeping for the mutation plan computed pre-exec.
+        if exitCode == 0 {
+            switch mutationPlan {
+            case .none:
+                break
+            case .mutations(let planned):
+                if let sessionId = ChatExecutionContext.currentSessionId, !sessionId.isEmpty {
+                    var operationIds: [String] = []
+                    for op in planned {
+                        let operation = FileOperation(
+                            type: op.type,
+                            path: op.path,
+                            destinationPath: op.destinationPath,
+                            previousContent: op.previousContent,
+                            sessionId: sessionId,
+                            batchId: ChatExecutionContext.currentBatchId
+                        )
+                        await FileOperationLog.shared.log(operation)
+                        operationIds.append(operation.id.uuidString)
+                    }
+                    payload["operation_ids"] = operationIds
+                }
+            case .unloggable:
+                warnings.append(
+                    "This command's filesystem changes were NOT captured in the undo log — `file_undo` cannot revert them."
+                )
+            }
+        }
+
         return ToolEnvelope.success(
             tool: name,
             result: payload,
@@ -2406,11 +2588,15 @@ struct ShellRunTool: OsaurusTool, PermissionedTool {
         }
     }
 
-    private func truncateOutput(_ output: String, maxLength: Int = ToolOutputCaps.shellOutput) -> String {
-        if output.count > maxLength {
-            return String(output.prefix(maxLength)) + "\n... (truncated)"
-        }
-        return output
+    /// Tail-biased like `sandbox_exec`: for build/test output the failure
+    /// summary the model needs lives at the end.
+    private func truncateOutput(_ output: String) -> String {
+        HeadTailTruncation.apply(
+            output,
+            cap: ToolOutputCaps.shellOutput,
+            headFraction: 0.4,
+            hint: "pipe through `grep`/`tail` or redirect to a file and use file_read to see the rest"
+        )
     }
 }
 
@@ -2610,13 +2796,16 @@ struct GitDiffTool: OsaurusTool {
             throw FolderToolError.operationFailed("git diff failed: \(output)")
         }
 
-        // Truncate if too long
-        let text: String
-        if output.count > ToolOutputCaps.gitDiff {
-            text = String(output.prefix(ToolOutputCaps.gitDiff)) + "\n... (diff truncated)"
-        } else {
-            text = output.isEmpty ? "No differences" : output
-        }
+        // Head-biased: diffs are ordered by file, so the front carries
+        // whole files while a prefix-only cut would silently drop the
+        // trailing ones — keep both ends and say how to recover the middle.
+        let truncated = HeadTailTruncation.apply(
+            output,
+            cap: ToolOutputCaps.gitDiff,
+            headFraction: 0.6,
+            hint: "re-run git_diff with `file_path` scoped to one file to see its full diff"
+        )
+        let text = truncated.isEmpty ? "No differences" : truncated
         return ToolEnvelope.success(tool: name, text: text)
     }
 }
@@ -2742,6 +2931,7 @@ enum FolderToolFactory {
             FileWriteTool(rootPath: rootPath),
             FileEditTool(rootPath: rootPath),
             FileOperationHistoryTool(rootPath: rootPath),
+            FileUndoTool(rootPath: rootPath),
             FileSearchTool(rootPath: rootPath),
             ShellRunTool(rootPath: rootPath),
         ]

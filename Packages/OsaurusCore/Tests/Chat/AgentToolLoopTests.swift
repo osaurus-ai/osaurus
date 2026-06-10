@@ -23,6 +23,11 @@ private final class ScriptedLoopSurface {
     /// Result envelope per tool name; defaults to a generic success.
     var toolResults: [String: AgentLoopToolExecution] = [:]
     var cancelled = false
+    /// When true, `buildMessages` reports a hard context overflow.
+    var overBudget = false
+    /// When non-nil, hooks expose `pendingTodoCount` returning this value
+    /// (the chat surface's session-todo plumb).
+    var pendingTodos: Int?
 
     // Recorded crossings
     var builtNotices: [[String]] = []
@@ -40,7 +45,10 @@ private final class ScriptedLoopSurface {
             isCancelled: { self.cancelled },
             buildMessages: { notices in
                 self.builtNotices.append(notices)
-                return [ChatMessage(role: "user", content: "task")]
+                return AgentLoopIterationInput(
+                    messages: [ChatMessage(role: "user", content: "task")],
+                    overBudget: self.overBudget
+                )
             },
             modelStep: { _, _ in
                 guard !self.steps.isEmpty else { return .finalResponse }
@@ -59,7 +67,8 @@ private final class ScriptedLoopSurface {
             },
             onBatchComplete: { outcomes in
                 self.batchOutcomes.append(outcomes)
-            }
+            },
+            pendingTodoCount: pendingTodos.map { count in { count } }
         )
     }
 }
@@ -764,5 +773,306 @@ struct AgentToolLoopParallelBatchTests {
     @Test func emptyBatchReturnsEmpty() async {
         let executions = await AgentToolLoop.runBatchInParallel([]) { _, _ in "unreachable" }
         #expect(executions.isEmpty)
+    }
+
+    @Test func samePathMutationsSerializeInModelOrder() async {
+        // Two writes to the SAME path must not overlap (lost-update guard):
+        // the first is slow, the second fast — serialized execution means
+        // the slow one still completes first. The distinct-path write keeps
+        // running in parallel (it completes before the slow same-path one).
+        let recorder = CompletionRecorder()
+        let calls: [(invocation: ServiceToolInvocation, callId: String)] = [
+            (
+                ServiceToolInvocation(
+                    toolName: "file_write",
+                    jsonArguments: #"{"path":"src/app.py","content":"slow"}"#,
+                    toolCallId: nil
+                ), "c1"
+            ),
+            (
+                ServiceToolInvocation(
+                    toolName: "file_edit",
+                    jsonArguments: #"{"path":"./src/app.py","old_string":"a","new_string":"b"}"#,
+                    toolCallId: nil
+                ), "c2"
+            ),
+            (
+                ServiceToolInvocation(
+                    toolName: "file_write",
+                    jsonArguments: #"{"path":"other.py","content":"x"}"#,
+                    toolCallId: nil
+                ), "c3"
+            ),
+        ]
+        let executions = await AgentToolLoop.runBatchInParallel(calls) { invocation, callId in
+            if callId == "c1" {
+                try? await Task.sleep(nanoseconds: 100 * 1_000_000)
+            }
+            await recorder.record(callId)
+            return "ran:\(callId)"
+        }
+
+        #expect(executions.map(\.result) == ["ran:c1", "ran:c2", "ran:c3"])
+        let completion = await recorder.order
+        // Same-path serialization: c2 only ran after c1 finished, even
+        // though c1 was slow. The unrelated path (c3) overlapped freely.
+        #expect(completion.firstIndex(of: "c1")! < completion.firstIndex(of: "c2")!)
+        #expect(completion.first == "c3")
+    }
+
+    @Test func pathSerializationKeyNormalizesEquivalentPaths() {
+        let write = ServiceToolInvocation(
+            toolName: "file_write",
+            jsonArguments: #"{"path":"src/app.py"}"#,
+            toolCallId: nil
+        )
+        let edit = ServiceToolInvocation(
+            toolName: "file_edit",
+            jsonArguments: #"{"path":"./src/app.py"}"#,
+            toolCallId: nil
+        )
+        let read = ServiceToolInvocation(
+            toolName: "file_read",
+            jsonArguments: #"{"path":"src/app.py"}"#,
+            toolCallId: nil
+        )
+        #expect(AgentToolLoop.pathSerializationKey(for: write) != nil)
+        #expect(
+            AgentToolLoop.pathSerializationKey(for: write)
+                == AgentToolLoop.pathSerializationKey(for: edit)
+        )
+        // Reads never serialize.
+        #expect(AgentToolLoop.pathSerializationKey(for: read) == nil)
+    }
+
+    @Test func cancelledTaskSkipsUnstartedBatchCalls() async {
+        // Cooperative cancellation: children check `Task.isCancelled`
+        // before dispatching, so a Stop / disconnect that cancels the
+        // surrounding task yields paired "cancelled" envelopes instead of
+        // firing the tools.
+        actor RunCounter {
+            private(set) var count = 0
+            func bump() { count += 1 }
+        }
+        let counter = RunCounter()
+        let calls: [(invocation: ServiceToolInvocation, callId: String)] = [
+            (ServiceToolInvocation(toolName: "a", jsonArguments: "{}", toolCallId: nil), "c1"),
+            (ServiceToolInvocation(toolName: "b", jsonArguments: "{}", toolCallId: nil), "c2"),
+        ]
+        let task = Task { () -> [AgentLoopToolExecution] in
+            // Wait until the cancel below has landed, then run the batch
+            // inside the (now-cancelled) task.
+            while !Task.isCancelled { await Task.yield() }
+            return await AgentToolLoop.runBatchInParallel(calls) { _, _ in
+                await counter.bump()
+                return "ran"
+            }
+        }
+        task.cancel()
+        let executions = await task.value
+
+        #expect(executions.count == 2)
+        #expect(executions.allSatisfy { ToolEnvelope.isError($0.result) })
+        #expect(executions.allSatisfy { $0.result.contains("cancelled before") })
+        let ran = await counter.count
+        #expect(ran == 0)
+    }
+
+    @Test func batchBindsSharedBatchIdForUndoGrouping() async {
+        // Multi-call batches bind one `ChatExecutionContext.currentBatchId`
+        // for the whole wave so the file-operation log can group them.
+        actor BatchIds {
+            private(set) var ids: [UUID?] = []
+            func record(_ id: UUID?) { ids.append(id) }
+        }
+        let batchIds = BatchIds()
+        let calls: [(invocation: ServiceToolInvocation, callId: String)] = [
+            (ServiceToolInvocation(toolName: "a", jsonArguments: "{}", toolCallId: nil), "c1"),
+            (ServiceToolInvocation(toolName: "b", jsonArguments: "{}", toolCallId: nil), "c2"),
+        ]
+        _ = await AgentToolLoop.runBatchInParallel(calls) { _, _ in
+            await batchIds.record(ChatExecutionContext.currentBatchId)
+            return "ok"
+        }
+        let ids = await batchIds.ids
+        #expect(ids.count == 2)
+        #expect(ids[0] != nil)
+        #expect(ids[0] == ids[1])
+    }
+}
+
+// MARK: - overBudget exit + budget parity
+
+@MainActor
+struct AgentLoopOverBudgetTests {
+
+    @Test func overBudgetEndsRunBeforeModelStep() async throws {
+        // `buildMessages` reporting a hard overflow must end the run with
+        // the distinct `.overBudget` exit WITHOUT a model step or any
+        // tool execution — the request is doomed, don't send it.
+        let surface = ScriptedLoopSurface(steps: [
+            .toolCalls([inv("never_runs")])
+        ])
+        surface.overBudget = true
+
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(),
+            state: AgentTaskState(),
+            hooks: surface.makeHooks()
+        )
+
+        #expect(result.exit == .overBudget)
+        #expect(result.iterations == 0)
+        #expect(surface.executedCalls.isEmpty)
+        // The scripted model step was never consumed.
+        #expect(surface.steps.count == 1)
+    }
+
+    @Test func composeIterationMessagesReportsHardOverflow() {
+        // A transcript whose protected first message + tail alone exceed
+        // the history budget must come back flagged `overBudget`.
+        let manager = ContextBudgetManager(contextLength: 100)
+        let huge = String(repeating: "x", count: 20_000)
+        let messages = [
+            ChatMessage(role: "system", content: "sys"),
+            ChatMessage(role: "user", content: huge),
+            ChatMessage(role: "assistant", content: huge),
+            ChatMessage(role: "user", content: huge),
+        ]
+        let input = AgentLoopBudget.composeIterationMessages(
+            messages,
+            notices: [],
+            manager: manager
+        )
+        #expect(input.overBudget)
+        #expect(input.messages.first?.role == "system")
+    }
+
+    @Test func makeBudgetManagerCapsResponseReservationLikeAssess() {
+        // The runtime trim budget and the UI hard gate must reserve the
+        // SAME response amount: `max_tokens` capped at a quarter of the
+        // effective budget (small-window models would otherwise be
+        // permanently gated).
+        let window = 4_096
+        let effective = ContextBudgetManager(contextLength: window).effectiveBudget
+        let expectedReservation = AgentLoopBudget.cappedResponseReservation(
+            100_000,
+            effectiveBudget: effective
+        )
+        #expect(expectedReservation == effective / 4)
+
+        // A manager built with an oversized max_tokens must end up with
+        // the same history budget as one reserving the capped amount
+        // directly — i.e. the cap was applied, not the raw 100K.
+        let capped = AgentLoopBudget.makeBudgetManager(
+            contextWindow: window,
+            systemPromptChars: 0,
+            toolTokens: 0,
+            maxResponseTokens: 100_000
+        )
+        var reference = ContextBudgetManager(contextLength: window)
+        reference.reserveByCharCount(.systemPrompt, characters: 0)
+        reference.reserve(.tools, tokens: 0)
+        reference.reserve(.response, tokens: expectedReservation)
+        #expect(capped.historyBudget == reference.historyBudget)
+        // And it is strictly larger than what the old uncapped
+        // reservation would have left (zero for a 4K window).
+        #expect(capped.historyBudget > 0)
+    }
+}
+
+// MARK: - Todo staleness notice
+
+@MainActor
+struct AgentLoopTodoStalenessTests {
+
+    /// With pending todo items and no `todo` call, the driver stages the
+    /// staleness nudge after `todoStalenessThreshold` iterations — it
+    /// rides the notice channel of the FOLLOWING iteration's build.
+    @Test func stalenessNoticeFiresAfterThresholdIterations() async throws {
+        let surface = ScriptedLoopSurface(
+            steps: (0 ..< 6).map { i in .toolCalls([inv("tool_\(i)")]) } + [.finalResponse]
+        )
+        surface.pendingTodos = 2
+        _ = try await AgentToolLoop.run(
+            policy: chatPolicy(),  // threshold defaults to 4
+            state: AgentTaskState(),
+            hooks: surface.makeHooks()
+        )
+        // Iterations 1-4 carry no todo call → the notice is staged after
+        // iteration 4 and shows up in iteration 5's build. Firing re-arms
+        // the window, so iterations 6-7 stay quiet.
+        let expected = AgentToolLoop.todoStalenessNotice(pending: 2)
+        #expect(surface.builtNotices[4].contains(expected))
+        for (index, notices) in surface.builtNotices.enumerated() where index != 4 {
+            #expect(!notices.contains(expected), "unexpected staleness notice at build \(index)")
+        }
+    }
+
+    /// A `todo` call resets the staleness window.
+    @Test func todoCallResetsStalenessWindow() async throws {
+        let surface = ScriptedLoopSurface(steps: [
+            .toolCalls([inv("tool_a")]),
+            .toolCalls([inv("tool_b")]),
+            .toolCalls([inv("todo", #"{"markdown":"- [x] a\n- [ ] b"}"#)]),
+            .toolCalls([inv("tool_c")]),
+            .toolCalls([inv("tool_d")]),
+            .finalResponse,
+        ])
+        surface.pendingTodos = 1
+        _ = try await AgentToolLoop.run(
+            policy: chatPolicy(),
+            state: AgentTaskState(),
+            hooks: surface.makeHooks()
+        )
+        let needle = "[System Notice] Your todo list"
+        for notices in surface.builtNotices {
+            #expect(!notices.contains(where: { $0.hasPrefix(needle) }))
+        }
+    }
+
+    /// No pending items (or no hook at all) → never nags.
+    @Test func noNoticeWithoutPendingItems() async throws {
+        let surface = ScriptedLoopSurface(
+            steps: (0 ..< 6).map { i in .toolCalls([inv("tool_\(i)")]) } + [.finalResponse]
+        )
+        surface.pendingTodos = 0
+        _ = try await AgentToolLoop.run(
+            policy: chatPolicy(),
+            state: AgentTaskState(),
+            hooks: surface.makeHooks()
+        )
+        let needle = "[System Notice] Your todo list"
+        for notices in surface.builtNotices {
+            #expect(!notices.contains(where: { $0.hasPrefix(needle) }))
+        }
+    }
+}
+
+// MARK: - Watermark identity
+
+struct CompactionWatermarkIdentityTests {
+
+    @Test func sameLengthEditInvalidatesDecisions() {
+        // Identity is a CONTENT hash, not a length: a regeneration that
+        // happens to produce equal-size text must reset stale decisions
+        // instead of replaying them against rewritten content.
+        let watermark = CompactionWatermark()
+        let original = ChatMessage(role: "user", content: "aaaa")
+        watermark.recordDrop(at: 0, original: original)
+        #expect(watermark.droppedCount == 1)
+
+        let sameLengthEdit = [ChatMessage(role: "user", content: "bbbb")]
+        watermark.validate(against: sameLengthEdit)
+        #expect(watermark.droppedCount == 0)
+    }
+
+    @Test func identicalContentKeepsDecisions() {
+        let watermark = CompactionWatermark()
+        let original = ChatMessage(role: "user", content: "stable")
+        watermark.recordDrop(at: 0, original: original)
+
+        watermark.validate(against: [ChatMessage(role: "user", content: "stable")])
+        #expect(watermark.droppedCount == 1)
     }
 }

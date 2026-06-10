@@ -25,7 +25,7 @@
 //    8. codeStyle                 static, gated on file-mutation tools
 //    9. riskAware                 static, gated on file-mutation tools
 //   10. secretHandling            static, sandbox-only
-//   11. agentLoopGuidance         static, gated on prior loop-tool use
+//   11. agentLoopGuidance         static, gated on loop tools in schema
 //   12. sandbox / folderContext   static framing, mode-specific
 //   13. capabilityNudge           static, gated on capabilities_discover
 //   14. enabledManifest           static, frozen (all enabled tools +
@@ -337,31 +337,16 @@ struct PromptSectionOrderingTests {
         }
     }
 
-    /// Once a loop tool is in history, the continuation guide joins the
-    /// static prefix in its original order slot: after model-family guidance
+    /// The loop cheat-sheet renders whenever a loop tool is in the schema
+    /// (turn 1 included), in its order slot: after model-family guidance
     /// and before capability discovery.
-    @Test("ordering: prior loop use places agent loop before capability nudge")
-    func ordering_priorLoopUse() async {
+    @Test("ordering: loop guidance sits between family guidance and capability nudge")
+    func ordering_loopGuidanceSlot() async {
         await withAgent(toolSelectionMode: .auto) { agentId in
-            let messages = [
-                ChatMessage(
-                    role: "assistant",
-                    content: nil,
-                    tool_calls: [
-                        ToolCall(
-                            id: "call_todo",
-                            type: "function",
-                            function: ToolCallFunction(name: "todo", arguments: #"{"markdown":"- [ ] one"}"#)
-                        )
-                    ],
-                    tool_call_id: nil
-                )
-            ]
             let ctx = await SystemPromptComposer.composeChatContext(
                 agentId: agentId,
                 executionMode: .none,
-                model: "google/gemma-3-12b-it",
-                messages: messages
+                model: "google/gemma-3-12b-it"
             )
             assertOrderedPrefix(
                 [
@@ -450,13 +435,11 @@ struct PromptSectionOrderingTests {
 
     // MARK: - KV-cache prefix stability
 
-    /// KV-cache safety: the new always-on sections (grounding,
-    /// modelFamilyGuidance-for-every-family) must be present on BOTH the
-    /// first turn and a turn after the model has entered the loop, so they
-    /// never appear/disappear mid-session and bust the cached prefix. The
-    /// ONLY legitimate mid-session section delta is `agentLoopGuidance`,
-    /// which (for non-small-context models) intentionally joins once the
-    /// session enters the loop — that pre-existing flip is unchanged here.
+    /// KV-cache safety: every section — including `agentLoopGuidance`,
+    /// which is now schema-gated rather than history-gated — must be
+    /// present on BOTH the first turn and a turn after the model has
+    /// entered the loop, so nothing appears/disappears mid-session and
+    /// busts the cached prefix.
     @Test("kv-safety: new sections do not flip between turn 1 and a post-loop turn")
     func kvSafety_newSectionsStableAcrossTurns() async {
         await withAgent(toolSelectionMode: .auto) { agentId in
@@ -490,12 +473,12 @@ struct PromptSectionOrderingTests {
             )
             let s1 = Set(sectionIds(turn1))
             let s2 = Set(sectionIds(turn2))
-            // Only the loop cheat-sheet may be added on the later turn.
-            #expect(s2.subtracting(s1) == ["agentLoopGuidance"])
-            // Nothing disappears mid-session.
+            // Section sets are identical across the loop boundary — the
+            // cheat-sheet is schema-gated, so it is on BOTH turns.
+            #expect(s2.subtracting(s1).isEmpty)
             #expect(s1.subtracting(s2).isEmpty)
-            // The new always-on sections are on BOTH turns.
-            for id in ["grounding", "modelFamilyGuidance"] {
+            // The always-on sections are on BOTH turns.
+            for id in ["grounding", "modelFamilyGuidance", "agentLoopGuidance"] {
                 #expect(s1.contains(id))
                 #expect(s2.contains(id))
             }

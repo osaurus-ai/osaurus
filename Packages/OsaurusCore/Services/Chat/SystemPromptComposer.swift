@@ -199,18 +199,6 @@ public struct SystemPromptComposer: Sendable {
         return trivialInputs.contains(normalized)
     }
 
-    /// The agent-loop cheat sheet is expensive and only becomes valuable
-    /// after the model has already used one of those tools. Keeping the
-    /// first-turn prompt quiet leaves the compact tool descriptions as the
-    /// source of truth, then adds continuation guidance when history proves
-    /// the session actually entered the loop.
-    static func hasPriorAgentLoopUse(_ messages: [ChatMessage]) -> Bool {
-        messages.contains { message in
-            guard let calls = message.tool_calls else { return false }
-            return calls.contains { Self.agentLoopToolNames.contains($0.function.name) }
-        }
-    }
-
     /// Shared pipeline: assemble memory (returned separately) + resolve
     /// tools + build ComposedContext.
     ///
@@ -523,8 +511,7 @@ public struct SystemPromptComposer: Sendable {
             contextDisable: contextDisable,
             sizeClass: window.sizeClass,
             effectiveToolsOff: effectiveToolsOff,
-            capabilityPromptSectionsEnabled: !isTrivialInput,
-            agentLoopGuidanceEnabled: hasPriorAgentLoopUse(messages)
+            capabilityPromptSectionsEnabled: !isTrivialInput
         )
     }
 
@@ -607,7 +594,7 @@ public struct SystemPromptComposer: Sendable {
     ///   8. codeStyle                 static, gated on file-edit tools
     ///   9. riskAware                 static, gated on file-mutation tools
     ///  10. secretHandling            static, sandbox-only
-    ///  11. agentLoopGuidance         static, gated on loop tools (or small ctx)
+    ///  11. agentLoopGuidance         static, gated on loop tools in schema
     ///  12. sandbox / folderContext   static framing, mode-specific, gated on tools on
     ///  13. capabilityNudge           static, gated on capabilities_discover
     ///                                (sandbox: build-ladder variant, canCreatePlugins-aware)
@@ -821,19 +808,14 @@ public struct SystemPromptComposer: Sendable {
 
         // Agent-loop guidance: short cheat-sheet for the chat-layer-
         // intercepted tools (todo / complete / clarify / share_artifact).
-        // Larger models rely on the compact tool descriptions for the first
-        // turns; once history shows the model has entered the loop, this
-        // continuation guide is worth the extra tokens.
-        //
-        // Small-context models (`.small`) get it from turn 1 onward instead
-        // — they most need the "when to call which" guide up front, and
-        // gating on the session-constant size class (rather than the
-        // mid-session `agentLoopGuidanceEnabled` history flag) means the
-        // section never appears/disappears across turns, so the small-model
-        // path stays KV-cache stable. `.tiny` never reaches here (tools off).
-        let smallContextLoopGuidance = toolset.sizeClass == .small
+        // Always rendered when any loop tool resolves into the schema:
+        // gating it on prior loop use (the old behaviour) meant the model
+        // never saw the "when to call which" guide on its FIRST multi-step
+        // task — exactly when it decides whether to keep a todo list at
+        // all — and the section appearing mid-session busted the cached
+        // prefix once. Schema-gated, so it is session-constant and
+        // KV-cache stable. `.tiny` never reaches here (tools off).
         if !effectiveToolsOff,
-            toolset.agentLoopGuidanceEnabled || smallContextLoopGuidance,
             !resolvedNames.isDisjoint(with: Self.agentLoopToolNames)
         {
             composer.append(
@@ -1195,6 +1177,19 @@ public struct SystemPromptComposer: Sendable {
         "capabilities_discover", "capabilities_load",
     ]
 
+    /// Loop tools whose ARGUMENT constraints must survive the bootstrap:
+    /// the ≥30-char `summary` rule (`complete`), the option limits
+    /// (`clarify`), and the path-vs-content rules (`share_artifact`) all
+    /// live in property descriptions the plain skeleton strips — and these
+    /// tools are typically called without a prior `capabilities_load` that
+    /// would restore the full spec. Middle tier: one-line description +
+    /// full parameter schema, so small models see the constraints on turn 1
+    /// without paying for the full prose (which the `.small` budget
+    /// guardrail can't afford).
+    private static let constraintPreservingBootstrapToolNames: Set<String> = [
+        "complete", "clarify", "share_artifact",
+    ]
+
     /// Compress first-turn always-loaded specs by keeping the callable name,
     /// a one-line description, and the JSON shape without verbose property
     /// descriptions. Full schemas still enter via manual picks or
@@ -1205,6 +1200,16 @@ public struct SystemPromptComposer: Sendable {
     static func compactBootstrapSpec(_ tool: Tool) -> Tool {
         let name = tool.function.name
         guard !fullBootstrapToolNames.contains(name) else { return tool }
+        if constraintPreservingBootstrapToolNames.contains(name) {
+            return Tool(
+                type: tool.type,
+                function: ToolFunction(
+                    name: name,
+                    description: oneLineToolDescription(tool.function.description),
+                    parameters: tool.function.parameters
+                )
+            )
+        }
         return Tool(
             type: tool.type,
             function: ToolFunction(
@@ -1515,8 +1520,7 @@ public struct SystemPromptComposer: Sendable {
             contextDisable: contextDisable,
             sizeClass: window.sizeClass,
             effectiveToolsOff: effectiveToolsOff,
-            capabilityPromptSectionsEnabled: true,
-            agentLoopGuidanceEnabled: false
+            capabilityPromptSectionsEnabled: true
         )
     }
 

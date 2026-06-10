@@ -1020,9 +1020,9 @@ For on-demand discovery during a session, agents can use:
 | Tool                  | Description                                                       |
 | --------------------- | ----------------------------------------------------------------- |
 | `capabilities_discover` | Search methods, tools, and skills across all indexes in parallel  |
-| `capabilities_load`   | Load a capability by ID into the active session (hot-loads tools) |
+| `capabilities_load`   | Load a capability by ID into the active session (tools become callable immediately) |
 
-When `capabilities_load` is called, new tool specs are queued in a `CapabilityLoadBuffer` and drained into the active tool set after each invocation, allowing the agent to dynamically expand its capabilities mid-session.
+When `capabilities_load` is called, new tool specs are queued in a `CapabilityLoadBuffer` and drained after the invocation. Loaded tools are callable immediately (the registry dispatches by name), but the rendered tool schema stays frozen until the next user turn — hot-patching it mid-run would rewrite the prompt prefix and bust the KV cache. The loaded names persist on the session's tool state, so the next compose includes their full schemas.
 
 **Search Infrastructure:**
 

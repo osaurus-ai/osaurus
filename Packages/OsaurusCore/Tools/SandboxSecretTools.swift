@@ -78,8 +78,9 @@ struct SandboxSecretSetTool: OsaurusTool, @unchecked Sendable {
     let name = "sandbox_secret_set"
     let description =
         "Store a secret (API key, token) securely for the current agent. "
-        + "Pass `value` if you already have it; omit to prompt the user via a secure dialog "
-        + "(the chat loop intercepts the prompt marker and surfaces an input overlay)."
+        + "PREFER omitting `value`: the user gets a secure input dialog and the secret never "
+        + "enters the conversation. Pass `value` only when you already hold the secret "
+        + "(it is stored in Keychain and redacted from the recorded call)."
 
     let agentId: String
 
@@ -103,8 +104,9 @@ struct SandboxSecretSetTool: OsaurusTool, @unchecked Sendable {
                 "value": .object([
                     "type": .string("string"),
                     "description": .string(
-                        "The secret value to store. If provided, stored directly without prompting. "
-                            + "Omit to prompt the user via a secure input dialog."
+                        "The secret value to store. PREFER OMITTING this — the user is prompted "
+                            + "via a secure dialog and the value never enters the conversation. "
+                            + "If provided it is stored directly and redacted from the recorded call."
                     ),
                 ]),
             ]),
@@ -212,6 +214,48 @@ enum SecretToolResult {
             tool: "sandbox_secret_set",
             retryable: false
         )
+    }
+}
+
+// MARK: - Persisted-Argument Scrubbing
+
+/// Scrubs the secret `value` out of `sandbox_secret_set` tool-call
+/// arguments before they land in chat history / persistence.
+///
+/// The direct-`value` path stores the secret in Keychain correctly, but
+/// the model's tool-call arguments would otherwise ride along in every
+/// later context window and in the persisted session file — defeating
+/// the Keychain. Execution always sees the original arguments; only the
+/// RECORDED copy is scrubbed.
+public enum SecretArgumentScrubber {
+    static let redactedPlaceholder = "[REDACTED]"
+
+    /// Returns scrubbed arguments JSON for `sandbox_secret_set` calls
+    /// that carry a non-empty `value`; every other input is returned
+    /// unchanged.
+    public static func scrubForPersistence(toolName: String, argumentsJSON: String) -> String {
+        guard toolName == "sandbox_secret_set",
+            let data = argumentsJSON.data(using: .utf8),
+            var args = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+            let value = args["value"] as? String,
+            !value.isEmpty,
+            value != redactedPlaceholder
+        else { return argumentsJSON }
+
+        args["value"] = redactedPlaceholder
+        guard
+            let scrubbed = try? JSONSerialization.data(
+                withJSONObject: args,
+                options: .osaurusCanonical
+            ),
+            let json = String(data: scrubbed, encoding: .utf8)
+        else {
+            // Re-serialization should never fail for a dict we just
+            // parsed; if it somehow does, fail CLOSED (drop the args
+            // entirely) rather than persisting the secret.
+            return "{\"value\":\"\(redactedPlaceholder)\"}"
+        }
+        return json
     }
 }
 

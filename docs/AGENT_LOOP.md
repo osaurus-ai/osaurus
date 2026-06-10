@@ -24,6 +24,14 @@ There is no separate "Agent" or "Work" tab — the same chat window handles a on
 
 The chat layer intercepts three special tool results so the loop has structure without a separate planner: `todo`, `complete`, and `clarify`. The intercept fires AFTER `ToolRegistry.execute` returns — the registry runs the tool body like any other tool, and the chat view (`ChatView`'s post-execute branch) inspects the tool name and result string to drive the inline UI. The intercept is gated on `!ToolEnvelope.isError(resultText)` so a rejected summary (e.g. `complete` with a placeholder like "done") falls through to the model for a retry instead of surfacing in the completion banner. Every other tool (file, sandbox, plugin, MCP, …) just runs and returns its output to the model on the next turn.
 
+**Intercept parity across surfaces.** The run-ending intercepts are not chat-only. The HTTP `/agents/{id}/run` loop and the plugin completion loop also end the run on a successful `complete`/`clarify` (the driver exits `.endedBySurface`), and a batch carrying an intercept falls back to serial model-order execution on every surface. What differs per surface is only the *presentation*: chat renders banners/overlays, HTTP returns the summary or question in the response payload, and plugins receive lifecycle events.
+
+| Surface | `complete` | `clarify` |
+| --- | --- | --- |
+| Chat | Ends run; "Completed" banner | Pauses run; inline overlay, user's answer resumes |
+| HTTP `/agents/{id}/run` | Ends run; summary in response | Ends run; question in response (stateless — the caller re-sends with the answer) |
+| Plugin dispatch | Ends run; COMPLETED event | Pauses task; `CLARIFICATION` event, answer resumes the task |
+
 See [Tool Contract](TOOL_CONTRACT.md) for the canonical success/failure envelope shape every tool returns.
 
 ---
@@ -110,6 +118,7 @@ Built by [`FolderToolFactory`](../Packages/OsaurusCore/Folder/FolderTools.swift)
 | `file_write`    | Create or overwrite UTF-8 text files. Use this instead of `echo`/`cat` heredoc. Pass `dry_run: true` to preview the diff and risk warnings without writing. Refuses `.xlsx`, `.pdf`, and `.pptx`-family structured targets; write CSV/TSV/Markdown text or use a structured document tool. |
 | `file_edit`     | Surgical exact-string replacement. Use this instead of `sed`/`awk`. Pass `dry_run: true` to preview the diff without mutating. |
 | `file_operation_history` | Show recent file writes/edits made by the current chat session, optionally filtered to one path. |
+| `file_undo`     | Revert logged file operations from this session — the most recent one, a specific `operation_id`, or every operation on one `path`. Only entries with `can_undo: true` revert. |
 | `file_search`   | ripgrep-style content search, or `target="files"` filename-glob find. Use this instead of `grep`/`rg`/`find`. |
 | `shell_run`     | Execute a shell command (requires approval). Reserve for `mv`/`cp`/`rm`/`mkdir`, builds, tests, git, installs, and any work that can't be expressed via the dedicated `file_*` tools. |
 
@@ -125,7 +134,9 @@ The previously-discrete `file_move`, `file_copy`, `file_delete`, `dir_create`, a
 | `git_diff`   | Show diffs                                        |
 | `git_commit` | Stage and commit (requires approval)              |
 
-Every applied `file_write` / `file_edit` call is logged in [`FileOperationLog`](../Packages/OsaurusCore/Folder/FileOperationLog.swift) so the user can review or undo individual file operations. Dry-run write/edit previews do not log because they do not change the filesystem.
+Every applied `file_write` / `file_edit` call is logged in [`FileOperationLog`](../Packages/OsaurusCore/Folder/FileOperationLog.swift) so the user — or the agent, via `file_undo` — can review and revert individual file operations. Dry-run write/edit previews do not log because they do not change the filesystem.
+
+Common-case `shell_run` mutations join the same log: [`ShellMutationLog`](../Packages/OsaurusCore/Folder/ShellMutationLog.swift) plans simple `mv` / `cp` / `rm` / `mkdir` commands **before** execution (an `rm` undo needs the pre-exec file content) and logs the planned operations when the command exits 0. The capture is all-or-nothing per command: anything it can't parse faithfully (pipes, globs, redirects, directories, paths outside the root) is classified *unloggable* and the tool result carries an explicit "not covered by the undo log" warning instead of a half-logged entry. Each history entry reports an honest per-entry `can_undo`, and operations within one parallel batch share a batch id so related changes group together in history.
 
 ---
 
@@ -215,7 +226,7 @@ Where the surfaces deliberately diverge, the difference is a named [`AgentLoopPo
 | `stopOnToolRejection` | `true` — a rejected tool stops the run | `false` — the model gets the error envelope and keeps looping |
 | `dedupeNoticeEnabled` | `true` — a dedupe replay also stages a "use the result you already have" notice | `false` — replays happen silently |
 
-Every run ends with one of five exits: `finalResponse`, `iterationCapReached` (the final iteration's tool calls still execute first), `toolRejected`, `cancelled`, or `endedBySurface` (a `complete`/`clarify` intercept).
+Every run ends with one of six exits: `finalResponse`, `iterationCapReached` (the final iteration's tool calls still execute first), `toolRejected`, `cancelled`, `endedBySurface` (a `complete`/`clarify` intercept), or `overBudget` (even fully-compacted history cannot fit the context window — the driver ends the run with a shared explanatory message instead of sending a doomed request).
 
 ### Driver-staged system notices
 
@@ -229,6 +240,10 @@ When a model emits several tool calls in one step, the driver executes them as a
 - **Intra-batch dedupe.** Read-like duplicates *within* one batch are deferred past the parallel wave and resolved in order against live state: if the earlier sibling's read succeeded, the duplicate replays the held envelope (serial parity); if it failed, the duplicate executes for real.
 - **Intercepts force serial.** A batch carrying a loop-ending intercept (`AgentToolLoop.interceptToolNames` — `complete`, `clarify`) falls back to serial model-order execution and stops at the first `endRun`, so siblings after a `complete` never execute or land in history.
 - **State-before-cancel.** Executed outcomes are recorded into `AgentTaskState` before cancellation is honored, so history and task state can't desync mid-batch.
+
+### Deferred schema policy (`capabilities_load`)
+
+Loading a capability mid-run does **not** rewrite the rendered `<tools>` block. The loaded tool is callable immediately — registry dispatch is by name, and `capabilities_load`'s success envelope carries an explicit note ("loaded tools are callable NOW…") — but the schema snapshot the prompt renders stays frozen until the next user turn. Rewriting the block mid-run would change the prompt prefix bytes and bust the paged-KV cache for every subsequent iteration of the run; deferring the rewrite keeps the prefix byte-stable while losing nothing functionally. The pending specs ride in `CapabilityLoadBuffer` and drain into the session's tool set at the next compose. The plugin host and the eval harness follow the same compose-once/freeze contract (`frozenManifest` / `frozenSoul` / `frozenAlwaysLoadedNames` via `SessionToolStateStore`).
 
 ### Context budget & KV-stable compaction
 

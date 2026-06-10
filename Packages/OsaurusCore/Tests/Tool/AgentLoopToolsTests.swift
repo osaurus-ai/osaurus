@@ -135,6 +135,39 @@ struct AgentLoopToolsTests {
     }
 
     @Test
+    func complete_warnsOnUncheckedTodoBoxes() async throws {
+        try await withSession { _ in
+            _ = try await TodoTool().execute(
+                argumentsJSON: #"{"markdown": "- [x] done step\n- [ ] left one\n- [ ] left two"}"#
+            )
+            let result = try await CompleteTool().execute(
+                argumentsJSON: #"""
+                    {"summary": "Finished the first step; verified by re-reading the file contents."}
+                    """#
+            )
+            // Soft warning, NOT a rejection — rejecting loops small models.
+            #expect(ToolEnvelope.isSuccess(result))
+            #expect(result.contains("2 unchecked item"))
+        }
+    }
+
+    @Test
+    func complete_noWarningWhenTodoFullyChecked() async throws {
+        try await withSession { _ in
+            _ = try await TodoTool().execute(
+                argumentsJSON: #"{"markdown": "- [x] one\n- [x] two"}"#
+            )
+            let result = try await CompleteTool().execute(
+                argumentsJSON: #"""
+                    {"summary": "Did both steps and verified with the checker script exiting 0."}
+                    """#
+            )
+            #expect(ToolEnvelope.isSuccess(result))
+            #expect(!result.contains("unchecked"))
+        }
+    }
+
+    @Test
     func complete_validateHelperMatchesExecuteOutput() {
         // The intercept path in ChatView calls validate() directly; ensure
         // the same checks fire so behavior is consistent across both.

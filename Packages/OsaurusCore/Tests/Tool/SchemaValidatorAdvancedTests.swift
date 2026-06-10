@@ -44,6 +44,48 @@ struct SchemaValidatorAdvancedTests {
         #expect((result.errorMessage ?? "").contains("did not match"))
     }
 
+    // MARK: - object-level anyOf of required groups (path-XOR-content)
+
+    /// Mirrors `share_artifact`'s schema: `{}` must fail preflight with a
+    /// clear `field`, while either required group satisfies the call.
+    private let xorSchema: JSONValue = .object([
+        "type": .string("object"),
+        "additionalProperties": .bool(false),
+        "properties": .object([
+            "path": .object(["type": .string("string")]),
+            "content": .object(["type": .string("string")]),
+            "filename": .object(["type": .string("string")]),
+        ]),
+        "required": .array([]),
+        "anyOf": .array([
+            .object(["required": .array([.string("path")])]),
+            .object(["required": .array([.string("content"), .string("filename")])]),
+        ]),
+    ])
+
+    @Test func objectAnyOfAcceptsEitherRequiredGroup() {
+        #expect(SchemaValidator.validate(arguments: ["path": "a.txt"], against: xorSchema).isValid)
+        #expect(
+            SchemaValidator.validate(
+                arguments: ["content": "hi", "filename": "a.md"],
+                against: xorSchema
+            ).isValid
+        )
+    }
+
+    @Test func objectAnyOfRejectsEmptyArgumentsWithField() {
+        let result = SchemaValidator.validate(arguments: [String: Any](), against: xorSchema)
+        #expect(!result.isValid)
+        #expect(result.field == "path")
+        #expect((result.errorMessage ?? "").contains("`path` OR `content` + `filename`"))
+    }
+
+    @Test func objectAnyOfRejectsPartialGroup() {
+        // `content` without `filename` satisfies neither branch.
+        let result = SchemaValidator.validate(arguments: ["content": "hi"], against: xorSchema)
+        #expect(!result.isValid)
+    }
+
     // MARK: - items (array element validation)
 
     private let arrayOfStringsSchema: JSONValue = .object([

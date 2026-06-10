@@ -1,0 +1,21 @@
+{
+  "id": "agent_loop.capabilities-load-midrun",
+  "domain": "agent_loop",
+  "label": "agent loop • capabilities_load mid-run, loaded tool callable same run",
+  "query": "First call capabilities_load with ids [\"tool/file_write\"] to make sure the write tool is available. Then write a file named loaded.txt containing exactly: ok",
+  "notes": "Pins the deferred-schema policy end to end: capabilities_load drains into the session bookkeeping WITHOUT rewriting the frozen request schema (KV-prefix stability), the result carries the 'callable now' note, and the loaded tool is dispatchable by name in the SAME run. Loading an already-schema-resident tool is deliberate — the load path's behaviour must not depend on the host's registry state.",
+  "fixtures": {
+    "workspaceFiles": [
+      { "path": "README.md", "contents": "Write tools may need to be loaded via capabilities_load.\n" }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 6,
+      "mustCallTools": ["capabilities_load", "file_write"],
+      "files": [
+        { "path": "loaded.txt", "contains": "ok" }
+      ]
+    }
+  }
+}

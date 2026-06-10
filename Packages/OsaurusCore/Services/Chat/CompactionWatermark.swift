@@ -45,9 +45,26 @@ public final class CompactionWatermark: @unchecked Sendable {
     public init() {}
 
     /// Fingerprint that's cheap to compute and stable for identical
-    /// messages: role, content length, and tool-call linkage.
+    /// messages: role, content HASH, and tool-call linkage. A real hash
+    /// (not just the length) so a same-length edit — regeneration that
+    /// happens to produce equal-size text — invalidates stale decisions
+    /// instead of replaying them against rewritten content.
     private static func identity(of message: ChatMessage) -> String {
-        "\(message.role)|\(message.content?.count ?? -1)|\(message.tool_call_id ?? "")|\(message.tool_calls?.count ?? 0)"
+        "\(message.role)|\(contentHash(message.content))|\(message.tool_call_id ?? "")|\(message.tool_calls?.count ?? 0)"
+    }
+
+    /// Deterministic FNV-1a 64-bit over the content's UTF-8 bytes.
+    /// `String.hashValue` is per-process randomized, which would be fine
+    /// for this in-memory store, but a stable hash costs nothing and
+    /// keeps fingerprints comparable if decisions are ever persisted.
+    private static func contentHash(_ content: String?) -> String {
+        guard let content else { return "nil" }
+        var hash: UInt64 = 0xcbf2_9ce4_8422_2325
+        for byte in content.utf8 {
+            hash ^= UInt64(byte)
+            hash = hash &* 0x0000_0100_0000_01b3
+        }
+        return String(hash, radix: 16)
     }
 
     /// Verify recorded decisions still line up with the caller's history.

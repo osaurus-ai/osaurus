@@ -18,14 +18,12 @@ import Foundation
 public struct ShareArtifactTool: OsaurusTool {
     public let name = "share_artifact"
     public let description =
-        "Surface an artifact to the user in the chat thread. The chat does NOT show files you wrote to disk or "
-        + "to the sandbox unless you also call this tool — it is the only path that creates an artifact card the "
-        + "user can click. Use for generated images, charts, websites, reports, code blobs, and any deliverable. "
-        + "**The file must already exist before this call — `share_artifact` does NOT create files.** "
-        + "Pass `path` to share an existing file (under your working folder, or under your sandbox home / "
-        + "`/workspace/...`), or `content` + `filename` to share inline text/markdown without writing to disk first. "
-        + "If unsure where you wrote a file, list it first with `sandbox_search_files(target=\"files\", pattern=\"<name>\")` "
-        + "(sandbox) or `file_read`/`file_search` (folder mode). Required: at least one of `path` or `content`."
+        "Share a deliverable with the user as a clickable artifact card — pass `path` to an EXISTING "
+        + "file, or `content` + `filename` for inline text, this is the only path that surfaces "
+        + "files in the chat thread. Files written to disk or the sandbox are NOT shown in chat "
+        + "without this call, and this tool does NOT create files. Use for generated images, charts, "
+        + "websites, reports, and code blobs. If unsure where you wrote a file, find it first "
+        + "(`sandbox_search_files` / `file_search` with `target=\"files\"`)."
 
     public let parameters: JSONValue? = .object([
         "type": .string("object"),
@@ -34,24 +32,23 @@ public struct ShareArtifactTool: OsaurusTool {
             "path": .object([
                 "type": .string("string"),
                 "description": .string(
-                    "Path to an existing file or directory. In sandbox mode: relative to the agent home "
-                        + "(e.g. `report.pdf`, `output/chart.svg`) or `/workspace/...` absolute. In folder mode: "
-                        + "relative to the working folder. The file MUST exist — this tool does not create files."
+                    "Path to an EXISTING file or directory: relative to the sandbox agent home "
+                        + "(e.g. `output/chart.svg`) or `/workspace/...` absolute in sandbox mode; relative "
+                        + "to the working folder in folder mode."
                 ),
             ]),
             "content": .object([
                 "type": .string("string"),
                 "description": .string(
-                    "Inline text or markdown content to share directly. Use this when you want to share "
-                        + "generated text without writing to a file first. Omit entirely when using `path` — do "
-                        + "NOT pass an empty string."
+                    "Inline text/markdown to share without writing a file first. Omit entirely when "
+                        + "using `path` — do NOT pass an empty string."
                 ),
             ]),
             "filename": .object([
                 "type": .string("string"),
                 "description": .string(
-                    "Filename for the artifact. Required when using `content`. Optional with `path` (defaults "
-                        + "to the file/directory basename). Omit entirely when not used — do NOT pass an empty string."
+                    "Filename for the artifact. Required with `content`; optional with `path` (defaults "
+                        + "to the basename). Omit when unused — do NOT pass an empty string."
                 ),
             ]),
             "description": .object([
@@ -60,6 +57,14 @@ public struct ShareArtifactTool: OsaurusTool {
             ]),
         ]),
         "required": .array([]),
+        // Preflight-enforced "path OR content(+filename)": a bare `{}`
+        // fails schema validation with a clear `field` instead of
+        // round-tripping through the tool body's prose error. Path mode
+        // still wins when both arrive (see `execute`).
+        "anyOf": .array([
+            .object(["required": .array([.string("path")])]),
+            .object(["required": .array([.string("content"), .string("filename")])]),
+        ]),
     ])
 
     public init() {}

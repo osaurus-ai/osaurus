@@ -2501,7 +2501,10 @@ final class ChatSession: ObservableObject {
                         }
                     }
 
-                    var toolSpecs = context.tools
+                    // Frozen for the whole run (deferred-schema policy): the
+                    // tool schema never changes mid-run, even after
+                    // `capabilities_load` — see the drain block below.
+                    let toolSpecs = context.tools
                     let isManualTools = liveToolMode == .manual
                     cachedContext = context
 
@@ -2747,43 +2750,36 @@ final class ChatSession: ObservableObject {
                             // etc.) so the model sees the rejection.
                         }
 
-                        // Hot-load tools injected by capabilities_load or sandbox_plugin_register.
-                        // Skipped in manual mode — the user's explicit tool set is fixed.
-                        if !isManualTools,
-                            inv.toolName == "capabilities_load"
-                                || inv.toolName == "sandbox_plugin_register"
+                        // Tools loaded via capabilities_load / sandbox_plugin_register.
+                        // Deferred-schema policy (KV stability): loaded tools
+                        // are callable IMMEDIATELY — the registry dispatches by
+                        // name and schema visibility is not an execution gate —
+                        // but `toolSpecs` stays FROZEN for the rest of this run.
+                        // Hot-patching it mid-run rewrote the rendered `<tools>`
+                        // block and busted the paged-KV cache for the whole
+                        // conversation. The names persist into the session's
+                        // tool union so the next user turn composes their full
+                        // schemas in.
+                        if inv.toolName == "capabilities_load"
+                            || inv.toolName == "sandbox_plugin_register"
                         {
+                            // Always drain so a buffered spec can't leak into an
+                            // unrelated run; persist only in auto mode (manual
+                            // mode keeps the user's explicit tool set fixed).
                             let newTools = await CapabilityLoadBuffer.shared.drain()
-                            for tool in newTools {
-                                if let existing = toolSpecs.firstIndex(where: {
-                                    $0.function.name == tool.function.name
-                                }) {
-                                    // `capabilities_load` upgrades compact bootstrap schemas to
-                                    // full schemas in-place, so the next tool iteration can use
-                                    // the complete argument contract without waiting for a
-                                    // fresh compose.
-                                    toolSpecs[existing] = tool
-                                } else {
-                                    toolSpecs.append(tool)
+                            if !isManualTools, !newTools.isEmpty {
+                                if !ToolEnvelope.isError(resultText) {
+                                    resultText += AgentToolLoop.deferredSchemaNotice
                                 }
-                            }
-                            // Re-sort into canonical order so a tool loaded
-                            // mid-turn lands in the same slot it will occupy
-                            // on the next recompose — appended tools would
-                            // otherwise sit at the tail and bust the KV cache.
-                            if !newTools.isEmpty {
-                                toolSpecs = SystemPromptComposer.canonicalToolOrder(toolSpecs)
-                            }
-                            // Persist names into the session's tool union
-                            // so they survive the next compose call.
-                            if let sid = self.sessionId {
-                                let names = newTools.map { $0.function.name }
-                                let snapshot = context.alwaysLoadedNames
-                                await SessionToolStateStore.shared.appendLoadedTools(
-                                    self.sessionStateKey(sid),
-                                    names: names,
-                                    fallbackAlwaysLoadedNames: snapshot
-                                )
+                                if let sid = self.sessionId {
+                                    let names = newTools.map { $0.function.name }
+                                    let snapshot = context.alwaysLoadedNames
+                                    await SessionToolStateStore.shared.appendLoadedTools(
+                                        self.sessionStateKey(sid),
+                                        names: names,
+                                        fallbackAlwaysLoadedNames: snapshot
+                                    )
+                                }
                             }
                         }
 
@@ -2830,22 +2826,12 @@ final class ChatSession: ObservableObject {
                             "[Osaurus][Tool] Success: \(inv.toolName) returned \(resultText.count) chars: \(truncatedResult)\(resultText.count > 500 ? "..." : "")"
                         )
 
-                        guard self.isRunActive(runId) else {
-                            // Cancelled after the intercept window; the
-                            // driver ends the run before recording.
-                            return AgentLoopToolExecution(result: resultText)
-                        }
-                        let toolTurn = recordToolTurn(resultText, callId: callId)
-
-                        // Create a new assistant turn for subsequent content
-                        // This ensures tool calls and text are rendered sequentially
-                        let newAssistantTurn = ChatTurn(role: .assistant, content: "")
-
-                        // Batch both appends into a single mutation to reduce
-                        // the number of @Published change signals and SwiftUI layout passes.
-                        self.turns.append(contentsOf: [toolTurn, newAssistantTurn])
-                        assistantTurn = newAssistantTurn
-                        self.rebuildVisibleBlocks()
+                        // Turn persistence intentionally does NOT happen here.
+                        // Non-intercept results are appended by the
+                        // `onBatchComplete` hook in the driver's slot (model)
+                        // order — mid-batch appends were the source of
+                        // out-of-order transcripts (denials and deferred
+                        // dedupe replays landing around executed siblings).
                         return AgentLoopToolExecution(result: resultText)
                     }
 
@@ -2913,9 +2899,9 @@ final class ChatSession: ObservableObject {
                             // so user denials, missing files, and bad arguments don't all get the
                             // same opaque `executionError` treatment. The driver records the
                             // envelope into the task state and, under the chat policy, stops the
-                            // run (remaining calls in the batch are skipped).
+                            // run (remaining calls in the batch are skipped). Turn persistence
+                            // happens in `onBatchComplete`, in slot order.
                             let rejectionMessage = ToolEnvelope.fromError(error, tool: inv.toolName)
-                            self.turns.append(recordToolTurn(rejectionMessage, callId: callId))
                             return AgentLoopToolExecution(result: rejectionMessage, isError: true)
                         }
                     }
@@ -2933,27 +2919,56 @@ final class ChatSession: ObservableObject {
                     func executeToolBatch(
                         _ calls: [(invocation: ServiceToolInvocation, callId: String)]
                     ) async -> [AgentLoopToolExecution] {
+                        // Cancelled before any execution: return NO results.
+                        // The driver treats missing slots as never-executed
+                        // (no turn appended, no `state.record`) — matching
+                        // the serial cancel semantics instead of recording
+                        // empty placeholder envelopes.
+                        guard self.isRunActive(runId) else { return [] }
+
                         // Serial fallback for batches of one — identical to
                         // the historical single-call path.
                         if calls.count == 1, let only = calls.first {
-                            return [await executeSingleToolCall(only.invocation, callId: only.callId)]
+                            let execution = await executeSingleToolCall(only.invocation, callId: only.callId)
+                            // Cancelled before execution produced anything:
+                            // report "never ran" rather than an empty
+                            // envelope the driver would record.
+                            if execution.result.isEmpty, !execution.isError, !self.isRunActive(runId) {
+                                return []
+                            }
+                            return [execution]
                         }
 
                         // Serial fallback when the batch carries a loop-ending
                         // intercept (`complete`/`clarify`): execute in model
                         // order and stop at the first `endRun`; the driver
                         // treats the missing trailing results as
-                        // never-executed slots.
+                        // never-executed slots. Turns for non-intercept calls
+                        // are appended inline here (serial execution order IS
+                        // model order); `onBatchComplete` skips call ids that
+                        // already have a tool turn.
                         if AgentToolLoop.containsIntercept(calls) {
                             var serialExecutions: [AgentLoopToolExecution] = []
                             for call in calls {
+                                guard self.isRunActive(runId) else { break }
                                 let execution = await executeSingleToolCall(
                                     call.invocation,
                                     callId: call.callId
                                 )
+                                if execution.result.isEmpty, !execution.isError, !self.isRunActive(runId) {
+                                    break
+                                }
                                 serialExecutions.append(execution)
                                 if execution.endRun { break }
+                                // Historical serial shape: tool turn followed
+                                // by a fresh assistant turn for subsequent
+                                // content.
+                                let toolTurn = recordToolTurn(execution.result, callId: call.callId)
+                                let newAssistantTurn = ChatTurn(role: .assistant, content: "")
+                                self.turns.append(contentsOf: [toolTurn, newAssistantTurn])
+                                assistantTurn = newAssistantTurn
                             }
+                            self.rebuildVisibleBlocks()
                             return serialExecutions
                         }
 
@@ -2962,14 +2977,14 @@ final class ChatSession: ObservableObject {
                         if executionMode.usesSandboxTools {
                             await SandboxToolRegistrar.shared.registerTools(for: effectiveAgentId)
                         }
-                        guard self.isRunActive(runId) else {
-                            // Cancelled before execution; the driver's
-                            // post-batch probe ends the run before these
-                            // placeholders are recorded anywhere.
-                            return calls.map { _ in AgentLoopToolExecution(result: "") }
-                        }
+                        guard self.isRunActive(runId) else { return [] }
 
-                        // Phase 1 — approvals, serially in model order.
+                        // Phase 1 — approvals, serially in model order. No
+                        // turns are appended here: denial/skip envelopes ride
+                        // back to the driver as slotted executions and are
+                        // persisted by `onBatchComplete` in slot order, so
+                        // the transcript can never interleave a denial ahead
+                        // of an earlier approved call's result.
                         var approved: [(slot: Int, invocation: ServiceToolInvocation, callId: String)] = []
                         var denied = false
                         for (slot, call) in calls.enumerated() {
@@ -2984,7 +2999,6 @@ final class ChatSession: ObservableObject {
                                         "Skipped: an earlier tool call in this batch was rejected, so this call did not run.",
                                     tool: call.invocation.toolName
                                 )
-                                self.turns.append(recordToolTurn(envelope, callId: call.callId))
                                 executions[slot] = AgentLoopToolExecution(result: envelope, isError: false)
                                 continue
                             }
@@ -2996,7 +3010,6 @@ final class ChatSession: ObservableObject {
                                 approved.append((slot, call.invocation, call.callId))
                             } catch {
                                 let envelope = ToolEnvelope.fromError(error, tool: call.invocation.toolName)
-                                self.turns.append(recordToolTurn(envelope, callId: call.callId))
                                 executions[slot] = AgentLoopToolExecution(result: envelope, isError: true)
                                 denied = true
                             }
@@ -3030,15 +3043,13 @@ final class ChatSession: ObservableObject {
                             }
 
                             // Phase 3 — post-process on the MainActor, in
-                            // model order: intercepts, hot-loaded tools,
-                            // artifacts, secret prompts, turn recording.
+                            // model order: hot-loaded tools, artifacts,
+                            // secret prompts. Turn recording is deferred to
+                            // `onBatchComplete` (slot order).
                             for (entry, execution) in zip(approved, results) {
                                 if execution.isError {
-                                    // Registry threw — recorded exactly like
+                                    // Registry threw — surfaced exactly like
                                     // the serial catch path.
-                                    self.turns.append(
-                                        recordToolTurn(execution.result, callId: entry.callId)
-                                    )
                                     executions[entry.slot] = execution
                                 } else {
                                     executions[entry.slot] = await postProcessToolResult(
@@ -3048,7 +3059,6 @@ final class ChatSession: ObservableObject {
                                     )
                                 }
                             }
-                            self.rebuildVisibleBlocks()
                         }
 
                         return executions.map { $0 ?? AgentLoopToolExecution(result: "") }
@@ -3085,11 +3095,12 @@ final class ChatSession: ObservableObject {
                             // recent pairs stay intact, and the system prefix
                             // is untouched. No-op while within budget.
                             let preTrimTokens = ContextBudgetManager.estimateTokens(for: msgs)
-                            msgs = AgentLoopBudget.trimPreservingSystemPrefix(
+                            let trimResult = AgentLoopBudget.trimPreservingSystemPrefixReportingOverflow(
                                 msgs,
                                 with: loopBudgetManager,
                                 watermark: self.compactionWatermark
                             )
+                            msgs = trimResult.messages
                             let postTrimTokens = ContextBudgetManager.estimateTokens(for: msgs)
                             let savedTokens = preTrimTokens - postTrimTokens
                             if savedTokens > 0 {
@@ -3144,7 +3155,14 @@ final class ChatSession: ObservableObject {
                                 tokens: convTokens,
                                 finishedOutputTurn: assistantTurn
                             )
-                            return msgs
+                            // `overBudget` (protected first message + tail
+                            // alone exceed the budget after every compaction
+                            // lever) ends the run with a distinct exit
+                            // instead of sending a doomed request.
+                            return AgentLoopIterationInput(
+                                messages: msgs,
+                                overBudget: trimResult.overBudget
+                            )
                         },
                         modelStep: { msgs, attempt in
                             ttftTrace?.set("messageCount", msgs.count)
@@ -3257,10 +3275,19 @@ final class ChatSession: ObservableObject {
                             }
                         },
                         willProcessCall: { inv, callId in
+                            // The RECORDED copy of the args is scrubbed
+                            // (sandbox_secret_set `value` → [REDACTED]);
+                            // execution still sees the original `inv`.
                             let call = ToolCall(
                                 id: callId,
                                 type: "function",
-                                function: ToolCallFunction(name: inv.toolName, arguments: inv.jsonArguments),
+                                function: ToolCallFunction(
+                                    name: inv.toolName,
+                                    arguments: SecretArgumentScrubber.scrubForPersistence(
+                                        toolName: inv.toolName,
+                                        argumentsJSON: inv.jsonArguments
+                                    )
+                                ),
                                 geminiThoughtSignature: inv.geminiThoughtSignature
                             )
                             assistantTurn.pendingToolName = nil
@@ -3286,19 +3313,16 @@ final class ChatSession: ObservableObject {
                             // its sink.
                             self.rebuildVisibleBlocks()
                         },
-                        onDedupedResult: { _, callId, held in
+                        onDedupedResult: { _, _, _ in
                             // Consecutive-identical dedupe: the driver replayed
                             // the EXACT envelope the model already received —
                             // never a collapsed/summarized form — so the
                             // short-circuit is neutral and never hands back
-                            // less than it had. Record it like a normal
-                            // result. No new assistant turn here: the dedupe
-                            // pass runs BEFORE the batch executes, and
-                            // splitting the turn mid-pass would strand the
-                            // batch's remaining tool rows behind a second
-                            // assistant message (invalid tool_call framing).
-                            self.turns.append(recordToolTurn(held, callId: callId))
-                            self.rebuildVisibleBlocks()
+                            // less than it had. The replayed outcome rides the
+                            // driver's slotted outcomes, so `onBatchComplete`
+                            // persists its turn in slot (model) order — an
+                            // inline append here would land deferred replays
+                            // AFTER their executed siblings.
                         },
 
                         executeTool: { inv, callId in
@@ -3311,6 +3335,47 @@ final class ChatSession: ObservableObject {
                             // serial in model order, execution concurrent,
                             // post-processing back in model order.
                             await executeToolBatch(calls)
+                        },
+                        onBatchComplete: { outcomes in
+                            guard !outcomes.isEmpty else { return }
+                            // Slot-order turn persistence (mirrors HTTP): the
+                            // driver hands outcomes in the model's call order
+                            // — executed results, denials, and dedupe replays
+                            // alike — so the transcript and session save
+                            // always match the order the model asked for.
+                            // Intercept slots are excluded by the driver
+                            // (they wrote their own history); the intercept
+                            // serial fallback appends inline, so skip call
+                            // ids that already have a tool turn.
+                            var appendedAny = false
+                            for outcome in outcomes {
+                                let exists = self.turns.contains {
+                                    $0.role == .tool && $0.toolCallId == outcome.callId
+                                }
+                                guard !exists else { continue }
+                                self.turns.append(
+                                    recordToolTurn(outcome.result, callId: outcome.callId)
+                                )
+                                appendedAny = true
+                            }
+                            if appendedAny {
+                                // One fresh assistant turn for subsequent
+                                // content so tool calls and following prose
+                                // render sequentially (previously created
+                                // per-call by the post-processor).
+                                let newAssistantTurn = ChatTurn(role: .assistant, content: "")
+                                self.turns.append(newAssistantTurn)
+                                assistantTurn = newAssistantTurn
+                            }
+                            self.rebuildVisibleBlocks()
+                        },
+                        pendingTodoCount: {
+                            // Feeds the driver's staleness nudge — todo is
+                            // session-scoped, so only chat provides this.
+                            let key = self.expectedTodoSessionId
+                            guard let todo = await AgentTodoStore.shared.todo(for: key)
+                            else { return 0 }
+                            return todo.totalCount - todo.doneCount
                         }
                     )
 
@@ -3324,11 +3389,29 @@ final class ChatSession: ObservableObject {
                         hooks: loopHooks
                     )
 
+                    if runResult.exit == .overBudget {
+                        // Even fully-compacted history can't fit the model
+                        // window — the driver ended the run before sending a
+                        // doomed request. Surface the distinct failure on the
+                        // assistant bubble instead of a generic stream error.
+                        assistantTurn.content = AgentToolLoop.overBudgetMessage
+                        lastStreamError = AgentToolLoop.overBudgetMessage
+                        rebuildVisibleBlocks()
+                    }
+
                     if runResult.exit == .iterationCapReached && isRunActive(runId) {
                         do {
                             var finalReq = ChatCompletionRequest(
                                 model: selectedModel ?? "default",
-                                messages: buildMessages(),
+                                // Same watermark-trimmed view of history the
+                                // loop iterations used — the raw array can
+                                // exceed the window precisely when the cap
+                                // hits after heavy tool traffic.
+                                messages: AgentLoopBudget.trimPreservingSystemPrefix(
+                                    buildMessages(),
+                                    with: loopBudgetManager,
+                                    watermark: compactionWatermark
+                                ),
                                 temperature: effectiveTemp,
                                 max_tokens: effectiveMaxTokensForAgent,
                                 stream: true,

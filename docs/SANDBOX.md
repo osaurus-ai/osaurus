@@ -271,6 +271,8 @@ Phase 1 dropped the wall-clock timeouts that used to kill long commands at ~2 mi
 
 The inactivity timer (when set) resets on every byte of output, so a `cargo build` that produces silent stretches between status lines won't trip it as long as it's actually progressing.
 
+When the idle ceiling does fire, the failure envelope carries the honest `kind: "timeout"` (retryable, with wording that explains it was an inactivity kill, not a wall-clock cap — "re-run with a longer `timeout` or emit progress output"). Sandbox-not-ready states (container not running, VM still provisioning) map to `kind: "unavailable"` (also retryable) so the model waits and retries instead of pivoting to a different approach. The same taxonomy applies to MCP provider calls: a provider timeout is `kind: "timeout"`, an unreachable/disabled provider is `kind: "unavailable"`.
+
 ### Terminate semantics
 
 When the user presses `[Terminate]`:
@@ -414,6 +416,13 @@ The prompt path keeps secret values out of the conversation history and LLM cont
 - `SecretPromptState` tracks a `resolved` flag, making `submit()` and `cancel()` idempotent
 - `onDisappear` on the overlay calls `cancel()` as a safety net if the view is dismissed unexpectedly
 - All session reset paths (`cancelExecution`, `finishExecution`, etc.) dismiss pending prompts before clearing state
+
+### Secret Containment
+
+Storing a secret is only half the problem — the other half is keeping its **value** out of the model context and the persisted transcript afterwards:
+
+- **Output scrubbing.** Agent secrets are injected into the exec environment, so `echo $KEY` would otherwise land the value in the model's context. `SecretScrubber` rewrites every known secret value in `sandbox_exec` stdout/stderr, background-job log tails, and sandbox-plugin tool output to `[REDACTED:<ENV_KEY>]` before the result is enveloped. Longer values scrub first (substring-safe); values under 6 characters are exempt to avoid false positives on ordinary output.
+- **Argument scrubbing.** When the agent uses the direct `value` path of `sandbox_secret_set`, the *recorded* copy of the tool-call arguments is rewritten (`value` → `[REDACTED]`) before it is persisted into chat history; execution still sees the original. The prompt path never carries the value through the model at all and remains the recommended flow — the tool description steers models toward it.
 
 ---
 

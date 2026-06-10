@@ -54,7 +54,8 @@ curl http://127.0.0.1:1337/v1/chat/completions \
       {"role": "user", "content": "Hello, how are you?"}
     ],
     "session_id": "my-session-1",
-    // Optional: reuse KV cache across turns for lower latency
+    // Optional: groups history + session tool state across turns
+    // (KV cache reuse is automatic and content-addressed)
     "temperature": 0.7,
     "max_tokens": 150
   }'
@@ -264,13 +265,16 @@ The Model Context Protocol endpoints let any MCP-aware harness connect and disco
 
 Combine `/chat/completions` (your harness's own tool loop) with `/mcp/tools` + `/mcp/call` (Osaurus tool surface) to keep both sides authoritative.
 
-### Session Reuse (KV Cache)
+#### External surface deny list
 
-Provide a `session_id` to reuse the same model chat session’s KV cache across requests. Reuse applies when:
+Folder write and shell tools are **never invocable from external surfaces** — neither `/mcp/call` nor the `/agents/{id}/run` loop will execute `file_write`, `file_edit`, `file_undo`, `shell_run`, or `git_commit`, even while a working folder is open in the app and those tools are registered process-wide. `/mcp/call` returns `403` with `{"error": "tool_not_exposable"}`, the agent loop hands the model a structured `rejected` envelope, and the denied names are hidden from `GET /mcp/tools` listings. Rationale: loopback connections skip Bearer auth, so an external caller could otherwise rewrite the user's files or run arbitrary shell commands through the open folder session. Write access from outside the app goes through the sandbox (`sandbox_*` tools on sandboxed agents), which is isolated by construction.
 
-- The `model` matches, and
-- The session is not concurrently in use, and
-- The session has not expired from the internal LRU window.
+### Session Grouping (`session_id`)
+
+Provide a `session_id` to group requests into one logical conversation. It is **not** a cache key — KV cache reuse is automatic and content-addressed (see the next section). What `session_id` does control:
+
+- Persisted conversation history for agent-backed requests.
+- Per-session tool state: the system-prompt prefix (manifest, SOUL, always-loaded tool names) is frozen on the first compose for a session, and tools loaded mid-session via `capabilities_load` are re-included on later requests with the same `session_id`. This keeps the prompt prefix byte-stable, which is what lets the content-addressed cache hit.
 
 Example follow-up turn using the same `session_id`:
 
@@ -286,7 +290,7 @@ curl http://127.0.0.1:1337/v1/chat/completions \
   }'
 ```
 
-Keep `session_id` stable per conversation and per model.
+Keep `session_id` stable per conversation and per model. Omitting it never disables KV reuse — identical prompt prefixes still share cached blocks — but session tool bookkeeping (frozen prefix, `capabilities_load` persistence) won't apply.
 
 ### Prefix Caching and `prefix_hash`
 

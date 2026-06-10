@@ -322,6 +322,38 @@ final class ToolRegistry: ObservableObject {
         }
     }
 
+    // MARK: - External surface deny list
+
+    /// Tool classes that must never be invocable from EXTERNAL surfaces
+    /// (the HTTP `/agents/{id}/run` loop and the `/mcp/call` bridge).
+    /// With a working folder open, folder tools register process-wide
+    /// with policy `.auto`; an external caller — loopback skips Bearer
+    /// auth entirely — could otherwise rewrite the user's files or run
+    /// arbitrary shell commands. These names refuse with a structured
+    /// envelope regardless of registration state and are hidden from
+    /// `/mcp/tools` listings.
+    public nonisolated static let externallyDeniedToolNames: Set<String> = [
+        "file_write", "file_edit", "shell_run", "git_commit", "file_undo",
+    ]
+
+    /// Whether `name` is blocked for the current execution because an
+    /// external surface (`ChatExecutionContext.isExternalSurface`) is
+    /// driving the call.
+    nonisolated static func isDeniedForCurrentSurface(_ name: String) -> Bool {
+        ChatExecutionContext.isExternalSurface && externallyDeniedToolNames.contains(name)
+    }
+
+    /// The structured refusal handed to external callers for denied
+    /// tool classes.
+    nonisolated static func externalSurfaceDenialEnvelope(tool: String) -> String {
+        ToolEnvelope.failure(
+            kind: .rejected,
+            message:
+                "'\(tool)' is not available to external callers. Folder write and shell tools can only run from the Osaurus app.",
+            tool: tool
+        )
+    }
+
     /// Resolve the permission gate (missing system permissions, ask/deny
     /// policy, auto-grants) for one tool call without executing it. Throws
     /// the same errors `execute` would on denial. Unknown tools are a
@@ -331,6 +363,18 @@ final class ToolRegistry: ObservableObject {
     /// order first, then the approved set executes concurrently with
     /// `execute(..., permissionGateResolved: true)`.
     func resolvePermissionGate(name: String, argumentsJSON: String) async throws {
+        // External-surface deny happens BEFORE the gate so a denied tool
+        // can never pop an approval prompt from an external request.
+        if Self.isDeniedForCurrentSurface(name) {
+            throw NSError(
+                domain: "ToolRegistry",
+                code: 3,
+                userInfo: [
+                    NSLocalizedDescriptionKey:
+                        "'\(name)' is not available to external callers. Folder write and shell tools can only run from the Osaurus app."
+                ]
+            )
+        }
         guard let tool = toolsByName[name] else { return }
         try await runPermissionGate(tool: tool, name: name, argumentsJSON: argumentsJSON)
     }
@@ -445,6 +489,12 @@ final class ToolRegistry: ObservableObject {
         argumentsJSON: String,
         permissionGateResolved: Bool = false
     ) async throws -> String {
+        // External-surface deny list: refuse workspace-mutating tool
+        // classes for HTTP/MCP-initiated executions regardless of
+        // registration state or permission policy.
+        if Self.isDeniedForCurrentSurface(name) {
+            return Self.externalSurfaceDenialEnvelope(tool: name)
+        }
         guard let tool = toolsByName[name] else {
             if name.hasPrefix("sandbox_") {
                 return ToolErrorEnvelope(
@@ -506,15 +556,21 @@ final class ToolRegistry: ObservableObject {
                 try await ChatExecutionContext.$allowHostSecretReads.withValue(policy.allowSecretReads) {
                     try await ChatExecutionContext.$sandboxReadBridge.withValue(combinedSandboxReadBridge) {
                         if tool.bypassRegistryTimeout {
-                            return try await Self.runToolBodyUntimed(
-                                tool,
-                                argumentsJSON: effectiveArgumentsJSON
+                            return Self.normalizeToolResult(
+                                try await Self.runToolBodyUntimed(
+                                    tool,
+                                    argumentsJSON: effectiveArgumentsJSON
+                                ),
+                                tool: name
                             )
                         }
-                        return try await Self.runToolBody(
-                            tool,
-                            argumentsJSON: effectiveArgumentsJSON,
-                            timeoutSeconds: Self.defaultToolTimeoutSeconds
+                        return Self.normalizeToolResult(
+                            try await Self.runToolBody(
+                                tool,
+                                argumentsJSON: effectiveArgumentsJSON,
+                                timeoutSeconds: Self.defaultToolTimeoutSeconds
+                            ),
+                            tool: name
                         )
                     }
                 }
@@ -681,6 +737,69 @@ final class ToolRegistry: ObservableObject {
             return .ready(argumentsJSON: argumentsJSON)
         }
         return .ready(argumentsJSON: coercedJSON)
+    }
+
+    /// Registry-boundary result normalization, applied to EVERY executed
+    /// tool body's output (built-in, MCP, plugin, dynamic):
+    ///
+    /// 1. Envelope normalization — plain-text results (MCP content
+    ///    conversions, plugin prose, legacy tools) wrap into the canonical
+    ///    success envelope so every consumer (`isError`, `classify`,
+    ///    dedupe, transcripts) sees one shape.
+    /// 2. Universal output cap — results above
+    ///    `ToolOutputCaps.universalResult` are head+tail truncated and
+    ///    re-wrapped with `truncated: true` plus a recovery hint, so no
+    ///    single call (base64 payload, giant diff, runaway listing) can
+    ///    blow the context window in one turn. Error-ness is preserved.
+    nonisolated static func normalizeToolResult(_ raw: String, tool: String) -> String {
+        // The secret-prompt marker is deliberately NOT an envelope —
+        // `SecretPromptParser` keys off `action` at the JSON root and the
+        // chat loop replaces it with a real envelope after the overlay
+        // resolves. Wrapping it here would break the secure-input flow.
+        if raw.contains("\"action\":\"\(SecretPromptAction.actionKey)\""),
+            SecretPromptParser.parse(raw) != nil
+        {
+            return raw
+        }
+
+        let cap = ToolOutputCaps.universalResult
+        let isEnvelope = ToolEnvelope.isSuccess(raw) || ToolEnvelope.isError(raw)
+
+        if raw.count <= cap {
+            return isEnvelope ? raw : ToolEnvelope.success(tool: tool, text: raw)
+        }
+
+        // Head-biased: at the registry backstop the front of an oversized
+        // payload is what identifies it (the recovery hint rides in the
+        // envelope, not the marker).
+        let truncatedContent = HeadTailTruncation.apply(raw, cap: cap, headFraction: 2.0 / 3.0)
+        let hint =
+            "Output exceeded the per-call cap and was truncated (head and tail kept). "
+            + "Re-run with narrower arguments — filters, `max_results`, line ranges, or "
+            + "head/tail options — to retrieve the missing region."
+
+        if ToolEnvelope.isError(raw) {
+            return ToolEnvelope.failure(
+                kind: .executionError,
+                message: "Tool '\(tool)' failed and its error output exceeded the per-call cap. " + hint,
+                tool: tool,
+                metadata: [
+                    "truncated": true,
+                    "original_chars": raw.count,
+                    "content": truncatedContent,
+                ]
+            )
+        }
+        return ToolEnvelope.success(
+            tool: tool,
+            result: [
+                "kind": "truncated_output",
+                "truncated": true,
+                "original_chars": raw.count,
+                "content": truncatedContent,
+            ] as [String: Any],
+            warnings: [hint]
+        )
     }
 
     /// Default per-tool wall-clock cap (seconds). Mirrors

@@ -762,6 +762,14 @@ private func agentNodeWorkdir(home: String) -> String {
     "\(home)/.osaurus/node_workspace"
 }
 
+/// The agent's raw secret env (key → value), for post-exec output
+/// scrubbing. Same source `agentShellEnvironment` injects, minus the
+/// non-secret additions (PATH / VIRTUAL_ENV).
+private func agentSecretValues(agentId: String) -> [String: String] {
+    guard let uuid = UUID(uuidString: agentId) else { return [:] }
+    return AgentSecretsKeychain.getFilteredSecrets(agentId: uuid)
+}
+
 private func agentShellEnvironment(agentId: String, home: String, cwd: String? = nil) -> [String: String] {
     var env: [String: String] = [:]
     if let uuid = UUID(uuidString: agentId) {
@@ -792,10 +800,9 @@ private func jsonResult(_ dict: [String: Any]) -> String {
 }
 
 /// Cap a stream's worth of text before it lands in the model's context.
-/// Uses a head + tail strategy: keep the first 40% of the budget and the
-/// last 60%, with a marker in the middle so the model knows truncation
-/// happened. Tail bias matters because the final lines of a process
-/// (errors, summary prints) are usually the most important.
+/// Keeps the first 40% of the budget and the last 60% — tail bias matters
+/// because the final lines of a process (errors, summary prints) are
+/// usually the most important.
 ///
 /// Default budget is `ToolOutputCaps.execStdout` (~12.5K tokens). When
 /// the input fits under the budget the text is returned untouched.
@@ -803,16 +810,7 @@ private func jsonResult(_ dict: [String: Any]) -> String {
 /// Internal — `SandboxPluginTool` shares this so user-created plugin
 /// runs cap their stdout/stderr the same way the built-in shell tools do.
 internal func truncateForModel(_ text: String, maxChars: Int = ToolOutputCaps.execStdout) -> String {
-    if text.count <= maxChars { return text }
-    let headChars = Int(Double(maxChars) * 0.4)
-    let tailChars = maxChars - headChars
-    let head = String(text.prefix(headChars))
-    let tail = String(text.suffix(tailChars))
-    let omitted = text.count - headChars - tailChars
-    return
-        head
-        + "\n\n... [output truncated — \(omitted) chars omitted out of \(text.count) total] ...\n\n"
-        + tail
+    HeadTailTruncation.apply(text, cap: maxChars, headFraction: 0.4)
 }
 
 protocol SandboxToolCommandRunning: Sendable {
@@ -1205,7 +1203,9 @@ private struct SandboxReadFileTool: OsaurusTool, @unchecked Sendable {
                 ]),
                 "max_chars": .object([
                     "type": .string("integer"),
-                    "description": .string("Cap returned characters after line selection"),
+                    "description": .string(
+                        "Cap returned characters after line selection (default \(ToolOutputCaps.fileRead))"
+                    ),
                 ]),
             ]),
             "required": .array([.string("path")]),
@@ -1230,7 +1230,11 @@ private struct SandboxReadFileTool: OsaurusTool, @unchecked Sendable {
         let startLine = max(coerceInt(args["start_line"]) ?? 0, 0)
         let lineCount = max(coerceInt(args["line_count"]) ?? 0, 0)
         let tailLines = max(coerceInt(args["tail_lines"]) ?? 0, 0)
-        let maxChars = max(coerceInt(args["max_chars"]) ?? 0, 0)
+        // Default cap when the model omits `max_chars`: same budget as the
+        // host `file_read`, so an unbounded `cat` of a generated artifact
+        // can't blow the context in one call. An explicit `max_chars`
+        // still overrides (already capped by the universal registry cap).
+        let maxChars = coerceInt(args["max_chars"]).map { max($0, 0) } ?? ToolOutputCaps.fileRead
 
         let command: String
         if tailLines > 0 {
@@ -1270,6 +1274,10 @@ private struct SandboxReadFileTool: OsaurusTool, @unchecked Sendable {
             )
         }
         var payload: [String: Any] = [
+            // `kind: "file"` so `AgentTaskState.classify` sees this as a
+            // file read in plain-sandbox mode (progress signal + dedupe),
+            // exactly like the folder `file_read` envelope.
+            "kind": "file",
             "path": resolved,
             "content": result.stdout,
             "size": result.stdout.count,
@@ -1283,6 +1291,18 @@ private struct SandboxReadFileTool: OsaurusTool, @unchecked Sendable {
         }
         if maxChars > 0 {
             payload["max_chars"] = maxChars
+        }
+        // Hitting the cap exactly almost always means the file continues —
+        // flag it with a recovery path instead of a silent cut.
+        if maxChars > 0, result.stdout.count >= maxChars {
+            payload["truncated"] = true
+            return sandboxSuccess(
+                tool: name,
+                result: payload,
+                warnings: [
+                    "Content truncated at \(maxChars) chars. Read the rest with `start_line`/`line_count`, `tail_lines`, or a larger `max_chars`."
+                ]
+            )
         }
         return sandboxSuccess(tool: name, result: payload)
     }
@@ -1379,7 +1399,7 @@ private struct SandboxSearchFilesTool: OsaurusTool, @unchecked Sendable {
         guard case .value(let resolved) = resolvedReq else { return resolvedReq.failureEnvelope ?? "" }
 
         let maxResults = coerceInt(args["max_results"]) ?? 100
-        let cappedMax = max(1, min(maxResults, 500))
+        let cappedMax = max(1, min(maxResults, ToolOutputCaps.searchMaxResults))
 
         switch target {
         case "files":
@@ -1395,15 +1415,12 @@ private struct SandboxSearchFilesTool: OsaurusTool, @unchecked Sendable {
                 agentName,
                 command: cmd
             )
-            return sandboxSuccess(
-                tool: name,
-                result: [
-                    "pattern": pattern,
-                    "target": "files",
-                    "path": resolved,
-                    "matches": result.stdout,
-                ],
-                warnings: emptySearchWarnings(matches: result.stdout, resolved: resolved)
+            return searchSuccess(
+                pattern: pattern,
+                target: "files",
+                resolved: resolved,
+                matches: result.stdout,
+                cappedMax: cappedMax
             )
 
         case "content":
@@ -1429,15 +1446,12 @@ private struct SandboxSearchFilesTool: OsaurusTool, @unchecked Sendable {
                 agentName,
                 command: cmd
             )
-            return sandboxSuccess(
-                tool: name,
-                result: [
-                    "pattern": pattern,
-                    "target": "content",
-                    "path": resolved,
-                    "matches": result.stdout,
-                ],
-                warnings: emptySearchWarnings(matches: result.stdout, resolved: resolved)
+            return searchSuccess(
+                pattern: pattern,
+                target: "content",
+                resolved: resolved,
+                matches: result.stdout,
+                cappedMax: cappedMax
             )
 
         default:
@@ -1461,6 +1475,40 @@ private struct SandboxSearchFilesTool: OsaurusTool, @unchecked Sendable {
             return nil
         }
         return [hint]
+    }
+
+    /// Shared success shaping for both search targets: flags a result set
+    /// that hit the `head -N` cut with `truncated: true` plus a narrowing
+    /// hint, so the model knows the match list is incomplete instead of
+    /// treating the cap as the full universe.
+    private func searchSuccess(
+        pattern: String,
+        target: String,
+        resolved: String,
+        matches: String,
+        cappedMax: Int
+    ) -> String {
+        let lineCount = matches.split(separator: "\n", omittingEmptySubsequences: true).count
+        let truncated = lineCount >= cappedMax
+        var payload: [String: Any] = [
+            "pattern": pattern,
+            "target": target,
+            "path": resolved,
+            "matches": matches,
+        ]
+        var warnings = emptySearchWarnings(matches: matches, resolved: resolved) ?? []
+        if truncated {
+            payload["truncated"] = true
+            warnings.append(
+                "Results truncated at \(cappedMax) lines — more matches exist. Narrow with a more specific `pattern`, a deeper `path`, or "
+                    + (target == "content" ? "an `include` glob." : "a tighter glob.")
+            )
+        }
+        return sandboxSuccess(
+            tool: name,
+            result: payload,
+            warnings: warnings.isEmpty ? nil : warnings
+        )
     }
 }
 
@@ -1738,31 +1786,22 @@ private struct SandboxExecTool: OsaurusTool, @unchecked Sendable {
             Run a shell command (bash) in the agent's sandbox. **Reserve this for \
             builds, installs, git, processes, network calls, package managers, \
             and anything else that needs a shell.** For file IO, search, edit, \
-            write, and dependency installs, prefer the dedicated `sandbox_*` \
-            tools — each tool's description states which shell pattern it replaces.
+            and write, prefer the dedicated `sandbox_*` tools (see the sandbox \
+            tool dispatch in your instructions).
 
-            Foreground (default): runs to completion. Long-running commands \
-            (builds, installs, large fetches) stream their output live to the \
-            chat — the user sees it as it happens and can press [Terminate] at \
-            any time, which signals SIGTERM and surfaces `killed_by: "user"` in \
-            your result. Prefer ONE rich invocation (chained with `&&` / `;` / \
-            pipes) over many round-trips.\(backgroundParagraph)
+            Foreground (default): runs to completion; output streams live to the \
+            chat and the user can press [Terminate] (surfaces `killed_by: "user"`). \
+            Prefer ONE rich invocation (chained with `&&` / `;` / pipes) over many \
+            round-trips.\(backgroundParagraph)
 
-            This is for a shell command LINE. For a multi-line script, \
-            `sandbox_write_file` the script then run the file (e.g. \
-            `python3 script.py`) — NEVER inline multi-line code in `python3 -c` / \
-            `node -e`: the JSON→shell→code escaping breaks and bash mis-parses \
-            the body. Pass the command verbatim — do NOT wrap the whole command \
-            in an extra quote; quote only the individual arguments that need it.
-
-            LIMITS: no built-in foreground timeout — the user terminates if they \
-            care. Pass `timeout: <seconds>` ONLY if you want a hard idle ceiling \
-            (kill the process if it produces no output for N seconds). Final \
-            stdout truncated at ~50KB (40% head + 60% tail). Per-turn command \
-            count is capped — chain inside one call instead of burning the cap. \
-            Avoid `2>/dev/null` in pipelines — it hides errors from the result \
-            envelope (pipefail is on, so a real upstream failure DOES surface as \
-            a non-zero exit; suppressed stderr will trigger an empty-output warning).
+            Takes a single command LINE, passed verbatim — quote individual \
+            arguments only, never the whole command. Multi-line scripts: \
+            `sandbox_write_file` the script, then run the file. No built-in \
+            timeout; pass `timeout: <seconds>` ONLY for a hard idle ceiling \
+            (killed after N silent seconds). Output truncated at ~50KB \
+            (head + tail kept). Per-turn command count is capped — chain inside \
+            one call. Avoid `2>/dev/null` — pipefail is on and suppressed stderr \
+            triggers an empty-output warning.
             """
     }
 
@@ -2009,9 +2048,16 @@ private struct SandboxExecTool: OsaurusTool, @unchecked Sendable {
         sink.markExited(code: result.exitCode)
         await LiveExecRegistry.shared.unregister(toolCallId: toolCallId)
 
+        // Secrets ride into the exec env, so `echo $KEY` would exfiltrate
+        // them into model context — scrub known values before anything
+        // lands in the envelope.
+        let secrets = agentSecretValues(agentId: agentId)
+        let stdout = SecretScrubber.scrub(result.stdout, secrets: secrets)
+        let stderr = SecretScrubber.scrub(result.stderr, secrets: secrets)
+
         var payload: [String: Any] = [
-            "stdout": truncateForModel(result.stdout),
-            "stderr": truncateForModel(result.stderr, maxChars: ToolOutputCaps.execStderr),
+            "stdout": truncateForModel(stdout),
+            "stderr": truncateForModel(stderr, maxChars: ToolOutputCaps.execStderr),
             "exit_code": Int(result.exitCode),
             "cwd": cwd,
         ]
@@ -2021,8 +2067,8 @@ private struct SandboxExecTool: OsaurusTool, @unchecked Sendable {
         let warnings = diagnosticWarnings(
             command: command,
             exitCode: result.exitCode,
-            stdout: result.stdout,
-            stderr: result.stderr
+            stdout: stdout,
+            stderr: stderr
         )
         return sandboxSuccess(
             tool: name,
@@ -2370,7 +2416,12 @@ private struct SandboxProcessTool: OsaurusTool, @unchecked Sendable {
             agentName,
             command: "tail -n \(lines) '\(job.logFile)' 2>/dev/null"
         )
-        return result?.stdout ?? ""
+        // Background jobs run with the same secret-bearing env as
+        // foreground execs, so their logs need the same scrubbing.
+        return SecretScrubber.scrub(
+            result?.stdout ?? "",
+            secrets: agentSecretValues(agentId: agentId)
+        )
     }
 }
 

@@ -135,10 +135,11 @@ struct AgentLoopBudgetTests {
             watermark: CompactionWatermark()
         )
 
-        #expect(composed.first?.role == "system")
-        #expect(composed.first?.content == "You are a test agent.")
-        #expect(composed.suffix(2).map { $0.content ?? "" } == notices)
-        #expect(composed.suffix(2).allSatisfy { $0.role == "user" })
+        #expect(composed.messages.first?.role == "system")
+        #expect(composed.messages.first?.content == "You are a test agent.")
+        #expect(composed.messages.suffix(2).map { $0.content ?? "" } == notices)
+        #expect(composed.messages.suffix(2).allSatisfy { $0.role == "user" })
+        #expect(!composed.overBudget)
         // Transient: the input history is untouched (3 messages, no notices).
         #expect(history.count == 3)
         #expect(!history.contains { ($0.content ?? "").hasPrefix("[System Notice]") })
@@ -151,8 +152,9 @@ struct AgentLoopBudgetTests {
             notices: ["[System Notice] n"],
             manager: nil
         )
-        #expect(composed.count == 2)
-        #expect(composed.last?.content == "[System Notice] n")
+        #expect(composed.messages.count == 2)
+        #expect(composed.messages.last?.content == "[System Notice] n")
+        #expect(!composed.overBudget)
     }
 
     @Test func foundationIdsResolveToFixedWindow() async {

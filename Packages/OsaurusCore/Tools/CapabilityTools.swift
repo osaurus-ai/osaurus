@@ -452,49 +452,104 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
         )
         guard case .value(let ids) = idsReq else { return idsReq.failureEnvelope ?? "" }
 
-        var output = ""
+        var sections: [String] = []
+        var failures: [LoadFailure] = []
 
         for id in ids {
             guard let slashIdx = id.firstIndex(of: "/") else {
-                output +=
-                    "Warning: Invalid ID format '\(id)' — expected `<type>/<id>` "
-                    + "(e.g. `tool/sandbox_exec`, `skill/plot-data`). Use IDs from the Enabled capabilities list or `capabilities_discover`.\n"
+                failures.append(
+                    LoadFailure(
+                        kind: .invalidArgs,
+                        message:
+                            "Invalid ID format '\(id)' — expected `<type>/<id>` "
+                            + "(e.g. `tool/sandbox_exec`, `skill/plot-data`). Use IDs from the Enabled capabilities list or `capabilities_discover`."
+                    )
+                )
                 continue
             }
 
             let typePrefix = String(id[id.startIndex ..< slashIdx])
             let rawId = String(id[id.index(after: slashIdx)...])
 
+            let outcome: LoadOutcome
             switch typePrefix {
             case "method":
-                output += await loadMethod(rawId)
+                outcome = await loadMethod(rawId)
             case "tool":
-                output += await loadTool(rawId)
+                outcome = await loadTool(rawId)
             case "skill":
-                output += await loadSkill(rawId)
+                outcome = await loadSkill(rawId)
             default:
-                output +=
-                    "Warning: Unknown type '\(typePrefix)' in ID '\(id)' "
-                    + "(expected `tool`, `skill`, or `method`).\n"
+                outcome = .failure(
+                    LoadFailure(
+                        kind: .invalidArgs,
+                        message:
+                            "Unknown type '\(typePrefix)' in ID '\(id)' "
+                            + "(expected `tool`, `skill`, or `method`)."
+                    )
+                )
+            }
+            switch outcome {
+            case .success(let text): sections.append(text)
+            case .failure(let failure): failures.append(failure)
             }
         }
 
-        let text = output.isEmpty ? "No capabilities loaded." : output
-        return ToolEnvelope.success(tool: name, text: text)
+        // Hard failure contract: when NOTHING loaded, return a real
+        // failure envelope — "Error: …" prose inside a success envelope
+        // taught small models to treat misses as wins.
+        if sections.isEmpty, let first = failures.first {
+            let combined = failures.map(\.message).joined(separator: "\n")
+            return ToolEnvelope.failure(
+                kind: first.kind,
+                message: combined,
+                field: first.kind == .invalidArgs ? "ids" : nil,
+                tool: name,
+                retryable: first.kind != .rejected
+            )
+        }
+
+        let text = sections.isEmpty ? "No capabilities loaded." : sections.joined()
+        let warnings = failures.map(\.message)
+        return ToolEnvelope.success(
+            tool: name,
+            text: text,
+            warnings: warnings.isEmpty ? nil : warnings
+        )
+    }
+
+    /// Structured per-id failure: the `kind` drives the all-failed
+    /// envelope's taxonomy, the message rides as a warning on partial
+    /// success.
+    private struct LoadFailure {
+        let kind: ToolEnvelope.Kind
+        let message: String
+    }
+
+    private enum LoadOutcome {
+        case success(String)
+        case failure(LoadFailure)
     }
 
     // MARK: - Loaders
 
-    private func loadMethod(_ methodId: String) async -> String {
+    private func loadMethod(_ methodId: String) async -> LoadOutcome {
         if ChatExecutionContext.currentAgentId == Agent.defaultId {
-            return
-                "Error: Method loading is disabled for the configuration agent. "
-                + "Use `capabilities_discover` to find a configuration tool (osaurus_*_<verb>) "
-                + "and load it directly.\n"
+            return .failure(
+                LoadFailure(
+                    kind: .rejected,
+                    message:
+                        "Method loading is disabled for the configuration agent. "
+                        + "Use `capabilities_discover` to find a configuration tool (osaurus_*_<verb>) "
+                        + "and load it directly."
+                )
+            )
         }
         do {
             guard let method = try await MethodService.shared.load(id: methodId) else {
-                return "Error: Method '\(methodId)' not found.\n"
+                return .failure(
+                    LoadFailure(kind: .notFound, message: "Method '\(methodId)' not found.")
+                )
             }
 
             let sessionId = ChatExecutionContext.currentSessionId
@@ -549,13 +604,18 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
                 }
             }
 
-            return output
+            return .success(output)
         } catch {
-            return "Error loading method '\(methodId)': \(error.localizedDescription)\n"
+            return .failure(
+                LoadFailure(
+                    kind: .executionError,
+                    message: "Error loading method '\(methodId)': \(error.localizedDescription)"
+                )
+            )
         }
     }
 
-    private func loadTool(_ toolId: String) async -> String {
+    private func loadTool(_ toolId: String) async -> LoadOutcome {
         // Phase C default-agent gate: limit `capabilities_load` to the
         // configure write tools. Everything else (sandbox, MCP, plugin
         // tools) is hard-stopped with a routing hint so the model
@@ -565,10 +625,15 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
                 ToolRegistry.configureWriteToolNames
             }
             if !configureWrites.contains(toolId) {
-                return
-                    "Error: Default agent can only load configuration write tools "
-                    + "(`osaurus_*_<verb>`). Use `osaurus_status`, `osaurus_list`, or "
-                    + "`osaurus_describe` for reads; nothing else needs `capabilities_load`.\n"
+                return .failure(
+                    LoadFailure(
+                        kind: .rejected,
+                        message:
+                            "Default agent can only load configuration write tools "
+                            + "(`osaurus_*_<verb>`). Use `osaurus_status`, `osaurus_list`, or "
+                            + "`osaurus_describe` for reads; nothing else needs `capabilities_load`."
+                    )
+                )
             }
         }
         let allowedNames = await grantedToolNamesForCurrentAgent()
@@ -584,22 +649,65 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
             )
         }
         guard !availability.reasonCodes.contains(.notRegistered) else {
-            return "Error: Tool '\(toolId)' not found or not registered. availability: \(availability.compactSummary)\n"
+            return .failure(
+                LoadFailure(
+                    kind: .notFound,
+                    message:
+                        "Tool '\(toolId)' not found or not registered. availability: \(availability.compactSummary)"
+                )
+            )
         }
         guard isBuiltIn || (allowedNames?.contains(toolId) ?? true) else {
-            return
-                "Error: Tool '\(toolId)' is not enabled for this agent. availability: \(availability.compactSummary)\n"
+            return .failure(
+                LoadFailure(
+                    kind: .rejected,
+                    message:
+                        "Tool '\(toolId)' is not enabled for this agent. availability: \(availability.compactSummary)"
+                )
+            )
         }
         // Built-in tools are always loaded via alwaysLoadedSpecs, so skip the
         // enabled check — rejecting them here is misleading since they're callable.
         guard isEnabled || isBuiltIn else {
-            return "Error: Tool '\(toolId)' is disabled. availability: \(availability.compactSummary)\n"
+            return .failure(
+                LoadFailure(
+                    kind: .rejected,
+                    message:
+                        "Tool '\(toolId)' is disabled. availability: \(availability.compactSummary)"
+                )
+            )
         }
         guard let spec = toolSpec.first else {
-            return "Error: Tool '\(toolId)' not found or not registered. availability: \(availability.compactSummary)\n"
+            return .failure(
+                LoadFailure(
+                    kind: .notFound,
+                    message:
+                        "Tool '\(toolId)' not found or not registered. availability: \(availability.compactSummary)"
+                )
+            )
+        }
+        // No-op re-load: a tool already in this session's schema (always
+        // loaded, or loaded by an earlier capabilities_load) must not
+        // re-enter the buffer — that re-triggers the deferred-schema
+        // bookkeeping and the "callable now" notice for a tool the model
+        // could already call.
+        if await isAlreadyLoadedInSession(toolId) {
+            return .success("Tool '\(toolId)' is already loaded and callable — no action needed.\n")
         }
         await CapabilityLoadBuffer.shared.add(spec)
-        return "Tool '\(toolId)' loaded and available.\n"
+        return .success("Tool '\(toolId)' loaded and available.\n")
+    }
+
+    /// True when the current session's tool state already carries this
+    /// tool (first-turn always-loaded snapshot or a prior mid-session
+    /// load). Without a session in context we can't know — return false
+    /// and let the buffer path run (harmless, just redundant).
+    private func isAlreadyLoadedInSession(_ toolId: String) async -> Bool {
+        guard let sessionId = ChatExecutionContext.currentSessionId, !sessionId.isEmpty,
+            let state = await SessionToolStateStore.shared.get(sessionId)
+        else { return false }
+        if state.loadedToolNames.contains(toolId) { return true }
+        return state.initialAlwaysLoadedNames?.contains(toolId) ?? false
     }
 
     /// Nil means this agent has not been seeded by the capability picker
@@ -632,18 +740,25 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
         return "Auto-loaded tools: \(names.joined(separator: ", "))\n"
     }
 
-    private func loadSkill(_ skillName: String) async -> String {
+    private func loadSkill(_ skillName: String) async -> LoadOutcome {
         if ChatExecutionContext.currentAgentId == Agent.defaultId {
-            return
-                "Error: Skill loading is disabled for the configuration agent. "
-                + "Use `capabilities_discover` to find a configuration tool (osaurus_*_<verb>) "
-                + "and load it directly.\n"
+            return .failure(
+                LoadFailure(
+                    kind: .rejected,
+                    message:
+                        "Skill loading is disabled for the configuration agent. "
+                        + "Use `capabilities_discover` to find a configuration tool (osaurus_*_<verb>) "
+                        + "and load it directly."
+                )
+            )
         }
         let skill = await MainActor.run {
             SkillManager.shared.skill(named: skillName)
         }
         guard let skill = skill else {
-            return "Error: Skill '\(skillName)' not found.\n"
+            return .failure(
+                LoadFailure(kind: .notFound, message: "Skill '\(skillName)' not found.")
+            )
         }
         var output = "## Skill: \(skill.name)\n"
         if !skill.description.isEmpty {
@@ -687,6 +802,6 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
                 output += await bufferToolSpecs(named: groupToolNames)
             }
         }
-        return output
+        return .success(output)
     }
 }

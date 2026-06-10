@@ -79,13 +79,28 @@ public final class AgentTaskState {
 
     /// Read-like tools whose results are eligible for replay-on-duplicate and
     /// whose `path` freshness is invalidated by a write to the same path.
-    private static let readLikeTools: Set<String> = ["file_read", "file_search"]
+    private static let readLikeTools: Set<String> = [
+        "file_read", "file_search", "sandbox_read_file", "sandbox_search_files",
+    ]
+
+    /// Search tools' results depend on MANY paths, so any write — not just
+    /// one to the searched path — invalidates their fresh entries.
+    private static let searchLikeTools: Set<String> = [
+        "file_search", "sandbox_search_files",
+    ]
 
     /// Tools that mutate a path; recording one invalidates any fresh read
     /// signature for that path so a verify-read re-executes.
     private static let writeLikeTools: Set<String> = [
         "file_edit", "file_write", "sandbox_write_file",
     ]
+
+    /// Tools that run arbitrary commands (`rm`/`mv`/redirects can mutate any
+    /// path, including via scripts we cannot parse). Recording one wipes ALL
+    /// fresh reads — blunt but correct; the only cost is a re-read. Applied
+    /// regardless of exit code: a failed command may still have mutated
+    /// before failing.
+    private static let execLikeTools: Set<String> = ["shell_run", "sandbox_exec"]
 
     /// The listing nudge is REACTIVE, not proactive: it fires only once the
     /// model has produced this many listings without an intervening read —
@@ -186,13 +201,23 @@ public final class AgentTaskState {
         lastResultEnvelope = result
         lastResultClass = resultClass
 
+        // An exec can mutate ANY path (rm/mv/redirects, scripts) — wipe all
+        // fresh reads so no post-mutation verify-read replays stale content.
+        if Self.execLikeTools.contains(name) {
+            freshReads.removeAll(keepingCapacity: true)
+        }
+
         // A write/edit invalidates any fresh read of the same path so the
         // verify-read re-executes instead of replaying stale pre-edit content.
         // Read and write canonicalize the path through the SAME helper, so
         // `file_read "config.json"` and `file_edit "./config.json"` match.
+        // Search results span many paths, so ANY write stales them.
         if Self.writeLikeTools.contains(name), let target = pathArgument(argsJSON) {
             let targetCanonical = Self.canonicalPath(target)
-            freshReads = freshReads.filter { $0.value.canonicalPath != targetCanonical }
+            freshReads = freshReads.filter { entry in
+                if Self.searchLikeTools.contains(entry.key.name) { return false }
+                return entry.value.canonicalPath != targetCanonical
+            }
         }
 
         // Repeated-call detector for non-read tools: reads are handled by
@@ -227,10 +252,18 @@ public final class AgentTaskState {
 
         // Mark a successful read-like result as fresh (with its exact
         // envelope) so a re-issue replays it until a write invalidates it.
-        if Self.readLikeTools.contains(name), ToolEnvelope.isSuccess(result),
-            let target = pathArgument(argsJSON)
-        {
-            freshReads[sig] = FreshRead(canonicalPath: Self.canonicalPath(target), envelope: result)
+        // Search tools may omit `path` (it defaults to the root); key them
+        // on "." — write invalidation clears search entries wholesale, so
+        // the sentinel never has to match a written path.
+        if Self.readLikeTools.contains(name), ToolEnvelope.isSuccess(result) {
+            if let target = pathArgument(argsJSON) {
+                freshReads[sig] = FreshRead(
+                    canonicalPath: Self.canonicalPath(target),
+                    envelope: result
+                )
+            } else if Self.searchLikeTools.contains(name) {
+                freshReads[sig] = FreshRead(canonicalPath: ".", envelope: result)
+            }
         }
     }
 

@@ -92,6 +92,35 @@ public struct SchemaValidator {
             }
         }
 
+        // Object-level `anyOf` / `oneOf` of `required` branches: the
+        // standard way to express "at least one of these key groups must
+        // be present" (e.g. share_artifact's path-XOR-content). Only
+        // presence is checked here — branches carrying their own
+        // `properties` constraints are out of scope (per-property
+        // validation below covers the declared property schemas).
+        if case .array(let branches)? = schemaObject["anyOf"] ?? schemaObject["oneOf"] {
+            let requiredGroups: [[String]] = branches.compactMap { branch in
+                guard case .object(let branchObj) = branch else { return nil }
+                let keys = requiredKeys(branchObj)
+                return keys.isEmpty ? nil : keys
+            }
+            if !requiredGroups.isEmpty {
+                let satisfied = requiredGroups.contains { group in
+                    group.allSatisfy { obj[$0] != nil && !(obj[$0] is NSNull) }
+                }
+                if !satisfied {
+                    let alternatives =
+                        requiredGroups
+                        .map { "`" + $0.joined(separator: "` + `") + "`" }
+                        .joined(separator: " OR ")
+                    return .fail(
+                        "Arguments must include \(alternatives).",
+                        field: requiredGroups.first?.first
+                    )
+                }
+            }
+        }
+
         for (key, value) in obj {
             guard case .object(let propSchemaObj)? = properties[key] else { continue }
             let res = validateValue(value, schemaObject: propSchemaObj, key: key)

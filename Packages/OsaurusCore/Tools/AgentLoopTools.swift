@@ -29,10 +29,11 @@ import Foundation
 public final class TodoTool: OsaurusTool, @unchecked Sendable {
     public let name = "todo"
     public let description =
-        "Write or replace the current task checklist. Pass a markdown checklist where every item "
-        + "is a line starting with `- [ ]` (pending) or `- [x]` (done). Calling again replaces "
-        + "the entire list — to mark items done, send the full list with the new boxes checked. "
-        + "Use this for tasks with more than 2 obvious steps; skip for trivial work."
+        "Write or replace the current task checklist. For any task with 3+ steps, create the "
+        + "list BEFORE starting work, then re-send it with the new box checked IMMEDIATELY "
+        + "after finishing each item — do not batch updates for the end. Every item is a line "
+        + "starting with `- [ ]` (pending) or `- [x]` (done); each call replaces the entire "
+        + "list. Skip only for trivial single-step work."
 
     public let parameters: JSONValue? = .object([
         "type": .string("object"),
@@ -108,8 +109,8 @@ public final class TodoTool: OsaurusTool, @unchecked Sendable {
 public final class CompleteTool: OsaurusTool, @unchecked Sendable {
     public let name = "complete"
     public let description =
-        "End the current task with a one-paragraph summary. Include WHAT you did and HOW you "
-        + "verified it (the command you ran, the file you checked, the URL you opened). "
+        "End the current task with a one-paragraph summary of WHAT you did and HOW you verified "
+        + "it (the command you ran, the file you checked, the URL you opened). "
         + "Vague summaries (`done`, `looks good`, `complete`) are rejected. If you couldn't "
         + "finish, say so honestly in the summary instead of pretending — that's fine; the "
         + "user understands partial work."
@@ -121,7 +122,7 @@ public final class CompleteTool: OsaurusTool, @unchecked Sendable {
             "summary": .object([
                 "type": .string("string"),
                 "description": .string(
-                    "What you did + how you verified, in one paragraph. Example: \"Added /health route in app.py and verified with `curl localhost:8080/health` returning 200.\" Required minimum length: about 30 characters of meaningful prose."
+                    "What you did + how you verified, in one paragraph (≥30 chars of meaningful prose). Example: \"Added /health route in app.py; verified with `curl localhost:8080/health` returning 200.\""
                 ),
             ])
         ]),
@@ -153,6 +154,25 @@ public final class CompleteTool: OsaurusTool, @unchecked Sendable {
                 expected: "≥30 chars of meaningful prose; not a placeholder",
                 tool: name
             )
+        }
+
+        // Soft warning, never a rejection (rejecting here loops small
+        // models): completing with unchecked todo boxes is allowed, but
+        // the discrepancy is flagged in the envelope so it lands in the
+        // transcript the user reads.
+        if let sessionId = ChatExecutionContext.currentSessionId, !sessionId.isEmpty,
+            let todo = await AgentTodoStore.shared.todo(for: sessionId)
+        {
+            let pending = todo.totalCount - todo.doneCount
+            if pending > 0 {
+                return ToolEnvelope.success(
+                    tool: name,
+                    text: "Task completed.",
+                    warnings: [
+                        "todo list has \(pending) unchecked item\(pending == 1 ? "" : "s") — update it, or state honestly in the summary that they were not done"
+                    ]
+                )
+            }
         }
         return ToolEnvelope.success(tool: name, text: "Task completed.")
     }
@@ -246,20 +266,20 @@ public final class ClarifyTool: OsaurusTool, @unchecked Sendable {
             "question": .object([
                 "type": .string("string"),
                 "description": .string(
-                    "Specific, concrete question. Avoid open-ended `what would you like?` style; ask the actual decision (\"Use Postgres or SQLite?\")."
+                    "The concrete decision to ask (\"Use Postgres or SQLite?\") — not open-ended \"what would you like?\" style."
                 ),
             ]),
             "options": .object([
                 "type": .string("array"),
                 "items": .object(["type": .string("string")]),
                 "description": .string(
-                    "Optional list of short answer choices (≤6, ≤80 chars each). When present, the UI shows them as one-tap buttons; omit for free-form answers."
+                    "≤6 short answer choices (≤80 chars each), shown as one-tap buttons; omit for free-form answers."
                 ),
             ]),
             "allowMultiple": .object([
                 "type": .string("boolean"),
                 "description": .string(
-                    "When true and `options` is set, the user can pick more than one. Defaults to false."
+                    "Allow picking more than one option. Defaults to false."
                 ),
             ]),
         ]),

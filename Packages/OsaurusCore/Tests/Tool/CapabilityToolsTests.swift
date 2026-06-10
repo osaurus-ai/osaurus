@@ -247,16 +247,22 @@ struct CapabilitiesLoadToolTests {
     }
 
     @Test func handlesInvalidIdFormat() async throws {
+        // All-failed contract: a load where NOTHING succeeded returns a
+        // real failure envelope (kind: invalid_args, field: ids), not
+        // "Warning" prose inside a success envelope.
         let tool = CapabilitiesLoadTool()
         let result = try await tool.execute(argumentsJSON: "{\"ids\": [\"no-slash\"]}")
-        #expect(result.contains("Warning"))
+        #expect(ToolEnvelope.isError(result))
+        #expect(EnvelopeAssertions.failureKind(result) == "invalid_args")
+        #expect(EnvelopeAssertions.failureField(result) == "ids")
         #expect(result.contains("Invalid ID format"))
     }
 
     @Test func handlesUnknownTypePrefix() async throws {
         let tool = CapabilitiesLoadTool()
         let result = try await tool.execute(argumentsJSON: "{\"ids\": [\"widget/abc\"]}")
-        #expect(result.contains("Warning"))
+        #expect(ToolEnvelope.isError(result))
+        #expect(EnvelopeAssertions.failureKind(result) == "invalid_args")
         #expect(result.contains("Unknown type"))
     }
 

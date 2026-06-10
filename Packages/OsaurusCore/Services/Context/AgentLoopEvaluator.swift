@@ -136,7 +136,8 @@ public enum AgentLoopEvaluator {
         model: String? = nil,
         contextWindowOverride: Int? = nil,
         streaming: Bool = true,
-        maxTokens: Int? = nil
+        maxTokens: Int? = nil,
+        stopOnToolRejection: Bool = false
     ) async -> AgentLoopTranscript {
         // The Default agent's schema is hard-restricted to the 8-tool
         // configure baseline (folder write tools enter only via
@@ -186,6 +187,11 @@ public enum AgentLoopEvaluator {
             }
         }
 
+        // Buffer hygiene: flush any specs a previous (possibly crashed)
+        // run left in the process-wide load buffer so they can't leak
+        // into this run's drain bookkeeping.
+        _ = await CapabilityLoadBuffer.shared.drain()
+
         var history: [ChatMessage] = [ChatMessage(role: "user", content: task)]
         let composed = await SystemPromptComposer.composeChatContext(
             agentId: resolvedAgentId,
@@ -196,7 +202,9 @@ public enum AgentLoopEvaluator {
             additionalToolNames: []
         )
         let systemPrompt = composed.prompt
-        var toolSpecs = composed.tools
+        // Frozen for the whole run (deferred-schema policy, production
+        // parity): `capabilities_load` never patches the request schema.
+        let toolSpecs = composed.tools
 
         // Shared loop budget wiring (same as chat/HTTP/plugin) with a
         // run-scoped sticky watermark.
@@ -327,17 +335,29 @@ public enum AgentLoopEvaluator {
             }
         }
 
-        /// History/transcript/hot-load/intercept handling for one executed
-        /// call — runs serially in model order, after dispatch.
+        /// History/transcript/intercept handling for one executed call —
+        /// runs serially in model order, after dispatch.
         func postProcess(
             _ inv: ServiceToolInvocation,
             callId: String,
-            result: String
+            result rawResult: String
         ) async -> AgentLoopToolExecution {
+            var result = rawResult
+            let isError = ToolEnvelope.isError(result)
+            // Deferred-schema policy (production parity): drain the load
+            // buffer — tools loaded via `capabilities_load` are callable
+            // immediately through the registry — but the request schema
+            // stays FROZEN for the whole run; the model is told via the
+            // result note instead of a mid-run `<tools>` rewrite.
+            if inv.toolName == "capabilities_load" {
+                let drained = await CapabilityLoadBuffer.shared.drain()
+                if !drained.isEmpty, !isError {
+                    result += AgentToolLoop.deferredSchemaNotice
+                }
+            }
             history.append(
                 ChatMessage(role: "tool", content: result, tool_calls: nil, tool_call_id: callId)
             )
-            let isError = ToolEnvelope.isError(result)
             transcriptCalls.append(
                 .init(
                     name: inv.toolName,
@@ -347,23 +367,6 @@ public enum AgentLoopEvaluator {
                     wasError: isError
                 )
             )
-            // Hot-load capability tools mid-run, like the chat loop —
-            // but scoped: the ephemeral agent id has no AgentManager
-            // record, so the registry-side grant check falls back to
-            // global-enabled. This filter is the eval-side grant
-            // boundary: only the workspace's folder tools may enter
-            // the schema via `capabilities_load`; everything else
-            // (configure tools, sandbox plugin tools, …) is dropped.
-            if inv.toolName == "capabilities_load" {
-                let allowedHotLoadNames = Set(FolderToolManager.shared.folderToolNames)
-                let drained = await CapabilityLoadBuffer.shared.drain()
-                for spec in drained
-                where allowedHotLoadNames.contains(spec.function.name)
-                    && !toolSpecs.contains(where: { $0.function.name == spec.function.name })
-                {
-                    toolSpecs.append(spec)
-                }
-            }
             // Agent-loop intercepts, mirroring the chat surface: a
             // successful `complete` ends the run and its summary is the
             // final answer; a successful `clarify` ends the run awaiting
@@ -506,8 +509,18 @@ public enum AgentLoopEvaluator {
                     }
                     return executions
                 }
-                let results = await AgentToolLoop.runBatchInParallel(calls) { inv, _ in
-                    await dispatchOne(inv)
+                // PRODUCTION two-phase batch (`sessionId:agentId:`): phase 1
+                // resolves permission gates serially in model order (denials
+                // produce paired rejection/skip envelopes — exercised e2e
+                // here), phase 2 executes the approved set in parallel with
+                // same-path slots serialized. Auto-approve stays bound: eval
+                // runs are headless, an approval panel would hang the run.
+                let results = await ChatExecutionContext.$autoApproveToolPrompts.withValue(true) {
+                    await AgentToolLoop.runBatchInParallel(
+                        calls,
+                        sessionId: sessionId,
+                        agentId: resolvedAgentId
+                    )
                 }
                 var executions: [AgentLoopToolExecution] = []
                 executions.reserveCapacity(calls.count)
@@ -526,7 +539,7 @@ public enum AgentLoopEvaluator {
                 try await AgentToolLoop.run(
                     policy: AgentLoopPolicy(
                         maxIterations: maxIterations,
-                        stopOnToolRejection: false,
+                        stopOnToolRejection: stopOnToolRejection,
                         dedupeNoticeEnabled: true
                     ),
                     state: state,
@@ -547,6 +560,10 @@ public enum AgentLoopEvaluator {
             } else {
                 exitLabel = Self.describe(runResult.exit)
             }
+            // Buffer hygiene: drain anything still pending (e.g. a
+            // capabilities_load on the final iteration) so an eval run
+            // can never leak buffered specs process-wide.
+            _ = await CapabilityLoadBuffer.shared.drain()
             return makeTranscript(
                 iterations: runResult.iterations,
                 exit: exitLabel,
@@ -554,6 +571,9 @@ public enum AgentLoopEvaluator {
                 error: nil
             )
         } catch {
+            // Same hygiene on the abort path — a crashed model step must
+            // not leak pending tool specs into the next run.
+            _ = await CapabilityLoadBuffer.shared.drain()
             return makeTranscript(
                 iterations: 0,
                 exit: "errored",
@@ -570,6 +590,7 @@ public enum AgentLoopEvaluator {
         case .toolRejected: return "toolRejected"
         case .iterationCapReached: return "iterationCapReached"
         case .cancelled: return "cancelled"
+        case .overBudget: return "overBudget"
         }
     }
 }

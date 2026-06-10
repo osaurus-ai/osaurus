@@ -776,7 +776,8 @@ final class PluginHostContext: @unchecked Sendable {
         let options = InferenceOptions(from: rawJSON)
         let agentCtx = await resolveAgentContext(
             agentId: activeAgentId,
-            messages: request.messages
+            messages: request.messages,
+            sessionId: request.session_id
         )
         let execMode = agentCtx?.executionMode ?? .none
         var enriched = enrichRequest(request, context: agentCtx, options: options)
@@ -842,7 +843,8 @@ final class PluginHostContext: @unchecked Sendable {
     /// Internal (not private) so unit tests can pin the resolution surface.
     static func resolveAgentContext(
         agentId: UUID?,
-        messages: [ChatMessage] = []
+        messages: [ChatMessage] = [],
+        sessionId: String? = nil
     ) async -> AgentContext? {
         guard let agentId else { return nil }
 
@@ -862,7 +864,8 @@ final class PluginHostContext: @unchecked Sendable {
         // (sandbox > host folder > none). Previously this path was hard-
         // coded to `folderContext: nil`, so a host-folder agent driven via
         // a plugin would silently lose its folder tools.
-        let (execMode, agentModel) = await MainActor.run { () -> (ExecutionMode, String?) in
+        let (execMode, agentModel, toolMode) = await MainActor.run {
+            () -> (ExecutionMode, String?, ToolSelectionMode) in
             let mode = ToolRegistry.shared.resolveExecutionMode(
                 folderContext: FolderContextService.shared.currentContext,
                 autonomousEnabled: resolved.autonomousEnabled
@@ -871,15 +874,44 @@ final class PluginHostContext: @unchecked Sendable {
             // `composeChatContext` as the chat-model fallback
             // (GitHub issue #823).
             let model = AgentManager.shared.effectiveModel(for: agentId)
-            return (mode, model)
+            return (mode, model, AgentManager.shared.effectiveToolSelectionMode(for: agentId))
+        }
+        // Session-frozen compose inputs (parity with the chat send path):
+        // the first compose for a `session_id` snapshots the manifest /
+        // SOUL / always-loaded names, and every later compose echoes them
+        // so the static system-prompt prefix stays byte-identical across
+        // the session (KV-cache reuse). Without this, every
+        // `prepareInference` recomposed fresh and any drifting section
+        // forced a full re-prefill.
+        var cachedSession: SessionToolState?
+        if let sid = sessionId {
+            let liveFp = SessionToolState.fingerprint(executionMode: execMode, toolMode: toolMode)
+            await SessionToolStateStore.shared.invalidateIfFingerprintChanged(
+                sid,
+                liveFingerprint: liveFp
+            )
+            cachedSession = await SessionToolStateStore.shared.get(sid)
         }
         let composed = await SystemPromptComposer.composeChatContext(
             agentId: agentId,
             executionMode: execMode,
             model: agentModel,
             query: extractLatestUserQuery(from: messages),
-            messages: messages
+            messages: messages,
+            additionalToolNames: cachedSession?.loadedToolNames ?? [],
+            frozenAlwaysLoadedNames: cachedSession?.initialAlwaysLoadedNames,
+            frozenManifest: cachedSession?.frozenManifest,
+            frozenSoul: cachedSession?.frozenSoul
         )
+        if let sid = sessionId, cachedSession == nil {
+            await SessionToolStateStore.shared.setInitial(
+                sid,
+                alwaysLoadedNames: composed.alwaysLoadedNames,
+                fingerprint: SessionToolState.fingerprint(executionMode: execMode, toolMode: toolMode),
+                manifest: composed.enabledManifest,
+                soul: composed.soul
+            )
+        }
         return await MainActor.run {
             let mgr = AgentManager.shared
             return AgentContext(
@@ -1174,46 +1206,38 @@ final class PluginHostContext: @unchecked Sendable {
 
     /// Post-processes a tool result after execution, handling special tools
     /// like `share_artifact` (copy files, notify handlers, collect artifact metadata)
-    /// and `capabilities_load` (hot-load newly discovered tools into the active set).
+    /// and `capabilities_load` (record newly loaded tools for the NEXT request).
     private static func postProcessToolResult(
         toolName: String,
         result: String,
-        prep: PreparedInference,
-        toolSpecs: inout [Tool]?
+        prep: PreparedInference
     ) async -> PostProcessResult {
         switch toolName {
         case "share_artifact":
             return await processShareArtifact(result: result, prep: prep)
 
         case "capabilities_load":
+            // Deferred-schema policy (KV stability): loaded tools are
+            // callable IMMEDIATELY — the registry dispatches by name and
+            // schema visibility is not an execution gate — but this run's
+            // rendered tool schema stays FROZEN. Hot-patching `toolSpecs`
+            // mid-run rewrote the prompt prefix and busted the paged-KV
+            // cache for the rest of the conversation. The names persist
+            // onto the session entry so the next request with the same
+            // `session_id` composes their full schemas in.
             let newTools = await CapabilityLoadBuffer.shared.drain()
-            if !newTools.isEmpty {
-                var merged = toolSpecs ?? []
-                for tool in newTools {
-                    if let index = merged.firstIndex(where: {
-                        $0.function.name == tool.function.name
-                    }) {
-                        // Plugins share the chat-side lazy bootstrap path; loading a
-                        // tool must upgrade any compact placeholder already present.
-                        merged[index] = tool
-                    } else {
-                        merged.append(tool)
-                    }
-                }
-                // Keep the same canonical layout the chat composer emits so a
-                // mid-dispatch load doesn't reorder the schema vs. recompose.
-                toolSpecs = await SystemPromptComposer.canonicalToolOrder(merged)
-                // Persist additions to the per-session cache so subsequent
-                // requests with the same `session_id` continue to see these
-                // tools without the model having to re-discover them.
-                if let sid = prep.enriched.request.session_id {
-                    recordSessionLoadedTools(
-                        sessionId: sid,
-                        names: newTools.map { $0.function.name }
-                    )
-                }
+            guard !newTools.isEmpty else { return (result, nil) }
+            if let sid = prep.enriched.request.session_id {
+                recordSessionLoadedTools(
+                    sessionId: sid,
+                    names: newTools.map { $0.function.name }
+                )
             }
-            return (result, nil)
+            var noted = result
+            if !ToolEnvelope.isError(result) {
+                noted += AgentToolLoop.deferredSchemaNotice
+            }
+            return (noted, nil)
 
         default:
             return (result, nil)
@@ -1355,7 +1379,9 @@ final class PluginHostContext: @unchecked Sendable {
             var messages = prep.enriched.request.messages
             var toolCallsExecuted: [[String: String]] = []
             var sharedArtifacts: [[String: Any]] = []
-            var toolSpecs = prep.enriched.tools
+            // Frozen for the whole run (deferred-schema policy): the tool
+            // schema never changes mid-run, even after `capabilities_load`.
+            let toolSpecs = prep.enriched.tools
             // Per-invocation harness state (plugin completions are one-shot
             // across requests). Provides within-run dedupe + post-listing nudge.
             let taskState = AgentTaskState()
@@ -1366,6 +1392,11 @@ final class PluginHostContext: @unchecked Sendable {
             // completion carries no executable tool calls (or the iteration
             // budget says to stop executing).
             var finalResponse: ChatCompletionResponse?
+            // Set when a successful `complete`/`clarify` intercept ends the
+            // run (`endRun` → driver `.endedBySurface`), so the terminal
+            // handler below can build the matching envelope. Parity with
+            // chat's agent-loop intercepts.
+            var interceptedExit: (tool: String, args: String)?
 
             // Canonical loop skeleton lives in `AgentToolLoop`; these hooks
             // carry the plugin host's non-streaming specifics — message-array
@@ -1436,8 +1467,7 @@ final class PluginHostContext: @unchecked Sendable {
                         argumentsJSON: inv.jsonArguments,
                         callId: callId,
                         priorAssistantContent: "",
-                        prep: prep,
-                        toolSpecs: &toolSpecs
+                        prep: prep
                     )
                     // assistantMessage from processToolCall is unused here
                     // because choice.message already represents the full
@@ -1445,6 +1475,17 @@ final class PluginHostContext: @unchecked Sendable {
                     if let dict = processed.artifactDict { sharedArtifacts.append(dict) }
                     messages.append(processed.toolMessage)
                     toolCallsExecuted.append(processed.toolCallExecuted)
+                    // Agent-loop intercepts: a successful `complete`/`clarify`
+                    // ends the run cleanly instead of riding to the iteration
+                    // cap. The tool turn is already in `messages` (above), so
+                    // history stays paired.
+                    if AgentToolLoop.isSuccessfulIntercept(
+                        toolName: inv.toolName,
+                        result: processed.result
+                    ) {
+                        interceptedExit = (inv.toolName, inv.jsonArguments)
+                        return AgentLoopToolExecution(result: processed.result, endRun: true)
+                    }
                     return AgentLoopToolExecution(result: processed.result)
                 }
             )
@@ -1465,6 +1506,68 @@ final class PluginHostContext: @unchecked Sendable {
                 return Self.jsonString(["error": "inference_error", "message": "No choices returned"])
             } catch {
                 return Self.jsonString(["error": "inference_error", "message": error.localizedDescription])
+            }
+
+            // Even fully-compacted history can't fit the window — the
+            // driver ended the run before sending a doomed request.
+            if exit == .overBudget {
+                return Self.jsonString([
+                    "error": "context_overflow",
+                    "message": AgentToolLoop.overBudgetMessage,
+                    "tool_calls_executed": toolCallsExecuted,
+                    "shared_artifacts": sharedArtifacts,
+                ])
+            }
+
+            // A successful `complete`/`clarify` intercept ended the run
+            // (`.endedBySurface`): build the matching terminal envelope
+            // instead of falling through to `max_iterations_reached`.
+            if exit == .endedBySurface, let intercept = interceptedExit {
+                Self.persistInference(
+                    pluginId: pid,
+                    agentId: prep.agentId,
+                    externalSessionKey: prep.enriched.request.session_id,
+                    finalMessages: messages,
+                    model: prep.enriched.request.model
+                )
+                if intercept.tool == "clarify" {
+                    // The headless loop cannot pause for input; surface the
+                    // question so the plugin can ask its user and follow up.
+                    return Self.jsonString([
+                        "error": "clarify_requested",
+                        "message":
+                            "The model paused to ask a clarifying question; answer it in a follow-up request.",
+                        "question": ClarifyTool.parse(argumentsJSON: intercept.args)?.question ?? "",
+                        "tool_calls_executed": toolCallsExecuted,
+                        "shared_artifacts": sharedArtifacts,
+                    ])
+                }
+                // `complete`: synthesize a normal chat-completion response
+                // whose content is the model's verified summary.
+                let summary = CompleteTool.parseSummary(from: intercept.args) ?? "Task completed."
+                let synthesized = ChatCompletionResponse(
+                    id: "cmpl-\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(12))",
+                    created: Int(Date().timeIntervalSince1970),
+                    model: prep.enriched.request.model,
+                    choices: [
+                        ChatChoice(
+                            index: 0,
+                            message: ChatMessage(role: "assistant", content: summary),
+                            finish_reason: "stop"
+                        )
+                    ],
+                    usage: Usage(prompt_tokens: 0, completion_tokens: 0, total_tokens: 0)
+                )
+                guard let encoded = try? JSONEncoder.osaurusCanonical().encode(synthesized),
+                    var json = (try? JSONSerialization.jsonObject(with: encoded)) as? [String: Any]
+                else {
+                    return Self.jsonString([
+                        "error": "serialization_error", "message": "Failed to serialize response",
+                    ])
+                }
+                if !toolCallsExecuted.isEmpty { json["tool_calls_executed"] = toolCallsExecuted }
+                if !sharedArtifacts.isEmpty { json["shared_artifacts"] = sharedArtifacts }
+                return Self.jsonString(json)
             }
 
             guard exit == .finalResponse, let response = finalResponse,
@@ -1595,7 +1698,9 @@ final class PluginHostContext: @unchecked Sendable {
             var lastContent = ""
             var toolCallsExecuted: [[String: String]] = []
             var sharedArtifacts: [[String: Any]] = []
-            var toolSpecs = prep.enriched.tools
+            // Frozen for the whole run (deferred-schema policy): the tool
+            // schema never changes mid-run, even after `capabilities_load`.
+            let toolSpecs = prep.enriched.tools
             // Per-invocation harness state (plugin completions are one-shot
             // across requests). Provides within-run dedupe + post-listing nudge.
             let taskState = AgentTaskState()
@@ -1802,8 +1907,7 @@ final class PluginHostContext: @unchecked Sendable {
                         argumentsJSON: inv.jsonArguments,
                         callId: callId,
                         priorAssistantContent: lastContent,
-                        prep: prep,
-                        toolSpecs: &toolSpecs
+                        prep: prep
                     )
                     if let dict = processed.artifactDict { sharedArtifacts.append(dict) }
 
@@ -1825,6 +1929,37 @@ final class PluginHostContext: @unchecked Sendable {
                     // lastContent after the first tool to avoid duplicating
                     // prose into every assistant tool-call message.
                     lastContent = ""
+                    // Agent-loop intercepts: a successful `complete`/`clarify`
+                    // ends the run cleanly (`endRun` → `.endedBySurface`)
+                    // instead of riding to the iteration cap. Stream the
+                    // parsed summary/question as final content and stage the
+                    // terminal envelope the post-loop handler returns.
+                    if AgentToolLoop.isSuccessfulIntercept(
+                        toolName: inv.toolName,
+                        result: processed.result
+                    ) {
+                        let isComplete = inv.toolName == "complete"
+                        let text =
+                            isComplete
+                            ? (CompleteTool.parseSummary(from: inv.jsonArguments) ?? "Task completed.")
+                            : (ClarifyTool.parse(argumentsJSON: inv.jsonArguments)?.question ?? "")
+                        if !text.isEmpty {
+                            emit(Self.chunkPayload(id: cid, delta: ["content": text]))
+                        }
+                        let finishReason = isComplete ? "stop" : "clarify"
+                        emit(Self.chunkPayload(id: cid, delta: [:], finishReason: finishReason))
+                        persistPartial(text)
+                        terminalEnvelope = Self.buildStreamResult(
+                            id: cid,
+                            model: prep.enriched.request.model,
+                            content: text,
+                            toolCallsExecuted: toolCallsExecuted,
+                            sharedArtifacts: sharedArtifacts,
+                            usage: lastUsage,
+                            finishReason: finishReason
+                        )
+                        return AgentLoopToolExecution(result: processed.result, endRun: true)
+                    }
                     return AgentLoopToolExecution(result: processed.result)
                 }
             )
@@ -1843,6 +1978,19 @@ final class PluginHostContext: @unchecked Sendable {
                 exit = runResult.exit
             } catch {
                 return Self.jsonString(["error": "inference_error", "message": error.localizedDescription])
+            }
+
+            if exit == .overBudget {
+                // Even fully-compacted history can't fit the window — the
+                // driver ended the run before sending a doomed request.
+                emit(Self.chunkPayload(id: cid, delta: [:], finishReason: "context_overflow"))
+                persistPartial(lastContent)
+                return Self.jsonString([
+                    "error": "context_overflow",
+                    "message": AgentToolLoop.overBudgetMessage,
+                    "tool_calls_executed": toolCallsExecuted,
+                    "shared_artifacts": sharedArtifacts,
+                ])
             }
 
             if exit == .cancelled {
@@ -1894,15 +2042,14 @@ final class PluginHostContext: @unchecked Sendable {
 
     /// Execute one tool call, post-process the result, and produce the
     /// assistant + tool ChatMessages to append to the running history.
-    /// Updates `toolSpecs` in place when post-processing surfaces newly
-    /// loaded tools (e.g. `capabilities_load`).
+    /// The tool schema is intentionally NOT mutated here — see the
+    /// deferred-schema policy in `postProcessToolResult`.
     private static func processToolCall(
         toolName: String,
         argumentsJSON: String,
         callId: String,
         priorAssistantContent: String,
-        prep: PreparedInference,
-        toolSpecs: inout [Tool]?
+        prep: PreparedInference
     ) async -> ToolCallProcessing {
         var result = await Self.executeToolCall(
             name: toolName,
@@ -1913,8 +2060,7 @@ final class PluginHostContext: @unchecked Sendable {
         let postProcessed = await Self.postProcessToolResult(
             toolName: toolName,
             result: result,
-            prep: prep,
-            toolSpecs: &toolSpecs
+            prep: prep
         )
         result = postProcessed.result
 

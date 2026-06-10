@@ -137,10 +137,10 @@ struct ContextBudgetPreviewTests {
     // MARK: - Tools on (auto)
 
     /// Auto-mode with tools on hits the always-loaded baseline and prices
-    /// capability discovery ahead of time. Agent-loop prose is no longer a
-    /// first-turn cost: compact tool descriptions carry the initial contract,
-    /// and the heavier cheat sheet appears only after a loop tool is used.
-    @Test("preview: tools on (auto) surfaces capability discovery, not agent loop")
+    /// capability discovery ahead of time. The agent-loop cheat sheet is
+    /// schema-gated: loop tools are in the always-loaded baseline, so the
+    /// preview prices it from turn 1 (it never flips mid-session).
+    @Test("preview: tools on (auto) surfaces capability discovery and agent loop")
     func toolsOn_auto_includesCapabilityNudgeOnly() async {
         await withAgent(toolSelectionMode: .auto) { agentId in
             let preview = SystemPromptComposer.composePreviewContext(
@@ -150,7 +150,7 @@ struct ContextBudgetPreviewTests {
             let ids = sectionIds(preview)
             #expect(ids.contains("platform"))
             #expect(ids.contains("persona"))
-            #expect(ids.contains("agentLoopGuidance") == false)
+            #expect(ids.contains("agentLoopGuidance"))
             #expect(ids.contains("capabilityNudge"))
             // No model-family hint without a model id, no skills configured.
             #expect(ids.contains("modelFamilyGuidance") == false)
@@ -167,8 +167,9 @@ struct ContextBudgetPreviewTests {
     /// must explain those tools whenever they are callable; otherwise the
     /// model sees an opaque `capabilities_discover` function and #789-style
     /// "search is enabled but never found" failures are hard to diagnose.
-    /// Loop guidance is separately deferred until a loop tool has been used.
-    @Test("preview: manual mode defers agent loop and keeps capability nudge")
+    /// Loop guidance is schema-gated: present exactly when a loop tool
+    /// resolves into the manual schema.
+    @Test("preview: manual mode keeps capability nudge; loop guidance tracks schema")
     func toolsOn_manual_keepsCapabilityNudge() async {
         await withAgent(
             toolSelectionMode: .manual,
@@ -179,7 +180,9 @@ struct ContextBudgetPreviewTests {
                 executionMode: .none
             )
             let ids = sectionIds(preview)
-            #expect(ids.contains("agentLoopGuidance") == false)
+            let loopNames: Set<String> = ["todo", "complete", "clarify", "share_artifact"]
+            let hasLoopTool = preview.tools.contains { loopNames.contains($0.function.name) }
+            #expect(ids.contains("agentLoopGuidance") == hasLoopTool)
             #expect(ids.contains("capabilityNudge"))
             #expect(preview.tools.contains { $0.function.name == "render_chart" })
         }
@@ -291,32 +294,19 @@ struct ContextBudgetPreviewTests {
         }
     }
 
-    /// Once history contains an agent-loop call, the continuation guide is
-    /// worth the prompt cost. This keeps multi-step sessions stable without
-    /// charging the first "hello" or "can you..." turn.
-    @Test("compose: prior loop use enables agent loop guidance")
-    func priorLoopUse_enablesAgentLoopGuidance() async {
+    /// The loop cheat-sheet is schema-gated: it renders from the FIRST
+    /// real turn whenever loop tools resolve into the schema, so the model
+    /// sees the "when to call which" guide on its first multi-step task
+    /// and the section never flips mid-session (KV-prefix stable).
+    @Test("compose: loop tools in schema enable agent loop guidance on turn 1")
+    func loopToolsInSchema_enableAgentLoopGuidance() async {
         await withAgent(toolSelectionMode: .auto) { agentId in
-            let messages = [
-                ChatMessage(
-                    role: "assistant",
-                    content: nil,
-                    tool_calls: [
-                        ToolCall(
-                            id: "call_todo",
-                            type: "function",
-                            function: ToolCallFunction(name: "todo", arguments: #"{"markdown":"- [ ] one"}"#)
-                        )
-                    ],
-                    tool_call_id: nil
-                )
-            ]
             let context = await SystemPromptComposer.composeChatContext(
                 agentId: agentId,
                 executionMode: .none,
-                query: "continue",
-                messages: messages
+                query: "refactor the parser and add tests"
             )
+            #expect(context.tools.contains { $0.function.name == "todo" })
             #expect(sectionIds(context).contains("agentLoopGuidance"))
         }
     }

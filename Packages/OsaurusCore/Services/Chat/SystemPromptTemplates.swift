@@ -63,10 +63,10 @@ public enum SystemPromptTemplates {
     public static let agentLoopGuidance = """
         ## Agent loop
 
-        - `todo(markdown)` — write or replace the user-visible task list. Use it when the request has 3+ obvious steps; skip for trivial work. Each call replaces the whole list, so to mark items done re-send the full list with the new boxes.
-        - `complete(summary)` — call once at the very end (never alongside other tools) with WHAT you did + HOW you verified it. Vague placeholders ("done", "looks good") are rejected; partial work should be reported honestly.
+        - `todo(markdown)` — write or replace the user-visible task list. For any task with 3+ steps, create it BEFORE starting work, then re-send the full list with the new box checked immediately after finishing each item. Skip only for trivial work.
+        - `complete(summary)` — call once at the very end (never alongside other tools) with WHAT you did + HOW you verified it. Vague placeholders are rejected; report partial work honestly.
         - `clarify(question)` — pause and ask exactly one concrete question only when guessing wrong would change the result. For minor preferences pick a sensible default and proceed.
-        - `share_artifact(...)` — the only way the user sees a generated image, chart, report, code blob, or any file. **The file MUST exist before this call.** Sandbox: save under your home dir (default cwd) — files in `/tmp` won't be findable. If unsure where you wrote it, verify with `sandbox_search_files(target="files", pattern="<name>")` first. For inline text/markdown, use `content`+`filename` mode and skip the file write entirely.
+        - `share_artifact(path | content+filename)` — the only way the user sees a generated image, chart, report, code blob, or any file. **The file MUST exist before this call.** Sandbox: save under your home dir (default cwd), not `/tmp`. For inline text/markdown, pass `content`+`filename` and skip the file write.
         """
 
     // MARK: - Grounding
@@ -810,16 +810,18 @@ public enum SystemPromptTemplates {
         "Use paths relative to the working directory; an absolute path is accepted only if it is inside the working directory (paths outside it are rejected)."
 
     /// Positive dispatch table for the folder-mode tools. Mirror of
-    /// `sandboxToolGuide` — discipline ("instead of cat / sed / awk")
-    /// lives in each tool's description.
+    /// `sandboxToolGuide` — the shell-replacement discipline lives HERE
+    /// (one table, one place) instead of being repeated in every tool's
+    /// description.
     static let folderToolGuide = """
-        Tool dispatch (each tool's description has full detail and the \
-        shell pattern it replaces):
+        Tool dispatch (always prefer these over their shell equivalents — \
+        `cat`/`ls`/`grep`/`find`/`sed`/`awk`/`echo` in `shell_run`):
         - Read / list: `file_read` to read a file or list a directory — the path decides (optional line range, or `max_depth` for a directory).
         - Search: `file_search` for content (case-insensitive substring), or `target:"files"` to find files by name (case-insensitive substring, e.g. `q4`).
         - Find a file by name: use `file_search` with `target:"files"` and a short distinctive token from the name (not the whole phrase).
         - Edit: `file_edit` for targeted in-place edits, `file_write` for new files or full rewrites.
-        - Shell: `shell_run` for `mv` / `cp` / `rm` / `mkdir` (write/exec ops are logged and undoable).
+        - Shell: `shell_run` for builds, tests, git, processes, and `mv` / `cp` / `rm` / `mkdir` (simple forms join the undo log; complex commands warn that they don't).
+        - Undo: `file_undo` reverts logged operations; `file_operation_history` shows what is revertible.
         """
 
     /// Folder-mode-specific reminder: filesystem changes ARE visible to

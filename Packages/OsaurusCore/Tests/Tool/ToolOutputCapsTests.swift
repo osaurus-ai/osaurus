@@ -25,16 +25,25 @@ struct ToolOutputCapsTests {
         #expect(ToolOutputCaps.shellOutput == 10_000)
         #expect(ToolOutputCaps.gitDiff == 20_000)
         #expect(ToolOutputCaps.tree == 8_000)
+        #expect(ToolOutputCaps.fileSearch == 12_000)
+        #expect(ToolOutputCaps.searchMaxResults == 500)
+        #expect(ToolOutputCaps.universalResult == 100_000)
     }
 
     /// Tier ordering is the deliberate part of the design: exec stdout
     /// gets the largest budget, tree the smallest (it's retained context
-    /// on every later turn).
+    /// on every later turn). The universal registry backstop must sit
+    /// ABOVE every per-tool cap (with JSON-escaping headroom) so it never
+    /// re-mangles a deliberately-capped envelope.
     @Test func tierOrderingHolds() {
         #expect(ToolOutputCaps.execStdout > ToolOutputCaps.gitDiff)
         #expect(ToolOutputCaps.gitDiff > ToolOutputCaps.fileRead)
         #expect(ToolOutputCaps.fileRead > ToolOutputCaps.shellOutput)
         #expect(ToolOutputCaps.shellOutput > ToolOutputCaps.tree)
+        #expect(
+            ToolOutputCaps.universalResult
+                > ToolOutputCaps.execStdout + ToolOutputCaps.execStderr
+        )
     }
 
     /// `truncateForModel`'s default budget rides the shared constant —
@@ -47,6 +56,6 @@ struct ToolOutputCapsTests {
         let over = String(repeating: "b", count: ToolOutputCaps.execStdout + 100)
         let truncated = truncateForModel(over)
         #expect(truncated.count < over.count)
-        #expect(truncated.contains("output truncated"))
+        #expect(truncated.contains("[TRUNCATED:"))
     }
 }

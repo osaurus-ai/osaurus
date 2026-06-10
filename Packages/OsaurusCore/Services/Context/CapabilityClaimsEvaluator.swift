@@ -4,15 +4,21 @@
 //
 //  Public facade that drives a real, multi-turn agent loop for the
 //  OsaurusEvals `capability_claims` domain. It runs the whole chat path —
-//  compose prompt → model call → tool dispatch → drain
-//  `CapabilityLoadBuffer` → re-compose → continue — so eval cases can
-//  assert on what the model SAYS and DOES when asked "do you have X".
+//  compose prompt once → model call → tool dispatch → drain
+//  `CapabilityLoadBuffer` → continue — so eval cases can assert on what
+//  the model SAYS and DOES when asked "do you have X".
 //
 //  The internal `ChatCompletionRequest` / `ChatMessage` / `Tool` types
 //  stay encapsulated; the public surface is a decode-friendly transcript
 //  (ordered tool calls + final assistant text) plus an LLM-judge verdict
 //  so the runner can combine deterministic transcript checks with a
 //  rubric grade.
+//
+//  Deferred-schema policy (matches production): the system prompt and
+//  tool schema are composed ONCE before the loop and stay frozen for the
+//  whole run. Tools loaded mid-run via `capabilities_load` are callable
+//  immediately through the registry; the drained names are recorded on
+//  the transcript but never patched back into the request schema.
 //
 
 import Foundation
@@ -106,11 +112,13 @@ public enum CapabilityClaimsEvaluator {
     /// Run the multi-turn agent loop for `query` against the live
     /// registry/agent state and return the transcript. The loop mirrors
     /// the production chat path: it composes the real system prompt
-    /// (manifest included), calls the routed model with the resolved
+    /// (manifest included) ONCE, calls the routed model with that frozen
     /// tool schema, dispatches every tool call through
     /// `ToolRegistry.execute`, drains tools loaded via
-    /// `capabilities_load` back into the schema, and continues until the
-    /// model answers without calling a tool (or `maxIterations` is hit).
+    /// `capabilities_load` (callable immediately by name; recorded on
+    /// the transcript, never patched into the schema), and continues
+    /// until the model answers without calling a tool (or
+    /// `maxIterations` is hit).
     ///
     /// `agentId` defaults to the active agent. `model` defaults to
     /// whatever `ChatConfigurationStore` currently routes to (set by the
@@ -131,11 +139,14 @@ public enum CapabilityClaimsEvaluator {
         var history: [ChatMessage] = [ChatMessage(role: "user", content: query)]
         var toolCalls: [CapabilityClaimsTranscript.ToolInvocation] = []
         var loadedToolNames: [String] = []
-        var additionalToolNames: LoadedTools = []
-        var firstTurnPrompt = ""
         var finalText = ""
+        var firstTurnPrompt = ""
         var iterations = 0
         var hitCap = false
+        // Stable per-run session id so the engine's content-addressed KV
+        // grouping sees one coherent conversation instead of N anonymous
+        // requests.
+        let runSessionId = UUID().uuidString
 
         // Bind the agent for the whole loop so capability-tool scoping,
         // `capabilities_load` agent grants, and agent-scoped tools see
@@ -147,19 +158,21 @@ public enum CapabilityClaimsEvaluator {
             )
         do {
             result = try await ChatExecutionContext.$currentAgentId.withValue(resolvedAgentId) {
-                while iterations < maxIterations {
-                    let composed = await SystemPromptComposer.composeChatContext(
-                        agentId: resolvedAgentId,
-                        executionMode: .none,
-                        model: resolvedModel,
-                        query: query,
-                        messages: history,
-                        additionalToolNames: additionalToolNames
-                    )
-                    if iterations == 0 { firstTurnPrompt = composed.prompt }
+                // Compose ONCE; prompt + tool schema stay frozen for the
+                // whole run (deferred-schema policy, same as production).
+                let composed = await SystemPromptComposer.composeChatContext(
+                    agentId: resolvedAgentId,
+                    executionMode: .none,
+                    model: resolvedModel,
+                    query: query,
+                    messages: history
+                )
+                firstTurnPrompt = composed.prompt
+                let frozenTools = composed.tools
 
+                while iterations < maxIterations {
                     var requestMessages: [ChatMessage] = [
-                        ChatMessage(role: "system", content: composed.prompt)
+                        ChatMessage(role: "system", content: firstTurnPrompt)
                     ]
                     requestMessages.append(contentsOf: history)
 
@@ -174,9 +187,9 @@ public enum CapabilityClaimsEvaluator {
                         presence_penalty: nil,
                         stop: nil,
                         n: nil,
-                        tools: composed.tools,
+                        tools: frozenTools,
                         tool_choice: .auto,
-                        session_id: nil
+                        session_id: runSessionId
                     )
 
                     let response = try await engine.completeChat(request: request)
@@ -234,14 +247,14 @@ public enum CapabilityClaimsEvaluator {
                         )
                     }
 
-                    // Pull tools loaded via capabilities_load into the
-                    // schema for the next compose, exactly like the chat
-                    // loop does.
+                    // Drain tools loaded via capabilities_load: record them
+                    // on the transcript (and keep the process-wide buffer
+                    // clean), but do NOT patch the frozen schema — they are
+                    // already callable by name through the registry.
                     let drained = await CapabilityLoadBuffer.shared.drain()
                     for spec in drained {
                         let name = spec.function.name
-                        if !additionalToolNames.contains(name) {
-                            additionalToolNames.insert(name)
+                        if !loadedToolNames.contains(name) {
                             loadedToolNames.append(name)
                         }
                     }

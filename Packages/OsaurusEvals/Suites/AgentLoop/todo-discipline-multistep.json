@@ -1,0 +1,26 @@
+{
+  "id": "agent_loop.todo-discipline-multistep",
+  "domain": "agent_loop",
+  "label": "agent loop • todo created up front and updated before complete",
+  "query": "Three config files in this folder each have debug=true. Change debug to false in all three, then verify by reading them back. Track your progress with a todo list as you work.",
+  "notes": "Pins todo discipline on a genuinely multi-step task: the model must create the checklist, and at least one later `todo` call must carry a checked box BEFORE the run completes (`todoUpdatedBeforeComplete`) — making a list once and never updating it fails. The task itself is mechanical so the assertion isolates the discipline, not the editing skill.",
+  "fixtures": {
+    "workspaceFiles": [
+      { "path": "alpha.conf", "contents": "name=alpha\ndebug=true\n" },
+      { "path": "beta.conf", "contents": "name=beta\ndebug=true\n" },
+      { "path": "gamma.conf", "contents": "name=gamma\ndebug=true\n" }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 18,
+      "mustCallTools": ["todo"],
+      "todoUpdatedBeforeComplete": true,
+      "files": [
+        { "path": "alpha.conf", "contains": "debug=false" },
+        { "path": "beta.conf", "contains": "debug=false" },
+        { "path": "gamma.conf", "contains": "debug=false" }
+      ]
+    }
+  }
+}

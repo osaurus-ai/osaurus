@@ -95,4 +95,19 @@ extension FileOperation {
     public var destinationFilename: String? {
         destinationPath.map { ($0 as NSString).lastPathComponent }
     }
+
+    /// Whether this entry carries everything `performUndo` needs. Honest
+    /// per-entry: a `delete` without a captured body or a `move`/`copy`
+    /// without a destination cannot be reverted, and the history must say
+    /// so instead of advertising a blanket `can_undo: true`.
+    public var canUndo: Bool {
+        switch type {
+        case .create, .write, .fileEdit, .dirCreate:
+            return true
+        case .move, .copy:
+            return destinationPath != nil
+        case .delete:
+            return previousContent != nil
+        }
+    }
 }

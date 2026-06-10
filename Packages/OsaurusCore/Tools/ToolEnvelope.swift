@@ -226,14 +226,23 @@ public enum ToolEnvelope {
             case .fileNotFound(let path):
                 return failure(
                     kind: .notFound,
-                    message: "File not found: \(path)",
+                    message:
+                        "File not found: \(path). Check the exact path with "
+                        + "`file_search(target=\"files\", pattern=\"\((path as NSString).lastPathComponent)\")` "
+                        + "or list the parent directory with `file_read` before retrying.",
+                    field: "path",
+                    expected: "path to an existing file under the working folder",
                     tool: tool,
                     retryable: false
                 )
             case .directoryNotFound(let path):
                 return failure(
                     kind: .notFound,
-                    message: "Directory not found: \(path)",
+                    message:
+                        "Directory not found: \(path). List the parent directory with "
+                        + "`file_read` (a directory path returns a listing) to find the right name before retrying.",
+                    field: "path",
+                    expected: "path to an existing directory under the working folder",
                     tool: tool,
                     retryable: false
                 )
@@ -255,6 +264,75 @@ public enum ToolEnvelope {
                 )
             }
         }
+
+        // MCP provider errors map to their honest kinds so the model can
+        // branch (retry on timeout, pivot on unavailable) instead of
+        // treating every remote failure as a generic execution error.
+        if let mcpErr = error as? MCPProviderError {
+            switch mcpErr {
+            case .timeout:
+                return failure(
+                    kind: .timeout,
+                    message: "MCP provider call timed out.",
+                    tool: tool,
+                    retryable: true
+                )
+            case .notConnected, .providerDisabled, .providerNotFound, .invalidURL:
+                return failure(
+                    kind: .unavailable,
+                    message: mcpErr.localizedDescription
+                        + " — the MCP provider is not reachable right now.",
+                    tool: tool,
+                    retryable: false
+                )
+            case .connectionFailed(let detail):
+                return failure(
+                    kind: .unavailable,
+                    message: "MCP provider connection failed: \(detail)",
+                    tool: tool,
+                    retryable: true
+                )
+            case .toolExecutionFailed(let detail):
+                return failure(
+                    kind: .executionError,
+                    message: detail,
+                    tool: tool
+                )
+            }
+        }
+
+        // Sandbox runtime errors: the idle-ceiling timeout gets its honest
+        // `timeout` kind (with wording that explains it's an inactivity
+        // kill, not a wall-clock cap), and "sandbox not ready" states map
+        // to `unavailable` so the model retries instead of pivoting.
+        #if os(macOS)
+            if let sandboxErr = error as? SandboxError {
+                switch sandboxErr {
+                case .timeout:
+                    return failure(
+                        kind: .timeout,
+                        message:
+                            "Command killed by the idle timeout: it produced no output for the configured ceiling. Re-run with a longer `timeout`, or restructure it to emit progress output.",
+                        tool: tool,
+                        retryable: true
+                    )
+                case .unavailable, .containerNotRunning:
+                    return failure(
+                        kind: .unavailable,
+                        message: sandboxErr.localizedDescription
+                            + " — wait a moment and retry, or check the Sandbox settings panel.",
+                        tool: tool,
+                        retryable: true
+                    )
+                default:
+                    return failure(
+                        kind: .executionError,
+                        message: sandboxErr.localizedDescription,
+                        tool: tool
+                    )
+                }
+            }
+        #endif
 
         // Registry permission errors carry their reason in NSError.localizedDescription
         // and a stable code in the `ToolRegistry` NSError domain.

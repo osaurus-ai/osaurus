@@ -58,10 +58,4 @@ struct ResolvedToolset: Sendable {
     /// tools but skip this text so a "hi" turn does not pay the full agentic
     /// preamble cost before the model has any real task to solve.
     let capabilityPromptSectionsEnabled: Bool
-
-    /// True once this session history already contains one of the chat-loop
-    /// tool calls. The tool descriptions are enough for first use; this
-    /// heavier cheat sheet is only worth its tokens after the model has
-    /// entered the loop and needs continuation guidance.
-    let agentLoopGuidanceEnabled: Bool
 }

@@ -310,6 +310,16 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// context window instead of the model's real one — the
         /// compaction-stress lever.
         public let contextWindowOverride: Int?
+        /// Loop policy: when true the run ends with `toolRejected` on the
+        /// first error envelope (the chat surface's policy); default
+        /// false keeps the headless policy (hand the model the error and
+        /// keep looping). Lets cases pin BOTH behaviours.
+        public let stopOnToolRejection: Bool?
+        /// Todo discipline: when true, some `todo` call with at least one
+        /// checked (`[x]`) box must appear BEFORE the first `complete`
+        /// call (or before the run ends, when there is no `complete`) —
+        /// pins "mark items done as you go", not just "made a list once".
+        public let todoUpdatedBeforeComplete: Bool?
 
         public init(
             maxIterations: Int? = nil,
@@ -326,7 +336,9 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             commands: [CommandAssertion]? = nil,
             finalTextContains: [String]? = nil,
             rubric: [String]? = nil,
-            contextWindowOverride: Int? = nil
+            contextWindowOverride: Int? = nil,
+            stopOnToolRejection: Bool? = nil,
+            todoUpdatedBeforeComplete: Bool? = nil
         ) {
             self.maxIterations = maxIterations
             self.mustCallTools = mustCallTools
@@ -343,6 +355,8 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.finalTextContains = finalTextContains
             self.rubric = rubric
             self.contextWindowOverride = contextWindowOverride
+            self.stopOnToolRejection = stopOnToolRejection
+            self.todoUpdatedBeforeComplete = todoUpdatedBeforeComplete
         }
 
         /// One workspace-file assertion. `path` is relative to the

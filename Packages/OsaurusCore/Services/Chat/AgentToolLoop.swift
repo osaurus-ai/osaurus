@@ -56,20 +56,39 @@ struct AgentLoopPolicy: Sendable {
     /// surfaces historically don't.
     var dedupeNoticeEnabled: Bool
 
+    /// Iterations without a `todo` call (while unchecked items remain)
+    /// before the driver stages the staleness notice. Only consulted when
+    /// `AgentLoopHooks.pendingTodoCount` is set. The notice re-arms after
+    /// firing, so it nags at most once per threshold window.
+    var todoStalenessThreshold: Int = 4
+
     init(
         maxIterations: Int,
         budgetWarningThreshold: Int = 3,
         stopOnToolRejection: Bool,
-        dedupeNoticeEnabled: Bool
+        dedupeNoticeEnabled: Bool,
+        todoStalenessThreshold: Int = 4
     ) {
         self.maxIterations = max(1, maxIterations)
         self.budgetWarningThreshold = budgetWarningThreshold
         self.stopOnToolRejection = stopOnToolRejection
         self.dedupeNoticeEnabled = dedupeNoticeEnabled
+        self.todoStalenessThreshold = max(1, todoStalenessThreshold)
     }
 }
 
 // MARK: - Step + execution results
+
+/// The composed message array for one model step, plus whether even a
+/// fully-compacted transcript exceeds the history budget. Returned by the
+/// `buildMessages` hook so the driver can end the run with `.overBudget`
+/// instead of sending a doomed request.
+struct AgentLoopIterationInput {
+    var messages: [ChatMessage]
+    /// True when the protected first message + recent tail ALONE exceed
+    /// the history budget after every compaction lever was exhausted.
+    var overBudget: Bool = false
+}
 
 /// What one model step produced, as classified by the surface.
 enum AgentLoopModelStep {
@@ -126,7 +145,10 @@ struct AgentLoopHooks {
     /// `[System Notice]` lines (budget warning first, then state notice)
     /// for this iteration; the surface decides placement and persistence
     /// (chat appends transiently, HTTP/plugin persist into their arrays).
-    var buildMessages: (_ notices: [String]) async -> [ChatMessage]
+    /// Set `overBudget` on the returned input when even fully-compacted
+    /// history cannot fit — the driver ends the run with `.overBudget`
+    /// instead of sending a doomed request.
+    var buildMessages: (_ notices: [String]) async -> AgentLoopIterationInput
 
     /// Perform one model step (request build + stream/complete + delta
     /// routing) and classify the outcome. Thrown errors abort the run and
@@ -160,15 +182,23 @@ struct AgentLoopHooks {
     var executeBatch:
         ((_ calls: [(invocation: ServiceToolInvocation, callId: String)]) async -> [AgentLoopToolExecution])?
 
-    /// Called after a full batch is processed (not on early stop), with
-    /// outcomes in original model order. HTTP appends its assistant
-    /// `tool_calls` message + tool results here; chat no-ops (it appends
-    /// per-call).
+    /// Called after a full batch is processed (and on batch-mode early
+    /// stops via `finishBatch`), with outcomes in original model order.
+    /// HTTP appends its assistant `tool_calls` message + tool results
+    /// here; chat persists its hidden tool turns here so transcript order
+    /// always matches the model's call order.
     var onBatchComplete: (_ outcomes: [AgentLoopToolOutcome]) async -> Void
+
+    /// Number of UNCHECKED items on the session's todo list, or nil when
+    /// the surface has no session-scoped todo (HTTP/plugin/eval). When
+    /// set, the driver stages a one-line staleness notice after
+    /// `AgentLoopPolicy.todoStalenessThreshold` iterations pass without a
+    /// `todo` call while pending items remain. Chat-only today.
+    var pendingTodoCount: (() async -> Int)?
 
     init(
         isCancelled: @escaping () async -> Bool = { false },
-        buildMessages: @escaping (_ notices: [String]) async -> [ChatMessage],
+        buildMessages: @escaping (_ notices: [String]) async -> AgentLoopIterationInput,
         modelStep: @escaping (_ messages: [ChatMessage], _ iteration: Int) async throws -> AgentLoopModelStep,
         willProcessCall: @escaping (_ invocation: ServiceToolInvocation, _ callId: String) async -> Void = { _, _ in },
         onDedupedResult:
@@ -181,7 +211,8 @@ struct AgentLoopHooks {
         executeBatch: (
             (_ calls: [(invocation: ServiceToolInvocation, callId: String)]) async -> [AgentLoopToolExecution]
         )? = nil,
-        onBatchComplete: @escaping (_ outcomes: [AgentLoopToolOutcome]) async -> Void = { _ in }
+        onBatchComplete: @escaping (_ outcomes: [AgentLoopToolOutcome]) async -> Void = { _ in },
+        pendingTodoCount: (() async -> Int)? = nil
     ) {
         self.isCancelled = isCancelled
         self.buildMessages = buildMessages
@@ -191,6 +222,7 @@ struct AgentLoopHooks {
         self.executeTool = executeTool
         self.executeBatch = executeBatch
         self.onBatchComplete = onBatchComplete
+        self.pendingTodoCount = pendingTodoCount
     }
 }
 
@@ -295,9 +327,9 @@ enum AgentLoopBudget {
         let compactable = breakdown.messages
             .filter { compactableEntryIds.contains($0.id) }
             .reduce(0) { $0 + $1.tokens }
-        let reservation = min(
-            maxResponseTokens ?? defaultResponseReservation,
-            max(0, effective / 4)
+        let reservation = cappedResponseReservation(
+            maxResponseTokens,
+            effectiveBudget: effective
         )
         let nonCompactable = max(0, total - compactable) + reservation
 
@@ -308,10 +340,27 @@ enum AgentLoopBudget {
         )
     }
 
+    /// The ONE definition of how many tokens the response reserves out of
+    /// the effective budget, shared by `assess` (UI hard-overflow gate)
+    /// and `makeBudgetManager` (runtime trim budget) so the two never
+    /// diverge. Capped at a quarter of the effective budget so
+    /// small-window models (Foundation ~4K) aren't permanently gated by a
+    /// reservation larger than their whole window — the runtime truncates
+    /// generation in that case rather than failing the request.
+    static func cappedResponseReservation(
+        _ maxResponseTokens: Int?,
+        effectiveBudget: Int
+    ) -> Int {
+        min(
+            maxResponseTokens ?? defaultResponseReservation,
+            max(0, effectiveBudget / 4)
+        )
+    }
+
     /// Build a `ContextBudgetManager` with the canonical reservations:
     /// system prompt (by char count), tool schema (tokens), and the
-    /// response (`max_tokens`, defaulting to 4096 as the plugin host
-    /// always has).
+    /// response (`max_tokens` capped via `cappedResponseReservation`,
+    /// matching the `assess` hard gate).
     static func makeBudgetManager(
         contextWindow: Int,
         systemPromptChars: Int,
@@ -321,7 +370,10 @@ enum AgentLoopBudget {
         var mgr = ContextBudgetManager(contextLength: contextWindow)
         mgr.reserveByCharCount(.systemPrompt, characters: systemPromptChars)
         mgr.reserve(.tools, tokens: toolTokens)
-        mgr.reserve(.response, tokens: maxResponseTokens ?? 4096)
+        mgr.reserve(
+            .response,
+            tokens: cappedResponseReservation(maxResponseTokens, effectiveBudget: mgr.effectiveBudget)
+        )
         return mgr
     }
 
@@ -356,20 +408,32 @@ enum AgentLoopBudget {
     ///
     /// Chat follows the same contract inline (it interleaves compaction
     /// telemetry and the mid-run token notice between the two steps).
+    ///
+    /// The returned input carries `overBudget` (trimmed transcript still
+    /// exceeds the history budget after every compaction lever) so the
+    /// driver can end the run with `.overBudget` instead of sending a
+    /// doomed request.
     static func composeIterationMessages(
         _ messages: [ChatMessage],
         notices: [String],
         manager: ContextBudgetManager?,
         watermark: CompactionWatermark? = nil
-    ) -> [ChatMessage] {
+    ) -> AgentLoopIterationInput {
         var msgs = messages
+        var overBudget = false
         if let manager {
-            msgs = trimPreservingSystemPrefix(msgs, with: manager, watermark: watermark)
+            let result = trimPreservingSystemPrefixReportingOverflow(
+                msgs,
+                with: manager,
+                watermark: watermark
+            )
+            msgs = result.messages
+            overBudget = result.overBudget
         }
         for notice in notices {
             msgs.append(ChatMessage(role: "user", content: notice))
         }
-        return msgs
+        return AgentLoopIterationInput(messages: msgs, overBudget: overBudget)
     }
 
     /// Like `trimPreservingSystemPrefix`, but also reports whether the
@@ -417,6 +481,11 @@ enum AgentToolLoop {
         case iterationCapReached
         /// `isCancelled` returned true.
         case cancelled
+        /// `buildMessages` reported that even fully-compacted history
+        /// cannot fit the budget. The run ends WITHOUT a model step; the
+        /// surface emits a distinct "context cannot fit" envelope instead
+        /// of sending a doomed request.
+        case overBudget
     }
 
     struct RunResult: Equatable, Sendable {
@@ -437,6 +506,13 @@ enum AgentToolLoop {
         "[System Notice] Tool call budget: \(remaining) of \(maxIterations) remaining. Wrap up your current work and provide a summary."
     }
 
+    /// Shared user-facing text for the `.overBudget` exit: the request
+    /// cannot fit the model's context window even after every compaction
+    /// lever was exhausted. Each surface wraps this in its own envelope
+    /// (chat error bubble, HTTP SSE error, plugin JSON error).
+    static let overBudgetMessage =
+        "Context window cannot fit this request even after compaction. Shorten the input, reduce tool output, or start a new conversation."
+
     // MARK: - Default parallel batch executor
 
     /// Default batch executor: run every call concurrently via a TaskGroup,
@@ -450,6 +526,27 @@ enum AgentToolLoop {
     /// execution (plugin host) and tests (scripted executors) can reuse the
     /// ordering/error semantics; `ChatExecutionContext` scoping lives in
     /// the `sessionId:agentId:` convenience below.
+    /// Folder tools that mutate one target path. Two parallel calls on the
+    /// same path read-then-write non-atomically (lost update / TOCTOU), so
+    /// the batch executor serializes same-path slots while keeping
+    /// distinct paths fully parallel.
+    static let pathMutatingToolNames: Set<String> = ["file_write", "file_edit"]
+
+    /// Serialization key for a call: non-nil when the call mutates a
+    /// single target path. Calls sharing a key execute serially in model
+    /// order within the parallel wave.
+    static func pathSerializationKey(for invocation: ServiceToolInvocation) -> String? {
+        guard pathMutatingToolNames.contains(invocation.toolName) else { return nil }
+        guard let data = invocation.jsonArguments.data(using: .utf8),
+            let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+            let rawPath = obj["path"] as? String
+        else { return nil }
+        let path = (rawPath.trimmingCharacters(in: .whitespacesAndNewlines) as NSString)
+            .standardizingPath
+        guard !path.isEmpty else { return nil }
+        return path
+    }
+
     static func runBatchInParallel(
         _ calls: [(invocation: ServiceToolInvocation, callId: String)],
         execute: @escaping @Sendable (_ invocation: ServiceToolInvocation, _ callId: String) async throws -> String
@@ -457,6 +554,23 @@ enum AgentToolLoop {
         @Sendable func executeOne(
             _ call: (invocation: ServiceToolInvocation, callId: String)
         ) async -> AgentLoopToolExecution {
+            // Cooperative cancellation: a Stop / client disconnect cancels
+            // the surrounding task (chat run task, HTTP request task), and
+            // TaskGroup children inherit it. Check before dispatching so
+            // un-started calls don't fire after the user pulled the plug —
+            // they come back as paired "cancelled" envelopes instead, so
+            // no assistant `tool_use` dangles.
+            if Task.isCancelled {
+                return AgentLoopToolExecution(
+                    result: ToolEnvelope.failure(
+                        kind: .executionError,
+                        message: "Run cancelled before this call executed.",
+                        tool: call.invocation.toolName,
+                        retryable: false
+                    ),
+                    isError: false
+                )
+            }
             do {
                 return AgentLoopToolExecution(result: try await execute(call.invocation, call.callId))
             } catch {
@@ -472,19 +586,43 @@ enum AgentToolLoop {
             return [await executeOne(only)]
         }
 
-        let indexed: [(Int, AgentLoopToolExecution)] = await withTaskGroup(
-            of: (Int, AgentLoopToolExecution).self
-        ) { group in
-            for (index, call) in calls.enumerated() {
-                group.addTask {
-                    (index, await executeOne(call))
+        // Group same-path mutating calls so they run serially in model
+        // order (lost-update / TOCTOU guard); every other call gets its
+        // own group and still runs fully parallel.
+        var groups: [[Int]] = []
+        var groupIndexByKey: [String: Int] = [:]
+        for (index, call) in calls.enumerated() {
+            if let key = pathSerializationKey(for: call.invocation) {
+                if let existing = groupIndexByKey[key] {
+                    groups[existing].append(index)
+                    continue
+                }
+                groupIndexByKey[key] = groups.count
+            }
+            groups.append([index])
+        }
+
+        // One batch id for the whole wave so multi-file operations group
+        // in the file-operation undo log (`FileOperation.batchId`).
+        let indexed: [(Int, AgentLoopToolExecution)] = await ChatExecutionContext.$currentBatchId
+            .withValue(UUID()) {
+                await withTaskGroup(of: [(Int, AgentLoopToolExecution)].self) { group in
+                    for slotGroup in groups {
+                        group.addTask {
+                            var results: [(Int, AgentLoopToolExecution)] = []
+                            results.reserveCapacity(slotGroup.count)
+                            for index in slotGroup {
+                                results.append((index, await executeOne(calls[index])))
+                            }
+                            return results
+                        }
+                    }
+                    var collected: [(Int, AgentLoopToolExecution)] = []
+                    collected.reserveCapacity(calls.count)
+                    for await items in group { collected.append(contentsOf: items) }
+                    return collected
                 }
             }
-            var collected: [(Int, AgentLoopToolExecution)] = []
-            collected.reserveCapacity(calls.count)
-            for await item in group { collected.append(item) }
-            return collected
-        }
 
         return indexed.sorted { $0.0 < $1.0 }.map { $0.1 }
     }
@@ -588,6 +726,30 @@ enum AgentToolLoop {
         calls.contains { interceptToolNames.contains($0.invocation.toolName) }
     }
 
+    /// Whether a tool execution produced a SUCCESSFUL intercept — the
+    /// surface should flag `endRun` exactly as chat does. Failed intercept
+    /// envelopes (e.g. a rejected placeholder `complete` summary) fall
+    /// through so the model sees the failure and retries.
+    static func isSuccessfulIntercept(toolName: String, result: String) -> Bool {
+        interceptToolNames.contains(toolName) && !ToolEnvelope.isError(result)
+    }
+
+    /// One-line transient nudge staged when the session's todo list has
+    /// gone stale mid-run (unchecked items, no `todo` call for
+    /// `todoStalenessThreshold` iterations). Rides the same notice channel
+    /// as the budget warning — never persisted into history.
+    static func todoStalenessNotice(pending: Int) -> String {
+        "[System Notice] Your todo list still has \(pending) unchecked item\(pending == 1 ? "" : "s") and has not been updated recently. If you finished any, re-send the full list with those boxes checked now; if the plan changed, rewrite the list."
+    }
+
+    /// Appended to a successful `capabilities_load` result under the
+    /// deferred-schema policy: the loaded tool is callable immediately
+    /// (registry dispatch is by name), but the rendered tool-schema block
+    /// stays frozen until the next compose so the prompt prefix — and the
+    /// paged-KV cache built on it — stays byte-stable mid-run.
+    static let deferredSchemaNotice =
+        "\nNote: loaded tools are callable NOW — call them by name with JSON arguments. Their full schemas will appear in the tool list from the next user turn."
+
     /// Stable call-id assignment: preserve the model-supplied id when
     /// present (OpenAI `call_xxx`), otherwise mint one in the same shape.
     static func callId(for invocation: ServiceToolInvocation) -> String {
@@ -612,12 +774,16 @@ enum AgentToolLoop {
         isolation: isolated (any Actor)? = #isolation
     ) async throws -> RunResult {
         var iteration = 0
-        // Two staged-notice slots, mirroring the historical chat locals
+        // Staged-notice slots, mirroring the historical chat locals
         // (`pendingBudgetNotice` / `pendingStateNotice`). The state slot is
         // overwritten per event so the LAST dedupe/bias in a batch wins,
         // exactly as the per-call overwrite did in `ChatSession.send`.
         var pendingBudgetNotice: String?
         var pendingStateNotice: String?
+        var pendingTodoNotice: String?
+        // Last iteration that carried a `todo` call (0 = run start), for
+        // the staleness check below.
+        var lastTodoIteration = 0
 
         while iteration < policy.maxIterations {
             if await hooks.isCancelled() {
@@ -634,9 +800,19 @@ enum AgentToolLoop {
                 notices.append(n)
                 pendingStateNotice = nil
             }
-            let messages = await hooks.buildMessages(notices)
+            if let n = pendingTodoNotice {
+                notices.append(n)
+                pendingTodoNotice = nil
+            }
+            let input = await hooks.buildMessages(notices)
+            if input.overBudget {
+                // Even fully-compacted history can't fit — the request is
+                // doomed. End cleanly before the model step; the failed
+                // build doesn't charge the iteration budget.
+                return RunResult(exit: .overBudget, iterations: iteration - 1)
+            }
 
-            let step = try await hooks.modelStep(messages, iteration)
+            let step = try await hooks.modelStep(input.messages, iteration)
             switch step {
             case .finalResponse:
                 return RunResult(exit: .finalResponse, iterations: iteration)
@@ -891,6 +1067,22 @@ enum AgentToolLoop {
                         remaining: remaining,
                         maxIterations: policy.maxIterations
                     )
+                }
+
+                // Todo staleness: when the session todo still has unchecked
+                // items and no `todo` call has landed for a threshold of
+                // iterations, stage a one-line nudge. Firing re-arms the
+                // window so the nudge repeats at most once per threshold.
+                if invocations.contains(where: { $0.toolName == "todo" }) {
+                    lastTodoIteration = iteration
+                } else if let pendingTodoCount = hooks.pendingTodoCount,
+                    iteration - lastTodoIteration >= policy.todoStalenessThreshold
+                {
+                    let pending = await pendingTodoCount()
+                    if pending > 0 {
+                        pendingTodoNotice = Self.todoStalenessNotice(pending: pending)
+                        lastTodoIteration = iteration
+                    }
                 }
             }
         }

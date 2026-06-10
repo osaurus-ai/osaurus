@@ -54,6 +54,12 @@ public final class FolderToolManager {
 
         currentFolderContext = context
 
+        // Bind the undo log's root so `performUndo` can resolve relative
+        // paths — without this every undo fails with "No root path
+        // configured" even though operations were dutifully logged.
+        let root = context.rootPath
+        Task { await FileOperationLog.shared.setRootPath(root) }
+
         // Build core tools (always). `shell_run` lives in the core set so
         // the folder-section prompt can reference it unconditionally.
         folderTools = FolderToolFactory.buildCoreTools(rootPath: context.rootPath)
@@ -77,5 +83,6 @@ public final class FolderToolManager {
         folderTools = []
         _folderToolNames = []
         currentFolderContext = nil
+        Task { await FileOperationLog.shared.setRootPath(nil) }
     }
 }

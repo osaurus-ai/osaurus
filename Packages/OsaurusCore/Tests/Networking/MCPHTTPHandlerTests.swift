@@ -123,7 +123,85 @@ struct MCPHTTPHandlerTests {
             #expect(isError == false)
             let content = (json?["content"] as? [[String: Any]]) ?? []
             let text = content.first?["text"] as? String
-            #expect(text == #"{"text":"hello"}"#)
+            // The registry boundary normalizes every tool result into a
+            // ToolEnvelope; the raw echo payload rides inside `result.text`.
+            let envelope =
+                try JSONSerialization.jsonObject(
+                    with: Data((text ?? "").utf8)
+                ) as? [String: Any]
+            #expect(envelope?["ok"] as? Bool == true)
+            #expect(envelope?["tool"] as? String == EchoTool.nameStatic)
+            let result = envelope?["result"] as? [String: Any]
+            #expect(result?["text"] as? String == #"{"text":"hello"}"#)
+        }
+    }
+
+    @Test func mcp_call_refuses_externally_denied_tools() async throws {
+        let server = try await startTestServer()
+        defer { Task { await server.shutdown() } }
+
+        for tool in ["file_write", "file_edit", "shell_run", "git_commit"] {
+            var request = URLRequest(url: URL(string: "http://\(server.host):\(server.port)/mcp/call")!)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.authenticate()
+            let bodyObj: [String: Any] = ["name": tool, "arguments": [:]]
+            request.httpBody = try JSONSerialization.data(withJSONObject: bodyObj)
+
+            let (data, resp) = try await URLSession.shared.data(for: request)
+            let status = (resp as? HTTPURLResponse)?.statusCode ?? -1
+            let body = String(decoding: data, as: UTF8.self)
+            #expect(status == 403, "expected 403 for \(tool), got \(status)")
+            #expect(body.contains("tool_not_exposable"))
+        }
+    }
+
+    @Test func mcp_call_rejects_malformed_agent_header() async throws {
+        let server = try await startTestServer()
+        defer { Task { await server.shutdown() } }
+
+        var request = URLRequest(url: URL(string: "http://\(server.host):\(server.port)/mcp/call")!)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("not-a-uuid", forHTTPHeaderField: "X-Osaurus-Agent-Id")
+        request.authenticate()
+        let bodyObj: [String: Any] = ["name": "echo", "arguments": ["text": "hi"]]
+        request.httpBody = try JSONSerialization.data(withJSONObject: bodyObj)
+
+        let (data, resp) = try await URLSession.shared.data(for: request)
+        let status = (resp as? HTTPURLResponse)?.statusCode ?? -1
+        let body = String(decoding: data, as: UTF8.self)
+        #expect(status == 403)
+        #expect(body.contains("invalid_agent"))
+    }
+
+    @Test func mcp_tools_hides_externally_denied_tools() async throws {
+        try await DynamicCatalogTestLock.shared.run {
+            let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(
+                "osaurus-tests-\(UUID().uuidString)",
+                isDirectory: true
+            )
+            ToolConfigurationStore.overrideDirectory = tempDir
+            try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+
+            // Register a tool whose name is on the external deny list; it
+            // must be filtered from the /mcp/tools listing.
+            ToolRegistry.shared.register(NamedEchoTool(name: "shell_run"))
+            ToolRegistry.shared.setEnabled(true, for: "shell_run")
+            defer { ToolRegistry.shared.unregister(names: ["shell_run"]) }
+
+            let server = try await startTestServer()
+            defer { Task { await server.shutdown() } }
+
+            var toolsRequest = URLRequest(url: URL(string: "http://\(server.host):\(server.port)/mcp/tools")!)
+            toolsRequest.authenticate()
+            let (data, resp) = try await URLSession.shared.data(for: toolsRequest)
+            let status = (resp as? HTTPURLResponse)?.statusCode ?? -1
+            #expect(status == 200)
+            let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+            let tools = (json?["tools"] as? [[String: Any]]) ?? []
+            let names = Set(tools.compactMap { $0["name"] as? String })
+            #expect(!names.contains("shell_run"))
         }
     }
 
@@ -174,6 +252,16 @@ private struct EchoTool: OsaurusTool {
         "properties": .object(["text": .object(["type": .string("string")])]),
         "required": .array([.string("text")]),
     ])
+    func execute(argumentsJSON: String) async throws -> String {
+        return argumentsJSON
+    }
+}
+
+/// Echo tool with an arbitrary registered name, for deny-list tests.
+private struct NamedEchoTool: OsaurusTool {
+    let name: String
+    let description: String = "Echo back the input JSON arguments"
+    let parameters: JSONValue? = nil
     func execute(argumentsJSON: String) async throws -> String {
         return argumentsJSON
     }

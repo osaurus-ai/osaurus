@@ -81,7 +81,10 @@ final class SandboxPluginTool: OsaurusTool, @unchecked Sendable {
             )
         }
 
-        let env = buildExecEnvironment(agentId: agentId, from: args)
+        // Captured separately from the full env so post-exec scrubbing
+        // only matches actual secret values, never PARAM_* arguments.
+        let secrets = secretEnvironment(agentId: agentId)
+        let env = buildExecEnvironment(secrets: secrets, from: args)
 
         let result: ContainerExecResult
         do {
@@ -98,9 +101,11 @@ final class SandboxPluginTool: OsaurusTool, @unchecked Sendable {
             return ToolEnvelope.fromError(error, tool: name)
         }
 
+        // Secrets ride into the plugin's env, so any script that prints
+        // its config would exfiltrate them — scrub before enveloping.
         return encodeResult(
-            stdout: result.stdout,
-            stderr: result.stderr,
+            stdout: SecretScrubber.scrub(result.stdout, secrets: secrets),
+            stderr: SecretScrubber.scrub(result.stderr, secrets: secrets),
             exitCode: result.exitCode
         )
     }
@@ -215,13 +220,18 @@ final class SandboxPluginTool: OsaurusTool, @unchecked Sendable {
 
     // MARK: - Environment
 
-    private func buildExecEnvironment(agentId: String, from args: [String: Any]) -> [String: String] {
-        var env: [String: String] = [:]
+    /// The agent + plugin secrets injected into the exec env. Kept as a
+    /// separate dict so the post-exec scrubber knows the exact values.
+    private func secretEnvironment(agentId: String) -> [String: String] {
+        guard let uuid = UUID(uuidString: agentId) else { return [:] }
+        return AgentSecretsKeychain.mergedSecretsEnvironment(agentId: uuid, pluginId: plugin.id)
+    }
 
-        if let uuid = UUID(uuidString: agentId) {
-            env = AgentSecretsKeychain.mergedSecretsEnvironment(agentId: uuid, pluginId: plugin.id)
-        }
-
+    private func buildExecEnvironment(
+        secrets: [String: String],
+        from args: [String: Any]
+    ) -> [String: String] {
+        var env = secrets
         env["OSAURUS_PLUGIN"] = plugin.id
         env.merge(buildParamVars(from: args)) { _, new in new }
         return env

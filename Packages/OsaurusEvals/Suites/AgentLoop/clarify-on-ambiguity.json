@@ -1,0 +1,21 @@
+{
+  "id": "agent_loop.clarify-on-ambiguity",
+  "domain": "agent_loop",
+  "label": "agent loop • clarify intercept ends the run awaiting input",
+  "query": "One of the two config files needs its timeout doubled, but I won't tell you which one. Use the clarify tool to ask me which file to change — do not guess and do not modify anything until I answer.",
+  "notes": "Pins the clarify intercept exit (`clarifyRequested`) end to end: a successful clarify call must END the run (endRun through the driver) instead of riding to the iteration cap, and nothing may be written while the question is pending. The instruction is explicit because the behaviour under test is the intercept plumbing, not the model's ambiguity detection (CapabilityClaims covers that).",
+  "fixtures": {
+    "workspaceFiles": [
+      { "path": "service-a.toml", "contents": "timeout_seconds = 30\n" },
+      { "path": "service-b.toml", "contents": "timeout_seconds = 45\n" }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 5,
+      "mustCallTools": ["clarify"],
+      "mustNotCallTools": ["file_write", "file_edit"],
+      "allowedExits": ["clarifyRequested"]
+    }
+  }
+}

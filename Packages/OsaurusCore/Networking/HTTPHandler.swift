@@ -3362,6 +3362,40 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             // tool_calls message (mirrors the historical loop local).
             var responseContent = ""
 
+            // Set when a successful `complete`/`clarify` intercept ends the
+            // run — the post-loop tail streams this text (the parsed summary
+            // or clarifying question) so the client sees a final answer
+            // instead of a silent stop. Parity with chat's intercepts.
+            var interceptText: String?
+
+            // Intercept post-check shared by the single-call fallback and
+            // the serial intercept batch path: a successful `complete` /
+            // `clarify` flags `endRun` so the driver exits `.endedBySurface`.
+            func interceptAware(
+                _ inv: ServiceToolInvocation,
+                _ execution: AgentLoopToolExecution
+            ) -> AgentLoopToolExecution {
+                guard
+                    AgentToolLoop.isSuccessfulIntercept(
+                        toolName: inv.toolName,
+                        result: execution.result
+                    )
+                else { return execution }
+                var ended = execution
+                ended.endRun = true
+                switch inv.toolName {
+                case "complete":
+                    interceptText =
+                        CompleteTool.parseSummary(from: inv.jsonArguments)
+                        ?? "Task completed."
+                case "clarify":
+                    interceptText = ClarifyTool.parse(argumentsJSON: inv.jsonArguments)?.question
+                default:
+                    break
+                }
+                return ended
+            }
+
             // Canonical loop skeleton lives in `AgentToolLoop` (slotting mode:
             // dedupe pass + parallel batch execution). These hooks carry the
             // HTTP surface's specifics — SSE forwarding via the writer, the
@@ -3494,13 +3528,18 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 },
                 executeTool: { inv, callId in
                     // Single-call fallback; the batch executor below is the
-                    // normal path for this surface.
-                    let executions = await AgentToolLoop.runBatchInParallel(
-                        [(invocation: inv, callId: callId)],
-                        sessionId: requestId,
-                        agentId: agentId
-                    )
-                    return executions.first
+                    // normal path for this surface. `isExternalSurface`
+                    // marks the execution so the registry's external deny
+                    // list (folder write/shell tools) applies.
+                    let executions = await ChatExecutionContext.$isExternalSurface.withValue(true) {
+                        await AgentToolLoop.runBatchInParallel(
+                            [(invocation: inv, callId: callId)],
+                            sessionId: requestId,
+                            agentId: agentId
+                        )
+                    }
+                    let execution =
+                        executions.first
                         ?? AgentLoopToolExecution(
                             result: ToolEnvelope.failure(
                                 kind: .executionError,
@@ -3509,18 +3548,42 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                             ),
                             isError: true
                         )
+                    return interceptAware(inv, execution)
                 },
                 executeBatch: { calls in
-                    // Two-phase canonical batch: approvals resolve serially
-                    // in model order FIRST (no stacked/racing permission
-                    // prompts), then the approved set runs in parallel via
-                    // a TaskGroup so wall-clock time stays proportional to
-                    // the slowest call; results come back in model order.
-                    await AgentToolLoop.runBatchInParallel(
-                        calls,
-                        sessionId: requestId,
-                        agentId: agentId
-                    )
+                    await ChatExecutionContext.$isExternalSurface.withValue(true) {
+                        // Serial fallback when the batch carries a loop-ending
+                        // intercept (`complete`/`clarify`): execute in model
+                        // order and stop at the first `endRun` — running
+                        // siblings in parallel would let calls AFTER the
+                        // intercept execute and land in history, where the
+                        // serial path (chat/eval parity) stops immediately.
+                        if AgentToolLoop.containsIntercept(calls) {
+                            var executions: [AgentLoopToolExecution] = []
+                            for call in calls {
+                                let single =
+                                    await AgentToolLoop.runBatchInParallel(
+                                        [(invocation: call.invocation, callId: call.callId)],
+                                        sessionId: requestId,
+                                        agentId: agentId
+                                    ).first ?? AgentLoopToolExecution(result: "")
+                                let execution = interceptAware(call.invocation, single)
+                                executions.append(execution)
+                                if execution.endRun { break }
+                            }
+                            return executions
+                        }
+                        // Two-phase canonical batch: approvals resolve serially
+                        // in model order FIRST (no stacked/racing permission
+                        // prompts), then the approved set runs in parallel via
+                        // a TaskGroup so wall-clock time stays proportional to
+                        // the slowest call; results come back in model order.
+                        return await AgentToolLoop.runBatchInParallel(
+                            calls,
+                            sessionId: requestId,
+                            agentId: agentId
+                        )
+                    }
                 },
                 onBatchComplete: { outcomes in
                     var assistantToolCalls: [ToolCall] = []
@@ -3588,6 +3651,26 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 return
             }
 
+            // Even fully-compacted history can't fit the window: the
+            // driver ended the run before sending a doomed request.
+            // Surface the distinct in-band SSE error (the 200 head is
+            // already on the wire) instead of a silent stop.
+            if exitState == .overBudget {
+                hop {
+                    writerBound.value.writeError(AgentToolLoop.overBudgetMessage, context: ctx.value)
+                    writerBound.value.writeEnd(ctx.value)
+                }
+                logSelf.logRequest(
+                    method: "POST",
+                    path: path,
+                    userAgent: logUserAgent,
+                    requestBody: logRequestBody,
+                    responseStatus: 200,
+                    startTime: logStartTime,
+                    errorMessage: AgentToolLoop.overBudgetMessage
+                )
+                return
+            }
             // If we exited via the iteration cap without producing a
             // final text turn (i.e. the last loop body still required
             // tools), stream a synthetic notice so the client sees a
@@ -3598,6 +3681,21 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 hop {
                     writerBound.value.writeContent(
                         notice,
+                        model: model,
+                        responseId: responseId,
+                        created: created,
+                        context: ctx.value
+                    )
+                }
+            }
+            // A successful `complete`/`clarify` intercept ended the run:
+            // stream the parsed summary/question as the final content so
+            // the stateless client gets the same terminal text a chat user
+            // would see in the banner/prompt UI.
+            if exitState == .endedBySurface, let text = interceptText, !text.isEmpty {
+                hop {
+                    writerBound.value.writeContent(
+                        text,
                         model: model,
                         responseId: responseId,
                         created: created,
@@ -6623,8 +6721,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logUserAgent = userAgent
         let logSelf = self
         runRequestTask(priority: .userInitiated) {
+            // External callers never see the externally-denied tool classes
+            // (folder write/shell) — `/mcp/call` refuses them too.
             let entries = await MainActor.run {
-                ToolRegistry.shared.listTools().filter { $0.enabled }
+                ToolRegistry.shared.listTools().filter {
+                    $0.enabled && !ToolRegistry.externallyDeniedToolNames.contains($0.name)
+                }
             }
             let tools = entries.map { e in
                 var obj: [String: Any] = [
@@ -6684,33 +6786,51 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             requestBodyString = nil
         }
 
-        // Tool calls attributed to the Default agent are not exposable externally.
-        // Custom-agent and unattributed (anonymous) calls keep working.
-        if let header = head.headers.first(name: "X-Osaurus-Agent-Id"),
-            let agentUUID = UUID(uuidString: header),
-            let rejection = Agent.rejectBuiltInForExternalSurface(
-                agentUUID,
-                source: "http/mcp/call"
-            )
-        {
-            let bodyJSON = #"{"error":"\#(rejection.code)","message":"\#(rejection.message)"}"#
-            sendResponse(
-                context: context,
-                version: head.version,
-                status: .forbidden,
-                headers: [("Content-Type", "application/json; charset=utf-8")],
-                body: bodyJSON
-            )
-            logRequest(
-                method: "POST",
-                path: "/mcp/call",
-                userAgent: userAgent,
-                requestBody: requestBodyString,
-                responseStatus: 403,
-                startTime: startTime,
-                errorMessage: rejection.message
-            )
-            return
+        // Tool calls attributed to the Default agent are not exposable
+        // externally. A PRESENT header must parse to a valid custom-agent
+        // UUID — a malformed value used to skip the guard entirely, which
+        // was a trivial bypass. Unattributed (no header) calls keep
+        // working for the documented MCP bridge flow: they execute with NO
+        // agent context bound, so they can never act as the built-in
+        // agent, and the external deny list below blocks workspace-
+        // mutating tool classes regardless.
+        if let header = head.headers.first(name: "X-Osaurus-Agent-Id") {
+            let agentUUID = UUID(uuidString: header)
+            let rejection: (code: String, message: String)? = {
+                if agentUUID == nil {
+                    return (
+                        "invalid_agent",
+                        "X-Osaurus-Agent-Id must be a valid agent UUID."
+                    )
+                }
+                if let guardError = Agent.rejectBuiltInForExternalSurface(
+                    agentUUID,
+                    source: "http/mcp/call"
+                ) {
+                    return (guardError.code, guardError.message)
+                }
+                return nil
+            }()
+            if let rejection {
+                let bodyJSON = #"{"error":"\#(rejection.code)","message":"\#(rejection.message)"}"#
+                sendResponse(
+                    context: context,
+                    version: head.version,
+                    status: .forbidden,
+                    headers: [("Content-Type", "application/json; charset=utf-8")],
+                    body: bodyJSON
+                )
+                logRequest(
+                    method: "POST",
+                    path: "/mcp/call",
+                    userAgent: userAgent,
+                    requestBody: requestBodyString,
+                    responseStatus: 403,
+                    startTime: startTime,
+                    errorMessage: rejection.message
+                )
+                return
+            }
         }
 
         struct CallBody: Codable {
@@ -6782,6 +6902,32 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             return "{}"
         }()
 
+        // External deny list: folder write/shell tool classes are never
+        // invocable through the MCP bridge (they're also hidden from
+        // `/mcp/tools`). Refuse before any schema validation or gating.
+        if ToolRegistry.externallyDeniedToolNames.contains(req.name) {
+            let message =
+                "'\(req.name)' is not available to external callers. Folder write and shell tools can only run from the Osaurus app."
+            let bodyJSON = #"{"error":"tool_not_exposable","message":"\#(message)"}"#
+            sendResponse(
+                context: context,
+                version: head.version,
+                status: .forbidden,
+                headers: [("Content-Type", "application/json; charset=utf-8")],
+                body: bodyJSON
+            )
+            logRequest(
+                method: "POST",
+                path: "/mcp/call",
+                userAgent: userAgent,
+                requestBody: requestBodyString,
+                responseStatus: 403,
+                startTime: startTime,
+                errorMessage: message
+            )
+            return
+        }
+
         let loop = context.eventLoop
         let ctx = NIOLoopBound(context, eventLoop: loop)
         let cors = stateRef.value.corsHeaders
@@ -6841,7 +6987,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     }
                 }
 
-                let result = try await ToolRegistry.shared.execute(name: toolName, argumentsJSON: argsJSON)
+                // Belt-and-braces: the registry re-checks the external deny
+                // list under this flag even if a new entry point forgets
+                // the name-based preflight above.
+                let result = try await ChatExecutionContext.$isExternalSurface.withValue(true) {
+                    try await ToolRegistry.shared.execute(name: toolName, argumentsJSON: argsJSON)
+                }
                 let payload: [String: Any] = [
                     "content": [["type": "text", "text": result]],
                     "isError": false,

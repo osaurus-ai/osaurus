@@ -1,0 +1,23 @@
+{
+  "id": "agent_loop.batch-error-isolation",
+  "domain": "agent_loop",
+  "label": "agent loop • one failing call in a batch never aborts its siblings",
+  "query": "Read real-1.txt, ghost.txt, and real-2.txt — issue all three file_read calls together in a single response. ghost.txt may not exist; that's fine. Then write summary.txt containing the two words you found, separated by a single space.",
+  "notes": "Exercises the production two-phase batch path under partial failure: the ghost.txt slot returns a paired error envelope while its siblings execute and record normally (headless policy, stopOnToolRejection=false), and the run still converges on the right outcome. Pins the 'per-call errors are isolated, never batch-fatal' contract end to end.",
+  "fixtures": {
+    "workspaceFiles": [
+      { "path": "real-1.txt", "contents": "north\n" },
+      { "path": "real-2.txt", "contents": "south\n" }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 8,
+      "mustCallTools": ["file_read", "file_write"],
+      "allowedExits": ["finalResponse"],
+      "files": [
+        { "path": "summary.txt", "contains": "north south" }
+      ]
+    }
+  }
+}

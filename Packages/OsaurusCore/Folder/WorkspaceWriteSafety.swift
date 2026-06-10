@@ -194,7 +194,7 @@ enum WorkspaceWriteSafety {
             "display_name": operation.type.displayName,
             "path": operation.path,
             "timestamp": ISO8601DateFormatter().string(from: operation.timestamp),
-            "can_undo": true,
+            "can_undo": operation.canUndo,
         ]
         if let destinationPath = operation.destinationPath {
             entry["destination_path"] = destinationPath

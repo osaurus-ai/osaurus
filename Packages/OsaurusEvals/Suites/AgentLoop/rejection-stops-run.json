@@ -1,0 +1,20 @@
+{
+  "id": "agent_loop.rejection-stops-run",
+  "domain": "agent_loop",
+  "label": "agent loop • chat rejection policy stops the run on a tool error",
+  "query": "Use file_read to read the file missing-config.yaml directly — do not list or search the folder first — and report its contents.",
+  "notes": "Pins the chat surface's `stopOnToolRejection: true` policy: the first error envelope (file_read on a nonexistent path) ends the run with exit=toolRejected instead of looping. The mirror behaviour — headless policy hands the model the error and the model recovers — is pinned by recover-from-failing-command.json (stopOnToolRejection defaults to false there).",
+  "fixtures": {
+    "workspaceFiles": [
+      { "path": "README.md", "contents": "This project has no YAML configuration.\n" }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 4,
+      "stopOnToolRejection": true,
+      "mustCallTools": ["file_read"],
+      "allowedExits": ["toolRejected"]
+    }
+  }
+}

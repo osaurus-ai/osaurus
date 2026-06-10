@@ -216,9 +216,10 @@ struct SandboxReduceTool: OsaurusTool, @unchecked Sendable {
                 for notice in notices {
                     messages.append(ChatMessage(role: "user", content: notice))
                 }
-                return AgentLoopBudget.trimPreservingSystemPrefix(
+                return AgentLoopBudget.composeIterationMessages(
                     messages,
-                    with: budgetManager,
+                    notices: [],
+                    manager: budgetManager,
                     watermark: watermark
                 )
             },
@@ -378,6 +379,15 @@ struct SandboxReduceTool: OsaurusTool, @unchecked Sendable {
             return ToolEnvelope.failure(
                 kind: .executionError,
                 message: "Reduction subagent stopped after a tool failure.",
+                tool: name,
+                retryable: true
+            )
+        case .overBudget:
+            return ToolEnvelope.failure(
+                kind: .executionError,
+                message:
+                    "Reduction subagent overflowed its context window even after compaction. "
+                    + "Narrow the task or scope it with `paths`.",
                 tool: name,
                 retryable: true
             )

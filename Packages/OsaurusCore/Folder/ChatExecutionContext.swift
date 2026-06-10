@@ -98,4 +98,14 @@ public enum ChatExecutionContext {
     /// `nil` everywhere else, so plain folder and plain sandbox modes are
     /// untouched.
     @TaskLocal public static var sandboxReadBridge: SandboxReadBridge?
+
+    /// True when the current tool execution was initiated by an EXTERNAL
+    /// surface (the HTTP `/agents/{id}/run` loop or the `/mcp/call`
+    /// bridge) rather than the in-app chat/plugin surfaces. The registry
+    /// refuses workspace-mutating tool classes
+    /// (`ToolRegistry.externallyDeniedToolNames`) under this flag — with
+    /// a folder open those tools are registered process-wide with policy
+    /// `.auto`, and loopback callers skip Bearer auth entirely.
+    /// Module-internal so out-of-module callers cannot unbind it.
+    @TaskLocal static var isExternalSurface: Bool = false
 }
