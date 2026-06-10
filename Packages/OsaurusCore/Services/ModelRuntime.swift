@@ -3547,6 +3547,7 @@ public actor ModelRuntime {
             }
             let directWeightSentinels = [
                 "model.safetensors",
+                "model.safetensors.index.json",
                 "weights.safetensors",
                 "model-00001-of-00001.safetensors",
             ]

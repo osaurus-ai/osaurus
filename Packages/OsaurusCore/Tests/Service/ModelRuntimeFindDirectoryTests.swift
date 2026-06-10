@@ -55,6 +55,27 @@ struct ModelRuntimeFindDirectoryTests {
         #expect(resolved?.resolvingSymlinksInPath().path == realModel.resolvingSymlinksInPath().path)
     }
 
+    @Test("Indexed sharded bundle resolves from model.safetensors.index.json")
+    func indexedShardedBundleResolvesFromManifestSentinel() throws {
+        let (root, realModel) = try makeRoot()
+        try FileManager.default.createDirectory(at: realModel, withIntermediateDirectories: true)
+        try Data(#"{"model_type":"mimo_v2"}"#.utf8).write(
+            to: realModel.appendingPathComponent("config.json")
+        )
+        try Data("{}".utf8).write(
+            to: realModel.appendingPathComponent("tokenizer.json")
+        )
+        try Data(#"{"weight_map":{"model.embed_tokens.weight":"model_pp0_ep0_shard0.safetensors"}}"#.utf8).write(
+            to: realModel.appendingPathComponent("model.safetensors.index.json")
+        )
+
+        let resolved = ModelRuntime.resolveLocalModelDirectory(
+            forModelId: "OsaurusAI/TestModel",
+            in: root
+        )
+        #expect(resolved?.resolvingSymlinksInPath().path == realModel.resolvingSymlinksInPath().path)
+    }
+
     @Test("Friendly non-CRACK id resolves to local CRACK bundle")
     func friendlyNonCrackIdResolvesToLocalCrackBundle() throws {
         let root = try makeIsolatedDir()
