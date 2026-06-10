@@ -51,6 +51,12 @@ struct PairingApprovalView: View {
                     .opacity(appeared ? 1 : 0)
                     .offset(y: appeared ? 0 : 4)
 
+                encryptionAssurance
+                    .padding(.top, 12)
+                    .padding(.horizontal, 24)
+                    .opacity(appeared ? 1 : 0)
+                    .offset(y: appeared ? 0 : 4)
+
                 VStack(alignment: .leading, spacing: 4) {
                     Toggle(isOn: $state.isPermanent) {
                         Text("Remember this device permanently", bundle: .module)
@@ -167,6 +173,42 @@ struct PairingApprovalView: View {
                     )
                 )
         }
+    }
+
+    // MARK: - Encryption Assurance
+
+    /// Reassures the user at the moment of approval: everything this device
+    /// exchanges with the agent runs through the Osaurus Secure Channel.
+    private var encryptionAssurance: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "lock.fill")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(theme.successColor)
+                .padding(.top, 1)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("This connection will be end-to-end encrypted", bundle: .module)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(theme.primaryText)
+                Text(
+                    "Conversations and credentials are sealed between the two devices — not even the relay can read them.",
+                    bundle: .module
+                )
+                .font(.system(size: 11))
+                .foregroundColor(theme.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(theme.successColor.opacity(theme.isDark ? 0.10 : 0.07))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(theme.successColor.opacity(0.25), lineWidth: 1)
+        )
     }
 
     // MARK: - Action Buttons

@@ -631,15 +631,30 @@ struct AgentPill: View {
         ) {
             remoteAvatar(systemImage: "network", size: 26)
             VStack(alignment: .leading, spacing: 1) {
-                Text(remote.name)
-                    .font(.system(size: 12, weight: isCurrent ? .semibold : .medium))
-                    .foregroundColor(theme.primaryText)
-                    .lineLimit(1)
+                HStack(spacing: 4) {
+                    Text(remote.name)
+                        .font(.system(size: 12, weight: isCurrent ? .semibold : .medium))
+                        .foregroundColor(theme.primaryText)
+                        .lineLimit(1)
+                    if remote.supportsSecureChannel {
+                        Image(systemName: "lock.fill")
+                            .font(.system(size: 8, weight: .semibold))
+                            .foregroundColor(theme.successColor)
+                            .help(L("End-to-end encrypted"))
+                    }
+                }
                 let subtitle = [
                     remote.host.map(shortHost),
                     remote.agentDescription.isEmpty ? nil : remote.agentDescription,
                 ].compactMap { $0 }.joined(separator: " · ")
-                if !subtitle.isEmpty {
+                if !remote.supportsSecureChannel {
+                    // Old peer: we hard-require E2E for agent traffic, so chat
+                    // will be refused until it upgrades — say so up front.
+                    Text("Needs upgrade for encrypted chat", bundle: .module)
+                        .font(.system(size: 10))
+                        .foregroundColor(theme.warningColor)
+                        .lineLimit(1)
+                } else if !subtitle.isEmpty {
                     Text(subtitle)
                         .font(.system(size: 10))
                         .foregroundColor(theme.tertiaryText)
@@ -661,10 +676,18 @@ struct AgentPill: View {
             }
         ) {
             remoteAvatar(systemImage: "antenna.radiowaves.left.and.right", size: 26)
-            Text(relay.name)
-                .font(.system(size: 12, weight: isCurrent ? .semibold : .medium))
-                .foregroundColor(theme.primaryText)
-                .lineLimit(1)
+            HStack(spacing: 4) {
+                Text(relay.name)
+                    .font(.system(size: 12, weight: isCurrent ? .semibold : .medium))
+                    .foregroundColor(theme.primaryText)
+                    .lineLimit(1)
+                // Relay agent traffic is Secure Channel or refused (426 gate),
+                // so a paired agent that chats is end-to-end encrypted.
+                Image(systemName: "lock.fill")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundColor(theme.successColor)
+                    .help(L("End-to-end encrypted"))
+            }
         }
         .id(index)
     }

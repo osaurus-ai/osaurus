@@ -187,6 +187,23 @@ struct ChatEmptyState: View {
         return quickActions
     }
 
+    /// Transport-security status for the active remote agent, if any.
+    /// Relay agents are always end-to-end encrypted (the Secure Channel is
+    /// hard-required for agent traffic); Bonjour peers advertise support via
+    /// `osc=1` — peers without it must upgrade before they can chat.
+    private enum RemoteEncryptionStatus {
+        case endToEndEncrypted
+        case peerNeedsUpgrade
+    }
+
+    private var remoteEncryptionStatus: RemoteEncryptionStatus? {
+        if activeRelayAgent != nil { return .endToEndEncrypted }
+        if let discovered = activeDiscoveredAgent {
+            return discovered.supportsSecureChannel ? .endToEndEncrypted : .peerNeedsUpgrade
+        }
+        return nil
+    }
+
     /// Drives the SwiftUI `.animation(value:)` so the title/subtitle/actions
     /// animate together when the generative payload swaps in.
     private var generativeFingerprint: String {
@@ -305,6 +322,13 @@ struct ChatEmptyState: View {
                     .opacity(hasAppeared ? 1 : 0)
                     .offset(y: hasAppeared ? 0 : 15)
                     .animation(theme.springAnimation().delay(0.17), value: hasAppeared)
+
+                if let status = remoteEncryptionStatus {
+                    encryptionBadge(status)
+                        .opacity(hasAppeared ? 1 : 0)
+                        .offset(y: hasAppeared ? 0 : 12)
+                        .animation(theme.springAnimation().delay(0.24), value: hasAppeared)
+                }
             }
             .animation(theme.springAnimation(), value: generativeFingerprint)
 
@@ -328,6 +352,36 @@ struct ChatEmptyState: View {
         } else {
             HeroAgentAvatar(agent: activeAgent)
         }
+    }
+
+    /// Small capsule under the greeting that tells the user whether this
+    /// remote conversation is protected by the Secure Channel.
+    private func encryptionBadge(_ status: RemoteEncryptionStatus) -> some View {
+        let encrypted = status == .endToEndEncrypted
+        let tint = encrypted ? theme.successColor : theme.warningColor
+        return HStack(spacing: 5) {
+            Image(systemName: encrypted ? "lock.fill" : "exclamationmark.triangle.fill")
+                .font(.system(size: 9, weight: .semibold))
+            if encrypted {
+                Text("End-to-end encrypted", bundle: .module)
+            } else {
+                Text("Peer needs an Osaurus upgrade for encrypted chat", bundle: .module)
+            }
+        }
+        .font(.system(size: 11, weight: .medium))
+        .foregroundColor(tint)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 4)
+        .background(Capsule().fill(tint.opacity(theme.isDark ? 0.14 : 0.10)))
+        .help(
+            encrypted
+                ? L(
+                    "Agent traffic is protected by the Osaurus Secure Channel: forward-secret, mutually authenticated end-to-end encryption."
+                )
+                : L(
+                    "This peer runs an older Osaurus without the Secure Channel. Agent chat is refused until it upgrades — no plaintext fallback."
+                )
+        )
     }
 
     private func remoteHeroAvatar(systemImage: String, seed: String) -> some View {

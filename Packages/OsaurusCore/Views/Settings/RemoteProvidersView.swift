@@ -254,6 +254,26 @@ private struct ProviderCardView: View {
                             .foregroundColor(theme.primaryText)
 
                         statusBadge
+
+                        if provider.providerType == .osaurus {
+                            // Osaurus peers talk through the Secure Channel —
+                            // agent traffic is end-to-end encrypted or refused.
+                            HStack(spacing: 3) {
+                                Image(systemName: "lock.fill")
+                                    .font(.system(size: 8, weight: .semibold))
+                                Text("E2E", bundle: .module)
+                                    .font(.system(size: 10, weight: .semibold))
+                            }
+                            .foregroundColor(theme.successColor)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Capsule().fill(theme.successColor.opacity(0.12)))
+                            .help(
+                                L(
+                                    "Agent traffic is protected by the Osaurus Secure Channel: forward-secret, mutually authenticated end-to-end encryption."
+                                )
+                            )
+                        }
                     }
 
                     Text(provider.displayEndpoint)
