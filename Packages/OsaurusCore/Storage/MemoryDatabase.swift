@@ -49,7 +49,7 @@ public enum MemoryDatabaseError: Error, LocalizedError {
 public final class MemoryDatabase: @unchecked Sendable {
     public static let shared = MemoryDatabase()
 
-    private static let schemaVersion = 8
+    private static let schemaVersion = 9
 
     nonisolated(unsafe) private static let iso8601Formatter: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()
@@ -65,8 +65,30 @@ public final class MemoryDatabase: @unchecked Sendable {
 
     private let stmtCache = PreparedStatementCache(capacity: 96)
 
+    /// Why the most recent `open()` failed (connection or migration),
+    /// kept for the diagnostics panel — `isOpen == false` alone gives the
+    /// user nothing actionable. Guarded by `queue`.
+    private var _lastOpenError: String?
+
     public var isOpen: Bool {
         queue.sync { db != nil }
+    }
+
+    public var lastOpenErrorDescription: String? {
+        queue.sync { _lastOpenError }
+    }
+
+    /// Schema version this build expects (`PRAGMA user_version` once all
+    /// migrations have run). Surfaced by diagnostics.
+    public static var expectedSchemaVersion: Int { latestSchemaVersion }
+
+    /// Current `PRAGMA user_version` of the open database, or nil when
+    /// closed. Surfaced by diagnostics.
+    public func schemaUserVersion() -> Int? {
+        queue.sync {
+            guard db != nil else { return nil }
+            return try? getSchemaVersion()
+        }
     }
 
     public static func waitForSharedOpen(
@@ -99,8 +121,29 @@ public final class MemoryDatabase: @unchecked Sendable {
         try queue.sync {
             guard db == nil else { return }
             OsaurusPaths.ensureExistsSilent(OsaurusPaths.memory())
-            try openConnection()
-            try runMigrations()
+            do {
+                try openConnection()
+            } catch {
+                _lastOpenError = error.localizedDescription
+                throw error
+            }
+            do {
+                try runMigrations()
+                _lastOpenError = nil
+            } catch {
+                // Close the half-opened connection before rethrowing.
+                // Leaving `db` set here turns every retry of `open()` into
+                // an instant no-op success (`guard db == nil`), so the app
+                // would run against the unmigrated schema and the migration
+                // failure would never surface anywhere.
+                _lastOpenError = "migration: \(error.localizedDescription)"
+                stmtCache.clear()
+                if let connection = db {
+                    sqlite3_close(connection)
+                    db = nil
+                }
+                throw error
+            }
         }
         OsaurusDatabaseHandle.register(maintenanceHandle)
     }
@@ -156,7 +199,7 @@ public final class MemoryDatabase: @unchecked Sendable {
 
     /// Highest schema version this build knows how to produce. Opening a DB
     /// stamped newer than this is refused (forward-version fail-fast).
-    private static let latestSchemaVersion = 8
+    private static let latestSchemaVersion = 9
 
     private func runMigrations() throws {
         let currentVersion = try getSchemaVersion()
@@ -185,6 +228,10 @@ public final class MemoryDatabase: @unchecked Sendable {
         if currentVersion < 8 {
             // Same self-managed BEGIN/COMMIT as v7 — do not double-wrap.
             try migrateToV8()
+        }
+        if currentVersion < 9 {
+            // Same self-managed BEGIN/COMMIT as v7/v8 — do not double-wrap.
+            try migrateToV9()
         }
     }
 
@@ -444,6 +491,27 @@ public final class MemoryDatabase: @unchecked Sendable {
         try setSchemaVersion(8)
     }
 
+    /// V9 migration: re-run the orphan `signal_type` drop, now rename-free.
+    ///
+    /// The v7/v8 rebuild started with `ALTER TABLE ... RENAME`, which makes
+    /// SQLite re-parse every view and trigger in the database — a single
+    /// stale schema object left behind by an earlier build fails that
+    /// statement, and with it the whole migration, on every launch.
+    /// Combined with the old `open()` behavior (a failed migration left the
+    /// connection set, so retries no-opped into "success"), affected
+    /// installs kept running against the orphan schema with no visible
+    /// error and their `user_version` never advanced. The rebuild in
+    /// `dropOrphanSignalTypeColumnIfPresent` is now a copy-out/copy-back
+    /// through a scratch table that only ever parses `pending_signals`
+    /// itself, so unrelated schema debris can't block it. Re-running it at
+    /// v9 heals databases whose earlier repair attempts kept failing; it's
+    /// a fast no-op for everyone already canonical.
+    private func migrateToV9() throws {
+        MemoryLogger.database.info("Running v9 migration (rename-free orphan signal_type drop)")
+        try dropOrphanSignalTypeColumnIfPresent()
+        try setSchemaVersion(9)
+    }
+
     /// Detect and drop the orphan `pending_signals.signal_type` column if it
     /// is present, leaving the canonical schema behind. Idempotent: a no-op
     /// when the column is already absent. Does **not** stamp the schema
@@ -465,15 +533,29 @@ public final class MemoryDatabase: @unchecked Sendable {
             return
         }
 
-        // SQLite 3.35+ supports ALTER TABLE DROP COLUMN, but the
-        // vendored SQLCipher build's exact version is unknown to us
-        // here. The rename + recreate + copy + drop pattern works on
-        // every SQLite 3.x and is the SQLite-recommended path for
-        // schema rewrites. Wrap in a transaction so a crash mid-flight
-        // doesn't leave a half-rebuilt table.
+        // Rebuild without `ALTER TABLE`: a RENAME makes SQLite re-parse
+        // every view and trigger in the database, so a single stale schema
+        // object from an earlier build fails the rebuild outright. A
+        // copy-out/copy-back through a scratch table only ever parses
+        // `pending_signals` itself. Wrap in a transaction so a crash
+        // mid-flight doesn't leave a half-rebuilt table.
         try executeRaw("BEGIN TRANSACTION")
         do {
-            try executeRaw("ALTER TABLE pending_signals RENAME TO pending_signals_old")
+            // Scratch tables an interrupted earlier rebuild may have left
+            // behind; they only ever hold a stale duplicate of
+            // `pending_signals`, never the sole copy.
+            try executeRaw("DROP TABLE IF EXISTS pending_signals_v6")
+            try executeRaw("DROP TABLE IF EXISTS pending_signals_old")
+            try executeRaw("DROP TABLE IF EXISTS pending_signals_scratch")
+            try executeRaw(
+                """
+                    CREATE TABLE pending_signals_scratch AS
+                    SELECT id, agent_id, conversation_id, user_message,
+                           assistant_message, status, created_at
+                    FROM pending_signals
+                """
+            )
+            try executeRaw("DROP TABLE pending_signals")
             try executeRaw(
                 """
                     CREATE TABLE pending_signals (
@@ -493,12 +575,12 @@ public final class MemoryDatabase: @unchecked Sendable {
                         (id, agent_id, conversation_id, user_message, assistant_message, status, created_at)
                     SELECT
                         id, agent_id, conversation_id, user_message, assistant_message, status, created_at
-                    FROM pending_signals_old
+                    FROM pending_signals_scratch
                 """
             )
-            try executeRaw("DROP TABLE pending_signals_old")
-            // Indexes were attached to the old table name and got
-            // dropped along with it; recreate against the new table.
+            try executeRaw("DROP TABLE pending_signals_scratch")
+            // The indexes were dropped with the original table; recreate
+            // against the rebuilt one.
             try executeRaw(
                 "CREATE INDEX IF NOT EXISTS idx_pending_conv_status ON pending_signals(conversation_id, status)"
             )

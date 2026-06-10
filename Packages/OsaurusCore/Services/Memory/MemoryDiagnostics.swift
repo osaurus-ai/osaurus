@@ -73,6 +73,7 @@ public enum MemoryDiagnostics {
 
         let configEnabled = await MainActor.run { MemoryConfigurationStore.load().enabled }
         let dbOpen = MemoryDatabase.shared.isOpen
+        let lastOpenError = MemoryDatabase.shared.lastOpenErrorDescription
         let telemetryBefore = await MemoryService.shared.bufferTelemetry()
 
         await MemoryService.shared.bufferTurn(
@@ -90,6 +91,7 @@ public enum MemoryDiagnostics {
         return classify(
             configEnabled: configEnabled,
             dbOpen: dbOpen,
+            lastOpenError: lastOpenError,
             beforeCount: beforeCount,
             afterCount: afterCount,
             before: telemetryBefore,
@@ -103,6 +105,7 @@ public enum MemoryDiagnostics {
     static func classify(
         configEnabled: Bool,
         dbOpen: Bool,
+        lastOpenError: String? = nil,
         beforeCount: Int,
         afterCount: Int,
         before: BufferTurnTelemetry,
@@ -122,9 +125,10 @@ public enum MemoryDiagnostics {
             )
         }
         guard dbOpen else {
+            let detail = lastOpenError.map { " Last open error: \($0)" } ?? ""
             return .failure(
                 reason:
-                    "memory database is closed. Restart the app and check Console for SQLCipher errors.",
+                    "memory database is closed. Restart the app and check Console for SQLCipher errors.\(detail)",
                 schemaDump: nil
             )
         }
@@ -142,10 +146,7 @@ public enum MemoryDiagnostics {
             let lower = err.lowercased()
             let attachSchema =
                 lower.contains("sqlite_constraint") || lower.contains("step=19")
-            let schemaDump =
-                attachSchema
-                ? MemoryDatabase.shared.tableSchemaDescription(table: "pending_signals")
-                : nil
+            let schemaDump = attachSchema ? schemaDumpWithContext() : nil
             return .failure(
                 reason: "bufferTurn threw on insert. \(err)",
                 schemaDump: schemaDump
@@ -176,5 +177,28 @@ public enum MemoryDiagnostics {
                 "bufferTurn returned without inserting and without recording a known reason. Check Console for memory_service logs.",
             schemaDump: nil
         )
+    }
+
+    /// Schema dump plus the surrounding facts every constraint-failure
+    /// report needs: the database's `user_version` vs what this build
+    /// expects, the app version, and the last open/migration error. A
+    /// single screenshot then distinguishes "hasn't updated yet",
+    /// "migration keeps failing", and "schema drifted some other way".
+    static func schemaDumpWithContext() -> String {
+        var lines = [MemoryDatabase.shared.tableSchemaDescription(table: "pending_signals")]
+        let userVersion =
+            MemoryDatabase.shared.schemaUserVersion().map(String.init) ?? "unknown"
+        lines.append("")
+        lines.append(
+            "schema user_version: \(userVersion) (this build expects \(MemoryDatabase.expectedSchemaVersion))"
+        )
+        let appVersion =
+            Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+            ?? "unknown"
+        lines.append("app version: \(appVersion)")
+        if let openError = MemoryDatabase.shared.lastOpenErrorDescription {
+            lines.append("last open/migration error: \(openError)")
+        }
+        return lines.joined(separator: "\n")
     }
 }
