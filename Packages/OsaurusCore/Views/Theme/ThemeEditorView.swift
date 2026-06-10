@@ -967,26 +967,36 @@ struct ThemeEditorView: View {
         }
     }
 
-    private static let maxImageDimension: CGFloat = 2048
+    nonisolated private static let maxImageDimension: CGFloat = 2048
 
     private func handleImageImport(_ result: Result<[URL], Error>) {
         switch result {
         case .success(let urls):
             guard let url = urls.first else { return }
-            do {
-                let data = try Data(contentsOf: url)
-                let resizedData = Self.resizeImageData(data, maxDimension: Self.maxImageDimension) ?? data
-                editingTheme.background.imageData = resizedData.base64EncodedString()
+            // Reading, resizing, and PNG-encoding a large image takes long
+            // enough to hang the UI, so the whole pipeline runs off the
+            // main actor; only the state update hops back.
+            Task {
+                let encoded = await Task.detached(priority: .userInitiated) { () -> String? in
+                    guard let data = try? Data(contentsOf: url) else { return nil }
+                    let resized = Self.resizeImageData(data, maxDimension: Self.maxImageDimension) ?? data
+                    return resized.base64EncodedString()
+                }.value
+                guard let encoded else {
+                    print("[Osaurus] Failed to import image")
+                    return
+                }
+                editingTheme.background.imageData = encoded
                 editingTheme.background.type = .image
-            } catch {
-                print("[Osaurus] Failed to import image: \(error)")
             }
         case .failure(let error):
             print("[Osaurus] Image import failed: \(error)")
         }
     }
 
-    private static func resizeImageData(_ data: Data, maxDimension: CGFloat) -> Data? {
+    /// Off-main-actor helper: drawing into an offscreen `NSImage` and
+    /// producing the PNG representation are safe on a background thread.
+    nonisolated private static func resizeImageData(_ data: Data, maxDimension: CGFloat) -> Data? {
         guard let image = NSImage(data: data) else { return nil }
         let size = image.size
         guard size.width > maxDimension || size.height > maxDimension else { return nil }
