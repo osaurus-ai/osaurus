@@ -3,7 +3,7 @@
   "domain": "agent_loop",
   "label": "agent loop • search then edit across multiple files",
   "query": "The function fetchDataV1 has been renamed to fetchData. Find every file that references fetchDataV1 and update all of them to use the new name.",
-  "notes": "Forces a search-before-edit workflow across more than one file. Scored on disk state: the old name must be gone from BOTH files and the new name present.",
+  "notes": "Forces a search-before-edit workflow across more than one file. Scored on disk state: the old name must be gone from BOTH files and the new name present. The iteration budget is deliberately roomy — each file needs TWO edits (import + call site) and small models burn steps recovering from relative-path mistakes; budget pressure is wrap-up-on-budget's job, not this case's.",
   "fixtures": {
     "workspaceFiles": [
       {
@@ -22,7 +22,7 @@
   },
   "expect": {
     "agentLoop": {
-      "maxIterations": 10,
+      "maxIterations": 20,
       "files": [
         { "path": "src/client.py", "contains": "fetchData" },
         { "path": "src/report.py", "contains": "fetchData" }

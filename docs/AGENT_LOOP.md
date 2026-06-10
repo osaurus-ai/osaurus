@@ -202,6 +202,53 @@ The OpenAI-compatible HTTP endpoint is **stateless** — there's no Osaurus sess
 
 ---
 
+## The Canonical Loop Driver (`AgentToolLoop`)
+
+All agent loops in Osaurus run on **one driver**: [`AgentToolLoop`](../Packages/OsaurusCore/Services/Chat/AgentToolLoop.swift). The chat UI, the HTTP `/v1/chat/completions` agent path, the plugin completion loop, the `sandbox_reduce` nested reduction subagent (see [REDUCTION_SUBAGENT.md](REDUCTION_SUBAGENT.md)), and the eval harness each supply surface-specific hooks (`buildMessages`, `modelStep`, `executeTool` / `executeBatch`, …) but share the iteration loop itself: budget bookkeeping, dedupe, next-step bias, notice staging, batch ordering, and the exit taxonomy live in exactly one place.
+
+Where the surfaces deliberately diverge, the difference is a named [`AgentLoopPolicy`](../Packages/OsaurusCore/Services/Chat/AgentToolLoop.swift) knob rather than a forked loop:
+
+| Knob | Chat | HTTP / Plugin |
+| --- | --- | --- |
+| `maxIterations` | per-surface budget | per-surface budget |
+| `budgetWarningThreshold` | 3 (default) | 3 (default) |
+| `stopOnToolRejection` | `true` — a rejected tool stops the run | `false` — the model gets the error envelope and keeps looping |
+| `dedupeNoticeEnabled` | `true` — a dedupe replay also stages a "use the result you already have" notice | `false` — replays happen silently |
+
+Every run ends with one of five exits: `finalResponse`, `iterationCapReached` (the final iteration's tool calls still execute first), `toolRejected`, `cancelled`, or `endedBySurface` (a `complete`/`clarify` intercept).
+
+### Driver-staged system notices
+
+The driver stages three kinds of `[System Notice]` lines for the *next* model step: the iteration-budget warning ("Tool call budget: N of M remaining…", staged when the remaining budget drops to the policy threshold), the dedupe notice ("You already retrieved this exact result…"), and the `AgentTaskState` next-step bias (see below). The notice contract is uniform across surfaces via [`AgentLoopBudget.composeIterationMessages`](../Packages/OsaurusCore/Services/Chat/AgentToolLoop.swift): history is trimmed **first** (so compaction decisions are notice-independent and KV-stable), then notices are appended as **transient** user messages — they ride exactly one iteration and are never persisted into the surface's history store.
+
+### Parallel tool batches
+
+When a model emits several tool calls in one step, the driver executes them as a batch with serial-equivalent semantics:
+
+- **Two-phase approvals.** Permission gates resolve **serially, in model order, before anything executes** — prompts never stack or race. A denial skips every later call in the batch with a paired rejection envelope (no dangling `tool_use`). The approved set then runs in parallel via a TaskGroup with the gate pre-resolved, and results are restored to model order. HTTP uses the shared two-phase helper (`AgentToolLoop.runBatchInParallel(sessionId:agentId:)`); chat implements the same two phases inline because each outcome also records a UI turn on the MainActor.
+- **Intra-batch dedupe.** Read-like duplicates *within* one batch are deferred past the parallel wave and resolved in order against live state: if the earlier sibling's read succeeded, the duplicate replays the held envelope (serial parity); if it failed, the duplicate executes for real.
+- **Intercepts force serial.** A batch carrying a loop-ending intercept (`AgentToolLoop.interceptToolNames` — `complete`, `clarify`) falls back to serial model-order execution and stops at the first `endRun`, so siblings after a `complete` never execute or land in history.
+- **State-before-cancel.** Executed outcomes are recorded into `AgentTaskState` before cancellation is honored, so history and task state can't desync mid-batch.
+
+### Context budget & KV-stable compaction
+
+Window math lives in one place — [`AgentLoopBudget`](../Packages/OsaurusCore/Services/Chat/AgentToolLoop.swift): window resolution (Foundation ids → 4,096; model bundle `contextLength`; configured fallback → 128k), the canonical reservations (system prompt, request toolset, `max_tokens` response), and `assess(...)`, which the chat input's context chip and send gate use so **UI and runtime never disagree** about fullness or hard overflow. All budgets are computed against the *effective* budget (window × 0.85 safety margin), and the hard-overflow gate excludes compactable history — only a non-compactable prefix that can't possibly fit blocks a send.
+
+When history exceeds the budget, [`ContextBudgetManager`](../Packages/OsaurusCore/Services/Chat/ContextBudgetManager.swift) trims with a sticky [`CompactionWatermark`](../Packages/OsaurusCore/Services/Chat/CompactionWatermark.swift) so the rendered prefix is **monotonic and byte-stable** across iterations — what the paged-KV prefix cache needs to keep reusing the prompt:
+
+- Once a tool result is summarized, the summary replays **byte-identically** forever; once a message is dropped, it stays dropped.
+- Messages already sent verbatim are never *newly* summarized when they age out of the protected tail (a mid-transcript rewrite the KV cache can't reuse past) — they're dropped instead, a pure truncation.
+- The trim note is **count-free** (`[Note: Earlier messages were trimmed…]`) so additional drops never rewrite its bytes.
+- An exhausted trim (protected first message + tail alone over budget) reports an explicit `overBudget` signal instead of silently sending a doomed request.
+
+The protected regions are the first message (original task) and the most recent 3 turn-pairs. Practical consequence for agents: findings narrated in assistant turns survive compaction; raw tool output may not — which is why the model is steered to externalize conclusions as it works.
+
+### Proof lane: end-to-end agentic evals
+
+[`AgentLoopEvaluator`](../Packages/OsaurusCore/Services/Context/AgentLoopEvaluator.swift) drives this same driver against a fixture-seeded temp workspace for the OsaurusEvals `agent_loop` domain — streaming model steps, a stable `session_id` for KV reuse, the parallel batch executor, and config-resolved `max_tokens`, so the eval exercises the production shape rather than a simplified one. Cases assert **outcomes** (file contents, command exit codes) plus harness behaviors: dedupe replays firing, the repeated-call nudge landing, and compaction actually occurring. The evaluator refuses to run while a user folder session is active in-process and snapshots/restores any prior folder-tool registration. See [`Packages/OsaurusEvals/README.md`](../Packages/OsaurusEvals/README.md#agent_loop-domain) for the case schema and the suite inventory.
+
+---
+
 ## Harness Task State (`AgentTaskState`)
 
 Small local models (≈1B active) used as both planner and executor in a free
@@ -250,9 +297,10 @@ Two changes, one component:
    requires the model to descend and read within a fixed turn budget with the
    note **off**. If it only works with the note on, the structure failed.
 
-**Scope.** All three tool-call loops share the component:
-`ChatSession.send` (chat), the HTTP `/v1/chat/completions` agent loop, and the
-plugin completion loop. Within-message dedupe/bias is reset by `beginMessage()`.
+**Scope.** The component is owned by the canonical `AgentToolLoop` driver
+(see above), so every surface gets it automatically: `ChatSession.send`
+(chat), the HTTP `/v1/chat/completions` agent loop, the plugin completion
+loop, and the eval harness. Within-message dedupe/bias is reset by `beginMessage()`.
 Cross-*user-message* survival of `lastListing` (so "what's on my desktop"
 carries into a later "read the file") is **`ChatSession`-only** — the HTTP and
 plugin loops are stateless across requests by design (see the divergence note

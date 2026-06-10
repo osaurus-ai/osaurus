@@ -296,6 +296,30 @@ public struct ContextBudgetManager: Sendable {
         recentPairsToKeep: Int = 3,
         watermark: CompactionWatermark
     ) -> [ChatMessage] {
+        trimMessagesReportingOverflow(
+            messages,
+            recentPairsToKeep: recentPairsToKeep,
+            watermark: watermark
+        ).messages
+    }
+
+    /// The byte-stable context note inserted once messages have been
+    /// dropped. Deliberately COUNT-FREE: a live count would rewrite the
+    /// note's bytes on every additional drop, busting the KV prefix the
+    /// watermark exists to protect.
+    public static let trimmedHistoryNote =
+        "[Note: Earlier messages were trimmed to fit the context window. The original task and recent actions are preserved.]"
+
+    /// Sticky trim variant that also reports whether the transcript STILL
+    /// exceeds the history budget after every compaction lever (summaries,
+    /// drops) is exhausted — i.e. the protected first message + tail alone
+    /// are over budget. Callers can surface that instead of silently
+    /// sending an over-budget request.
+    func trimMessagesReportingOverflow(
+        _ messages: [ChatMessage],
+        recentPairsToKeep: Int = 3,
+        watermark: CompactionWatermark
+    ) -> (messages: [ChatMessage], overBudget: Bool) {
         watermark.validate(against: messages)
 
         // Assemble the visible transcript: replay frozen summaries, skip
@@ -319,28 +343,36 @@ public struct ContextBudgetManager: Sendable {
                         )
                     )
                 )
-            case .none:
+            case .verbatim, .none:
                 visible.append((i, msg))
             }
         }
 
         func render() -> [ChatMessage] {
             var result = visible.map { $0.message }
-            let droppedCount = watermark.droppedCount
-            if droppedCount > 0, !result.isEmpty {
-                let contextNote = ChatMessage(
-                    role: "user",
-                    content:
-                        "[Note: \(droppedCount) earlier messages were trimmed to fit context window. The original task and recent actions are preserved.]"
-                )
-                result.insert(contextNote, at: 1)
+            if watermark.droppedCount > 0, !result.isEmpty {
+                // Count-free so the note's bytes never change once emitted.
+                result.insert(ChatMessage(role: "user", content: Self.trimmedHistoryNote), at: 1)
             }
             return result
         }
 
+        // Everything in the returned transcript is about to be sent to the
+        // model verbatim (frozen summaries excepted — they carry their own
+        // decision). Record that so later trims DROP these messages when
+        // space is needed instead of newly summarizing them — a summary of
+        // a previously-sent message is a mid-transcript rewrite the KV
+        // cache can't reuse past.
+        func markVisibleAsSent() {
+            for (origIndex, _) in visible where watermark.decision(at: origIndex) == nil {
+                watermark.recordVerbatim(at: origIndex, original: messages[origIndex])
+            }
+        }
+
         let budget = historyBudget
         if Self.estimateTokens(for: render()) <= budget {
-            return render()
+            markVisibleAsSent()
+            return (render(), false)
         }
 
         // Identify protected regions on the VISIBLE transcript: first
@@ -350,10 +382,15 @@ public struct ContextBudgetManager: Sendable {
         let protectedTailStart = visible.count - recentCount
         guard protectedTailStart > 1 else {
             // Protected regions cover everything — nothing left to trim.
-            return render()
+            markVisibleAsSent()
+            return (render(), Self.estimateTokens(for: render()) > budget)
         }
 
-        // Phase 1: freeze summaries for middle tool results not yet compacted.
+        // Phase 1: freeze summaries for middle tool results that were never
+        // sent verbatim. Messages already sent verbatim are skipped — once
+        // their bytes were part of the token stream, rewriting them as
+        // summaries would invalidate the KV prefix at that point; phase 2
+        // drops them instead (a pure truncation).
         for slot in 1 ..< protectedTailStart {
             let (origIndex, msg) = visible[slot]
             guard msg.role == "tool", let content = msg.content,
@@ -367,7 +404,8 @@ public struct ContextBudgetManager: Sendable {
             )
         }
         if Self.estimateTokens(for: render()) <= budget {
-            return render()
+            markVisibleAsSent()
+            return (render(), false)
         }
 
         // Phase 2: drop oldest middle messages (never the first message,
@@ -384,7 +422,8 @@ public struct ContextBudgetManager: Sendable {
             tailStart -= 1
         }
 
-        return render()
+        markVisibleAsSent()
+        return (render(), Self.estimateTokens(for: render()) > budget)
     }
 
     /// Trims messages to fit within the history budget.

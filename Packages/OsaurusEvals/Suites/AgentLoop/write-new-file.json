@@ -3,12 +3,13 @@
   "domain": "agent_loop",
   "label": "agent loop • create a new file from scratch",
   "query": "Create a file named TODO.md in this folder containing a markdown checklist with exactly these three unchecked items: 'write tests', 'update docs', 'tag release'.",
-  "notes": "Bare file-creation case in an empty workspace. Pins that the model can produce a file at a specific path with specified content without an existing file to anchor on.",
+  "notes": "Bare file-creation case in an empty workspace. Pins that the model can produce a file at a specific path with specified content without an existing file to anchor on. The clean path: no tool call may return an error envelope.",
   "fixtures": {},
   "expect": {
     "agentLoop": {
       "maxIterations": 6,
       "mustCallTools": ["file_write"],
+      "noToolErrors": true,
       "files": [
         { "path": "TODO.md", "contains": "write tests" },
         { "path": "TODO.md", "contains": "update docs" },

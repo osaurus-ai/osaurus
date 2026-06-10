@@ -143,7 +143,7 @@ struct AgentToolLoopTests {
     @Test func iterationCapReachedWhenToolsNeverStop() async throws {
         let max = 5
         let surface = ScriptedLoopSurface(
-            steps: (0..<max).map { i in .toolCalls([inv("tool_\(i)")]) }
+            steps: (0 ..< max).map { i in .toolCalls([inv("tool_\(i)")]) }
         )
         let result = try await AgentToolLoop.run(
             policy: chatPolicy(maxIterations: max),
@@ -159,7 +159,7 @@ struct AgentToolLoopTests {
         // so iterations 3, 4, 5 must each see the warning notice.
         let max = 5
         let surface = ScriptedLoopSurface(
-            steps: (0..<max).map { i in .toolCalls([inv("tool_\(i)")]) }
+            steps: (0 ..< max).map { i in .toolCalls([inv("tool_\(i)")]) }
         )
         _ = try await AgentToolLoop.run(
             policy: chatPolicy(maxIterations: max),
@@ -169,7 +169,7 @@ struct AgentToolLoopTests {
         #expect(surface.builtNotices.count == max)
         #expect(surface.builtNotices[0].isEmpty)
         #expect(surface.builtNotices[1].isEmpty)
-        for i in 2..<max {
+        for i in 2 ..< max {
             let remaining = max - i
             #expect(
                 surface.builtNotices[i] == [
@@ -464,8 +464,11 @@ struct AgentToolLoopTests {
         // The earlier call WAS recorded; the intercept was not (the last
         // recorded envelope belongs to file_read).
         #expect(state.lastResultEnvelope?.contains("file_read") == true)
-        // No batch-complete callback on early stop.
-        #expect(surface.batchOutcomes.isEmpty)
+        // Batch-complete still fires on the intercept exit so per-batch
+        // surfaces (HTTP) keep the executed rows; the intercept slot is
+        // excluded (it wrote its own history).
+        #expect(surface.batchOutcomes.count == 1)
+        #expect(surface.batchOutcomes[0].map { $0.invocation.toolName } == ["file_read"])
     }
 
     @Test func batchExecutorRejectionStopsRunUnderChatPolicy() async throws {
@@ -492,6 +495,190 @@ struct AgentToolLoopTests {
             hooks: hooks
         )
         #expect(result == AgentToolLoop.RunResult(exit: .toolRejected, iterations: 1))
+        // Batch-complete still fires so per-batch surfaces (HTTP) keep the
+        // executed rows even on the rejection exit.
+        #expect(surface.batchOutcomes.count == 1)
+        #expect(surface.batchOutcomes[0].map(\.wasError) == [false, true])
+    }
+
+    @Test func batchExecutorDedupesDuplicateReadSiblingsWithinOneBatch() async throws {
+        // Two identical reads in ONE model step: serial mode executes the
+        // first and replays the second from the freshly recorded state.
+        // Batch mode must match — the duplicate sibling is deferred past
+        // the parallel wave and replayed in the in-order pass.
+        let args = #"{"path":"a.txt"}"#
+        let envelope = ToolEnvelope.success(
+            tool: "file_read",
+            result: ["kind": "file", "path": "a.txt", "content": "hi"]
+        )
+        let surface = ScriptedLoopSurface(steps: [
+            .toolCalls([inv("file_read", args), inv("other_tool"), inv("file_read", args)]),
+            .finalResponse,
+        ])
+        var batchCalls: [[String]] = []
+        var hooks = surface.makeHooks()
+        hooks.executeBatch = { calls in
+            batchCalls.append(calls.map { $0.invocation.toolName })
+            return calls.map { call in
+                AgentLoopToolExecution(
+                    result: call.invocation.toolName == "file_read"
+                        ? envelope
+                        : ToolEnvelope.success(tool: call.invocation.toolName, text: "ok")
+                )
+            }
+        }
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(),
+            state: AgentTaskState(),
+            hooks: hooks
+        )
+        #expect(result.exit == .finalResponse)
+        // Only ONE file_read reached the executor; the duplicate replayed.
+        #expect(batchCalls == [["file_read", "other_tool"]])
+        #expect(surface.dedupedCalls.map(\.name) == ["file_read"])
+        #expect(surface.dedupedCalls.first?.held == envelope)
+        // Outcomes preserve model order with the replay in its slot.
+        #expect(
+            surface.batchOutcomes[0].map { $0.invocation.toolName } == [
+                "file_read", "other_tool", "file_read",
+            ]
+        )
+        #expect(surface.batchOutcomes[0].map(\.wasDeduped) == [false, false, true])
+    }
+
+    @Test func batchExecutorDuplicateSiblingExecutesWhenFirstReadFails() async throws {
+        // Serial parity: if the first read FAILS, no fresh read is recorded,
+        // so the identical sibling re-executes instead of replaying.
+        let args = #"{"path":"missing.txt"}"#
+        let failure = ToolEnvelope.failure(kind: .notFound, message: "gone", tool: "file_read")
+        let surface = ScriptedLoopSurface(steps: [
+            .toolCalls([inv("file_read", args), inv("file_read", args)]),
+            .finalResponse,
+        ])
+        var batchCalls: [[String]] = []
+        var hooks = surface.makeHooks()
+        hooks.executeBatch = { calls in
+            batchCalls.append(calls.map { $0.invocation.toolName })
+            return calls.map { _ in AgentLoopToolExecution(result: failure, isError: false) }
+        }
+        let result = try await AgentToolLoop.run(
+            policy: headlessPolicy(),
+            state: AgentTaskState(),
+            hooks: hooks
+        )
+        #expect(result.exit == .finalResponse)
+        // Wave 1 ran the first; the deferred duplicate executed in the
+        // in-order pass as a single-call batch.
+        #expect(batchCalls == [["file_read"], ["file_read"]])
+        #expect(surface.dedupedCalls.isEmpty)
+        #expect(surface.batchOutcomes[0].map(\.wasDeduped) == [false, false])
+    }
+
+    @Test func batchExecutorNonReadDuplicatesAllExecute() async throws {
+        // Identical write/exec calls re-execute by design (they may
+        // legitimately differ); only read-like tools dedupe in-batch.
+        let args = #"{"cmd":"date"}"#
+        let surface = ScriptedLoopSurface(steps: [
+            .toolCalls([inv("shell_run", args), inv("shell_run", args)]),
+            .finalResponse,
+        ])
+        var batchCalls: [[String]] = []
+        var hooks = surface.makeHooks()
+        hooks.executeBatch = { calls in
+            batchCalls.append(calls.map { $0.invocation.toolName })
+            return calls.map {
+                AgentLoopToolExecution(result: ToolEnvelope.success(tool: $0.invocation.toolName, text: "ok"))
+            }
+        }
+        let result = try await AgentToolLoop.run(
+            policy: headlessPolicy(),
+            state: AgentTaskState(),
+            hooks: hooks
+        )
+        #expect(result.exit == .finalResponse)
+        #expect(batchCalls == [["shell_run", "shell_run"]])
+        #expect(surface.dedupedCalls.isEmpty)
+    }
+
+    @Test func batchExecutorShortReturnTreatsMissingSlotsAsNeverExecuted() async throws {
+        // The executor may return FEWER results than calls (chat stops
+        // executing the rest of a batch after an intercept). Missing slots
+        // must be excluded from outcomes/recording, not crash the zip.
+        let surface = ScriptedLoopSurface(steps: [
+            .toolCalls([inv("complete", #"{"summary":"done"}"#), inv("never_ran")])
+        ])
+        let state = AgentTaskState()
+        var hooks = surface.makeHooks()
+        hooks.executeBatch = { _ in
+            // Only the first call executed (it intercepted).
+            [
+                AgentLoopToolExecution(
+                    result: ToolEnvelope.success(tool: "complete", text: "done"),
+                    endRun: true
+                )
+            ]
+        }
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(),
+            state: state,
+            hooks: hooks
+        )
+        #expect(result == AgentToolLoop.RunResult(exit: .endedBySurface, iterations: 1))
+        // Nothing recorded: the intercept is never recorded, and the
+        // missing slot never executed.
+        #expect(state.lastResultEnvelope == nil)
+        // Batch-complete fired with no completed outcomes.
+        #expect(surface.batchOutcomes.count == 1)
+        #expect(surface.batchOutcomes[0].isEmpty)
+    }
+
+    @Test func batchExecutorRecordsBeforeHonoringCancellation() async throws {
+        // Cancellation lands mid-batch: the executed outcomes are already
+        // in surface history, so they must be recorded into the state
+        // machine before the run exits `.cancelled`.
+        let surface = ScriptedLoopSurface(steps: [
+            .toolCalls([inv("tool_a")])
+        ])
+        let state = AgentTaskState()
+        var hooks = surface.makeHooks()
+        hooks.executeBatch = { calls in
+            surface.cancelled = true  // user hits Stop mid-execution
+            return calls.map {
+                AgentLoopToolExecution(result: ToolEnvelope.success(tool: $0.invocation.toolName, text: "ok"))
+            }
+        }
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(),
+            state: state,
+            hooks: hooks
+        )
+        #expect(result == AgentToolLoop.RunResult(exit: .cancelled, iterations: 1))
+        #expect(state.lastResultEnvelope != nil)
+        // Batch-complete fired so per-batch surfaces keep the row.
+        #expect(surface.batchOutcomes.count == 1)
+    }
+
+    @Test func serialModeRecordsBeforeHonoringCancellation() async throws {
+        let surface = ScriptedLoopSurface(steps: [
+            .toolCalls([inv("tool_a"), inv("tool_b")])
+        ])
+        let state = AgentTaskState()
+        let hooks = surface.makeHooks()
+        var mutatedHooks = hooks
+        mutatedHooks.executeTool = { inv, callId in
+            let execution = await hooks.executeTool(inv, callId)
+            surface.cancelled = true
+            return execution
+        }
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(),
+            state: state,
+            hooks: mutatedHooks
+        )
+        #expect(result == AgentToolLoop.RunResult(exit: .cancelled, iterations: 1))
+        // The executed call WAS recorded before the cancelled exit.
+        #expect(state.lastResultEnvelope != nil)
+        #expect(surface.executedCalls.map(\.name) == ["tool_a"])
     }
 
     @Test func modelStepErrorsPropagateToCaller() async {

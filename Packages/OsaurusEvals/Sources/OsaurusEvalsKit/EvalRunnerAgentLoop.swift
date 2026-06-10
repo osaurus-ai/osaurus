@@ -79,6 +79,9 @@ extension EvalRunner {
             )
         }
         let elapsed = Date().timeIntervalSince(started) * 1000
+        // Report loop-only latency (model steps + tool execution), not
+        // wall time inflated by judge calls and workspace setup.
+        let latency = transcript.loopDurationMs > 0 ? transcript.loopDurationMs : elapsed
 
         if let err = transcript.error {
             return EvalCaseReport(
@@ -89,137 +92,203 @@ extension EvalRunner {
                 outcome: .errored,
                 notes: ["agent loop error: \(err)"],
                 modelId: modelId,
-                latencyMs: elapsed
+                latencyMs: latency
             )
         }
 
-        var notes: [String] = []
-        var passed = true
+        var score = AgentLoopScore()
 
-        // 1. Exit shape.
-        let allowedExits = exp.allowedExits ?? ["finalResponse"]
-        if allowedExits.contains(transcript.exit) {
-            notes.append("exit ok: \(transcript.exit)")
-        } else {
-            passed = false
-            notes.append("exit '\(transcript.exit)' not in allowed \(allowedExits)")
-        }
-
-        // 2. Transcript assertions.
-        let calledNames = transcript.toolCalls.map(\.name)
-        let calledSet = Set(calledNames)
-        if let must = exp.mustCallTools {
-            let missing = must.filter { !calledSet.contains($0) }
-            if missing.isEmpty {
-                notes.append("mustCallTools ok: [\(must.joined(separator: ","))]")
-            } else {
-                passed = false
-                notes.append("mustCallTools missing: [\(missing.joined(separator: ","))]")
-            }
-        }
-        if let mustNot = exp.mustNotCallTools {
-            let offenders = mustNot.filter { calledSet.contains($0) }
-            if offenders.isEmpty {
-                notes.append("mustNotCallTools ok")
-            } else {
-                passed = false
-                notes.append("mustNotCallTools called: [\(offenders.joined(separator: ","))]")
-            }
-        }
-        if let cap = exp.maxToolCalls {
-            if transcript.toolCalls.count <= cap {
-                notes.append("maxToolCalls ok: \(transcript.toolCalls.count) ≤ \(cap)")
-            } else {
-                passed = false
-                notes.append("maxToolCalls breached: \(transcript.toolCalls.count) > \(cap)")
-            }
-        }
-        if exp.noDuplicateExecutedCalls == true {
-            // Replays through the loop's dedupe (`wasDeduped`) are the
-            // mechanism WORKING; only repeated real executions fail.
-            var seen: Set<String> = []
-            var duplicates: [String] = []
-            for call in transcript.toolCalls where !call.wasDeduped {
-                let key = call.name + "\u{1F}" + call.arguments
-                if !seen.insert(key).inserted {
-                    duplicates.append(call.name)
-                }
-            }
-            if duplicates.isEmpty {
-                notes.append("noDuplicateExecutedCalls ok")
-            } else {
-                passed = false
-                notes.append(
-                    "duplicate executions: [\(duplicates.joined(separator: ","))]"
-                )
-            }
-        }
+        // 1+2. Exit shape + transcript assertions.
+        scoreTranscriptAssertions(exp, transcript: transcript, into: &score)
 
         // 3. Workspace outcomes.
         for assertion in exp.files ?? [] {
             let result = scoreFileAssertion(assertion, workspace: workspace)
-            passed = passed && result.passed
-            notes.append(result.note)
+            score.record(result.passed, note: result.note)
         }
         for assertion in exp.commands ?? [] {
             let result = await scoreCommandAssertion(assertion, workspace: workspace)
-            passed = passed && result.passed
-            notes.append(result.note)
+            score.record(result.passed, note: result.note)
         }
 
         // 4. Final-text checks.
         for needle in exp.finalTextContains ?? [] {
-            if transcript.finalText.localizedCaseInsensitiveContains(needle) {
-                notes.append("finalText contains '\(needle)'")
-            } else {
-                passed = false
-                notes.append("finalText missing '\(needle)'")
-            }
+            score.check(
+                transcript.finalText.localizedCaseInsensitiveContains(needle),
+                pass: "finalText contains '\(needle)'",
+                fail: "finalText missing '\(needle)'"
+            )
         }
 
         // 5. LLM-judge rubric — every condition must pass.
         let rubric = exp.rubric ?? []
         for (index, verdict) in verdicts.enumerated() {
             let condition = index < rubric.count ? rubric[index] : "(condition \(index))"
-            if verdict.pass {
-                notes.append("judge ok: \(condition)")
-            } else {
-                passed = false
-                notes.append("judge FAIL: \(condition) — \(verdict.reason)")
-            }
+            score.check(
+                verdict.pass,
+                pass: "judge ok: \(condition)",
+                fail: "judge FAIL: \(condition) — \(verdict.reason)"
+            )
         }
         if !rubric.isEmpty && verdicts.count != rubric.count {
-            passed = false
-            notes.append("judge produced \(verdicts.count) verdicts for \(rubric.count) conditions")
+            score.record(
+                false,
+                note: "judge produced \(verdicts.count) verdicts for \(rubric.count) conditions"
+            )
         }
 
-        // Surface error envelopes from the transcript on failure —
-        // repeated tool errors are invisible in the summary line alone
-        // and are the first thing needed to debug a failing case.
-        if !passed {
-            for call in transcript.toolCalls where call.resultPreview.contains("\"ok\":false") {
-                notes.append(
-                    "tool error: \(call.name)(\(call.arguments.prefix(160))) → \(call.resultPreview.prefix(200))"
-                )
-            }
-            notes.append("tool schemas: [\(transcript.toolSchemaNames.joined(separator: ","))]")
+        if !score.passed {
+            appendFailureForensics(transcript, into: &score)
         }
-        notes.append(
-            "summary: toolCalls=[\(calledNames.joined(separator: ","))] "
+        score.notes.append(
+            "summary: toolCalls=[\(transcript.toolCalls.map(\.name).joined(separator: ","))] "
                 + "iters=\(transcript.iterations) exit=\(transcript.exit)"
         )
-        notes.append("final: \(transcript.finalText.replacingOccurrences(of: "\n", with: " "))")
+        score.notes.append(
+            "final: \(transcript.finalText.replacingOccurrences(of: "\n", with: " "))"
+        )
 
         return EvalCaseReport(
             id: testCase.id,
             label: label,
             domain: testCase.domain,
             query: testCase.query,
-            outcome: passed ? .passed : .failed,
-            notes: notes,
+            outcome: score.passed ? .passed : .failed,
+            notes: score.notes,
             modelId: modelId,
-            latencyMs: elapsed
+            latencyMs: latency
         )
+    }
+
+    // MARK: - Transcript scoring
+
+    /// Pass/notes accumulator threaded through the scoring layers.
+    private struct AgentLoopScore {
+        var passed = true
+        var notes: [String] = []
+
+        mutating func record(_ ok: Bool, note: String) {
+            passed = passed && ok
+            notes.append(note)
+        }
+
+        mutating func check(_ ok: Bool, pass: String, fail: String) {
+            record(ok, note: ok ? pass : fail)
+        }
+    }
+
+    /// Deterministic transcript assertions (exit shape, tool-call sets,
+    /// duplicate discipline, dedupe replays, notices, compaction).
+    private static func scoreTranscriptAssertions(
+        _ exp: EvalCase.AgentLoopExpectations,
+        transcript: AgentLoopTranscript,
+        into score: inout AgentLoopScore
+    ) {
+        let allowedExits = exp.allowedExits ?? ["finalResponse"]
+        score.check(
+            allowedExits.contains(transcript.exit),
+            pass: "exit ok: \(transcript.exit)",
+            fail: "exit '\(transcript.exit)' not in allowed \(allowedExits)"
+        )
+
+        let calledSet = Set(transcript.toolCalls.map(\.name))
+        if let must = exp.mustCallTools {
+            let missing = must.filter { !calledSet.contains($0) }
+            score.check(
+                missing.isEmpty,
+                pass: "mustCallTools ok: [\(must.joined(separator: ","))]",
+                fail: "mustCallTools missing: [\(missing.joined(separator: ","))]"
+            )
+        }
+        if let mustNot = exp.mustNotCallTools {
+            let offenders = mustNot.filter { calledSet.contains($0) }
+            score.check(
+                offenders.isEmpty,
+                pass: "mustNotCallTools ok",
+                fail: "mustNotCallTools called: [\(offenders.joined(separator: ","))]"
+            )
+        }
+        if let cap = exp.maxToolCalls {
+            score.check(
+                transcript.toolCalls.count <= cap,
+                pass: "maxToolCalls ok: \(transcript.toolCalls.count) ≤ \(cap)",
+                fail: "maxToolCalls breached: \(transcript.toolCalls.count) > \(cap)"
+            )
+        }
+        if exp.noDuplicateExecutedCalls == true {
+            // Replays through the loop's dedupe (`wasDeduped`) are the
+            // mechanism WORKING; only repeated real executions fail.
+            // Keys use the loop's own canonicalisation so the scorer and
+            // the dedupe agree on what "identical arguments" means.
+            var seen: Set<String> = []
+            var duplicates: [String] = []
+            for call in transcript.toolCalls where !call.wasDeduped {
+                let key = call.name + "\u{1F}" + AgentTaskState.canonicalArgs(call.arguments)
+                if !seen.insert(key).inserted {
+                    duplicates.append(call.name)
+                }
+            }
+            score.check(
+                duplicates.isEmpty,
+                pass: "noDuplicateExecutedCalls ok",
+                fail: "duplicate executions: [\(duplicates.joined(separator: ","))]"
+            )
+        }
+        if exp.noToolErrors == true {
+            let errored = transcript.toolCalls.filter(\.wasError)
+            score.check(
+                errored.isEmpty,
+                pass: "noToolErrors ok",
+                fail: "tool errors present: [\(errored.map(\.name).joined(separator: ","))]"
+            )
+        }
+        if let minReplays = exp.minDedupedReplays {
+            let replays = transcript.toolCalls.filter(\.wasDeduped).count
+            score.check(
+                replays >= minReplays,
+                pass: "minDedupedReplays ok: \(replays) ≥ \(minReplays)",
+                fail: "dedupe replays: \(replays) < required \(minReplays)"
+            )
+        }
+        for needle in exp.noticesContain ?? [] {
+            score.check(
+                transcript.notices.contains(where: { $0.contains(needle) }),
+                pass: "notice fired containing '\(needle)'",
+                fail: "no notice containing '\(needle)' (saw \(transcript.notices.count) notices)"
+            )
+        }
+        if exp.expectCompaction == true {
+            score.check(
+                transcript.compacted,
+                pass: "compaction occurred",
+                fail: "expected compaction but the watermark never recorded one"
+            )
+        }
+    }
+
+    /// Failure-only forensics: error envelopes, the tool schema the model
+    /// saw, the call-by-call trace (a bare name list can't distinguish
+    /// "re-read the same file 6 times" from "walked 6 files once"), and
+    /// every driver-staged notice.
+    private static func appendFailureForensics(
+        _ transcript: AgentLoopTranscript,
+        into score: inout AgentLoopScore
+    ) {
+        for call in transcript.toolCalls where call.wasError {
+            score.notes.append(
+                "tool error: \(call.name)(\(call.arguments.prefix(160))) → \(call.resultPreview.prefix(200))"
+            )
+        }
+        score.notes.append("tool schemas: [\(transcript.toolSchemaNames.joined(separator: ","))]")
+        for (index, call) in transcript.toolCalls.enumerated() {
+            let flags = [call.wasDeduped ? "deduped" : nil, call.wasError ? "error" : nil]
+                .compactMap { $0 }
+            let suffix = flags.isEmpty ? "" : " [\(flags.joined(separator: ","))]"
+            score.notes.append("call[\(index)]\(suffix): \(call.name)(\(call.arguments.prefix(120)))")
+        }
+        for (index, notice) in transcript.notices.enumerated() {
+            score.notes.append("notice[\(index)]: \(notice.prefix(160))")
+        }
     }
 
     // MARK: - Outcome scoring

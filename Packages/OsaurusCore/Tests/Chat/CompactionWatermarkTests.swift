@@ -156,7 +156,8 @@ struct CompactionWatermarkTests {
                     return nil
                 }
                 return "\(msg.tool_call_id ?? "")|\(c)"
-            })
+            }
+        )
         for summary in frozenSummaries {
             let key = "\(summary.tool_call_id ?? "")|\(summary.content ?? "")"
             // A frozen summary either replays byte-identically or its message
@@ -233,6 +234,146 @@ struct CompactionWatermarkTests {
 
         #expect(trimmed.first?.role == "user")
         #expect(trimmed.first?.content == messages.first?.content)
+    }
+
+    @Test func trimNoteIsByteStableAcrossAdditionalDrops() {
+        // The context note must never change bytes once emitted — a live
+        // dropped-count would rewrite it on every additional drop and bust
+        // the KV prefix.
+        let mgr = makeManager(contextLength: 4_096)
+        let watermark = CompactionWatermark()
+        var messages = scriptedSession(rounds: 14, toolChars: 8_000)
+
+        let first = mgr.trimMessages(messages, watermark: watermark)
+        let noteAfterFirst = first.first {
+            $0.role == "user" && ($0.content?.hasPrefix("[Note:") ?? false)
+        }
+        #expect(noteAfterFirst?.content == ContextBudgetManager.trimmedHistoryNote)
+        let dropsAfterFirst = watermark.droppedCount
+        #expect(dropsAfterFirst > 0)
+
+        // Grow until MORE drops occur; the note must replay byte-identically.
+        for round in 14 ..< 22 {
+            messages.append(assistantToolCallMessage(id: "call_\(round)"))
+            messages.append(toolResultMessage(id: "call_\(round)", chars: 8_000))
+        }
+        let second = mgr.trimMessages(messages, watermark: watermark)
+        #expect(watermark.droppedCount > dropsAfterFirst)
+        let noteAfterSecond = second.first {
+            $0.role == "user" && ($0.content?.hasPrefix("[Note:") ?? false)
+        }
+        #expect(noteAfterSecond?.content == ContextBudgetManager.trimmedHistoryNote)
+        #expect(noteAfterSecond?.content == noteAfterFirst?.content)
+    }
+
+    @Test func verbatimMessagesAreDroppedNotSummarizedWhenTheyAgeOut() {
+        // A message sent verbatim inside the protected tail must NEVER be
+        // re-emitted as a summary once it ages out — that's a
+        // mid-transcript rewrite. It either replays verbatim or is dropped.
+        let mgr = makeManager(contextLength: 8_192)
+        let watermark = CompactionWatermark()
+        var messages = scriptedSession(rounds: 10, toolChars: 5_000)
+
+        let first = mgr.trimMessages(messages, watermark: watermark)
+        // Identify tool results sent VERBATIM in the first render (tail).
+        let verbatimIds = Set(
+            first.compactMap { msg -> String? in
+                guard msg.role == "tool", let c = msg.content,
+                    !c.hasPrefix("[Compressed:")
+                else { return nil }
+                return msg.tool_call_id
+            }
+        )
+        #expect(!verbatimIds.isEmpty)
+
+        // Grow the session so those tail messages age out of protection.
+        for round in 10 ..< 20 {
+            messages.append(assistantToolCallMessage(id: "call_\(round)"))
+            messages.append(toolResultMessage(id: "call_\(round)", chars: 5_000))
+            let trimmed = mgr.trimMessages(messages, watermark: watermark)
+            // No previously-verbatim message may reappear as a summary.
+            for msg in trimmed where msg.role == "tool" {
+                guard let id = msg.tool_call_id, verbatimIds.contains(id) else { continue }
+                #expect(msg.content?.hasPrefix("[Compressed:") == false)
+            }
+        }
+    }
+
+    @Test func overBudgetReportedWhenProtectedRegionsExceedBudget() {
+        // A tiny window where even the protected first message + tail can't
+        // fit must surface `overBudget` instead of silently overflowing.
+        var mgr = ContextBudgetManager(contextLength: 1_024)
+        mgr.reserve(.response, tokens: 512)
+        let watermark = CompactionWatermark()
+        let messages = scriptedSession(rounds: 6, toolChars: 9_000)
+
+        let result = mgr.trimMessagesReportingOverflow(messages, watermark: watermark)
+        #expect(result.overBudget)
+        // A comfortable window reports no overflow.
+        let bigMgr = makeManager(contextLength: 128_000)
+        let freshWatermark = CompactionWatermark()
+        let fits = bigMgr.trimMessagesReportingOverflow(messages, watermark: freshWatermark)
+        #expect(!fits.overBudget)
+    }
+
+    @Test func renderedPrefixIsMonotonicAcrossGrowingTranscript() {
+        // The strongest KV contract: across a growing transcript, the
+        // entries surviving from one render to the next must appear in the
+        // SAME relative order with the SAME bytes — the new render may only
+        // remove entries (drops) and add new ones (note, appended tail, new
+        // summaries); it may never rewrite or reorder surviving entries.
+        // Every message body is unique so keys identify a single message.
+        func uniqueAssistant(_ round: Int) -> ChatMessage {
+            ChatMessage(
+                role: "assistant",
+                content: nil,
+                tool_calls: [
+                    ToolCall(
+                        id: "call_\(round)",
+                        type: "function",
+                        function: ToolCallFunction(
+                            name: "file_read",
+                            arguments: "{\"path\":\"f\(round).txt\"}"
+                        )
+                    )
+                ],
+                tool_call_id: nil
+            )
+        }
+        func uniqueTool(_ round: Int) -> ChatMessage {
+            let body =
+                "Lines 1-400 of f\(round).txt\n"
+                + String(repeating: "x\(round) ", count: 1_200)
+            return ChatMessage(role: "tool", content: body, tool_calls: nil, tool_call_id: "call_\(round)")
+        }
+        func key(_ m: ChatMessage) -> String {
+            let calls = m.tool_calls?.map { $0.id }.joined(separator: ",") ?? ""
+            return "\(m.role)|\(m.content ?? "<nil>")|\(m.tool_call_id ?? "")|\(calls)"
+        }
+
+        let mgr = makeManager(contextLength: 8_192)
+        let watermark = CompactionWatermark()
+        var messages: [ChatMessage] = [userMessage("Refactor the parser and verify the tests pass.")]
+        for round in 0 ..< 8 {
+            messages.append(uniqueAssistant(round))
+            messages.append(uniqueTool(round))
+        }
+
+        var previous = mgr.trimMessages(messages, watermark: watermark).map(key)
+        for round in 8 ..< 18 {
+            messages.append(uniqueAssistant(round))
+            messages.append(uniqueTool(round))
+            let current = mgr.trimMessages(messages, watermark: watermark).map(key)
+
+            let currentSet = Set(current)
+            let previousSet = Set(previous)
+            // Entries surviving from the previous render, in each render's
+            // own order — these two sequences must be identical.
+            let expectedOrder = previous.filter { currentSet.contains($0) }
+            let survivors = current.filter { previousSet.contains($0) }
+            #expect(survivors == expectedOrder)
+            previous = current
+        }
     }
 
     @Test func statelessVariantUnchangedForPluginParity() {

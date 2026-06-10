@@ -1,0 +1,23 @@
+{
+  "id": "agent_loop.parallel-batch-reads",
+  "domain": "agent_loop",
+  "label": "agent loop • multi-call batch reads then a combining write",
+  "query": "Read part1.txt, part2.txt, and part3.txt — issue all three file_read calls together in a single response, not one per turn. Then write a file named combined.txt containing the three words in order, separated by single dashes, e.g. word1-word2-word3.",
+  "notes": "Exercises the parallel batch executor (two-phase approval + concurrent dispatch + serial model-order post-processing) that chat/HTTP run when a model emits several tool calls in one step. A model that ignores the batching instruction still passes the outcome assertions serially — the batch path is exercised opportunistically, which is exactly how production hits it.",
+  "fixtures": {
+    "workspaceFiles": [
+      { "path": "part1.txt", "contents": "alpha\n" },
+      { "path": "part2.txt", "contents": "beta\n" },
+      { "path": "part3.txt", "contents": "gamma\n" }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 8,
+      "mustCallTools": ["file_read", "file_write"],
+      "files": [
+        { "path": "combined.txt", "contains": "alpha-beta-gamma" }
+      ]
+    }
+  }
+}

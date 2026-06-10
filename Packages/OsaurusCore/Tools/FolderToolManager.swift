@@ -40,6 +40,12 @@ public final class FolderToolManager {
     /// Whether folder tools are currently registered
     public var hasFolderTools: Bool { currentFolderContext != nil }
 
+    /// The context the current registration was built for, if any.
+    /// Callers that must temporarily swap the process-wide folder toolset
+    /// (the eval harness) snapshot this and re-register it on exit so a
+    /// pre-existing registration is never silently torn down.
+    public var registeredContext: FolderContext? { currentFolderContext }
+
     /// Register folder-specific tools for the given context
     /// Called by FolderContextService when folder is selected
     public func registerFolderTools(for context: FolderContext) {

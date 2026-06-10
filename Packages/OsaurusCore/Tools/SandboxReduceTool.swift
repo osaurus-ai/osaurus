@@ -336,7 +336,8 @@ struct SandboxReduceTool: OsaurusTool, @unchecked Sendable {
                     retryable: true
                 )
             }
-            let capped = digest.count > Self.digestMaxChars
+            let capped =
+                digest.count > Self.digestMaxChars
                 ? String(digest.prefix(Self.digestMaxChars)) + "\n[digest truncated]"
                 : digest
             return ToolEnvelope.success(

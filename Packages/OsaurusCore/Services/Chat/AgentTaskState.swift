@@ -152,6 +152,14 @@ public final class AgentTaskState {
 
     // MARK: Dedupe
 
+    /// True when `name` participates in dedupe replay (read-like tools).
+    /// The loop driver uses this to recognise duplicate read siblings
+    /// inside a single parallel batch — non-read duplicates always
+    /// re-execute by design (they may legitimately differ).
+    public static func isReplayEligible(name: String) -> Bool {
+        readLikeTools.contains(name)
+    }
+
     /// If this read re-issues a still-fresh read (same tool + canonical args,
     /// not invalidated by an intervening write to its path), return the EXACT
     /// envelope the model already received so the loop can replay it instead
@@ -332,8 +340,11 @@ public final class AgentTaskState {
     }
 
     /// Canonicalise an arguments JSON string to a stable, sorted-key form so
-    /// `{"a":1,"b":2}` and `{"b":2,"a":1}` hash equal.
-    static func canonicalArgs(_ argsJSON: String) -> String {
+    /// `{"a":1,"b":2}` and `{"b":2,"a":1}` hash equal. Public so eval
+    /// scoring can build duplicate keys with the SAME canonicalisation the
+    /// loop's dedupe uses — a scorer with weaker key rules would flag
+    /// duplicates the loop correctly distinguishes (or miss real ones).
+    public static func canonicalArgs(_ argsJSON: String) -> String {
         guard let data = argsJSON.data(using: .utf8),
             let obj = try? JSONSerialization.jsonObject(with: data),
             let canonical = try? JSONSerialization.data(

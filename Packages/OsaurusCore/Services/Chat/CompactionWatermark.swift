@@ -27,6 +27,12 @@ public final class CompactionWatermark: @unchecked Sendable {
     enum Decision {
         case dropped
         case summarized(String)
+        /// The message was sent to the model VERBATIM in a rendered request.
+        /// Once a message has been part of the token stream, summarizing it
+        /// later would rewrite mid-transcript bytes and bust the KV prefix —
+        /// so verbatim messages are only ever DROPPED (a pure truncation at
+        /// one point), never newly summarized.
+        case verbatim
     }
 
     private let lock = NSLock()
@@ -80,6 +86,17 @@ public final class CompactionWatermark: @unchecked Sendable {
         identities[index] = Self.identity(of: original)
     }
 
+    /// Record that the message at `index` was sent to the model verbatim.
+    /// Never overwrites an existing summarize/drop decision (those are
+    /// stronger); re-recording verbatim is a no-op.
+    func recordVerbatim(at index: Int, original: ChatMessage) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard decisions[index] == nil else { return }
+        decisions[index] = .verbatim
+        identities[index] = Self.identity(of: original)
+    }
+
     var droppedCount: Int {
         lock.lock()
         defer { lock.unlock() }
@@ -89,11 +106,17 @@ public final class CompactionWatermark: @unchecked Sendable {
         }
     }
 
-    /// Whether any compaction decision has been recorded (used by surfaces
-    /// to decide if a "compacted" indicator should show).
+    /// Whether any COMPACTING decision (summary or drop) has been recorded
+    /// (used by surfaces to decide if a "compacted" indicator should show).
+    /// Verbatim send markers are bookkeeping, not compaction.
     public var hasCompacted: Bool {
         lock.lock()
         defer { lock.unlock() }
-        return !decisions.isEmpty
+        return decisions.values.contains { decision in
+            switch decision {
+            case .dropped, .summarized: return true
+            case .verbatim: return false
+            }
+        }
     }
 }

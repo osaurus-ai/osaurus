@@ -142,14 +142,12 @@ struct AgentLoopHooks {
     /// A dedupe short-circuit replayed `heldResult` instead of executing.
     /// The surface appends the replayed envelope to its history exactly
     /// as if the tool had run.
-    var onDedupedResult:
-        (_ invocation: ServiceToolInvocation, _ callId: String, _ heldResult: String) async -> Void
+    var onDedupedResult: (_ invocation: ServiceToolInvocation, _ callId: String, _ heldResult: String) async -> Void
 
     /// Execute one tool call and append the outcome to the surface's
     /// history. Must not throw — surfaces convert failures to error
     /// envelopes (`ToolEnvelope.fromError`) and flag `isError`.
-    var executeTool:
-        (_ invocation: ServiceToolInvocation, _ callId: String) async -> AgentLoopToolExecution
+    var executeTool: (_ invocation: ServiceToolInvocation, _ callId: String) async -> AgentLoopToolExecution
 
     /// Optional whole-batch executor for the non-deduped calls of one
     /// iteration. When set, the driver switches to slotting mode: it runs
@@ -173,9 +171,16 @@ struct AgentLoopHooks {
         buildMessages: @escaping (_ notices: [String]) async -> [ChatMessage],
         modelStep: @escaping (_ messages: [ChatMessage], _ iteration: Int) async throws -> AgentLoopModelStep,
         willProcessCall: @escaping (_ invocation: ServiceToolInvocation, _ callId: String) async -> Void = { _, _ in },
-        onDedupedResult: @escaping (_ invocation: ServiceToolInvocation, _ callId: String, _ heldResult: String) async -> Void = { _, _, _ in },
+        onDedupedResult:
+            @escaping (_ invocation: ServiceToolInvocation, _ callId: String, _ heldResult: String) async -> Void = {
+                _,
+                _,
+                _ in
+            },
         executeTool: @escaping (_ invocation: ServiceToolInvocation, _ callId: String) async -> AgentLoopToolExecution,
-        executeBatch: ((_ calls: [(invocation: ServiceToolInvocation, callId: String)]) async -> [AgentLoopToolExecution])? = nil,
+        executeBatch: (
+            (_ calls: [(invocation: ServiceToolInvocation, callId: String)]) async -> [AgentLoopToolExecution]
+        )? = nil,
         onBatchComplete: @escaping (_ outcomes: [AgentLoopToolOutcome]) async -> Void = { _ in }
     ) {
         self.isCancelled = isCancelled
@@ -199,14 +204,108 @@ struct AgentLoopHooks {
 /// window and what's reserved".
 enum AgentLoopBudget {
 
-    /// Resolve the model's usable context window: model bundle metadata
-    /// first (`ModelInfo.contextLength`), then the user-configured chat
-    /// fallback.
+    /// Model ids that route to the Apple Foundation model, whose context
+    /// window is fixed and not described by any `ModelInfo` bundle.
+    static let foundationModelIds: Set<String> = ["foundation", "default"]
+
+    /// The Apple Foundation model's usable context window (~4K tokens).
+    static let foundationContextWindow = 4_096
+
+    /// Fallback window when neither the model bundle nor the user config
+    /// declares one.
+    static let fallbackContextWindow = 128_000
+
+    /// Canonical response (`max_tokens`) reservation when the request
+    /// doesn't specify one — matches what the plugin host always reserved.
+    static let defaultResponseReservation = 4_096
+
+    /// Resolve the model's usable context window: Foundation ids first
+    /// (fixed window), then model bundle metadata (`ModelInfo.contextLength`),
+    /// then the user-configured chat fallback. This is THE definition of
+    /// "how big is the window" — the UI uses `resolveContextWindowSync`,
+    /// which must stay behavior-identical.
     static func resolveContextWindow(modelId: String) async -> Int {
+        if foundationModelIds.contains(modelId) { return foundationContextWindow }
         if let info = ModelInfo.load(modelId: modelId), let ctx = info.model.contextLength {
             return ctx
         }
-        return await MainActor.run { ChatConfigurationStore.load().contextLength ?? 128_000 }
+        return await MainActor.run { ChatConfigurationStore.load().contextLength ?? fallbackContextWindow }
+    }
+
+    /// MainActor-synchronous twin of `resolveContextWindow` for SwiftUI
+    /// computed properties (the context chip and send gate). Same
+    /// resolution order, same values.
+    @MainActor
+    static func resolveContextWindowSync(modelId: String) -> Int {
+        if foundationModelIds.contains(modelId) { return foundationContextWindow }
+        if let info = ModelInfo.load(modelId: modelId), let ctx = info.model.contextLength {
+            return ctx
+        }
+        return ChatConfigurationStore.load().contextLength ?? fallbackContextWindow
+    }
+
+    // MARK: Shared budget assessment (UI + runtime parity)
+
+    /// One shared answer to "how full is the context and is the send
+    /// doomed", derived the same way the runtime trims: against the
+    /// EFFECTIVE budget (window × safety margin), not the raw window.
+    struct Assessment: Equatable, Sendable {
+        /// Estimated next-send tokens over the effective budget; nil when
+        /// the breakdown is empty.
+        var usageRatio: Double?
+        /// Soft warning: usage at or beyond `nearLimitThreshold` of the
+        /// effective budget. Sends still go through — compaction handles
+        /// history growth — but quality may degrade.
+        var nearLimit: Bool
+        /// The NON-compactable prefix (system prompt, tools, memory,
+        /// input — everything except conversation history and generated
+        /// output, which compaction can trim) plus the response
+        /// reservation exceeds the effective budget. Such a request fails
+        /// no matter how much history is compacted.
+        var hardOverflow: Bool
+
+        static let empty = Assessment(usageRatio: nil, nearLimit: false, hardOverflow: false)
+    }
+
+    /// Breakdown entry ids that history compaction can trim away. The
+    /// generated-output entry is conversation history from the next
+    /// request's point of view; "compacted" is the saved-tokens display
+    /// entry, not real cost.
+    private static let compactableEntryIds: Set<String> = ["conversation", "output", "compacted"]
+
+    /// Assess a composed breakdown against a model window. The response
+    /// reservation's contribution to the hard gate is capped at a quarter
+    /// of the effective budget so small-window models (Foundation ~4K)
+    /// aren't permanently gated by a reservation larger than their whole
+    /// window — the runtime truncates generation in that case rather than
+    /// failing the request.
+    static func assess(
+        breakdown: ContextBreakdown,
+        contextWindow: Int,
+        maxResponseTokens: Int? = nil,
+        nearLimitThreshold: Double = 0.85
+    ) -> Assessment {
+        guard contextWindow > 0 else { return .empty }
+        let effective = ContextBudgetManager(contextLength: contextWindow).effectiveBudget
+        guard effective > 0 else { return .empty }
+
+        let total = breakdown.total
+        let ratio: Double? = total > 0 ? Double(total) / Double(effective) : nil
+
+        let compactable = breakdown.messages
+            .filter { compactableEntryIds.contains($0.id) }
+            .reduce(0) { $0 + $1.tokens }
+        let reservation = min(
+            maxResponseTokens ?? defaultResponseReservation,
+            max(0, effective / 4)
+        )
+        let nonCompactable = max(0, total - compactable) + reservation
+
+        return Assessment(
+            usageRatio: ratio,
+            nearLimit: (ratio ?? 0) >= nearLimitThreshold,
+            hardOverflow: nonCompactable > effective
+        )
     }
 
     /// Build a `ContextBudgetManager` with the canonical reservations:
@@ -239,17 +338,64 @@ enum AgentLoopBudget {
         with manager: ContextBudgetManager,
         watermark: CompactionWatermark? = nil
     ) -> [ChatMessage] {
-        func trim(_ msgs: [ChatMessage]) -> [ChatMessage] {
+        trimPreservingSystemPrefixReportingOverflow(
+            messages,
+            with: manager,
+            watermark: watermark
+        ).messages
+    }
+
+    /// Canonical per-iteration message assembly for every loop surface:
+    /// trim FIRST against the history budget (so compaction decisions are
+    /// notice-independent and KV-stable), then append the driver-staged
+    /// `[System Notice]` lines as TRANSIENT user messages — never persisted
+    /// into the surface's history store, so a notice rides exactly one
+    /// iteration. The trim budget's safety margin
+    /// (`ContextBudgetManager.safetyMargin`, 15% of the window) is the
+    /// refit headroom that absorbs the notices' small token cost.
+    ///
+    /// Chat follows the same contract inline (it interleaves compaction
+    /// telemetry and the mid-run token notice between the two steps).
+    static func composeIterationMessages(
+        _ messages: [ChatMessage],
+        notices: [String],
+        manager: ContextBudgetManager?,
+        watermark: CompactionWatermark? = nil
+    ) -> [ChatMessage] {
+        var msgs = messages
+        if let manager {
+            msgs = trimPreservingSystemPrefix(msgs, with: manager, watermark: watermark)
+        }
+        for notice in notices {
+            msgs.append(ChatMessage(role: "user", content: notice))
+        }
+        return msgs
+    }
+
+    /// Like `trimPreservingSystemPrefix`, but also reports whether the
+    /// trimmed transcript STILL exceeds the history budget after every
+    /// compaction lever is exhausted (protected first message + tail alone
+    /// over budget), so surfaces can warn instead of silently overflowing.
+    /// The stateless (no-watermark) path reports overflow by re-estimating
+    /// the trimmed tail.
+    static func trimPreservingSystemPrefixReportingOverflow(
+        _ messages: [ChatMessage],
+        with manager: ContextBudgetManager,
+        watermark: CompactionWatermark? = nil
+    ) -> (messages: [ChatMessage], overBudget: Bool) {
+        func trim(_ msgs: [ChatMessage]) -> (messages: [ChatMessage], overBudget: Bool) {
             if let watermark {
-                return manager.trimMessages(msgs, watermark: watermark)
+                return manager.trimMessagesReportingOverflow(msgs, watermark: watermark)
             }
-            return manager.trimMessages(msgs)
+            let trimmed = manager.trimMessages(msgs)
+            return (trimmed, ContextBudgetManager.estimateTokens(for: trimmed) > manager.historyBudget)
         }
         guard let first = messages.first, first.role == "system" else {
             return trim(messages)
         }
         let tail = Array(messages.dropFirst())
-        return [first] + trim(tail)
+        let result = trim(tail)
+        return ([first] + result.messages, result.overBudget)
     }
 }
 
@@ -343,24 +489,103 @@ enum AgentToolLoop {
         return indexed.sorted { $0.0 < $1.0 }.map { $0.1 }
     }
 
-    /// Canonical-registry convenience: each task scopes
-    /// `ChatExecutionContext` so tools see the same session/agent ids they
-    /// would on a sequential dispatch.
+    /// Canonical-registry two-phase batch (the chat surface pioneered the
+    /// pattern; headless surfaces share it here):
+    ///
+    /// - Phase 1 — approvals resolve FIRST, serially and in model order,
+    ///   so permission prompts never stack or race. On a denial the
+    ///   remaining unstarted calls are skipped with a paired rejection
+    ///   envelope (the assistant `tool_use` never dangles).
+    /// - Phase 2 — the approved set executes in parallel with the gate
+    ///   pre-resolved (`permissionGateResolved: true`), so no prompt can
+    ///   pop mid-flight.
+    ///
+    /// Each phase scopes `ChatExecutionContext` so tools and the gate see
+    /// the same session/agent ids they would on a sequential dispatch.
     static func runBatchInParallel(
         _ calls: [(invocation: ServiceToolInvocation, callId: String)],
         sessionId: String,
         agentId: UUID
     ) async -> [AgentLoopToolExecution] {
-        await runBatchInParallel(calls) { invocation, _ in
+        // Bind the session/agent task-locals exactly as a sequential
+        // registry dispatch would.
+        @Sendable func scoped<T: Sendable>(
+            _ body: @Sendable () async throws -> T
+        ) async throws -> T {
             try await ChatExecutionContext.$currentSessionId.withValue(sessionId) {
                 try await ChatExecutionContext.$currentAgentId.withValue(agentId) {
-                    try await ToolRegistry.shared.execute(
-                        name: invocation.toolName,
-                        argumentsJSON: invocation.jsonArguments
-                    )
+                    try await body()
                 }
             }
         }
+
+        var executions = [AgentLoopToolExecution?](repeating: nil, count: calls.count)
+
+        // Phase 1 — approvals, serially in model order.
+        var approved: [(slot: Int, invocation: ServiceToolInvocation, callId: String)] = []
+        var denied = false
+        for (slot, call) in calls.enumerated() {
+            if denied {
+                executions[slot] = AgentLoopToolExecution(
+                    result: ToolEnvelope.failure(
+                        kind: .rejected,
+                        message:
+                            "Skipped: an earlier tool call in this batch was rejected, so this call did not run.",
+                        tool: call.invocation.toolName
+                    ),
+                    isError: false
+                )
+                continue
+            }
+            do {
+                try await scoped {
+                    try await ToolRegistry.shared.resolvePermissionGate(
+                        name: call.invocation.toolName,
+                        argumentsJSON: call.invocation.jsonArguments
+                    )
+                }
+                approved.append((slot, call.invocation, call.callId))
+            } catch {
+                executions[slot] = AgentLoopToolExecution(
+                    result: ToolEnvelope.fromError(error, tool: call.invocation.toolName),
+                    isError: true
+                )
+                denied = true
+            }
+        }
+
+        // Phase 2 — approved calls execute in parallel, gate pre-resolved.
+        if !approved.isEmpty {
+            let approvedCalls = approved.map { ($0.invocation, $0.callId) }
+            let results = await runBatchInParallel(approvedCalls) { invocation, _ in
+                try await scoped {
+                    try await ToolRegistry.shared.execute(
+                        name: invocation.toolName,
+                        argumentsJSON: invocation.jsonArguments,
+                        permissionGateResolved: true
+                    )
+                }
+            }
+            for (entry, execution) in zip(approved, results) {
+                executions[entry.slot] = execution
+            }
+        }
+
+        return executions.map { $0 ?? AgentLoopToolExecution(result: "") }
+    }
+
+    /// Tools whose successful execution ends the run from INSIDE a batch
+    /// (`endRun` intercepts). Batch executors check this to fall back to
+    /// serial model-order execution — running siblings in parallel would
+    /// let calls AFTER the intercept execute and land in history, where
+    /// the serial path stops immediately.
+    static let interceptToolNames: Set<String> = ["complete", "clarify"]
+
+    /// Whether a batch carries a loop-ending intercept tool.
+    static func containsIntercept(
+        _ calls: [(invocation: ServiceToolInvocation, callId: String)]
+    ) -> Bool {
+        calls.contains { interceptToolNames.contains($0.invocation.toolName) }
     }
 
     /// Stable call-id assignment: preserve the model-supplied id when
@@ -441,6 +666,14 @@ enum AgentToolLoop {
                     // `complete`/`clarify` riding through the batch path).
                     var endRunSlots: Set<Int> = []
                     var toExecute: [(slot: Int, invocation: ServiceToolInvocation, callId: String)] = []
+                    // Read calls that duplicate an EARLIER sibling in this
+                    // same batch. Serial mode would dedupe them (the first
+                    // executes and records a fresh read; the second hits
+                    // `heldResult`), so they are deferred past the parallel
+                    // wave and resolved in the in-order pass below, where
+                    // the live state decides replay vs. execute.
+                    var deferredDuplicates: [Int: (invocation: ServiceToolInvocation, callId: String)] = [:]
+                    var seenSignatures: Set<CallSignature> = []
                     for (slot, invocation) in invocations.enumerated() {
                         let callId = Self.callId(for: invocation)
                         await hooks.willProcessCall(invocation, callId)
@@ -459,7 +692,18 @@ enum AgentToolLoop {
                             if policy.dedupeNoticeEnabled {
                                 pendingStateNotice = Self.dedupeNotice
                             }
+                            continue
+                        }
+                        let signature = CallSignature(
+                            name: invocation.toolName,
+                            canonicalArgs: AgentTaskState.canonicalArgs(invocation.jsonArguments)
+                        )
+                        if AgentTaskState.isReplayEligible(name: invocation.toolName),
+                            seenSignatures.contains(signature)
+                        {
+                            deferredDuplicates[slot] = (invocation, callId)
                         } else {
+                            seenSignatures.insert(signature)
                             toExecute.append((slot, invocation, callId))
                         }
                     }
@@ -467,7 +711,14 @@ enum AgentToolLoop {
                         let executions = await executeBatch(
                             toExecute.map { ($0.invocation, $0.callId) }
                         )
-                        for (entry, execution) in zip(toExecute, executions) {
+                        // The executor may legitimately return FEWER results
+                        // than calls (chat stops executing the rest of a
+                        // batch after an intercept); missing slots stay nil
+                        // and are excluded from outcomes/recording, exactly
+                        // like serial calls that never ran.
+                        for (index, entry) in toExecute.enumerated()
+                        where index < executions.count {
+                            let execution = executions[index]
                             slotted[entry.slot] = AgentLoopToolOutcome(
                                 invocation: entry.invocation,
                                 callId: entry.callId,
@@ -480,20 +731,63 @@ enum AgentToolLoop {
                             }
                         }
                     }
-                    outcomes = slotted.compactMap { $0 }
-                    if await hooks.isCancelled() {
-                        return RunResult(exit: .cancelled, iterations: iteration)
+                    // Early-exit helper: the batch's executed outcomes have
+                    // already landed in surface history, so `onBatchComplete`
+                    // must fire even when the run stops here — otherwise
+                    // per-batch surfaces (HTTP) drop the tool rows from
+                    // their message arrays. Intercept slots are excluded:
+                    // the intercept wrote its own history.
+                    func finishBatch(_ exit: Exit) async -> RunResult {
+                        let completed = (0 ..< slotted.count).compactMap { slot in
+                            endRunSlots.contains(slot) ? nil : slotted[slot]
+                        }
+                        await hooks.onBatchComplete(completed)
+                        return RunResult(exit: exit, iterations: iteration)
                     }
-                    // Record every outcome — held replays included — in
-                    // model order (historical HTTP behavior), then stage the
-                    // bias from the resulting state once. A surface
-                    // intercept ends the run BEFORE its own call is
+                    // In-order pass: record every outcome — held replays
+                    // included — in model order (historical HTTP behavior).
+                    // Deferred duplicate reads resolve here against the LIVE
+                    // state: once the earlier sibling's read has recorded,
+                    // `heldResult` replays it (serial parity); if the
+                    // sibling failed, the duplicate executes for real. A
+                    // surface intercept ends the run BEFORE its own call is
                     // recorded (matching the serial path); earlier batch
                     // outcomes stay recorded.
                     for slot in 0 ..< slotted.count {
+                        if let deferred = deferredDuplicates[slot] {
+                            if let held = state.heldResult(
+                                name: deferred.invocation.toolName,
+                                argsJSON: deferred.invocation.jsonArguments
+                            ) {
+                                await hooks.onDedupedResult(deferred.invocation, deferred.callId, held)
+                                slotted[slot] = AgentLoopToolOutcome(
+                                    invocation: deferred.invocation,
+                                    callId: deferred.callId,
+                                    result: held,
+                                    wasDeduped: true,
+                                    wasError: false
+                                )
+                                if policy.dedupeNoticeEnabled {
+                                    pendingStateNotice = Self.dedupeNotice
+                                }
+                            } else if let execution = await executeBatch(
+                                [(deferred.invocation, deferred.callId)]
+                            ).first {
+                                slotted[slot] = AgentLoopToolOutcome(
+                                    invocation: deferred.invocation,
+                                    callId: deferred.callId,
+                                    result: execution.result,
+                                    wasDeduped: false,
+                                    wasError: execution.isError
+                                )
+                                if execution.endRun {
+                                    endRunSlots.insert(slot)
+                                }
+                            }
+                        }
                         guard let outcome = slotted[slot] else { continue }
                         if endRunSlots.contains(slot) {
-                            return RunResult(exit: .endedBySurface, iterations: iteration)
+                            return await finishBatch(.endedBySurface)
                         }
                         state.record(
                             name: outcome.invocation.toolName,
@@ -504,8 +798,16 @@ enum AgentToolLoop {
                     if let bias = state.nextStepBias() {
                         pendingStateNotice = "[System Notice] " + bias
                     }
+                    outcomes = slotted.compactMap { $0 }
+                    // Cancellation is honored only AFTER the executed batch
+                    // is recorded — the surface history already contains
+                    // these tool turns, so skipping `state.record` would
+                    // desync the state machine from the transcript.
+                    if await hooks.isCancelled() {
+                        return await finishBatch(.cancelled)
+                    }
                     if policy.stopOnToolRejection, outcomes.contains(where: { $0.wasError }) {
-                        return RunResult(exit: .toolRejected, iterations: iteration)
+                        return await finishBatch(.toolRejected)
                     }
                 } else {
                     // Serial mode (chat/plugin semantics): interleaved dedupe
@@ -540,9 +842,6 @@ enum AgentToolLoop {
                         }
 
                         let execution = await hooks.executeTool(invocation, callId)
-                        if await hooks.isCancelled() {
-                            return RunResult(exit: .cancelled, iterations: iteration)
-                        }
 
                         // Surface intercepts (chat `complete`/`clarify`) end the
                         // run before the call is recorded — the intercept already
@@ -551,6 +850,10 @@ enum AgentToolLoop {
                             return RunResult(exit: .endedBySurface, iterations: iteration)
                         }
 
+                        // Record BEFORE honoring cancellation: the surface
+                        // already appended this tool turn to its history, so
+                        // skipping the record would desync `AgentTaskState`
+                        // from the transcript.
                         state.record(
                             name: invocation.toolName,
                             argsJSON: invocation.jsonArguments,
@@ -569,6 +872,9 @@ enum AgentToolLoop {
                             )
                         )
 
+                        if await hooks.isCancelled() {
+                            return RunResult(exit: .cancelled, iterations: iteration)
+                        }
                         if execution.isError, policy.stopOnToolRejection {
                             return RunResult(exit: .toolRejected, iterations: iteration)
                         }

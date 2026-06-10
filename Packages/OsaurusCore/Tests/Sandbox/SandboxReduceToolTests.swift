@@ -46,7 +46,9 @@ struct SandboxReduceToolTests {
         let allowlist = Set(SandboxReduceTool.childToolAllowlist)
         #expect(allowlist == ["sandbox_read_file", "sandbox_search_files", "sandbox_exec"])
         // Explicitly excluded: loop tools, dispatch, writes, and itself.
-        for banned in ["sandbox_reduce", "complete", "clarify", "todo", "dispatch", "sandbox_write_file", "share_artifact"] {
+        for banned in [
+            "sandbox_reduce", "complete", "clarify", "todo", "dispatch", "sandbox_write_file", "share_artifact",
+        ] {
             #expect(!allowlist.contains(banned))
         }
     }

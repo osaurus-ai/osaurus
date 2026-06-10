@@ -277,47 +277,48 @@ struct FloatingInputCard: View {
         return bd
     }
 
-    /// Max context length for the selected model
+    /// Max context length for the selected model — the SAME resolution the
+    /// runtime loop uses (`AgentLoopBudget`), so the chip's denominator and
+    /// the trim budget never diverge.
     private var maxContextTokens: Int? {
         guard let model = selectedModel else { return nil }
-        // Foundation model has ~4096 token context
-        if model == "foundation" || model == "default" {
-            return 4096
-        }
-        if let info = ModelInfo.load(modelId: model),
-            let ctx = info.model.contextLength
-        {
-            return ctx
-        }
-        return nil
+        return AgentLoopBudget.resolveContextWindowSync(modelId: model)
     }
 
     // MARK: - Context budget gating
 
-    /// Estimated fraction of the model window the next send occupies
-    /// (typing included). nil when the window is unknown.
-    private var contextUsageRatio: Double? {
-        guard let maxCtx = maxContextTokens, maxCtx > 0, displayContextTokens > 0 else { return nil }
-        return Double(displayContextTokens) / Double(maxCtx)
+    /// Shared UI/runtime budget math (`AgentLoopBudget.assess`): ratio and
+    /// thresholds are computed against the EFFECTIVE budget (window ×
+    /// safety margin) the runtime trims against, the hard gate excludes
+    /// compactable history, and the response reservation is included.
+    private var budgetAssessment: AgentLoopBudget.Assessment {
+        guard let maxCtx = maxContextTokens else { return .empty }
+        return AgentLoopBudget.assess(
+            breakdown: displayContextBreakdown,
+            contextWindow: maxCtx
+        )
     }
 
-    /// Soft warning threshold: at ≥85% of the window the context chip
-    /// turns amber. Sends still go through — mid-run compaction is the
+    /// Estimated fraction of the effective budget the next send occupies
+    /// (typing included). nil when the window is unknown.
+    private var contextUsageRatio: Double? {
+        budgetAssessment.usageRatio
+    }
+
+    /// Soft warning threshold: at ≥85% of the effective budget the context
+    /// chip turns amber. Sends still go through — mid-run compaction is the
     /// overflow handler — but the user should know quality may degrade.
     private var isContextNearLimit: Bool {
-        (contextUsageRatio ?? 0) >= 0.85
+        budgetAssessment.nearLimit
     }
 
     /// Hard overflow: the non-compactable prefix alone — everything
     /// EXCEPT the conversation history (system prompt, tools, memory,
-    /// input, response reservation) — exceeds the model window. History
-    /// can be compacted mid-run; this can't, so the send is blocked with
-    /// a clear signal instead of a guaranteed model failure.
+    /// input) — plus the response reservation exceeds the effective
+    /// budget. History can be compacted mid-run; this can't, so the send
+    /// is blocked with a clear signal instead of a guaranteed model failure.
     private var isContextHardOverflow: Bool {
-        guard let maxCtx = maxContextTokens, maxCtx > 0 else { return false }
-        let bd = displayContextBreakdown
-        let conversationTokens = bd.messages.first { $0.id == "conversation" }?.tokens ?? 0
-        return bd.total - conversationTokens > maxCtx
+        budgetAssessment.hardOverflow
     }
 
     private var isVoiceConfigured: Bool {

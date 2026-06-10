@@ -27,12 +27,22 @@ public struct AgentLoopTranscript: Sendable, Codable {
         /// True when the loop's dedupe replayed a held result instead of
         /// re-executing (the duplicate-call-avoidance signal).
         public let wasDeduped: Bool
+        /// True when the result was an error envelope — drives the opt-in
+        /// `noToolErrors` scoring assertion without parsing previews.
+        public let wasError: Bool
 
-        public init(name: String, arguments: String, resultPreview: String, wasDeduped: Bool) {
+        public init(
+            name: String,
+            arguments: String,
+            resultPreview: String,
+            wasDeduped: Bool,
+            wasError: Bool = false
+        ) {
             self.name = name
             self.arguments = arguments
             self.resultPreview = resultPreview
             self.wasDeduped = wasDeduped
+            self.wasError = wasError
         }
     }
 
@@ -42,13 +52,27 @@ public struct AgentLoopTranscript: Sendable, Codable {
     /// Iterations charged against the loop budget.
     public let iterations: Int
     /// `AgentToolLoop.Exit` as a string: `finalResponse`,
-    /// `iterationCapReached`, `toolRejected`, `cancelled`, `endedBySurface`.
+    /// `iterationCapReached`, `toolRejected`, `cancelled`,
+    /// `clarifyRequested` (clarify intercept), `endedBySurface`.
     public let exit: String
     /// First-turn system prompt (post-compose) for forensics.
     public let systemPrompt: String
     /// Names of the tool schemas sent to the model on the first
     /// iteration — forensics for "did the model even see this tool".
     public let toolSchemaNames: [String]
+    /// Wall-clock milliseconds spent INSIDE the agent loop (model steps +
+    /// tool execution), excluding workspace setup and any judge calls —
+    /// the latency the runner should report.
+    public let loopDurationMs: Double
+    /// Driver-staged transient notices observed across all iterations
+    /// (budget warnings, dedupe notices, next-step nudges) in stage order.
+    /// Lets cases assert a nudge actually FIRED, not just that the model
+    /// behaved.
+    public let notices: [String]
+    /// True when the sticky watermark recorded at least one summarize/drop
+    /// decision — i.e. history compaction actually occurred during the run
+    /// (the compaction-stress assertion).
+    public let compacted: Bool
     /// Non-nil when the loop aborted (engine threw, model unroutable).
     public let error: String?
 
@@ -59,6 +83,9 @@ public struct AgentLoopTranscript: Sendable, Codable {
         exit: String,
         systemPrompt: String,
         toolSchemaNames: [String],
+        loopDurationMs: Double = 0,
+        notices: [String] = [],
+        compacted: Bool = false,
         error: String?
     ) {
         self.toolCalls = toolCalls
@@ -67,6 +94,9 @@ public struct AgentLoopTranscript: Sendable, Codable {
         self.exit = exit
         self.systemPrompt = systemPrompt
         self.toolSchemaNames = toolSchemaNames
+        self.loopDurationMs = loopDurationMs
+        self.notices = notices
+        self.compacted = compacted
         self.error = error
     }
 }
@@ -93,13 +123,20 @@ public enum AgentLoopEvaluator {
     ///   - contextWindowOverride: when set, the budget manager is built
     ///     against this window instead of the model's real one — the
     ///     compaction-stress lever ("long tool outputs on a small window").
+    ///   - streaming: when true (default, matching the chat surface) each
+    ///     model step uses the streaming path — where the delta routing,
+    ///     tool-call assembly, and most local-model parser bugs live.
+    ///   - maxTokens: per-step response cap; falls back to the user's
+    ///     chat configuration, then 2048.
     public static func run(
         task: String,
         workspace: URL,
         agentId: UUID? = nil,
         maxIterations: Int = 10,
         model: String? = nil,
-        contextWindowOverride: Int? = nil
+        contextWindowOverride: Int? = nil,
+        streaming: Bool = true,
+        maxTokens: Int? = nil
     ) async -> AgentLoopTranscript {
         // The Default agent's schema is hard-restricted to the 8-tool
         // configure baseline (folder write tools enter only via
@@ -108,6 +145,24 @@ public enum AgentLoopEvaluator {
         // agent, run under an ephemeral non-default agent id so the
         // composed schema matches a regular chat agent working in a
         // folder (folder tools in, configure tools stripped).
+        // In-process interleaving guard: this evaluator swaps the
+        // PROCESS-WIDE folder toolset to the eval workspace. Running it
+        // while a user folder session is live would point the user's
+        // chat tools at the eval temp directory mid-conversation —
+        // refuse instead.
+        if FolderContextService.shared.hasActiveFolder {
+            return AgentLoopTranscript(
+                toolCalls: [],
+                finalText: "",
+                iterations: 0,
+                exit: "errored",
+                systemPrompt: "",
+                toolSchemaNames: [],
+                error:
+                    "AgentLoopEvaluator refused to run: a user folder session is active in this process."
+            )
+        }
+
         let activeId = AgentManager.shared.activeAgent.id
         let resolvedAgentId = agentId ?? (activeId == Agent.defaultId ? UUID() : activeId)
         let resolvedModel =
@@ -117,11 +172,19 @@ public enum AgentLoopEvaluator {
         let engine = ChatEngine()
 
         // Workspace context + folder tools, mirroring the chat path's
-        // host-folder mode. Unregistered after the run so eval cases
-        // can't leak tools into each other.
+        // host-folder mode. On exit the eval registration is torn down and
+        // any PRIOR registration (snapshot below) is restored, so eval
+        // cases can't leak tools into each other or clobber a toolset
+        // registered outside a folder session.
+        let priorFolderContext = FolderToolManager.shared.registeredContext
         let folderContext = await FolderContextService.shared.buildContext(from: workspace)
         FolderToolManager.shared.registerFolderTools(for: folderContext)
-        defer { FolderToolManager.shared.unregisterFolderTools() }
+        defer {
+            FolderToolManager.shared.unregisterFolderTools()
+            if let priorFolderContext {
+                FolderToolManager.shared.registerFolderTools(for: priorFolderContext)
+            }
+        }
 
         var history: [ChatMessage] = [ChatMessage(role: "user", content: task)]
         let composed = await SystemPromptComposer.composeChatContext(
@@ -143,62 +206,251 @@ public enum AgentLoopEvaluator {
         } else {
             contextWindow = await AgentLoopBudget.resolveContextWindow(modelId: resolvedModel)
         }
+        let resolvedMaxTokens =
+            maxTokens
+            ?? ChatConfigurationStore.load().maxTokens
+            ?? 2_048
         let budgetManager = AgentLoopBudget.makeBudgetManager(
             contextWindow: contextWindow,
             systemPromptChars: systemPrompt.count,
             toolTokens: composed.toolTokens,
-            maxResponseTokens: 2048
+            maxResponseTokens: resolvedMaxTokens
         )
         let watermark = CompactionWatermark()
 
+        // Stable per-run session id: threaded as the request `session_id`
+        // so the inference layer's paged-KV prefix cache can reuse the
+        // prompt across iterations — the production loops all do, and KV
+        // reuse is itself behaviour under test.
         let sessionId = "agent-loop-eval-\(UUID().uuidString)"
         let state = AgentTaskState()
         var transcriptCalls: [AgentLoopTranscript.ToolInvocation] = []
+        var noticesSeen: [String] = []
         var finalText = ""
         // Set when a successful `complete` intercept ends the run; the
         // summary becomes the final answer (mirrors the chat surface,
         // where the summary renders as the completion banner).
         var completedViaTool = false
+        // Set when a successful `clarify` intercept ends the run — mapped
+        // to the distinct `clarifyRequested` exit so cases can assert on
+        // "the model asked instead of guessing".
+        var clarifiedViaTool = false
+
+        /// Snapshot the run's accumulated state into a transcript — the
+        /// single construction point for the success and error returns.
+        func makeTranscript(
+            iterations: Int,
+            exit: String,
+            loopMs: Double,
+            error: String?
+        ) -> AgentLoopTranscript {
+            AgentLoopTranscript(
+                toolCalls: transcriptCalls,
+                finalText: finalText,
+                iterations: iterations,
+                exit: exit,
+                systemPrompt: systemPrompt,
+                toolSchemaNames: composed.tools.map { $0.function.name },
+                loopDurationMs: loopMs,
+                notices: noticesSeen,
+                compacted: watermark.hasCompacted,
+                error: error
+            )
+        }
+
+        func makeRequest(_ messages: [ChatMessage], stream: Bool) -> ChatCompletionRequest {
+            ChatCompletionRequest(
+                model: resolvedModel,
+                messages: messages,
+                temperature: 0.0,
+                max_tokens: resolvedMaxTokens,
+                stream: stream,
+                top_p: nil,
+                frequency_penalty: nil,
+                presence_penalty: nil,
+                stop: nil,
+                n: nil,
+                tools: toolSpecs.isEmpty ? nil : toolSpecs,
+                tool_choice: toolSpecs.isEmpty ? nil : .auto,
+                session_id: sessionId
+            )
+        }
+
+        /// Append the assistant turn carrying this step's tool calls.
+        /// Call ids are pre-assigned (preserving model-supplied ids) so the
+        /// history's `tool_calls[].id` and the driver's per-call ids match.
+        func appendAssistantToolCalls(
+            _ invocations: [ServiceToolInvocation],
+            content: String?
+        ) -> [ServiceToolInvocation] {
+            let withIds = invocations.map { inv in
+                ServiceToolInvocation(
+                    toolName: inv.toolName,
+                    jsonArguments: inv.jsonArguments,
+                    toolCallId: AgentToolLoop.callId(for: inv)
+                )
+            }
+            history.append(
+                ChatMessage(
+                    role: "assistant",
+                    content: (content?.isEmpty == false) ? content : nil,
+                    tool_calls: withIds.map {
+                        ToolCall(
+                            id: $0.toolCallId ?? "",
+                            type: "function",
+                            function: ToolCallFunction(name: $0.toolName, arguments: $0.jsonArguments)
+                        )
+                    },
+                    tool_call_id: nil
+                )
+            )
+            return withIds
+        }
+
+        /// Registry dispatch for one call (shared by the serial hook and
+        /// the parallel batch executor). Auto-approves `.ask`-gated tools
+        /// (e.g. `shell_run`): eval runs are headless against isolated
+        /// temp workspaces, so the approval NSPanel would hang the run on
+        /// a card nobody can click.
+        @Sendable func dispatchOne(_ inv: ServiceToolInvocation) async -> String {
+            do {
+                return try await ChatExecutionContext.$currentSessionId.withValue(sessionId) {
+                    try await ChatExecutionContext.$autoApproveToolPrompts.withValue(true) {
+                        try await ToolRegistry.shared.execute(
+                            name: inv.toolName,
+                            argumentsJSON: inv.jsonArguments
+                        )
+                    }
+                }
+            } catch {
+                return ToolEnvelope.fromError(error, tool: inv.toolName)
+            }
+        }
+
+        /// History/transcript/hot-load/intercept handling for one executed
+        /// call — runs serially in model order, after dispatch.
+        func postProcess(
+            _ inv: ServiceToolInvocation,
+            callId: String,
+            result: String
+        ) async -> AgentLoopToolExecution {
+            history.append(
+                ChatMessage(role: "tool", content: result, tool_calls: nil, tool_call_id: callId)
+            )
+            let isError = ToolEnvelope.isError(result)
+            transcriptCalls.append(
+                .init(
+                    name: inv.toolName,
+                    arguments: inv.jsonArguments,
+                    resultPreview: String(result.prefix(300)),
+                    wasDeduped: false,
+                    wasError: isError
+                )
+            )
+            // Hot-load capability tools mid-run, like the chat loop —
+            // but scoped: the ephemeral agent id has no AgentManager
+            // record, so the registry-side grant check falls back to
+            // global-enabled. This filter is the eval-side grant
+            // boundary: only the workspace's folder tools may enter
+            // the schema via `capabilities_load`; everything else
+            // (configure tools, sandbox plugin tools, …) is dropped.
+            if inv.toolName == "capabilities_load" {
+                let allowedHotLoadNames = Set(FolderToolManager.shared.folderToolNames)
+                let drained = await CapabilityLoadBuffer.shared.drain()
+                for spec in drained
+                where allowedHotLoadNames.contains(spec.function.name)
+                    && !toolSpecs.contains(where: { $0.function.name == spec.function.name })
+                {
+                    toolSpecs.append(spec)
+                }
+            }
+            // Agent-loop intercepts, mirroring the chat surface: a
+            // successful `complete` ends the run and its summary is the
+            // final answer; a successful `clarify` ends the run awaiting
+            // user input (headless: no answer ever arrives). Error
+            // envelopes fall through so the model can retry.
+            if inv.toolName == "complete", !isError {
+                completedViaTool = true
+                if let summary = CompleteTool.parseSummary(from: inv.jsonArguments) {
+                    finalText = summary
+                }
+                return AgentLoopToolExecution(result: result, endRun: true)
+            }
+            if inv.toolName == "clarify", !isError {
+                clarifiedViaTool = true
+                return AgentLoopToolExecution(result: result, endRun: true)
+            }
+            return AgentLoopToolExecution(result: result, isError: isError)
+        }
 
         let hooks = AgentLoopHooks(
             buildMessages: { notices in
+                // Canonical notice contract: trim with the system prefix
+                // kept byte-stable, then notices ride transiently. Notices
+                // are also recorded for the transcript so cases can assert
+                // a nudge/warning actually fired.
+                noticesSeen.append(contentsOf: notices)
                 var msgs: [ChatMessage] = [ChatMessage(role: "system", content: systemPrompt)]
                 msgs.append(contentsOf: history)
-                for notice in notices {
-                    msgs.append(ChatMessage(role: "user", content: notice))
-                }
-                return AgentLoopBudget.trimPreservingSystemPrefix(
+                return AgentLoopBudget.composeIterationMessages(
                     msgs,
-                    with: budgetManager,
+                    notices: notices,
+                    manager: budgetManager,
                     watermark: watermark
                 )
             },
             modelStep: { effective, _ in
-                let request = ChatCompletionRequest(
-                    model: resolvedModel,
-                    messages: effective,
-                    temperature: 0.0,
-                    max_tokens: 2048,
-                    stream: false,
-                    top_p: nil,
-                    frequency_penalty: nil,
-                    presence_penalty: nil,
-                    stop: nil,
-                    n: nil,
-                    tools: toolSpecs.isEmpty ? nil : toolSpecs,
-                    tool_choice: toolSpecs.isEmpty ? nil : .auto,
-                    session_id: nil
+                if streaming {
+                    // Streaming path (default, matching chat): delta routing
+                    // and tool-call assembly — where most local-model parser
+                    // bugs live — are part of what's under test.
+                    var content = ""
+                    do {
+                        let stream = try await engine.streamChat(
+                            request: makeRequest(effective, stream: true)
+                        )
+                        for try await delta in stream {
+                            if StreamingReasoningHint.decode(delta) != nil { continue }
+                            if StreamingStatsHint.decode(delta) != nil { continue }
+                            if StreamingToolHint.isSentinel(delta) { continue }
+                            content += delta
+                        }
+                        if !content.isEmpty {
+                            finalText = content
+                        }
+                        return .finalResponse
+                    } catch let invs as ServiceToolInvocations {
+                        // Interim prose preceding tool calls is NOT the
+                        // final answer (never let it go stale into the
+                        // transcript's finalText) — but it DOES stay in
+                        // history, like the chat surface: the model's
+                        // narrated findings must survive later compaction
+                        // of the tool results they describe.
+                        finalText = ""
+                        return .toolCalls(
+                            appendAssistantToolCalls(invs.invocations, content: content)
+                        )
+                    } catch let inv as ServiceToolInvocation {
+                        finalText = ""
+                        return .toolCalls(appendAssistantToolCalls([inv], content: content))
+                    }
+                }
+
+                let response = try await engine.completeChat(
+                    request: makeRequest(effective, stream: false)
                 )
-                let response = try await engine.completeChat(request: request)
                 guard let choice = response.choices.first else {
                     return .finalResponse
                 }
-                if let content = choice.message.content, !content.isEmpty {
-                    finalText = content
-                }
                 guard let calls = choice.message.tool_calls, !calls.isEmpty else {
+                    if let content = choice.message.content, !content.isEmpty {
+                        finalText = content
+                    }
                     return .finalResponse
                 }
+                // Tool calls present: any prose on this turn is interim
+                // narration, not the final answer.
+                finalText = ""
                 history.append(
                     ChatMessage(
                         role: "assistant",
@@ -231,64 +483,44 @@ public enum AgentLoopEvaluator {
                 )
             },
             executeTool: { inv, callId in
-                let result: String
-                do {
-                    // Auto-approve `.ask`-gated tools (e.g. `shell_run`):
-                    // eval runs are headless against isolated temp
-                    // workspaces, so the approval NSPanel would hang the
-                    // run on a card nobody can click.
-                    result = try await ChatExecutionContext.$currentSessionId.withValue(sessionId) {
-                        try await ChatExecutionContext.$autoApproveToolPrompts.withValue(true) {
-                            try await ToolRegistry.shared.execute(
-                                name: inv.toolName,
-                                argumentsJSON: inv.jsonArguments
-                            )
-                        }
+                let result = await dispatchOne(inv)
+                return await postProcess(inv, callId: callId, result: result)
+            },
+            executeBatch: { calls in
+                // Parallel batch executor (the production HTTP/chat shape).
+                // Batches carrying a loop-ending intercept fall back to
+                // serial model-order execution, stopping at the first
+                // `endRun` — mirroring the chat surface, so siblings after
+                // a `complete`/`clarify` never run.
+                if AgentToolLoop.containsIntercept(calls) {
+                    var executions: [AgentLoopToolExecution] = []
+                    for call in calls {
+                        let result = await dispatchOne(call.invocation)
+                        let execution = await postProcess(
+                            call.invocation,
+                            callId: call.callId,
+                            result: result
+                        )
+                        executions.append(execution)
+                        if execution.endRun { break }
                     }
-                } catch {
-                    result = ToolEnvelope.fromError(error, tool: inv.toolName)
+                    return executions
                 }
-                history.append(
-                    ChatMessage(role: "tool", content: result, tool_calls: nil, tool_call_id: callId)
-                )
-                transcriptCalls.append(
-                    .init(
-                        name: inv.toolName,
-                        arguments: inv.jsonArguments,
-                        resultPreview: String(result.prefix(300)),
-                        wasDeduped: false
+                let results = await AgentToolLoop.runBatchInParallel(calls) { inv, _ in
+                    await dispatchOne(inv)
+                }
+                var executions: [AgentLoopToolExecution] = []
+                executions.reserveCapacity(calls.count)
+                for (call, raw) in zip(calls, results) {
+                    executions.append(
+                        await postProcess(call.invocation, callId: call.callId, result: raw.result)
                     )
-                )
-                // Hot-load capability tools mid-run, like the chat loop.
-                if inv.toolName == "capabilities_load" {
-                    let drained = await CapabilityLoadBuffer.shared.drain()
-                    for spec in drained
-                    where !toolSpecs.contains(where: { $0.function.name == spec.function.name }) {
-                        toolSpecs.append(spec)
-                    }
                 }
-                // Agent-loop intercepts, mirroring the chat surface: a
-                // successful `complete` ends the run and its summary is the
-                // final answer; a successful `clarify` ends the run awaiting
-                // user input (headless: no answer ever arrives). Error
-                // envelopes fall through so the model can retry.
-                if inv.toolName == "complete", !ToolEnvelope.isError(result) {
-                    completedViaTool = true
-                    if let summary = CompleteTool.parseSummary(from: inv.jsonArguments) {
-                        finalText = summary
-                    }
-                    return AgentLoopToolExecution(result: result, endRun: true)
-                }
-                if inv.toolName == "clarify", !ToolEnvelope.isError(result) {
-                    return AgentLoopToolExecution(result: result, endRun: true)
-                }
-                return AgentLoopToolExecution(
-                    result: result,
-                    isError: ToolEnvelope.isError(result)
-                )
+                return executions
             }
         )
 
+        let loopStarted = Date()
         do {
             let runResult = try await ChatExecutionContext.$currentAgentId.withValue(resolvedAgentId) {
                 try await AgentToolLoop.run(
@@ -305,29 +537,27 @@ public enum AgentLoopEvaluator {
             // model's final response (the summary), not a surface
             // interruption — report it as the happy-path exit so cases
             // score tool-completion and text-completion identically.
+            // A `clarify` intercept maps to its own exit so cases can
+            // assert "asked instead of guessing" distinctly.
             let exitLabel: String
             if case .endedBySurface = runResult.exit, completedViaTool {
                 exitLabel = "finalResponse"
+            } else if case .endedBySurface = runResult.exit, clarifiedViaTool {
+                exitLabel = "clarifyRequested"
             } else {
                 exitLabel = Self.describe(runResult.exit)
             }
-            return AgentLoopTranscript(
-                toolCalls: transcriptCalls,
-                finalText: finalText,
+            return makeTranscript(
                 iterations: runResult.iterations,
                 exit: exitLabel,
-                systemPrompt: systemPrompt,
-                toolSchemaNames: composed.tools.map { $0.function.name },
+                loopMs: Date().timeIntervalSince(loopStarted) * 1000,
                 error: nil
             )
         } catch {
-            return AgentLoopTranscript(
-                toolCalls: transcriptCalls,
-                finalText: finalText,
+            return makeTranscript(
                 iterations: 0,
                 exit: "errored",
-                systemPrompt: systemPrompt,
-                toolSchemaNames: composed.tools.map { $0.function.name },
+                loopMs: Date().timeIntervalSince(loopStarted) * 1000,
                 error: error.localizedDescription
             )
         }

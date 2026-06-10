@@ -5,7 +5,10 @@
 > adopted by all three loop surfaces, and `sandbox_reduce`
 > (`Packages/OsaurusCore/Tools/SandboxReduceTool.swift`) is registered with
 > the other exec-gated sandbox tools. This document remains as the design
-> rationale; details below describe the original proposal.
+> rationale; details below describe the original proposal. The driver's
+> current behavior — policy knobs, two-phase parallel batches, KV-stable
+> compaction, and the eval proof lane — is documented in
+> [AGENT_LOOP.md — The Canonical Loop Driver](AGENT_LOOP.md#the-canonical-loop-driver-agenttoolloop).
 
 ## Problem
 

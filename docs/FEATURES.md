@@ -26,7 +26,7 @@ Canonical reference for all Osaurus features, their status, and documentation.
 | Agent DB & Self-Scheduling       | Stable    | "Agents"           | AGENT_DB.md                   | Storage/AgentDatabase.swift, Storage/SchedulerDatabase.swift, Managers/NextRunScheduler.swift, Tools/Database/, Views/Agent/AgentDBTabViews.swift, Views/Agent/NextRunPanelView.swift |
 | Schedules                        | Stable    | "Schedules"        | (in README)                   | Managers/ScheduleManager.swift, Models/Schedule/Schedule.swift, Views/Schedule/SchedulesView.swift      |
 | Watchers                         | Stable    | "Watchers"         | WATCHERS.md                   | Managers/WatcherManager.swift, Models/Watcher/Watcher.swift, Views/Watcher/WatchersView.swift         |
-| Agent Loop & Folder Context      | Stable    | "Agent Loop"       | AGENT_LOOP.md                 | Folder/, Tools/AgentLoopTools.swift, Tools/FolderToolManager.swift, Models/Chat/AgentTodo.swift, Models/Chat/AgentTodoStore.swift, Models/Chat/SharedArtifact.swift |
+| Agent Loop & Folder Context      | Stable    | "Agent Loop"       | AGENT_LOOP.md                 | Services/Chat/AgentToolLoop.swift, Services/Chat/AgentTaskState.swift, Folder/, Tools/AgentLoopTools.swift, Tools/FolderToolManager.swift, Models/Chat/AgentTodo.swift, Models/Chat/AgentTodoStore.swift, Models/Chat/SharedArtifact.swift |
 | Developer Tools: Insights        | Stable    | "Developer Tools"  | DEVELOPER_TOOLS.md            | Views/Insights/InsightsView.swift, Managers/InsightsService.swift                              |
 | Developer Tools: Server Explorer | Stable    | "Developer Tools"  | DEVELOPER_TOOLS.md            | Views/Settings/ServerView.swift                                                                |
 | Apple Foundation Models          | macOS 26+ | "What is Osaurus?" | (in README)                   | Services/Inference/FoundationModelService.swift                                                 |
@@ -620,6 +620,10 @@ This command bridge is for external clients connecting to Osaurus. It is separat
 
 **Components:**
 
+- `Services/Chat/AgentToolLoop.swift` — The canonical loop driver shared by chat, HTTP, plugin, and eval surfaces: `AgentLoopPolicy` knobs, exit taxonomy, two-phase parallel batch execution, driver-staged `[System Notice]` lines, and the shared `AgentLoopBudget` window/budget math
+- `Services/Chat/AgentTaskState.swift` — Per-task harness state: result classification, fresh-read dedupe, reactive next-step bias
+- `Services/Chat/ContextBudgetManager.swift` + `Services/Chat/CompactionWatermark.swift` — Budget reservations and sticky, KV-prefix-stable history compaction (monotonic summarize→drop decisions, byte-stable trim note, `overBudget` signal)
+- `Services/Context/AgentLoopEvaluator.swift` — Drives the same loop end-to-end for the OsaurusEvals `agent_loop` proof suite
 - `Tools/AgentLoopTools.swift` — The three chat-layer-intercepted loop tools (`todo`, `complete`, `clarify`); registered as global built-ins
 - `Tools/FolderToolManager.swift` — Registers folder tools when a working folder is selected; unregisters on clear. `share_artifact` is no longer registered here — it lives as a global built-in alongside the loop tools.
 - `Folder/FolderContext.swift` — Project type, file tree, manifest, git status, optional `AGENTS.md`/`CLAUDE.md`/`.cursorrules`
@@ -634,6 +638,9 @@ This command bridge is for external clients connecting to Osaurus. It is separat
 **Features:**
 
 - **Unified loop** — One chat is one task; no separate Agent/Work tab
+- **One canonical driver** — Chat, HTTP `/v1/chat/completions`, the plugin host, and the eval harness all run `AgentToolLoop`; surface differences are named `AgentLoopPolicy` knobs, not forked loops
+- **Parallel tool batches** — Multi-call model steps execute concurrently with serial-equivalent semantics: approvals resolve serially in model order before anything runs, read-duplicates within a batch replay the sibling's result, and `complete`/`clarify` batches fall back to serial so post-intercept siblings never execute
+- **KV-stable compaction** — History trimming is sticky and monotonic (`CompactionWatermark`), so the rendered prompt prefix stays byte-stable across iterations and the paged-KV cache keeps its hits; UI and runtime share one budget assessment (`AgentLoopBudget.assess`) so the context chip and the send gate can't disagree with the trimmer
 - **`todo` / `complete` / `clarify`** — Three minimal-schema global built-in tools whose results the chat layer intercepts to drive the inline UI (not a pre-dispatch hook — the registry runs them like any other tool)
 - **Single mode resolver** — `ToolRegistry.resolveExecutionMode(folderContext:autonomousEnabled:)` decides sandbox > host folder > none for chat, plugin, and HTTP entry points
 - **Working folder picker** — Per-chat folder via `FolderContextService`, with security-scoped bookmark persistence

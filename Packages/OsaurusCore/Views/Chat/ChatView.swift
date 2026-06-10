@@ -2939,6 +2939,24 @@ final class ChatSession: ObservableObject {
                             return [await executeSingleToolCall(only.invocation, callId: only.callId)]
                         }
 
+                        // Serial fallback when the batch carries a loop-ending
+                        // intercept (`complete`/`clarify`): execute in model
+                        // order and stop at the first `endRun`; the driver
+                        // treats the missing trailing results as
+                        // never-executed slots.
+                        if AgentToolLoop.containsIntercept(calls) {
+                            var serialExecutions: [AgentLoopToolExecution] = []
+                            for call in calls {
+                                let execution = await executeSingleToolCall(
+                                    call.invocation,
+                                    callId: call.callId
+                                )
+                                serialExecutions.append(execution)
+                                if execution.endRun { break }
+                            }
+                            return serialExecutions
+                        }
+
                         var executions = [AgentLoopToolExecution?](repeating: nil, count: calls.count)
 
                         if executionMode.usesSandboxTools {

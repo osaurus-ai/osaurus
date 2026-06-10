@@ -1150,10 +1150,13 @@ final class PluginHostContext: @unchecked Sendable {
         guard maxIterations > 1 else { return nil }
 
         // Window resolution + reservations are shared with the chat and
-        // HTTP loop surfaces via `AgentLoopBudget`.
+        // HTTP loop surfaces via `AgentLoopBudget`. The tool reservation is
+        // for THIS request's tool schema, not the whole registry — the
+        // model only ever sees the request's toolset, so reserving for
+        // every registered tool would starve the history budget.
         let contextLength = await AgentLoopBudget.resolveContextWindow(modelId: inf.request.model)
         let toolTokens = await MainActor.run {
-            ToolRegistry.shared.totalEstimatedTokens()
+            ToolRegistry.shared.totalEstimatedTokens(for: inf.tools ?? [])
         }
         let sysChars = inf.request.messages.first(where: { $0.role == "system" })?.content?.count ?? 0
 
@@ -1370,16 +1373,19 @@ final class PluginHostContext: @unchecked Sendable {
             // post-processing (share_artifact / capabilities_load).
             let hooks = AgentLoopHooks(
                 buildMessages: { notices in
-                    // Driver-staged notices (budget warning, next-step bias)
-                    // persist into the running history, matching the
-                    // historical behavior of appending the bias in-line.
-                    for notice in notices {
-                        messages.append(ChatMessage(role: "user", content: notice))
-                    }
-                    return prep.budgetManager?.trimMessages(messages, watermark: compactionWatermark)
-                        ?? messages
+                    // Canonical notice contract (shared with chat/HTTP):
+                    // trim with the system prefix kept byte-stable, then
+                    // append driver-staged notices TRANSIENTLY — they ride
+                    // exactly one iteration and never persist into
+                    // `messages`.
+                    AgentLoopBudget.composeIterationMessages(
+                        messages,
+                        notices: notices,
+                        manager: prep.budgetManager,
+                        watermark: compactionWatermark
+                    )
                 },
-                modelStep: { effective, iteration in
+                modelStep: { effective, _ in
                     let iterReq = Self.iterationRequest(
                         from: prep.enriched.request,
                         messages: effective,
@@ -1391,12 +1397,15 @@ final class PluginHostContext: @unchecked Sendable {
                     }
 
                     if let calls = choice.message.tool_calls, !calls.isEmpty,
-                        choice.finish_reason == "tool_calls",
-                        iteration < prep.options.maxIterations
+                        choice.finish_reason == "tool_calls"
                     {
                         // The non-streaming path appends the full assistant
                         // message (with all tool_calls) once; the per-call
                         // hooks then append only the tool-result messages.
+                        // The iteration cap is owned by the DRIVER (same
+                        // taxonomy as the HTTP surface): the final
+                        // iteration's calls still execute, then the loop
+                        // exits `.iterationCapReached`.
                         messages.append(choice.message)
                         return .toolCalls(
                             calls.map {
@@ -1409,9 +1418,7 @@ final class PluginHostContext: @unchecked Sendable {
                         )
                     }
 
-                    // Final answer (or a last-iteration tool call, which is
-                    // returned to the plugin as-is rather than executed —
-                    // preserving the historical budget semantics).
+                    // Final answer.
                     finalResponse = response
                     return .finalResponse
                 },
@@ -1463,9 +1470,15 @@ final class PluginHostContext: @unchecked Sendable {
             guard exit == .finalResponse, let response = finalResponse,
                 let choice = response.choices.first
             else {
+                // Driver-owned iteration cap (same taxonomy as HTTP): the
+                // final iteration's tool calls executed, but the model
+                // never produced a final text answer. Surface what ran so
+                // the plugin isn't left with an opaque error.
                 return Self.jsonString([
                     "error": "max_iterations_reached",
                     "message": "Reached max iterations (\(prep.options.maxIterations)) without a final response",
+                    "tool_calls_executed": toolCallsExecuted,
+                    "shared_artifacts": sharedArtifacts,
                 ])
             }
 
@@ -1635,16 +1648,19 @@ final class PluginHostContext: @unchecked Sendable {
             let hooks = AgentLoopHooks(
                 isCancelled: { isCancelled(streamId) },
                 buildMessages: { notices in
-                    // Driver-staged notices (budget warning, next-step bias)
-                    // persist into the running history, matching the
-                    // historical behavior of appending the bias in-line.
-                    for notice in notices {
-                        messages.append(ChatMessage(role: "user", content: notice))
-                    }
-                    return prep.budgetManager?.trimMessages(messages, watermark: compactionWatermark)
-                        ?? messages
+                    // Canonical notice contract (shared with chat/HTTP):
+                    // trim with the system prefix kept byte-stable, then
+                    // append driver-staged notices TRANSIENTLY — they ride
+                    // exactly one iteration and never persist into
+                    // `messages`.
+                    AgentLoopBudget.composeIterationMessages(
+                        messages,
+                        notices: notices,
+                        manager: prep.budgetManager,
+                        watermark: compactionWatermark
+                    )
                 },
-                modelStep: { effective, iteration in
+                modelStep: { effective, _ in
                     let iterReq = Self.iterationRequest(
                         from: prep.enriched.request,
                         messages: effective,
@@ -1723,26 +1739,14 @@ final class PluginHostContext: @unchecked Sendable {
                         return .finalResponse
 
                     } catch let invs as ServiceToolInvocations {
-                        guard iteration < prep.options.maxIterations else {
-                            // Last-iteration tool call: emit a finish_reason
-                            // chunk that is honest about why we stopped, then
-                            // return a structured `max_iterations_reached`
-                            // envelope WITHOUT executing the batch (matches
-                            // the historical budget semantics).
-                            emit(Self.chunkPayload(id: cid, delta: [:], finishReason: "max_iterations"))
-                            persistPartial(lastContent)
-                            terminalEnvelope = maxIterationsEnvelope()
-                            return .finalResponse
-                        }
+                        // The iteration cap is owned by the DRIVER (same
+                        // taxonomy as the HTTP surface): the final
+                        // iteration's calls still execute, then the loop
+                        // exits `.iterationCapReached` and the terminal
+                        // handler below emits the honest stop chunk.
                         return .toolCalls(invs.invocations)
 
                     } catch let inv as ServiceToolInvocation {
-                        guard iteration < prep.options.maxIterations else {
-                            emit(Self.chunkPayload(id: cid, delta: [:], finishReason: "max_iterations"))
-                            persistPartial(lastContent)
-                            terminalEnvelope = maxIterationsEnvelope()
-                            return .finalResponse
-                        }
                         return .toolCalls([inv])
                     }
                 },
@@ -1863,8 +1867,11 @@ final class PluginHostContext: @unchecked Sendable {
             }
 
             // Iteration budget exhausted while the model was still requesting
-            // tools. Persist whatever we have before returning so the user
-            // can still see the partial conversation.
+            // tools (driver `.iterationCapReached`). Emit a finish chunk
+            // that is honest about why we stopped, persist whatever we have
+            // before returning so the user can still see the partial
+            // conversation.
+            emit(Self.chunkPayload(id: cid, delta: [:], finishReason: "max_iterations"))
             persistPartial(lastContent)
             return maxIterationsEnvelope()
         }

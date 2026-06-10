@@ -547,14 +547,20 @@ struct AgentTaskStateTests {
     @Test func repeatedCall_keyOrderInsensitive() {
         let state = AgentTaskState()
         state.record(
-            name: "file_write", argsJSON: #"{"path":"a.txt","content":"x"}"#,
-            result: execFailureEnvelope())
+            name: "file_write",
+            argsJSON: #"{"path":"a.txt","content":"x"}"#,
+            result: execFailureEnvelope()
+        )
         state.record(
-            name: "file_write", argsJSON: #"{"content":"x","path":"a.txt"}"#,
-            result: execFailureEnvelope())
+            name: "file_write",
+            argsJSON: #"{"content":"x","path":"a.txt"}"#,
+            result: execFailureEnvelope()
+        )
         state.record(
-            name: "file_write", argsJSON: #"{"path":"a.txt","content":"x"}"#,
-            result: execFailureEnvelope())
+            name: "file_write",
+            argsJSON: #"{"path":"a.txt","content":"x"}"#,
+            result: execFailureEnvelope()
+        )
         let bias = state.nextStepBias() ?? ""
         #expect(bias.contains("file_write"))
     }
@@ -569,8 +575,10 @@ struct AgentTaskStateTests {
         state.record(name: "sandbox_exec", argsJSON: args, result: execFailureEnvelope())
         // Now a different command runs — the nudge must not fire for it.
         state.record(
-            name: "sandbox_exec", argsJSON: #"{"command":"ls"}"#,
-            result: ToolEnvelope.success(tool: "sandbox_exec", text: "ok"))
+            name: "sandbox_exec",
+            argsJSON: #"{"command":"ls"}"#,
+            result: ToolEnvelope.success(tool: "sandbox_exec", text: "ok")
+        )
         #expect(state.nextStepBias() == nil)
     }
 

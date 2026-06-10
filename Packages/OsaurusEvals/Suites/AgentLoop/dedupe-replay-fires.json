@@ -1,0 +1,21 @@
+{
+  "id": "agent_loop.dedupe-replay-fires",
+  "domain": "agent_loop",
+  "label": "agent loop • dedupe replay actually fires on an identical re-read",
+  "query": "Read notes.txt. Then, as a separate step, read notes.txt again with the exact same arguments to double-check you got it right. Finally report the file's contents.",
+  "notes": "Companion to duplicate-call-avoidance: that case asserts nothing executed twice, this one asserts the dedupe REPLAY mechanism itself fired at least once (wasDeduped in the transcript). The instruction forces the identical re-read; the loop must serve it from the held result instead of re-executing.",
+  "fixtures": {
+    "workspaceFiles": [
+      { "path": "notes.txt", "contents": "checksum: 7f3a\n" }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 6,
+      "mustCallTools": ["file_read"],
+      "noDuplicateExecutedCalls": true,
+      "minDedupedReplays": 1,
+      "finalTextContains": ["7f3a"]
+    }
+  }
+}

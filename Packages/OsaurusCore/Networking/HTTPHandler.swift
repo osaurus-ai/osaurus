@@ -3373,16 +3373,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     disconnected.value
                 },
                 buildMessages: { notices in
-                    // Driver-staged notices (budget warning, next-step bias)
-                    // persist into the running history, matching the
-                    // historical behavior of appending the bias in-line.
-                    for notice in notices {
-                        messages.append(ChatMessage(role: "user", content: notice))
-                    }
-                    guard let budgetManager else { return messages }
-                    return AgentLoopBudget.trimPreservingSystemPrefix(
+                    // Canonical notice contract (shared with chat/plugin):
+                    // trim with the system prefix kept byte-stable, then
+                    // append driver-staged notices TRANSIENTLY — they ride
+                    // exactly one iteration and never persist into
+                    // `messages`.
+                    AgentLoopBudget.composeIterationMessages(
                         messages,
-                        with: budgetManager,
+                        notices: notices,
+                        manager: budgetManager,
                         watermark: compactionWatermark
                     )
                 },
@@ -3512,10 +3511,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         )
                 },
                 executeBatch: { calls in
-                    // The loop's default batch executor: non-duplicate calls
-                    // run in parallel via a TaskGroup so wall-clock time
-                    // stays proportional to the slowest call rather than
-                    // the sum; results come back in model order.
+                    // Two-phase canonical batch: approvals resolve serially
+                    // in model order FIRST (no stacked/racing permission
+                    // prompts), then the approved set runs in parallel via
+                    // a TaskGroup so wall-clock time stays proportional to
+                    // the slowest call; results come back in model order.
                     await AgentToolLoop.runBatchInParallel(
                         calls,
                         sessionId: requestId,

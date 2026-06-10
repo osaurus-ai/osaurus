@@ -272,8 +272,27 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         public let maxToolCalls: Int?
         /// When true, no identical (name, arguments) pair may EXECUTE
         /// more than once — replays through the loop's dedupe are fine
-        /// (that's the mechanism working). Pins duplicate-call avoidance.
+        /// (that's the mechanism working). Duplicate keys use the loop's
+        /// own argument canonicalisation (sorted-key JSON), so spelling
+        /// variants of the same arguments compare equal. Pins
+        /// duplicate-call avoidance.
         public let noDuplicateExecutedCalls: Bool?
+        /// Opt-in: when true, no processed tool call may return an error
+        /// envelope. Off by default — recovery cases legitimately route
+        /// through tool errors.
+        public let noToolErrors: Bool?
+        /// Minimum number of dedupe REPLAYS (`wasDeduped`) the transcript
+        /// must contain. Asserts the loop's dedupe actually fired, not
+        /// just that nothing executed twice.
+        public let minDedupedReplays: Int?
+        /// Substrings that must appear in at least one driver-staged
+        /// notice (budget warning / dedupe notice / next-step nudge).
+        /// Asserts a nudge FIRED, independent of whether the model obeyed.
+        public let noticesContain: [String]?
+        /// When true, the run must have actually compacted history (the
+        /// sticky watermark recorded a summarize/drop). Strengthens
+        /// compaction-stress beyond "the answer came out right".
+        public let expectCompaction: Bool?
         /// Exits that pass. Default: `["finalResponse"]`. A
         /// wrap-up-on-budget case can accept `iterationCapReached`.
         public let allowedExits: [String]?
@@ -298,6 +317,10 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             mustNotCallTools: [String]? = nil,
             maxToolCalls: Int? = nil,
             noDuplicateExecutedCalls: Bool? = nil,
+            noToolErrors: Bool? = nil,
+            minDedupedReplays: Int? = nil,
+            noticesContain: [String]? = nil,
+            expectCompaction: Bool? = nil,
             allowedExits: [String]? = nil,
             files: [FileAssertion]? = nil,
             commands: [CommandAssertion]? = nil,
@@ -310,6 +333,10 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.mustNotCallTools = mustNotCallTools
             self.maxToolCalls = maxToolCalls
             self.noDuplicateExecutedCalls = noDuplicateExecutedCalls
+            self.noToolErrors = noToolErrors
+            self.minDedupedReplays = minDedupedReplays
+            self.noticesContain = noticesContain
+            self.expectCompaction = expectCompaction
             self.allowedExits = allowedExits
             self.files = files
             self.commands = commands
