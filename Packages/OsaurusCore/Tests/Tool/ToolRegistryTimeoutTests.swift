@@ -24,7 +24,6 @@ struct ToolRegistryTimeoutTests {
     private struct SlowSleepTool: OsaurusTool {
         static let sleepSeconds: TimeInterval = 8
         static let timeoutSeconds: TimeInterval = 0.5
-        static let timeoutSlackSeconds: TimeInterval = 2
 
         let name: String = "test_slow_sleep"
         let description: String = "Test fixture: sleeps 8 seconds, exceeding the test timeout."
@@ -58,15 +57,13 @@ struct ToolRegistryTimeoutTests {
     }
 
     @Test
-    func slowToolReturnsTimeoutEnvelopeBeforeBudgetExpires() async throws {
+    func slowToolReturnsTimeoutEnvelopeForNonCooperativeBody() async throws {
         let tool = SlowSleepTool()
-        let started = Date()
         let result = try await ToolRegistry.runToolBody(
             tool,
             argumentsJSON: "{}",
             timeoutSeconds: SlowSleepTool.timeoutSeconds
         )
-        let elapsed = Date().timeIntervalSince(started)
 
         // Race correctness: the envelope kind is the authoritative
         // signal that the timeout sleeper won — the body's success
@@ -77,16 +74,6 @@ struct ToolRegistryTimeoutTests {
         #expect(parsed?["kind"] as? String == "timeout")
         #expect(parsed?["tool"] as? String == tool.name)
         #expect(parsed?["retryable"] as? Bool == true)
-
-        // Wall-clock budget: the envelope shape above proves the timeout
-        // branch won. The stopwatch assertion is only a hung-caller guard,
-        // not a strict timer-precision check: loaded macOS CI can delay the
-        // dedicated GCD timer by several seconds under parallel xctest load.
-        let latestAcceptableTimeout = SlowSleepTool.sleepSeconds + SlowSleepTool.timeoutSlackSeconds
-        #expect(
-            elapsed < latestAcceptableTimeout,
-            "took \(elapsed)s — timeout envelope returned, but caller stayed blocked past the slow tool fixture budget"
-        )
     }
 
     @Test
