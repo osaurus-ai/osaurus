@@ -93,4 +93,14 @@ struct ErrorBodyShapeTests {
         #expect(HTTPHandler.anthropicErrorType(for: error) == "invalid_request_error")
         #expect(HTTPHandler.ollamaErrorType(for: error) == "invalid_request_error")
     }
+
+    @Test func cancellationDoesNotMapToInternalError() {
+        let error = CancellationError()
+
+        #expect(HTTPHandler.localRuntimeHTTPStatus(for: error).code == 499)
+        #expect(HTTPHandler.openAIErrorType(for: error) == "request_cancelled")
+        #expect(HTTPHandler.openResponsesErrorCode(for: error) == "request_cancelled")
+        #expect(HTTPHandler.anthropicErrorType(for: error) == "request_cancelled")
+        #expect(HTTPHandler.ollamaErrorType(for: error) == "request_cancelled")
+    }
 }

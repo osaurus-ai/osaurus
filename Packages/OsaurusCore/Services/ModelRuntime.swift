@@ -138,6 +138,15 @@ public actor ModelRuntime {
     /// counting it in the feasibility gate — closes that window without a
     /// global cold-load lock.
     private var inflightLoadWeights: [String: Int64] = [:]
+
+    /// Process-wide cold-load slot. `loadingTasks` coalesces callers only
+    /// after a load task is registered, but model discovery, JANG shape walks,
+    /// sidecar checks, and vmlx container materialization all perform async
+    /// work before/around that registration. Separate cold loads can otherwise
+    /// enter MLX/Metal setup concurrently and trip native command-buffer
+    /// assertions before Swift can throw. Hot cache hits bypass this slot.
+    private var coldLoadActive = false
+    private var coldLoadWaiters: [CheckedContinuation<Void, Never>] = []
     private var currentModelName: String?
     private var cachedConfig: RuntimeConfig?
 
@@ -952,6 +961,27 @@ public actor ModelRuntime {
         }
     }
 
+    private func acquireColdLoadSlot() async {
+        if !coldLoadActive {
+            coldLoadActive = true
+            return
+        }
+
+        await withCheckedContinuation { continuation in
+            coldLoadWaiters.append(continuation)
+        }
+    }
+
+    private func releaseColdLoadSlot() {
+        guard coldLoadActive else { return }
+        if !coldLoadWaiters.isEmpty {
+            let next = coldLoadWaiters.removeFirst()
+            next.resume()
+        } else {
+            coldLoadActive = false
+        }
+    }
+
     /// Flexible mode can keep multiple small models resident, but it must not
     /// keep a huge model while starting another huge load. The vmlx load path
     /// applies a 70% MLX memory budget; mirror that budget before entering
@@ -1054,6 +1084,79 @@ public actor ModelRuntime {
                 let other = modelCache.keys.first(where: { $0 != name })
             {
                 genLog.info("loadContainer: strict eviction of \(other, privacy: .public)")
+                await unload(name: other)
+                continue
+            }
+
+            break
+        }
+
+        await acquireColdLoadSlot()
+        defer { releaseColdLoadSlot() }
+
+        while true {
+            try Task.checkCancellation()
+            if let existing = modelCache[name] {
+                let elapsedMs = Int((CFAbsoluteTimeGetCurrent() - loadStartedAt) * 1000)
+                genLog.info(
+                    "loadContainer: cache hit after cold-load wait model=\(name, privacy: .public) elapsedMs=\(elapsedMs, privacy: .public)"
+                )
+                return existing
+            }
+
+            if let existingRecord = loadingTasks[name] {
+                do {
+                    let holder = try await existingRecord.task.value
+                    return try await finishLoadedContainer(
+                        name: name,
+                        holder: holder,
+                        loadID: existingRecord.id
+                    )
+                } catch is CancellationError {
+                    if loadingTasks[name]?.id == existingRecord.id {
+                        loadingTasks.removeValue(forKey: name)
+                    }
+                    supersededLoadingTaskIDs.remove(existingRecord.id)
+                    continue
+                } catch {
+                    if loadingTasks[name]?.id == existingRecord.id {
+                        loadingTasks.removeValue(forKey: name)
+                    }
+                    supersededLoadingTaskIDs.remove(existingRecord.id)
+                    throw error
+                }
+            }
+
+            if let otherLoading = loadingTasks.first(where: { $0.key != name }) {
+                let otherName = otherLoading.key
+                let otherRecord = otherLoading.value
+                if policy == .strictSingleModel {
+                    genLog.info(
+                        "loadContainer: strict drain of in-flight load \(otherName, privacy: .public) after cold-load wait"
+                    )
+                    await cancelAndDrainLoadingTasks([(otherName, otherRecord)])
+                } else {
+                    do {
+                        let holder = try await otherRecord.task.value
+                        _ = try? await finishLoadedContainer(
+                            name: otherName,
+                            holder: holder,
+                            loadID: otherRecord.id
+                        )
+                    } catch {
+                        if loadingTasks[otherName]?.id == otherRecord.id {
+                            loadingTasks.removeValue(forKey: otherName)
+                        }
+                        supersededLoadingTaskIDs.remove(otherRecord.id)
+                    }
+                }
+                continue
+            }
+
+            if policy == .strictSingleModel,
+                let other = modelCache.keys.first(where: { $0 != name })
+            {
+                genLog.info("loadContainer: strict eviction after cold-load wait of \(other, privacy: .public)")
                 await unload(name: other)
                 continue
             }

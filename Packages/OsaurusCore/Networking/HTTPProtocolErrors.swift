@@ -46,6 +46,9 @@ extension HTTPHandler {
     }
 
     static func localRuntimeHTTPStatus(for error: Error) -> HTTPResponseStatus {
+        if error is CancellationError {
+            return HTTPResponseStatus(statusCode: 499, reasonPhrase: "Client Closed Request")
+        }
         if error is ModelRuntime.LoadRefusedError {
             return .serviceUnavailable
         }
@@ -59,6 +62,9 @@ extension HTTPHandler {
     }
 
     static func openAIErrorType(for error: Error) -> String {
+        if error is CancellationError {
+            return "request_cancelled"
+        }
         if error is ModelRuntime.LoadRefusedError {
             return "insufficient_resources"
         }
@@ -72,6 +78,9 @@ extension HTTPHandler {
     }
 
     static func anthropicErrorType(for error: Error) -> String {
+        if error is CancellationError {
+            return "request_cancelled"
+        }
         if error is ModelRuntime.LoadRefusedError {
             return "overloaded_error"
         }
@@ -85,6 +94,9 @@ extension HTTPHandler {
     }
 
     static func openResponsesErrorCode(for error: Error) -> String {
+        if error is CancellationError {
+            return "request_cancelled"
+        }
         if error is ModelRuntime.LoadRefusedError {
             return "insufficient_resources"
         }
@@ -98,6 +110,9 @@ extension HTTPHandler {
     }
 
     static func ollamaErrorType(for error: Error) -> String {
+        if error is CancellationError {
+            return "request_cancelled"
+        }
         if error is ModelRuntime.LoadRefusedError {
             return "insufficient_resources"
         }

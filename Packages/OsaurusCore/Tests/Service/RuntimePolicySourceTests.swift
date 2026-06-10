@@ -1036,13 +1036,13 @@ struct RuntimePolicySourceTests {
     }
 
     /// With the default `maxBatchSize == 1`, vmlx can use its solo
-    /// TokenIterator-backed fast path. Osaurus must not let a second same-model
+    /// TokenIterator-backed fast path. Osaurus must not let a second solo
     /// request run prompt tokenization / `MLXArray.asArray(...)` while that
     /// decode is still active. vmlx emits `.info` before its post-generation
     /// cache store finishes, so Osaurus also must not release the solo lease
     /// at `.info`; otherwise a second request can enter `prepareInput` while
     /// the first one is still materializing safetensors cache tensors on Metal.
-    @Test("MLXBatchAdapter gates same-model solo generation and propagates stream cancellation")
+    @Test("MLXBatchAdapter gates solo generation and propagates stream cancellation")
     func mlxBatchAdapterGatesSoloGenerationAndCancelsProducer() throws {
         let adapter = try Self.source("Services/ModelRuntime/MLXBatchAdapter.swift")
 
@@ -1780,6 +1780,14 @@ struct RuntimePolicySourceTests {
         #expect(
             loadPreflight.contains("inflightLoadWeights[name] = loadFootprintBytes"),
             "Cold loads must reserve their footprint before the feasibility gate so a parallel load of another model can't double-book unified memory."
+        )
+        #expect(
+            runtime.contains("private var coldLoadActive = false")
+                && runtime.contains("private func acquireColdLoadSlot() async")
+                && runtime.contains("private func releaseColdLoadSlot()")
+                && loadPreflight.contains("await acquireColdLoadSlot()")
+                && loadPreflight.contains("defer { releaseColdLoadSlot() }"),
+            "Cold loads must serialize before vmlx model materialization; RAM accounting alone does not prevent concurrent MLX/Metal command-buffer setup."
         )
         #expect(
             loadPreflight.contains("checkRAMFeasibility("),

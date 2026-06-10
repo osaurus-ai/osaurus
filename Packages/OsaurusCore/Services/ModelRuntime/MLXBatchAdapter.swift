@@ -208,44 +208,42 @@ struct MLXBatchAdapter {
         return resolved
     }
 
-    /// Same-model gate for the single-slot runtime path. With
+    /// Process-wide gate for the single-slot runtime path. With
     /// `maxBatchSize == 1`, vmlx can route through its TokenIterator-backed
     /// solo fast path. There is no batching upside to overlapping a second
-    /// prompt-prep/eval against that active decode, and MLX/Metal command
-    /// encoders are not safe to drive concurrently from the same container.
+    /// prompt-prep/eval against an active solo decode, and MLX/Metal command
+    /// encoders are not safe to drive concurrently across solo engines.
     actor SoloGenerationGate {
-        private var busyModels: Set<String> = []
-        private var waiters: [String: [CheckedContinuation<Void, Never>]] = [:]
+        private var busy = false
+        private var waiters: [CheckedContinuation<Void, Never>] = []
 
         struct Lease: @unchecked Sendable {
-            fileprivate let modelName: String
             fileprivate let gate: SoloGenerationGate
 
             func release() async {
-                await gate.release(modelName)
+                await gate.release()
             }
         }
 
         func acquire(modelName: String) async -> Lease {
-            if !busyModels.contains(modelName) {
-                busyModels.insert(modelName)
-                return Lease(modelName: modelName, gate: self)
+            if !busy {
+                busy = true
+                return Lease(gate: self)
             }
 
             await withCheckedContinuation { continuation in
-                waiters[modelName, default: []].append(continuation)
+                waiters.append(continuation)
             }
-            return Lease(modelName: modelName, gate: self)
+            return Lease(gate: self)
         }
 
-        private func release(_ modelName: String) {
-            guard busyModels.contains(modelName) else { return }
-            if var queue = waiters[modelName], !queue.isEmpty {
-                let next = queue.removeFirst()
-                waiters[modelName] = queue.isEmpty ? nil : queue
+        private func release() {
+            guard busy else { return }
+            if !waiters.isEmpty {
+                let next = waiters.removeFirst()
                 next.resume()
             } else {
-                busyModels.remove(modelName)
+                busy = false
             }
         }
     }
@@ -1036,7 +1034,7 @@ struct MLXBatchAdapter {
         // Important: vmlx emits terminal `.info` before it performs the
         // post-generation disk-cache store and then finishes its stream. The
         // solo lease must be held until the upstream stream is actually done;
-        // releasing it at `.info` lets the next same-model request enter
+        // releasing it at `.info` lets the next solo request enter
         // `prepareInput` while the previous request is still materializing
         // cache tensors on Metal.
         trace?.mark("batch_submit")
@@ -1074,7 +1072,7 @@ struct MLXBatchAdapter {
             // `await`ed, not in a detached `Task` — so the lease is provably
             // released before this producer task completes. The old
             // `defer { Task { await soloLease.release() } }` released on an
-            // unordered future hop, leaving a window where the next same-model
+            // unordered future hop, leaving a window where the next solo
             // request could enter `prepareInput` while this one's Metal
             // cache-store was still materializing.
             continuation.finish()
