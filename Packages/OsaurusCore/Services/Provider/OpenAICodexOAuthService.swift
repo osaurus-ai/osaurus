@@ -26,7 +26,9 @@ public enum OpenAICodexOAuthError: LocalizedError, Sendable {
         switch self {
         case .invalidAuthorizationCallback:
             return
-                L("ChatGPT sign-in did not return a valid authorization code. Try the sign-in again from the same browser window.")
+                L(
+                    "ChatGPT sign-in did not return a valid authorization code. Try the sign-in again from the same browser window."
+                )
         case .invalidPKCE:
             return L("Could not create a secure login challenge")
         case .invalidTokenResponse:
@@ -35,25 +37,37 @@ public enum OpenAICodexOAuthError: LocalizedError, Sendable {
             return L("Missing ChatGPT/Codex sign-in tokens. Sign in with ChatGPT again, then retry the provider.")
         case .missingAccountId:
             return
-                L("Could not identify the ChatGPT account from the sign-in token. Sign in with the ChatGPT account that has Codex access, then retry.")
+                L(
+                    "Could not identify the ChatGPT account from the sign-in token. Sign in with the ChatGPT account that has Codex access, then retry."
+                )
         case .tokenRequestFailed(let message):
             return L("OpenAI token request failed: \(OpenAICodexOAuthService.safeDiagnosticFragment(message))")
         case .loopbackBindFailed(let message):
             return
-                L("Could not start the ChatGPT sign-in callback server on localhost:1455. Close any other in-progress sign-in or app using that port, then retry. Details: \(OpenAICodexOAuthService.safeDiagnosticFragment(message))")
+                L(
+                    "Could not start the ChatGPT sign-in callback server on localhost:1455. Close any other in-progress sign-in or app using that port, then retry. Details: \(OpenAICodexOAuthService.safeDiagnosticFragment(message))"
+                )
         case .browserOpenFailed:
             return
-                L("Could not open the browser for ChatGPT sign-in. Check the macOS default browser setting, then retry.")
+                L(
+                    "Could not open the browser for ChatGPT sign-in. Check the macOS default browser setting, then retry."
+                )
         case .authorizationCallbackFailed(let message):
             return L("ChatGPT sign-in callback failed: \(OpenAICodexOAuthService.safeDiagnosticFragment(message))")
         case .authorizationCallbackRejected(let message):
-            return L("ChatGPT rejected the sign-in callback: \(OpenAICodexOAuthService.safeDiagnosticFragment(message))")
+            return L(
+                "ChatGPT rejected the sign-in callback: \(OpenAICodexOAuthService.safeDiagnosticFragment(message))"
+            )
         case .modelCatalogRequestFailed(let message):
             return
-                L("ChatGPT/Codex model catalog request failed: \(OpenAICodexOAuthService.safeDiagnosticFragment(message))")
+                L(
+                    "ChatGPT/Codex model catalog request failed: \(OpenAICodexOAuthService.safeDiagnosticFragment(message))"
+                )
         case .modelCatalogDecodeFailed(let message):
             return
-                L("OpenAI returned an unreadable Codex model catalog: \(OpenAICodexOAuthService.safeDiagnosticFragment(message))")
+                L(
+                    "OpenAI returned an unreadable Codex model catalog: \(OpenAICodexOAuthService.safeDiagnosticFragment(message))"
+                )
         }
     }
 }

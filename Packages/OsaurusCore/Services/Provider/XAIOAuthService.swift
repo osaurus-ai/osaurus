@@ -35,7 +35,9 @@ public enum XAIOAuthError: LocalizedError, Sendable {
         switch self {
         case .invalidAuthorizationCallback:
             return
-                L("Grok sign-in did not return a valid authorization code. Try the sign-in again from the same browser window.")
+                L(
+                    "Grok sign-in did not return a valid authorization code. Try the sign-in again from the same browser window."
+                )
         case .invalidPKCE:
             return L("Could not create a secure login challenge")
         case .invalidTokenResponse:
@@ -50,7 +52,9 @@ public enum XAIOAuthError: LocalizedError, Sendable {
             return L("xAI token request failed: \(XAIOAuthService.safeDiagnosticFragment(message))")
         case .loopbackBindFailed(let message):
             return
-                L("Could not start the Grok sign-in callback server on 127.0.0.1:\(XAIOAuthService.callbackPort). Close any other in-progress sign-in or app using that port, then retry. Details: \(XAIOAuthService.safeDiagnosticFragment(message))")
+                L(
+                    "Could not start the Grok sign-in callback server on 127.0.0.1:\(XAIOAuthService.callbackPort). Close any other in-progress sign-in or app using that port, then retry. Details: \(XAIOAuthService.safeDiagnosticFragment(message))"
+                )
         case .browserOpenFailed:
             return
                 L("Could not open the browser for Grok sign-in. Check the macOS default browser setting, then retry.")

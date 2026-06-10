@@ -547,7 +547,9 @@ struct ShareAgentSheet: View {
         switch record.displayStatus {
         case .used:
             return
-                L("The receiver who accepted this invite will lose access immediately. Their access key will be revoked.")
+                L(
+                    "The receiver who accepted this invite will lose access immediately. Their access key will be revoked."
+                )
         case .active:
             return L("The link will stop working. Anyone trying to use it will be turned away.")
         case .expired:
