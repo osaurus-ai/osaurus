@@ -2332,6 +2332,11 @@ final class ChatSession: ObservableObject {
         awaitingClarify = nil
 
         if hasContent {
+            // One-shot activation signal — the install's first ever chat-UI
+            // message. Inside the `hasContent` branch so a contentless
+            // regeneration doesn't count as "used".
+            FeatureTelemetry.firstTimeChatUsed()
+
             turns.append(ChatTurn(role: .user, content: trimmed, attachments: attachments))
             // Stash the draft so we can put it back if the user cancels
             // out of the privacy review sheet. The text and attachments

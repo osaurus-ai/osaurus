@@ -261,6 +261,13 @@ public final class ChatWindowManager: NSObject, ObservableObject {
 
         // Update last focused
         lastFocusedWindowId = id
+
+        // One-shot activation signal, armed by onboarding completion. Firing
+        // here (the only place chat windows become visible) rather than in
+        // the onboarding completion handler means it reports the window
+        // actually on screen, and still fires on a later launch if the user
+        // quit before the post-onboarding window opened.
+        FeatureTelemetry.firstTimeChatShown()
     }
 
     /// Hide a window by ID

@@ -483,6 +483,13 @@ public struct OnboardingView: View {
         // is the drop-off point.
         OnboardingTelemetry.completed(lastStep: currentStep, via: via)
 
+        // Arm the post-onboarding activation funnel: the chat window that
+        // opens right after this (see AppDelegate's `onComplete`) fires
+        // `first_time_chat_shown` exactly once. Armed for the close-button
+        // path too — chat opens either way, and `onboarding_completed`'s
+        // `via` property already separates the two cohorts.
+        FeatureTelemetry.armFirstTimeChatShown()
+
         // If the user never opted into usage analytics on the Welcome step,
         // telemetry is still `undecided` here. Finalize that as a decline so
         // the post-launch upgrade prompt (`maybePromptForTelemetryConsent`)

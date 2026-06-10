@@ -91,6 +91,19 @@ are skipped. Only the message *role* is inspected — never the content.)
 
 Emitted when a new chat conversation is started from the UI. No properties.
 
+### `first_time_chat_shown`
+
+Emitted exactly once per install, the first time a chat window becomes
+visible after completing onboarding. Together with `first_time_chat_used` it
+bridges the gap between `onboarding_completed` and the engagement events: did
+a new user ever reach chat, and did they ever send anything? No properties.
+
+### `first_time_chat_used`
+
+Emitted exactly once per install, when the first ever message is sent from
+the in-app chat. No properties — the accompanying `message_sent` carries the
+dimensions.
+
 ### `agent_run`
 
 Emitted once when an agent run is initiated.

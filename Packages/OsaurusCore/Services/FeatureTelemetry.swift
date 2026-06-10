@@ -79,6 +79,61 @@ enum FeatureTelemetry {
         service.track("chat_session_started")
     }
 
+    // MARK: - First-run activation
+
+    // Bridges the gap the onboarding funnel can't see: `onboarding_completed`
+    // fires, then nothing — did the user ever reach chat, and did they ever
+    // send a message? Two one-shot events answer that. Both are persisted
+    // flags (not in-memory) because the first message often happens in a
+    // later session than the one that finished onboarding.
+
+    /// Armed when onboarding completes; cleared when `first_time_chat_shown`
+    /// fires. Scoping the event to an explicit arm (rather than "first chat
+    /// window ever") keeps users who consented via the post-launch upgrade
+    /// prompt — without a fresh onboarding run — out of the activation funnel.
+    private static let firstChatShownPendingKey = "firstTimeChatShownPending"
+
+    /// Set once `first_time_chat_shown` has fired, ever. Blocks re-arming so
+    /// re-running onboarding (help button, version bump) can't fire it again.
+    private static let firstChatShownTrackedKey = "firstTimeChatShownTracked"
+
+    /// Set once `first_time_chat_used` has fired, ever.
+    private static let firstChatUsedTrackedKey = "firstTimeChatUsedTracked"
+
+    /// Arm the `first_time_chat_shown` one-shot. Called when onboarding
+    /// completes (any path — the chat window opens right after both the
+    /// finish CTA and an early close). No-op once the event has ever fired,
+    /// keeping it strictly once per install.
+    static func armFirstTimeChatShown(defaults: UserDefaults = .standard) {
+        guard !defaults.bool(forKey: firstChatShownTrackedKey) else { return }
+        defaults.set(true, forKey: firstChatShownPendingKey)
+    }
+
+    /// The first chat window became visible after completing onboarding.
+    /// Call on every window show — the persisted arm + tracked flags make it
+    /// emit at most once per install. No properties.
+    static func firstTimeChatShown(
+        service: TelemetryService = .shared,
+        defaults: UserDefaults = .standard
+    ) {
+        guard defaults.bool(forKey: firstChatShownPendingKey) else { return }
+        defaults.set(false, forKey: firstChatShownPendingKey)
+        defaults.set(true, forKey: firstChatShownTrackedKey)
+        service.track("first_time_chat_shown")
+    }
+
+    /// The first message this install ever sent from the chat UI. Call on
+    /// every chat-UI send — the persisted flag makes it emit exactly once.
+    /// No properties; the regular `message_sent` carries the dimensions.
+    static func firstTimeChatUsed(
+        service: TelemetryService = .shared,
+        defaults: UserDefaults = .standard
+    ) {
+        guard !defaults.bool(forKey: firstChatUsedTrackedKey) else { return }
+        defaults.set(true, forKey: firstChatUsedTrackedKey)
+        service.track("first_time_chat_used")
+    }
+
     /// An agent run was initiated. `source` is `http_api` (the
     /// `/agents/{id}/run` endpoint) or `dispatch` (background / scheduled /
     /// plugin dispatch). No agent id or name is attached.

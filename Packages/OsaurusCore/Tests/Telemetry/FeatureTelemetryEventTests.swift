@@ -198,6 +198,65 @@ struct FeatureTelemetryEventTests {
         #expect(FeatureTelemetry.isPrimaryUserTurn([]) == false)
     }
 
+    // MARK: - First-run activation one-shots
+
+    /// Isolated defaults suite for the persisted one-shot flags.
+    private func makeFlagDefaults() -> (UserDefaults, () -> Void) {
+        let suiteName = "feature-telemetry-flags-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        return (defaults, { defaults.removePersistentDomain(forName: suiteName) })
+    }
+
+    @Test func firstTimeChatShown_is_silent_until_armed_then_fires_once() {
+        let (service, rec, cleanup) = makeRecordingService()
+        defer { cleanup() }
+        let (flags, flagCleanup) = makeFlagDefaults()
+        defer { flagCleanup() }
+
+        // Not armed (no onboarding completion) → nothing.
+        FeatureTelemetry.firstTimeChatShown(service: service, defaults: flags)
+        #expect(rec.events.isEmpty)
+
+        // Armed by onboarding completion → exactly one emit, then silent.
+        FeatureTelemetry.armFirstTimeChatShown(defaults: flags)
+        FeatureTelemetry.firstTimeChatShown(service: service, defaults: flags)
+        FeatureTelemetry.firstTimeChatShown(service: service, defaults: flags)
+
+        #expect(rec.events.count == 1)
+        #expect(rec.events[0].name == "first_time_chat_shown")
+        #expect(rec.events[0].props.isEmpty)
+    }
+
+    /// Re-running onboarding (help button, version bump) must NOT fire the
+    /// event again — it is strictly once per install.
+    @Test func firstTimeChatShown_does_not_rearm_after_firing() {
+        let (service, rec, cleanup) = makeRecordingService()
+        defer { cleanup() }
+        let (flags, flagCleanup) = makeFlagDefaults()
+        defer { flagCleanup() }
+
+        FeatureTelemetry.armFirstTimeChatShown(defaults: flags)
+        FeatureTelemetry.firstTimeChatShown(service: service, defaults: flags)
+        FeatureTelemetry.armFirstTimeChatShown(defaults: flags)
+        FeatureTelemetry.firstTimeChatShown(service: service, defaults: flags)
+
+        #expect(rec.events.count == 1)
+    }
+
+    @Test func firstTimeChatUsed_fires_exactly_once_ever() {
+        let (service, rec, cleanup) = makeRecordingService()
+        defer { cleanup() }
+        let (flags, flagCleanup) = makeFlagDefaults()
+        defer { flagCleanup() }
+
+        FeatureTelemetry.firstTimeChatUsed(service: service, defaults: flags)
+        FeatureTelemetry.firstTimeChatUsed(service: service, defaults: flags)
+
+        #expect(rec.events.count == 1)
+        #expect(rec.events[0].name == "first_time_chat_used")
+        #expect(rec.events[0].props.isEmpty)
+    }
+
     // MARK: - Consent gating
 
     @Test func feature_events_drop_when_consent_declined() {
