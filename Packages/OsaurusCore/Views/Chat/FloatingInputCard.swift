@@ -1240,6 +1240,12 @@ extension FloatingInputCard {
             }
         case "model":
             showModelPicker = true
+        case "agent":
+            NotificationCenter.default.post(
+                name: .chatToolbarOpenAgentPicker,
+                object: nil,
+                userInfo: windowId.map { ["windowId": $0] }
+            )
         case "help":
             ToastManager.shared.infoLocalized(
                 "Slash Commands",

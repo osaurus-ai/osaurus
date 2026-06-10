@@ -144,6 +144,9 @@ struct AgentPill: View {
     /// gear button. When `nil`, the gear is hidden entirely so the pill
     /// collapses back to its original single-button form.
     var onOpenActiveAgentSettings: (() -> Void)? = nil
+    /// Increment to programmatically open the agent picker popover (e.g. from
+    /// the `/agent` slash command). Each change pops the popover open.
+    var openPickerTrigger: Int = 0
 
     @State private var isHovered = false
     @State private var isGearHovered = false
@@ -268,6 +271,9 @@ struct AgentPill: View {
         )
         .popover(isPresented: $isPopoverPresented, arrowEdge: .bottom) {
             popoverContent
+        }
+        .onChange(of: openPickerTrigger) { _, _ in
+            isPopoverPresented = true
         }
     }
 

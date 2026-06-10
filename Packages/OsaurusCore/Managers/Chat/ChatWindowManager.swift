@@ -824,6 +824,10 @@ private struct ChatToolbarAgentView: View {
     @ObservedObject var windowState: ChatWindowState
     @ObservedObject var session: ChatSession
 
+    /// Incremented by the `/agent` slash command notification to pop the
+    /// agent picker open from the input card.
+    @State private var openPickerTrigger: Int = 0
+
     var body: some View {
         AgentPill(
             agents: windowState.agents,
@@ -856,15 +860,25 @@ private struct ChatToolbarAgentView: View {
                     initialTab: .agents,
                     deeplinkAgentId: deeplinkId
                 )
-            }
+            },
+            openPickerTrigger: openPickerTrigger
         )
         .environment(\.theme, windowState.theme)
+        .onReceive(NotificationCenter.default.publisher(for: .chatToolbarOpenAgentPicker)) { notification in
+            guard let targetWindowId = notification.userInfo?["windowId"] as? UUID,
+                targetWindowId == windowState.windowId
+            else { return }
+            openPickerTrigger &+= 1
+        }
     }
 }
 
 extension Notification.Name {
     static let chatToolbarSelectDiscoveredAgent = Notification.Name("chatToolbarSelectDiscoveredAgent")
     static let chatToolbarSelectRelayAgent = Notification.Name("chatToolbarSelectRelayAgent")
+    /// Posted by the `/agent` slash command to pop open the toolbar's agent
+    /// picker for the window identified in `userInfo["windowId"]`.
+    static let chatToolbarOpenAgentPicker = Notification.Name("chatToolbarOpenAgentPicker")
 }
 
 /// Contextual action button: new-chat plus once a conversation exists.
