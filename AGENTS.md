@@ -79,4 +79,5 @@ and deletes rather than calling `SecItemCopyMatching` / `SecItemAdd` /
   Do not use Python or shell wrappers as an orchestration layer to farm work out
   to Codex, Claude, local LLMs, or other helper agents. Work directly in the
   current session, keep status artifacts current, and use normal shell, test,
-  build, and proof commands for evidence.
+  build, and proof commands for evidence. Python is allowed for deterministic
+  parsing or proof harnesses, but never to recursively run another agent.
