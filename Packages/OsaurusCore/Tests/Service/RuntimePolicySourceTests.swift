@@ -1788,7 +1788,17 @@ struct RuntimePolicySourceTests {
                 && runtime.contains("incomingLoadFootprintBytes")
                 && runtime.contains("availableBytes=")
                 && runtime.contains("Clear memory, unload other models, or choose a smaller/more-quantized model."),
-            "The load gate must stop low-available-memory launches before Metal OOMs and expose a user-actionable resource message, not a fatal C++ exception."
+            "The load gate must track available memory and expose a user-actionable resource message when it refuses, not a fatal C++ exception."
+        )
+        // A low immediately-free page count must not by itself refuse a load:
+        // unified memory makes that count an unreliable proxy for whether a
+        // load can succeed, so refusal is gated on the physical hard ceiling
+        // (`projected > hardLimit`) while low-available only marks `.tight`.
+        #expect(
+            runtime.contains("let lowAvailable = available > 0 && requiredAvailable > available")
+                && runtime.contains("if projected > hardLimit {")
+                && runtime.contains("} else if projected > softLimit || lowAvailable {"),
+            "Refusal must depend only on the physical hard ceiling; a free-page shortfall warns (.tight) but does not block a load vMLX could satisfy via unified memory."
         )
 
         let health = try Self.source("Networking/HTTPHandler.swift")

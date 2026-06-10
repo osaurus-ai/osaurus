@@ -830,8 +830,11 @@ public actor ModelRuntime {
     }
 
     /// Pre-load RAM feasibility gate. Records `lastRAMFeasibility` for
-    /// observability and throws when the projected footprint exceeds the hard
-    /// ceiling. Applies to all eviction policies.
+    /// observability and throws only when the projected footprint exceeds the
+    /// physical hard ceiling. A low immediately-free page count is recorded as
+    /// `.tight` (warn) but does not refuse — unified memory makes that count an
+    /// unreliable proxy for whether a load can succeed. Applies to all
+    /// eviction policies.
     private func checkRAMFeasibility(
         modelName: String,
         incomingWeightsBytes: Int64,
@@ -858,10 +861,19 @@ public actor ModelRuntime {
         let softLimit = Int64(Double(physical) * Self.ramSoftThreshold)
         let hardLimit = Int64(Double(physical) * Self.ramHardThreshold)
 
+        // Refusal is gated solely on the projected footprint vs. the physical
+        // hard ceiling. On unified-memory Macs the OS satisfies a load by
+        // compressing/evicting, so the immediately-free page count (`available`)
+        // routinely sits well below a model's full weight size even when the
+        // load would succeed. Treat a shortfall there as `.tight` (warn) rather
+        // than refusing — otherwise an un-discounted bundle (e.g. a non-routed
+        // MXFP8 MoE budgeted at its whole shard total) is rejected before
+        // vMLX's mmap-backed loader can prove the real footprint.
+        let lowAvailable = available > 0 && requiredAvailable > available
         let verdict: RAMFeasibility.Verdict
-        if projected > hardLimit || (available > 0 && requiredAvailable > available) {
+        if projected > hardLimit {
             verdict = .refused
-        } else if projected > softLimit {
+        } else if projected > softLimit || lowAvailable {
             verdict = .tight
         } else {
             verdict = .ok
@@ -888,7 +900,7 @@ public actor ModelRuntime {
             break
         case .tight:
             genLog.error(
-                "loadContainer: RAM tight for \(modelName, privacy: .public) projected=\(projected, privacy: .public) soft=\(softLimit, privacy: .public) physical=\(physical, privacy: .public)"
+                "loadContainer: RAM tight for \(modelName, privacy: .public) projected=\(projected, privacy: .public) soft=\(softLimit, privacy: .public) physical=\(physical, privacy: .public) available=\(available, privacy: .public) requiredAvailable=\(requiredAvailable, privacy: .public)"
             )
         case .refused:
             genLog.error(
