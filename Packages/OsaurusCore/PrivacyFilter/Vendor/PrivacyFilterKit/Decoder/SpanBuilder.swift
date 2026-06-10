@@ -16,7 +16,12 @@ enum SpanBuilder {
         offsets: [TokenOffset],
         text: String
     ) -> [Entity] {
-        precondition(labelIds.count == offsets.count)
+        // The model truncates inputs longer than its position-embedding
+        // cap, so the decoder can return fewer labels than the tokenizer
+        // produced offsets. Walk the common prefix instead of trapping —
+        // tokens beyond the cap were never classified, so they cannot
+        // yield entities.
+        let count = min(labelIds.count, offsets.count)
         var result: [Entity] = []
         var openStart: Int? = nil
         var openEntity: EntityType? = nil
@@ -31,8 +36,8 @@ enum SpanBuilder {
             result.append(Entity(type: entity, text: trimmed, range: startIndex ..< endIndex))
         }
 
-        for (i, id) in labelIds.enumerated() {
-            let label = labels[id]
+        for i in 0 ..< count {
+            let label = labels[labelIds[i]]
             let offset = offsets[i]
             switch label.boundary {
             case .single:
