@@ -295,16 +295,45 @@ final class ChatWindowState: ObservableObject {
         bonjourCancellable = BonjourBrowser.shared.$discoveredAgents
             .receive(on: RunLoop.main)
             .sink { [weak self] agents in
-                self?.discoveredAgents = agents
-                if let selected = self?.selectedDiscoveredAgent,
-                    !agents.contains(where: { $0.id == selected.id })
-                {
-                    self?.removeEphemeralProviderIfNeeded()
-                    self?.selectedDiscoveredAgent = nil
-                    self?.selectedDiscoveredAgentProviderId = nil
+                guard let self else { return }
+                self.discoveredAgents = agents
+                if let selected = self.selectedDiscoveredAgent {
+                    if let refreshed = agents.first(where: { $0.id == selected.id }) {
+                        // Agent survived (or re-appeared within the browser's
+                        // removal grace period). If it came back on a new
+                        // host/port — sleep/wake, DHCP change — repoint the
+                        // provider and reconnect so the chat keeps working.
+                        if refreshed.host != selected.host || refreshed.port != selected.port {
+                            self.selectedDiscoveredAgent = refreshed
+                            self.reconnectSelectedDiscoveredAgent(to: refreshed)
+                        }
+                    } else {
+                        // Browser already debounces flaps; an actual removal
+                        // here means the agent has been gone for the full
+                        // grace period.
+                        self.removeEphemeralProviderIfNeeded()
+                        self.selectedDiscoveredAgent = nil
+                        self.selectedDiscoveredAgentProviderId = nil
+                    }
                 }
-                self?.refreshPairedRelayAgents(discoveredAgents: agents)
+                self.refreshPairedRelayAgents(discoveredAgents: agents)
             }
+    }
+
+    /// Repoint the selected agent's provider at a refreshed host/port and
+    /// reconnect. Used when a discovered agent re-resolves to a new endpoint
+    /// after a network change.
+    private func reconnectSelectedDiscoveredAgent(to agent: DiscoveredAgent) {
+        guard let providerId = selectedDiscoveredAgentProviderId else { return }
+        let manager = RemoteProviderManager.shared
+        guard var provider = manager.configuration.providers.first(where: { $0.id == providerId })
+        else { return }
+        let rawHost = agent.host ?? ""
+        guard !rawHost.isEmpty else { return }
+        provider.host = rawHost.hasSuffix(".") ? String(rawHost.dropLast()) : rawHost
+        provider.port = agent.port
+        manager.updateProvider(provider, apiKey: nil)
+        Task { try? await manager.connect(providerId: providerId) }
     }
 
     /// Mirror `AgentManager.shared.$agents` into this window so the picker,

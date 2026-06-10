@@ -85,9 +85,24 @@ public final class RemoteAgentManager: ObservableObject {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.timeoutInterval = 30
 
+        // Ephemeral X25519 key for HPKE: a sealing-capable sender returns the
+        // minted credential encrypted to this key so the relay operator (who
+        // terminates TLS) can't read it. The invite signature still verifies
+        // server-side from the canonical invite fields, which are unchanged.
+        let (encPrivateKey, encPub) = PairingKeyEnvelope.generateRecipientKey()
+
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
-        request.httpBody = try encoder.encode(invite)
+        let inviteJSON = try encoder.encode(invite)
+        if var bodyObject = try JSONSerialization.jsonObject(with: inviteJSON) as? [String: Any] {
+            bodyObject["encPub"] = encPub
+            request.httpBody = try JSONSerialization.data(
+                withJSONObject: bodyObject,
+                options: [.sortedKeys]
+            )
+        } else {
+            request.httpBody = inviteJSON
+        }
 
         let (data, response) = try await postWithBackgroundSession(request)
 
@@ -105,15 +120,53 @@ public final class RemoteAgentManager: ObservableObject {
             let agentDescription: String?
             let relayBaseURL: String
             let apiKey: String
+            let sealedApiKey: PairingKeyEnvelope.Sealed?
         }
         guard let decoded = try? JSONDecoder().decode(PairInviteResponse.self, from: data) else {
             throw RemoteAgentPairError.malformedResponse
         }
 
+        // Prefer the HPKE-sealed credential. Fall back to plaintext only for
+        // senders running an older Osaurus that ignored `encPub` — without a
+        // signed channel binding for the receiver we can't reject plaintext
+        // outright without breaking cross-version invites.
+        let resolvedApiKey: String
+        if let sealed = decoded.sealedApiKey {
+            guard
+                let opened = try? PairingKeyEnvelope.open(
+                    sealed,
+                    privateKey: encPrivateKey,
+                    info: PairingKeyEnvelope.info(
+                        agentAddress: decoded.agentAddress,
+                        nonce: invite.nonce
+                    )
+                )
+            else {
+                throw RemoteAgentPairError.malformedResponse
+            }
+            resolvedApiKey = opened
+        } else {
+            resolvedApiKey = decoded.apiKey
+        }
+        guard !resolvedApiKey.isEmpty else { throw RemoteAgentPairError.malformedResponse }
+
         // If we already have a remote agent for this address, replace it
         // (deleting the old provider so its keychain entry is wiped).
         if let existing = remoteAgent(forAddress: decoded.agentAddress) {
             destroy(existing)
+        }
+
+        // Also collapse any other provider already pointing at this agent's
+        // crypto address (e.g. created by the LAN Bonjour pairing flow, which
+        // mints its own provider with a different synthetic `remoteAgentId`).
+        // Deduping on the address — the agent's stable identity — keeps one
+        // provider per agent regardless of which pairing path created it.
+        let addressLower = decoded.agentAddress.lowercased()
+        let duplicateProviders = RemoteProviderManager.shared.configuration.providers.filter {
+            $0.remoteAgentAddress?.lowercased() == addressLower
+        }
+        for duplicate in duplicateProviders {
+            RemoteProviderManager.shared.removeProvider(id: duplicate.id)
         }
 
         // Create a matching RemoteProvider so chat / model picker can reach it.
@@ -141,7 +194,7 @@ public final class RemoteAgentManager: ObservableObject {
             remoteAgentId: UUID(),
             remoteAgentAddress: decoded.agentAddress
         )
-        RemoteProviderManager.shared.addProvider(provider, apiKey: decoded.apiKey)
+        RemoteProviderManager.shared.addProvider(provider, apiKey: resolvedApiKey)
 
         let remote = RemoteAgent(
             agentAddress: decoded.agentAddress,

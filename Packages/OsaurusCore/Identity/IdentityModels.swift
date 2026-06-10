@@ -247,7 +247,10 @@ public struct RevocationSnapshot: Sendable {
 // MARK: - Validation Result
 
 public enum AccessKeyValidationResult: Sendable {
-    case valid(issuer: OsaurusID)
+    /// `audience` is the validated key's `aud` claim (the agent or master
+    /// address the key is scoped to). Callers use it to enforce that an
+    /// agent-scoped key only reaches its own agent's routes.
+    case valid(issuer: OsaurusID, audience: OsaurusID)
     case invalid(reason: String)
     case expired
     case revoked

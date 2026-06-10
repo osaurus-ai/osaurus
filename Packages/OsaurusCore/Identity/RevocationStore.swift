@@ -31,6 +31,7 @@ public final class RevocationStore: @unchecked Sendable {
             revokedKeys.insert(key)
             save()
         }
+        APIKeyValidatorEpoch.shared.bump()
     }
 
     // MARK: - Bulk Revocation
@@ -43,6 +44,7 @@ public final class RevocationStore: @unchecked Sendable {
             counterThresholds[normalized] = max(existing, counter)
             save()
         }
+        APIKeyValidatorEpoch.shared.bump()
     }
 
     // MARK: - Query

@@ -168,6 +168,21 @@ func signPairingPayload(_ payload: Data, privateKey: Data) throws -> Data {
     try signWithPrefix(payload, privateKey: privateKey, prefix: "Osaurus Signed Pairing")
 }
 
+/// Signed by the advertiser's agent key in the `/pair` response so the
+/// connector can prove the responder actually controls the agent address it
+/// discovered over Bonjour (anti-spoofing), bound to the server-issued
+/// challenge nonce (anti-replay). Distinct domain prefix from the connector's
+/// pairing signature so the two can't be cross-substituted.
+func signPairingServerPayload(_ payload: Data, privateKey: Data) throws -> Data {
+    try signWithPrefix(payload, privateKey: privateKey, prefix: "Osaurus Signed Pairing Server")
+}
+
+/// Canonical bytes for the `/pair` server-identity signature. Centralised so
+/// the advertiser (signer) and connector (verifier) cannot drift.
+func pairingServerSigningPayload(agentAddress: String, nonce: String) -> Data {
+    Data("osaurus-pairing-server-v1:\(agentAddress.lowercased()):\(nonce)".utf8)
+}
+
 /// Sign an `AgentInvite` payload. Distinct domain prefix from access /
 /// pairing so an attacker can't substitute an invite signature for any
 /// other class of token.

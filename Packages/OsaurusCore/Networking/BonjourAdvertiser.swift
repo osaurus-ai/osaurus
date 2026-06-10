@@ -8,6 +8,7 @@
 
 import Combine
 import Foundation
+import os
 
 /// Manages Bonjour advertisement of Osaurus agents.
 /// Each agent is published as a `_osaurus._tcp` service carrying the agent's
@@ -19,7 +20,21 @@ public final class BonjourAdvertiser: NSObject {
     /// Bonjour service type for Osaurus agents.
     public static let serviceType = "_osaurus._tcp."
 
+    /// DNS-SD instance names are limited to 63 bytes. The UUID suffix
+    /// (`@<uuid>` = 37 bytes) must stay intact for identity, so the display
+    /// name gets whatever budget remains. The full name and id always travel
+    /// in the TXT record, so truncation is cosmetic.
+    static let maxInstanceNameBytes = 63
+    /// Cap the TXT `description` value. Individual TXT key=value strings max
+    /// out at 255 bytes; keep well under so the record stays small on the wire.
+    static let maxTXTDescriptionBytes = 200
+
     private var services: [UUID: NetService] = [:]
+    /// The instance name we asked mDNS to publish per agent. mDNS may rename
+    /// the live service on conflict ("Name (2)"); comparing against what we
+    /// REQUESTED (instead of `service.name`) prevents an endless
+    /// stop/republish loop after an auto-rename.
+    private var requestedNames: [UUID: String] = [:]
     private var currentPort: Int = 0
     private var isAdvertising = false
     private var cancellables: Set<AnyCancellable> = []
@@ -50,6 +65,7 @@ public final class BonjourAdvertiser: NSObject {
         isAdvertising = false
         for service in services.values { service.stop() }
         services.removeAll()
+        requestedNames.removeAll()
     }
 
     // MARK: - Private
@@ -63,22 +79,48 @@ public final class BonjourAdvertiser: NSObject {
         for id in services.keys where !bonjourEnabledIds.contains(id) {
             services[id]?.stop()
             services.removeValue(forKey: id)
+            requestedNames.removeValue(forKey: id)
         }
 
-        // Publish or re-publish services for current agents.
+        // Publish or re-publish services for current agents. Compare against
+        // the name we last REQUESTED, not the live `service.name`: mDNS may
+        // auto-rename on conflict, and reacting to that would stop/republish
+        // the service forever.
         for agent in agents where agent.bonjourEnabled {
-            let existing = services[agent.id]
-            let expectedName = "\(agent.name)@\(agent.id.uuidString)"
-            // Re-publish when there is no service yet or the display name changed.
-            if existing == nil || existing?.name != expectedName {
-                existing?.stop()
-                publish(agent: agent)
+            let expectedName = Self.instanceName(for: agent)
+            if services[agent.id] == nil || requestedNames[agent.id] != expectedName {
+                services[agent.id]?.stop()
+                publish(agent: agent, name: expectedName)
             }
         }
     }
 
-    private func publish(agent: Agent) {
-        let name = "\(agent.name)@\(agent.id.uuidString)"
+    /// Build a DNS-SD instance name that fits the 63-byte limit while keeping
+    /// the full UUID (needed by the browser to identify the agent). The
+    /// display name is truncated on a character boundary to whatever budget
+    /// the UUID suffix leaves.
+    static func instanceName(for agent: Agent) -> String {
+        let suffix = "@\(agent.id.uuidString)"
+        let budget = maxInstanceNameBytes - suffix.utf8.count
+        return truncateUTF8(agent.name, maxBytes: max(0, budget)) + suffix
+    }
+
+    /// Truncate a string to at most `maxBytes` of UTF-8 without splitting a
+    /// character.
+    static func truncateUTF8(_ string: String, maxBytes: Int) -> String {
+        guard string.utf8.count > maxBytes else { return string }
+        var result = ""
+        var used = 0
+        for char in string {
+            let size = String(char).utf8.count
+            if used + size > maxBytes { break }
+            result.append(char)
+            used += size
+        }
+        return result
+    }
+
+    private func publish(agent: Agent, name: String) {
         let service = NetService(
             domain: "",  // empty = local. domain
             type: Self.serviceType,
@@ -89,6 +131,7 @@ public final class BonjourAdvertiser: NSObject {
         service.delegate = self
         service.publish()
         services[agent.id] = service
+        requestedNames[agent.id] = name
     }
 
     private func txtRecord(for agent: Agent) -> Data {
@@ -96,7 +139,8 @@ public final class BonjourAdvertiser: NSObject {
         fields["name"] = agent.name.data(using: .utf8)
         fields["id"] = agent.id.uuidString.data(using: .utf8)
         if !agent.description.isEmpty {
-            fields["description"] = agent.description.data(using: .utf8)
+            let capped = Self.truncateUTF8(agent.description, maxBytes: Self.maxTXTDescriptionBytes)
+            fields["description"] = capped.data(using: .utf8)
         }
         if let address = agent.agentAddress {
             fields["address"] = address.data(using: .utf8)
@@ -108,11 +152,19 @@ public final class BonjourAdvertiser: NSObject {
 // MARK: - NetServiceDelegate
 
 extension BonjourAdvertiser: NetServiceDelegate {
+    private nonisolated static var delegateLogger: Logger {
+        Logger(subsystem: "com.osaurus", category: "bonjour")
+    }
+
     public nonisolated func netServiceDidPublish(_ sender: NetService) {
-        print("[Bonjour] Advertised agent '\(sender.name)' on port \(sender.port)")
+        Self.delegateLogger.info(
+            "Advertised agent '\(sender.name, privacy: .public)' on port \(sender.port)"
+        )
     }
 
     public nonisolated func netService(_ sender: NetService, didNotPublish errorDict: [String: NSNumber]) {
-        print("[Bonjour] Failed to advertise agent '\(sender.name)': \(errorDict)")
+        Self.delegateLogger.error(
+            "Failed to advertise agent '\(sender.name, privacy: .public)': \(errorDict, privacy: .public)"
+        )
     }
 }

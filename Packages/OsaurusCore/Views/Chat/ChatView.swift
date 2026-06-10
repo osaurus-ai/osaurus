@@ -4898,12 +4898,19 @@ private enum PairingClient {
         let agentId: String
         let nonce: String
         let signature: String
+        let encPub: String?
     }
 
     struct PairResponseBody: Codable {
         let agentAddress: String
         let apiKey: String
         let isPermanent: Bool
+        let serverSignature: String?
+        let sealedApiKey: PairingKeyEnvelope.Sealed?
+    }
+
+    struct ChallengeResponseBody: Codable {
+        let nonce: String
     }
 
     enum PairingError: LocalizedError {
@@ -4912,6 +4919,8 @@ private enum PairingClient {
         case networkError(Int)
         case decodingFailed
         case denied
+        case challengeFailed
+        case identityMismatch
 
         var errorDescription: String? {
             switch self {
@@ -4920,6 +4929,9 @@ private enum PairingClient {
             case .networkError(let code): return "Pairing request failed (HTTP \(code))."
             case .decodingFailed: return "Unexpected response from the remote device."
             case .denied: return "Pairing was denied by the remote device."
+            case .challengeFailed: return "Could not obtain a pairing challenge from the remote device."
+            case .identityMismatch:
+                return "The remote device could not prove it owns the discovered agent identity."
             }
         }
     }
@@ -4936,14 +4948,28 @@ private enum PairingClient {
         }
 
         let connectorAddress = try PairingKey.deriveAddress(masterKey: masterKey)
-        let nonce = UUID().uuidString
-
-        let signature = try PairingKey.sign(payload: Data(nonce.utf8), masterKey: masterKey)
-        let hexSig = "0x" + signature.hexEncodedString
 
         let rawHost = agent.host ?? ""
         guard !rawHost.isEmpty else { throw PairingError.missingHost }
         let host = rawHost.hasSuffix(".") ? String(rawHost.dropLast()) : rawHost
+
+        // 1. Fetch a server-issued single-use challenge nonce. Signing this
+        //    (instead of a self-chosen nonce) is what makes a sniffed `/pair`
+        //    body non-replayable.
+        let nonce = try await fetchChallenge(host: host, port: agent.port)
+
+        // 2. Ephemeral X25519 key for HPKE: the minted credential comes back
+        //    sealed to this key, so it never crosses the cleartext LAN hop in
+        //    plaintext. Signing "<nonce>:<encPub>" binds the key to us — a
+        //    MITM can't swap in their own without changing the connector
+        //    address shown in the approval prompt.
+        let (encPrivateKey, encPub) = PairingKeyEnvelope.generateRecipientKey()
+
+        let signature = try PairingKey.sign(
+            payload: Data("\(nonce):\(encPub)".utf8),
+            masterKey: masterKey
+        )
+        let hexSig = "0x" + signature.hexEncodedString
 
         let urlString = "http://\(host):\(agent.port)/pair"
         guard let url = URL(string: urlString) else { throw PairingError.missingHost }
@@ -4952,7 +4978,8 @@ private enum PairingClient {
             connectorAddress: connectorAddress,
             agentId: agent.id.uuidString,
             nonce: nonce,
-            signature: hexSig
+            signature: hexSig,
+            encPub: encPub
         )
         let bodyData = try JSONEncoder().encode(body)
 
@@ -4971,7 +4998,72 @@ private enum PairingClient {
             throw PairingError.decodingFailed
         }
 
-        return (apiKey: decoded.apiKey, isPermanent: decoded.isPermanent)
+        // 3. Verify the responder controls the agent address we discovered over
+        //    Bonjour. If the TXT record advertised a crypto address, the server
+        //    MUST prove control of it by signing our challenge with the agent
+        //    key; otherwise a spoofed advertiser / MITM could hand us a key.
+        if let expectedAddress = agent.address, !expectedAddress.isEmpty {
+            try verifyServerIdentity(
+                decoded: decoded,
+                expectedAddress: expectedAddress,
+                nonce: nonce
+            )
+        }
+
+        // 4. We sent `encPub`, so the credential MUST come back sealed. Fail
+        //    closed on a plaintext (or missing) key so a downgrade-stripping
+        //    MITM can't force the key onto the cleartext hop.
+        guard let sealed = decoded.sealedApiKey else { throw PairingError.decodingFailed }
+        let apiKey = try PairingKeyEnvelope.open(
+            sealed,
+            privateKey: encPrivateKey,
+            info: PairingKeyEnvelope.info(agentAddress: decoded.agentAddress, nonce: nonce)
+        )
+
+        return (apiKey: apiKey, isPermanent: decoded.isPermanent)
+    }
+
+    private static func fetchChallenge(host: String, port: Int) async throws -> String {
+        guard let url = URL(string: "http://\(host):\(port)/pair/challenge") else {
+            throw PairingError.missingHost
+        }
+        var request = URLRequest(url: url, timeoutInterval: 30)
+        request.httpMethod = "GET"
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard statusCode == 200,
+            let decoded = try? JSONDecoder().decode(ChallengeResponseBody.self, from: data),
+            !decoded.nonce.isEmpty
+        else {
+            throw PairingError.challengeFailed
+        }
+        return decoded.nonce
+    }
+
+    private static func verifyServerIdentity(
+        decoded: PairResponseBody,
+        expectedAddress: String,
+        nonce: String
+    ) throws {
+        // The server must return the agent address we expect and a signature
+        // over the challenge that recovers to that same address.
+        guard decoded.agentAddress.lowercased() == expectedAddress.lowercased(),
+            let serverSignature = decoded.serverSignature
+        else {
+            throw PairingError.identityMismatch
+        }
+        let hex =
+            serverSignature.hasPrefix("0x") ? String(serverSignature.dropFirst(2)) : serverSignature
+        guard let sigBytes = Data(hexEncoded: hex),
+            let recovered = try? recoverAddress(
+                payload: pairingServerSigningPayload(agentAddress: decoded.agentAddress, nonce: nonce),
+                signature: sigBytes,
+                domainPrefix: "Osaurus Signed Pairing Server"
+            ),
+            recovered.lowercased() == expectedAddress.lowercased()
+        else {
+            throw PairingError.identityMismatch
+        }
     }
 }
 

@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import os
 
 // MARK: - PairedRelayAgent
 
@@ -58,6 +59,14 @@ public final class BonjourBrowser: NSObject, ObservableObject {
 
     private var core: BonjourBrowserCore?
 
+    /// Grace period before a `didRemove` actually drops an agent from the
+    /// published list. mDNS TTL flaps (sleep/wake, Wi-Fi roam, cache expiry
+    /// races) routinely emit remove+find pairs seconds apart; tearing down an
+    /// ephemeral provider — and the active chat using it — on the first remove
+    /// is needlessly destructive.
+    private static let removalGracePeriod: Duration = .seconds(12)
+    private var pendingRemovals: [String: Task<Void, Never>] = [:]
+
     private override init() {
         super.init()
         let core = BonjourBrowserCore(
@@ -76,6 +85,10 @@ public final class BonjourBrowser: NSObject, ObservableObject {
     // MARK: - Private
 
     private func upsert(_ agent: DiscoveredAgent) {
+        // A re-discovered service cancels any in-flight debounced removal.
+        pendingRemovals[agent.serviceName]?.cancel()
+        pendingRemovals[agent.serviceName] = nil
+
         // Skip agents that belong to this device.
         let localIds = Set(AgentManager.shared.agents.map(\.id))
         guard !localIds.contains(agent.id) else { return }
@@ -88,7 +101,13 @@ public final class BonjourBrowser: NSObject, ObservableObject {
     }
 
     private func remove(serviceName: String) {
-        discoveredAgents.removeAll { $0.serviceName == serviceName }
+        pendingRemovals[serviceName]?.cancel()
+        pendingRemovals[serviceName] = Task { [weak self] in
+            try? await Task.sleep(for: Self.removalGracePeriod)
+            guard !Task.isCancelled, let self else { return }
+            self.pendingRemovals[serviceName] = nil
+            self.discoveredAgents.removeAll { $0.serviceName == serviceName }
+        }
     }
 }
 
@@ -108,6 +127,10 @@ private final class BonjourBrowserCore: NSObject, @unchecked Sendable {
     /// Retains services while they resolve (a dropped reference cancels the
     /// resolve), keyed by NetService name.
     private var resolvingServices: [String: NetService] = [:]
+    /// Service names whose first resolve failed and have one retry in flight.
+    private var retriedResolves: Set<String> = []
+
+    static let logger = Logger(subsystem: "com.osaurus", category: "bonjour")
 
     init(
         serviceType: String,
@@ -139,7 +162,10 @@ private final class BonjourBrowserCore: NSObject, @unchecked Sendable {
     }
 
     private func handleResolved(service: NetService) {
-        defer { resolvingServices.removeValue(forKey: service.name) }
+        defer {
+            resolvingServices.removeValue(forKey: service.name)
+            retriedResolves.remove(service.name)
+        }
 
         guard let txtData = service.txtRecordData() else { return }
         let fields = NetService.dictionary(fromTXTRecord: txtData)
@@ -200,7 +226,20 @@ extension BonjourBrowserCore: NetServiceDelegate {
     }
 
     func netService(_ sender: NetService, didNotResolve errorDict: [String: NSNumber]) {
+        // mDNS resolves regularly fail transiently right after wake / network
+        // change; one retry recovers most of them without UI impact.
+        if !retriedResolves.contains(sender.name) {
+            retriedResolves.insert(sender.name)
+            Self.logger.debug(
+                "Retrying resolve for '\(sender.name, privacy: .public)' after failure: \(errorDict, privacy: .public)"
+            )
+            sender.resolve(withTimeout: 5.0)
+            return
+        }
+        retriedResolves.remove(sender.name)
         resolvingServices.removeValue(forKey: sender.name)
-        print("[Bonjour] Failed to resolve '\(sender.name)': \(errorDict)")
+        Self.logger.error(
+            "Failed to resolve '\(sender.name, privacy: .public)': \(errorDict, privacy: .public)"
+        )
     }
 }

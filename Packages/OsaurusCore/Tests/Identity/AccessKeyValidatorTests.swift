@@ -21,7 +21,7 @@ struct AccessKeyValidatorTests {
         )
 
         let result = validator.validate(rawKey: token)
-        guard case .valid(let issuer) = result else {
+        guard case .valid(let issuer, _) = result else {
             Issue.record("Expected .valid, got \(result)")
             return
         }
@@ -60,7 +60,7 @@ struct AccessKeyValidatorTests {
         )
 
         let result = validator.validate(rawKey: token)
-        guard case .valid(let issuer) = result else {
+        guard case .valid(let issuer, _) = result else {
             Issue.record("Expected .valid, got \(result)")
             return
         }
@@ -126,7 +126,7 @@ struct AccessKeyValidatorTests {
         let result = validator.validate(rawKey: tampered)
 
         switch result {
-        case .valid(let issuer):
+        case .valid(let issuer, _):
             #expect(
                 issuer.lowercased() != TestKeys.aliceAddress.lowercased(),
                 "Tampered sig should not recover to original address"
@@ -186,7 +186,7 @@ struct AccessKeyValidatorTests {
         )
 
         let result = validator.validate(rawKey: token)
-        guard case .valid(let issuer) = result else {
+        guard case .valid(let issuer, _) = result else {
             Issue.record("Expected .valid for whitelisted Bob, got \(result)")
             return
         }
@@ -476,7 +476,7 @@ struct AccessKeyValidatorTests {
 
         let result = validator.validate(rawKey: token)
         switch result {
-        case .valid(let issuer):
+        case .valid(let issuer, _):
             #expect(
                 issuer.lowercased() != TestKeys.aliceAddress.lowercased(),
                 "Cross-protocol replay must not validate as the original signer"

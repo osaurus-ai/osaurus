@@ -17,17 +17,23 @@ public actor OsaurusServer: Sendable {
         private let lock = NSLock()
         private let build: @Sendable () -> APIKeyValidator
         private var cached: APIKeyValidator?
+        /// Epoch the cached validator was built at. When the global epoch
+        /// advances (key minted/revoked, whitelist/agent change), the cache is
+        /// considered stale and rebuilt on next access.
+        private var cachedEpoch: UInt64 = 0
 
         init(_ build: @escaping @Sendable () -> APIKeyValidator) {
             self.build = build
         }
 
         func value() -> APIKeyValidator {
+            let epoch = APIKeyValidatorEpoch.shared.current()
             lock.lock()
             defer { lock.unlock() }
-            if let cached { return cached }
+            if let cached, cachedEpoch == epoch { return cached }
             let validator = build()
             cached = validator
+            cachedEpoch = epoch
             return validator
         }
     }
@@ -176,21 +182,40 @@ public actor OsaurusServer: Sendable {
             defer { masterKeyData.zeroOut() }
 
             let masterAddress = try deriveOsaurusId(from: masterKeyData)
-            let agentAddress: OsaurusID =
-                if let idx = agentIndex {
-                    try AgentKey.deriveAddress(masterKey: masterKeyData, index: idx)
-                } else {
-                    masterAddress
-                }
+
+            // Accept tokens scoped to ANY of the user's agents so that
+            // agent-scoped keys minted by `/pair` and `/pair-invite` (whose
+            // `aud` is the agent's address, not the master's) validate. The
+            // agent addresses come from the thread-safe `AgentIdentityRegistry`
+            // (mirrored from `AgentManager`), so no extra key derivation is
+            // needed here. When a specific `agentIndex` is requested
+            // (single-agent server config), restrict to just that agent.
+            var agentAddresses: Set<OsaurusID> = []
+            if let idx = agentIndex {
+                agentAddresses.insert(try AgentKey.deriveAddress(masterKey: masterKeyData, index: idx))
+            } else {
+                agentAddresses.formUnion(AgentIdentityRegistry.shared.currentAddresses())
+            }
+            // Always keep a non-empty set; the master address is implicitly
+            // accepted by the validator regardless.
+            if agentAddresses.isEmpty { agentAddresses.insert(masterAddress) }
+
             APIKeyManager.shared.reload()
 
+            // The effective whitelist must cover every accepted agent so that
+            // agent-signed keys (iss == agent address) pass the whitelist gate.
+            var whitelist = WhitelistStore.shared.masterWhitelist()
+            whitelist.insert(masterAddress.lowercased())
+            for addr in agentAddresses {
+                whitelist.formUnion(
+                    WhitelistStore.shared.effectiveWhitelist(forAgent: addr, masterAddress: masterAddress)
+                )
+            }
+
             return APIKeyValidator(
-                agentAddress: agentAddress,
+                agentAddresses: agentAddresses,
                 masterAddress: masterAddress,
-                effectiveWhitelist: WhitelistStore.shared.effectiveWhitelist(
-                    forAgent: agentAddress,
-                    masterAddress: masterAddress
-                ),
+                effectiveWhitelist: whitelist,
                 revocationSnapshot: RevocationStore.shared.snapshot(),
                 hasKeys: !APIKeyManager.shared.listKeys().isEmpty
             )

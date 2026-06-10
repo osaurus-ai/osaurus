@@ -244,12 +244,16 @@ When a request arrives with an `osk-v1` token:
 2. **Decode** the base64url payload into `AccessKeyPayload`
 3. **Recover** the signer address via `ecrecover` with `Osaurus Signed Access` domain prefix
 4. **Verify issuer** — recovered address must match `payload.iss`
-5. **Check audience** — `payload.aud` must match the agent or master address
+5. **Check audience** — `payload.aud` must match the master address or the derived address of **any** current agent (the validator is built from `AgentIdentityRegistry`, so keys paired against any agent are accepted at the gate)
 6. **Check whitelist** — `payload.iss` must be in the effective whitelist
 7. **Check revocation** — not individually revoked (address + nonce) and not bulk-revoked (counter threshold)
 8. **Check expiration** — `payload.exp` must be in the future (if set)
 
 Only metadata is stored after key creation (label, prefix, nonce, counter, addresses, dates). The full key string is shown once and never persisted.
+
+**Route-level scoping.** Passing the gate is necessary but not sufficient for agent routes: when a request authenticated with an **agent-scoped** key reaches `/agents/{id}/run` or `/agents/{id}/dispatch`, the handler additionally checks that the key's validated `aud` matches the target agent's derived address and rejects cross-agent access with `403 agent_scope_denied`. Master-scoped keys are unrestricted.
+
+**Validator freshness.** The server's lock-free validator snapshot is invalidated by a global epoch counter (`APIKeyValidatorEpoch`) that is bumped on key generation, revocation, deletion, whitelist edits, and agent list changes. The next request after any of those events rebuilds the validator, so revocations and first-time pairings take effect without a server restart.
 
 ---
 
@@ -417,14 +421,24 @@ Access keys bridge the gap between the hardware-bound internal identity and the 
 
 ### Bonjour Pairing
 
-The `POST /pair` endpoint is an unauthenticated, signature-verified flow used by the in-app connector to onboard a new device against a Bonjour-discovered agent.
+The LAN pairing flow is a challenge-response protocol between an in-app connector and a Bonjour-discovered agent. It is unauthenticated (no pre-existing key) but signature-verified in both directions and end-to-end sealed.
 
-1. Connector signs a nonce with its `connectorAddress` private key (domain prefix `Osaurus Signed Pairing`).
-2. The Osaurus instance verifies the signature, resolves the target agent, and shows an approval dialog naming both the connector and the agent.
-3. On approval, the host mints an **agent-scoped** `osk-v1` key for the approved agent (`agentIndex = agent.agentIndex`) with a **90-day expiration** by default. The user can opt in to a non-expiring key via the dialog's "Remember this device permanently" toggle.
-4. The response body containing the new key is sent on the wire but **never persisted to the request log** — `InsightsService` redacts both `apiKey` JSON values and `Bearer osk-…` headers as defense-in-depth across all logged bodies.
+1. **Challenge.** Connector calls `GET /pair/challenge`; the host issues a single-use nonce (~2 minute TTL, tracked in `PairingChallengeStore`). Connector-chosen nonces are not accepted, so a captured `/pair` request cannot be replayed.
+2. **Request.** Connector generates an ephemeral X25519 keypair and signs `nonce` + ephemeral public key (`encPub`) with its `connectorAddress` private key (domain prefix `Osaurus Signed Pairing`), then `POST`s to `/pair`.
+3. **Verification and approval.** The host verifies the signature, atomically consumes the nonce, resolves the target agent, and shows an approval dialog naming both the connector and the agent. Prompts are serialized (a concurrent request gets `429 busy`), auto-deny after a 2-minute timeout, and only accept Return when the prompt window is key — keystrokes in other apps cannot approve a pairing. `/pair` and `/pair/challenge` are rate-limited per source IP, with a cooldown after a denial.
+4. **Sealed key delivery.** On approval, the host mints an **agent-scoped** `osk-v1` key for the approved agent (`agentIndex = agent.agentIndex`) with a **90-day expiration** by default ("Remember this device permanently" opts into a non-expiring key). The key is HPKE-sealed (X25519 + HKDF-SHA256 + ChaCha20-Poly1305, via `PairingKeyEnvelope`) to the connector's ephemeral `encPub`, with the agent address and nonce bound into the HPKE `info` — a passive observer on the LAN never sees the plaintext key, and an envelope cannot be transplanted to a different exchange.
+5. **Server identity verification.** The response carries a server signature (agent key) over the challenge and key fingerprint. The connector recovers the signer address and requires it to match the `address` it discovered in the agent's Bonjour TXT record, defeating spoofed advertisements.
+6. The response body containing the new key is sent on the wire but **never persisted to the request log** — `InsightsService` redacts both `apiKey` JSON values and `Bearer osk-…` headers as defense-in-depth across all logged bodies.
 
 Pairings approved before the agent-scoping fix are master-scoped, never-expiring keys. The Settings → Server pane labels them as **Legacy** and explains: *"Pre-upgrade pairing — grants access to all agents and never expires."* Users can revoke and re-pair to scope them tighter.
+
+### Relay Tunnel Trust Model
+
+Agents can be exposed through the Osaurus Relay (`agent.osaurus.ai`), which proxies public HTTPS traffic over a WebSocket tunnel into the local server at `127.0.0.1`.
+
+- **No loopback trust for relayed traffic.** `RelayTunnelManager` stamps every proxied request with an internal marker header (set *after* copying the external caller's headers, so a remote caller cannot suppress or forge a trusted state). The HTTP handler treats marked requests as non-loopback: they always pass through the full auth gate, CORS origin rules, and the built-in-agent remote block, even when `Expose to network` is off.
+- **Relay pairing (`/pair-invite`)** consumes a signed, single-use `AgentInvite` and supports the same HPKE sealed-key delivery as LAN pairing: the connector supplies an ephemeral `encPub`, and the minted key is returned only inside a sealed envelope. The relay operator (a TLS-terminating MITM by construction) never observes plaintext credentials in transit.
+- **Tunnel auth** uses a server-issued nonce challenge signed with the master key; the key material is zeroed immediately after signing, and transient auth failures retry with bounded exponential backoff.
 
 ### Pre-auth request limits
 
@@ -460,6 +474,13 @@ The address-based design naturally extends to agent-to-agent communication acros
 | Canonical encoding | Access key payloads use sorted-key JSON for deterministic signature verification |
 | Memory safety | Master key bytes and seed bytes are zeroed after use via `Data.zeroOut()` extension (calls `memset` over the underlying buffer) |
 | Pairings scoped to one agent | `/pair` mints agent-scoped keys (`agentIndex` from approved agent), 90-day default expiry |
+| Pairing is replay-proof | `/pair` only accepts signatures over a server-issued, single-use nonce from `GET /pair/challenge` (~2 min TTL, atomically consumed by `PairingChallengeStore`) |
+| Pairing server is verified | `/pair` response carries a server signature over challenge + key fingerprint; the connector requires the recovered address to match the Bonjour TXT `address` |
+| Minted keys sealed in transit | `/pair` and `/pair-invite` HPKE-seal the fresh `osk-v1` key (X25519 + HKDF-SHA256 + ChaCha20-Poly1305) to the connector's ephemeral public key, with agent address + nonce bound into the HPKE `info` |
+| Pairing endpoints rate-limited | `PairingRateLimiter` caps `/pair` and `/pair/challenge` per source IP, with a cooldown after a denial; the approval prompt is serialized, times out after 2 minutes, and only accepts Return when its window is key |
+| Relayed traffic never loopback-trusted | `RelayTunnelManager` marks proxied requests with an internal header; the auth gate, CORS rules, and remote blocks treat them as remote even though they arrive over `127.0.0.1` |
+| Cross-agent key use rejected | Agent-scoped keys hitting another agent's `/agents/{id}/...` routes get `403 agent_scope_denied` (audience checked against `AgentIdentityRegistry`) |
+| Revocations apply immediately | `APIKeyValidatorEpoch` invalidates the cached validator on key/revocation/whitelist/agent changes; no server restart needed |
 | Issued credentials never logged | `/pair` success path logs a redacted body; `InsightsService.redactCredentials` scrubs `osk-v1` values and `Bearer` headers everywhere as a backstop |
 | Pre-auth body-size limits | `/pair` capped at 64 KiB, other public routes at 32 MiB; rejected with `413` before the auth gate |
 | Drift between master and derivatives is surfaced | `IdentityHealthCheck.diagnose(...)` runs once per Identity view load; mismatched agents and stale osk-v1 keys are rendered in an `IdentityDriftBanner` with explicit Recover / Repair / Reset actions instead of failing silently at request time |
@@ -480,7 +501,11 @@ The address-based design naturally extends to agent-to-agent communication acros
 | `OsaurusIdentity.swift` | Public entry point — orchestrates `setup()`, `wipe()`, and two-layer request signing |
 | `IdentityModels.swift` | Data types: `OsaurusID`, `TokenHeader`, `TokenPayload`, `AccessKeyPayload`, `AccessKeyInfo`, `AgentInfo`, `RevocationSnapshot`, `IdentityInfo` (now carries `mnemonic`), and the `IdentityDefaultsKey` namespace for UserDefaults flags |
 | `APIKeyManager.swift` | Generate, persist, and revoke `osk-v1` access keys (metadata in Keychain). Includes `listKeys(forAudience:)` for per-agent scoping |
-| `APIKeyValidator.swift` | Immutable, lock-free access key validation via ecrecover + whitelist + revocation |
+| `APIKeyValidator.swift` | Immutable, lock-free access key validation via ecrecover + whitelist + revocation; accepts master- and any agent-scoped audience |
+| `AgentIdentityRegistry.swift` | Thread-safe snapshot of all agents' derived addresses/indices, maintained by `AgentManager`, read by the validator builder and the route-level scope check |
+| `PairingChallengeStore.swift` | Single-use, TTL-bound nonces for the LAN `/pair` challenge-response flow |
+| `PairingRateLimiter.swift` | Per-source-IP rate limiting and denial cooldown for the unauthenticated pairing endpoints |
+| `PairingKeyEnvelope.swift` | HPKE (X25519 + HKDF-SHA256 + ChaCha20-Poly1305) sealing of freshly minted keys to the connector's ephemeral public key |
 | `WhitelistStore.swift` | Master-level and per-agent address whitelist with Keychain persistence |
 | `RevocationStore.swift` | Individual and bulk access key revocation with Keychain persistence |
 | `CounterStore.swift` | Per-device monotonic counter in `UserDefaults` |

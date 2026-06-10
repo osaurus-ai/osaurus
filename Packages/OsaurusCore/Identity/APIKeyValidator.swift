@@ -10,7 +10,11 @@
 import Foundation
 
 public struct APIKeyValidator: Sendable {
-    private let agentAddress: String
+    /// Lowercased set of every agent address whose scoped keys this validator
+    /// accepts. A token's `aud` must equal the master address or be in this
+    /// set. The server builds this from ALL of the user's agents so that
+    /// agent-scoped keys minted by `/pair` and `/pair-invite` validate.
+    private let agentAddresses: Set<String>
     private let masterAddress: String
     private let whitelist: Set<String>
     private let revocations: RevocationSnapshot
@@ -18,13 +22,31 @@ public struct APIKeyValidator: Sendable {
 
     /// A no-op validator with no keys and no identity. Used before identity setup.
     public static let empty = APIKeyValidator(
-        agentAddress: "0x0",
+        agentAddresses: ["0x0"],
         masterAddress: "0x0",
         effectiveWhitelist: [],
         revocationSnapshot: RevocationSnapshot(revokedKeys: [], counterThresholds: [:]),
         hasKeys: false
     )
 
+    /// Designated initializer accepting the full set of accepted agent
+    /// audiences.
+    public init(
+        agentAddresses: Set<OsaurusID>,
+        masterAddress: OsaurusID,
+        effectiveWhitelist: Set<OsaurusID>,
+        revocationSnapshot: RevocationSnapshot,
+        hasKeys: Bool
+    ) {
+        self.agentAddresses = Set(agentAddresses.map { $0.lowercased() })
+        self.masterAddress = masterAddress.lowercased()
+        self.whitelist = Set(effectiveWhitelist.map { $0.lowercased() })
+        self.revocations = revocationSnapshot
+        self.hasKeys = hasKeys
+    }
+
+    /// Convenience initializer for a single-agent validator (tests, legacy
+    /// callers). Wraps the one address into the accepted-audience set.
     public init(
         agentAddress: OsaurusID,
         masterAddress: OsaurusID,
@@ -32,11 +54,13 @@ public struct APIKeyValidator: Sendable {
         revocationSnapshot: RevocationSnapshot,
         hasKeys: Bool
     ) {
-        self.agentAddress = agentAddress.lowercased()
-        self.masterAddress = masterAddress.lowercased()
-        self.whitelist = Set(effectiveWhitelist.map { $0.lowercased() })
-        self.revocations = revocationSnapshot
-        self.hasKeys = hasKeys
+        self.init(
+            agentAddresses: [agentAddress],
+            masterAddress: masterAddress,
+            effectiveWhitelist: effectiveWhitelist,
+            revocationSnapshot: revocationSnapshot,
+            hasKeys: hasKeys
+        )
     }
 
     public func validate(rawKey: String) -> AccessKeyValidationResult {
@@ -80,7 +104,7 @@ public struct APIKeyValidator: Sendable {
         }
 
         let audLower = payload.aud.lowercased()
-        guard audLower == agentAddress || audLower == masterAddress else {
+        guard audLower == masterAddress || agentAddresses.contains(audLower) else {
             return .invalid(reason: "Audience mismatch")
         }
 
@@ -99,6 +123,13 @@ public struct APIKeyValidator: Sendable {
             }
         }
 
-        return .valid(issuer: recoveredAddress)
+        return .valid(issuer: recoveredAddress, audience: payload.aud)
+    }
+
+    /// Whether the given audience is the master address (an unrestricted,
+    /// all-agent key) rather than an agent-scoped one. Callers use this to
+    /// decide whether to enforce per-agent route scoping.
+    public func isMasterScoped(audience: OsaurusID) -> Bool {
+        audience.lowercased() == masterAddress
     }
 }

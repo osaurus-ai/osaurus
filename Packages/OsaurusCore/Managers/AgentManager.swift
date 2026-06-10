@@ -54,7 +54,33 @@ public final class AgentManager: ObservableObject {
     public static let shared = AgentManager()
 
     /// All available agents (built-in + custom)
-    @Published public private(set) var agents: [Agent] = []
+    @Published public private(set) var agents: [Agent] = [] {
+        didSet { syncIdentityRegistry() }
+    }
+
+    /// Mirror the current agents' crypto addresses / key indices into the
+    /// thread-safe `AgentIdentityRegistry` so the off-main `APIKeyValidator`
+    /// builder can accept agent-scoped tokens (e.g. keys minted by `/pair`).
+    private func syncIdentityRegistry() {
+        var addresses: Set<String> = []
+        var indices: Set<UInt32> = []
+        var addressByAgentId: [UUID: String] = [:]
+        for agent in agents {
+            if let addr = agent.agentAddress {
+                addresses.insert(addr)
+                addressByAgentId[agent.id] = addr
+            }
+            if let idx = agent.agentIndex { indices.insert(idx) }
+        }
+        AgentIdentityRegistry.shared.update(
+            addresses: addresses,
+            indices: indices,
+            addressByAgentId: addressByAgentId
+        )
+        // The set of accepted agent audiences changed; let the live server
+        // rebuild its validator so keys for new agents validate immediately.
+        APIKeyValidatorEpoch.shared.bump()
+    }
 
     /// The currently active agent ID
     @Published public private(set) var activeAgentId: UUID = Agent.defaultId

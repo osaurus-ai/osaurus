@@ -101,6 +101,9 @@ public final class APIKeyManager: @unchecked Sendable {
             keys.append(info)
             Self.saveToKeychain(keys)
         }
+        // A new key (and possibly the first key) must be honored by the live
+        // server without a restart.
+        APIKeyValidatorEpoch.shared.bump()
 
         return (fullKey, info)
     }
@@ -119,6 +122,7 @@ public final class APIKeyManager: @unchecked Sendable {
             keys[index] = key.withRevoked()
             Self.saveToKeychain(keys)
         }
+        APIKeyValidatorEpoch.shared.bump()
     }
 
     /// Revoke all keys from a given address with counter <= current counter.
@@ -134,6 +138,7 @@ public final class APIKeyManager: @unchecked Sendable {
             }
             Self.saveToKeychain(keys)
         }
+        APIKeyValidatorEpoch.shared.bump()
     }
 
     /// Revoke an access key and remove it from the key list entirely.
@@ -148,6 +153,7 @@ public final class APIKeyManager: @unchecked Sendable {
             keys.remove(at: index)
             Self.saveToKeychain(keys)
         }
+        APIKeyValidatorEpoch.shared.bump()
     }
 
     // MARK: - List
@@ -202,6 +208,7 @@ public final class APIKeyManager: @unchecked Sendable {
             keys.removeAll()
             Self.saveToKeychain(keys)
         }
+        APIKeyValidatorEpoch.shared.bump()
     }
 
     // MARK: - Keychain Persistence

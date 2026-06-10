@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import LocalAuthentication
 import NIOCore
 import NIOHTTP1
 import NIOPosix
@@ -178,6 +179,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     private let requestTasks = HTTPRequestTaskRegistry()
     private let channelCloseFuture = ChannelCloseFutureBox()
     private static let openResponsesContextStore = OpenResponsesContextStore()
+
+    /// Internal marker header stamped by `RelayTunnelManager` on every request
+    /// it proxies from the relay tunnel to the loopback server. Such requests
+    /// arrive over 127.0.0.1 but ORIGINATE from the public internet, so they
+    /// must never inherit the loopback auth/CORS trust that genuine local
+    /// callers (CLI, App Intents) get. The relay sets this header AFTER copying
+    /// the external caller's headers, so a remote caller cannot suppress it.
+    static let relayOriginHeaderName = "X-Osaurus-Relay-Origin"
     /// Per-request scratch state. `internal` so peer-file helpers (e.g.
     /// `HTTPRequestParse.readRequestBody()`) can drain the buffered body
     /// without going through a private accessor.
@@ -198,6 +207,18 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         /// subsequent `.body` / `.end` parts are dropped without further
         /// allocation or routing.
         var rejectedTooLarge: Bool = false
+        /// Set at `.head` when the request carries the relay-origin marker.
+        /// Forces `isLoopbackConnection` to report `false` so relayed internet
+        /// traffic is auth-gated even when `trustLoopback` is on.
+        var isRelayOrigin: Bool = false
+        /// The validated access key's audience (lowercased), set by the auth
+        /// gate when a Bearer token validates. `nil` means the caller was
+        /// loopback-trusted or hit a public route (no per-agent restriction).
+        var authedAudience: String?
+        /// `true` when `authedAudience` is the master address — an unrestricted
+        /// all-agent key. Agent-scoped keys (`false`) are confined to their
+        /// own agent's routes.
+        var authedScopeIsMaster: Bool = false
     }
     let stateRef: NIOLoopBound<RequestState>
 
@@ -274,6 +295,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             stateRef.value.requestStartTime = Date()
             stateRef.value.bodyBytesSeen = 0
             stateRef.value.rejectedTooLarge = false
+            // Detect relay-proxied traffic before computing CORS / loopback
+            // trust so the relay marker can strip loopback privileges.
+            stateRef.value.isRelayOrigin =
+                head.headers.first(name: HTTPHandler.relayOriginHeaderName) != nil
             stateRef.value.corsHeaders = computeCORSHeaders(
                 for: head,
                 isPreflight: false,
@@ -398,7 +423,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             // Access key authentication gate (all data snapshotted at server start, zero locks)
             // Plugin routes handle their own auth per-route, so skip the global gate.
             // Loopback connections (CLI / local tools) are trusted without a token.
-            let publicPaths: Set<String> = ["/", "/health", "/pair", "/pair-invite"]
+            let publicPaths: Set<String> = ["/", "/health", "/pair", "/pair/challenge", "/pair-invite"]
             let isPluginRoute = path.hasPrefix("/plugins/")
             let isLoopback = isLoopbackConnection(context)
             if !publicPaths.contains(path) && !isPluginRoute && !isLoopback {
@@ -414,8 +439,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 } else {
                     let result = apiKeyValidator.validate(rawKey: token)
                     switch result {
-                    case .valid:
+                    case .valid(_, let audience):
                         message = ""
+                        // Record the key's scope so agent-addressing routes can
+                        // confine an agent-scoped key to its own agent.
+                        stateRef.value.authedAudience = audience.lowercased()
+                        stateRef.value.authedScopeIsMaster =
+                            apiKeyValidator.isMasterScoped(audience: audience)
                     case .expired:
                         message = "Access key has expired"
                     case .revoked:
@@ -563,6 +593,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 handleOpenResponses(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .POST, path == "/memory/ingest" {
                 handleMemoryIngest(head: head, context: context, startTime: startTime, userAgent: userAgent)
+            } else if head.method == .GET, path == "/pair/challenge" {
+                handlePairChallengeEndpoint(
+                    head: head,
+                    context: context,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
             } else if head.method == .POST, path == "/pair" {
                 handlePairEndpoint(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .POST, path == "/pair-invite" {
@@ -2030,13 +2067,57 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
     // MARK: - CORS
 
+    /// Best-effort source IP for rate-limiting the pairing endpoints.
+    private func remoteIP(_ context: ChannelHandlerContext) -> String {
+        context.channel.remoteAddress?.ipAddress ?? "unknown"
+    }
+
     /// Whether the inbound connection is a "trusted local caller" — i.e., a
     /// process on the user's own machine reaching us via 127.0.0.1 / ::1.
     /// Both the auth gate and CORS auto-trust use this predicate so the two
     /// stay in lockstep; flipping `trustLoopback` off (e.g. behind a reverse
     /// proxy) disables both.
     private func isLoopbackConnection(_ context: ChannelHandlerContext) -> Bool {
-        trustLoopback && (context.channel.remoteAddress?.isLoopback ?? false)
+        // Relay-tunnel traffic reaches us over loopback but is remote in origin
+        // (see `relayOriginHeaderName`). Such requests never count as a trusted
+        // local caller, so they remain subject to the auth gate, CORS origin
+        // rules, and the built-in-agent remote block.
+        guard !stateRef.value.isRelayOrigin else { return false }
+        return trustLoopback && (context.channel.remoteAddress?.isLoopback ?? false)
+    }
+
+    /// Enforce that an agent-scoped access key only addresses its own agent.
+    /// Returns a rejection when the validated key's audience is an agent
+    /// address that does not match the target agent. Loopback callers,
+    /// master-scoped keys, and public routes (no recorded audience) pass
+    /// through unrestricted. An unknown agent→address mapping is denied so a
+    /// scoped key cannot reach an agent we can't prove it owns.
+    private func agentScopeRejection(forAgentId agentId: UUID) -> (code: String, message: String)? {
+        Self.agentScopeRejection(
+            forAgentId: agentId,
+            authedAudience: stateRef.value.authedAudience,
+            authedScopeIsMaster: stateRef.value.authedScopeIsMaster
+        )
+    }
+
+    /// Pure core of the agent-scope check so it can run inside detached request
+    /// tasks (which must not touch the event-loop-bound `stateRef`). Callers
+    /// capture `authedAudience` / `authedScopeIsMaster` on the event loop and
+    /// pass them in.
+    static func agentScopeRejection(
+        forAgentId agentId: UUID,
+        authedAudience: String?,
+        authedScopeIsMaster: Bool
+    ) -> (code: String, message: String)? {
+        guard let aud = authedAudience, !authedScopeIsMaster else { return nil }
+        guard let target = AgentIdentityRegistry.shared.address(forAgentId: agentId), aud == target
+        else {
+            return (
+                "agent_scope_denied",
+                "This access key is not scoped to the requested agent."
+            )
+        }
+        return nil
     }
 
     /// Loopback callers always get `Access-Control-Allow-Origin: *` (issue
@@ -2466,12 +2547,96 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let agentId: String
         let nonce: String
         let signature: String
+        /// Connector's ephemeral X25519 public key (base64url). When present,
+        /// the connector's signature covers `"<nonce>:<encPub>"` and the
+        /// minted key is returned HPKE-sealed instead of in cleartext.
+        let encPub: String?
     }
 
     private struct PairResponse: Codable {
         let agentAddress: String
         let apiKey: String
         let isPermanent: Bool
+        /// Agent-key signature over the challenge nonce + agent address so the
+        /// connector can verify the responder controls the discovered agent
+        /// address (anti-spoofing) and that this response is fresh.
+        let serverSignature: String?
+        /// HPKE-sealed access key (set when the request carried `encPub`;
+        /// `apiKey` is empty in that case so the credential never crosses the
+        /// cleartext LAN hop unprotected).
+        let sealedApiKey: PairingKeyEnvelope.Sealed?
+    }
+
+    /// GET /pair/challenge — issue a single-use, short-lived pairing nonce.
+    /// The connector signs this nonce and presents it to `POST /pair`, so a
+    /// replayed pairing body is rejected (the nonce is consumed on first use).
+    private func handlePairChallengeEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        guard PairingRateLimiter.shared.allow(ip: remoteIP(context)) else {
+            sendPairingRateLimited(
+                head: head,
+                context: context,
+                path: "/pair/challenge",
+                method: "GET",
+                startTime: startTime,
+                userAgent: userAgent
+            )
+            return
+        }
+        let nonce = PairingChallengeStore.shared.issue()
+        var headers = [("Content-Type", "application/json; charset=utf-8")]
+        headers.append(contentsOf: stateRef.value.corsHeaders)
+        let body = #"{"nonce":"\#(nonce)"}"#
+        sendResponse(
+            context: context,
+            version: head.version,
+            status: .ok,
+            headers: headers,
+            body: body
+        )
+        logRequest(
+            method: "GET",
+            path: "/pair/challenge",
+            userAgent: userAgent,
+            requestBody: nil,
+            responseBody: body,
+            responseStatus: 200,
+            startTime: startTime
+        )
+    }
+
+    /// Emit a 429 for a rate-limited pairing request.
+    private func sendPairingRateLimited(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        method: String,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        var headers = [("Content-Type", "application/json; charset=utf-8")]
+        headers.append(contentsOf: stateRef.value.corsHeaders)
+        let body = #"{"error":"Too many pairing attempts. Try again shortly."}"#
+        sendResponse(
+            context: context,
+            version: head.version,
+            status: .tooManyRequests,
+            headers: headers,
+            body: body
+        )
+        logRequest(
+            method: method,
+            path: path,
+            userAgent: userAgent,
+            requestBody: nil,
+            responseBody: body,
+            responseStatus: 429,
+            startTime: startTime
+        )
     }
 
     /// POST /pair — unauthenticated endpoint for cryptographic Bonjour pairing.
@@ -2481,6 +2646,18 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         startTime: Date,
         userAgent: String?
     ) {
+        let pairingIP = remoteIP(context)
+        guard PairingRateLimiter.shared.allow(ip: pairingIP) else {
+            sendPairingRateLimited(
+                head: head,
+                context: context,
+                path: "/pair",
+                method: "POST",
+                startTime: startTime,
+                userAgent: userAgent
+            )
+            return
+        }
         let data: Data
         let requestBodyString: String?
         if let body = stateRef.value.requestBodyBuffer {
@@ -2523,38 +2700,66 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             (head.headers.first(name: "Host") ?? "unknown")
             .components(separatedBy: ":").first ?? "unknown"
 
+        // Shared error-reply shape (mirrors `handlePairInviteEndpoint`).
+        func reply(status: HTTPResponseStatus, body: String, code: Int) {
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(
+                    context: ctx.value,
+                    version: head.version,
+                    status: status,
+                    headers: headers,
+                    body: body
+                )
+                logSelf.logRequest(
+                    method: "POST",
+                    path: "/pair",
+                    userAgent: logUserAgent,
+                    requestBody: logRequestBody,
+                    responseBody: body,
+                    responseStatus: code,
+                    startTime: logStartTime
+                )
+            }
+        }
+
         runRequestTask(priority: .userInitiated) {
-            // 1. Verify the connector's signature over the nonce.
+            // 1. Verify the connector's signature over the nonce. When the
+            //    connector supplied an ephemeral encryption key, the signature
+            //    covers it too, so a MITM cannot swap in their own key without
+            //    also changing the connector address shown in the approval
+            //    prompt.
+            let signedPayload: Data
+            if let encPub = req.encPub, !encPub.isEmpty {
+                signedPayload = Data("\(req.nonce):\(encPub)".utf8)
+            } else {
+                signedPayload = Data(req.nonce.utf8)
+            }
             let hexSig = req.signature.hasPrefix("0x") ? String(req.signature.dropFirst(2)) : req.signature
             guard let sigBytes = Data(hexEncoded: hexSig),
                 let recovered = try? recoverAddress(
-                    payload: Data(req.nonce.utf8),
+                    payload: signedPayload,
                     signature: sigBytes,
                     domainPrefix: "Osaurus Signed Pairing"
                 ),
                 recovered == req.connectorAddress
             else {
-                hop {
-                    var headers = [("Content-Type", "application/json; charset=utf-8")]
-                    headers.append(contentsOf: cors)
-                    let body = #"{"error":"Signature verification failed"}"#
-                    self.sendResponse(
-                        context: ctx.value,
-                        version: head.version,
-                        status: .unauthorized,
-                        headers: headers,
-                        body: body
-                    )
-                    logSelf.logRequest(
-                        method: "POST",
-                        path: "/pair",
-                        userAgent: logUserAgent,
-                        requestBody: logRequestBody,
-                        responseBody: body,
-                        responseStatus: 401,
-                        startTime: logStartTime
-                    )
-                }
+                reply(status: .unauthorized, body: #"{"error":"Signature verification failed"}"#, code: 401)
+                return
+            }
+
+            // 1b. Consume the server-issued challenge nonce. The connector must
+            //     have fetched it from `GET /pair/challenge`; a sniffed/replayed
+            //     `/pair` body fails here because the nonce is single-use and
+            //     short-lived. Done after the (cheap) signature check so an
+            //     attacker with a bad signature can't burn a valid nonce.
+            guard PairingChallengeStore.shared.consume(req.nonce) else {
+                reply(
+                    status: .unauthorized,
+                    body: #"{"error":"Pairing challenge expired or invalid"}"#,
+                    code: 401
+                )
                 return
             }
 
@@ -2564,27 +2769,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 let agent = agents.first(where: { $0.id == agentUUID && $0.bonjourEnabled }),
                 let agentAddress = agent.agentAddress
             else {
-                hop {
-                    var headers = [("Content-Type", "application/json; charset=utf-8")]
-                    headers.append(contentsOf: cors)
-                    let body = #"{"error":"Agent not found or not available for pairing"}"#
-                    self.sendResponse(
-                        context: ctx.value,
-                        version: head.version,
-                        status: .notFound,
-                        headers: headers,
-                        body: body
-                    )
-                    logSelf.logRequest(
-                        method: "POST",
-                        path: "/pair",
-                        userAgent: logUserAgent,
-                        requestBody: logRequestBody,
-                        responseBody: body,
-                        responseStatus: 404,
-                        startTime: logStartTime
-                    )
-                }
+                reply(
+                    status: .notFound,
+                    body: #"{"error":"Agent not found or not available for pairing"}"#,
+                    code: 404
+                )
                 return
             }
 
@@ -2594,32 +2783,25 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 agentName: agent.name
             )
 
-            guard approval.approved else {
-                hop {
-                    var headers = [("Content-Type", "application/json; charset=utf-8")]
-                    headers.append(contentsOf: cors)
-                    let body = #"{"error":"Pairing denied"}"#
-                    self.sendResponse(
-                        context: ctx.value,
-                        version: head.version,
-                        status: .forbidden,
-                        headers: headers,
-                        body: body
-                    )
-                    logSelf.logRequest(
-                        method: "POST",
-                        path: "/pair",
-                        userAgent: logUserAgent,
-                        requestBody: logRequestBody,
-                        responseBody: body,
-                        responseStatus: 403,
-                        startTime: logStartTime
-                    )
-                }
+            let isPermanent: Bool
+            switch approval {
+            case .approved(let permanent):
+                isPermanent = permanent
+            case .busy:
+                // Another approval prompt is already on screen. Tell the
+                // connector to retry instead of denying or queueing.
+                reply(
+                    status: .tooManyRequests,
+                    body: #"{"error":"Another pairing request is in progress. Try again shortly."}"#,
+                    code: 429
+                )
+                return
+            case .denied:
+                // Back off a peer whose request was explicitly denied.
+                PairingRateLimiter.shared.penalize(ip: pairingIP)
+                reply(status: .forbidden, body: #"{"error":"Pairing denied"}"#, code: 403)
                 return
             }
-
-            let isPermanent = approval.isPermanent
 
             // 4. Generate an *agent-scoped* osk-v1 API key. The token's `aud`
             //    is the agent's address, so it cannot be presented to other
@@ -2634,27 +2816,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             //    agent key from the Master Key.
             let label = "Paired – \(pairingHost)"
             guard let agentIndex = agent.agentIndex else {
-                hop {
-                    var headers = [("Content-Type", "application/json; charset=utf-8")]
-                    headers.append(contentsOf: cors)
-                    let body = #"{"error":"Agent is missing a derived key index"}"#
-                    self.sendResponse(
-                        context: ctx.value,
-                        version: head.version,
-                        status: .internalServerError,
-                        headers: headers,
-                        body: body
-                    )
-                    logSelf.logRequest(
-                        method: "POST",
-                        path: "/pair",
-                        userAgent: logUserAgent,
-                        requestBody: logRequestBody,
-                        responseBody: body,
-                        responseStatus: 500,
-                        startTime: logStartTime
-                    )
-                }
+                reply(
+                    status: .internalServerError,
+                    body: #"{"error":"Agent is missing a derived key index"}"#,
+                    code: 500
+                )
                 return
             }
             let expiration: AccessKeyExpiration = isPermanent ? .never : .days90
@@ -2665,27 +2831,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     agentIndex: agentIndex
                 )
             else {
-                hop {
-                    var headers = [("Content-Type", "application/json; charset=utf-8")]
-                    headers.append(contentsOf: cors)
-                    let body = #"{"error":"Failed to generate access key"}"#
-                    self.sendResponse(
-                        context: ctx.value,
-                        version: head.version,
-                        status: .internalServerError,
-                        headers: headers,
-                        body: body
-                    )
-                    logSelf.logRequest(
-                        method: "POST",
-                        path: "/pair",
-                        userAgent: logUserAgent,
-                        requestBody: logRequestBody,
-                        responseBody: body,
-                        responseStatus: 500,
-                        startTime: logStartTime
-                    )
-                }
+                reply(
+                    status: .internalServerError,
+                    body: #"{"error":"Failed to generate access key"}"#,
+                    code: 500
+                )
                 return
             }
 
@@ -2694,8 +2844,58 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 TemporaryPairedKeyStore.shared.register(keyId: keyInfo.id)
             }
 
+            // 4b. Sign a server-identity attestation over the challenge nonce
+            //     so the connector can prove this responder controls the
+            //     agent address it discovered over Bonjour. Reuses the master
+            //     key in the same biometric reuse window opened by the mint
+            //     above, so no second prompt is shown.
+            let serverSignature: String? = {
+                let attestContext = LAContext()
+                attestContext.touchIDAuthenticationAllowableReuseDuration = 300
+                attestContext.interactionNotAllowed = true
+                guard var masterKeyData = try? MasterKey.getPrivateKey(context: attestContext) else {
+                    return nil
+                }
+                defer { masterKeyData.zeroOut() }
+                var childKey = AgentKey.derive(masterKey: masterKeyData, index: agentIndex)
+                defer { childKey.zeroOut() }
+                let payload = pairingServerSigningPayload(agentAddress: agentAddress, nonce: req.nonce)
+                guard let sig = try? signPairingServerPayload(payload, privateKey: childKey) else {
+                    return nil
+                }
+                return "0x" + sig.hexEncodedString
+            }()
+
+            // 4c. When the connector provided an ephemeral encryption key,
+            //     HPKE-seal the minted credential so it never crosses the
+            //     cleartext LAN hop in plaintext. Fail closed: if sealing
+            //     fails we do NOT fall back to plaintext.
+            var sealedApiKey: PairingKeyEnvelope.Sealed?
+            var apiKeyForWire = fullKey
+            if let encPub = req.encPub, !encPub.isEmpty {
+                guard
+                    let sealed = try? PairingKeyEnvelope.seal(
+                        secret: fullKey,
+                        recipientPublicKeyBase64url: encPub,
+                        info: PairingKeyEnvelope.info(agentAddress: agentAddress, nonce: req.nonce)
+                    )
+                else {
+                    APIKeyManager.shared.revoke(id: keyInfo.id)
+                    reply(status: .badRequest, body: #"{"error":"Invalid encryption key"}"#, code: 400)
+                    return
+                }
+                sealedApiKey = sealed
+                apiKeyForWire = ""
+            }
+
             // 5. Return the agent's address, the generated API key, and the permanence flag.
-            let response = PairResponse(agentAddress: agentAddress, apiKey: fullKey, isPermanent: isPermanent)
+            let response = PairResponse(
+                agentAddress: agentAddress,
+                apiKey: apiKeyForWire,
+                isPermanent: isPermanent,
+                serverSignature: serverSignature,
+                sealedApiKey: sealedApiKey
+            )
             let json =
                 (try? JSONEncoder.osaurusCanonical().encode(response)).map { String(decoding: $0, as: UTF8.self) }
                 ?? #"{"error":"Encoding failed"}"#
@@ -2706,7 +2906,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let redactedResponse = PairResponse(
                 agentAddress: agentAddress,
                 apiKey: "<redacted>",
-                isPermanent: isPermanent
+                isPermanent: isPermanent,
+                serverSignature: serverSignature,
+                sealedApiKey: nil
             )
             let redactedJson =
                 (try? JSONEncoder.osaurusCanonical().encode(redactedResponse)).map {
@@ -2739,6 +2941,17 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let agentDescription: String?
         let relayBaseURL: String
         let apiKey: String
+        /// HPKE-sealed access key (set when the redeeming client supplied an
+        /// `encPub`; `apiKey` is empty in that case so the relay operator —
+        /// who terminates TLS — never sees the credential in plaintext).
+        let sealedApiKey: PairingKeyEnvelope.Sealed?
+    }
+
+    /// Optional extras the redeeming client may add alongside the exact
+    /// invite JSON. Decoded separately so the invite signature check keeps
+    /// operating on the canonical `AgentInvite` fields.
+    private struct PairInviteRequestExtras: Decodable {
+        let encPub: String?
     }
 
     /// POST /pair-invite — unauthenticated endpoint that swaps a signed
@@ -2808,6 +3021,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             reply(status: .badRequest, body: #"{"error":"Invalid invite payload"}"#, code: 400)
             return
         }
+        let encPub = (try? JSONDecoder().decode(PairInviteRequestExtras.self, from: data))?.encPub
         guard invite.v == AgentInvite.currentVersion else {
             reply(status: .badRequest, body: #"{"error":"Unsupported invite version"}"#, code: 400)
             return
@@ -2883,23 +3097,52 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     )
                 }
 
-                func responseBody(apiKey: String) -> String {
+                // HPKE-seal the credential when the redeemer supplied an
+                // ephemeral key so the relay operator (TLS terminates at the
+                // relay) never sees it in plaintext. Fail closed: a present
+                // but unusable encPub aborts rather than downgrading.
+                var sealedApiKey: PairingKeyEnvelope.Sealed?
+                var apiKeyForWire = fullKey
+                if let encPub, !encPub.isEmpty {
+                    guard
+                        let sealed = try? PairingKeyEnvelope.seal(
+                            secret: fullKey,
+                            recipientPublicKeyBase64url: encPub,
+                            info: PairingKeyEnvelope.info(
+                                agentAddress: agentAddress,
+                                nonce: invite.nonce
+                            )
+                        )
+                    else {
+                        APIKeyManager.shared.revoke(id: keyInfo.id)
+                        await MainActor.run {
+                            AgentInviteStore.rollbackConsume(nonce: invite.nonce, for: agent.id)
+                        }
+                        reply(status: .badRequest, body: #"{"error":"Invalid encryption key"}"#, code: 400)
+                        return
+                    }
+                    sealedApiKey = sealed
+                    apiKeyForWire = ""
+                }
+
+                func responseBody(apiKey: String, sealed: PairingKeyEnvelope.Sealed?) -> String {
                     let body = PairInviteResponse(
                         agentAddress: agentAddress,
                         agentName: agent.name,
                         agentDescription: agent.description.isEmpty ? nil : agent.description,
                         relayBaseURL: invite.url,
-                        apiKey: apiKey
+                        apiKey: apiKey,
+                        sealedApiKey: sealed
                     )
                     return (try? JSONEncoder.osaurusCanonical().encode(body))
                         .map { String(decoding: $0, as: UTF8.self) }
                         ?? #"{"error":"Encoding failed"}"#
                 }
 
-                let json = responseBody(apiKey: fullKey)
+                let json = responseBody(apiKey: apiKeyForWire, sealed: sealedApiKey)
                 // Redacted twin for the request log — the ring buffer powers
                 // the in-app diagnostics panel and must never echo the key.
-                let redactedJson = responseBody(apiKey: "<redacted>")
+                let redactedJson = responseBody(apiKey: "<redacted>", sealed: nil)
                 hop {
                     var headers = [("Content-Type", "application/json; charset=utf-8")]
                     headers.append(contentsOf: cors)
@@ -3200,6 +3443,28 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 headers: [("Content-Type", "application/json; charset=utf-8")],
                 body:
                     #"{"error":"\#(rejection.code)","message":"\#(rejection.message)"}"#
+            )
+            logRequest(
+                method: "POST",
+                path: path,
+                userAgent: userAgent,
+                requestBody: requestBodyString,
+                responseStatus: 403,
+                startTime: startTime,
+                errorMessage: rejection.message
+            )
+            return
+        }
+
+        // Confine agent-scoped keys (e.g. minted by `/pair` or `/pair-invite`)
+        // to their own agent so one paired peer cannot drive every agent.
+        if let rejection = agentScopeRejection(forAgentId: agentId) {
+            sendResponse(
+                context: context,
+                version: head.version,
+                status: .forbidden,
+                headers: [("Content-Type", "application/json; charset=utf-8")],
+                body: #"{"error":"\#(rejection.code)","message":"\#(rejection.message)"}"#
             )
             logRequest(
                 method: "POST",
@@ -3773,6 +4038,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         // can drive it as a detached background task. Remote callers remain
         // blocked from the built-in agent.
         let isLoopback = isLoopbackConnection(context)
+        // Capture the validated key's scope on the event loop; the resolution
+        // below runs in a detached task that must not touch `stateRef`.
+        let authedAudience = stateRef.value.authedAudience
+        let authedScopeIsMaster = stateRef.value.authedScopeIsMaster
 
         runRequestTask(priority: .userInitiated) {
             // Resolve identifier: try UUID first, then crypto address
@@ -3787,6 +4056,37 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         status: .notFound,
                         headers: headers,
                         body: #"{"error":"agent_not_found","message":"No agent found for the given identifier"}"#
+                    )
+                }
+                return
+            }
+
+            // Confine agent-scoped keys to their own agent (relay/LAN paired
+            // peers). Runs off the event loop, so use the captured scope.
+            if let rejection = Self.agentScopeRejection(
+                forAgentId: agentId,
+                authedAudience: authedAudience,
+                authedScopeIsMaster: authedScopeIsMaster
+            ) {
+                let bodyJSON = #"{"error":"\#(rejection.code)","message":"\#(rejection.message)"}"#
+                hop {
+                    var headers = [("Content-Type", "application/json; charset=utf-8")]
+                    headers.append(contentsOf: cors)
+                    self.sendResponse(
+                        context: ctx.value,
+                        version: head.version,
+                        status: .forbidden,
+                        headers: headers,
+                        body: bodyJSON
+                    )
+                    logSelf.logRequest(
+                        method: "POST",
+                        path: path,
+                        userAgent: logUserAgent,
+                        requestBody: requestBodyString,
+                        responseStatus: 403,
+                        startTime: logStartTime,
+                        errorMessage: rejection.message
                     )
                 }
                 return

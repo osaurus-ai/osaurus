@@ -17,15 +17,35 @@ enum PairingPromptService {
         case none
     }
 
+    /// Outcome of an approval request. `busy` lets the caller return a distinct
+    /// "try again" status when another prompt is already on screen, instead of
+    /// silently denying or clobbering the in-flight prompt.
+    enum ApprovalResult: Equatable {
+        case approved(isPermanent: Bool)
+        case denied
+        case busy
+    }
+
+    /// How long an unattended prompt stays up before auto-denying. Bounds the
+    /// `/pair` request (and its awaited continuation) so it can't hang forever.
+    private static let approvalTimeout: TimeInterval = 120
+
     private static var pairingWindow: NSPanel?
     private static var localKeyMonitor: Any?
-    private static var globalKeyMonitor: Any?
     private static var closeObserver: NSObjectProtocol?
+    private static var timeoutWorkItem: DispatchWorkItem?
 
     static func requestApproval(
         connectorAddress: OsaurusID,
         agentName: String
-    ) async -> (approved: Bool, isPermanent: Bool) {
+    ) async -> ApprovalResult {
+        // Only one approval prompt at a time. Concurrent `/pair` requests get a
+        // `busy` result (mapped to HTTP 429) rather than racing the static
+        // window/monitor state or hanging behind the first prompt.
+        if pairingWindow != nil {
+            return .busy
+        }
+
         return await withCheckedContinuation { continuation in
             var hasResumed = false
 
@@ -33,14 +53,14 @@ enum PairingPromptService {
                 guard !hasResumed else { return }
                 hasResumed = true
                 dismissWindow()
-                continuation.resume(returning: (approved: true, isPermanent: isPermanent))
+                continuation.resume(returning: .approved(isPermanent: isPermanent))
             }
 
             let onDeny = {
                 guard !hasResumed else { return }
                 hasResumed = true
                 dismissWindow()
-                continuation.resume(returning: (approved: false, isPermanent: false))
+                continuation.resume(returning: .denied)
             }
 
             let approvalState = PairingApprovalState()
@@ -117,15 +137,22 @@ enum PairingPromptService {
                 }
             }
 
+            // Local monitor only — it fires solely while Osaurus is the active
+            // app and this panel is key. The previous GLOBAL monitor approved
+            // pairing on a stray Return even when another app was focused,
+            // which (combined with the unauthenticated `/pair` endpoint) let a
+            // LAN attacker time a request so a user's keystroke granted a key.
             localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+                guard pairingWindow?.isKeyWindow == true else { return event }
                 if handleKeyEvent(event) { return nil }
                 return event
             }
 
-            globalKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { event in
-                guard pairingWindow?.isVisible == true else { return }
-                _ = handleKeyEvent(event)
-            }
+            // Auto-deny if the user never responds so the awaiting `/pair`
+            // request (and its continuation) can't be parked indefinitely.
+            let timeout = DispatchWorkItem { onDeny() }
+            timeoutWorkItem = timeout
+            DispatchQueue.main.asyncAfter(deadline: .now() + approvalTimeout, execute: timeout)
 
             NSApp.activate(ignoringOtherApps: true)
             panel.makeKeyAndOrderFront(nil)
@@ -140,6 +167,8 @@ enum PairingPromptService {
     }
 
     private static func dismissWindow() {
+        timeoutWorkItem?.cancel()
+        timeoutWorkItem = nil
         if let observer = closeObserver {
             NotificationCenter.default.removeObserver(observer)
             closeObserver = nil
@@ -147,10 +176,6 @@ enum PairingPromptService {
         if let monitor = localKeyMonitor {
             NSEvent.removeMonitor(monitor)
             localKeyMonitor = nil
-        }
-        if let monitor = globalKeyMonitor {
-            NSEvent.removeMonitor(monitor)
-            globalKeyMonitor = nil
         }
         pairingWindow?.orderOut(nil)
         pairingWindow = nil

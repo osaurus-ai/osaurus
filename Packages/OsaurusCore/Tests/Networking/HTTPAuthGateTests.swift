@@ -175,6 +175,51 @@ struct HTTPAuthGateTests {
         #expect(status == 401)
         #expect(body.contains("Invalid access key"))
     }
+
+    // MARK: - Relay Loopback Bypass Regression
+
+    /// Baseline: with loopback trust enabled, a plain local request needs no token.
+    @Test func loopbackTrusted_noToken_returns200() async throws {
+        let server = try await startAuthTestServer(validator: .empty, trustLoopback: true)
+        defer { Task { await server.shutdown() } }
+
+        let (_, resp) = try await URLSession.shared.data(
+            from: URL(string: "http://\(server.host):\(server.port)/v1/models")!
+        )
+        #expect((resp as? HTTPURLResponse)?.statusCode == 200)
+    }
+
+    /// Regression for the relay loopback auth bypass: traffic proxied by
+    /// `RelayTunnelManager` arrives over 127.0.0.1 but carries the relay-origin
+    /// marker, so it must NOT inherit loopback trust — a request without a
+    /// Bearer token has to 401 even when `trustLoopback` is on.
+    @Test func relayOriginHeader_disablesLoopbackTrust_returns401() async throws {
+        let server = try await startAuthTestServer(validator: .empty, trustLoopback: true)
+        defer { Task { await server.shutdown() } }
+
+        var request = URLRequest(
+            url: URL(string: "http://\(server.host):\(server.port)/v1/models")!
+        )
+        request.setValue("1", forHTTPHeaderField: HTTPHandler.relayOriginHeaderName)
+
+        let (_, resp) = try await URLSession.shared.data(for: request)
+        #expect((resp as? HTTPURLResponse)?.statusCode == 401)
+    }
+
+    /// Relayed traffic with a valid Bearer token still passes the gate.
+    @Test func relayOriginHeader_withValidToken_returns200() async throws {
+        let server = try await startAuthTestServer(validator: .forAlice(), trustLoopback: true)
+        defer { Task { await server.shutdown() } }
+
+        var request = URLRequest(
+            url: URL(string: "http://\(server.host):\(server.port)/v1/models")!
+        )
+        request.setValue("1", forHTTPHeaderField: HTTPHandler.relayOriginHeaderName)
+        request.authenticate()
+
+        let (_, resp) = try await URLSession.shared.data(for: request)
+        #expect((resp as? HTTPURLResponse)?.statusCode == 200)
+    }
 }
 
 // MARK: - Test Server Bootstrap
@@ -196,7 +241,8 @@ private struct AuthTestServer {
 }
 
 private func startAuthTestServer(
-    validator: APIKeyValidator
+    validator: APIKeyValidator,
+    trustLoopback: Bool = false
 ) async throws -> AuthTestServer {
     let config = ServerConfiguration.default
 
@@ -213,7 +259,7 @@ private func startAuthTestServer(
                             configuration: config,
                             apiKeyValidator: validator,
                             eventLoop: channel.eventLoop,
-                            trustLoopback: false
+                            trustLoopback: trustLoopback
                         )
                     )
                 }

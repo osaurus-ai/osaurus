@@ -526,7 +526,8 @@ struct AgentPill: View {
                         if !selectableDiscoveredAgents.isEmpty {
                             sectionHeader(Text("On This Network", bundle: .module))
                             ForEach(Array(selectableDiscoveredAgents.enumerated()), id: \.element.id) {
-                                idx, remote in
+                                idx,
+                                remote in
                                 discoveredRow(remote, index: agents.count + idx)
                             }
                         }
@@ -534,7 +535,8 @@ struct AgentPill: View {
                         if !selectableRelayAgents.isEmpty {
                             sectionHeader(Text("Paired", bundle: .module))
                             ForEach(Array(selectableRelayAgents.enumerated()), id: \.element.id) {
-                                idx, relay in
+                                idx,
+                                relay in
                                 relayRow(
                                     relay,
                                     index: agents.count + selectableDiscoveredAgents.count + idx

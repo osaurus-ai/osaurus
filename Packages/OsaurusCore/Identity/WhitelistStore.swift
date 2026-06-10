@@ -30,6 +30,7 @@ public final class WhitelistStore: @unchecked Sendable {
             masterAddresses.insert(address.lowercased())
             save()
         }
+        APIKeyValidatorEpoch.shared.bump()
     }
 
     public func removeMaster(address: OsaurusID) {
@@ -37,6 +38,7 @@ public final class WhitelistStore: @unchecked Sendable {
             masterAddresses.remove(address.lowercased())
             save()
         }
+        APIKeyValidatorEpoch.shared.bump()
     }
 
     public func masterWhitelist() -> Set<OsaurusID> {
@@ -53,6 +55,7 @@ public final class WhitelistStore: @unchecked Sendable {
             agentAddresses[key] = set
             save()
         }
+        APIKeyValidatorEpoch.shared.bump()
     }
 
     public func removeAgent(address: OsaurusID, forAgent agentAddress: OsaurusID) {
@@ -64,6 +67,7 @@ public final class WhitelistStore: @unchecked Sendable {
             }
             save()
         }
+        APIKeyValidatorEpoch.shared.bump()
     }
 
     public func agentWhitelist(forAgent agentAddress: OsaurusID) -> Set<OsaurusID> {
@@ -120,5 +124,6 @@ public final class WhitelistStore: @unchecked Sendable {
         queue.sync(flags: .barrier) {
             load()
         }
+        APIKeyValidatorEpoch.shared.bump()
     }
 }

@@ -133,6 +133,9 @@ private struct RelayRequestFrame: Decodable {
     let path: String
     let headers: [String: String]
     let body: String?
+    /// When `"base64"`, `body` is base64-encoded raw bytes (binary-safe mode).
+    /// Absent/other values mean UTF-8 text (legacy mode).
+    let bodyEncoding: String?
 }
 
 private struct RelayResponseFrame: Encodable {
@@ -141,6 +144,11 @@ private struct RelayResponseFrame: Encodable {
     let status: Int
     let headers: [String: String]
     let body: String
+    /// Set to `"base64"` when `body` carries base64-encoded raw bytes. Bodies
+    /// that are not valid UTF-8 (images, audio, etc.) were previously mangled
+    /// through `String(data:encoding:) ?? ""`; base64 keeps them intact for
+    /// relays that understand the field. Omitted for plain text bodies.
+    let bodyEncoding: String?
 }
 
 private struct RelayStreamStartFrame: Encodable {
@@ -187,8 +195,17 @@ public final class RelayTunnelManager: ObservableObject {
     private var authenticatedAgents: Set<String> = []
     /// O(1) lookup from lowercased agent address to agent UUID, built at auth time.
     private var addressToAgentId: [String: UUID] = [:]
-    /// Set before expecting a `challenge` frame; consumed when the nonce arrives.
-    private var pendingNonceHandler: ((String) -> Void)?
+    /// FIFO queue of challenge handlers. The relay answers challenges in the
+    /// order they are requested (one on socket open, one per
+    /// `request_challenge`), so each inbound `challenge` frame consumes the
+    /// oldest handler. A single-slot value here used to let a concurrent
+    /// `addAgentToTunnel()` clobber the `connect()` handler, permanently
+    /// stalling tunnel auth.
+    private var pendingNonceHandlers: [(String) -> Void] = []
+    /// Bounded retry budget for `auth_error` frames (e.g. transient clock
+    /// skew). Reset on a successful auth.
+    private var authErrorRetries = 0
+    private static let maxAuthErrorRetries = 3
     /// Public-link checks run after relay auth so green UI means the public
     /// HTTPS route, not just the WebSocket auth handshake, is usable.
     private let publicURLProbe = RelayPublicURLProbe.live()
@@ -253,7 +270,7 @@ public final class RelayTunnelManager: ObservableObject {
         isConnected = false
         authenticatedAgents.removeAll()
         addressToAgentId.removeAll()
-        pendingNonceHandler = nil
+        pendingNonceHandlers.removeAll()
         cancelAllPublicChecks()
         for id in agentStatuses.keys {
             agentStatuses[id] = .disconnected
@@ -304,8 +321,22 @@ public final class RelayTunnelManager: ObservableObject {
         self.webSocketTask = task
         task.resume()
 
-        pendingNonceHandler = { [weak self] nonce in
-            guard let self else { return }
+        // `keyBox` is captured by reference; the handler zeroes the key bytes
+        // after signing so master-key material doesn't outlive its single use
+        // inside a long-lived closure.
+        var keyBox: Data? = masterKey
+        pendingNonceHandlers.append { [weak self] nonce in
+            guard let self else {
+                keyBox?.zeroOut()
+                keyBox = nil
+                return
+            }
+            defer {
+                keyBox?.zeroOut()
+                keyBox = nil
+            }
+            guard let signingKey = keyBox else { return }
+
             let timestamp = Int(Date().timeIntervalSince1970)
             var authAgents: [[String: Any]] = []
 
@@ -316,7 +347,7 @@ public final class RelayTunnelManager: ObservableObject {
                         address: address,
                         nonce: nonce,
                         timestamp: timestamp,
-                        masterKey: masterKey,
+                        masterKey: signingKey,
                         agentIndex: index
                     )
                     authAgents.append(["address": address, "signature": sigHex])
@@ -389,14 +420,15 @@ public final class RelayTunnelManager: ObservableObject {
 
     private func handleChallenge(_ json: [String: Any]) {
         guard let nonce = json["nonce"] as? String else { return }
-        let handler = pendingNonceHandler
-        pendingNonceHandler = nil
-        handler?(nonce)
+        guard !pendingNonceHandlers.isEmpty else { return }
+        let handler = pendingNonceHandlers.removeFirst()
+        handler(nonce)
     }
 
     private func handleAuthOk(_ json: [String: Any]) {
         isConnected = true
         reconnectDelay = 1
+        authErrorRetries = 0
 
         guard let agents = json["agents"] as? [[String: Any]] else { return }
         for agentInfo in agents {
@@ -427,8 +459,28 @@ public final class RelayTunnelManager: ObservableObject {
         isConnected = false
         authenticatedAgents.removeAll()
         addressToAgentId.removeAll()
-        pendingNonceHandler = nil
+        pendingNonceHandlers.removeAll()
         cancelAllPublicChecks()
+
+        // An auth_error used to permanently kill the tunnel: the receive loop
+        // exits (webSocketTask is nil) and nothing rescheduled a connect, so a
+        // transient failure (clock skew, relay restart mid-handshake) required
+        // an app restart. Retry with backoff, bounded so a genuinely bad
+        // signature doesn't hammer the relay forever.
+        guard shouldReconnect, authErrorRetries < Self.maxAuthErrorRetries else { return }
+        authErrorRetries += 1
+        for id in configuration.enabledAgentIds {
+            agentStatuses[id] = .connecting
+        }
+        reconnectTask?.cancel()
+        reconnectTask = Task { [weak self] in
+            guard let self else { return }
+            let delay = self.reconnectDelay
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            self.reconnectDelay = min(self.reconnectDelay * 2, 60)
+            await self.connect()
+        }
     }
 
     private func handleAgentAdded(_ json: [String: Any]) {
@@ -542,8 +594,20 @@ public final class RelayTunnelManager: ObservableObject {
         if let agentUUID {
             request.setValue(agentUUID, forHTTPHeaderField: "X-Osaurus-Agent-Id")
         }
+        // Stamp the relay-origin marker LAST (after caller headers) so the
+        // local server never treats this loopback request as a trusted local
+        // caller. `setValue` overwrites any value a remote caller tried to
+        // smuggle in through the relay frame, so the marker cannot be removed.
+        request.setValue("1", forHTTPHeaderField: HTTPHandler.relayOriginHeaderName)
         if let body = frame.body, !body.isEmpty {
-            request.httpBody = body.data(using: .utf8)
+            if frame.bodyEncoding == "base64" {
+                // Binary-safe mode: reject the frame if the relay claims base64
+                // but the payload doesn't decode, rather than forwarding junk.
+                guard let decoded = Data(base64Encoded: body) else { return nil }
+                request.httpBody = decoded
+            } else {
+                request.httpBody = body.data(using: .utf8)
+            }
         }
         return request
     }
@@ -557,6 +621,13 @@ public final class RelayTunnelManager: ObservableObject {
         return result
     }
 
+    /// Forward a streaming (SSE / NDJSON) response verbatim. The previous
+    /// implementation re-split the stream with `bytes.lines`, which destroyed
+    /// multi-line SSE events (`event:` + `data:`, multi-`data:` events, and
+    /// comment keepalives) and re-invented event boundaries. Instead, forward
+    /// the raw byte stream in UTF-8-safe chunks, flushing on every newline for
+    /// low latency, so the public caller sees exactly what the local server
+    /// produced.
     private static func relayStreamingResponse(
         id: String,
         status: Int,
@@ -567,27 +638,49 @@ public final class RelayTunnelManager: ObservableObject {
     ) async {
         sendFrame(RelayStreamStartFrame(id: id, status: status, headers: headers), via: webSocket)
 
-        let isSSE = contentType.contains("text/event-stream")
+        let flushThreshold = 16 * 1024
+        var buffer = Data()
+        func flush() {
+            guard let chunk = takeUTF8Prefix(&buffer), !chunk.isEmpty else { return }
+            sendFrame(RelayStreamChunkFrame(id: id, data: chunk), via: webSocket)
+        }
 
         do {
-            for try await line in bytes.lines {
-                guard !line.isEmpty else { continue }
-                if isSSE {
-                    // URLSession.AsyncBytes.lines does not yield empty strings for consecutive
-                    // newlines, so blank-line SSE event boundaries are never observed here.
-                    // Each non-empty line from the NIO server is one complete SSE event
-                    // (e.g. "data: {...}"), so forward it immediately with the required \n\n
-                    // terminator so Machine A's SSE parser sees proper event boundaries.
-                    sendFrame(RelayStreamChunkFrame(id: id, data: line + "\n\n"), via: webSocket)
-                } else {
-                    sendFrame(RelayStreamChunkFrame(id: id, data: line + "\n"), via: webSocket)
+            for try await byte in bytes {
+                buffer.append(byte)
+                // Newline flush keeps SSE/NDJSON latency low; size flush bounds
+                // memory for long lines.
+                if byte == 0x0A || buffer.count >= flushThreshold {
+                    flush()
                 }
             }
         } catch {
-            // Stream interrupted — close cleanly
+            // Stream interrupted — forward what we have and close cleanly.
         }
+        flush()
 
         sendFrame(RelayStreamEndFrame(id: id), via: webSocket)
+    }
+
+    /// Pop the longest valid-UTF-8 prefix from `data` as a String, leaving any
+    /// trailing bytes of a split multi-byte character in place for the next
+    /// flush. Returns nil when no valid prefix exists yet. Internal for tests.
+    nonisolated static func takeUTF8Prefix(_ data: inout Data) -> String? {
+        guard !data.isEmpty else { return nil }
+        if let s = String(data: data, encoding: .utf8) {
+            data.removeAll(keepingCapacity: true)
+            return s
+        }
+        // A UTF-8 code point is at most 4 bytes; back off up to 3 bytes to
+        // find a clean boundary.
+        for back in 1 ... 3 where data.count > back {
+            let prefix = data.prefix(data.count - back)
+            if let s = String(data: prefix, encoding: .utf8) {
+                data.removeFirst(data.count - back)
+                return s
+            }
+        }
+        return nil
     }
 
     private static func relayBufferedResponse(
@@ -605,15 +698,32 @@ public final class RelayTunnelManager: ObservableObject {
         } catch {
             // Partial read — send whatever we collected
         }
-        sendFrame(
-            RelayResponseFrame(
-                id: id,
-                status: status,
-                headers: headers,
-                body: String(data: allData, encoding: .utf8) ?? ""
-            ),
-            via: webSocket
-        )
+        // Text passes through as-is; anything not valid UTF-8 (images, audio,
+        // multipart) is base64-encoded with `bodyEncoding` so it is no longer
+        // silently corrupted into "" by lossy string conversion.
+        if let text = String(data: allData, encoding: .utf8) {
+            sendFrame(
+                RelayResponseFrame(
+                    id: id,
+                    status: status,
+                    headers: headers,
+                    body: text,
+                    bodyEncoding: nil
+                ),
+                via: webSocket
+            )
+        } else {
+            sendFrame(
+                RelayResponseFrame(
+                    id: id,
+                    status: status,
+                    headers: headers,
+                    body: allData.base64EncodedString(),
+                    bodyEncoding: "base64"
+                ),
+                via: webSocket
+            )
+        }
     }
 
     private static func sendErrorResponse(id: String, error: String, via webSocket: URLSessionWebSocketTask?) {
@@ -622,7 +732,8 @@ public final class RelayTunnelManager: ObservableObject {
                 id: id,
                 status: 502,
                 headers: ["content-type": "application/json"],
-                body: "{\"error\":\"\(error)\"}"
+                body: "{\"error\":\"\(error)\"}",
+                bodyEncoding: nil
             ),
             via: webSocket
         )
@@ -653,15 +764,26 @@ public final class RelayTunnelManager: ObservableObject {
             return
         }
 
-        pendingNonceHandler = { [weak self] nonce in
-            guard let self else { return }
+        var keyBox: Data? = masterKey
+        pendingNonceHandlers.append { [weak self] nonce in
+            guard let self else {
+                keyBox?.zeroOut()
+                keyBox = nil
+                return
+            }
+            defer {
+                keyBox?.zeroOut()
+                keyBox = nil
+            }
+            guard let signingKey = keyBox else { return }
+
             let timestamp = Int(Date().timeIntervalSince1970)
             do {
                 let sigHex = try Self.signAgentAuth(
                     address: address,
                     nonce: nonce,
                     timestamp: timestamp,
-                    masterKey: masterKey,
+                    masterKey: signingKey,
                     agentIndex: index
                 )
                 self.sendJSON([
@@ -712,7 +834,7 @@ public final class RelayTunnelManager: ObservableObject {
         urlSession = nil
         authenticatedAgents.removeAll()
         addressToAgentId.removeAll()
-        pendingNonceHandler = nil
+        pendingNonceHandlers.removeAll()
         cancelAllPublicChecks()
 
         for id in configuration.enabledAgentIds {
