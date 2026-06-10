@@ -110,6 +110,10 @@ Every participant -- human, agent, device -- gets a secp256k1 cryptographic addr
 
 Expose agents to the internet via secure WebSocket tunnels through `agent.osaurus.ai`. Unique URL per agent based on its crypto address. No port forwarding, no ngrok, no configuration.
 
+### Secure Channel
+
+When two Osaurus agents talk -- across your LAN or across the world through the relay -- the conversation is **end-to-end encrypted**: a forward-secret X25519 handshake authenticated by each agent's crypto identity, with every request, streamed token, and access key sealed in ChaCha20-Poly1305. The relay becomes a blind pipe that forwards ciphertext it cannot open; a man-in-the-middle cannot complete a handshake; replayed or truncated traffic is detected and refused; and there is no plaintext fallback an attacker can force. Zero configuration -- pairing is all it takes. See the [Secure Channel docs](docs/SECURE_CHANNEL.md).
+
 ## Models
 
 The harness is model-agnostic. Swap freely -- your agents, memory, and tools stay intact.

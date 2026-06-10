@@ -145,6 +145,11 @@ public final class BonjourAdvertiser: NSObject {
         if let address = agent.agentAddress {
             fields["address"] = address.data(using: .utf8)
         }
+        // Secure Channel capability (diagnostic): this peer accepts
+        // `/secure/session` handshakes and requires E2E encryption on agent
+        // run/dispatch. Browsers use it to explain "peer needs upgrade"
+        // instead of a bare handshake 404.
+        fields["osc"] = "1".data(using: .utf8)
         return NetService.data(fromTXTRecord: fields)
     }
 }

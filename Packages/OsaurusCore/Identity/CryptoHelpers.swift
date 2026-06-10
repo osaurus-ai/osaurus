@@ -190,6 +190,13 @@ func signInvitePayload(_ payload: Data, privateKey: Data) throws -> Data {
     try signWithPrefix(payload, privateKey: privateKey, prefix: "Osaurus Signed Invite")
 }
 
+/// Sign a Secure Channel handshake transcript with the agent key. Distinct
+/// domain prefix so a channel signature can never be replayed as a pairing /
+/// access / invite signature (or vice versa).
+func signSecureChannelPayload(_ payload: Data, privateKey: Data) throws -> Data {
+    try signWithPrefix(payload, privateKey: privateKey, prefix: "Osaurus Secure Channel")
+}
+
 /// EIP-191 personal_sign compatible signing.
 /// Produces `\x19Ethereum Signed Message:\n<len><message>` hash + secp256k1 recoverable signature.
 func signEIP191Message(_ message: String, privateKey: Data) throws -> Data {

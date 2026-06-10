@@ -1488,6 +1488,12 @@ public actor RemoteProviderService: ToolCapableService {
             configuredProviderType: self.provider.providerType,
             request: request
         )
+        // Native Osaurus peers: the plaintext request (Bearer included) is
+        // sealed into a `/secure/call` envelope per attempt inside the
+        // producer, and the SSE response is decrypted frame-by-frame before
+        // the line parser. No downgrade path — if the peer can't handshake,
+        // the user-facing SecureChannelClientError says to upgrade it.
+        let secureProvider = providerType == .osaurus ? self.provider : nil
         let inactivityTimeout = self.streamInactivityTimeout
         let toolList = tools ?? []
         // Only the with-tools path needs accumulated text for the inline
@@ -1519,30 +1525,69 @@ public actor RemoteProviderService: ToolCapableService {
                 // uncatchable Obj-C `NSException` and `abort()`s the
                 // entire xctest process. See the doc comment on
                 // `sessionInvalidatedFlag`.
-                let (bytes, response) = try await Self.connectWithRetry(
-                    session: currentSession,
-                    urlRequest: urlRequest,
-                    isCancelled: { [weak self] in
-                        self?.isSessionInvalidated ?? true
-                    }
-                )
+                var connectedBytes: URLSession.AsyncBytes? = nil
+                var secureDecoder: SecureFrameStreamDecoder? = nil
+                var attempt = 0
+                connectLoop: while true {
+                    attempt += 1
 
-                guard let httpResponse = response as? HTTPURLResponse else {
-                    continuation.finish(throwing: RemoteProviderServiceError.invalidResponse)
-                    return
+                    var outboundRequest = urlRequest
+                    if let secureProvider {
+                        // Seal per attempt: each call consumes a fresh
+                        // sequence number, so a retry can't be a replay.
+                        let wrapped = try await SecureChannelClient.shared.wrappedRequest(
+                            for: urlRequest,
+                            provider: secureProvider,
+                            urlSession: currentSession
+                        )
+                        outboundRequest = wrapped.request
+                        secureDecoder = SecureFrameStreamDecoder(opener: wrapped.opener)
+                    }
+
+                    let (bytes, response) = try await Self.connectWithRetry(
+                        session: currentSession,
+                        urlRequest: outboundRequest,
+                        isCancelled: { [weak self] in
+                            self?.isSessionInvalidated ?? true
+                        }
+                    )
+
+                    guard let httpResponse = response as? HTTPURLResponse else {
+                        continuation.finish(throwing: RemoteProviderServiceError.invalidResponse)
+                        return
+                    }
+
+                    if httpResponse.statusCode >= 400 {
+                        var errorData = Data()
+                        for try await byte in bytes {
+                            errorData.append(byte)
+                        }
+                        // Server restarted and forgot the session — drop the
+                        // cached keys, re-handshake, retry once.
+                        if let secureProvider, attempt == 1,
+                            SecureChannelClient.isSessionUnknownError(
+                                statusCode: httpResponse.statusCode,
+                                body: errorData
+                            )
+                        {
+                            await SecureChannelClient.shared.invalidateSession(for: secureProvider)
+                            continue connectLoop
+                        }
+                        let errorMessage = String(data: errorData, encoding: .utf8) ?? "Unknown error"
+                        continuation.finish(
+                            throwing: RemoteProviderServiceError.requestFailed(
+                                "HTTP \(httpResponse.statusCode): \(errorMessage)"
+                            )
+                        )
+                        return
+                    }
+
+                    connectedBytes = bytes
+                    break connectLoop
                 }
 
-                if httpResponse.statusCode >= 400 {
-                    var errorData = Data()
-                    for try await byte in bytes {
-                        errorData.append(byte)
-                    }
-                    let errorMessage = String(data: errorData, encoding: .utf8) ?? "Unknown error"
-                    continuation.finish(
-                        throwing: RemoteProviderServiceError.requestFailed(
-                            "HTTP \(httpResponse.statusCode): \(errorMessage)"
-                        )
-                    )
+                guard let bytes = connectedBytes else {
+                    continuation.finish(throwing: RemoteProviderServiceError.invalidResponse)
                     return
                 }
 
@@ -1578,17 +1623,35 @@ public actor RemoteProviderService: ToolCapableService {
                     )
 
                     if let chunk = chunk {
-                        lineParser.append(chunk)
-                        // Wire-verification tap. Capture the raw
-                        // pre-unscrub bytes before they're parsed
-                        // into SSE events. We tap inside the
-                        // stream loop (not at the bytes(for:) site)
-                        // so the inactivity timeout / cancel paths
-                        // still get their last delivered chunk in
-                        // the snapshot. No-op when no probe is set.
-                        probe?.appendResponseChunk(chunk)
+                        if let secureDecoder {
+                            // Decrypt outer secure frames into the original
+                            // SSE bytes before line parsing. The probe sees
+                            // the decrypted stream (the logical wire) — the
+                            // raw bytes are ciphertext.
+                            let plain = try secureDecoder.feed(chunk)
+                            if !plain.isEmpty {
+                                lineParser.append(plain)
+                                probe?.appendResponseChunk(plain)
+                            }
+                        } else {
+                            lineParser.append(chunk)
+                            // Wire-verification tap. Capture the raw
+                            // pre-unscrub bytes before they're parsed
+                            // into SSE events. We tap inside the
+                            // stream loop (not at the bytes(for:) site)
+                            // so the inactivity timeout / cancel paths
+                            // still get their last delivered chunk in
+                            // the snapshot. No-op when no probe is set.
+                            probe?.appendResponseChunk(chunk)
+                        }
                     } else {
                         // Stream ended naturally or inactivity timeout fired.
+                        // An encrypted stream must have delivered its
+                        // authenticated `fin` frame by now, or it was
+                        // silently truncated.
+                        if let secureDecoder {
+                            try secureDecoder.verifyCompleted()
+                        }
                         // Flush any unterminated trailing bytes as a final line.
                         lineParser.flushPending()
                     }
@@ -3403,8 +3466,8 @@ extension RemoteProviderService {
             req.setValue("application/json", forHTTPHeaderField: "Accept")
             req.timeoutInterval = min(provider.timeout, 10)
             for (key, value) in headers { req.setValue(value, forHTTPHeaderField: key) }
-            if let (data, response) = try? await GlobalProxySettings.sharedSession().data(for: req),
-                let http = response as? HTTPURLResponse, http.statusCode < 400,
+            if let (data, status) = await osaurusGET(req, provider: provider),
+                status < 400,
                 let parsed = try? JSONDecoder().decode(ModelsResponse.self, from: data),
                 !parsed.data.isEmpty
             {
@@ -3423,14 +3486,52 @@ extension RemoteProviderService {
         req.setValue("application/json", forHTTPHeaderField: "Accept")
         req.timeoutInterval = min(provider.timeout, 10)
         for (key, value) in headers { req.setValue(value, forHTTPHeaderField: key) }
-        guard let (data, response) = try? await GlobalProxySettings.sharedSession().data(for: req),
-            let http = response as? HTTPURLResponse, http.statusCode < 400
-        else {
+        guard let (data, status) = await osaurusGET(req, provider: provider), status < 400 else {
             return ["default"]
         }
         struct AgentInfo: Decodable { let default_model: String? }
         let model = (try? JSONDecoder().decode(AgentInfo.self, from: data))?.default_model ?? "default"
         return [model]
+    }
+
+    /// Metadata GET against an Osaurus peer. Prefers the Secure Channel (so
+    /// the Bearer never crosses the wire in cleartext); falls back to the
+    /// plaintext request when the peer predates the channel or has no pinned
+    /// address — the server intentionally keeps `/models` and agent metadata
+    /// plaintext-accessible for third-party SDK clients.
+    private static func osaurusGET(
+        _ request: URLRequest,
+        provider: RemoteProvider
+    ) async -> (data: Data, statusCode: Int)? {
+        let urlSession = GlobalProxySettings.sharedSession()
+        if provider.remoteAgentAddress != nil {
+            do {
+                let (outer, opener) = try await SecureChannelClient.shared.wrappedRequest(
+                    for: request,
+                    provider: provider,
+                    urlSession: urlSession
+                )
+                let (data, response) = try await urlSession.data(for: outer)
+                if let http = response as? HTTPURLResponse {
+                    if SecureChannelClient.isSessionUnknownError(statusCode: http.statusCode, body: data) {
+                        await SecureChannelClient.shared.invalidateSession(for: provider)
+                    } else if http.statusCode < 400 {
+                        let inner = try SecureChannelClient.openBufferedResponse(data, opener: opener)
+                        let body = inner.body.flatMap { Data(base64urlEncoded: $0) } ?? Data()
+                        return (body, inner.status)
+                    }
+                }
+            } catch SecureChannelClientError.peerUnsupported {
+                // Old peer — plaintext fallback below.
+            } catch {
+                // Handshake/transport failure: fall through to plaintext for
+                // metadata only (chat traffic never downgrades).
+            }
+        }
+        guard let (data, response) = try? await urlSession.data(for: request),
+            let http = response as? HTTPURLResponse
+        else { return nil }
+        return (data, http.statusCode)
     }
 
     /// Fetch models from Gemini API (different response format from OpenAI)

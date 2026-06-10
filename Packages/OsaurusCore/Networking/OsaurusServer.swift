@@ -76,10 +76,15 @@ public actor OsaurusServer: Sendable {
             .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
             .childChannelInitializer { channel in
                 channel.pipeline.configureHTTPServerPipeline().flatMap {
-                    channel.pipeline.addHandlers([
+                    // Outbound encryption stage for Secure Channel calls.
+                    // Must sit between the HTTP encoder and HTTPHandler so
+                    // every response part the routes write can be sealed.
+                    let responseEncryptor = SecureChannelResponseEncryptor()
+                    return channel.pipeline.addHandlers([
                         // Connection cap (first handler): a flood of idle-held
                         // sockets can't exhaust file descriptors / pin memory.
                         ConnectionLimitHandler(),
+                        responseEncryptor,
                         // Slow-loris / idle-hold defense cannot use NIO idle
                         // timeouts on this pipeline: long local non-streaming
                         // model calls intentionally produce no response bytes
@@ -91,7 +96,8 @@ public actor OsaurusServer: Sendable {
                             configuration: serverConfiguration,
                             apiKeyValidatorProvider: { validatorSnapshot.value() },
                             eventLoop: channel.eventLoop,
-                            trustLoopback: trustLoopback
+                            trustLoopback: trustLoopback,
+                            responseEncryptor: responseEncryptor
                         ),
                     ])
                 }

@@ -12,6 +12,7 @@ Canonical reference for all Osaurus features, their status, and documentation.
 | -------------------------------- | --------- | ------------------ | ----------------------------- | ------------------------------------------------------------------------------------- |
 | Local LLM Server (MLX)           | Stable    | "Key Features"     | OpenAI_API_GUIDE.md           | Services/Inference/MLXService.swift, Services/ModelRuntime/                                     |
 | Remote Providers                 | Stable    | "Key Features"     | REMOTE_PROVIDERS.md           | Managers/RemoteProviderManager.swift, Services/Provider/RemoteProviderService.swift            |
+| Secure Channel (Agent E2E Encryption) | Stable | "Key Features"   | SECURE_CHANNEL.md             | Identity/SecureChannel.swift, Identity/SecureSessionStore.swift, Networking/SecureChannelResponseEncryptor.swift, Services/Provider/SecureChannelClient.swift, Networking/HTTPHandler.swift |
 | Remote MCP Providers             | Stable    | "Key Features"     | REMOTE_MCP_PROVIDERS.md       | Managers/MCPProviderManager.swift, Tools/MCPProviderTool.swift                        |
 | MCP Server                       | Stable    | "MCP Server"       | (in README)                   | Networking/OsaurusServer.swift, Services/MCP/MCPServerManager.swift, CLI MCPCommand.swift |
 | Structured Document IO           | Foundation | "Tools & Plugins"  | (in README)                   | Services/Documents/, Models/Documents/, Managers/Documents/DocumentAdaptersBootstrap.swift |

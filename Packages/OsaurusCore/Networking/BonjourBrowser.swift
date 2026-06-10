@@ -34,6 +34,11 @@ public struct DiscoveredAgent: Identifiable, Equatable, Sendable {
     public let address: String?
     public let host: String?
     public let port: Int
+    /// Whether the peer advertised Secure Channel support (`osc=1` in its
+    /// TXT record). Peers without it predate end-to-end encryption and will
+    /// reject nothing — but WE will refuse to send them agent traffic, so
+    /// surface a "peer needs upgrade" message instead of a cryptic failure.
+    public let supportsSecureChannel: Bool
 
     /// Internal key that matches the NetService name for lookup/removal.
     internal let serviceName: String
@@ -179,6 +184,7 @@ private final class BonjourBrowserCore: NSObject, @unchecked Sendable {
 
         let desc = fields["description"].flatMap { String(data: $0, encoding: .utf8) } ?? ""
         let addr = fields["address"].flatMap { String(data: $0, encoding: .utf8) }
+        let osc = fields["osc"].flatMap { String(data: $0, encoding: .utf8) } == "1"
 
         let agent = DiscoveredAgent(
             id: agentId,
@@ -187,6 +193,7 @@ private final class BonjourBrowserCore: NSObject, @unchecked Sendable {
             address: addr,
             host: service.hostName,
             port: Int(service.port),
+            supportsSecureChannel: osc,
             serviceName: service.name
         )
         onResolved(agent)
