@@ -556,10 +556,15 @@ public final class WatcherManager {
                     break
                 }
 
-                // Compute change count before overwriting lastKnown
+                // Compute change count before overwriting lastKnown. The diff
+                // builds path sets over every entry, which is slow enough on
+                // large folders to hang the UI, so it runs off the main actor
+                // like the capture.
                 let changeCount: Int
                 if let known = self.lastKnownFingerprints[watcherId] {
-                    changeCount = fingerprint.diff(from: known).totalCount
+                    changeCount = await Task.detached(priority: .userInitiated) {
+                        fingerprint.diff(from: known).totalCount
+                    }.value
                 } else {
                     changeCount = fingerprint.entries.count
                 }
