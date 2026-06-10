@@ -8,11 +8,14 @@
 //  the matching `restoreRange` translates classifier hits back to
 //  the original input so we can highlight the right characters.
 //
-//  Implementation note: the masker replaces a code span with the same
-//  number of UTF-16 spaces. Equal-length replacement keeps every
-//  `String.Index` valid across `original ↔ masked`, which is the only
-//  reason `restoreRange` can return the same indices unchanged when
-//  the span lies outside any masked region.
+//  Implementation note: the masker replaces a code span with a run
+//  of spaces matching the span's UTF-16 length, so every UTF-16
+//  offset means the same thing in `original` and `masked`.
+//  `restoreRange` relies on that to translate a detection's offsets
+//  in the masked string back into indices in the original. Indices
+//  themselves are NOT interchangeable between the two strings once a
+//  masked span contains non-ASCII characters (their UTF-8 layouts
+//  diverge), which is why the translation goes through offsets.
 //
 
 import Foundation
@@ -31,10 +34,11 @@ public enum CodeBlockMasker {
     }
 
     /// Mask fenced and inline code spans in `text` and return a
-    /// `MaskOutput`. Calling `restoreRange` on a range whose start or
-    /// end falls inside a masked span returns `nil`; otherwise the
-    /// range is passed through (we keep the masked length equal to
-    /// the original length so indices stay aligned).
+    /// `MaskOutput`. Calling `restoreRange` on a range that overlaps
+    /// a masked span returns `nil`; otherwise the range is translated
+    /// into the equivalent indices in the original string (UTF-16
+    /// offsets are preserved by the masking pass, so the translation
+    /// is a straight offset lookup).
     public static func mask(_ text: String) -> MaskOutput {
         // Hot-path bail: no backticks AND no indented-block hint =>
         // no spans to mask. `findCodeSpans` would still walk every
@@ -56,50 +60,77 @@ public enum CodeBlockMasker {
             return MaskOutput(masked: text) { range in range }
         }
 
-        // Build the masked string by replacing each code span with
-        // an equal-length run of spaces. Equal-length keeps every
-        // string index valid in both strings.
-        var masked = text
-        for span in spans.reversed() {
-            let count = text.distance(from: span.lowerBound, to: span.upperBound)
-            let filler = String(repeating: " ", count: count)
-            masked.replaceSubrange(span, with: filler)
+        // The fenced/inline pass and the indented pass can emit spans
+        // that partially overlap (an inline span inside an indented
+        // line, for example). Merge them before masking so each
+        // region is rewritten exactly once — replacing overlapping
+        // ranges independently invalidates the later range's indices.
+        var merged: [Range<String.Index>] = []
+        merged.reserveCapacity(spans.count)
+        for span in spans {
+            if let last = merged.last, span.lowerBound < last.upperBound {
+                if span.upperBound > last.upperBound {
+                    merged[merged.count - 1] = last.lowerBound ..< span.upperBound
+                }
+            } else {
+                merged.append(span)
+            }
         }
 
+        // Build the masked string in one forward pass, replacing each
+        // code span with a run of spaces matching the span's UTF-16
+        // length so UTF-16 offsets stay identical in both strings.
+        var masked = ""
+        masked.reserveCapacity(text.count)
+        var cursor = text.startIndex
+        for span in merged {
+            masked += text[cursor ..< span.lowerBound]
+            let count = text.utf16.distance(from: span.lowerBound, to: span.upperBound)
+            masked += String(repeating: " ", count: count)
+            cursor = span.upperBound
+        }
+        masked += text[cursor...]
+
         // Capture the spans as UTF-16 offsets so the closure doesn't
-        // hold a reference to the original `String.Index` values
-        // (which are valid in `text` and `masked` but become awkward
-        // to compare across instances when callers pass a range from
-        // a copy).
-        let utf16Spans: [Range<Int>] = spans.map { span in
-            let start = text.utf16.distance(
-                from: text.utf16.startIndex,
-                to: span.lowerBound.samePosition(in: text.utf16)!
-            )
-            let end = text.utf16.distance(
-                from: text.utf16.startIndex,
-                to: span.upperBound.samePosition(in: text.utf16)!
-            )
+        // hold `String.Index` values that are only meaningful in one
+        // of the two strings.
+        let utf16Spans: [Range<Int>] = merged.map { span in
+            let start = text.utf16.distance(from: text.utf16.startIndex, to: span.lowerBound)
+            let end = text.utf16.distance(from: text.utf16.startIndex, to: span.upperBound)
             return start ..< end
         }
         let originalCopy = text
+        let maskedCopy = masked
 
         let restore: (Range<String.Index>) -> Range<String.Index>? = { range in
-            // Treat indices as UTF-16 positions in the original
-            // string. Discard hits that overlap any masked span.
-            let utf16 = originalCopy.utf16
-            guard let startU16 = range.lowerBound.samePosition(in: utf16),
-                let endU16 = range.upperBound.samePosition(in: utf16)
+            // The range was produced against the masked string.
+            // Convert it to UTF-16 offsets there, discard hits that
+            // overlap any masked span, then rebuild the equivalent
+            // indices in the original string.
+            let maskedUtf16 = maskedCopy.utf16
+            guard let startU16 = range.lowerBound.samePosition(in: maskedUtf16),
+                let endU16 = range.upperBound.samePosition(in: maskedUtf16)
             else {
                 return nil
             }
-            let start = utf16.distance(from: utf16.startIndex, to: startU16)
-            let end = utf16.distance(from: utf16.startIndex, to: endU16)
+            let start = maskedUtf16.distance(from: maskedUtf16.startIndex, to: startU16)
+            let end = maskedUtf16.distance(from: maskedUtf16.startIndex, to: endU16)
             for span in utf16Spans {
                 let overlaps = !(end <= span.lowerBound || start >= span.upperBound)
                 if overlaps { return nil }
             }
-            return range
+            let utf16 = originalCopy.utf16
+            guard start <= end, end <= utf16.count,
+                let lower = utf16.index(
+                    utf16.startIndex, offsetBy: start, limitedBy: utf16.endIndex
+                )?.samePosition(in: originalCopy),
+                let upper = utf16.index(
+                    utf16.startIndex, offsetBy: end, limitedBy: utf16.endIndex
+                )?.samePosition(in: originalCopy)
+            else {
+                return nil
+            }
+            return lower ..< upper
         }
 
         return MaskOutput(masked: masked, restoreRange: restore)

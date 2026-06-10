@@ -78,4 +78,40 @@ struct CodeBlockMaskerTests {
         #expect(output.masked.hasPrefix("Before "))
         #expect(!output.masked.contains("still open"))
     }
+
+    @Test func overlappingSpansWithNonASCII_doesNotTrap() {
+        // An inline span inside an indented line produces two
+        // overlapping spans, and the multi-byte characters inside the
+        // inline span change the string's encoded length when masked.
+        // This combination used to trap in replaceSubrange.
+        let text = "para\n\n    call `汉字` more\n"
+        let output = CodeBlockMasker.mask(text)
+        #expect(output.masked.utf16.count == text.utf16.count)
+        #expect(output.masked.hasPrefix("para\n\n"))
+        #expect(!output.masked.contains("汉字"))
+        #expect(!output.masked.contains("call"))
+    }
+
+    @Test func restoreRange_translatesAcrossNonASCIIMaskedSpan() {
+        // The inline span contains multi-byte characters, so indices
+        // into the masked string are not interchangeable with the
+        // original. restoreRange must map the detection back to the
+        // right characters anyway.
+        let text = "`汉字汉字` Alice wrote that"
+        let output = CodeBlockMasker.mask(text)
+        let aliceInMasked = output.masked.range(of: "Alice")!
+        let restored = output.restoreRange(aliceInMasked)
+        #expect(restored != nil)
+        if let restored {
+            #expect(String(text[restored]) == "Alice")
+        }
+    }
+
+    @Test func fencedBlockWithNonASCII_preservesUTF16Length() {
+        let text = "Hi\n```\n秘密の値 = 1\n```\nAfter."
+        let output = CodeBlockMasker.mask(text)
+        #expect(output.masked.utf16.count == text.utf16.count)
+        #expect(!output.masked.contains("秘密"))
+        #expect(output.masked.contains("After."))
+    }
 }
