@@ -271,6 +271,17 @@ public final class MemoryDatabase: @unchecked Sendable {
     private func migrateToV5(from previousVersion: Int) throws {
         MemoryLogger.database.info("Running v5 migration (previous version: \(previousVersion))")
 
+        // Connections open with foreign_keys = ON, so the DROP TABLE sweep below
+        // would implicitly delete rows from each old table as it is dropped and
+        // fail with "FOREIGN KEY constraint failed" whenever a not-yet-dropped
+        // child still references a parent being dropped. Defer FK checks to the
+        // commit of this migration: unlike foreign_keys, defer_foreign_keys is
+        // settable inside a transaction and resets when it commits. By then every
+        // old table is gone and the v5 tables declare no FKs, so nothing is left
+        // to violate. Without this, v5 rolls back on affected installs and the
+        // whole migration chain (v6-v9) never runs.
+        try executeRaw("PRAGMA defer_foreign_keys = ON")
+
         // Create v2 tables first so we can copy into them within the same migration.
         try createV5Tables()
 
