@@ -278,6 +278,41 @@ struct ModelManagerTests {
         #expect(detected.map(\.id).contains("JANGQ-AI/Step-3.7-Flash-JANGTQ_K"))
     }
 
+    @Test func scanLocalModels_detectsHighShardCountWithoutFixedMissLoop() async throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent("osu-high-shard-scan-\(UUID().uuidString)")
+        try fm.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: root) }
+
+        let repo = root.appendingPathComponent("Nex-N2-Pro-JANGTQ2")
+        try fm.createDirectory(at: repo, withIntermediateDirectories: true)
+        try Data("{}".utf8).write(to: repo.appendingPathComponent("config.json"))
+        try Data("{}".utf8).write(to: repo.appendingPathComponent("tokenizer.json"))
+        try Data().write(to: repo.appendingPathComponent("model-00001-of-00999.safetensors"))
+
+        let detected = ModelManager.scanLocalModels(at: root)
+        #expect(detected.map(\.id) == ["Nex-N2-Pro-JANGTQ2"])
+    }
+
+    @Test func scanLocalModels_doesNotDescendIntoModelLikeMediaLeaf() async throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent("osu-model-like-leaf-\(UUID().uuidString)")
+        try fm.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: root) }
+
+        let mediaLeaf = root.appendingPathComponent("VideoAudioBundle")
+        let nested = mediaLeaf.appendingPathComponent("assets").appendingPathComponent("NestedModel")
+        try fm.createDirectory(at: nested, withIntermediateDirectories: true)
+        try Data("{}".utf8).write(to: mediaLeaf.appendingPathComponent("config.json"))
+        try Data("{}".utf8).write(to: mediaLeaf.appendingPathComponent("processor_config.json"))
+        try Data("{}".utf8).write(to: nested.appendingPathComponent("config.json"))
+        try Data("{}".utf8).write(to: nested.appendingPathComponent("tokenizer.json"))
+        try Data("{}".utf8).write(to: nested.appendingPathComponent("model.safetensors.index.json"))
+
+        let detected = ModelManager.scanLocalModels(at: root)
+        #expect(detected.isEmpty)
+    }
+
     @Test func scanLocalModels_detectsExternalGemma4QATRootWhenConfigured() async throws {
         guard let rawRoot = ProcessInfo.processInfo.environment["OSAURUS_TEST_GEMMA4_QAT_ROOT"],
             !rawRoot.isEmpty

@@ -6,6 +6,7 @@
 //
 
 import Combine
+import Darwin
 import Foundation
 import MLXLLM
 import SwiftUI
@@ -1415,33 +1416,70 @@ extension ModelManager {
     }
 
     // MARK: - Local Models Cache (in-memory, cleared on app restart)
-    private static nonisolated let localModelsCacheLock = NSLock()
+    private static nonisolated let localModelsCacheCondition = NSCondition()
     private static nonisolated(unsafe) var cachedLocalModels: [MLXModel]?
+    private static nonisolated(unsafe) var localModelsScanInFlight = false
+    private static nonisolated let localModelsScanWaitLimit: TimeInterval = 10
 
     nonisolated static func invalidateLocalModelsCache() {
-        localModelsCacheLock.lock()
+        localModelsCacheCondition.lock()
         cachedLocalModels = nil
-        localModelsCacheLock.unlock()
+        localModelsScanInFlight = false
+        localModelsCacheCondition.broadcast()
+        localModelsCacheCondition.unlock()
         LocalReasoningCapability.invalidate()
         LocalGenerationDefaults.invalidate()
     }
 
     /// Discover locally downloaded models. Cached until invalidated by model download/delete.
     nonisolated static func discoverLocalModels() -> [MLXModel] {
-        localModelsCacheLock.lock()
-        let cached = cachedLocalModels
-        localModelsCacheLock.unlock()
-
-        let scanned: [MLXModel]
-        if let cached {
-            scanned = cached
-        } else {
-            scanned = scanLocalModels()
-            localModelsCacheLock.lock()
-            cachedLocalModels = scanned
-            localModelsCacheLock.unlock()
+        func waitForLocalModelsScan(until deadline: Date) -> [MLXModel]? {
+            while localModelsScanInFlight && cachedLocalModels == nil {
+                if !localModelsCacheCondition.wait(until: deadline) {
+                    break
+                }
+            }
+            return cachedLocalModels
         }
 
+        localModelsCacheCondition.lock()
+        if let cached = cachedLocalModels {
+            localModelsCacheCondition.unlock()
+            return mergeExternalModels(into: cached)
+        }
+
+        if localModelsScanInFlight {
+            let cached = waitForLocalModelsScan(until: Date().addingTimeInterval(localModelsScanWaitLimit)) ?? []
+            localModelsCacheCondition.unlock()
+            return mergeExternalModels(into: cached)
+        }
+
+        let deadline = Date().addingTimeInterval(localModelsScanWaitLimit)
+        localModelsScanInFlight = true
+        DispatchQueue.global(qos: .utility).async {
+            let scanned = scanLocalModels()
+
+            localModelsCacheCondition.lock()
+            cachedLocalModels = scanned
+            localModelsScanInFlight = false
+            localModelsCacheCondition.broadcast()
+            localModelsCacheCondition.unlock()
+        }
+
+        if let cached = waitForLocalModelsScan(until: deadline) {
+            localModelsCacheCondition.unlock()
+            return mergeExternalModels(into: cached)
+        } else {
+            if cachedLocalModels == nil {
+                cachedLocalModels = []
+            }
+            let cached = cachedLocalModels ?? []
+            localModelsCacheCondition.unlock()
+            return mergeExternalModels(into: cached)
+        }
+    }
+
+    private nonisolated static func mergeExternalModels(into scanned: [MLXModel]) -> [MLXModel] {
         // Append externally-discovered bundles (HF cache, LM Studio). Read
         // fresh from the locator's in-memory registry each call (cheap) so a
         // background rescan is reflected without invalidating the disk-scan
@@ -1469,7 +1507,28 @@ extension ModelManager {
         var models: [MLXModel] = []
 
         func exists(_ base: URL, _ name: String) -> Bool {
-            fm.fileExists(atPath: base.appendingPathComponent(name).path)
+            access(base.appendingPathComponent(name).path, F_OK) == 0
+        }
+
+        func directoryEntryNames(_ dir: URL) -> [String]? {
+            guard let handle = opendir(dir.path) else { return nil }
+            defer { closedir(handle) }
+
+            var names: [String] = []
+            while let entry = readdir(handle) {
+                let name = withUnsafePointer(to: &entry.pointee.d_name) { pointer in
+                    pointer.withMemoryRebound(
+                        to: CChar.self,
+                        capacity: MemoryLayout.size(ofValue: entry.pointee.d_name)
+                    ) { cString in
+                        String(cString: cString)
+                    }
+                }
+                if name != "." && name != ".." {
+                    names.append(name)
+                }
+            }
+            return names
         }
 
         /// Resolve symlinks and return the real directory URL, or `nil` if the entry is not a directory.
@@ -1502,14 +1561,28 @@ extension ModelManager {
                 return true
             }
 
-            // Common sharded names used by HF exports. Checking a bounded
-            // prefix avoids scanning every entry in large model directories.
-            for total in 1 ... 256 {
+            // Common sharded names used by HF exports. Do not list plausible
+            // model leaves here: external-drive bundles can block in opendir.
+            // A bounded sentinel probe stays responsive and still covers high
+            // shard counts seen in local JANG/JANGTQ bundles.
+            for total in 1 ... 4096 {
                 if exists(dir, "model-00001-of-\(String(format: "%05d", total)).safetensors") {
                     return true
                 }
             }
             return false
+        }
+
+        func isModelLikeLeaf(_ dir: URL) -> Bool {
+            exists(dir, "config.json")
+                || exists(dir, "model.safetensors.index.json")
+                || exists(dir, "model.safetensors")
+                || exists(dir, "model_index.json")
+                || exists(dir, "tokenizer.json")
+                || exists(dir, "processor_config.json")
+                || exists(dir, "preprocessor_config.json")
+                || exists(dir, "audio_config.json")
+                || exists(dir, "video_config.json")
         }
 
         func shouldDescendIntoLocalModelCandidate(_ entry: URL) -> Bool {
@@ -1527,6 +1600,11 @@ extension ModelManager {
             return !skippedInfrastructureDirectories.contains(name)
         }
 
+        func isLikelyOrganizationContainer(_ entry: URL) -> Bool {
+            let name = entry.lastPathComponent
+            return !name.contains(".") && name.split(separator: "-").count <= 2
+        }
+
         // Three layouts are supported and may coexist under the same root:
         //   1. Flat:        <root>/<modelDir>/{config.json,tokenizer.*,*.safetensors}
         //   2. Nested:      <root>/<org>/<repo>/{config.json,...}        (HF style)
@@ -1542,8 +1620,10 @@ extension ModelManager {
         // — anything deeper is treated as not-a-bundle.
         func scanDir(_ root: URL, prefix: [String], maxDepth: Int) {
             guard maxDepth > 0,
-                let entryNames = try? fm.contentsOfDirectory(atPath: root.path)
+                let entryNames = directoryEntryNames(root)
             else { return }
+
+            let modelCountBeforeDirectPass = models.count
             for entryName in entryNames where !entryName.hasPrefix(".") {
                 let entry = root.appendingPathComponent(entryName, isDirectory: true)
                 guard shouldDescendIntoLocalModelCandidate(entry) else { continue }
@@ -1558,9 +1638,23 @@ extension ModelManager {
                         downloadURL: "https://huggingface.co/\(id)"
                     )
                     models.append(model)
-                    continue  // a model dir doesn't itself contain other models
+                }
+            }
+
+            let foundDirectBundles = models.count > modelCountBeforeDirectPass
+
+            for entryName in entryNames where !entryName.hasPrefix(".") {
+                let entry = root.appendingPathComponent(entryName, isDirectory: true)
+                guard shouldDescendIntoLocalModelCandidate(entry) else { continue }
+                if foundDirectBundles && !isLikelyOrganizationContainer(entry) {
+                    continue
+                }
+                guard let resolved = resolvedDirectory(entry) else { continue }
+                if isModelLikeLeaf(resolved) {
+                    continue
                 }
                 if maxDepth > 1 {
+                    let nameComponents = prefix + [entry.lastPathComponent]
                     scanDir(resolved, prefix: nameComponents, maxDepth: maxDepth - 1)
                 }
             }
