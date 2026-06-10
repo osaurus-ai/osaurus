@@ -4393,11 +4393,11 @@ struct AgentDetailView: View {
                     .frame(width: 20)
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(action.text.isEmpty ? "Untitled" : action.text)
+                    Text(action.text.isEmpty ? L("Untitled") : action.text)
                         .font(.system(size: 13, weight: .medium))
                         .foregroundColor(action.text.isEmpty ? theme.placeholderText : theme.primaryText)
                         .lineLimit(1)
-                    Text(action.prompt.isEmpty ? "No prompt" : action.prompt)
+                    Text(action.prompt.isEmpty ? L("No prompt") : action.prompt)
                         .font(.system(size: 11))
                         .foregroundColor(theme.tertiaryText)
                         .lineLimit(1)
@@ -4751,7 +4751,7 @@ struct AgentDetailView: View {
         AgentDetailSection(
             title: L("History"),
             icon: "clock.arrow.circlepath",
-            subtitle: "\(chatSessions.count) chat\(chatSessions.count == 1 ? "" : "s")"
+            subtitle: L("\(chatSessions.count) chat\(chatSessions.count == 1 ? "" : "s")")
         ) {
             VStack(alignment: .leading, spacing: 16) {
                 VStack(alignment: .leading, spacing: 8) {

@@ -158,20 +158,20 @@ enum ModelCompatibilityDiagnostics {
             return SourceStatus(
                 kind: .external,
                 title: externalSource,
-                detail: "Referenced in place; Osaurus does not copy or mutate this bundle."
+                detail: L("Referenced in place; Osaurus does not copy or mutate this bundle.")
             )
         }
         if isLocal {
             return SourceStatus(
                 kind: .osaurusLocal,
-                title: "Osaurus local models",
-                detail: "Stored under the configured Osaurus model directory."
+                title: L("Osaurus local models"),
+                detail: L("Stored under the configured Osaurus model directory.")
             )
         }
         return SourceStatus(
             kind: .catalog,
-            title: "Catalog",
-            detail: "Download or import the bundle before local runtime proof is possible."
+            title: L("Catalog"),
+            detail: L("Download or import the bundle before local runtime proof is possible.")
         )
     }
 
@@ -179,8 +179,8 @@ enum ModelCompatibilityDiagnostics {
         guard let bundleURL else {
             return LocalBundleStatus(
                 kind: .notDownloaded,
-                title: "Not local",
-                detail: "No local bundle is selected for this catalog entry.",
+                title: L("Not local"),
+                detail: L("No local bundle is selected for this catalog entry."),
                 path: nil,
                 config: nil
             )
@@ -195,8 +195,8 @@ enum ModelCompatibilityDiagnostics {
         if validation.isValid {
             return LocalBundleStatus(
                 kind: .available,
-                title: "Bundle complete",
-                detail: "config.json, tokenizer assets, and safetensors weights are present.",
+                title: L("Bundle complete"),
+                detail: L("config.json, tokenizer assets, and safetensors weights are present."),
                 path: bundleURL.path,
                 config: config
             )
@@ -204,7 +204,7 @@ enum ModelCompatibilityDiagnostics {
 
         return LocalBundleStatus(
             kind: .incomplete,
-            title: validation.reason?.title ?? "Bundle incomplete",
+            title: validation.reason?.title ?? L("Bundle incomplete"),
             detail: validation.detail,
             path: bundleURL.path,
             config: config
@@ -233,32 +233,36 @@ enum ModelCompatibilityDiagnostics {
             return RuntimeStatus(
                 kind: .needsDownload,
                 reason: .needsDownload,
-                title: "Download required",
-                detail: "Osaurus cannot prove runtime behavior until the model bundle is local."
+                title: L("Download required"),
+                detail: L("Osaurus cannot prove runtime behavior until the model bundle is local.")
             )
         case .incomplete:
             return RuntimeStatus(
                 kind: .blocked,
                 reason: .incompleteBundle,
-                title: "Bundle is incomplete",
-                detail: localBundle.detail ?? "The local directory does not have the required MLX files."
+                title: L("Bundle is incomplete"),
+                detail: localBundle.detail ?? L("The local directory does not have the required MLX files.")
             )
         case .available:
             if source.kind == .external {
                 return RuntimeStatus(
                     kind: .unproven,
                     reason: .externalBundleUnproven,
-                    title: "External bundle discovered",
+                    title: L("External bundle discovered"),
                     detail:
-                        "The files look loadable, but this specific cache-backed bundle still needs a real generation proof before it should be called validated."
+                        L(
+                            "The files look loadable, but this specific cache-backed bundle still needs a real generation proof before it should be called validated."
+                        )
                 )
             }
             return RuntimeStatus(
                 kind: .ready,
                 reason: .localBundleReady,
-                title: "Local bundle ready",
+                title: L("Local bundle ready"),
                 detail:
-                    "The bundle has the required local files. Runtime quality still depends on model-family support and live generation proof."
+                    L(
+                        "The bundle has the required local files. Runtime quality still depends on model-family support and live generation proof."
+                    )
             )
         }
     }
@@ -286,9 +290,11 @@ enum ModelCompatibilityDiagnostics {
             return RuntimeStatus(
                 kind: .blocked,
                 reason: .unsupportedHunyuanDense,
-                title: "Unsupported Hunyuan Dense",
+                title: L("Unsupported Hunyuan Dense"),
                 detail:
-                    "Unsupported local model type: hunyuan_v1_dense. Osaurus needs vmlx Hunyuan Dense support before this model can run locally."
+                    L(
+                        "Unsupported local model type: hunyuan_v1_dense. Osaurus needs vmlx Hunyuan Dense support before this model can run locally."
+                    )
             )
         }
 
@@ -300,9 +306,11 @@ enum ModelCompatibilityDiagnostics {
             return RuntimeStatus(
                 kind: .blocked,
                 reason: .unsupportedLongCat,
-                title: "Unsupported LongCat family",
+                title: L("Unsupported LongCat family"),
                 detail:
-                    "LongCat local bundles require native vmlx architecture, processor, cache, and media-path support before Osaurus should offer them as runnable."
+                    L(
+                        "LongCat local bundles require native vmlx architecture, processor, cache, and media-path support before Osaurus should offer them as runnable."
+                    )
             )
         }
 
@@ -316,8 +324,8 @@ enum ModelCompatibilityDiagnostics {
         guard localBundle.kind != .notDownloaded else {
             return BenchmarkStatus(
                 kind: .notApplicable,
-                title: "No local proof",
-                detail: "Download or import first, then run a generation proof with token/s."
+                title: L("No local proof"),
+                detail: L("Download or import first, then run a generation proof with token/s.")
             )
         }
 
@@ -325,15 +333,17 @@ enum ModelCompatibilityDiagnostics {
         case .blocked:
             return BenchmarkStatus(
                 kind: .notApplicable,
-                title: "Blocked",
-                detail: "Benchmark proof is not meaningful until the runtime blocker is resolved."
+                title: L("Blocked"),
+                detail: L("Benchmark proof is not meaningful until the runtime blocker is resolved.")
             )
         case .ready, .unproven, .needsDownload:
             return BenchmarkStatus(
                 kind: .missingProof,
-                title: "Proof missing",
+                title: L("Proof missing"),
                 detail:
-                    "No local benchmark proof is recorded here yet. A passing row needs visible output, token/s, RAM status, cancellation, and cache evidence."
+                    L(
+                        "No local benchmark proof is recorded here yet. A passing row needs visible output, token/s, RAM status, cancellation, and cache evidence."
+                    )
             )
         }
     }
@@ -343,16 +353,18 @@ enum ModelCompatibilityDiagnostics {
         return [
             FeatureHook(
                 code: .dflashSpeculativeDecoding,
-                title: "DFlash speculative decoding",
+                title: L("DFlash speculative decoding"),
                 detail:
-                    "Not enabled for local generation yet; needs target/draft validation and benchmark evidence.",
+                    L("Not enabled for local generation yet; needs target/draft validation and benchmark evidence."),
                 issue: 1065
             ),
             FeatureHook(
                 code: .tensorParallelism,
-                title: "Tensor parallelism",
+                title: L("Tensor parallelism"),
                 detail:
-                    "Not enabled in the local runtime; requires an explicit distributed-runtime design and artifact integrity checks.",
+                    L(
+                        "Not enabled in the local runtime; requires an explicit distributed-runtime design and artifact integrity checks."
+                    ),
                 issue: 833
             ),
         ]

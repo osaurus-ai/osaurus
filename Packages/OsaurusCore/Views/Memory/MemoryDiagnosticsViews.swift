@@ -192,10 +192,14 @@ extension MemoryView {
         switch final.stage {
         case .cancelled:
             return
-                "Backfill cancelled after \(final.sessionsProcessed) session(s) — \(final.turnsBuffered) turns buffered. Run 'Distill pending' to drain them."
+                L(
+                    "Backfill cancelled after \(final.sessionsProcessed) session(s) — \(final.turnsBuffered) turns buffered. Run 'Distill pending' to drain them."
+                )
         default:
             return
-                "Backfill complete: \(final.sessionsProcessed) session(s) buffered (\(final.turnsBuffered) turns), \(final.sessionsSkipped) skipped. Distillation finished."
+                L(
+                    "Backfill complete: \(final.sessionsProcessed) session(s) buffered (\(final.turnsBuffered) turns), \(final.sessionsSkipped) skipped. Distillation finished."
+                )
         }
     }
 
@@ -485,7 +489,7 @@ extension MemoryView {
                     .tracking(0.4)
                 Spacer()
                 if !recentLogs.isEmpty {
-                    Text("\(recentLogs.count) row\(recentLogs.count == 1 ? "" : "s")")
+                    Text("\(recentLogs.count) row\(recentLogs.count == 1 ? "" : "s")", bundle: .module)
                         .font(.system(size: 10))
                         .foregroundColor(theme.tertiaryText)
                 }

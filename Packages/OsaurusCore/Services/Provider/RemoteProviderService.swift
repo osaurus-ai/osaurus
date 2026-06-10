@@ -25,17 +25,17 @@ public enum RemoteProviderServiceError: LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .invalidURL:
-            return "Invalid provider URL configuration"
+            return L("Invalid provider URL configuration")
         case .notConnected:
-            return "Provider is not connected"
+            return L("Provider is not connected")
         case .requestFailed(let message):
-            return "Request failed: \(message)"
+            return L("Request failed: \(message)")
         case .invalidResponse:
-            return "Invalid response from provider"
+            return L("Invalid response from provider")
         case .streamingError(let message):
-            return "Streaming error: \(message)"
+            return L("Streaming error: \(message)")
         case .noModelsAvailable:
-            return "No models available from provider"
+            return L("No models available from provider")
         }
     }
 }

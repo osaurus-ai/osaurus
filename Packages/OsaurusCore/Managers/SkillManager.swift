@@ -18,11 +18,11 @@ public enum SkillFileError: Error, LocalizedError {
 
     public var errorDescription: String? {
         switch self {
-        case .cannotModifyBuiltIn: return "Cannot modify built-in skills"
-        case .cannotModifyPluginSkill: return "Cannot modify plugin-provided skills"
-        case .skillNotFound: return "Skill not found"
-        case .exportFailed: return "Failed to export skill"
-        case .invalidSkillArchive: return "Invalid skill archive - SKILL.md not found"
+        case .cannotModifyBuiltIn: return L("Cannot modify built-in skills")
+        case .cannotModifyPluginSkill: return L("Cannot modify plugin-provided skills")
+        case .skillNotFound: return L("Skill not found")
+        case .exportFailed: return L("Failed to export skill")
+        case .invalidSkillArchive: return L("Invalid skill archive - SKILL.md not found")
         }
     }
 }

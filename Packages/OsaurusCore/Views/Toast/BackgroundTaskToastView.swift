@@ -38,15 +38,15 @@ struct BackgroundTaskToastView: View {
         .frame(maxWidth: 380, alignment: .leading)
         .fixedSize(horizontal: false, vertical: true)
         .themedAlert(
-            "Cancel Background Task?",
+            L("Cancel Background Task?"),
             isPresented: $showCancelConfirmation,
-            message: "The task is still running. Dismissing will cancel it.",
-            primaryButton: .destructive("Cancel Task") {
+            message: L("The task is still running. Dismissing will cancel it."),
+            primaryButton: .destructive(L("Cancel Task")) {
                 BackgroundTaskManager.shared.cancelTask(taskState.id)
                 onOpen()
                 onDismiss()
             },
-            secondaryButton: .cancel("Keep Running"),
+            secondaryButton: .cancel(L("Keep Running")),
             presentationStyle: .window
         )
     }
@@ -122,7 +122,7 @@ struct BackgroundTaskToastView: View {
     /// Indeterminate progress + activity feed for an in-flight chat task.
     private var runningContent: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(taskState.currentStep ?? "Running...")
+            Text(taskState.currentStep ?? L("Running..."))
                 .font(.system(size: 11.5, weight: .medium))
                 .foregroundColor(theme.secondaryText)
                 .lineLimit(2)

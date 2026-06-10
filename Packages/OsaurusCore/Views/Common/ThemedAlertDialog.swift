@@ -697,12 +697,12 @@ private extension View {
                     .ignoresSafeArea()
 
                 ThemedAlertDialogContent(
-                    title: "Cancel Background Task?",
-                    message: "The work task is still running. Dismissing will cancel the task.",
+                    title: L("Cancel Background Task?"),
+                    message: L("The work task is still running. Dismissing will cancel the task."),
                     accessory: nil,
                     buttons: [
-                        .destructive("Cancel Task") {},
-                        .cancel("Keep Running"),
+                        .destructive(L("Cancel Task")) {},
+                        .cancel(L("Keep Running")),
                     ],
                     showsCloseButton: false,
                     customContent: nil,

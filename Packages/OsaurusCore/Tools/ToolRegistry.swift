@@ -608,7 +608,7 @@ final class ToolRegistry: ObservableObject {
         } catch is CancellationError {
             return ToolEnvelope.failure(
                 kind: .executionError,
-                message: "Tool '\(tool.name)' was cancelled.",
+                message: L("Tool '\(tool.name)' was cancelled."),
                 tool: tool.name,
                 retryable: false
             )
@@ -711,13 +711,13 @@ final class ToolRegistry: ObservableObject {
         let timeoutEnvelope = ToolEnvelope.failure(
             kind: .timeout,
             message:
-                "Tool '\(toolName)' exceeded the \(Int(timeoutSeconds))s execution budget.",
+                L("Tool '\(toolName)' exceeded the \(Int(timeoutSeconds))s execution budget."),
             tool: toolName,
             retryable: true
         )
         let cancellationEnvelope = ToolEnvelope.failure(
             kind: .executionError,
-            message: "Tool '\(toolName)' was cancelled.",
+            message: L("Tool '\(toolName)' was cancelled."),
             tool: toolName,
             retryable: false
         )
@@ -1211,7 +1211,7 @@ final class ToolRegistry: ObservableObject {
                 runtime: nil,
                 groupName: nil,
                 reasonCodes: [.notRegistered],
-                detail: "tool is not registered; install or enable the plugin/provider that owns it"
+                detail: L("tool is not registered; install or enable the plugin/provider that owns it")
             )
         }
 
@@ -1231,23 +1231,23 @@ final class ToolRegistry: ObservableObject {
 
         if dynamic, !entry.enabled {
             appendReason(.disabled)
-            details.append("globally disabled")
+            details.append(L("globally disabled"))
         }
 
         if dynamic, let agentAllowedNames, !agentAllowedNames.contains(toolName) {
             appendReason(.hiddenByAgentScope)
-            details.append("not enabled for this agent")
+            details.append(L("not enabled for this agent"))
         }
 
         if let executionMode, excludedToolNames(for: executionMode).contains(toolName) {
             appendReason(.hiddenByExecutionMode)
-            details.append("hidden in \(String(describing: executionMode)) mode")
+            details.append(L("hidden in \(String(describing: executionMode)) mode"))
         }
 
         if let policy = policyInfo(for: toolName) {
             if policy.effectivePolicy == .deny {
                 appendReason(.permissionBlocked)
-                details.append("permission policy is deny")
+                details.append(L("permission policy is deny"))
             }
             let missingPermissions = policy.systemPermissionStates
                 .filter { !$0.value }
@@ -1255,22 +1255,22 @@ final class ToolRegistry: ObservableObject {
                 .sorted()
             if !missingPermissions.isEmpty {
                 appendReason(.missingPermission)
-                details.append("missing system permission(s): \(missingPermissions.joined(separator: ", "))")
+                details.append(L("missing system permission(s): \(missingPermissions.joined(separator: ", "))"))
             }
         }
 
         if dynamic, let selectedPreflightNames, !selectedPreflightNames.contains(toolName) {
             appendReason(.notSelectedByPreflight)
-            details.append("not selected by preflight for this turn")
+            details.append(L("not selected by preflight for this turn"))
         }
 
         if reasons.isEmpty {
             if dynamic {
                 appendReason(.loadableViaCapabilitiesLoad)
-                details.append("registered \(runtime) tool; load with capabilities_load")
+                details.append(L("registered \(runtime) tool; load with capabilities_load"))
             } else {
                 appendReason(.alreadyLoaded)
-                details.append("registered \(runtime) tool; already in the active baseline")
+                details.append(L("registered \(runtime) tool; already in the active baseline"))
             }
         }
 
@@ -1293,11 +1293,11 @@ final class ToolRegistry: ObservableObject {
     }
 
     private func availabilityRuntimeLabel(for toolName: String, builtIn: Bool) -> String {
-        if isSandboxTool(toolName) { return "sandbox" }
+        if isSandboxTool(toolName) { return L("sandbox") }
         if isMCPTool(toolName) { return "mcp" }
-        if isPluginTool(toolName) { return "plugin" }
-        if builtIn { return "builtin" }
-        return "native"
+        if isPluginTool(toolName) { return L("plugin") }
+        if builtIn { return L("builtin") }
+        return L("native")
     }
 
     static let capabilityToolNames: Set<String> = [

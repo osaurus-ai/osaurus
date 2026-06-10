@@ -160,8 +160,8 @@ public final class SpeechModelManager: ObservableObject {
     /// FluidAudio manages its own model cache, so report a nominal size
     public var totalDownloadedSizeString: String {
         let count = downloadedModelsCount
-        if count == 0 { return "No models" }
-        return "\(count) model\(count == 1 ? "" : "s") ready"
+        if count == 0 { return L("No models") }
+        return L("\(count) model\(count == 1 ? "" : "s") ready")
     }
 
     // MARK: - Download Methods

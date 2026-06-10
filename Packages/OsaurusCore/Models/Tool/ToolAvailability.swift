@@ -50,29 +50,29 @@ struct ToolAvailability: Equatable, Sendable {
     var displayLabel: String {
         switch primaryReason {
         case .available:
-            return "Available"
+            return L("Available")
         case .alreadyLoaded:
-            return "Loaded"
+            return L("Loaded")
         case .loadableViaCapabilitiesLoad:
-            return "Loadable"
+            return L("Loadable")
         case .disabled:
-            return "Disabled"
+            return L("Disabled")
         case .hiddenByAgentScope:
-            return "Agent off"
+            return L("Agent off")
         case .hiddenByExecutionMode:
-            return "Mode hidden"
+            return L("Mode hidden")
         case .permissionBlocked:
-            return "Blocked"
+            return L("Blocked")
         case .missingPermission:
-            return "Needs permission"
+            return L("Needs permission")
         case .notInstalled:
-            return "Not installed"
+            return L("Not installed")
         case .notRegistered:
-            return "Not registered"
+            return L("Not registered")
         case .pluginConfigRequired:
-            return "Config needed"
+            return L("Config needed")
         case .notSelectedByPreflight:
-            return "Not selected"
+            return L("Not selected")
         }
     }
 

@@ -1096,6 +1096,28 @@
         }
       }
     },
+    "%lld chat%@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$lld Chat%2$@"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$lld chat%2$@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$lld 聊天"
+          }
+        }
+      }
+    },
     "%lld connected • %lld model%@ available" : {
       "localizations" : {
         "de" : {
@@ -1176,6 +1198,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%1$lld 个自定义标头%2$@"
+          }
+        }
+      }
+    },
+    "%lld downloaded • %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$lld heruntergeladen • %2$@"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$lld downloaded • %2$@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$lld 已下载 • %2$@"
           }
         }
       }
@@ -1368,6 +1412,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "找到 %1$lld 个模型%2$@"
+          }
+        }
+      }
+    },
+    "%lld model%@ ready" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$lld Modell%2$@ bereit"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$lld model%2$@ ready"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$lld 模型已就绪"
           }
         }
       }
@@ -1627,7 +1693,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%1$lld 行%2$@"
+            "value" : "%1$lld 行"
           }
         }
       }
@@ -1857,7 +1923,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%1$lld 个工具%2$@ · %3$lld 个技能%4$@"
+            "value" : "%1$lld 个工具 · %3$lld 个技能"
           }
         }
       }
@@ -2496,6 +2562,22 @@
       },
       "shouldTranslate" : false
     },
+    "1 day" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "1 Tag"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1天"
+          }
+        }
+      }
+    },
     "1 hour" : {
       "localizations" : {
         "de" : {
@@ -2562,6 +2644,22 @@
         }
       }
     },
+    "7 days" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "7 Tage"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "7天"
+          }
+        }
+      }
+    },
     "15 minutes" : {
       "localizations" : {
         "de" : {
@@ -2580,6 +2678,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "15 分钟"
+          }
+        }
+      }
+    },
+    "30 days" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "30 Tage"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "30天"
           }
         }
       }
@@ -2896,6 +3010,23 @@
         }
       }
     },
+    "About Osaurus" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Über Osaurus"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "关于Osaurus"
+          }
+        }
+      }
+    },
     "About System Permissions" : {
       "localizations" : {
         "de" : {
@@ -2973,6 +3104,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "强调色"
+          }
+        }
+      }
+    },
+    "Accepted" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Akzeptiert"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已接受"
           }
         }
       }
@@ -3183,6 +3330,39 @@
         }
       }
     },
+    "Acknowledgements…" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Danksagungen ..."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "致谢..."
+          }
+        }
+      }
+    },
+    "Action" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aktion"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "行动"
+          }
+        }
+      }
+    },
     "Action Bar" : {
       "localizations" : {
         "de" : {
@@ -3280,7 +3460,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "活动"
+            "value" : "活跃"
           }
         }
       }
@@ -3296,7 +3476,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "积极的"
+            "value" : "活跃"
           }
         }
       }
@@ -3330,7 +3510,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "活动槽位"
+            "value" : "活跃插槽"
           }
         }
       }
@@ -3868,6 +4048,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "智能体名称"
+          }
+        }
+      }
+    },
+    "Agent off" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Agent aus"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "代理关闭"
           }
         }
       }
@@ -5527,7 +5723,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "询问人工智能"
+            "value" : "询问AI"
           }
         }
       }
@@ -6764,6 +6960,28 @@
         }
       }
     },
+    "Backfill cancelled after %lld session(s) — %lld turns buffered. Run 'Distill pending' to drain them." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Backfill abgebrochen nach %1$lld Sitzung(en) — %2$lld Runden gepuffert. Führe 'Distill pending' aus, um sie zu leeren."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Backfill cancelled after %1$lld session(s) — %2$lld turns buffered. Run 'Distill pending' to drain them."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在 %1$lld 个会话后取消回填 —— 已缓冲 %2$lld 次轮询。运行“Distill pending”以释放它们。"
+          }
+        }
+      }
+    },
     "Backfill chat history?" : {
       "localizations" : {
         "de" : {
@@ -6776,6 +6994,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "回填聊天记录？"
+          }
+        }
+      }
+    },
+    "Backfill complete: %lld session(s) buffered (%lld turns), %lld skipped. Distillation finished." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Backfill abgeschlossen: %1$lld Sitzung(en) gepuffert (%2$lld Runden), %3$lld übersprungen. Destillation beendet."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Backfill complete: %1$lld session(s) buffered (%2$lld turns), %3$lld skipped. Distillation finished."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "回填完成: %1$lld 个会话已缓冲 (%2$lld 轮), %3$lld 个已跳过。蒸馏完成。"
           }
         }
       }
@@ -7054,6 +7294,22 @@
         }
       }
     },
+    "Benchmark proof is not meaningful until the runtime blocker is resolved." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Benchmark-Nachweis ist nicht aussagekräftig, bis der Laufzeitblocker behoben ist."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "基准证明在运行时阻塞问题解决之前是没有意义的。"
+          }
+        }
+      }
+    },
     "Best Quality" : {
       "localizations" : {
         "de" : {
@@ -7274,6 +7530,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "保存在 GPU 内存中的分块 KV 缓存。跨请求共享所必需。"
+          }
+        }
+      }
+    },
+    "Blocked" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Blockiert"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已阻止"
           }
         }
       }
@@ -7979,6 +8251,22 @@
         }
       }
     },
+    "builtin" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "integriert"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "内置"
+          }
+        }
+      }
+    },
     "Bulk-ingest conversation turns into memory" : {
       "localizations" : {
         "de" : {
@@ -8007,6 +8295,54 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "包"
+          }
+        }
+      }
+    },
+    "Bundle complete" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bundle vollständig"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "捆绑完成"
+          }
+        }
+      }
+    },
+    "Bundle incomplete" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bundle unvollständig"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "捆绑不完整"
+          }
+        }
+      }
+    },
+    "Bundle is incomplete" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bundle ist unvollständig"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "捆绑包不完整"
           }
         }
       }
@@ -8156,6 +8492,22 @@
         }
       }
     },
+    "Cancel Background Task?" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hintergrundaufgabe abbrechen?"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "取消后台任务？"
+          }
+        }
+      }
+    },
     "Cancel download" : {
       "localizations" : {
         "de" : {
@@ -8206,6 +8558,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "取消排队的消息"
+          }
+        }
+      }
+    },
+    "Cancel Task" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aufgabe abbrechen"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "取消任务"
           }
         }
       }
@@ -8317,6 +8685,38 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "无法附加 %@"
+          }
+        }
+      }
+    },
+    "Cannot modify built-in skills" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Integrierte Fähigkeiten können nicht geändert werden"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法修改内置技能"
+          }
+        }
+      }
+    },
+    "Cannot modify plugin-provided skills" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Vom Plugin bereitgestellte Fähigkeiten können nicht geändert werden"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法修改插件提供的技能"
           }
         }
       }
@@ -8755,6 +9155,54 @@
         }
       }
     },
+    "ChatGPT rejected the sign-in callback: %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ChatGPT hat den Anmelde-Rückruf abgelehnt: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ChatGPT 拒绝了登录回调: %@"
+          }
+        }
+      }
+    },
+    "ChatGPT sign-in callback failed: %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ChatGPT Anmelde-Rückruf fehlgeschlagen: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ChatGPT 登录回调失败: %@"
+          }
+        }
+      }
+    },
+    "ChatGPT sign-in did not return a valid authorization code. Try the sign-in again from the same browser window." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ChatGPT-Anmeldung hat keinen gültigen Autorisierungscode zurückgegeben. Versuche die Anmeldung erneut im selben Browserfenster."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ChatGPT 登录未返回有效的授权码。请从同一浏览器窗口重新尝试登录。"
+          }
+        }
+      }
+    },
     "ChatGPT sign-in required" : {
       "localizations" : {
         "de" : {
@@ -8822,6 +9270,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "ChatGPT/Codex目录"
+          }
+        }
+      }
+    },
+    "ChatGPT/Codex model catalog request failed: %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ChatGPT/Codex Modellkatalog-Anfrage fehlgeschlagen: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ChatGPT/Codex模型目录请求失败：%@"
           }
         }
       }
@@ -9346,7 +9810,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "清除所有内存"
+            "value" : "清除所有记忆"
           }
         }
       }
@@ -10285,6 +10749,38 @@
         }
       }
     },
+    "Config needed" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Konfiguration erforderlich"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "需要配置"
+          }
+        }
+      }
+    },
+    "config.json, tokenizer assets, and safetensors weights are present." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "config.json, Tokenizer-Assets und safetensors-Gewichte sind vorhanden."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "config.json、分词器资源和safetensors权重文件都存在。"
+          }
+        }
+      }
+    },
     "Configuration" : {
       "localizations" : {
         "de" : {
@@ -10918,6 +11414,22 @@
         }
       }
     },
+    "Connecting your agent to the share network." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Verbinde deinen Agent mit dem Freigabenetzwerk."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "将您的代理连接到共享网络。"
+          }
+        }
+      }
+    },
     "Connecting..." : {
       "localizations" : {
         "de" : {
@@ -10930,6 +11442,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "正在连接..."
+          }
+        }
+      }
+    },
+    "Connecting…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Verbinde…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "连接中…"
           }
         }
       }
@@ -11151,10 +11679,37 @@
     },
     "Context is full: the system prompt, tools, and input alone exceed this model's window. Shorten the input, disable tools, or pick a larger-context model." : {
       "comment" : "Tooltip text for the context indicator chip when the context is full.",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Der Kontext ist voll: Das System-Prompt, die Tools und die Eingabe allein überschreiten bereits das Fenster dieses Modells. Kürzen Sie die Eingabe, deaktivieren Sie Tools oder wählen Sie ein Modell mit größerem Kontext."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "上下文已满：仅系统提示、工具和输入就已超出此模型的窗口长度。请缩短输入内容、禁用工具，或选择更大上下文的模型。"
+          }
+        }
+      }
     },
     "Context is nearly full (≥85% of the model window). Older messages will be compacted; consider starting a fresh chat for best quality." : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Der Kontext ist fast voll (≥85 % des Modellfensters). Ältere Nachrichten werden komprimiert; für beste Qualität sollten Sie ein neues Gespräch beginnen."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "上下文即将满载（已达模型窗口的 85% 及以上）。较早的消息将被压缩处理；建议开启新对话以获得最佳效果。"
+          }
+        }
+      }
     },
     "Context Length" : {
       "localizations" : {
@@ -11533,7 +12088,20 @@
       }
     },
     "Copy Path" : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pfad kopieren"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "复制路径"
+          }
+        }
+      }
     },
     "Copy phrase" : {
       "localizations" : {
@@ -11838,6 +12406,102 @@
         }
       }
     },
+    "Could not create a secure login challenge" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sichere Anmeldeaufforderung konnte nicht erstellt werden"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法创建安全登录验证。"
+          }
+        }
+      }
+    },
+    "Could not generate invite: %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Einladung konnte nicht generiert werden: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法生成邀请：%@"
+          }
+        }
+      }
+    },
+    "Could not identify the ChatGPT account from the sign-in token. Sign in with the ChatGPT account that has Codex access, then retry." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ChatGPT-Konto konnte anhand des Anmelde-Tokens nicht identifiziert werden. Melde dich mit dem ChatGPT-Konto an, das Codex-Zugriff hat, und versuche es erneut."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法从登录令牌中识别ChatGPT账户。请使用具有Codex访问权限的ChatGPT账户登录，然后重试。"
+          }
+        }
+      }
+    },
+    "Could not load xAI OAuth configuration: %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "xAI OAuth-Konfiguration konnte nicht geladen werden: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法加载xAI OAuth配置：%@"
+          }
+        }
+      }
+    },
+    "Could not open the browser for ChatGPT sign-in. Check the macOS default browser setting, then retry." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Browser für ChatGPT-Anmeldung konnte nicht geöffnet werden. Überprüfe die macOS-Standardbrowsereinstellung und versuche es erneut."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法打开浏览器进行ChatGPT登录。请检查macOS默认浏览器设置，然后重试。"
+          }
+        }
+      }
+    },
+    "Could not open the browser for Grok sign-in. Check the macOS default browser setting, then retry." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Browser für Grok-Anmeldung konnte nicht geöffnet werden. Überprüfe die macOS-Standardbrowsereinstellung und versuche es erneut."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法打开浏览器进行Grok登录。请检查macOS默认浏览器设置，然后重试。"
+          }
+        }
+      }
+    },
     "Could not read %@" : {
       "comment" : "Auto-extracted format-string key (Apple String.LocalizationValue canonical form).",
       "extractionState" : "manual",
@@ -11858,6 +12522,44 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "无法读取 %@"
+          }
+        }
+      }
+    },
+    "Could not start the ChatGPT sign-in callback server on localhost:1455. Close any other in-progress sign-in or app using that port, then retry. Details: %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ChatGPT-Anmelde-Rückrufserver auf localhost:1455 konnte nicht gestartet werden. Schließe andere laufende Anmeldungen oder Apps, die diesen Port verwenden, und versuche es erneut. Details: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法在localhost:1455上启动ChatGPT登录回调服务器。使用该端口关闭任何其他正在进行的登录或应用程序，然后重试。细节：%@"
+          }
+        }
+      }
+    },
+    "Could not start the Grok sign-in callback server on 127.0.0.1:%u. Close any other in-progress sign-in or app using that port, then retry. Details: %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Grok-Anmelde-Rückrufserver auf 127.0.0.1:%1$u konnte nicht gestartet werden. Schließe andere laufende Anmeldungen oder Apps, die diesen Port verwenden, und versuche es erneut. Details: %2$@"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Could not start the Grok sign-in callback server on 127.0.0.1:%1$u. Close any other in-progress sign-in or app using that port, then retry. Details: %2$@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法在127.0.0.1:%1$u上启动Grok登录回调服务器。使用该端口关闭任何其他正在进行的登录或应用程序，然后重试。详细信息：%2$@"
           }
         }
       }
@@ -13821,7 +14523,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "删除秘密"
+            "value" : "删除密钥"
           }
         }
       }
@@ -14330,6 +15032,22 @@
         }
       }
     },
+    "DFlash speculative decoding" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "DFlash spekulatives Decodieren"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "DFlash推测解码"
+          }
+        }
+      }
+    },
     "Diagnostics" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -14457,6 +15175,23 @@
         }
       }
     },
+    "Disable Voice Detection" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Voice-Erkennung deaktivieren"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "禁用语音检测"
+          }
+        }
+      }
+    },
     "Disabled" : {
       "localizations" : {
         "de" : {
@@ -14540,6 +15275,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "断开连接"
+          }
+        }
+      }
+    },
+    "Discord Community" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Discord-Community"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Discord社区"
           }
         }
       }
@@ -15016,7 +15768,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "完毕"
+            "value" : "完成"
           }
         }
       }
@@ -15098,6 +15850,54 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "稍后下载"
+          }
+        }
+      }
+    },
+    "Download or import first, then run a generation proof with token/s." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zuerst herunterladen oder importieren, dann einen Generationsnachweis mit Token/s ausführen."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "先下载或导入，然后使用令牌运行生成证明。"
+          }
+        }
+      }
+    },
+    "Download or import the bundle before local runtime proof is possible." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Lade das Bundle herunter oder importiere es, bevor ein lokaler Laufzeitnachweis möglich ist."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在本地运行时验证之前，请先下载或导入捆绑包。"
+          }
+        }
+      }
+    },
+    "Download required" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Download erforderlich"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "需要下载"
           }
         }
       }
@@ -15604,6 +16404,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "例如 Cursor、CLI、my-app"
+          }
+        }
+      }
+    },
+    "e.g. My Provider" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "z. B. Mein Anbieter"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "例如：我的提供商"
           }
         }
       }
@@ -16529,6 +17345,22 @@
         }
       }
     },
+    "Enable the relay tunnel so others can reach this agent." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aktiviere den Relay-Tunnel, damit andere diesen Agenten erreichen können."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "启用中继隧道，以便其他人可以访问此代理。"
+          }
+        }
+      }
+    },
     "Enable to read assistant replies aloud" : {
       "comment" : "A description of the functionality of enabling text-to-speech.",
       "isCommentAutoGenerated" : true,
@@ -16575,6 +17407,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "启用隧道"
+          }
+        }
+      }
+    },
+    "Enable Voice Detection" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Voice-Erkennung aktivieren"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "启用语音检测"
           }
         }
       }
@@ -17109,6 +17958,86 @@
         }
       }
     },
+    "ERROR: Access Denied" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "FEHLER: Zugriff verweigert"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "错误：访问被拒绝"
+          }
+        }
+      }
+    },
+    "ERROR: Access Restricted" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "FEHLER: Zugriff eingeschränkt"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "错误：访问受限"
+          }
+        }
+      }
+    },
+    "ERROR: Authorized but fetch failed: %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "FEHLER: Autorisiert, aber Abruf fehlgeschlagen: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "错误：授权成功但获取失败：%@"
+          }
+        }
+      }
+    },
+    "ERROR: Process is NOT trusted for Accessibility. If enabled in System Settings, try removing and re-adding Osaurus to the list." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "FEHLER: Prozess wird NICHT für Bedienungshilfen vertraut. Wenn in den Systemeinstellungen aktiviert, versuche, Osaurus aus der Liste zu entfernen und erneut hinzuzufügen."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "错误：此进程未被信任用于辅助功能。如果在系统设置中已启用，请尝试将Osaurus从列表中移除并重新添加。"
+          }
+        }
+      }
+    },
+    "ERROR: Unknown Status" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "FEHLER: Unbekannter Status"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "错误：未知状态"
+          }
+        }
+      }
+    },
     "Errors" : {
       "localizations" : {
         "de" : {
@@ -17325,6 +18254,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "到期日"
+          }
+        }
+      }
+    },
+    "Expired" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Abgelaufen"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已过期"
           }
         }
       }
@@ -17902,6 +18847,22 @@
         }
       }
     },
+    "External bundle discovered" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Externes Bundle entdeckt"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "发现外部捆绑包"
+          }
+        }
+      }
+    },
     "External links" : {
       "comment" : "A section header for external links in the plugin detail view.",
       "isCommentAutoGenerated" : true,
@@ -18178,6 +19139,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "删除代理失败"
+          }
+        }
+      }
+    },
+    "Failed to export skill" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Fähigkeit konnte nicht exportiert werden"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "导出技能失败"
           }
         }
       }
@@ -19067,7 +20044,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "一般的"
+            "value" : "通用"
           }
         }
       }
@@ -19719,6 +20696,22 @@
         }
       }
     },
+    "globally disabled" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "global deaktiviert"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "全局禁用"
+          }
+        }
+      }
+    },
     "Gmail, Calendar, Drive, Docs (requires self-hosting)" : {
       "localizations" : {
         "de" : {
@@ -20080,6 +21073,38 @@
         }
       }
     },
+    "Grok sign-in callback failed: %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Grok Anmelde-Rückruf fehlgeschlagen: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Grok 登录回调失败：%@"
+          }
+        }
+      }
+    },
+    "Grok sign-in did not return a valid authorization code. Try the sign-in again from the same browser window." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Grok-Anmeldung hat keinen gültigen Autorisierungscode zurückgegeben. Versuche die Anmeldung erneut im selben Browserfenster."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Grok 登录未返回有效的授权码。请从同一浏览器窗口重新尝试登录。"
+          }
+        }
+      }
+    },
     "Hard caps on incoming request bodies. Requests larger than these are rejected with HTTP 413." : {
       "localizations" : {
         "de" : {
@@ -20285,6 +21310,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "已隐藏"
+          }
+        }
+      }
+    },
+    "hidden in %@ mode" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "im %@-Modus ausgeblendet"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "隐藏在%@模式下"
           }
         }
       }
@@ -22806,6 +23847,54 @@
         }
       }
     },
+    "Invalid provider URL configuration" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ungültige Provider-URL-Konfiguration"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "提供商 URL 配置无效"
+          }
+        }
+      }
+    },
+    "Invalid response from provider" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ungültige Antwort vom Provider"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "来自提供商的无效回复"
+          }
+        }
+      }
+    },
+    "Invalid skill archive - SKILL.md not found" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ungültiges Fähigkeitsarchiv - SKILL.md nicht gefunden"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无效的技能存档 - 未找到SKILL.md文件"
+          }
+        }
+      }
+    },
     "Invalid URL" : {
       "localizations" : {
         "de" : {
@@ -23016,6 +24105,22 @@
         }
       }
     },
+    "Keep Running" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Weiterlaufen lassen"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "继续运行"
+          }
+        }
+      }
+    },
     "Keep this chat running?" : {
       "localizations" : {
         "de" : {
@@ -23104,6 +24209,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "钥匙"
+          }
+        }
+      }
+    },
+    "Keyboard Shortcuts" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tastenkombinationen"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "键盘快捷键"
           }
         }
       }
@@ -24052,6 +25174,38 @@
       "comment" : "Text displayed in a settings toggle for using LM Studio models.",
       "isCommentAutoGenerated" : true
     },
+    "Loadable" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ladbar"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "可加载"
+          }
+        }
+      }
+    },
+    "Loaded" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Geladen"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已加载"
+          }
+        }
+      }
+    },
     "Loaded capabilities" : {
       "localizations" : {
         "de" : {
@@ -24416,6 +25570,22 @@
         }
       }
     },
+    "Local bundle ready" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Lokales Bundle bereit"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "本地捆绑包已就绪。"
+          }
+        }
+      }
+    },
     "Local endpoints don't usually need a key — leave blank to skip auth." : {
       "localizations" : {
         "de" : {
@@ -24577,6 +25747,22 @@
         }
       }
     },
+    "LongCat local bundles require native vmlx architecture, processor, cache, and media-path support before Osaurus should offer them as runnable." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "LongCat lokale Bundles benötigen native vmlx-Architektur, Prozessor, Cache und Medienpfad-Unterstützung, bevor Osaurus sie als ausführbar anbieten sollte."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "LongCat 本地捆绑包需要原生 vmlx 架构、处理器、缓存和媒体路径支持，之后 Osaurus 才能将它们作为可运行项提供。"
+          }
+        }
+      }
+    },
     "Low" : {
       "localizations" : {
         "de" : {
@@ -24728,6 +25914,23 @@
         }
       }
     },
+    "Manage Agents…" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Agenten verwalten…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "管理代理…"
+          }
+        }
+      }
+    },
     "Manage and discover tools" : {
       "localizations" : {
         "de" : {
@@ -24778,6 +25981,23 @@
         }
       }
     },
+    "Manage Schedules…" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Termine verwalten…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "管理日程…"
+          }
+        }
+      }
+    },
     "Manage Supabase Postgres, auth, and storage" : {
       "localizations" : {
         "de" : {
@@ -24810,6 +26030,23 @@
         }
       }
     },
+    "Manage Themes…" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Themen verwalten…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "管理主题..."
+          }
+        }
+      }
+    },
     "Manage Vercel projects, deploys, and DNS" : {
       "localizations" : {
         "de" : {
@@ -24822,6 +26059,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "管理 Vercel 项目、部署和 DNS"
+          }
+        }
+      }
+    },
+    "Manage Watchers…" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Beobachter verwalten…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "管理观察者…"
           }
         }
       }
@@ -25570,7 +26824,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "内存"
+            "value" : "记忆"
           }
         }
       }
@@ -25732,8 +26986,8 @@
         },
         "zh-Hans" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Memory for the default agent is controlled globally in Settings > Enable memory."
+            "state" : "translated",
+            "value" : "默认智能体的记忆功能在“设置”>“启用记忆”中全局控制。"
           }
         }
       }
@@ -26163,6 +27417,54 @@
         }
       }
     },
+    "Missing ChatGPT/Codex sign-in tokens. Sign in with ChatGPT again, then retry the provider." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Fehlende ChatGPT/Codex-Anmelde-Tokens. Melde dich erneut mit ChatGPT an und versuche den Provider erneut."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "缺少ChatGPT/Codex登录令牌。再次使用ChatGPT登录，然后重试提供商。"
+          }
+        }
+      }
+    },
+    "Missing Grok sign-in tokens. Sign in with Grok again, then retry the provider." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Fehlende Grok-Anmelde-Tokens. Melde dich erneut mit Grok an und versuche den Provider erneut."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "缺少 Grok 登录令牌。请使用 Grok 重新登录，然后重试该提供商。"
+          }
+        }
+      }
+    },
+    "missing system permission(s): %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fehlende Systemberechtigung(en): %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "缺少系统权限：%@"
+          }
+        }
+      }
+    },
     "Mode" : {
       "localizations" : {
         "de" : {
@@ -26175,6 +27477,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "模式"
+          }
+        }
+      }
+    },
+    "Mode hidden" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Modus ausgeblendet"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "隐藏模式"
           }
         }
       }
@@ -26956,6 +28274,22 @@
         }
       }
     },
+    "native" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "nativ"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "本地的"
+          }
+        }
+      }
+    },
     "Native MTP" : {
       "localizations" : {
         "de" : {
@@ -26988,6 +28322,22 @@
         }
       }
     },
+    "Needs permission" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Benötigt Berechtigung"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "需要权限"
+          }
+        }
+      }
+    },
     "Needs Permission" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -27000,7 +28350,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "需要许可"
+            "value" : "需要权限"
           }
         }
       }
@@ -27161,6 +28511,23 @@
         }
       }
     },
+    "New Schedule…" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Neuer Zeitplan…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新日程……"
+          }
+        }
+      }
+    },
     "New Tool" : {
       "localizations" : {
         "de" : {
@@ -27173,6 +28540,57 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "新工具"
+          }
+        }
+      }
+    },
+    "New Watcher…" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Neuer Beobachter…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新观察者……"
+          }
+        }
+      }
+    },
+    "New Window" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Neues Fenster"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新窗口"
+          }
+        }
+      }
+    },
+    "New Window with Agent" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Neues Fenster mit Agenten"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新建智能体窗口"
           }
         }
       }
@@ -27905,6 +29323,38 @@
         }
       }
     },
+    "No local benchmark proof is recorded here yet. A passing row needs visible output, token/s, RAM status, cancellation, and cache evidence." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hier ist noch kein lokaler Benchmark-Nachweis aufgezeichnet. Eine bestandene Zeile benötigt sichtbare Ausgabe, Token/s, RAM-Status, Abbruch und Cache-Nachweis."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "这里尚未记录本地基准测试证明。通过的行需要可见的输出、词元/秒、RAM 状态、取消操作以及缓存证据。"
+          }
+        }
+      }
+    },
+    "No local bundle is selected for this catalog entry." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Für diesen Katalogeintrag ist kein lokales Bundle ausgewählt."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此目录条目未选择本地捆绑包。"
+          }
+        }
+      }
+    },
     "No local models fit this Mac" : {
       "localizations" : {
         "de" : {
@@ -27917,6 +29367,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "没有适合此 Mac 的本地模型"
+          }
+        }
+      }
+    },
+    "No local proof" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kein lokaler Nachweis"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无本地证明"
           }
         }
       }
@@ -28087,6 +29553,22 @@
         }
       }
     },
+    "No models" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Keine Modelle"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无模型"
+          }
+        }
+      }
+    },
     "No models available" : {
       "localizations" : {
         "de" : {
@@ -28099,6 +29581,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "无可用型号"
+          }
+        }
+      }
+    },
+    "No models available from provider" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Keine Modelle vom Provider verfügbar"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "提供商没有可用的模型"
           }
         }
       }
@@ -28330,6 +29828,22 @@
         }
       }
     },
+    "No prompt" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Keine Eingabeaufforderung"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无提示"
+          }
+        }
+      }
+    },
     "No providers to reorder." : {
       "localizations" : {
         "de" : {
@@ -28422,6 +29936,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "没有捕获响应体"
+          }
+        }
+      }
+    },
+    "NO RESULT" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "KEIN ERGEBNIS"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "没有结果"
           }
         }
       }
@@ -28931,6 +30461,54 @@
         }
       }
     },
+    "Not enabled for local generation yet; needs target/draft validation and benchmark evidence." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Noch nicht für lokale Generierung aktiviert; benötigt Ziel-/Entwurfsvalidierung und Benchmark-Nachweise."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "尚未启用本地生成；需要目标/草稿验证和基准证据。"
+          }
+        }
+      }
+    },
+    "not enabled for this agent" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "für diesen Agenten nicht aktiviert"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此代理未启用"
+          }
+        }
+      }
+    },
+    "Not enabled in the local runtime; requires an explicit distributed-runtime design and artifact integrity checks." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nicht in der lokalen Laufzeit aktiviert; erfordert ein explizites Design für verteilte Laufzeit und Artefakt-Integritätsprüfungen."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未在本地运行时启用；需要显式的分布式运行时设计和工件完整性检查。"
+          }
+        }
+      }
+    },
     "Not Found" : {
       "localizations" : {
         "de" : {
@@ -28977,6 +30555,38 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "无法导入"
+          }
+        }
+      }
+    },
+    "Not installed" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nicht installiert"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未安装"
+          }
+        }
+      }
+    },
+    "Not local" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nicht lokal"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "非本地"
           }
         }
       }
@@ -29051,6 +30661,22 @@
         }
       }
     },
+    "Not registered" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nicht registriert"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未注册"
+          }
+        }
+      }
+    },
     "Not Running" : {
       "localizations" : {
         "de" : {
@@ -29063,6 +30689,38 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "未运行"
+          }
+        }
+      }
+    },
+    "Not selected" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nicht ausgewählt"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未选择"
+          }
+        }
+      }
+    },
+    "not selected by preflight for this turn" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "von der Vorauswahl für diese Runde nicht ausgewählt"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未入选本次预选"
           }
         }
       }
@@ -29693,7 +31351,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "又一步"
+            "value" : "还有一步"
           }
         }
       }
@@ -29861,6 +31519,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "打开捆绑包"
+          }
+        }
+      }
+    },
+    "Open Chat" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Chat öffnen"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "打开聊天"
           }
         }
       }
@@ -30167,6 +31841,22 @@
         }
       }
     },
+    "Open the Sandbox tab to retry the relay connection." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Öffne den Sandbox-Reiter, um die Relay-Verbindung erneut zu versuchen."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "打开沙盒标签页以重试中继连接。"
+          }
+        }
+      }
+    },
     "Open this table in the Data tab" : {
       "localizations" : {
         "de" : {
@@ -30344,6 +32034,54 @@
         }
       }
     },
+    "OpenAI returned an invalid token response during ChatGPT sign-in" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "OpenAI hat während der ChatGPT-Anmeldung eine ungültige Token-Antwort zurückgegeben"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在 ChatGPT 登录过程中，OpenAI 返回了无效的令牌响应。"
+          }
+        }
+      }
+    },
+    "OpenAI returned an unreadable Codex model catalog: %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "OpenAI hat einen unlesbaren Codex-Modellkatalog zurückgegeben: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OpenAI 返回了一个无法阅读的 Codex 模型目录：%@"
+          }
+        }
+      }
+    },
+    "OpenAI token request failed: %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "OpenAI Token-Anfrage fehlgeschlagen: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OpenAI令牌请求失败：%@"
+          }
+        }
+      }
+    },
     "OpenAI-Compatible Server" : {
       "comment" : "Display name for the \"OpenAI-Compatible Server\" credential type.",
       "isCommentAutoGenerated" : true,
@@ -30410,7 +32148,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "选修的"
+            "value" : "可选"
           }
         }
       }
@@ -30494,7 +32232,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "选修的。显示为所有聊天的系统消息。"
+            "value" : "可选。显示为所有聊天的系统消息。"
           }
         }
       }
@@ -30596,6 +32334,39 @@
         }
       }
     },
+    "Osaurus cannot prove runtime behavior until the model bundle is local." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Osaurus kann das Laufzeitverhalten nicht nachweisen, bis das Modell-Bundle lokal ist."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在模型捆绑是本地的之前，Osaurus无法证明运行时行为。"
+          }
+        }
+      }
+    },
+    "Osaurus Help" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Osaurus Hilfe"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus帮助"
+          }
+        }
+      }
+    },
     "OSAURUS IDENTITY RECOVERY" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -30660,6 +32431,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Osaurus 的构建得益于许多优秀的开源项目。我们衷心感谢这些库的开发者和维护者。"
+          }
+        }
+      }
+    },
+    "Osaurus local models" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Osaurus lokale Modelle"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus本地模型"
           }
         }
       }
@@ -31179,7 +32966,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "鹦鹉 v2（英文）"
+            "value" : "Parakeet v2（英语）"
           }
         }
       }
@@ -32124,6 +33911,22 @@
         }
       }
     },
+    "permission policy is deny" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Berechtigungsrichtlinie ist verweigert"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "权限策略被拒绝"
+          }
+        }
+      }
+    },
     "Permission required" : {
       "localizations" : {
         "de" : {
@@ -32135,7 +33938,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "需要许可"
+            "value" : "需要权限"
           }
         }
       }
@@ -32968,6 +34771,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "接入一个你已经付费的大脑，或使用 Ollama 在本地运行一个。"
+          }
+        }
+      }
+    },
+    "plugin" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Plugin"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "插件"
           }
         }
       }
@@ -34607,7 +36426,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "正在从 Hugging Face 流式下载捆绑包。"
+            "value" : "从 Hugging Face 流式传输捆绑包。"
           }
         }
       }
@@ -35719,7 +37538,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "迅速的"
+            "value" : "提示"
           }
         }
       }
@@ -35788,6 +37607,22 @@
         }
       }
     },
+    "Proof missing" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nachweis fehlt"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "证明缺失"
+          }
+        }
+      }
+    },
     "Protocol" : {
       "localizations" : {
         "de" : {
@@ -35832,6 +37667,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "证明真的是你本人"
+          }
+        }
+      }
+    },
+    "Provider is not connected" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Provider ist nicht verbunden"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "提供商未连接"
           }
         }
       }
@@ -37154,6 +39005,22 @@
         }
       }
     },
+    "Referenced in place; Osaurus does not copy or mutate this bundle." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Direkt referenziert; Osaurus kopiert oder verändert dieses Bundle nicht."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在原地引用；Osaurus 不复制或修改此捆绑包。"
+          }
+        }
+      }
+    },
     "Refresh" : {
       "localizations" : {
         "de" : {
@@ -37354,6 +39221,38 @@
         }
       }
     },
+    "registered %@ tool; already in the active baseline" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Werkzeug %@ registriert; bereits in der aktiven Basislinie"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已注册 %@ 工具；已在活动基线中"
+          }
+        }
+      }
+    },
+    "registered %@ tool; load with capabilities_load" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Werkzeug %@ registriert; mit capabilities_load laden"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已注册%@工具；使用capabilities_load加载"
+          }
+        }
+      }
+    },
     "Registered a plugin in sandbox" : {
       "localizations" : {
         "de" : {
@@ -37452,6 +39351,54 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "中继"
+          }
+        }
+      }
+    },
+    "Relay Connected" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Relay verbunden"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "中继连接成功"
+          }
+        }
+      }
+    },
+    "Relay Error: %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Relay-Fehler: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "中继错误：%@"
+          }
+        }
+      }
+    },
+    "Relay Off" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Relay aus"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "继电器关闭"
           }
         }
       }
@@ -37813,6 +39760,22 @@
         }
       }
     },
+    "Removes this entry from the list." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Entfernt diesen Eintrag aus der Liste."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "从列表中删除此条目。"
+          }
+        }
+      }
+    },
     "Removing a database view" : {
       "localizations" : {
         "de" : {
@@ -38119,6 +40082,23 @@
         }
       }
     },
+    "Report an Issue…" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ein Problem melden…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "报告问题..."
+          }
+        }
+      }
+    },
     "Repos outside mlx-community must advertise an MLX-native artifact family in the repo name, such as MLX, MXFP, JANG, JANGTQ, or TurboQuant." : {
       "comment" : "Error message when a Hugging Face repo is found but is not MLX-compatible.",
       "isCommentAutoGenerated" : true,
@@ -38197,6 +40177,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "请求正文不是聊天完成"
+          }
+        }
+      }
+    },
+    "Request failed: %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Anfrage fehlgeschlagen: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请求失败：%@"
           }
         }
       }
@@ -39542,6 +41538,22 @@
         }
       }
     },
+    "Revoke this invite?" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Diese Einladung widerrufen?"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "撤销此邀请？"
+          }
+        }
+      }
+    },
     "Root endpoint - server status message" : {
       "localizations" : {
         "de" : {
@@ -40388,6 +42400,22 @@
         }
       }
     },
+    "sandbox" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sandbox"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "沙盒"
+          }
+        }
+      }
+    },
     "Sandbox" : {
       "localizations" : {
         "de" : {
@@ -40688,6 +42716,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "保存"
+          }
+        }
+      }
+    },
+    "Save & Regenerate" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Speichern & Wiederherstellen"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "保存并重新生成"
           }
         }
       }
@@ -42242,7 +44286,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "选择至少一名座席以启用 VAD"
+            "value" : "至少选择一个代理以启用VAD"
           }
         }
       }
@@ -43082,6 +45126,23 @@
         }
       }
     },
+    "Settings…" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Einstellungen …"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "设置..."
+          }
+        }
+      }
+    },
     "Setup" : {
       "localizations" : {
         "de" : {
@@ -43466,6 +45527,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "应该能在此 Mac 上流畅运行"
+          }
+        }
+      }
+    },
+    "Show" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Anzeigen"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "显示"
           }
         }
       }
@@ -44257,6 +46334,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "技能被隐藏了"
+          }
+        }
+      }
+    },
+    "Skill not found" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Fähigkeit nicht gefunden"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未找到技能"
           }
         }
       }
@@ -45798,6 +47891,22 @@
         }
       }
     },
+    "Stored under the configured Osaurus model directory." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Gespeichert im konfigurierten Osaurus-Modellverzeichnis."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "存储在配置的Osaurus模型目录下。"
+          }
+        }
+      }
+    },
     "Stream tool responses in real-time" : {
       "localizations" : {
         "de" : {
@@ -45826,6 +47935,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "流式传输"
+          }
+        }
+      }
+    },
+    "Streaming error: %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Streaming-Fehler: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "流错误：%@"
           }
         }
       }
@@ -45962,6 +48087,150 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "成功"
+          }
+        }
+      }
+    },
+    "SUCCESS: %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ERFOLG: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "成功: %@"
+          }
+        }
+      }
+    },
+    "SUCCESS: Authorized" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ERFOLG: Autorisiert"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "成功：已授权"
+          }
+        }
+      }
+    },
+    "SUCCESS: Authorized (Found %lld calendars)" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ERFOLG: Autorisiert (%lld Kalender gefunden)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "成功：已授权（找到 %lld 个日历）"
+          }
+        }
+      }
+    },
+    "SUCCESS: Authorized (Found %lld lists)" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ERFOLG: Autorisiert (%lld Listen gefunden)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "成功：已授权（找到 %lld 个列表）"
+          }
+        }
+      }
+    },
+    "SUCCESS: Authorized (Found %lld+ contacts)" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ERFOLG: Autorisiert (%lld+ Kontakte gefunden)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "成功：已授权（找到 %lld 个联系人）"
+          }
+        }
+      }
+    },
+    "SUCCESS: Authorized (No calendars found)" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ERFOLG: Autorisiert (Keine Kalender gefunden)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "成功：已授权（未找到日历）"
+          }
+        }
+      }
+    },
+    "SUCCESS: Authorized (No lists found)" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ERFOLG: Autorisiert (Keine Listen gefunden)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "成功：已授权（未找到列表）"
+          }
+        }
+      }
+    },
+    "SUCCESS: Connected to %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ERFOLG: Verbunden mit %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "成功：连接到%@"
+          }
+        }
+      }
+    },
+    "SUCCESS: Process is trusted for Accessibility." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ERFOLG: Prozess wird für Bedienungshilfen vertraut."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "成功：该进程已通过无障碍验证。"
           }
         }
       }
@@ -46533,6 +48802,22 @@
         }
       }
     },
+    "Tensor parallelism" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tensor-Parallelität"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "张量并行"
+          }
+        }
+      }
+    },
     "Tertiary BG" : {
       "localizations" : {
         "de" : {
@@ -46985,6 +49270,22 @@
         }
       }
     },
+    "The bundle has the required local files. Runtime quality still depends on model-family support and live generation proof." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Das Bundle enthält die erforderlichen lokalen Dateien. Die Laufzeitqualität hängt weiterhin von der Modellfamilienunterstützung und dem Live-Generierungsnachweis ab."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "捆绑包包含所需的本地文件。运行时质量仍取决于模型系列支持和实时生成证明。"
+          }
+        }
+      }
+    },
     "The container's /workspace directory is bind-mounted from ~/.osaurus/container/workspace/. Open it in Finder to browse or edit files directly on the host." : {
       "localizations" : {
         "de" : {
@@ -47047,6 +49348,22 @@
         }
       }
     },
+    "The files look loadable, but this specific cache-backed bundle still needs a real generation proof before it should be called validated." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Die Dateien scheinen ladbar, aber dieses spezifische cache-gestützte Bundle benötigt noch einen echten Generierungsnachweis, bevor es als validiert bezeichnet werden sollte."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "文件看起来可以加载，但这个特定的缓存后端包在被称为验证之前还需要一个真正的生成证明。"
+          }
+        }
+      }
+    },
     "The host quarantined this plugin after it caused a crash during load. Retrying re-runs the same dylib against the same host build, so if the underlying bug (most often a misaligned `osr_host_api` mirror in the plugin) is unfixed it will crash again. Use this only after you have rebuilt or re-installed the plugin." : {
       "localizations" : {
         "de" : {
@@ -47059,6 +49376,38 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "宿主在该插件加载期间引发崩溃后将其隔离。重试会在同一宿主版本上重新运行同一个动态库（dylib），因此如果底层错误（最常见的是插件中 `osr_host_api` 镜像未对齐）未被修复，它将再次崩溃。请仅在您重新构建或重新安装插件后使用此操作。"
+          }
+        }
+      }
+    },
+    "The link will stop working. Anyone trying to use it will be turned away." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Der Link wird nicht mehr funktionieren. Jeder, der ihn verwendet, wird abgewiesen."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "该链接将停止工作。任何尝试使用它的人将被拒绝访问。"
+          }
+        }
+      }
+    },
+    "The local directory does not have the required MLX files." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Das lokale Verzeichnis enthält nicht die erforderlichen MLX-Dateien."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "本地目录中没有所需的MLX文件。"
           }
         }
       }
@@ -47159,6 +49508,22 @@
         }
       }
     },
+    "The receiver who accepted this invite will lose access immediately. Their access key will be revoked." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Der Empfänger, der diese Einladung angenommen hat, verliert sofort den Zugriff. Sein Zugriffsschlüssel wird widerrufen."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "接受此邀请的接收者将立即失去访问权限。他们的访问密钥将被撤销。"
+          }
+        }
+      }
+    },
     "The result was capped at 500 rows." : {
       "localizations" : {
         "de" : {
@@ -47197,6 +49562,22 @@
         }
       }
     },
+    "The task is still running. Dismissing will cancel it." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Die Aufgabe läuft noch. Schließen bricht sie ab."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "任务仍在运行中。取消将终止它。"
+          }
+        }
+      }
+    },
     "The Test button launches the subprocess, runs initialize/listTools, and tears it down." : {
       "localizations" : {
         "de" : {
@@ -47225,6 +49606,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "令牌或密钥头存储在明文提供者配置之外。"
+          }
+        }
+      }
+    },
+    "The work task is still running. Dismissing will cancel the task." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Die Arbeitsaufgabe läuft noch. Das Beenden wird die Aufgabe abbrechen."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "工作任务仍在运行。取消将终止任务。"
+          }
+        }
+      }
+    },
+    "Theme" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Thema"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "主题"
           }
         }
       }
@@ -48060,6 +50475,22 @@
         }
       }
     },
+    "This will permanently delete your identity, all pinned facts, episodes, and conversation history. This cannot be undone." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dies löscht dauerhaft deine Identität, alle gepinnten Fakten, Episoden und den Gesprächsverlauf. Dies kann nicht rückgängig gemacht werden."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "这将永久删除您的身份、所有固定的事实、剧集和对话历史记录。此操作无法撤销。"
+          }
+        }
+      }
+    },
     "This will remove the provider and all its tools. This cannot be undone." : {
       "localizations" : {
         "de" : {
@@ -48438,6 +50869,23 @@
         }
       }
     },
+    "Toggle Voice Detection" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Taste Spracherkennung umschalten"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "切换语音检测"
+          }
+        }
+      }
+    },
     "Token required" : {
       "localizations" : {
         "de" : {
@@ -48610,6 +51058,44 @@
         }
       }
     },
+    "Tool '%@' exceeded the %llds execution budget." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Werkzeug '%1$@' hat das Ausführungsbudget von %2$llds überschritten."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Tool '%1$@' exceeded the %2$llds execution budget."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "工具“%1$@”超过了%2$lld秒的执行预算。"
+          }
+        }
+      }
+    },
+    "Tool '%@' was cancelled." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Werkzeug '%@' wurde abgebrochen."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "工具“%@”已取消。"
+          }
+        }
+      }
+    },
     "Tool Call Timeout" : {
       "localizations" : {
         "de" : {
@@ -48654,6 +51140,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "工具发现正在运行，超时时间为 %lld 秒。"
+          }
+        }
+      }
+    },
+    "tool is not registered; install or enable the plugin/provider that owns it" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Werkzeug ist nicht registriert; installiere oder aktiviere das Plugin/den Provider, dem es gehört"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "工具未注册；安装或启用拥有它的插件/提供商"
           }
         }
       }
@@ -49740,6 +52242,54 @@
         }
       }
     },
+    "Unsupported Hunyuan Dense" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nicht unterstütztes Hunyuan Dense"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "不受支持的Hunyuan Dense"
+          }
+        }
+      }
+    },
+    "Unsupported local model type: hunyuan_v1_dense. Osaurus needs vmlx Hunyuan Dense support before this model can run locally." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nicht unterstützter lokaler Modelltyp: hunyuan_v1_dense. Osaurus benötigt vmlx Hunyuan Dense-Unterstützung, bevor dieses Modell lokal ausgeführt werden kann."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "不支持的本地模型类型：hunyuan_v1_dense。Osaurus 需要 vmlx Hunyuan Dense 支持才能在此模型上本地运行。"
+          }
+        }
+      }
+    },
+    "Unsupported LongCat family" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nicht unterstützte LongCat-Familie"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "不支持的 LongCat 系列"
+          }
+        }
+      }
+    },
     "Unsupported model" : {
       "localizations" : {
         "de" : {
@@ -49796,6 +52346,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "直到明天"
+          }
+        }
+      }
+    },
+    "Untitled" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Unbenannt"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无标题"
           }
         }
       }
@@ -51042,6 +53608,22 @@
         }
       }
     },
+    "View Session" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sitzung anzeigen"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "查看会话"
+          }
+        }
+      }
+    },
     "View Skill" : {
       "localizations" : {
         "de" : {
@@ -51690,6 +54272,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "警告"
+          }
+        }
+      }
+    },
+    "WARNING: Access Not Determined" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "WARNUNG: Zugriff nicht bestimmt"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "警告：访问未确定"
           }
         }
       }
@@ -52657,6 +55255,22 @@
         }
       }
     },
+    "xAI OAuth discovery returned an untrusted %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "xAI OAuth-Erkennung hat ein nicht vertrauenswürdiges %@ zurückgegeben"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "xAI OAuth发现返回了不受信任的%@"
+          }
+        }
+      }
+    },
     "xAI OAuth tokens are present and refreshed before model discovery." : {
       "localizations" : {
         "de" : {
@@ -52669,6 +55283,38 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "xAI OAuth 令牌存在，并在模型发现之前进行刷新。"
+          }
+        }
+      }
+    },
+    "xAI rejected the sign-in callback: %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "xAI hat den Anmelde-Rückruf abgelehnt: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "xAI 拒绝了登录回调: %@"
+          }
+        }
+      }
+    },
+    "xAI returned an invalid token response during Grok sign-in" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "xAI hat während der Grok-Anmeldung eine ungültige Token-Antwort zurückgegeben"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "xAI在Grok登录过程中返回了无效的令牌响应"
           }
         }
       }
@@ -52701,6 +55347,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "xAI已登录"
+          }
+        }
+      }
+    },
+    "xAI token request failed: %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "xAI Token-Anfrage fehlgeschlagen: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "xAI令牌请求失败：%@"
           }
         }
       }

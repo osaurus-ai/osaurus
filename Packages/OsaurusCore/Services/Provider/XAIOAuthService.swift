@@ -35,29 +35,29 @@ public enum XAIOAuthError: LocalizedError, Sendable {
         switch self {
         case .invalidAuthorizationCallback:
             return
-                "Grok sign-in did not return a valid authorization code. Try the sign-in again from the same browser window."
+                L("Grok sign-in did not return a valid authorization code. Try the sign-in again from the same browser window.")
         case .invalidPKCE:
-            return "Could not create a secure login challenge"
+            return L("Could not create a secure login challenge")
         case .invalidTokenResponse:
-            return "xAI returned an invalid token response during Grok sign-in"
+            return L("xAI returned an invalid token response during Grok sign-in")
         case .missingSignInTokens:
-            return "Missing Grok sign-in tokens. Sign in with Grok again, then retry the provider."
+            return L("Missing Grok sign-in tokens. Sign in with Grok again, then retry the provider.")
         case .discoveryFailed(let message):
-            return "Could not load xAI OAuth configuration: \(XAIOAuthService.safeDiagnosticFragment(message))"
+            return L("Could not load xAI OAuth configuration: \(XAIOAuthService.safeDiagnosticFragment(message))")
         case .untrustedEndpoint(let label):
-            return "xAI OAuth discovery returned an untrusted \(label)"
+            return L("xAI OAuth discovery returned an untrusted \(label)")
         case .tokenRequestFailed(let message):
-            return "xAI token request failed: \(XAIOAuthService.safeDiagnosticFragment(message))"
+            return L("xAI token request failed: \(XAIOAuthService.safeDiagnosticFragment(message))")
         case .loopbackBindFailed(let message):
             return
-                "Could not start the Grok sign-in callback server on 127.0.0.1:\(XAIOAuthService.callbackPort). Close any other in-progress sign-in or app using that port, then retry. Details: \(XAIOAuthService.safeDiagnosticFragment(message))"
+                L("Could not start the Grok sign-in callback server on 127.0.0.1:\(XAIOAuthService.callbackPort). Close any other in-progress sign-in or app using that port, then retry. Details: \(XAIOAuthService.safeDiagnosticFragment(message))")
         case .browserOpenFailed:
             return
-                "Could not open the browser for Grok sign-in. Check the macOS default browser setting, then retry."
+                L("Could not open the browser for Grok sign-in. Check the macOS default browser setting, then retry.")
         case .authorizationCallbackFailed(let message):
-            return "Grok sign-in callback failed: \(XAIOAuthService.safeDiagnosticFragment(message))"
+            return L("Grok sign-in callback failed: \(XAIOAuthService.safeDiagnosticFragment(message))")
         case .authorizationCallbackRejected(let message):
-            return "xAI rejected the sign-in callback: \(XAIOAuthService.safeDiagnosticFragment(message))"
+            return L("xAI rejected the sign-in callback: \(XAIOAuthService.safeDiagnosticFragment(message))")
         }
     }
 }

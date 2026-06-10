@@ -25,10 +25,10 @@ private enum ShareInviteExpiry: String, CaseIterable, Identifiable {
 
     var label: String {
         switch self {
-        case .hour1: return "1 hour"
-        case .day1: return "1 day"
-        case .days7: return "7 days"
-        case .days30: return "30 days"
+        case .hour1: return L("1 hour")
+        case .day1: return L("1 day")
+        case .days7: return L("7 days")
+        case .days30: return L("30 days")
         }
     }
 
@@ -124,17 +124,17 @@ struct ShareAgentSheet: View {
         // sheet's window — `.window` style would render the dialog there and
         // it would be invisible to the user.
         .themedAlert(
-            "Revoke this invite?",
+            L("Revoke this invite?"),
             isPresented: Binding(
                 get: { revokeConfirm != nil },
                 set: { if !$0 { revokeConfirm = nil } }
             ),
             message: revokeConfirm.map { revokeMessage(for: $0) },
-            primaryButton: .destructive("Revoke") {
+            primaryButton: .destructive(L("Revoke")) {
                 if let target = revokeConfirm { revoke(target) }
                 revokeConfirm = nil
             },
-            secondaryButton: .cancel("Cancel"),
+            secondaryButton: .cancel(L("Cancel")),
             presentationStyle: .contained
         )
     }
@@ -192,10 +192,10 @@ struct ShareAgentSheet: View {
 
     private var statusTitle: String {
         switch relayStatus {
-        case .connected: return "Relay Connected"
-        case .connecting: return "Connecting…"
-        case .disconnected: return "Relay Off"
-        case .error(let msg): return "Relay Error: \(msg)"
+        case .connected: return L("Relay Connected")
+        case .connecting: return L("Connecting…")
+        case .disconnected: return L("Relay Off")
+        case .error(let msg): return L("Relay Error: \(msg)")
         }
     }
 
@@ -204,11 +204,11 @@ struct ShareAgentSheet: View {
         case .connected(let url):
             return url
         case .connecting:
-            return "Connecting your agent to the share network."
+            return L("Connecting your agent to the share network.")
         case .disconnected:
-            return "Enable the relay tunnel so others can reach this agent."
+            return L("Enable the relay tunnel so others can reach this agent.")
         case .error:
-            return "Open the Sandbox tab to retry the relay connection."
+            return L("Open the Sandbox tab to retry the relay connection.")
         }
     }
 
@@ -321,7 +321,7 @@ struct ShareAgentSheet: View {
                         HStack(spacing: 6) {
                             Image(systemName: copiedFlash ? "checkmark" : "doc.on.doc")
                                 .font(.system(size: 11))
-                            Text(copiedFlash ? "Copied" : "Copy")
+                            Text(LocalizedStringKey(copiedFlash ? "Copied" : "Copy"), bundle: .module)
                         }
                     }
                     .buttonStyle(PrimaryButtonStyle())
@@ -343,7 +343,8 @@ struct ShareAgentSheet: View {
                 Image(systemName: "info.circle")
                     .font(.system(size: 10))
                 Text(
-                    "Single-use — once someone accepts, this link can't be used again. Expires \(invite.expirationDate.formatted(date: .abbreviated, time: .shortened))."
+                    "Single-use — once someone accepts, this link can't be used again. Expires \(invite.expirationDate.formatted(date: .abbreviated, time: .shortened)).",
+                    bundle: .module
                 )
                 .lineLimit(3)
             }
@@ -479,9 +480,9 @@ struct ShareAgentSheet: View {
     private func statusBadge(for status: IssuedInviteRecord.DisplayStatus) -> some View {
         let (color, label, icon): (Color, String, String) = {
             switch status {
-            case .active: return (theme.successColor, "Active", "checkmark.circle.fill")
-            case .used: return (theme.accentColor, "Accepted", "person.fill.checkmark")
-            case .expired: return (theme.tertiaryText, "Expired", "clock.badge.xmark.fill")
+            case .active: return (theme.successColor, L("Active"), "checkmark.circle.fill")
+            case .used: return (theme.accentColor, L("Accepted"), "person.fill.checkmark")
+            case .expired: return (theme.tertiaryText, L("Expired"), "clock.badge.xmark.fill")
             }
         }()
         return HStack(spacing: 3) {
@@ -516,7 +517,7 @@ struct ShareAgentSheet: View {
         } catch let error as AgentInviteError {
             generationError = error.errorDescription
         } catch {
-            generationError = "Could not generate invite: \(error.localizedDescription)"
+            generationError = L("Could not generate invite: \(error.localizedDescription)")
         }
     }
 
@@ -546,11 +547,11 @@ struct ShareAgentSheet: View {
         switch record.displayStatus {
         case .used:
             return
-                "The receiver who accepted this invite will lose access immediately. Their access key will be revoked."
+                L("The receiver who accepted this invite will lose access immediately. Their access key will be revoked.")
         case .active:
-            return "The link will stop working. Anyone trying to use it will be turned away."
+            return L("The link will stop working. Anyone trying to use it will be turned away.")
         case .expired:
-            return "Removes this entry from the list."
+            return L("Removes this entry from the list.")
         }
     }
 

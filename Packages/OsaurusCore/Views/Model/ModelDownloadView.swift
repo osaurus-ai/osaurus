@@ -262,7 +262,7 @@ struct ModelDownloadView: View {
     private func headerView(lists: GridLists) -> some View {
         ManagerHeaderWithTabs(
             title: L("Models"),
-            subtitle: "\(completedDownloadedModelsCount) downloaded • \(modelManager.totalDownloadedSizeString)"
+            subtitle: L("\(completedDownloadedModelsCount) downloaded • \(modelManager.totalDownloadedSizeString)")
         ) {
             HStack(spacing: 12) {
                 // Refresh OsaurusAI HF org listing (Recommended section lives inside All)
@@ -1596,11 +1596,11 @@ private struct SystemStatusBar: View {
     var body: some View {
         HStack(spacing: 20) {
             ResourceGauge(
-                label: L("Memory"),
+                label: L("RAM"),
                 icon: "memorychip",
                 usedFraction: totalMemoryGB > 0 ? usedMemoryGB / totalMemoryGB : 0,
                 detail: String(
-                    format: "%.0f GB free / %.0f GB",
+                    format: L("%.0f GB free / %.0f GB"),
                     max(0, totalMemoryGB - usedMemoryGB),
                     totalMemoryGB
                 )
@@ -1612,7 +1612,7 @@ private struct SystemStatusBar: View {
                 usedFraction: totalStorageGB > 0
                     ? (totalStorageGB - availableStorageGB) / totalStorageGB : 0,
                 detail: String(
-                    format: "%.0f GB free / %.0f GB",
+                    format: L("%.0f GB free / %.0f GB"),
                     availableStorageGB,
                     totalStorageGB
                 )

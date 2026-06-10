@@ -295,16 +295,16 @@ struct NotchView: View {
                 y: expansion == .compact ? 0 : (isHovering ? 10 : 6)
             )
             .themedAlert(
-                "Cancel Background Task?",
+                L("Cancel Background Task?"),
                 isPresented: $showCancelConfirmation,
-                message: "The task is still running. Dismissing will cancel it.",
-                primaryButton: .destructive("Cancel Task") {
+                message: L("The task is still running. Dismissing will cancel it."),
+                primaryButton: .destructive(L("Cancel Task")) {
                     if let task = activeTask {
                         BackgroundTaskManager.shared.cancelTask(task.id)
                         BackgroundTaskManager.shared.openTaskWindow(task.id)
                     }
                 },
-                secondaryButton: .cancel("Keep Running"),
+                secondaryButton: .cancel(L("Keep Running")),
                 presentationStyle: .window
             )
     }

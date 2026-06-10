@@ -319,23 +319,23 @@ public enum ToastAction: Equatable, Sendable {
     public var defaultButtonTitle: String {
         switch self {
         case .openChat:
-            return "Open Chat"
+            return L("Open Chat")
         case .openChatSession:
-            return "View Session"
+            return L("View Session")
         case .showChatWindow:
-            return "View"
+            return L("View")
         case .openSettings:
-            return "Open Settings"
+            return L("Open Settings")
         case .openURL:
-            return "Open"
+            return L("Open")
         case .revealInFinder:
-            return "Reveal in Finder"
+            return L("Reveal in Finder")
         case .showMainWindow:
-            return "Show"
+            return L("Show")
         case .showExecutionContext:
-            return "View"
+            return L("View")
         case .custom:
-            return "Action"
+            return L("Action")
         }
     }
 

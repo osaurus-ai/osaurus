@@ -217,11 +217,13 @@ struct MemoryView: View {
             "Clear All Memory",
             isPresented: $showClearConfirmation,
             message:
-                "This will permanently delete your identity, all pinned facts, episodes, and conversation history. This cannot be undone.",
-            primaryButton: .destructive("Clear Everything") {
+                L(
+                    "This will permanently delete your identity, all pinned facts, episodes, and conversation history. This cannot be undone."
+                ),
+            primaryButton: .destructive(L("Clear Everything")) {
                 clearAllMemory()
             },
-            secondaryButton: .cancel("Cancel")
+            secondaryButton: .cancel(L("Cancel"))
         )
     }
 
@@ -779,7 +781,7 @@ struct MemoryView: View {
                         Circle()
                             .fill(config.enabled ? Color.green : Color.red)
                             .frame(width: 8, height: 8)
-                        Text(config.enabled ? "Active" : "Disabled")
+                        Text(LocalizedStringKey(config.enabled ? "Active" : "Disabled"), bundle: .module)
                             .font(.system(size: 13))
                             .foregroundColor(theme.primaryText)
                     }

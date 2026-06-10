@@ -564,7 +564,7 @@ struct AgentCapabilityManagerView: View {
         return HStack(spacing: 6) {
             Image(systemName: "checkmark.seal.fill")
                 .font(.system(size: 9))
-            Text("\(toolCount) tool\(toolCount == 1 ? "" : "s") · \(skillCount) skill\(skillCount == 1 ? "" : "s")")
+            Text("\(toolCount) tool\(toolCount == 1 ? "" : "s") · \(skillCount) skill\(skillCount == 1 ? "" : "s")", bundle: .module)
                 .font(.system(size: 10, weight: .medium))
         }
         .foregroundColor(theme.accentColor)

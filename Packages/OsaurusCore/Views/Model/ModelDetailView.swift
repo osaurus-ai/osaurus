@@ -1121,7 +1121,7 @@ private struct CopyModelIdButton: View {
             HStack(spacing: 5) {
                 Image(systemName: showCopied ? "checkmark" : "doc.on.doc")
                     .font(.system(size: 10, weight: .medium))
-                Text(showCopied ? "Copied!" : "Copy Model ID")
+                Text(LocalizedStringKey(showCopied ? "Copied!" : "Copy Model ID"), bundle: .module)
                     .font(.system(size: 12, weight: .medium))
             }
             .foregroundColor(showCopied ? theme.successColor : theme.secondaryText)
@@ -1165,7 +1165,7 @@ private struct DetailInfoRow: View {
 
     var body: some View {
         HStack {
-            Text(label)
+            Text(LocalizedStringKey(label), bundle: .module)
                 .font(.system(size: 13))
                 .foregroundColor(theme.secondaryText)
 

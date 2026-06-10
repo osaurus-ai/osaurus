@@ -990,7 +990,7 @@ private final class UserMessageInlineEditView: NSView, NSTextViewDelegate {
         cancelButton.layer?.borderWidth = CGFloat(theme.defaultBorderWidth)
         cancelButton.layer?.borderColor = NSColor(theme.primaryBorder).withAlphaComponent(theme.borderOpacity).cgColor
         cancelButton.attributedTitle = NSAttributedString(
-            string: "Cancel",
+            string: L("Cancel"),
             attributes: [
                 .foregroundColor: NSColor(theme.secondaryText),
                 .font: NSFont.systemFont(ofSize: cap, weight: .medium),
@@ -1007,7 +1007,7 @@ private final class UserMessageInlineEditView: NSView, NSTextViewDelegate {
         if empty {
             confirmButton.layer?.backgroundColor = NSColor(theme.secondaryBackground).cgColor
             confirmButton.attributedTitle = NSAttributedString(
-                string: "Save & Regenerate",
+                string: L("Save & Regenerate"),
                 attributes: [
                     .foregroundColor: NSColor(theme.secondaryText),
                     .font: NSFont.systemFont(ofSize: cap, weight: .semibold),
@@ -1017,7 +1017,7 @@ private final class UserMessageInlineEditView: NSView, NSTextViewDelegate {
         } else {
             confirmButton.layer?.backgroundColor = NSColor(theme.accentColor).cgColor
             confirmButton.attributedTitle = NSAttributedString(
-                string: "Save & Regenerate",
+                string: L("Save & Regenerate"),
                 attributes: [
                     .foregroundColor: NSColor.white,
                     .font: NSFont.systemFont(ofSize: cap, weight: .semibold),
