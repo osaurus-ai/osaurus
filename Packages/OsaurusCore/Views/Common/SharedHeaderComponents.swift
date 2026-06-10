@@ -6,6 +6,7 @@
 //  Ensures consistent styling and behavior across modes.
 //
 
+import AppKit
 import SwiftUI
 
 // MARK: - Header Action Button
@@ -126,6 +127,78 @@ struct PinButton: View {
     }
 }
 
+// MARK: - Agent Picker Keyboard Controller
+
+/// Drives arrow-key / Enter / Esc navigation for the agent picker popover.
+/// Held as a `@StateObject` so the long-lived key-monitor closure captures a
+/// stable class reference instead of a stale `View` value — mirroring the
+/// coordinator pattern the model picker uses.
+@MainActor
+final class AgentPickerKeyboardController: ObservableObject {
+    /// Index (into the popover's flattened item list) the user has arrowed to.
+    @Published var highlightedIndex: Int?
+
+    private var monitor: Any?
+    private var itemCount: Int = 0
+    private var onActivate: ((Int) -> Void)?
+    private var onDismiss: (() -> Void)?
+
+    /// Begin monitoring keys for an open popover. Safe to call repeatedly; the
+    /// monitor is installed once and the callbacks/count are refreshed.
+    func start(
+        itemCount: Int,
+        initialIndex: Int?,
+        onActivate: @escaping (Int) -> Void,
+        onDismiss: @escaping () -> Void
+    ) {
+        self.itemCount = itemCount
+        self.highlightedIndex = initialIndex
+        self.onActivate = onActivate
+        self.onDismiss = onDismiss
+
+        guard monitor == nil else { return }
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self else { return event }
+            switch event.keyCode {
+            case 125:  // down arrow
+                self.move(by: 1)
+                return nil
+            case 126:  // up arrow
+                self.move(by: -1)
+                return nil
+            case 36, 76:  // return / numpad enter
+                if let index = self.highlightedIndex {
+                    self.onActivate?(index)
+                    return nil
+                }
+                return event
+            case 53:  // escape
+                self.onDismiss?()
+                return nil
+            default:
+                return event
+            }
+        }
+    }
+
+    func stop() {
+        if let monitor { NSEvent.removeMonitor(monitor) }
+        monitor = nil
+        highlightedIndex = nil
+        onActivate = nil
+        onDismiss = nil
+    }
+
+    private func move(by offset: Int) {
+        guard itemCount > 0 else { return }
+        if let current = highlightedIndex {
+            highlightedIndex = max(0, min(itemCount - 1, current + offset))
+        } else {
+            highlightedIndex = offset > 0 ? 0 : itemCount - 1
+        }
+    }
+}
+
 // MARK: - Agent Pill
 
 /// A capsule-shaped agent selector pill used in empty states.
@@ -151,7 +224,64 @@ struct AgentPill: View {
     @State private var isHovered = false
     @State private var isGearHovered = false
     @State private var isPopoverPresented = false
+    @StateObject private var keyboard = AgentPickerKeyboardController()
     @Environment(\.theme) private var theme
+
+    // MARK: - Keyboard Navigation Items
+
+    /// Discovered agents that actually render as selectable rows (the section
+    /// is hidden when no selection handler is wired).
+    private var selectableDiscoveredAgents: [DiscoveredAgent] {
+        onSelectDiscoveredAgent != nil ? discoveredAgents : []
+    }
+
+    /// Paired relay agents that actually render as selectable rows.
+    private var selectableRelayAgents: [PairedRelayAgent] {
+        onSelectRelayAgent != nil ? pairedRelayAgents : []
+    }
+
+    /// Total number of arrow-navigable rows, in render order:
+    /// local agents → discovered → relay.
+    private var menuItemCount: Int {
+        agents.count + selectableDiscoveredAgents.count + selectableRelayAgents.count
+    }
+
+    /// Flat index of the currently-active item so arrow keys start from the
+    /// user's current selection rather than the top of the list.
+    private var initialHighlightIndex: Int? {
+        if let relay = activeRelayAgent,
+            let i = selectableRelayAgents.firstIndex(where: { $0.id == relay.id })
+        {
+            return agents.count + selectableDiscoveredAgents.count + i
+        }
+        if let discovered = activeDiscoveredAgent,
+            let i = selectableDiscoveredAgents.firstIndex(where: { $0.id == discovered.id })
+        {
+            return agents.count + i
+        }
+        if let i = agents.firstIndex(where: { $0.id == activeAgentId }) {
+            return i
+        }
+        return agents.isEmpty ? nil : 0
+    }
+
+    /// Activate the row at `index` in the flattened list (Enter key path).
+    private func activateMenuItem(at index: Int) {
+        let agentCount = agents.count
+        let discoveredCount = selectableDiscoveredAgents.count
+        if index < agentCount {
+            isPopoverPresented = false
+            onSelectAgent(agents[index].id)
+        } else if index < agentCount + discoveredCount {
+            let remote = selectableDiscoveredAgents[index - agentCount]
+            isPopoverPresented = false
+            onSelectDiscoveredAgent?(remote)
+        } else if index < menuItemCount {
+            let relay = selectableRelayAgents[index - agentCount - discoveredCount]
+            isPopoverPresented = false
+            onSelectRelayAgent?(relay)
+        }
+    }
 
     private var activeAgent: Agent {
         agents.first { $0.id == activeAgentId } ?? Agent.default
@@ -275,6 +405,19 @@ struct AgentPill: View {
         .onChange(of: openPickerTrigger) { _, _ in
             isPopoverPresented = true
         }
+        .onChange(of: isPopoverPresented) { _, presented in
+            if presented {
+                keyboard.start(
+                    itemCount: menuItemCount,
+                    initialIndex: initialHighlightIndex,
+                    onActivate: { activateMenuItem(at: $0) },
+                    onDismiss: { isPopoverPresented = false }
+                )
+            } else {
+                keyboard.stop()
+            }
+        }
+        .onDisappear { keyboard.stop() }
     }
 
     // MARK: - Subviews
@@ -373,29 +516,42 @@ struct AgentPill: View {
 
     private var popoverContent: some View {
         VStack(alignment: .leading, spacing: 0) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 2) {
-                    ForEach(agents) { agent in
-                        agentRow(agent)
-                    }
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 2) {
+                        ForEach(Array(agents.enumerated()), id: \.element.id) { idx, agent in
+                            agentRow(agent, index: idx)
+                        }
 
-                    if !discoveredAgents.isEmpty && onSelectDiscoveredAgent != nil {
-                        sectionHeader(Text("On This Network", bundle: .module))
-                        ForEach(discoveredAgents) { remote in
-                            discoveredRow(remote)
+                        if !selectableDiscoveredAgents.isEmpty {
+                            sectionHeader(Text("On This Network", bundle: .module))
+                            ForEach(Array(selectableDiscoveredAgents.enumerated()), id: \.element.id) {
+                                idx, remote in
+                                discoveredRow(remote, index: agents.count + idx)
+                            }
+                        }
+
+                        if !selectableRelayAgents.isEmpty {
+                            sectionHeader(Text("Paired", bundle: .module))
+                            ForEach(Array(selectableRelayAgents.enumerated()), id: \.element.id) {
+                                idx, relay in
+                                relayRow(
+                                    relay,
+                                    index: agents.count + selectableDiscoveredAgents.count + idx
+                                )
+                            }
                         }
                     }
-
-                    if !pairedRelayAgents.isEmpty && onSelectRelayAgent != nil {
-                        sectionHeader(Text("Paired", bundle: .module))
-                        ForEach(pairedRelayAgents) { relay in
-                            relayRow(relay)
-                        }
+                    .padding(6)
+                }
+                .frame(maxHeight: 360)
+                .onChange(of: keyboard.highlightedIndex) { _, index in
+                    guard let index else { return }
+                    withAnimation(.easeOut(duration: 0.1)) {
+                        proxy.scrollTo(index, anchor: .center)
                     }
                 }
-                .padding(6)
             }
-            .frame(maxHeight: 360)
 
             Divider().opacity(0.5)
 
@@ -433,10 +589,11 @@ struct AgentPill: View {
             .padding(.bottom, 4)
     }
 
-    private func agentRow(_ agent: Agent) -> some View {
+    private func agentRow(_ agent: Agent, index: Int) -> some View {
         let isCurrent = agent.id == activeAgentId && !isRemoteActive
         return PopoverRow(
             isCurrent: isCurrent,
+            isHighlighted: keyboard.highlightedIndex == index,
             onTap: {
                 isPopoverPresented = false
                 onSelectAgent(agent.id)
@@ -457,12 +614,14 @@ struct AgentPill: View {
                 }
             }
         }
+        .id(index)
     }
 
-    private func discoveredRow(_ remote: DiscoveredAgent) -> some View {
+    private func discoveredRow(_ remote: DiscoveredAgent, index: Int) -> some View {
         let isCurrent = activeDiscoveredAgent?.id == remote.id
         return PopoverRow(
             isCurrent: isCurrent,
+            isHighlighted: keyboard.highlightedIndex == index,
             onTap: {
                 isPopoverPresented = false
                 onSelectDiscoveredAgent?(remote)
@@ -486,12 +645,14 @@ struct AgentPill: View {
                 }
             }
         }
+        .id(index)
     }
 
-    private func relayRow(_ relay: PairedRelayAgent) -> some View {
+    private func relayRow(_ relay: PairedRelayAgent, index: Int) -> some View {
         let isCurrent = activeRelayAgent?.id == relay.id
         return PopoverRow(
             isCurrent: isCurrent,
+            isHighlighted: keyboard.highlightedIndex == index,
             onTap: {
                 isPopoverPresented = false
                 onSelectRelayAgent?(relay)
@@ -503,16 +664,27 @@ struct AgentPill: View {
                 .foregroundColor(theme.primaryText)
                 .lineLimit(1)
         }
+        .id(index)
     }
 }
 
 private struct PopoverRow<Content: View>: View {
     let isCurrent: Bool
+    /// Keyboard-focus highlight (arrow-key navigation). Distinct from hover so
+    /// the user can tell which row Enter will activate.
+    var isHighlighted: Bool = false
     let onTap: () -> Void
     @ViewBuilder let content: () -> Content
 
     @Environment(\.theme) private var theme
     @State private var isHovered = false
+
+    private var rowBackground: Color {
+        if isCurrent { return theme.accentColor.opacity(0.10) }
+        if isHighlighted { return theme.secondaryBackground.opacity(0.9) }
+        if isHovered { return theme.secondaryBackground.opacity(0.6) }
+        return .clear
+    }
 
     var body: some View {
         Button(action: onTap) {
@@ -529,10 +701,13 @@ private struct PopoverRow<Content: View>: View {
             .padding(.vertical, 6)
             .background(
                 RoundedRectangle(cornerRadius: 8)
-                    .fill(
-                        isCurrent
-                            ? theme.accentColor.opacity(0.10)
-                            : (isHovered ? theme.secondaryBackground.opacity(0.6) : Color.clear)
+                    .fill(rowBackground)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(
+                        isHighlighted ? theme.accentColor.opacity(0.5) : Color.clear,
+                        lineWidth: 1
                     )
             )
             .contentShape(Rectangle())
