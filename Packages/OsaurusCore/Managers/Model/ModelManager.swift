@@ -112,9 +112,10 @@ final class ModelManager: NSObject, ObservableObject {
             /// Only include models whose `compatibility` is `.tight`
             /// (memory usage between 75 % and 95 % of total RAM)
             case tightFit = "Tight Fit"
-            /// Exclude models whose `compatibility` is `.tooLarge`
-            /// (memory usage above the 95 % ratio threshold). Models with
-            /// unknown memory info pass through unchanged
+            /// Exclude models whose advisory `compatibility` is `.tooLarge`
+            /// (memory usage above the 95 % ratio threshold). This filter is
+            /// user-selected catalog triage only; runtime load/download does
+            /// not block RAM pressure from this estimate.
             case hideTooLarge = "Hide Too Large"
 
             var id: String { rawValue }

@@ -152,7 +152,7 @@ public actor ModelRuntime {
 
     /// Result of the most recent pre-load RAM feasibility check. Surfaced via
     /// `lastRAMFeasibilitySnapshot()` so `/health` and the model picker can
-    /// show why a load was refused or flagged as tight without re-scanning.
+    /// show why a load was flagged as tight without re-scanning.
     private var lastRAMFeasibility: RAMFeasibility?
 
     /// Every in-flight generation wrapper task, keyed by a monotonic id.
@@ -635,7 +635,8 @@ public actor ModelRuntime {
             /// Above the soft (warn) threshold but below the hard ceiling —
             /// loaded anyway, but resident pressure is high.
             case tight
-            /// Above the hard ceiling — the load was refused.
+            /// Reserved for explicit future policy refusals. RAM pressure
+            /// alone is advisory and should not set this verdict.
             case refused
         }
         public let modelName: String
@@ -834,12 +835,13 @@ public actor ModelRuntime {
         lastRAMFeasibility
     }
 
-    /// Pre-load RAM feasibility gate. Records `lastRAMFeasibility` for
-    /// observability and throws only when the projected footprint exceeds the
-    /// physical hard ceiling. A low immediately-free page count is recorded as
-    /// `.tight` (warn) but does not refuse — unified memory makes that count an
-    /// unreliable proxy for whether a load can succeed. Applies to all
-    /// eviction policies.
+    /// Pre-load RAM feasibility assessment. Records `lastRAMFeasibility` for
+    /// observability but does not reject a user-requested load solely because
+    /// RAM is currently full or projected pressure crosses a configured
+    /// fraction of physical memory. Unified-memory macOS can compress, purge,
+    /// and page mmap-backed weights; hard rejection here blocked valid
+    /// JANG/JANGTQ/quantized loads before vMLX could prove the real footprint.
+    /// Applies to all eviction policies.
     private func checkRAMFeasibility(
         modelName: String,
         incomingWeightsBytes: Int64,
@@ -867,19 +869,16 @@ public actor ModelRuntime {
         let softLimit = Int64(Double(physical) * thresholds.soft)
         let hardLimit = Int64(Double(physical) * thresholds.hard)
 
-        // Refusal is gated solely on the projected footprint vs. the physical
-        // hard ceiling. On unified-memory Macs the OS satisfies a load by
-        // compressing/evicting, so the immediately-free page count (`available`)
-        // routinely sits well below a model's full weight size even when the
-        // load would succeed. Treat a shortfall there as `.tight` (warn) rather
-        // than refusing — otherwise an un-discounted bundle (e.g. a non-routed
-        // MXFP8 MoE budgeted at its whole shard total) is rejected before
-        // vMLX's mmap-backed loader can prove the real footprint.
+        // On unified-memory Macs the OS satisfies a load by compressing,
+        // evicting, or paging, so the immediately-free page count
+        // (`available`) routinely sits below a model's full weight size even
+        // when the load would succeed. A hard threshold refusal here is a fake
+        // stability fix: it avoids crashes by blocking valid mmap-backed
+        // loads. Keep the signal, evict idle resident models before this
+        // point, and let real load errors propagate.
         let lowAvailable = available > 0 && requiredAvailable > available
         let verdict: RAMFeasibility.Verdict
-        if projected > hardLimit {
-            verdict = .refused
-        } else if projected > softLimit || lowAvailable {
+        if projected > hardLimit || projected > softLimit || lowAvailable {
             verdict = .tight
         } else {
             verdict = .ok
@@ -905,26 +904,16 @@ public actor ModelRuntime {
         case .ok:
             break
         case .tight:
-            genLog.error(
-                "loadContainer: RAM tight for \(modelName, privacy: .public) projected=\(projected, privacy: .public) soft=\(softLimit, privacy: .public) physical=\(physical, privacy: .public) available=\(available, privacy: .public) requiredAvailable=\(requiredAvailable, privacy: .public)"
+            genLog.warning(
+                "loadContainer: RAM tight for \(modelName, privacy: .public) projected=\(projected, privacy: .public) soft=\(softLimit, privacy: .public) hard=\(hardLimit, privacy: .public) physical=\(physical, privacy: .public) available=\(available, privacy: .public) requiredAvailable=\(requiredAvailable, privacy: .public)"
             )
         case .refused:
-            genLog.error(
-                "loadContainer: refusing \(modelName, privacy: .public) — projected footprint \(projected, privacy: .public)B hard limit \(hardLimit, privacy: .public)B available \(available, privacy: .public)B requiredAvailable \(requiredAvailable, privacy: .public)B physical \(physical, privacy: .public)B"
+            genLog.warning(
+                "loadContainer: RAM assessment marked refused for \(modelName, privacy: .public), but RAM pressure preflight is advisory; proceeding"
             )
             CrashReportingService.recordBreadcrumb(
                 category: "model.load",
-                message:
-                    "refused model=\(modelName) weightsBytes=\(incomingWeightsBytes) loadFootprintBytes=\(incomingLoadFootprintBytes) kvHeadroomBytes=\(kvHeadroom) availableBytes=\(available) requiredAvailableBytes=\(requiredAvailable) physicalBytes=\(physical)"
-            )
-            let projGB = String(format: "%.1f", Double(projected) / 1_073_741_824)
-            let physGB = String(format: "%.1f", Double(physical) / 1_073_741_824)
-            let availGB = String(format: "%.1f", Double(max(available, 0)) / 1_073_741_824)
-            let requiredGB = String(format: "%.1f", Double(requiredAvailable) / 1_073_741_824)
-            throw LoadRefusedError(
-                modelName: modelName,
-                message:
-                    "Not enough memory to load \(modelName): needs ~\(requiredGB) GB available now (~\(projGB) GB projected with resident models), but this Mac has \(availGB) GB currently available out of \(physGB) GB. Clear memory, unload other models, or choose a smaller/more-quantized model."
+                message: "ram-advisory model=\(modelName) verdict=refused"
             )
         }
     }
@@ -1254,11 +1243,10 @@ public actor ModelRuntime {
         }
         try Task.checkCancellation()
 
-        // Pre-load RAM feasibility gate (all policies). After strict eviction /
-        // flexible budget trimming above, `resident` reflects what will still
-        // be alive when this load lands. If projected footprint blows past the
-        // hard ceiling, refuse with a clear error instead of letting the OS
-        // jetsam/OOM-kill us mid-load. A softer threshold only warns.
+        // Pre-load RAM feasibility assessment (all policies). After strict
+        // eviction / flexible budget trimming above, `resident` reflects what
+        // will still be alive when this load lands. Pressure is reported via
+        // health/logs, but RAM fullness is not a user-requested load block.
         try checkRAMFeasibility(
             modelName: name,
             incomingWeightsBytes: weightsBytes,

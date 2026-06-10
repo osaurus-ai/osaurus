@@ -17,6 +17,22 @@ struct RuntimePolicySourceTests {
         return try String(contentsOf: url, encoding: .utf8)
     }
 
+    private static func functionBody(_ signature: String, in source: String) throws -> String {
+        let start = try #require(source.range(of: signature))
+        let peers = [
+            "\n    private func ",
+            "\n    private static func ",
+            "\n    private nonisolated static func ",
+            "\n    @Test",
+        ]
+        let end =
+            peers.compactMap {
+                source.range(of: $0, range: start.upperBound ..< source.endIndex)?.lowerBound
+            }
+            .min() ?? source.endIndex
+        return String(source[start.lowerBound ..< end])
+    }
+
     private static func vmlxPinRevision(in source: String) throws -> String {
         let location = try #require(source.range(of: "https://github.com/osaurus-ai/vmlx-swift"))
         let end = source.index(location.lowerBound, offsetBy: 800, limitedBy: source.endIndex) ?? source.endIndex
@@ -1795,7 +1811,7 @@ struct RuntimePolicySourceTests {
         )
         #expect(
             loadPreflight.contains("checkRAMFeasibility("),
-            "All policies must pass the pre-load RAM feasibility gate before vmlx starts loading."
+            "All policies must record the pre-load RAM feasibility assessment before vmlx starts loading."
         )
         #expect(
             runtime.contains("ServerRuntimeSettingsStore.modelLoadRAMThresholds()")
@@ -1808,19 +1824,22 @@ struct RuntimePolicySourceTests {
             runtime.contains("availableMemoryBytes()")
                 && runtime.contains("requiredAvailable > available")
                 && runtime.contains("incomingLoadFootprintBytes")
-                && runtime.contains("availableBytes=")
-                && runtime.contains("Clear memory, unload other models, or choose a smaller/more-quantized model."),
-            "The load gate must track available memory and expose a user-actionable resource message when it refuses, not a fatal C++ exception."
+                && runtime.contains("availableMemoryBytes: available"),
+            "The load assessment must track available memory and expose it through health/logs without using it as a hard RAM block."
         )
-        // A low immediately-free page count must not by itself refuse a load:
-        // unified memory makes that count an unreliable proxy for whether a
-        // load can succeed, so refusal is gated on the physical hard ceiling
-        // (`projected > hardLimit`) while low-available only marks `.tight`.
+        let assessmentBody = try Self.functionBody(
+            "private func checkRAMFeasibility",
+            in: runtime
+        )
+        // RAM pressure must not refuse a user-requested load: unified memory
+        // makes both free pages and projected hard-threshold estimates
+        // advisory for mmap-backed JANG/JANGTQ/quantized loads.
         #expect(
-            runtime.contains("let lowAvailable = available > 0 && requiredAvailable > available")
-                && runtime.contains("if projected > hardLimit {")
-                && runtime.contains("} else if projected > softLimit || lowAvailable {"),
-            "Refusal must depend only on the physical hard ceiling; a free-page shortfall warns (.tight) but does not block a load vMLX could satisfy via unified memory."
+            assessmentBody.contains("let lowAvailable = available > 0 && requiredAvailable > available")
+                && assessmentBody.contains("projected > hardLimit || projected > softLimit || lowAvailable")
+                && !assessmentBody.contains("throw LoadRefusedError(")
+                && !assessmentBody.contains("verdict = .refused"),
+            "RAM pressure must warn as .tight, not throw or mark a hard refusal before vMLX attempts the load."
         )
 
         let health = try Self.source("Networking/HTTPHandler.swift")

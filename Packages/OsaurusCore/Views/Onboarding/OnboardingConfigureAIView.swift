@@ -166,21 +166,17 @@ final class ConfigureAIState: ObservableObject {
     /// both finalize. Reset whenever credentials are cleared (back / reselect).
     var hasFinalizedAPI = false
 
-    /// Whether the Local tab should be offered at all on this Mac. Under the
-    /// `cloudDefaultMemoryCeilingGB` threshold the curated local picks are too
-    /// heavy to run well, so we hide Local entirely and steer the user to a
-    /// hosted provider. `totalMemoryGB <= 0` (monitor not reported yet) fails
-    /// open so we never wrongly hide Local on a capable machine.
+    /// Whether the Local tab should be offered at all on this Mac. RAM is an
+    /// advisory fit signal only; users can still choose local models on small
+    /// machines because mmap-backed runtimes may succeed under macOS memory
+    /// compression/paging even when a static estimate looks tight.
     static func isLocalTabAvailable(totalMemoryGB: Double) -> Bool {
-        totalMemoryGB <= 0 || totalMemoryGB >= cloudDefaultMemoryCeilingGB
+        true
     }
 
-    /// Paths offered on this Mac: both tabs normally, Cloud-only when the
-    /// machine can't comfortably run a local brain.
+    /// Paths offered on this Mac.
     func availablePaths(totalMemoryGB: Double) -> [ConfigurePath] {
-        Self.isLocalTabAvailable(totalMemoryGB: totalMemoryGB)
-            ? [.local, .apiProvider]
-            : [.apiProvider]
+        [.local, .apiProvider]
     }
 
     // No footer caption on either tab. The reassurance copy crowded the footer,
@@ -253,24 +249,15 @@ final class ConfigureAIState: ObservableObject {
         }
     }
 
-    /// At or below this much unified memory, onboarding defaults to the Cloud
-    /// tab: the curated local picks are compute-intensive, so a small machine
-    /// is more likely to have a good first run with a hosted provider.
-    private static let cloudDefaultMemoryCeilingGB: Double = 24
-
-    /// Picks the lowest-friction default tab for this Mac on first appearance
-    /// (see `cloudDefaultMemoryCeilingGB`). Applied at most once (see
-    /// `didApplyDefaultPath`) so it never overrides a path the user chose by
-    /// hand.
+    /// Picks the lowest-friction default tab for this Mac on first appearance.
+    /// Local remains available even on low-RAM Macs; compatibility only affects
+    /// the recommended model and warning badges.
     func applyDefaultPathIfNeeded(totalMemoryGB: Double) {
         guard !didApplyDefaultPath else { return }
         // `totalMemoryGB == 0` means the monitor hasn't reported yet; wait for
         // a real value before committing to a default.
         guard totalMemoryGB > 0 else { return }
         didApplyDefaultPath = true
-        if totalMemoryGB <= Self.cloudDefaultMemoryCeilingGB {
-            selectedPath = .apiProvider
-        }
     }
 
     /// Auto-selects the recommended local pick — the best model this Mac can
@@ -286,14 +273,11 @@ final class ConfigureAIState: ObservableObject {
     ///      quality, so "the best the machine can handle" is the best
     ///      first-run experience.
     ///
-    /// Stays nil when nothing is downloaded and every curated candidate is
-    /// `.tooLarge`, so the picker shows the empty-state redirect instead.
+    /// Falls back to the smallest curated top pick when every option is tight
+    /// or too large, so onboarding never dead-ends on RAM estimates alone.
     /// `.unknown` (no param info / monitor not yet populated) fails open.
     func ensureLocalSelection(totalMemoryGB: Double) {
         guard selectedModel == nil else { return }
-        let fits: (MLXModel) -> Bool = {
-            $0.compatibility(totalMemoryGB: totalMemoryGB) != .tooLarge
-        }
 
         // 1. A curated top pick already on disk wins. Onboarding only shows
         // top picks, so we don't fall back to ad-hoc downloaded models that
@@ -305,13 +289,14 @@ final class ConfigureAIState: ObservableObject {
         }
 
         // 2. The largest top pick the Mac can comfortably run.
-        let candidates = ModelManager.shared.suggestedModels.filter {
-            $0.isTopSuggestion && fits($0)
-        }
+        let candidates = ModelManager.shared.suggestedModels.filter(\.isTopSuggestion)
         let comfortable = candidates.filter {
             $0.compatibility(totalMemoryGB: totalMemoryGB) == .compatible
         }
-        let pool = comfortable.isEmpty ? candidates : comfortable
+        let tight = candidates.filter {
+            $0.compatibility(totalMemoryGB: totalMemoryGB) == .tight
+        }
+        let pool = !comfortable.isEmpty ? comfortable : (!tight.isEmpty ? tight : candidates)
         selectedModel =
             pool.max(by: { ($0.estimatedMemoryGB ?? 0) < ($1.estimatedMemoryGB ?? 0) })
             ?? candidates.first
@@ -826,18 +811,7 @@ struct ConfigureAIBody: View {
     @ViewBuilder
     private var localPickerView: some View {
         let pairs = localPickerModels
-        // A model already on disk is always selectable — the user
-        // downloaded (and presumably ran) it before, so the compat
-        // heuristic shouldn't lock them out. Only not-yet-downloaded
-        // curated picks are gated on fit.
-        let hasAnyRunnable = pairs.contains { $0.model.isDownloaded || $0.compatibility != .tooLarge }
-
-        // When nothing fits (no models on disk and no runnable curated
-        // pick), redirecting to the Cloud / Ollama tab beats a dead-end
-        // list of disabled rows.
-        if !hasAnyRunnable {
-            localNoCompatibleModelsView
-        } else {
+        if !pairs.isEmpty {
             // Be opinionated: surface a single recommended pick (the model
             // `ensureLocalSelection` chose) and tuck everything else behind a
             // disclosure, so first-run isn't a wall of model choices.
@@ -882,7 +856,7 @@ struct ConfigureAIBody: View {
             badgesBelowTitle: true,
             accessory: .radio(isSelected: state.selectedModel?.id == model.id),
             isSelected: state.selectedModel?.id == model.id,
-            isDisabled: pair.compatibility == .tooLarge && !model.isDownloaded
+            isDisabled: false
         ) {
             // No `withAnimation` — selecting a model otherwise
             // morphs the CTA between "Continue" and
@@ -946,53 +920,6 @@ struct ConfigureAIBody: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
-        }
-    }
-
-    /// Empty-state shown when no curated top suggestion can run on this
-    /// Mac. Buttons drive the same `selectPath(...)` machinery as the
-    /// segmented control so the substate slide stays consistent.
-    private var localNoCompatibleModelsView: some View {
-        OnboardingGlassCard {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack(spacing: 12) {
-                    ZStack {
-                        Circle()
-                            .fill(theme.warningColor.opacity(0.14))
-                            .frame(
-                                width: OnboardingMetrics.cardIcon,
-                                height: OnboardingMetrics.cardIcon
-                            )
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .font(.system(size: 16, weight: .medium))
-                            .foregroundColor(theme.warningColor)
-                    }
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("No local models fit this Mac", bundle: .module)
-                            .font(theme.font(size: 14, weight: .semibold))
-                            .foregroundColor(theme.primaryText)
-                        Text(
-                            "Local models are compute-intensive and our curated picks need more unified memory than this machine has. We recommend a different path.",
-                            bundle: .module
-                        )
-                        .font(theme.font(size: 12))
-                        .foregroundColor(theme.secondaryText)
-                        .fixedSize(horizontal: false, vertical: true)
-                    }
-                    Spacer(minLength: 0)
-                }
-
-                HStack(spacing: 10) {
-                    Spacer()
-                    OnboardingCompactButton(
-                        title: "Pick a Cloud provider",
-                        style: .accent,
-                        action: { state.selectPath(.apiProvider) }
-                    )
-                }
-            }
-            .padding(.horizontal, OnboardingMetrics.cardPaddingH)
-            .padding(.vertical, OnboardingMetrics.cardPaddingV)
         }
     }
 

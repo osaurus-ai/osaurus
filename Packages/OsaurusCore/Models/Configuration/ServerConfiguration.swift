@@ -70,7 +70,8 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
     /// Projected physical-memory fraction above which a model load is marked tight.
     public var modelLoadRAMSoftThreshold: Double
 
-    /// Projected physical-memory fraction above which a model load is refused.
+    /// Projected physical-memory fraction above which a model load is marked
+    /// very tight. This is advisory telemetry, not a load/download block.
     public var modelLoadRAMHardThreshold: Double
 
     /// Maximum HTTP request body size, in bytes, accepted by the public

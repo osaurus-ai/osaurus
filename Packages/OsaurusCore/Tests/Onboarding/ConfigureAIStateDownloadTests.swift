@@ -104,4 +104,48 @@ struct ConfigureAIStateDownloadTests {
         let after = ModelManager.shared.downloadService.downloadStates[model.id]
         #expect(after == .notStarted)
     }
+
+    @Test func localPathStaysAvailableAt24GBAndBelow() {
+        #expect(ConfigureAIState.isLocalTabAvailable(totalMemoryGB: 24) == true)
+        #expect(ConfigureAIState.isLocalTabAvailable(totalMemoryGB: 8) == true)
+
+        let state = ConfigureAIState()
+        #expect(state.availablePaths(totalMemoryGB: 24) == [.local, .apiProvider])
+        #expect(state.availablePaths(totalMemoryGB: 8) == [.local, .apiProvider])
+
+        state.selectedPath = .local
+        state.applyDefaultPathIfNeeded(totalMemoryGB: 24)
+        #expect(state.selectedPath == .local)
+    }
+
+    @Test func ensureLocalSelectionDoesNotDeadEndWhenAllCuratedModelsAreTooLarge() {
+        let manager = ModelManager.shared
+        let originalSuggested = manager.suggestedModels
+        defer { manager.suggestedModels = originalSuggested }
+
+        manager.suggestedModels = [
+            MLXModel(
+                id: "test/large-a-\(UUID().uuidString)",
+                name: "Large A",
+                description: "",
+                downloadURL: "https://example.com/large-a",
+                isTopSuggestion: true,
+                downloadSizeBytes: 40 * 1024 * 1024 * 1024
+            ),
+            MLXModel(
+                id: "test/large-b-\(UUID().uuidString)",
+                name: "Large B",
+                description: "",
+                downloadURL: "https://example.com/large-b",
+                isTopSuggestion: true,
+                downloadSizeBytes: 48 * 1024 * 1024 * 1024
+            ),
+        ]
+
+        let state = ConfigureAIState()
+        state.ensureLocalSelection(totalMemoryGB: 24)
+
+        #expect(state.selectedModel != nil)
+        #expect(state.selectedModel?.isTopSuggestion == true)
+    }
 }

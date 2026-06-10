@@ -139,7 +139,7 @@ struct OnboardingRowBadge {
         case success
         /// Yellow chip — used for the "Tight fit" capability hint.
         case warning
-        /// Red chip — used for "Too large for this Mac" on disabled rows.
+        /// Red chip — used for high-risk compatibility warnings.
         case error
         /// Category chip whose color, icon, and label all come from the
         /// `ModelUseCase`. The badge's `text` field is unused for this
