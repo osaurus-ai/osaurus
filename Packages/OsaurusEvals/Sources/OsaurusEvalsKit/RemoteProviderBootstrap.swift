@@ -61,6 +61,22 @@ public enum EvalRemoteProviderBootstrap {
             providerType: .anthropic,
             headers: { ["x-api-key": $0, "anthropic-version": "2023-06-01"] }
         ),
+        // Native Gemini GenerateContent API: auth rides in `x-goog-api-key`,
+        // matching the app's Google preset (host + /v1beta base path).
+        "google": Preset(
+            name: "Google",
+            host: "generativelanguage.googleapis.com",
+            basePath: "/v1beta",
+            envKey: "GEMINI_API_KEY",
+            providerType: .gemini,
+            headers: { ["x-goog-api-key": $0] }
+        ),
+        "deepseek": Preset(
+            name: "DeepSeek",
+            host: "api.deepseek.com",
+            basePath: "/v1",
+            envKey: "DEEPSEEK_API_KEY"
+        ),
     ]
 
     /// Connect ephemeral providers for every remote `provider/name` model

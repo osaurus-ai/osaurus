@@ -287,15 +287,21 @@ public enum AgentLoopEvaluator {
         /// Append the assistant turn carrying this step's tool calls.
         /// Call ids are pre-assigned (preserving model-supplied ids) so the
         /// history's `tool_calls[].id` and the driver's per-call ids match.
+        /// Provider reasoning state is carried through like the chat surface
+        /// does: Gemini 3.x 400s if a functionCall part is re-sent without
+        /// its thought signature, and DeepSeek thinking mode 400s if
+        /// `reasoning_content` is not echoed back on assistant turns.
         func appendAssistantToolCalls(
             _ invocations: [ServiceToolInvocation],
-            content: String?
+            content: String?,
+            reasoning: String? = nil
         ) -> [ServiceToolInvocation] {
             let withIds = invocations.map { inv in
                 ServiceToolInvocation(
                     toolName: inv.toolName,
                     jsonArguments: inv.jsonArguments,
-                    toolCallId: AgentToolLoop.callId(for: inv)
+                    toolCallId: AgentToolLoop.callId(for: inv),
+                    geminiThoughtSignature: inv.geminiThoughtSignature
                 )
             }
             history.append(
@@ -306,10 +312,12 @@ public enum AgentLoopEvaluator {
                         ToolCall(
                             id: $0.toolCallId ?? "",
                             type: "function",
-                            function: ToolCallFunction(name: $0.toolName, arguments: $0.jsonArguments)
+                            function: ToolCallFunction(name: $0.toolName, arguments: $0.jsonArguments),
+                            geminiThoughtSignature: $0.geminiThoughtSignature
                         )
                     },
-                    tool_call_id: nil
+                    tool_call_id: nil,
+                    reasoning_content: (reasoning?.isEmpty == false) ? reasoning : nil
                 )
             )
             return withIds
@@ -413,12 +421,19 @@ public enum AgentLoopEvaluator {
                     // and tool-call assembly — where most local-model parser
                     // bugs live — are part of what's under test.
                     var content = ""
+                    // Reasoning deltas are kept (not shown in finalText) so
+                    // assistant turns can echo `reasoning_content` back to
+                    // providers that require it in thinking mode (DeepSeek).
+                    var reasoning = ""
                     do {
                         let stream = try await engine.streamChat(
                             request: makeRequest(effective, stream: true)
                         )
                         for try await delta in stream {
-                            if StreamingReasoningHint.decode(delta) != nil { continue }
+                            if let fragment = StreamingReasoningHint.decode(delta) {
+                                reasoning += fragment
+                                continue
+                            }
                             if StreamingStatsHint.decode(delta) != nil { continue }
                             if StreamingToolHint.isSentinel(delta) { continue }
                             content += delta
@@ -436,11 +451,13 @@ public enum AgentLoopEvaluator {
                         // of the tool results they describe.
                         finalText = ""
                         return .toolCalls(
-                            appendAssistantToolCalls(invs.invocations, content: content)
+                            appendAssistantToolCalls(
+                                invs.invocations, content: content, reasoning: reasoning)
                         )
                     } catch let inv as ServiceToolInvocation {
                         finalText = ""
-                        return .toolCalls(appendAssistantToolCalls([inv], content: content))
+                        return .toolCalls(
+                            appendAssistantToolCalls([inv], content: content, reasoning: reasoning))
                     }
                 }
 
@@ -457,14 +474,16 @@ public enum AgentLoopEvaluator {
                     return .finalResponse
                 }
                 // Tool calls present: any prose on this turn is interim
-                // narration, not the final answer.
+                // narration, not the final answer. `reasoning_content` is
+                // preserved for providers that require it echoed (DeepSeek).
                 finalText = ""
                 history.append(
                     ChatMessage(
                         role: "assistant",
                         content: choice.message.content,
                         tool_calls: calls,
-                        tool_call_id: nil
+                        tool_call_id: nil,
+                        reasoning_content: choice.message.reasoning_content
                     )
                 )
                 return .toolCalls(
