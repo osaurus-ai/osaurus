@@ -162,10 +162,14 @@ jobs:
           # We deliberately pass a dummy resultBundlePath check first because
           # xcodebuild refuses to overwrite an existing bundle.
           rm -rf "$XCRESULT_PATH"
-          # Per-test-case allowance (60s / 120s hard cap) surfaces a hung
-          # test BEFORE the job wall-timeout — and crucially, surfaces it
-          # WITH A NAME ATTACHED in the xcresult bundle, which the failure
-          # summary step below relies on.
+          # Per-test-case allowance surfaces a hung test BEFORE the job
+          # wall-timeout — and crucially, surfaces it WITH A NAME ATTACHED
+          # in the xcresult bundle, which the failure summary step below
+          # relies on. Keep this above the scheduler-starvation noise floor:
+          # Swift Testing can start hundreds of async suites at once, and
+          # Xcode's default parallel workers have produced false 60s
+          # timeouts on trivial @MainActor tests while a second xctest
+          # worker was still draining unrelated shell/timer-heavy rows.
           #
           # Why no `--quiet` on xcbeautify and no `-test-iterations`:
           # both were band-aids that landed during PR #878's launch-hang
@@ -195,9 +199,12 @@ jobs:
             -skipPackagePluginValidation \
             -skipMacroValidation \
             -enableCodeCoverage NO \
+            -parallel-testing-enabled NO \
+            -parallel-testing-worker-count 1 \
+            -maximum-parallel-testing-workers 1 \
             -test-timeouts-enabled YES \
-            -default-test-execution-time-allowance 60 \
-            -maximum-test-execution-time-allowance 120 \
+            -default-test-execution-time-allowance 180 \
+            -maximum-test-execution-time-allowance 300 \
             COMPILER_INDEX_STORE_ENABLE=NO \
             SWIFT_COMPILATION_MODE=incremental \
             | xcbeautify --renderer github-actions --is-ci \
