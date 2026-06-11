@@ -10,22 +10,32 @@
 
 import Foundation
 
+/// Serial queue that owns every debug-log disk write. Callers only pay for the
+/// (cheap) line formatting on their own thread; the `open`/`seek`/`write`/`close`
+/// all happen here, off whatever thread — frequently the main actor — invoked
+/// `debugLog`. A serial queue also preserves append ordering across concurrent
+/// callers without a lock.
+private let debugLogQueue = DispatchQueue(label: "com.osaurus.debuglog", qos: .utility)
+
 /// Writes a timestamped line to `/tmp/osaurus_debug.log`.
 ///
-/// Safe to call from any actor or thread.  Uses `FileHandle` for append-only
-/// writes so concurrent calls from different threads do not corrupt the file.
+/// Safe to call from any actor or thread. The file I/O is dispatched
+/// asynchronously onto a serial queue so callers never block on disk — a
+/// synchronous `open()` here previously tripped the main-thread hang watchdog.
 @inline(__always)
 func debugLog(_ msg: String) {
     let line = "[\(Date())] \(msg)\n"
-    guard let data = line.data(using: .utf8) else { return }
-    let path = "/tmp/osaurus_debug.log"
-    if FileManager.default.fileExists(atPath: path) {
-        if let fh = FileHandle(forWritingAtPath: path) {
-            fh.seekToEndOfFile()
-            fh.write(data)
-            fh.closeFile()
+    debugLogQueue.async {
+        guard let data = line.data(using: .utf8) else { return }
+        let path = "/tmp/osaurus_debug.log"
+        if FileManager.default.fileExists(atPath: path) {
+            if let fh = FileHandle(forWritingAtPath: path) {
+                fh.seekToEndOfFile()
+                fh.write(data)
+                fh.closeFile()
+            }
+        } else {
+            try? data.write(to: URL(fileURLWithPath: path))
         }
-    } else {
-        try? data.write(to: URL(fileURLWithPath: path))
     }
 }
