@@ -1968,8 +1968,6 @@ struct RuntimePolicySourceTests {
         #expect(httpHandler.contains("\"last_effective_generation_by_model\""))
         #expect(httpHandler.contains("It intentionally avoids `ModelRuntime`"))
 
-        let adapter = try Self.source("Services/ModelRuntime/MLXBatchAdapter.swift")
-        let runtime = try Self.source("Services/ModelRuntime.swift")
         #expect(adapter.contains("recordPendingEffectiveGenerationSettings("))
         #expect(adapter.contains("stage: \"pending_preload\""))
         #expect(adapter.contains("stage: \"submitted_to_batch_engine\""))
