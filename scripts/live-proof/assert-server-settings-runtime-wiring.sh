@@ -144,6 +144,18 @@ require_text "$RUNTIME" 'settings\.resolvedLoadConfiguration' \
   "runtime consumes MTP load configuration"
 require_text "$RUNTIME" 'settings\.resolvedMTPDraftStrategy' \
   "runtime consumes MTP draft strategy"
+require_text "$RUNTIME" 'resolveMemorySafetyLoadPlan' \
+  "runtime resolves memory-safety plan for model loads"
+require_text "$RUNTIME" 'memorySafetyPlan\.loadConfiguration' \
+  "runtime applies memory-safety load configuration"
+require_text "$RUNTIME" 'memorySafety=\\\(mtpPlan\.memorySafetySummary' \
+  "runtime logs resolved memory-safety summary during load"
+require_text "$ROOT/Packages/OsaurusCore/Networking/HTTPHandler.swift" '"memory_safety": Self\.memorySafetyJSONObject' \
+  "cache stats expose memory-safety status"
+require_text "$ROOT/Packages/OsaurusCore/Networking/HTTPHandler.swift" '"display_summary": plan\.displaySummary' \
+  "memory-safety status exposes display summary"
+require_text "$ROOT/Packages/OsaurusCore/Networking/HTTPHandler.swift" '"memory_status": memoryStatusJSONObject' \
+  "memory-safety status exposes live memory status"
 require_text "$ADAPTER" 'turboQuantCompressions' \
   "runtime diagnostics report TurboQuant compression count"
 require_text "$ADAPTER" 'nativeMTPDepthSummary' \
