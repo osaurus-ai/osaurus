@@ -323,11 +323,16 @@ struct ModelManagerTests {
         let root = URL(fileURLWithPath: (rawRoot as NSString).expandingTildeInPath, isDirectory: true)
         let detected = ModelManager.scanLocalModels(at: root)
         let ids = Set(detected.map { $0.id.lowercased() })
-        #expect(ids.contains("osaurusai/gemma-4-e2b-it-qat-mxfp4"))
-        #expect(ids.contains("osaurusai/gemma-4-e4b-it-qat-mxfp4"))
-        #expect(ids.contains("osaurusai/gemma-4-12b-it-qat-mxfp4"))
-        #expect(ids.contains("osaurusai/gemma-4-26b-a4b-it-qat-mxfp4"))
-        #expect(ids.contains("osaurusai/gemma-4-31b-it-qat-mxfp4"))
+
+        func containsGemma(_ repo: String) -> Bool {
+            ids.contains("osaurusai/\(repo)") || ids.contains("jangq-ai/\(repo)") || ids.contains(repo)
+        }
+
+        #expect(containsGemma("gemma-4-e2b-it-qat-mxfp4"))
+        #expect(containsGemma("gemma-4-e4b-it-qat-mxfp4"))
+        #expect(containsGemma("gemma-4-12b-it-qat-mxfp4"))
+        #expect(containsGemma("gemma-4-26b-a4b-it-qat-mxfp4"))
+        #expect(containsGemma("gemma-4-31b-it-qat-mxfp4"))
     }
 
     @Test func scanLocalModels_skipsLargeSupportTreesBesideJANGBundles() async throws {

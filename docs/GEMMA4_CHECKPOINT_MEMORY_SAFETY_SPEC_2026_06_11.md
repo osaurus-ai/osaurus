@@ -28,6 +28,8 @@ Current PR #1465 proof baseline:
   `.agents/gemma-final/artifacts/pr1465-external-root-post-disk-approval-vmlx_76047f3-20260611-071401/SUMMARY.json`
 - Post-notification-approval tool/cache proof after macOS disk approval:
   `.agents/gemma-final/artifacts/pr1465-post-notification-approval-e2b-tool-cache-vmlx_76047f3-20260611-083237/POST_APPROVAL_SUMMARY.json`
+- External-root all-ten proof after macOS disk access approval:
+  `.agents/gemma-final/artifacts/pr1465-external-root-all10-direct-parent-vmlx_76047f3-20260611-105825/tool-cache-all10/SUMMARY.json`
 
 ## Gemma 4 Live Proof
 
@@ -76,6 +78,19 @@ Representative release-speed proof from API-reported token/s:
 
 Current PR #1465 all-ten text/tool/cache artifact:
 `.agents/gemma-final/artifacts/pr1465-gemma-42fd-debug-all10-live-20260611-051547/tool-cache-all10/SUMMARY.json`.
+
+Current PR #1465 external-root all-ten text/tool/cache artifact after macOS
+disk access approval:
+`.agents/gemma-final/artifacts/pr1465-external-root-all10-direct-parent-vmlx_76047f3-20260611-105825/tool-cache-all10/SUMMARY.json`.
+
+The external-root run launched the PR-built Debug app directly with
+`OSU_MODELS_DIR=/Volumes/EricsLLMDrive/jangq-ai`, confirmed all ten Gemma rows
+were listed by `/v1/models`, then reran the same multi-turn required-tool/cache
+harness. All ten rows passed exact tool arguments, tool-result grounding,
+second required tool call after history, no protocol leakage, healthy server
+state, Safe Auto memory-safety telemetry, bundle defaults
+`temperature=1`, `top_k=64`, `top_p=0.95`, and Gemma rotating/full KV with
+disk-backed restore. Every row still reported `turbo_quant_kv_layer_count=0`.
 
 Current PR #1465 no-weird-character/tool-leak artifact:
 `.agents/gemma-final/artifacts/pr1465-gemma-42fd-debug-all10-live-20260611-051547/no-weird-chars-tool-leak-all10.json`.
