@@ -7476,6 +7476,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             }
 
             let memoryConfig = MemoryConfigurationStore.load()
+            let localModelScan: Any = ModelManager.localModelsScanDiagnosticJSONObject() as Any? ?? NSNull()
             let obj: [String: Any] = [
                 "status": "healthy",
                 "timestamp": Date().ISO8601Format(),
@@ -7492,6 +7493,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 "sandbox_status": sandboxStatus,
                 "mlx_last_error": mlxLastError,
                 "index_failures": indexFailures,
+                "local_model_scan": localModelScan,
                 "ram_feasibility": ramFeasibility,
                 "persistence": PersistenceHealth.shared.snapshot(),
             ]

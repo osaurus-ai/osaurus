@@ -402,6 +402,21 @@ struct ModelManagerTests {
         #expect(second.map(\.id) == ["gemma-4-E2B-it-qat-MXFP4"])
     }
 
+    @Test func scanLocalModels_recordsMissingRootDiagnostic() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("osu-missing-model-root-\(UUID().uuidString)", isDirectory: true)
+
+        let detected = ModelManager.scanLocalModels(at: root)
+
+        #expect(detected.isEmpty)
+        let diagnostic = try #require(ModelManager.localModelsScanDiagnosticJSONObject())
+        #expect(diagnostic["root"] as? String == root.path)
+        #expect(diagnostic["root_exists"] as? Bool == false)
+        #expect(diagnostic["status"] as? String == "failed")
+        #expect(diagnostic["model_count"] as? Int == 0)
+        #expect((diagnostic["error"] as? String)?.contains("missing") == true)
+    }
+
     @Test func deleteModel_removesDirectoryAndResetsState() async throws {
         let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
