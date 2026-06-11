@@ -1072,6 +1072,25 @@ final class ChatSession: ObservableObject {
         rebuildVisibleBlocks()
     }
 
+    /// Append the clarify question as a visible assistant turn when the
+    /// user dismisses the prompt card without answering. The card was
+    /// the only readable surface for the question (the recorded tool
+    /// envelope renders as collapsed chrome), so without this the
+    /// question vanishes and the user is left with a silently paused
+    /// agent. With the trace in the transcript they can answer from the
+    /// main composer whenever they're ready.
+    func appendClarifyQuestionTrace(_ payload: ClarifyPayload) {
+        var text = payload.question
+        if !payload.options.isEmpty {
+            let bullets = payload.options.map { "- \($0)" }.joined(separator: "\n")
+            text += "\n\n\(bullets)"
+        }
+        let turn = ChatTurn(role: .assistant, content: text)
+        turns.append(turn)
+        isDirty = true
+        rebuildVisibleBlocks()
+    }
+
     /// Clear the Privacy Filter `RedactionMap` for this conversation
     /// (and the chat-side highlight accumulator) without otherwise
     /// affecting the turn history, draft, or attachments. Useful when
@@ -2745,6 +2764,9 @@ final class ChatSession: ObservableObject {
                                     allowMultiple: payload.allowMultiple,
                                     onSubmit: { [weak self] answer in
                                         self?.send(answer)
+                                    },
+                                    onUserCancel: { [weak self] in
+                                        self?.appendClarifyQuestionTrace(payload)
                                     }
                                 )
                                 self.promptQueue.enqueue(.clarify(clarifyState))
@@ -3678,6 +3700,14 @@ struct ChatView: View {
             .themedAlertScope(.chat(windowState.windowId))
             .overlay(ThemedAlertHost(scope: .chat(windowState.windowId)))
             .overlay { promptOverlayLayer }
+            .onChange(of: session.promptQueue.current?.id) { _, newValue in
+                // Hand keyboard focus back to the composer once the last
+                // prompt resolves — it was hit-test disabled while the
+                // overlay was up and nothing else refocuses it.
+                if newValue == nil {
+                    focusTrigger &+= 1
+                }
+            }
             .onChange(of: session.lastCompletedAssistantTurnId) { _, newValue in
                 handleAssistantTurnCompleted(turnId: newValue)
             }
@@ -4683,6 +4713,10 @@ extension ChatView {
         else { return }
         editText = turn.content
         editingTurnId = turnId
+        // Register the Esc fallback for the window-level key monitor —
+        // it can't see this view's @State, and the first-responder
+        // check alone misses the "clicked away mid-edit" case.
+        windowState.cancelInlineEdit = { cancelEditing() }
     }
 
     /// Confirm the edit and regenerate the assistant response
@@ -4693,22 +4727,30 @@ extension ChatView {
         session.editAndRegenerate(turnId: turnId, newContent: trimmed)
         editingTurnId = nil
         editText = ""
+        windowState.cancelInlineEdit = nil
     }
 
     /// Dismiss the inline editor without changes
     private func cancelEditing() {
         editingTurnId = nil
         editText = ""
+        windowState.cancelInlineEdit = nil
     }
 
-    // Key monitor for Esc to cancel voice or close window
+    // Key monitor for Esc. Dismisses transient UI in priority order
+    // before falling through to closing the window. The monitor owns the
+    // key event before SwiftUI's `.keyboardShortcut(.cancelAction)` /
+    // `.onExitCommand` machinery, so every state that should win over
+    // "close window" must either be handled here or explicitly passed
+    // through to the responder chain.
     private func setupKeyMonitor() {
         if keyMonitor != nil { return }
 
         let capturedWindowId = windowState.windowId
         let session = windowState.session
+        let windowState = self.windowState
 
-        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak session] event in
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak session, weak windowState] event in
             // Esc key code is 53
             if event.keyCode == 53 {
                 // Only handle Esc if this event is for our specific window
@@ -4727,34 +4769,83 @@ extension ChatView {
                     return event
                 }
 
-                // Check if voice input is active AND overlay is visible
-                if SpeechService.shared.isRecording && session.showVoiceOverlay {
-                    // Stage 1: Cancel voice input
-                    print("[ChatView] Esc pressed: Cancelling voice input")
-                    Task {
-                        // Stop streaming and clear transcription
-                        _ = await SpeechService.shared.stopStreamingTranscription()
-                        SpeechService.shared.clearTranscription()
-                    }
-                    return nil  // Swallow event
-                } else {
-                    // Stage 2: Close chat window
-                    print("[ChatView] Esc pressed: Closing chat window")
+                // Stage 1: Themed alert is up (e.g. "Keep this chat
+                // running?"). Cancel it instead of re-entering the
+                // close path, which would just re-arm the same alert.
+                // Handled even when the alert has no cancel button so
+                // Esc can't close the window underneath a modal.
+                if ThemedAlertCenter.shared.cancelActive(scope: .chat(capturedWindowId)) {
+                    return nil
+                }
 
-                    // Also ensure we cleanup any zombie recording if it exists (hidden but recording)
+                // Stage 2: Voice overlay is visible.
+                if session.showVoiceOverlay {
                     if SpeechService.shared.isRecording {
-                        print("[ChatView] Cleaning up zombie voice recording on window close")
+                        // Cancel voice input; the overlay hides via the
+                        // `isRecording` onChange in FloatingInputCard.
+                        print("[ChatView] Esc pressed: Cancelling voice input")
                         Task {
                             _ = await SpeechService.shared.stopStreamingTranscription()
                             SpeechService.shared.clearTranscription()
                         }
                     }
-
-                    Task { @MainActor in
-                        ChatWindowManager.shared.closeWindow(id: capturedWindowId)
-                    }
-                    return nil  // Swallow event
+                    // Not recording means a transient overlay state
+                    // (e.g. `.sending` during cleanup) — swallow so Esc
+                    // can't close the window mid-handoff.
+                    return nil
                 }
+
+                // Stage 3: In-chat prompt overlay (clarify / secret).
+                // Cancel just the prompt, not the window. User-initiated
+                // so clarify keeps its question in the transcript.
+                if let currentPrompt = session.promptQueue.current {
+                    currentPrompt.cancelByUser()
+                    session.promptQueue.advance()
+                    return nil
+                }
+
+                // Stage 4: A text view that opted into local Esc
+                // handling (inline message editor) has focus — pass the
+                // event through so its `cancelOperation(_:)` cancels the
+                // edit instead of the window closing.
+                if let focused = ourWindow.firstResponder as? CustomNSTextView,
+                    focused.handlesEscapeLocally
+                {
+                    return event
+                }
+
+                // Stage 5: Inline edit is active but its text view lost
+                // focus (user clicked the thread background mid-edit) —
+                // cancel the edit via the imperative hook ChatView
+                // registers in `beginEditingTurn`.
+                if let cancelEdit = windowState?.cancelInlineEdit {
+                    cancelEdit()
+                    return nil
+                }
+
+                // Stage 6: Completion banner — dismiss it; the next Esc
+                // closes the window.
+                if session.lastCompletionSummary != nil {
+                    session.lastCompletionSummary = nil
+                    return nil
+                }
+
+                // Stage 7: Close chat window
+                print("[ChatView] Esc pressed: Closing chat window")
+
+                // Also ensure we cleanup any zombie recording if it exists (hidden but recording)
+                if SpeechService.shared.isRecording {
+                    print("[ChatView] Cleaning up zombie voice recording on window close")
+                    Task {
+                        _ = await SpeechService.shared.stopStreamingTranscription()
+                        SpeechService.shared.clearTranscription()
+                    }
+                }
+
+                Task { @MainActor in
+                    ChatWindowManager.shared.closeWindow(id: capturedWindowId)
+                }
+                return nil  // Swallow event
             }
             return event
         }

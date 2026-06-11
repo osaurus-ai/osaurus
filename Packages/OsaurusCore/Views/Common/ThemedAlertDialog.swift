@@ -40,6 +40,25 @@ public final class ThemedAlertCenter: ObservableObject {
     func active(for scope: ThemedAlertScope) -> ThemedAlertRequest? {
         activeByScope[scope]
     }
+
+    /// Cancel the active alert for `scope` as if its cancel-role button
+    /// was clicked. Returns true when an alert was active (the event is
+    /// considered handled even when the alert has no cancel button, so
+    /// callers don't fall through to more destructive actions like
+    /// closing the window underneath the alert).
+    ///
+    /// Used by ChatView's window-level Esc monitor, which owns the key
+    /// event before SwiftUI keyboard shortcuts can see it.
+    @discardableResult
+    public func cancelActive(scope: ThemedAlertScope) -> Bool {
+        guard let request = activeByScope[scope] else { return false }
+        if let cancel = request.buttons.first(where: { $0.role == .cancel }) {
+            cancel.action()
+            request.onDismiss()
+            activeByScope[scope] = nil
+        }
+        return true
+    }
 }
 
 /// Defines the scope/context for themed alerts to prevent overlapping dialogs.
@@ -368,12 +387,21 @@ private struct ThemedAlertDialogContent: View {
                 )
         }
         .buttonStyle(PlainButtonStyle())
+        // Cancel was promoted to the corner X, so it carries the Esc
+        // shortcut here instead of in the inline row.
+        .keyboardShortcut(.cancelAction)
         .help(Text(cancel.title))
     }
 
     private func alertButton(_ config: AlertButtonConfig, isPrimary: Bool) -> some View {
         let isHovered = hoveredButton == config.title
         let isDestructive = config.role == .destructive
+        // Return activates the primary action; Esc activates cancel.
+        // `keyboardShortcut(nil)` is a no-op for the remaining buttons.
+        let shortcut: KeyboardShortcut? =
+            isPrimary
+            ? .defaultAction
+            : (config.role == .cancel ? .cancelAction : nil)
 
         return Button {
             dismissWithAnimation { config.action() }
@@ -391,6 +419,7 @@ private struct ThemedAlertDialogContent: View {
                 )
         }
         .buttonStyle(PlainButtonStyle())
+        .keyboardShortcut(shortcut)
         .scaleEffect(isHovered ? 1.02 : 1.0)
         .animation(.easeInOut(duration: 0.15), value: isHovered)
         .onHover { hovering in

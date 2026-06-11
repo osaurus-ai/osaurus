@@ -297,6 +297,14 @@ final class CustomNSTextView: NSTextView {
     /// resignation attempt past it.
     var focusLockUntil: Date = .distantPast
 
+    /// When true, ChatView's window-level Esc monitor passes the Esc
+    /// key event through instead of swallowing it, so this text view's
+    /// normal `cancelOperation(_:)` → delegate `doCommandBy` path can
+    /// handle it (e.g. the inline message editor cancels the edit
+    /// rather than the whole window closing). Defaults to false — the
+    /// main composer keeps the window-level Esc cascade.
+    var handlesEscapeLocally: Bool = false
+
     // MARK: First-responder
 
     override func becomeFirstResponder() -> Bool {

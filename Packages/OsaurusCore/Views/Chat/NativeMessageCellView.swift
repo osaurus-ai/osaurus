@@ -761,6 +761,7 @@ private final class PaddedInlineButtonCell: NSButtonCell {
 
 private final class PaddedInlineButton: NSButton {
     private let paddedButtonCell: PaddedInlineButtonCell
+    private var hoverArea: NSTrackingArea?
 
     fileprivate var paddedCell: PaddedInlineButtonCell { paddedButtonCell }
 
@@ -774,6 +775,39 @@ private final class PaddedInlineButton: NSButton {
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    // Pointing-hand cursor + subtle alpha dim on hover, matching the
+    // hover affordances of the SwiftUI buttons elsewhere in chat.
+
+    override func resetCursorRects() {
+        if isEnabled {
+            addCursorRect(bounds, cursor: .pointingHand)
+        }
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let hoverArea { removeTrackingArea(hoverArea) }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeInKeyWindow],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        hoverArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        super.mouseEntered(with: event)
+        guard isEnabled else { return }
+        animator().alphaValue = 0.85
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        super.mouseExited(with: event)
+        animator().alphaValue = 1.0
+    }
 }
 
 // MARK: - UserMessageInlineEditView
@@ -785,6 +819,7 @@ private final class UserMessageInlineEditView: NSView, NSTextViewDelegate {
     private let textView: CustomNSTextView
     private let editBox = NSView()
     private let buttonStack = NSStackView()
+    private let hintLabel = NSTextField(labelWithString: "")
     private var cancelButton: PaddedInlineButton!
     private var confirmButton: PaddedInlineButton!
 
@@ -796,6 +831,7 @@ private final class UserMessageInlineEditView: NSView, NSTextViewDelegate {
 
     private var lastTheme: (any ThemeProtocol)?
     private var didApplyInitialFocus = false
+    private var lastLayoutWidth: CGFloat = 0
 
     override init(frame frameRect: NSRect) {
         let tv = CustomNSTextView()
@@ -816,6 +852,10 @@ private final class UserMessageInlineEditView: NSView, NSTextViewDelegate {
         tv.isAutomaticQuoteSubstitutionEnabled = false
         tv.isAutomaticDashSubstitutionEnabled = false
         tv.isAutomaticTextReplacementEnabled = false
+        // Opt out of ChatView's window-level Esc monitor so Esc reaches
+        // this text view's `cancelOperation(_:)` and cancels the edit
+        // instead of closing the chat window.
+        tv.handlesEscapeLocally = true
         self.textView = tv
         super.init(frame: frameRect)
         translatesAutoresizingMaskIntoConstraints = false
@@ -838,10 +878,24 @@ private final class UserMessageInlineEditView: NSView, NSTextViewDelegate {
         editBox.translatesAutoresizingMaskIntoConstraints = false
 
         buttonStack.orientation = .horizontal
-        buttonStack.spacing = 0
+        // Non-zero spacing guarantees a visible gap between the hint
+        // and the buttons even when the spacer collapses to zero on
+        // narrow bubbles.
+        buttonStack.spacing = 12
         buttonStack.alignment = .centerY
         buttonStack.distribution = .fill
         buttonStack.translatesAutoresizingMaskIntoConstraints = false
+
+        // Keyboard-convention hint on the leading side of the button
+        // row. Kept short — Shift+Enter behaves like every other text
+        // field so it doesn't need calling out; truncates first when
+        // the row gets narrow.
+        hintLabel.stringValue = L("Enter to save · Esc to cancel")
+        hintLabel.lineBreakMode = .byTruncatingTail
+        hintLabel.maximumNumberOfLines = 1
+        hintLabel.isSelectable = false
+        hintLabel.setContentHuggingPriority(.required, for: .horizontal)
+        hintLabel.setContentCompressionResistancePriority(.defaultLow - 1, for: .horizontal)
 
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -857,6 +911,9 @@ private final class UserMessageInlineEditView: NSView, NSTextViewDelegate {
         buttonPair.setContentHuggingPriority(.required, for: .horizontal)
         buttonPair.setContentCompressionResistancePriority(.required, for: .horizontal)
 
+        // Esc is handled by the text view's `cancelOperation(_:)` (see
+        // `textView(_:doCommandBy:)`) and by ChatView's Esc cascade when
+        // the editor isn't focused — no keyEquivalent needed here.
         cancelButton = PaddedInlineButton(frame: .zero)
         cancelButton.target = self
         cancelButton.action = #selector(cancelTapped)
@@ -864,8 +921,6 @@ private final class UserMessageInlineEditView: NSView, NSTextViewDelegate {
         cancelButton.isBordered = false
         cancelButton.wantsLayer = true
         cancelButton.translatesAutoresizingMaskIntoConstraints = false
-        cancelButton.keyEquivalent = "\u{1b}"
-        cancelButton.keyEquivalentModifierMask = []
 
         confirmButton = PaddedInlineButton(frame: .zero)
         confirmButton.target = self
@@ -887,6 +942,7 @@ private final class UserMessageInlineEditView: NSView, NSTextViewDelegate {
         addSubview(buttonStack)
         buttonPair.addArrangedSubview(cancelButton)
         buttonPair.addArrangedSubview(confirmButton)
+        buttonStack.addArrangedSubview(hintLabel)
         buttonStack.addArrangedSubview(spacer)
         buttonStack.addArrangedSubview(buttonPair)
 
@@ -932,7 +988,9 @@ private final class UserMessageInlineEditView: NSView, NSTextViewDelegate {
 
         let radius = CGFloat(theme.inputCornerRadius)
         editBox.layer?.cornerRadius = radius
-        editBox.layer?.backgroundColor = NSColor(theme.primaryBackground).cgColor
+        // Input chrome (matches the composer / prompt-card fields) with
+        // an accent border so the box reads as "actively editing".
+        editBox.layer?.backgroundColor = NSColor(theme.inputBackground).cgColor
         editBox.layer?.borderWidth = CGFloat(theme.defaultBorderWidth)
         editBox.layer?.borderColor = NSColor(theme.accentColor).withAlphaComponent(theme.borderOpacity + 0.2).cgColor
 
@@ -940,6 +998,9 @@ private final class UserMessageInlineEditView: NSView, NSTextViewDelegate {
         textView.font = .systemFont(ofSize: body)
         textView.textColor = NSColor(theme.primaryText)
         textView.insertionPointColor = NSColor(theme.accentColor)
+
+        hintLabel.font = NSFont.systemFont(ofSize: CGFloat(theme.captionSize) - 1)
+        hintLabel.textColor = NSColor(theme.tertiaryText)
 
         if textView.string != getText() {
             textView.string = getText()
@@ -974,6 +1035,43 @@ private final class UserMessageInlineEditView: NSView, NSTextViewDelegate {
             scrollView.invalidateIntrinsicContentSize()
         }
         scrollView.tile()
+    }
+
+    /// Re-measure once the editor knows its real width.
+    ///
+    /// Row height is derived from `fittingSize`, which reads the text
+    /// view's *cached intrinsic height* — and that is computed from the
+    /// text container's current width, not the final bubble width (Auto
+    /// Layout has no height-for-width). At configure time and even at
+    /// the start of this layout pass the scroll view hasn't tiled the
+    /// document view to its final width yet, so long text that wraps to
+    /// more lines at the real (narrower) width measured short and
+    /// rendered with the first line scrolled out of view.
+    ///
+    /// So on a real width change: force the document view to the final
+    /// clip width *now*, re-measure, then push the new row height on
+    /// the next runloop tick (mutating table row heights from inside an
+    /// active layout pass is what the "never layoutSubtreeIfNeeded in
+    /// measureFittedRowHeight" comment guards against). Width-gated so
+    /// steady-state layout passes (scrolling, hover) do no extra work.
+    override func layout() {
+        super.layout()
+        let width = bounds.width
+        guard width > 0, abs(width - lastLayoutWidth) > 0.5 else { return }
+        lastLayoutWidth = width
+
+        scrollView.tile()
+        let clipWidth = scrollView.contentView.bounds.width
+        if clipWidth > 0, abs(textView.frame.width - clipWidth) > 0.5 {
+            textView.setFrameSize(NSSize(width: clipWidth, height: textView.frame.height))
+        }
+
+        textView.invalidateIntrinsicContentSize()
+        scrollView.invalidateIntrinsicContentSize()
+        refreshScrollerVisibility()
+        DispatchQueue.main.async { [weak self] in
+            self?.onHeightChanged()
+        }
     }
 
     /// Matches ContentBlockView.InlineEditView — Cancel secondary chrome; Save accent + white when non-empty.
@@ -1064,6 +1162,13 @@ private final class UserMessageInlineEditView: NSView, NSTextViewDelegate {
                 return false
             }
             confirmTapped()
+            return true
+        }
+        if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
+            // Esc cancels the inline edit. The window-level Esc monitor
+            // passes the event through because our text view sets
+            // `handlesEscapeLocally` (see init).
+            onCancel?()
             return true
         }
         return false

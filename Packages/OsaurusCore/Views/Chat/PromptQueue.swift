@@ -52,6 +52,18 @@ public enum PromptItem: Identifiable {
         case .clarify(let c): c.cancel()
         }
     }
+
+    /// Cancel triggered by an explicit user gesture (card Cancel button,
+    /// Esc). Distinct from `cancel()` so clarify can leave a visible
+    /// trace of the dismissed question; teardown paths (queue drain,
+    /// view disappearance) stay silent.
+    @MainActor
+    func cancelByUser() {
+        switch self {
+        case .secret(let s): s.cancel()
+        case .clarify(let c): c.cancelByUser()
+        }
+    }
 }
 
 @MainActor
@@ -121,6 +133,7 @@ public final class ClarifyPromptState: ObservableObject {
 
     private let onSubmit: (String) -> Void
     private let onCancel: () -> Void
+    private let onUserCancel: () -> Void
     private var resolved = false
 
     public init(
@@ -128,7 +141,8 @@ public final class ClarifyPromptState: ObservableObject {
         options: [String] = [],
         allowMultiple: Bool = false,
         onSubmit: @escaping (String) -> Void,
-        onCancel: @escaping () -> Void = {}
+        onCancel: @escaping () -> Void = {},
+        onUserCancel: @escaping () -> Void = {}
     ) {
         self.question = question
         self.options = options
@@ -138,6 +152,7 @@ public final class ClarifyPromptState: ObservableObject {
         self.allowMultiple = options.isEmpty ? false : allowMultiple
         self.onSubmit = onSubmit
         self.onCancel = onCancel
+        self.onUserCancel = onUserCancel
     }
 
     /// Submit the user's answer. Multi-select callers should join their
@@ -158,6 +173,20 @@ public final class ClarifyPromptState: ObservableObject {
     public func cancel() {
         guard !resolved else { return }
         resolved = true
+        onCancel()
+    }
+
+    /// Dismiss via an explicit user gesture (Cancel button / Esc).
+    /// Fires `onUserCancel` (e.g. so the chat can keep the question
+    /// visible in the transcript) in addition to `onCancel`. Teardown
+    /// paths — `PromptQueue.drainAll()`, overlay `onDisappear` — must
+    /// keep calling `cancel()` instead: they fire during session
+    /// resets/loads where appending transcript turns would corrupt the
+    /// incoming conversation.
+    public func cancelByUser() {
+        guard !resolved else { return }
+        resolved = true
+        onUserCancel()
         onCancel()
     }
 }

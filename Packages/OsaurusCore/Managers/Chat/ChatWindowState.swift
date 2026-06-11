@@ -30,6 +30,15 @@ final class ChatWindowState: ObservableObject {
     /// button actions in `ChatView`.
     @Published var showCloseConfirmation: Bool = false
 
+    /// Imperative hook set by `ChatView` while the inline message editor
+    /// is active (and cleared on save/cancel). The window-level Esc
+    /// monitor invokes it so Esc cancels the edit even when the editor's
+    /// text view has lost keyboard focus (e.g. the user clicked the
+    /// thread background mid-edit) — without it Esc would fall through
+    /// to closing the whole window. Not `@Published`: purely imperative,
+    /// no view re-renders.
+    var cancelInlineEdit: (() -> Void)?
+
     // MARK: - Agent State
 
     @Published var agentId: UUID
