@@ -101,6 +101,14 @@ and deletes rather than calling `SecItemCopyMatching` / `SecItemAdd` /
   If settings conflict or do not compose for a model family, question the
   compatibility contract, fix the real wiring, or document the row as
   `PARTIAL`/`BLOCKED` with the exact incompatible setting combination.
+- Tool, memory, and cache setting proof must exercise the live user flow after
+  the setting changes. Required tool proof includes exact tool args, tool-result
+  history grounding, a second tool call after history, and no parser/protocol
+  leakage. Memory proof, when the shipped flow exposes memory context or memory
+  toggles, must include multi-turn chat that depends on the memory state. Cache
+  proof must include baseline, changed setting, reload when next-load-only,
+  live chat, `/admin/cache-stats`, and typed incompatibility rather than silent
+  ignore for unsupported combinations.
 - Do not spawn recursive local "agent" workers, Python subagents, or delegated
   helper agents for Gemma/Osaurus release work unless the user explicitly asks.
   Do not use Python or shell wrappers as an orchestration layer to farm work out
