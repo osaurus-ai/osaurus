@@ -143,6 +143,16 @@ public enum SandboxPathSanitizer {
             return .failure(.dangerousChar(ch))
         }
 
+        // Expand a leading `~` to the agent home. `sandbox_exec` commands
+        // go through a shell that expands tilde natively, so the file
+        // tools must agree — otherwise `sh -c 'x > ~/out.txt'` followed by
+        // `sandbox_read_file("~/out.txt")` reads a literal "~" directory
+        // and the surfaces diverge inside one harness.
+        if path == "~" { return .success(agentHome) }
+        if path.hasPrefix("~/") {
+            return .success("\(agentHome)/\(path.dropFirst(2))")
+        }
+
         if path.hasPrefix("/") {
             let allowedPrefixes = [agentHome, "/workspace/shared"]
             guard allowedPrefixes.contains(where: { path.hasPrefix($0) }) else {

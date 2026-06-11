@@ -1,0 +1,40 @@
+{
+  "id": "sandbox.exec-discipline",
+  "domain": "agent_loop",
+  "label": "sandbox • chained exec flow: read stdout, pass it forward, low error rate",
+  "query": "Run 'sh step1.sh' in your sandbox home; it prints a code word. Then run 'sh step2.sh <code-word>' passing that code word as the argument. Write step2's RESULT line to result.txt in your home.",
+  "notes": "Sandbox twin of frontier.audit-shell-run: exit codes and stdout must actually be read and acted on (step2 fails without step1's code word), with a tight error budget and call cap on sandbox_exec. Worded as 'code word' rather than 'token'/'secret' so provider-side safety filters (observed: Anthropic's cyber safeguard refusing token-relay prompts) don't preempt the exec-discipline signal this case actually measures.",
+  "fixtures": {
+    "sandbox": {
+      "seedFiles": [
+        {
+          "path": "step1.sh",
+          "contents": "#!/bin/sh\necho \"code word: alpha42\"\n"
+        },
+        {
+          "path": "step2.sh",
+          "contents": "#!/bin/sh\nif [ \"$1\" != \"alpha42\" ]; then\n  echo \"wrong or missing code word — run step1.sh to obtain it\" >&2\n  exit 1\nfi\necho \"RESULT: ok-alpha42\"\n"
+        }
+      ]
+    }
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 10,
+      "toolUsageAudit": [
+        {
+          "tool": "sandbox_exec",
+          "minCalls": 2,
+          "maxCalls": 8,
+          "maxErrors": 1
+        }
+      ],
+      "sandboxFiles": [
+        {
+          "path": "result.txt",
+          "contains": "ok-alpha42"
+        }
+      ]
+    }
+  }
+}

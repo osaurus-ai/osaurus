@@ -1,0 +1,27 @@
+{
+  "id": "sandbox.plugin-create-and-call",
+  "domain": "agent_loop",
+  "label": "sandbox • author a plugin, register it, then CALL it and use its output",
+  "query": "Create a sandbox plugin with plugin id 'mathkit' that exposes one tool with tool id 'square': it takes a number parameter and prints its square. Author the files under plugins/mathkit/ (helper script plus plugin.json, following the plugin-building guide in your instructions), register it with sandbox_plugin_register, then CALL the newly registered mathkit_square tool with the number 12 — it is callable immediately even though it is not in your visible tool list — and write the tool's output to plugin_out.txt in your home directory.",
+  "notes": "Effectiveness, not just registration: the registered {pluginId}_{toolId} tool must be invoked in the same run and its REAL output (144) pinned via the home mount. The runner uninstalls the plugin and unregisters its tools after the case.",
+  "fixtures": {
+    "sandbox": {
+      "pluginCreate": true
+    }
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 16,
+      "mustCallToolsInOrder": [
+        "sandbox_plugin_register",
+        "mathkit_square"
+      ],
+      "sandboxFiles": [
+        {
+          "path": "plugin_out.txt",
+          "contains": "144"
+        }
+      ]
+    }
+  }
+}

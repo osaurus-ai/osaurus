@@ -36,6 +36,21 @@ struct SandboxPathSanitizerTests {
         #expect(resolved == "\(agentHome)/sub/x")
     }
 
+    @Test func tildePathsExpandToAgentHome() {
+        // `sandbox_exec` shells expand `~` natively; the file tools must
+        // agree or `x > ~/out.txt` followed by `sandbox_read_file("~/out.txt")`
+        // reads a literal "~" directory.
+        let file = SandboxPathSanitizer.validate("~/out.txt", agentHome: agentHome)
+        #expect((try? file.get()) == "\(agentHome)/out.txt")
+
+        let bare = SandboxPathSanitizer.validate("~", agentHome: agentHome)
+        #expect((try? bare.get()) == agentHome)
+
+        // `~/..` still trips the traversal check before expansion.
+        let escape = SandboxPathSanitizer.validate("~/../other", agentHome: agentHome)
+        #expect(escape == .failure(.traversal))
+    }
+
     @Test func absolutePathUnderSharedWorkspaceIsAccepted() {
         let result = SandboxPathSanitizer.validate("/workspace/shared/data.csv", agentHome: agentHome)
         guard case .success = result else {

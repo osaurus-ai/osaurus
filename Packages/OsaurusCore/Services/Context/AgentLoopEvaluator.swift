@@ -101,6 +101,21 @@ public struct AgentLoopTranscript: Sendable, Codable {
     }
 }
 
+// MARK: - Sandbox mode
+
+/// How an `agent_loop` eval composes when the case runs against the
+/// live Linux-VM sandbox. `nil` (the default) keeps the host-folder
+/// path; the runner picks the mode from `fixtures.sandbox.hostFolder`.
+public enum AgentLoopSandboxMode: Sendable, Equatable {
+    /// Pure sandbox: every file/exec tool is a `sandbox_*` tool; no
+    /// host folder tools are registered (`.sandbox(hostRead: nil)`).
+    case pure
+    /// Combined mode: the eval workspace becomes the READ-ONLY host
+    /// context — `file_read` / `file_search` stay host-side while
+    /// writes/execution happen in the VM (`.sandbox(hostRead: ctx)`).
+    case combined
+}
+
 // MARK: - Evaluator
 
 /// Entry point for the `agent_loop` behaviour evals. Main-actor-bound
@@ -128,6 +143,15 @@ public enum AgentLoopEvaluator {
     ///     tool-call assembly, and most local-model parser bugs live.
     ///   - maxTokens: per-step response cap; falls back to the user's
     ///     chat configuration, then 2048.
+    ///   - sandbox: non-nil switches the run into live-sandbox mode —
+    ///     the container is booted (kept alive across cases; boot is
+    ///     expensive, per-agent provisioning is cheap), the agent's
+    ///     builtin sandbox tools are registered for the run, and the
+    ///     prompt composes with `executionMode: .sandbox(...)`. Requires
+    ///     `agentId` to reference a PERSISTED agent whose
+    ///     `autonomousExec.enabled == true` (the runner's eval agent) —
+    ///     tool registration reads the agent record. Builtin sandbox
+    ///     tools are unregistered on exit; the container is NOT stopped.
     public static func run(
         task: String,
         workspace: URL,
@@ -137,7 +161,8 @@ public enum AgentLoopEvaluator {
         contextWindowOverride: Int? = nil,
         streaming: Bool = true,
         maxTokens: Int? = nil,
-        stopOnToolRejection: Bool = false
+        stopOnToolRejection: Bool = false,
+        sandbox: AgentLoopSandboxMode? = nil
     ) async -> AgentLoopTranscript {
         // The Default agent's schema is hard-restricted to the 8-tool
         // configure baseline (folder write tools enter only via
@@ -173,18 +198,85 @@ public enum AgentLoopEvaluator {
         let engine = ChatEngine()
 
         // Workspace context + folder tools, mirroring the chat path's
-        // host-folder mode. On exit the eval registration is torn down and
-        // any PRIOR registration (snapshot below) is restored, so eval
-        // cases can't leak tools into each other or clobber a toolset
-        // registered outside a folder session.
+        // host-folder mode. Pure sandbox mode registers NO host folder
+        // tools — the model's whole file/exec surface is `sandbox_*`.
+        // On exit the eval registration is torn down and any PRIOR
+        // registration (snapshot below) is restored, so eval cases can't
+        // leak tools into each other or clobber a toolset registered
+        // outside a folder session.
+        let wantsHostFolder = (sandbox == nil || sandbox == .combined)
         let priorFolderContext = FolderToolManager.shared.registeredContext
-        let folderContext = await FolderContextService.shared.buildContext(from: workspace)
-        FolderToolManager.shared.registerFolderTools(for: folderContext)
+        var folderContext: FolderContext?
+        if wantsHostFolder {
+            let built = await FolderContextService.shared.buildContext(from: workspace)
+            folderContext = built
+            FolderToolManager.shared.registerFolderTools(for: built)
+        }
         defer {
-            FolderToolManager.shared.unregisterFolderTools()
-            if let priorFolderContext {
-                FolderToolManager.shared.registerFolderTools(for: priorFolderContext)
+            if wantsHostFolder {
+                FolderToolManager.shared.unregisterFolderTools()
+                if let priorFolderContext {
+                    FolderToolManager.shared.registerFolderTools(for: priorFolderContext)
+                }
             }
+        }
+
+        // Combined mode also activates the context on the service so
+        // `ToolRegistry.execute`'s per-call combined-mode chokepoint
+        // (`cachedRootPath` → read-only scope, secret-read policy,
+        // sandbox read bridge) resolves exactly as production would.
+        // Plain host-folder eval runs deliberately DON'T activate —
+        // their tools take the root at registration and the combined
+        // policy must stay inert for them.
+        if sandbox == .combined, let folderContext {
+            FolderContextService.shared.activateEvalContext(folderContext)
+        }
+        defer {
+            if sandbox == .combined {
+                FolderContextService.shared.deactivateEvalContext()
+            }
+        }
+
+        // Live-sandbox mode: boot/provision through the SAME registrar
+        // the chat surface uses (container start is coalesced + kept
+        // alive across cases; per-agent provisioning is idempotent),
+        // then verify the real builtin sandbox tools actually landed —
+        // a boot/provision failure must surface as an errored case, not
+        // as a confusing "model never called sandbox_exec" failure.
+        // Teardown unregisters the per-agent builtin tools; the
+        // container intentionally stays up (boot can take minutes).
+        if sandbox != nil {
+            await SandboxToolRegistrar.shared.registerTools(for: resolvedAgentId)
+            if let reason = SandboxToolRegistrar.shared.unavailabilityReason(for: resolvedAgentId) {
+                ToolRegistry.shared.unregisterAllBuiltinSandboxTools()
+                return AgentLoopTranscript(
+                    toolCalls: [],
+                    finalText: "",
+                    iterations: 0,
+                    exit: "errored",
+                    systemPrompt: "",
+                    toolSchemaNames: [],
+                    error: "sandbox unavailable (\(reason.kind.rawValue)): \(reason.message)"
+                )
+            }
+        }
+        defer {
+            if sandbox != nil {
+                ToolRegistry.shared.unregisterAllBuiltinSandboxTools()
+            }
+        }
+
+        // Execution mode the prompt/tool resolution composes under —
+        // exactly the three production shapes ChatView can produce.
+        let executionMode: ExecutionMode
+        switch sandbox {
+        case nil:
+            // `wantsHostFolder` guarantees folderContext is non-nil here.
+            executionMode = .hostFolder(folderContext!)
+        case .combined:
+            executionMode = .sandbox(hostRead: folderContext)
+        case .pure:
+            executionMode = .sandbox(hostRead: nil)
         }
 
         // Buffer hygiene: flush any specs a previous (possibly crashed)
@@ -195,7 +287,7 @@ public enum AgentLoopEvaluator {
         var history: [ChatMessage] = [ChatMessage(role: "user", content: task)]
         let composed = await SystemPromptComposer.composeChatContext(
             agentId: resolvedAgentId,
-            executionMode: .hostFolder(folderContext),
+            executionMode: executionMode,
             model: resolvedModel,
             query: task,
             messages: history,
@@ -452,12 +544,16 @@ public enum AgentLoopEvaluator {
                         finalText = ""
                         return .toolCalls(
                             appendAssistantToolCalls(
-                                invs.invocations, content: content, reasoning: reasoning)
+                                invs.invocations,
+                                content: content,
+                                reasoning: reasoning
+                            )
                         )
                     } catch let inv as ServiceToolInvocation {
                         finalText = ""
                         return .toolCalls(
-                            appendAssistantToolCalls([inv], content: content, reasoning: reasoning))
+                            appendAssistantToolCalls([inv], content: content, reasoning: reasoning)
+                        )
                     }
                 }
 

@@ -1,0 +1,36 @@
+{
+  "id": "sandbox.host-folder-combined",
+  "domain": "agent_loop",
+  "label": "sandbox • combined mode: read host CSV, compute in VM, share artifact",
+  "query": "The read-only host workspace contains data/sales.csv. Read it with file_read, compute the total of the amount column in your sandbox, write total.txt containing that total to your sandbox home, and share total.txt with me via share_artifact — I cannot see files inside your sandbox.",
+  "notes": "Combined mode end to end: host reads stay on file_read (the workspace is read-only), computation and writes happen in the VM, and the result crosses back to the user only via share_artifact. Total pinned: 1200+2500+3200 = 6900.",
+  "fixtures": {
+    "sandbox": {
+      "hostFolder": true
+    },
+    "workspaceFiles": [
+      {
+        "path": "data/sales.csv",
+        "contents": "month,amount\njan,1200\nfeb,2500\nmar,3200\n"
+      }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 14,
+      "mustCallTools": [
+        "file_read",
+        "share_artifact"
+      ],
+      "sandboxFiles": [
+        {
+          "path": "total.txt",
+          "contains": "6900"
+        }
+      ],
+      "artifactShared": {
+        "filenameContains": "total"
+      }
+    }
+  }
+}

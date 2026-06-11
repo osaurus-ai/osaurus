@@ -105,6 +105,28 @@ public final class FolderContextService: ObservableObject {
         UserDefaults.standard.removeObject(forKey: bookmarkKey)
     }
 
+    // MARK: - Eval-harness activation (module-internal)
+
+    /// Activate an already-built context as the process-wide folder
+    /// context WITHOUT a security-scoped bookmark or persistence —
+    /// used by `AgentLoopEvaluator` for combined sandbox + host-read
+    /// cases, where `ToolRegistry.execute` resolves the read-only
+    /// scope / secret policy / read bridge from `cachedRootPath`.
+    /// Callers must already hold the evaluator's "no user folder
+    /// session" guarantee and must pair with `deactivateEvalContext()`.
+    func activateEvalContext(_ context: FolderContext) {
+        currentContext = context
+        hasActiveFolder = true
+    }
+
+    /// Reverse of `activateEvalContext` — clears the context without
+    /// touching bookmarks, saved defaults, or tool registration (the
+    /// evaluator owns its own registration lifecycle).
+    func deactivateEvalContext() {
+        currentContext = nil
+        hasActiveFolder = false
+    }
+
     /// Build context from a URL (assumes access is already granted)
     public func buildContext(from url: URL) async -> FolderContext {
         // The tree walk, manifest/context-file reads and extension scan are all

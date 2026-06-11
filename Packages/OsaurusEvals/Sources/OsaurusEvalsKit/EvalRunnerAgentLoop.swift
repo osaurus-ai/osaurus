@@ -35,6 +35,32 @@ extension EvalRunner {
             )
         }
 
+        // Sandbox skip gating (same semantics as `requirePlugins`): a
+        // host without a working sandbox SKIPS the case instead of
+        // failing it, so contributors without Apple Containerization
+        // can still run the rest of the suite.
+        let sandboxFixture = testCase.fixtures.sandbox
+        let sandboxMode: AgentLoopSandboxMode? = sandboxFixture.map {
+            $0.hostFolder == true ? .combined : .pure
+        }
+        if sandboxFixture != nil {
+            let availability = await SandboxManager.shared.refreshAvailability()
+            let config = SandboxConfigurationStore.load()
+            if let skipReason = sandboxSkipReason(
+                availability: availability,
+                setupComplete: config.setupComplete
+            ) {
+                return .terminal(
+                    id: testCase.id,
+                    label: label,
+                    domain: testCase.domain,
+                    outcome: .skipped,
+                    notes: [skipReason],
+                    modelId: modelId
+                )
+            }
+        }
+
         // Fresh per-case workspace. Deleted in all exits below.
         let workspace = FileManager.default.temporaryDirectory
             .appendingPathComponent("osaurus-agentloop-eval-\(UUID().uuidString)", isDirectory: true)
@@ -67,13 +93,73 @@ extension EvalRunner {
         // its per-agent database + scheduler rows) is deleted after the
         // outcome assertions run — `dbState` / `scheduledRun` read the
         // isolated stores BEFORE teardown.
+        //
+        // Sandbox cases ALWAYS install an eval agent: tool registration
+        // reads `autonomousExec` off the persisted agent record, so an
+        // ephemeral (unsaved) agent id would never get sandbox tools.
         var evalAgentId: UUID?
-        if let caps = testCase.fixtures.agentCapabilities, caps.requestsAnyCapability {
+        if let sandboxFixture {
+            evalAgentId = installEvalAgent(
+                testCase.fixtures.agentCapabilities,
+                autonomousExec: autonomousExecConfig(from: sandboxFixture)
+            )
+        } else if let caps = testCase.fixtures.agentCapabilities, caps.requestsAnyCapability {
             evalAgentId = installEvalAgent(caps)
         }
         defer {
             if let evalAgentId {
                 removeEvalAgent(evalAgentId)
+            }
+        }
+
+        // Sandbox provisioning + fixture seeding. Boot/provision goes
+        // through the SAME registrar the chat surface uses (idempotent —
+        // the evaluator re-registers cheaply). Seeds are written via
+        // guest-side exec so ownership matches the agent user, and
+        // secrets land in the eval agent's keychain namespace. Plugin
+        // library state is snapshotted so post-case cleanup removes only
+        // what the case created.
+        let pluginIdsBeforeRun = Set(SandboxPluginLibrary.shared.plugins.map(\.id))
+        var sandboxHome: URL?
+        if let sandboxFixture, let evalAgentId {
+            /// Setup failed before the loop could run: tear down the
+            /// per-case sandbox state and report an errored row.
+            func sandboxSetupFailed(_ note: String) async -> EvalCaseReport {
+                await cleanupSandboxCase(
+                    agentId: evalAgentId,
+                    pluginIdsBeforeRun: pluginIdsBeforeRun
+                )
+                return .terminal(
+                    id: testCase.id,
+                    label: label,
+                    domain: testCase.domain,
+                    outcome: .errored,
+                    notes: [note],
+                    modelId: modelId
+                )
+            }
+
+            await SandboxToolRegistrar.shared.registerTools(for: evalAgentId)
+            if let reason = SandboxToolRegistrar.shared.unavailabilityReason(for: evalAgentId) {
+                return await sandboxSetupFailed(
+                    "sandbox boot/provision failed (\(reason.kind.rawValue)): \(reason.message)"
+                )
+            }
+            let linuxName = SandboxAgentProvisioner.linuxName(for: evalAgentId.uuidString)
+            sandboxHome = OsaurusPaths.containerAgentDir(linuxName)
+            for file in sandboxFixture.seedFiles ?? [] {
+                if let seedError = await seedSandboxFile(file, agentName: linuxName) {
+                    return await sandboxSetupFailed(
+                        "sandbox seed failed for '\(file.path)': \(seedError)"
+                    )
+                }
+            }
+            for secret in sandboxFixture.seedSecrets ?? [] {
+                _ = AgentSecretsKeychain.saveSecret(
+                    secret.value,
+                    id: secret.key,
+                    agentId: evalAgentId
+                )
             }
         }
 
@@ -85,7 +171,8 @@ extension EvalRunner {
             agentId: evalAgentId,
             maxIterations: exp.maxIterations ?? 10,
             contextWindowOverride: exp.contextWindowOverride,
-            stopOnToolRejection: exp.stopOnToolRejection ?? false
+            stopOnToolRejection: exp.stopOnToolRejection ?? false,
+            sandbox: sandboxMode
         )
 
         var verdicts: [CapabilityClaimsJudgement] = []
@@ -102,6 +189,12 @@ extension EvalRunner {
         let latency = transcript.loopDurationMs > 0 ? transcript.loopDurationMs : elapsed
 
         if let err = transcript.error {
+            if sandboxFixture != nil, let evalAgentId {
+                await cleanupSandboxCase(
+                    agentId: evalAgentId,
+                    pluginIdsBeforeRun: pluginIdsBeforeRun
+                )
+            }
             return EvalCaseReport(
                 id: testCase.id,
                 label: label,
@@ -152,6 +245,25 @@ extension EvalRunner {
             let result = scoreFileAssertion(assertion, workspace: workspace)
             score.record(result.passed, note: result.note)
         }
+        // 3b. Sandbox-home outcomes: the VM's /workspace is a VirtioFS
+        // mount of ~/.osaurus/container/workspace/, so the agent home is
+        // readable directly from the host — no guest exec needed. Must
+        // run BEFORE sandbox cleanup (which deletes the home dir).
+        for assertion in exp.sandboxFiles ?? [] {
+            if let sandboxHome {
+                let result = scoreFileAssertion(
+                    assertion,
+                    workspace: sandboxHome,
+                    labelPrefix: "sandbox file"
+                )
+                score.record(result.passed, note: result.note)
+            } else {
+                score.record(
+                    false,
+                    note: "sandboxFiles assertion '\(assertion.path)' requires fixtures.sandbox"
+                )
+            }
+        }
         for assertion in exp.commands ?? [] {
             let result = await scoreCommandAssertion(assertion, workspace: workspace)
             score.record(result.passed, note: result.note)
@@ -194,6 +306,16 @@ extension EvalRunner {
             "final: \(transcript.finalText.replacingOccurrences(of: "\n", with: " "))"
         )
 
+        // Sandbox teardown AFTER all scoring (sandboxFiles reads the
+        // home dir this deletes). The container itself stays up — boot
+        // is the expensive part; per-agent state is what must not leak.
+        if sandboxFixture != nil, let evalAgentId {
+            await cleanupSandboxCase(
+                agentId: evalAgentId,
+                pluginIdsBeforeRun: pluginIdsBeforeRun
+            )
+        }
+
         return EvalCaseReport(
             id: testCase.id,
             label: label,
@@ -218,24 +340,115 @@ extension EvalRunner {
     /// 5-minute min interval — so self-scheduling cases aren't
     /// quiet-hours-clamped depending on when the eval runs.
     private static func installEvalAgent(
-        _ caps: EvalCase.AgentCapabilitiesFixture
+        _ caps: EvalCase.AgentCapabilitiesFixture?,
+        autonomousExec: AutonomousExecConfig? = nil
     ) -> UUID {
         let agent = Agent(
             id: UUID(),
             name: "Osaurus Eval Agent",
             description: "Temporary agent registered by OsaurusEvals; safe to delete.",
+            autonomousExec: autonomousExec,
             settings: AgentSettings(
-                dbEnabled: caps.dbEnabled ?? false,
+                dbEnabled: caps?.dbEnabled ?? false,
                 schedule: AgentScheduleSettings.defaults(for: .reactive),
-                renderChartEnabled: caps.renderChartEnabled ?? false,
-                speakEnabled: caps.speakEnabled ?? false,
-                searchMemoryEnabled: caps.searchMemoryEnabled ?? false,
-                selfSchedulingEnabled: caps.selfSchedulingEnabled ?? false
+                renderChartEnabled: caps?.renderChartEnabled ?? false,
+                speakEnabled: caps?.speakEnabled ?? false,
+                searchMemoryEnabled: caps?.searchMemoryEnabled ?? false,
+                selfSchedulingEnabled: caps?.selfSchedulingEnabled ?? false
             )
         )
         AgentStore.save(agent)
         AgentManager.shared.refresh()
         return agent.id
+    }
+
+    // MARK: - Sandbox fixtures
+
+    /// Skip-decision for sandbox cases: a host without a working,
+    /// fully-set-up sandbox SKIPS instead of failing — same semantics
+    /// as `requirePlugins`. Pure so it's unit-testable without a VM.
+    static func sandboxSkipReason(
+        availability: SandboxAvailability,
+        setupComplete: Bool
+    ) -> String? {
+        if !availability.isAvailable {
+            return "sandbox unavailable: \(availability.reason ?? "unknown")"
+        }
+        if !setupComplete {
+            return "sandbox setup incomplete on this host"
+        }
+        return nil
+    }
+
+    /// Map the case's sandbox fixture onto the eval agent's
+    /// `AutonomousExecConfig`. Omitted flags use the production defaults
+    /// for an autonomous-enabled agent.
+    static func autonomousExecConfig(
+        from fixture: EvalCase.SandboxFixture
+    ) -> AutonomousExecConfig {
+        AutonomousExecConfig(
+            enabled: true,
+            maxCommandsPerTurn: fixture.maxCommandsPerTurn ?? 10,
+            pluginCreate: fixture.pluginCreate ?? true,
+            allowHostSecretReads: fixture.allowHostSecretReads ?? false,
+            sandboxNetworkEnabled: fixture.networkEnabled ?? true,
+            backgroundProcessEnabled: fixture.backgroundProcessEnabled ?? false
+        )
+    }
+
+    /// Write one seed file into the eval agent's VM home via guest-side
+    /// exec (as the agent user, so ownership matches what `sandbox_*`
+    /// tools later read/write). Contents ride base64 so arbitrary code
+    /// fixtures survive the shell pipeline. Returns an error string on
+    /// failure, nil on success.
+    private static func seedSandboxFile(
+        _ file: EvalCase.WorkspaceFile,
+        agentName: String
+    ) async -> String? {
+        let home = OsaurusPaths.inContainerAgentHome(agentName)
+        let absolute = home + "/" + file.path
+        let directory = (absolute as NSString).deletingLastPathComponent
+        let encoded = Data(file.contents.utf8).base64EncodedString()
+        do {
+            let result = try await SandboxManager.shared.execAsAgent(
+                agentName,
+                command:
+                    "mkdir -p '\(directory)' && printf '%s' '\(encoded)' | base64 -d > '\(absolute)'"
+            )
+            guard result.succeeded else {
+                return result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            return nil
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
+    /// Post-case sandbox teardown: delete the eval agent's keychain
+    /// secrets, uninstall + unregister any plugin the case created
+    /// (diffed against the pre-run library snapshot), and unprovision
+    /// the agent (Linux user, VM home dir via the host mount, plugin
+    /// state, background jobs). The container intentionally stays
+    /// running — boot is minutes, per-agent provisioning is cheap, and
+    /// the next sandbox case reuses it.
+    private static func cleanupSandboxCase(
+        agentId: UUID,
+        pluginIdsBeforeRun: Set<String>
+    ) async {
+        AgentSecretsKeychain.deleteAllSecrets(agentId: agentId)
+
+        let createdPluginIds = Set(SandboxPluginLibrary.shared.plugins.map(\.id))
+            .subtracting(pluginIdsBeforeRun)
+        for pluginId in createdPluginIds {
+            try? await SandboxPluginManager.shared.uninstall(
+                pluginId: pluginId,
+                from: agentId.uuidString
+            )
+            SandboxToolRegistrar.shared.unregisterPluginTools(pluginId: pluginId)
+            SandboxPluginLibrary.shared.delete(id: pluginId)
+        }
+
+        _ = await SandboxAgentProvisioner.shared.unprovision(agentId: agentId)
     }
 
     /// Tear down the temporary eval agent: clear any next-run slot it
@@ -613,9 +826,13 @@ extension EvalRunner {
 
     // MARK: - Outcome scoring
 
-    private static func scoreFileAssertion(
+    /// Score one file assertion against `workspace` (the case temp dir
+    /// for `files`, the agent home's host mount for `sandboxFiles` —
+    /// `labelPrefix` keeps the report lines distinguishable).
+    static func scoreFileAssertion(
         _ assertion: EvalCase.AgentLoopExpectations.FileAssertion,
-        workspace: URL
+        workspace: URL,
+        labelPrefix: String = "file"
     ) -> (passed: Bool, note: String) {
         let url = workspace.appendingPathComponent(assertion.path)
         let exists = FileManager.default.fileExists(atPath: url.path)
@@ -623,29 +840,29 @@ extension EvalRunner {
 
         if !shouldExist {
             return exists
-                ? (false, "file '\(assertion.path)' exists but was expected absent")
-                : (true, "file '\(assertion.path)' correctly absent")
+                ? (false, "\(labelPrefix) '\(assertion.path)' exists but was expected absent")
+                : (true, "\(labelPrefix) '\(assertion.path)' correctly absent")
         }
         guard exists else {
-            return (false, "file '\(assertion.path)' missing")
+            return (false, "\(labelPrefix) '\(assertion.path)' missing")
         }
         guard assertion.contains != nil || assertion.equals != nil else {
-            return (true, "file '\(assertion.path)' exists")
+            return (true, "\(labelPrefix) '\(assertion.path)' exists")
         }
         guard let contents = try? String(contentsOf: url, encoding: .utf8) else {
-            return (false, "file '\(assertion.path)' unreadable as UTF-8")
+            return (false, "\(labelPrefix) '\(assertion.path)' unreadable as UTF-8")
         }
         if let exact = assertion.equals {
             return contents == exact
-                ? (true, "file '\(assertion.path)' equals expected contents")
-                : (false, "file '\(assertion.path)' contents differ from expected")
+                ? (true, "\(labelPrefix) '\(assertion.path)' equals expected contents")
+                : (false, "\(labelPrefix) '\(assertion.path)' contents differ from expected")
         }
         if let needle = assertion.contains {
             return contents.contains(needle)
-                ? (true, "file '\(assertion.path)' contains '\(needle)'")
-                : (false, "file '\(assertion.path)' missing '\(needle)'")
+                ? (true, "\(labelPrefix) '\(assertion.path)' contains '\(needle)'")
+                : (false, "\(labelPrefix) '\(assertion.path)' missing '\(needle)'")
         }
-        return (true, "file '\(assertion.path)' exists")
+        return (true, "\(labelPrefix) '\(assertion.path)' exists")
     }
 
     private static func scoreCommandAssertion(

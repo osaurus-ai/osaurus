@@ -242,6 +242,48 @@ struct SSELineParserTests {
         #expect(result == "Anthropic is busy")
     }
 
+    @Test func anthropicRefusalStopReasonSurfacesAsStreamError() {
+        // Anthropic's real-time safeguard blocks a turn with
+        // `stop_reason: "refusal"` and ZERO content blocks. The handler
+        // must surface the `stop_details.explanation` as a stream error —
+        // not let the turn end as a silent empty completion.
+        let payload = """
+            {"type":"message_delta","delta":{"stop_reason":"refusal","stop_sequence":null,"stop_details":{"type":"refusal","category":"cyber","explanation":"Blocked under the usage policy."}},"usage":{"output_tokens":4}}
+            """
+        var state = RemoteProviderService.StreamingState(stopSequences: [], trackContent: false)
+        let outcome = RemoteProviderService.handleStreamEvent(
+            jsonData: Data(payload.utf8),
+            providerType: .anthropic,
+            state: &state,
+            yield: { _ in }
+        )
+        guard case .finishWithError(let error) = outcome else {
+            Issue.record("expected finishWithError, got \(outcome)")
+            return
+        }
+        let message = String(describing: error)
+        #expect(message.contains("refusal"))
+        #expect(message.contains("Blocked under the usage policy."))
+    }
+
+    @Test func anthropicNormalStopReasonDoesNotError() {
+        let payload = """
+            {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":12}}
+            """
+        var state = RemoteProviderService.StreamingState(stopSequences: [], trackContent: false)
+        let outcome = RemoteProviderService.handleStreamEvent(
+            jsonData: Data(payload.utf8),
+            providerType: .anthropic,
+            state: &state,
+            yield: { _ in }
+        )
+        guard case .continue = outcome else {
+            Issue.record("expected .continue, got \(outcome)")
+            return
+        }
+        #expect(state.lastFinishReason == "end_turn")
+    }
+
     @Test func errorEnvelope_decodesGeminiError() {
         let payload = """
             {"error":{"code":429,"message":"Quota exceeded","status":"RESOURCE_EXHAUSTED"}}

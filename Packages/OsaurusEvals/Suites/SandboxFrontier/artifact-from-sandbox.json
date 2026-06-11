@@ -1,0 +1,30 @@
+{
+  "id": "sandbox.artifact-from-sandbox",
+  "domain": "agent_loop",
+  "label": "sandbox • produce a file in the VM and deliver it via share_artifact",
+  "query": "Create report.csv in your sandbox home with a header row 'month,revenue' and five rows of plausible sample monthly revenue data. Then deliver it to me with share_artifact, including a one-line description — I cannot see files inside your sandbox, so sharing the artifact is the only way I can receive it. Call complete when you are done.",
+  "notes": "Artifact delivery is mandatory from the sandbox (the user has no view into the VM): the file must exist in the home AND a qualifying share_artifact call with a description must land before complete.",
+  "fixtures": {
+    "sandbox": {}
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 12,
+      "mustCallToolsInOrder": [
+        "sandbox_write_file",
+        "share_artifact",
+        "complete"
+      ],
+      "sandboxFiles": [
+        {
+          "path": "report.csv",
+          "contains": "month,revenue"
+        }
+      ],
+      "artifactShared": {
+        "filenameContains": "report",
+        "descriptionRequired": true
+      }
+    }
+  }
+}

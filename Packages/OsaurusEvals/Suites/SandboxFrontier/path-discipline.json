@@ -1,0 +1,46 @@
+{
+  "id": "sandbox.path-discipline",
+  "domain": "agent_loop",
+  "label": "sandbox • combined mode: host paths via file_read, VM paths via sandbox tools",
+  "query": "Two files exist: notes/readme.md in the read-only host workspace, and data/info.txt in your sandbox home. Each contains a token line. Read both files, then write both tokens on one line (host token first, separated by a single space) to combined.txt in your sandbox home.",
+  "notes": "Path-routing discipline in combined mode: reads on both surfaces must succeed with zero path-validation errors. The unified router intentionally lets file_read serve /workspace/... paths via the sandbox read bridge, so the audit pins zero errors on every read tool rather than demanding sandbox_read_file specifically. The combined output can only be produced by actually reading both sides.",
+  "fixtures": {
+    "sandbox": {
+      "hostFolder": true,
+      "seedFiles": [
+        {
+          "path": "data/info.txt",
+          "contents": "sandbox token: SBX-9038\n"
+        }
+      ]
+    },
+    "workspaceFiles": [
+      {
+        "path": "notes/readme.md",
+        "contents": "# Notes\n\nhost token: HOST-7264\n"
+      }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 12,
+      "toolUsageAudit": [
+        {
+          "tool": "file_read",
+          "minCalls": 1,
+          "maxErrors": 0
+        },
+        {
+          "tool": "sandbox_read_file",
+          "maxErrors": 0
+        }
+      ],
+      "sandboxFiles": [
+        {
+          "path": "combined.txt",
+          "contains": "HOST-7264 SBX-9038"
+        }
+      ]
+    }
+  }
+}

@@ -80,6 +80,16 @@ public enum EvalRunner {
             }
         }
 
+        // Sandbox cases keep the container alive across cases (boot is
+        // expensive; provisioning a per-case agent user is cheap). Stop it
+        // gracefully before the process exits — a hard kill at exit leaves
+        // a dirty rootfs.ext4 behind, and the next run's warm restart can
+        // boot a corrupted guest (observed as /etc/group damage that breaks
+        // agent provisioning with "chown: invalid group").
+        if await SandboxManager.shared.status() == .running {
+            try? await SandboxManager.shared.stopContainer()
+        }
+
         return EvalReport(modelId: modelLabel, startedAt: startedAt, cases: rows)
     }
 

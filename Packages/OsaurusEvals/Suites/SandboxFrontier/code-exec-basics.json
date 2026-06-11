@@ -1,0 +1,25 @@
+{
+  "id": "sandbox.code-exec-basics",
+  "domain": "agent_loop",
+  "label": "sandbox • write a script, run it, pin the output",
+  "query": "In your sandbox home, write a Python script fib.py that prints the first 12 Fibonacci numbers (starting 0,1) on one line, separated by single commas with no spaces. Run it with sandbox_exec, then write the script's exact stdout line to fib_out.txt in your home directory. Verify the file contents by reading it back before you finish.",
+  "notes": "Coding-ability floor for the sandbox lane: author code with sandbox_write_file, execute with sandbox_exec, act on real stdout. The output is pinned via the VirtioFS host mount so a hallucinated 'I ran it' cannot pass.",
+  "fixtures": {
+    "sandbox": {}
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 12,
+      "mustCallTools": [
+        "sandbox_write_file",
+        "sandbox_exec"
+      ],
+      "sandboxFiles": [
+        {
+          "path": "fib_out.txt",
+          "contains": "0,1,1,2,3,5,8,13,21,34,55,89"
+        }
+      ]
+    }
+  }
+}

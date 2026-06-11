@@ -13,7 +13,14 @@ import UserNotifications
 final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
     static let shared = NotificationService()
 
-    private let center = UNUserNotificationCenter.current()
+    /// `UNUserNotificationCenter.current()` raises an Objective-C
+    /// exception in processes without an app bundle (the `osaurus-evals`
+    /// CLI, `swift test`). Resolve it lazily behind a headless guard so
+    /// merely touching `NotificationService.shared` — e.g. via the
+    /// agent-DB storage-quota warning during a headless eval run —
+    /// can't crash; every post method no-ops when `center` is nil.
+    private lazy var center: UNUserNotificationCenter? =
+        Bundle.main.bundleIdentifier != nil ? .current() : nil
 
     private let categoryId = "OSU_MODEL_READY"
     private let actionOpenId = "OSU_OPEN_MODELS"
@@ -23,6 +30,7 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
     }
 
     func configureOnLaunch() {
+        guard let center else { return }
         center.delegate = self
         // Register category with an action to open the Model Manager window
         let openAction = UNNotificationAction(
@@ -45,6 +53,7 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
     }
 
     func postPluginVerificationFailed(name: String, version: String) {
+        guard let center else { return }
         let content = UNMutableNotificationContent()
         content.title = L("Plugin verification failed")
         content.body = "\(name) @ \(version)"
@@ -58,6 +67,7 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
     }
 
     func postModelReady(modelId: String, modelName: String) {
+        guard let center else { return }
         let content = UNMutableNotificationContent()
         content.title = L("Model ready")
         content.body = L("\(modelName) is downloaded and ready to use.")
@@ -75,6 +85,7 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
     }
 
     func postSafeModeActive() {
+        guard let center else { return }
         let content = UNMutableNotificationContent()
         content.title = L("Osaurus started in safe mode")
         content.body = L("Plugins disabled after repeated crashes. Run \"osaurus tools reset\" in Terminal to recover.")
@@ -99,6 +110,7 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
         // without a queue hop on the hot path; the actual UNNotification
         // submission still hops to MainActor via Task.
         Task { @MainActor in
+            guard let center = self.center else { return }
             let content = UNMutableNotificationContent()
             content.title = "\(agentName) · \(title)"
             content.body = body
@@ -114,12 +126,12 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
                 content: content,
                 trigger: nil
             )
-            self.center.add(request, withCompletionHandler: nil)
+            center.add(request, withCompletionHandler: nil)
         }
     }
 
     func postPluginUpdatesAvailable(count: Int, pluginNames: [String]) {
-        guard count > 0 else { return }
+        guard count > 0, let center else { return }
 
         let content = UNMutableNotificationContent()
         content.title = L("Plugin updates available")

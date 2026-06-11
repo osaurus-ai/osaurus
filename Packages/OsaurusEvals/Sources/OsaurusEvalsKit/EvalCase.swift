@@ -124,6 +124,16 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// scheduler rows (`AgentStore.delete` cleans both). Other
         /// domains ignore this.
         public let agentCapabilities: AgentCapabilitiesFixture?
+        /// Live-sandbox fixture for `agent_loop` cases. PRESENCE of this
+        /// block switches the case into sandbox execution mode: the
+        /// runner installs a temporary eval agent with `autonomousExec`
+        /// built from these flags, boots/provisions the Linux VM, seeds
+        /// the agent's VM home + secrets, and the evaluator composes with
+        /// `executionMode: .sandbox(...)` instead of `.hostFolder`. Cases
+        /// are SKIPPED (not failed) when the host has no working sandbox
+        /// (`SandboxManager.checkAvailability` fails or setup is
+        /// incomplete) — same semantics as `requirePlugins`.
+        public let sandbox: SandboxFixture?
 
         public init(
             requirePlugins: [String]? = nil,
@@ -132,7 +142,8 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             enableTools: [String]? = nil,
             ensureToolsDisabled: [String]? = nil,
             workspaceFiles: [WorkspaceFile]? = nil,
-            agentCapabilities: AgentCapabilitiesFixture? = nil
+            agentCapabilities: AgentCapabilitiesFixture? = nil,
+            sandbox: SandboxFixture? = nil
         ) {
             self.requirePlugins = requirePlugins
             self.seedMethods = seedMethods
@@ -141,6 +152,74 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.ensureToolsDisabled = ensureToolsDisabled
             self.workspaceFiles = workspaceFiles
             self.agentCapabilities = agentCapabilities
+            self.sandbox = sandbox
+        }
+    }
+
+    /// Sandbox-mode fixture for `agent_loop` cases. Every flag maps onto
+    /// the eval agent's `AutonomousExecConfig`; omitted fields use the
+    /// production defaults for an autonomous-enabled agent (commands
+    /// capped at 10/turn, plugin creation on, host secret reads refused,
+    /// network on, background jobs off).
+    public struct SandboxFixture: Sendable, Codable {
+        /// Allow `sandbox_plugin_register` (AutonomousExecConfig.pluginCreate).
+        public let pluginCreate: Bool?
+        /// Expose `sandbox_exec(background:true)` + `sandbox_process`.
+        public let backgroundProcessEnabled: Bool?
+        /// Outbound network from the VM (honored at boot — flipping it
+        /// per-case does NOT restart an already-running container).
+        public let networkEnabled: Bool?
+        /// Combined mode only: let host read tools open secret-shaped
+        /// files (`.env`, keys) in the read-only host workspace.
+        public let allowHostSecretReads: Bool?
+        /// `sandbox_exec` per-turn call budget.
+        public let maxCommandsPerTurn: Int?
+        /// Combined mode: the case's temp workspace (with
+        /// `workspaceFiles`) becomes the READ-ONLY host context —
+        /// `file_read` / `file_search` stay host-side while writes and
+        /// execution happen in the VM (`ExecutionMode.sandbox(hostRead:)`).
+        /// Default false → pure sandbox mode (no host folder tools).
+        public let hostFolder: Bool?
+        /// Files written into the eval agent's VM home BEFORE the run
+        /// (via guest-side exec, so ownership matches the agent user).
+        /// `path` is relative to the agent home.
+        public let seedFiles: [WorkspaceFile]?
+        /// Secrets pre-seeded into `AgentSecretsKeychain` for the eval
+        /// agent (deleted after the case). Headless note: cases must use
+        /// this (or pass `value` to `sandbox_secret_set`) — the no-value
+        /// prompt flow can only be answered from ChatView.
+        public let seedSecrets: [SeedSecret]?
+
+        public init(
+            pluginCreate: Bool? = nil,
+            backgroundProcessEnabled: Bool? = nil,
+            networkEnabled: Bool? = nil,
+            allowHostSecretReads: Bool? = nil,
+            maxCommandsPerTurn: Int? = nil,
+            hostFolder: Bool? = nil,
+            seedFiles: [WorkspaceFile]? = nil,
+            seedSecrets: [SeedSecret]? = nil
+        ) {
+            self.pluginCreate = pluginCreate
+            self.backgroundProcessEnabled = backgroundProcessEnabled
+            self.networkEnabled = networkEnabled
+            self.allowHostSecretReads = allowHostSecretReads
+            self.maxCommandsPerTurn = maxCommandsPerTurn
+            self.hostFolder = hostFolder
+            self.seedFiles = seedFiles
+            self.seedSecrets = seedSecrets
+        }
+    }
+
+    /// One secret to seed into the eval agent's keychain for a sandbox
+    /// case run. `key` is the env-var name the model checks/uses.
+    public struct SeedSecret: Sendable, Codable {
+        public let key: String
+        public let value: String
+
+        public init(key: String, value: String) {
+            self.key = key
+            self.value = value
         }
     }
 
@@ -349,6 +428,12 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         public let allowedExits: [String]?
         /// Workspace file assertions, checked after the loop ends.
         public let files: [FileAssertion]?
+        /// Sandbox-home file assertions for cases with
+        /// `fixtures.sandbox`. Same shape as `files`, but paths resolve
+        /// against the eval agent's VM home dir READ FROM THE HOST via
+        /// the VirtioFS mount (`~/.osaurus/container/workspace/agents/
+        /// <agent>/`) — no guest exec needed to score.
+        public let sandboxFiles: [FileAssertion]?
         /// Commands run in the workspace after the loop ends; each must
         /// exit with its `expectExitCode`.
         public let commands: [CommandAssertion]?
@@ -406,6 +491,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             expectCompaction: Bool? = nil,
             allowedExits: [String]? = nil,
             files: [FileAssertion]? = nil,
+            sandboxFiles: [FileAssertion]? = nil,
             commands: [CommandAssertion]? = nil,
             finalTextContains: [String]? = nil,
             rubric: [String]? = nil,
@@ -429,6 +515,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.expectCompaction = expectCompaction
             self.allowedExits = allowedExits
             self.files = files
+            self.sandboxFiles = sandboxFiles
             self.commands = commands
             self.finalTextContains = finalTextContains
             self.rubric = rubric

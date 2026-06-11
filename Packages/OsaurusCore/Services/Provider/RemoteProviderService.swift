@@ -1121,6 +1121,26 @@ public actor RemoteProviderService: ToolCapableService {
                 let stopReason = deltaEvent.delta.stop_reason
             {
                 state.lastFinishReason = stopReason
+                // Anthropic safety refusal (`stop_reason: "refusal"`): the
+                // API blocks the whole turn with ZERO content blocks, so
+                // without this the caller sees a silent empty completion.
+                // Surface the structured `stop_details.explanation` as a
+                // stream error so the agent loop / chat reports the refusal
+                // honestly instead of an empty reply.
+                if stopReason == "refusal" {
+                    let explanation =
+                        (try? JSONDecoder().decode(
+                            AnthropicRefusalDeltaEvent.self,
+                            from: jsonData
+                        ))?.delta.stop_details?.explanation
+                    return .finishWithError(
+                        RemoteProviderServiceError.requestFailed(
+                            "Anthropic refused this request (stop_reason=refusal): "
+                                + (explanation
+                                    ?? "no explanation provided by the provider")
+                        )
+                    )
+                }
             }
 
         case "message_stop":
@@ -2540,6 +2560,22 @@ public actor RemoteProviderService: ToolCapableService {
 /// Simple struct to decode Anthropic SSE event type
 private struct AnthropicSSEEvent: Decodable {
     let type: String
+}
+
+/// Decodes the `stop_details` payload of an Anthropic `message_delta`
+/// carrying `stop_reason: "refusal"` — the shared `MessageDeltaEvent`
+/// model is also used by the server-side Anthropic-compat writer, so the
+/// refusal-only field stays in this private decode-side shape.
+private struct AnthropicRefusalDeltaEvent: Decodable {
+    let delta: Delta
+
+    struct Delta: Decodable {
+        let stop_details: StopDetails?
+
+        struct StopDetails: Decodable {
+            let explanation: String?
+        }
+    }
 }
 
 /// Decodes an Anthropic mid-stream `error` event payload, e.g.

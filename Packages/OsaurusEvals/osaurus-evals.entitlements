@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Sandbox eval cases boot the Apple Containerization Linux VM
+	     in-process. SwiftPM binaries are ad-hoc signed without
+	     entitlements, so VM networking fails with a vmnet error unless
+	     the built CLI is re-signed with this file. See
+	     Suites/SandboxFrontier/README.md for the exact build, sign,
+	     and run commands. Invoke the signed binary directly: a
+	     "swift run" after source changes relinks and drops the
+	     signature. -->
+	<key>com.apple.security.virtualization</key>
+	<true/>
+	<key>com.apple.security.network.client</key>
+	<true/>
+	<key>com.apple.security.network.server</key>
+	<true/>
+	<key>com.apple.security.get-task-allow</key>
+	<true/>
+</dict>
+</plist>

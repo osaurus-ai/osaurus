@@ -181,6 +181,14 @@ public final class SandboxToolRegistrar {
 
     // MARK: - Plugin Tools (Global)
 
+    /// Unregister a single plugin's sandbox tools from the registry.
+    /// Used by the eval runner's post-case cleanup — the eval CLI never
+    /// calls `start()`, so the uninstall notification alone won't reach
+    /// the registry in that process.
+    public func unregisterPluginTools(pluginId: String) {
+        ToolRegistry.shared.unregisterSandboxPluginTools(pluginId: pluginId)
+    }
+
     /// Register all sandbox plugin tools globally (agent-agnostic).
     /// Plugin tools are available to any agent and resolved at execution time.
     public func registerAllPluginTools() {

@@ -1,0 +1,24 @@
+{
+  "id": "sandbox.install-and-use",
+  "domain": "agent_loop",
+  "label": "sandbox • pip install a package and actually use it",
+  "query": "Install the Python package 'humanize' in your sandbox using sandbox_install, then use it to format the number 1234567 with thousands separators (humanize.intcomma) and write the formatted result to humanize_out.txt in your home directory.",
+  "notes": "Off-CI (sandbox network): proves sandbox_install actually lands a usable package — the output file can only contain 1,234,567 if the import worked. A pip failure should surface as an honest error, not a hand-written file.",
+  "fixtures": {
+    "sandbox": {}
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 12,
+      "mustCallTools": [
+        "sandbox_install"
+      ],
+      "sandboxFiles": [
+        {
+          "path": "humanize_out.txt",
+          "contains": "1,234,567"
+        }
+      ]
+    }
+  }
+}
