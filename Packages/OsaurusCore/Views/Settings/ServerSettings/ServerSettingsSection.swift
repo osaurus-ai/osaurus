@@ -21,6 +21,7 @@ enum ServerSettingsSection: String, CaseIterable, Hashable, Identifiable {
     case sampling
     case concurrency
     case cache
+    case memorySafety
     case speculative
     case liveActivity
     case multimodal
@@ -40,6 +41,7 @@ enum ServerSettingsSection: String, CaseIterable, Hashable, Identifiable {
         case .sampling: return "Sampling Defaults"
         case .concurrency: return "Concurrency & Batching"
         case .cache: return "Cache"
+        case .memorySafety: return "Memory Safety"
         case .speculative: return "Speculative Decoding"
         case .liveActivity: return "Live Activity"
         case .multimodal: return "Multimodal"
@@ -59,6 +61,7 @@ enum ServerSettingsSection: String, CaseIterable, Hashable, Identifiable {
         case .sampling: return "slider.horizontal.3"
         case .concurrency: return "gauge.with.dots.needle.bottom.0percent"
         case .cache: return "externaldrive.connected.to.line.below"
+        case .memorySafety: return "memorychip.fill"
         case .speculative: return "bolt.horizontal"
         case .liveActivity: return "waveform.path.ecg"
         case .multimodal: return "photo.on.rectangle.angled"
@@ -75,7 +78,7 @@ enum ServerSettingsSection: String, CaseIterable, Hashable, Identifiable {
             return .server
         case .sampling:
             return .generation
-        case .concurrency, .cache, .speculative, .liveActivity:
+        case .concurrency, .cache, .memorySafety, .speculative, .liveActivity:
             return .performance
         case .multimodal, .tools:
             return .capabilities

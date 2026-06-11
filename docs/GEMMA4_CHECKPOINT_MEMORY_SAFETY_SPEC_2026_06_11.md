@@ -127,23 +127,31 @@ Important display rule:
 - If they differ, treat the observed runtime status as the current applied MLX
   state and the resolved plan as the requested policy.
 
-## Missing Settings Setter
+## Settings Control Surface
 
-Changed-setting proof is currently `BLOCKED: controls missing`.
+Changed-setting proof is currently `PARTIAL: source/UI path added, live app proof pending`.
 
-The current app exposes memory-safety status but no shipped UI, CLI, or HTTP
-setter for `memorySafety.mode` or `memorySafety.slider`. `/admin/cache-stats` is
-read-only.
+The app exposes memory-safety status through `/admin/cache-stats.memory_safety`
+and now exposes a Server Settings section that edits
+`VMLXServerRuntimeSettings.memorySafety`. The section persists through the
+existing Server Settings save path, which calls `ServerController.saveRuntimeSettings(_:)`
+and updates `ServerRuntimeSettingsStore.snapshot()`.
 
-The UI/settings work should persist:
+`/admin/cache-stats` remains read-only; it is the status surface, not the
+mutation surface.
+
+The Server Settings section persists:
 
 - `memorySafety.mode`
 - `memorySafety.slider`
 - `memorySafety.allowExperimentalMLXPress`
 - `memorySafety.failClosedWhenEstimateUnknown`
 - `memorySafety.customPhysicalMemoryFraction`
+- `memorySafety.customAllocatorCacheBytes`
+- `memorySafety.customDefaultMaxKVSize`
+- `memorySafety.customMaxConcurrentSequences`
 
-After UI/CLI/API support lands, proof must show:
+Live proof still must show:
 
 1. The user changes and saves the setting.
 2. `/admin/cache-stats.memory_safety` shows the changed mode/slider.

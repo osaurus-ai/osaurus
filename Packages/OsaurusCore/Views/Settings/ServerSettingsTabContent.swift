@@ -152,6 +152,8 @@ struct ServerSettingsTabContent: View {
                         .id(ServerSettingsSection.concurrency)
                     CacheSection(draft: $draft)
                         .id(ServerSettingsSection.cache)
+                    MemorySafetySection(draft: $draft)
+                        .id(ServerSettingsSection.memorySafety)
                     MTPSection(draft: $draft)
                         .id(ServerSettingsSection.speculative)
                     LiveActivitySection()
