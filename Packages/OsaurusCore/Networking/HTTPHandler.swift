@@ -5285,7 +5285,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             temperature: req.temperature,
             maxTokens: req.resolvedMaxTokens,
             maxTokensExplicit: req.maxTokens != nil,
-            topPOverride: req.topP
+            topPOverride: req.topP,
+            topKOverride: req.topK
         )
         let promptTokens = TokenEstimator.estimate(prompt)
         let cors = stateRef.value.corsHeaders

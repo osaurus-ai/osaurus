@@ -147,6 +147,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             maxTokens: maxTokens,
             maxTokensExplicit: request.resolvedMaxTokens != nil,
             topPOverride: request.top_p,
+            topKOverride: request.top_k,
             repetitionPenalty: repPenalty,
             samplingParametersAreImplicit: request.samplingParametersAreImplicit,
             frequencyPenalty: request.frequency_penalty,

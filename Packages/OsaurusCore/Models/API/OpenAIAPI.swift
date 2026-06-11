@@ -601,6 +601,7 @@ struct CompletionRequest: Decodable, Sendable {
     let maxTokens: Int?
     let temperature: Float?
     let topP: Float?
+    let topK: Int?
     let stop: [String]
     let stream: Bool?
 
@@ -608,6 +609,7 @@ struct CompletionRequest: Decodable, Sendable {
         case model, prompt, temperature, stop, stream
         case maxTokens = "max_tokens"
         case topP = "top_p"
+        case topK = "top_k"
     }
 
     init(from decoder: Decoder) throws {
@@ -625,6 +627,7 @@ struct CompletionRequest: Decodable, Sendable {
         maxTokens = try? c.decodeIfPresent(Int.self, forKey: .maxTokens)
         temperature = try? c.decodeIfPresent(Float.self, forKey: .temperature)
         topP = try? c.decodeIfPresent(Float.self, forKey: .topP)
+        topK = try? c.decodeIfPresent(Int.self, forKey: .topK)
         // `stop` may be a string or an array of strings.
         if let s = try? c.decode(String.self, forKey: .stop) {
             stop = [s]
@@ -651,6 +654,7 @@ struct ChatCompletionRequest: Codable, Sendable {
     var max_completion_tokens: Int? = nil
     let stream: Bool?
     let top_p: Float?
+    var top_k: Int? = nil
     let frequency_penalty: Float?
     let presence_penalty: Float?
     let stop: [String]?
@@ -702,7 +706,7 @@ struct ChatCompletionRequest: Codable, Sendable {
     var resolvedMaxTokens: Int? { max_tokens ?? max_completion_tokens }
 
     private enum CodingKeys: String, CodingKey {
-        case model, messages, temperature, max_tokens, max_completion_tokens, stream, top_p
+        case model, messages, temperature, max_tokens, max_completion_tokens, stream, top_p, top_k
         case frequency_penalty, presence_penalty, stop, n
         case tools, tool_choice, session_id
         case seed, response_format, stream_options
@@ -717,6 +721,7 @@ struct ChatCompletionRequest: Codable, Sendable {
             max_tokens: max_tokens,
             stream: stream,
             top_p: top_p,
+            top_k: top_k,
             frequency_penalty: frequency_penalty,
             presence_penalty: presence_penalty,
             stop: stop,
@@ -751,6 +756,7 @@ struct ChatCompletionRequest: Codable, Sendable {
             max_tokens: max_tokens,
             stream: stream,
             top_p: top_p,
+            top_k: top_k,
             frequency_penalty: frequency_penalty,
             presence_penalty: presence_penalty,
             stop: stop,

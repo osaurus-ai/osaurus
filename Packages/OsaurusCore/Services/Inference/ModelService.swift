@@ -16,6 +16,8 @@ struct GenerationParameters: Sendable {
     let maxTokensExplicit: Bool
     /// Optional per-request top_p override (falls back to server configuration when nil)
     let topPOverride: Float?
+    /// Optional per-request top_k override (falls back to model/server configuration when nil).
+    let topKOverride: Int?
     /// Optional per-request min_p override (falls back to model configuration when nil).
     let minPOverride: Float?
     /// Optional repetition penalty (applies when supported by backend).
@@ -59,6 +61,7 @@ struct GenerationParameters: Sendable {
         maxTokens: Int,
         maxTokensExplicit: Bool = true,
         topPOverride: Float? = nil,
+        topKOverride: Int? = nil,
         minPOverride: Float? = nil,
         repetitionPenalty: Float? = nil,
         samplingParametersAreImplicit: Bool = false,
@@ -74,6 +77,7 @@ struct GenerationParameters: Sendable {
         self.maxTokens = maxTokens
         self.maxTokensExplicit = maxTokensExplicit
         self.topPOverride = topPOverride
+        self.topKOverride = topKOverride
         self.minPOverride = minPOverride
         self.repetitionPenalty = repetitionPenalty
         self.samplingParametersAreImplicit = samplingParametersAreImplicit

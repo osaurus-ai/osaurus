@@ -121,7 +121,7 @@ struct MLXBatchAdapter {
                 ? generation.maxTokens
                 : (modelDefaults.maxTokens ?? runtimeMaxTokens ?? generation.maxTokens),
             topP: generation.topPOverride ?? modelDefaults.topP ?? runtimeTopP ?? engineDefaults.topP,
-            topK: modelDefaults.topK ?? runtimeTopK ?? engineDefaults.topK,
+            topK: generation.topKOverride ?? modelDefaults.topK ?? runtimeTopK ?? engineDefaults.topK,
             minP: generation.minPOverride ?? modelDefaults.minP ?? runtimeMinP ?? engineDefaults.minP,
             repetitionPenalty: repetitionPenalty,
             compiledBatchDecode: nativeMTPExplicitSamplingFallback
@@ -212,6 +212,7 @@ struct MLXBatchAdapter {
         }
         guard generation.temperature == 0 else { return false }
         if let topP = generation.topPOverride, topP < 1 { return false }
+        if let topK = generation.topKOverride, topK != 0 { return false }
         if let minP = generation.minPOverride, minP != 0 { return false }
         if let repetitionPenalty = generation.repetitionPenalty,
             repetitionPenalty != 0,

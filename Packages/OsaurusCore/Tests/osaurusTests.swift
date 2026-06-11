@@ -41,6 +41,26 @@ struct osaurusTests {
         #expect(internalMessages[1].content == "Hello")
     }
 
+    @Test func openAI_decodes_topK_samplingOverride() async throws {
+        let json = """
+            {
+              "model": "test-model",
+              "messages": [
+                {"role": "user", "content": "Hi"}
+              ],
+              "max_tokens": 12,
+              "temperature": 0,
+              "top_p": 0.9,
+              "top_k": 32
+            }
+            """.data(using: .utf8)!
+
+        let req = try JSONDecoder().decode(ChatCompletionRequest.self, from: json)
+        #expect(req.temperature == 0)
+        #expect(req.top_p == 0.9)
+        #expect(req.top_k == 32)
+    }
+
     @Test func serverConfiguration_portValidation() async throws {
         var cfg = ServerConfiguration.default
         cfg.port = 0

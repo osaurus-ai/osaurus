@@ -270,6 +270,7 @@ struct MLXBatchAdapterTests {
             maxTokens: 128,
             maxTokensExplicit: true,
             topPOverride: 0.5,
+            topKOverride: 32,
             minPOverride: 0.01,
             repetitionPenalty: 1.02
         )
@@ -294,7 +295,7 @@ struct MLXBatchAdapterTests {
         #expect(effective.temperature == 0.2)
         #expect(effective.maxTokens == 128)
         #expect(effective.topP == 0.5)
-        #expect(effective.topK == 40)
+        #expect(effective.topK == 32)
         #expect(effective.minP == 0.01)
         #expect(effective.repetitionPenalty == 1.02)
     }
@@ -375,6 +376,7 @@ struct MLXBatchAdapterTests {
             maxTokens: 128,
             maxTokensExplicit: true,
             topPOverride: nil,
+            topKOverride: 32,
             minPOverride: nil,
             repetitionPenalty: nil
         )
@@ -405,7 +407,7 @@ struct MLXBatchAdapterTests {
         #expect(effectiveDraftStrategy == nil)
         #expect(effective.temperature == 0.7)
         #expect(effective.topP == 0.95)
-        #expect(effective.topK == 20)
+        #expect(effective.topK == 32)
         #expect(effective.repetitionPenalty == nil)
         #expect(effective.compiledBatchDecode == false)
     }
