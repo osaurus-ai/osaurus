@@ -17,12 +17,14 @@ closure are not complete. Memory-safety controls have API/admin proof on PR
 Current PR #1465 proof baseline:
 
 - Osaurus PR: `#1465`
-- Osaurus commit: `1b5214469716e86577b77f4dbea7bd47270f10e3`
+- Osaurus proof/code commit: `15618727da01b71074626837b414e1d77c5fbe0c`
 - vMLX Swift pin: `76047f3b4492d4fae316267a30fba55163b1c5cd`
 - GitHub checks: `test-core`, `test-cli`, `swiftlint`, `shellcheck`, and
   `update_release_draft` were green on the commit above.
 - External-root proof after macOS disk access approval:
   `.agents/gemma-final/artifacts/pr1465-external-root-post-disk-approval-vmlx_76047f3-20260611-071401/SUMMARY.json`
+- Post-notification-approval tool/cache proof after macOS disk approval:
+  `.agents/gemma-final/artifacts/pr1465-post-notification-approval-e2b-tool-cache-vmlx_76047f3-20260611-083237/POST_APPROVAL_SUMMARY.json`
 
 ## Gemma 4 Live Proof
 
@@ -275,7 +277,12 @@ This does not claim MiMo VL/audio/video.
 
 Nex N2 remains a follow-up lane. Existing evidence shows useful topology proof
 but slow or blocked rows; do not block the Gemma checkpoint on N2 unless a
-shared runtime change regresses Gemma.
+shared runtime change regresses Gemma. After macOS disk notification approval,
+the currently available external runtime root still did not expose a launchable
+`nex-n2-pro-jangtq2` bundle. The drive contains the source bundle at
+`/Volumes/EricsLLMDrive/jangq-ai/sources/Nex-N2-Pro` and JANG build/proof
+outputs under `/Users/eric/jang/build`, so current N2 JANGTQ status is
+bundle-availability/discovery blocked, not runtime-proven.
 
 ## Required Release Checkers
 
