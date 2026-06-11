@@ -861,14 +861,20 @@ struct MLXBatchAdapter {
             return context
         }
         if ModelFamilyNames.isMiMoOrN2JANGRuntimeFamily(modelName) {
+            if toolChoiceRequiresLocalCall(toolChoice) {
+                context["enable_thinking"] = false
+                return context
+            }
             if directRailReasoningEffort {
                 context["enable_thinking"] = false
                 return context
             }
-            if hasPositiveReasoningEffort, let normalizedReasoningEffort {
+            if let disableThinking {
+                context["enable_thinking"] = !disableThinking
+            } else if hasPositiveReasoningEffort, let normalizedReasoningEffort {
                 context["enable_thinking"] = true
                 context["reasoning_effort"] = normalizedReasoningEffort
-            } else {
+            } else if normalizedReasoningEffort != nil {
                 context["enable_thinking"] = false
             }
             return context

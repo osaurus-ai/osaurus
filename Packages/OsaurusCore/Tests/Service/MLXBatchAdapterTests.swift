@@ -1375,7 +1375,7 @@ struct MLXBatchAdapterTests {
         }
     }
 
-    @Test func additionalContext_defaultsMiMoN2JANGThinkingOffButHonorsExplicitOptIn() {
+    @Test func additionalContext_letsMiMoN2JANGUseBundleDefaultButControlsRequiredTools() {
         let unspecified = GenerationParameters(temperature: nil, maxTokens: 16)
         let userEnabled = GenerationParameters(
             temperature: nil,
@@ -1393,8 +1393,34 @@ struct MLXBatchAdapterTests {
                 MLXBatchAdapter.additionalContext(
                     for: unspecified,
                     modelName: modelName
-                )["enable_thinking"] as? Bool == false,
-                "MiMo/N2 JANG text/tool rows should default to the no-thinking rail: \(modelName)"
+                )["enable_thinking"] == nil,
+                "MiMo/N2 JANG follow-ups must use the bundle default unless the user or tool-choice contract overrides it: \(modelName)"
+            )
+
+            let required = MLXBatchAdapter.additionalContext(
+                for: unspecified,
+                modelName: modelName,
+                toolChoice: .required,
+                toolChoiceName: "line_count"
+            )
+            #expect(
+                required["enable_thinking"] as? Bool == false,
+                "MiMo/N2 required tool turns still use the direct tool-call rail: \(modelName)"
+            )
+            #expect(required["tool_choice"] as? String == "required")
+            #expect(required["tool_choice_name"] as? String == "line_count")
+
+            let userDisabled = MLXBatchAdapter.additionalContext(
+                for: GenerationParameters(
+                    temperature: nil,
+                    maxTokens: 16,
+                    modelOptions: ["disableThinking": .bool(true)]
+                ),
+                modelName: modelName
+            )
+            #expect(
+                userDisabled["enable_thinking"] as? Bool == false,
+                "MiMo/N2 must honor explicit thinking-off requests: \(modelName)"
             )
             #expect(
                 MLXBatchAdapter.additionalContext(
