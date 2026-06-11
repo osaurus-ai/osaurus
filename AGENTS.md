@@ -39,6 +39,14 @@ and deletes rather than calling `SecItemCopyMatching` / `SecItemAdd` /
 - Never add forced thinking tags, parser repair, hidden sampler defaults,
   repetition-penalty rescues, close-token bias, or prompt/template coercion to
   make a model appear coherent.
+- Never add fake guards, placeholder gates, hardcoded model allowlists,
+  synthetic output filters, or "same behavior" enforcement to make a runtime
+  row look safe. If JANG, JANGTQ, MXFP, VL/audio/video, hybrid cache, SWA,
+  speed, coherency, leaking tool parser output, reasoning boundaries, or RAM
+  policy is wrong, trace the root cause and fix the real function/path. If the
+  root cause is not fixed yet, document the row as `PARTIAL` or `BLOCKED` with
+  exact evidence instead of forcing behavior in prompts, parsers, samplers, or
+  UI state.
 - Chat/API defaults must come from the active model bundle's
   `generation_config.json` or equivalent runtime config unless a user
   explicitly overrides them. Native-trained defaults such as top-k matter for
@@ -58,6 +66,10 @@ and deletes rather than calling `SecItemCopyMatching` / `SecItemAdd` /
 - Multi-turn coherency is required: visible answer, reasoning channel behavior,
   no looping, no hidden reasoning-only output, no length-cap fake pass, and no
   raw parser marker leak.
+- Reasoning fixes must preserve the model's real contract. Do not inject fake
+  closers/openers, hide leaked reasoning markers by stripping visible text, or
+  treat a parser cleanup as correctness unless the live output, structured
+  reasoning field, and user-visible answer all prove the boundary is correct.
 - Cache proof must match the model architecture:
   - Full-attention models need real KV, prefix/paged, L2 disk, and TurboQuant
     KV proof when enabled.
@@ -74,6 +86,21 @@ and deletes rather than calling `SecItemCopyMatching` / `SecItemAdd` /
 - Qwen/JANG/JANGTQ RAM regressions require end-to-end Osaurus proof with
   physical footprint, stop status, cache telemetry, token/s, and visible
   multi-turn output before being called fixed.
+- Memory limits must apply only through documented user/runtime settings and
+  the resolved runtime plan. Do not add hidden RAM percentage blocks or fake
+  load refusals. If a selected setting or true runtime limit prevents a load or
+  context request, fail before unsafe MLX/Metal allocation with a clear typed
+  API/app error that tells the user what setting or resource limit applied.
+- Server settings are part of runtime proof, not a source-only contract. For
+  every claimed model/runtime row, verify the relevant server setting wiring
+  through live Osaurus panel/API state: generation defaults and overrides,
+  reasoning mode, tool mode, memory enablement, prefix cache, paged KV, L2 disk
+  cache, TurboQuant KV when applicable, media/cache settings, concurrency, and
+  memory-safety settings. Toggle the setting, speak to the model, and confirm
+  the runtime behavior, telemetry, and user-visible state changed as intended.
+  If settings conflict or do not compose for a model family, question the
+  compatibility contract, fix the real wiring, or document the row as
+  `PARTIAL`/`BLOCKED` with the exact incompatible setting combination.
 - Do not spawn recursive local "agent" workers, Python subagents, or delegated
   helper agents for Gemma/Osaurus release work unless the user explicitly asks.
   Do not use Python or shell wrappers as an orchestration layer to farm work out
