@@ -3980,10 +3980,12 @@ struct ChatView: View {
             let hasLegacyPairedKeys = !APIKeyManager.shared
                 .legacyMasterScopedKeys(knownAgentAddresses: knownAgentAddrs)
                 .isEmpty
-            pendingWhatsNew = WhatsNewGate.pendingAutoShowRelease(
-                hasSandbox: hasSandbox,
-                hasLegacyPairedKeys: hasLegacyPairedKeys
-            )
+            // What's New modal disabled.
+            // pendingWhatsNew = WhatsNewGate.pendingAutoShowRelease(
+            //     hasSandbox: hasSandbox,
+            //     hasLegacyPairedKeys: hasLegacyPairedKeys
+            // )
+            _ = (hasSandbox, hasLegacyPairedKeys)
         }
         .onDisappear {
             cleanupKeyMonitor()
