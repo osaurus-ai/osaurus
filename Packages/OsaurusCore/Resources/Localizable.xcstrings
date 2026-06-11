@@ -70,6 +70,22 @@
         }
       }
     },
+    "Allow Experimental MLXPress" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Experimentelles MLXPress erlauben"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "允许实验性 MLXPress"
+          }
+        }
+      }
+    },
     "Agent traffic is protected by the Osaurus Secure Channel: forward-secret, mutually authenticated end-to-end encryption." : {
       "localizations" : {
         "de" : {
@@ -130,6 +146,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "端到端加密"
+          }
+        }
+      }
+    },
+    "Fail Closed When Estimate Is Unknown" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bei unbekannter Schätzung geschlossen fehlschlagen"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "估算未知时关闭式失败"
           }
         }
       }
