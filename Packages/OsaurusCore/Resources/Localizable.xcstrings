@@ -26051,6 +26051,7 @@
       }
     },
     "Local models are compute-intensive and our curated picks need more unified memory than this machine has. We recommend a different path." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -34667,6 +34668,7 @@
       }
     },
     "Pick a Cloud provider" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {

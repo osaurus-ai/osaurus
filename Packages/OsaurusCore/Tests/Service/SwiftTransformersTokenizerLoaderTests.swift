@@ -1403,7 +1403,9 @@ struct SwiftTransformersTokenizerLoaderTests {
             "Decoded: \(decoded)"
         )
         #expect(
-            decoded.contains(#"In the native LFM tagged JSON call, each line break is represented by the two characters \n"#),
+            decoded.contains(
+                #"In the native LFM tagged JSON call, each line break is represented by the two characters \n"#
+            ),
             "Decoded: \(decoded)"
         )
         #expect(
@@ -1445,7 +1447,9 @@ struct SwiftTransformersTokenizerLoaderTests {
                 "Required-tool instruction must be present in the LFM system preface. Decoded: \(decoded)"
             )
             #expect(
-                beforeUser.contains(#"<|tool_call_start|>["line_count", {"text":"red\ngreen\nblue"}]<|tool_call_end|>"#),
+                beforeUser.contains(
+                    #"<|tool_call_start|>["line_count", {"text":"red\ngreen\nblue"}]<|tool_call_end|>"#
+                ),
                 "Required-tool instruction must keep the exact multiline value in the LFM system preface. Decoded: \(decoded)"
             )
         }

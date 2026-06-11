@@ -1102,7 +1102,7 @@ extension ModelManager {
         guard let match = findInstalledMLXModel(named: name) else { return nil }
         let repo =
             match.id.split(separator: "/").last.map(String.init)?.lowercased()
-                ?? name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            ?? name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return (repo, match.id)
     }
 }

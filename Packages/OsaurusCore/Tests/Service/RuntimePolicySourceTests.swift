@@ -2552,7 +2552,9 @@ struct RuntimePolicySourceTests {
             )
             .map(\.lowerBound) ?? service.endIndex
         let validateBody = String(service[validate.lowerBound ..< validateEnd])
-        #expect(validateBody.contains("let mediaModalities: Set<ModelRuntimeRequestModality> = [.vision, .video, .audio]"))
+        #expect(
+            validateBody.contains("let mediaModalities: Set<ModelRuntimeRequestModality> = [.vision, .video, .audio]")
+        )
         #expect(validateBody.contains("if !modalities.isDisjoint(with: mediaModalities)"))
 
         let supportEnd =

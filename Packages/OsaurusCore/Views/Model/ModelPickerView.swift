@@ -2,7 +2,8 @@
 //  ModelPickerView.swift
 //  osaurus
 //
-//  A rich model picker with search, grouped sections, and metadata display.
+//  A rich model picker with provider tabs, unified cross-provider search,
+//  and metadata display.
 //
 
 import SwiftUI
@@ -15,10 +16,10 @@ struct ModelPickerView: View {
 
     @State private var searchText = ""
     @State private var searchDebounceTask: Task<Void, Never>?
-    @State private var collapsedGroups: Set<String> = []
-    @State private var cachedGroupedOptions: [(source: ModelPickerItem.Source, models: [ModelPickerItem])] = []
+    @State private var selectedTabKey: String?
+    @State private var cachedTabs: [ModelPickerTab] = []
+    @State private var cachedTabRows: [String: [ModelPickerRow]] = [:]
     @State private var cachedFlattenedRows: [ModelPickerRow] = []
-    @State private var cachedGroupRows: [String: [ModelPickerRow]] = [:]
     @Environment(\.theme) private var theme
 
     // MARK: - Test Mode
@@ -38,86 +39,97 @@ struct ModelPickerView: View {
 
     // MARK: - Data
 
-    private func recomputeRows() {
-        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let groups: [(source: ModelPickerItem.Source, models: [ModelPickerItem])]
+    private var isSearching: Bool {
+        !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
 
-        if query.isEmpty {
-            groups = cachedGroupedOptions
-        } else {
-            groups = cachedGroupedOptions.compactMap { group in
-                let groupMatches = SearchService.matches(query: query, in: group.source.displayName)
-                let matchedModels = group.models.filter {
-                    SearchService.matches(query: query, in: $0.displayName)
-                        || SearchService.matches(query: query, in: $0.id)
-                }
-                if groupMatches { return group }
-                if !matchedModels.isEmpty {
-                    return (source: group.source, models: matchedModels)
-                }
-                return nil
-            }
+    /// Rebuild tabs from options and keep the active tab valid. Called on
+    /// appear and whenever the options array changes.
+    private func rebuildTabs() {
+        cachedTabs = displayOptions.groupedByTab()
+        cachedTabRows = [:]
+
+        if let key = selectedTabKey, cachedTabs.contains(where: { $0.key == key }) {
+            return
         }
+        selectedTabKey = tabKey(containing: selectedModel) ?? cachedTabs.first?.key
+    }
+
+    private func tabKey(containing modelId: String?) -> String? {
+        guard let modelId else { return nil }
+        return cachedTabs.first(where: { tab in tab.models.contains(where: { $0.id == modelId }) })?.key
+    }
+
+    /// Rows for a tab, built lazily on first visit and reused until the
+    /// options array changes.
+    private func rowsForTab(_ tab: ModelPickerTab) -> [ModelPickerRow] {
+        if let cached = cachedTabRows[tab.key] { return cached }
 
         var rows: [ModelPickerRow] = []
-        // preallocate to reduce allocations
-        rows.reserveCapacity(groups.count * 20)
-
-        for group in groups {
-            let sourceKey = group.source.uniqueKey
-            let expanded = !query.isEmpty || !collapsedGroups.contains(sourceKey)
-
+        rows.reserveCapacity(tab.models.count)
+        for model in tab.models {
             rows.append(
-                .groupHeader(
-                    sourceKey: sourceKey,
-                    displayName: group.source.displayName,
-                    sourceType: group.source,
-                    count: group.models.count,
-                    isExpanded: expanded
+                ModelPickerRow(
+                    modelId: model.id,
+                    sourceKey: model.source.uniqueKey,
+                    displayName: model.displayName,
+                    description: model.description,
+                    parameterCount: model.parameterCount,
+                    quantization: model.quantization,
+                    isVLM: model.isVLM
                 )
             )
+        }
+        cachedTabRows[tab.key] = rows
+        return rows
+    }
 
-            if expanded {
-                // check if we have cached model rows for this group
-                let cacheKey = sourceKey + "_\(group.models.count)"
-                if let cachedModelRows = cachedGroupRows[cacheKey], query.isEmpty {
-                    rows.append(contentsOf: cachedModelRows)
-                } else {
-                    var modelRows: [ModelPickerRow] = []
-                    modelRows.reserveCapacity(group.models.count)
+    private func recomputeRows() {
+        guard isSearching else {
+            if let key = selectedTabKey, let tab = cachedTabs.first(where: { $0.key == key }) {
+                cachedFlattenedRows = rowsForTab(tab)
+            } else {
+                cachedFlattenedRows = []
+            }
+            return
+        }
 
-                    for model in group.models {
-                        let row = ModelPickerRow.model(
-                            id: model.id,
-                            sourceKey: sourceKey,
-                            displayName: model.displayName,
-                            description: model.description,
-                            parameterCount: model.parameterCount,
-                            quantization: model.quantization,
-                            isVLM: model.isVLM
-                        )
-                        modelRows.append(row)
-                    }
+        // Unified search: one pass across every tab's models with the query
+        // prepared once. Each row carries its provider title so identical
+        // model IDs offered by different providers stay distinguishable.
+        let prepared = SearchService.PreparedQuery(searchText)
+        var rows: [ModelPickerRow] = []
+        rows.reserveCapacity(64)
 
-                    // cache model rows when not searching
-                    if query.isEmpty {
-                        cachedGroupRows[cacheKey] = modelRows
-                    }
-                    rows.append(contentsOf: modelRows)
-                }
+        for tab in cachedTabs {
+            for model in tab.models {
+                guard
+                    SearchService.matches(prepared, in: model.displayName)
+                        || SearchService.matches(prepared, in: model.id)
+                else { continue }
+                rows.append(
+                    ModelPickerRow(
+                        modelId: model.id,
+                        sourceKey: model.source.uniqueKey,
+                        displayName: model.displayName,
+                        description: model.description,
+                        parameterCount: model.parameterCount,
+                        quantization: model.quantization,
+                        isVLM: model.isVLM,
+                        providerLabel: tab.title
+                    )
+                )
             }
         }
         cachedFlattenedRows = rows
     }
 
-    private func toggleGroup(_ source: ModelPickerItem.Source) {
-        let key = source.uniqueKey
-        if collapsedGroups.contains(key) {
-            collapsedGroups.remove(key)
-        } else {
-            collapsedGroups.insert(key)
-        }
-        // onChange(of: collapsedGroups) will trigger recomputeRows()
+    private func switchTab(by offset: Int) {
+        guard !cachedTabs.isEmpty else { return }
+        let currentIndex = cachedTabs.firstIndex(where: { $0.key == selectedTabKey }) ?? 0
+        let newIndex = max(0, min(cachedTabs.count - 1, currentIndex + offset))
+        guard cachedTabs[newIndex].key != selectedTabKey else { return }
+        selectedTabKey = cachedTabs[newIndex].key
     }
 
     // MARK: - Body
@@ -134,6 +146,11 @@ struct ModelPickerView: View {
             searchField
             Divider().background(theme.primaryBorder.opacity(0.3))
 
+            if !isSearching, cachedTabs.count > 1 {
+                tabBar
+                Divider().background(theme.primaryBorder.opacity(0.3))
+            }
+
             if let replacement = selectedModelReplacement {
                 deprecationBanner(replacement: replacement)
             }
@@ -149,7 +166,7 @@ struct ModelPickerView: View {
         .overlay(popoverBorder)
         .shadow(color: theme.shadowColor.opacity(0.15), radius: 12, x: 0, y: 6)
         .onAppear {
-            cachedGroupedOptions = displayOptions.groupedBySource()
+            rebuildTabs()
             recomputeRows()
         }
         .task {
@@ -162,7 +179,7 @@ struct ModelPickerView: View {
             // once and only rebuilds on `.localModelsChanged`, which this
             // posts when something went missing. Cheap existence check; no-op
             // when nothing changed. Runs last since it's the lowest priority.
-            await Task.detached(priority: .utility) {
+            _ = await Task.detached(priority: .utility) {
                 ExternalModelLocator.pruneMissing()
             }.value
         }
@@ -170,7 +187,7 @@ struct ModelPickerView: View {
             searchDebounceTask?.cancel()
         }
         .onChange(of: displayOptions.count) { _, _ in
-            cachedGroupedOptions = displayOptions.groupedBySource()
+            rebuildTabs()
             recomputeRows()
         }
         .onChange(of: searchText) { _, newValue in
@@ -185,14 +202,8 @@ struct ModelPickerView: View {
                 }
             }
         }
-        .onChange(of: collapsedGroups) { _, _ in
-            // debounce to avoid multiple rapid toggles
-            searchDebounceTask?.cancel()
-            searchDebounceTask = Task { @MainActor in
-                try? await Task.sleep(for: .milliseconds(50))
-                guard !Task.isCancelled else { return }
-                recomputeRows()
-            }
+        .onChange(of: selectedTabKey) { _, _ in
+            recomputeRows()
         }
     }
 
@@ -298,6 +309,75 @@ struct ModelPickerView: View {
         .animation(.easeOut(duration: 0.15), value: searchText.isEmpty)
     }
 
+    // MARK: - Tab Bar
+
+    private var tabBar: some View {
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(cachedTabs) { tab in
+                        tabChip(for: tab)
+                            .id(tab.key)
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+            }
+            .onAppear {
+                if let key = selectedTabKey {
+                    proxy.scrollTo(key, anchor: .center)
+                }
+            }
+            .onChange(of: selectedTabKey) { _, newKey in
+                guard let newKey else { return }
+                withAnimation(.easeOut(duration: 0.15)) {
+                    proxy.scrollTo(newKey, anchor: .center)
+                }
+            }
+        }
+    }
+
+    private func tabChip(for tab: ModelPickerTab) -> some View {
+        let isActive = tab.key == selectedTabKey
+        return Button(action: { selectedTabKey = tab.key }) {
+            HStack(spacing: 5) {
+                Text(tab.title)
+                    .font(.system(size: 11, weight: isActive ? .semibold : .medium))
+                    .foregroundColor(isActive ? theme.accentColor : theme.secondaryText)
+
+                Text("\(tab.models.count)")
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundColor(isActive ? theme.accentColor.opacity(0.9) : theme.tertiaryText)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1)
+                    .background(
+                        Capsule().fill(
+                            isActive
+                                ? theme.accentColor.opacity(0.12)
+                                : theme.secondaryBackground
+                        )
+                    )
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(
+                Capsule()
+                    .strokeBorder(
+                        isActive ? theme.accentColor.opacity(0.35) : theme.primaryBorder.opacity(0.25),
+                        lineWidth: 1
+                    )
+                    .background(
+                        Capsule().fill(
+                            isActive
+                                ? theme.accentColor.opacity(0.08)
+                                : theme.secondaryBackground.opacity(theme.isDark ? 0.4 : 0.5)
+                        )
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
     // MARK: - Deprecation Banner
 
     private func deprecationBanner(replacement: String) -> some View {
@@ -356,15 +436,13 @@ struct ModelPickerView: View {
             rows: cachedFlattenedRows,
             theme: theme,
             selectedModelId: selectedModel,
-            onToggleGroup: { sourceKey in
-                if let group = cachedGroupedOptions.first(where: { $0.source.uniqueKey == sourceKey }) {
-                    toggleGroup(group.source)
-                }
-            },
             onSelectModel: { modelId in
                 selectedModel = modelId
                 onDismiss()
             },
+            // nil while searching so left/right arrows stay with the
+            // search field's text cursor instead of switching hidden tabs
+            onSwitchTab: isSearching ? nil : { offset in switchTab(by: offset) },
             onDismiss: onDismiss
         )
     }
@@ -407,9 +485,12 @@ struct ModelPickerView: View {
                 ModelPickerItem.generateMockModels(count: 500)
             }
 
-            // small sample for quick testing
+            // small sample for quick testing — multiple providers so the tab
+            // bar and unified search attribution are exercised
             private var smallSampleModels: [ModelPickerItem] {
-                [
+                let openAIId = UUID()
+                let anthropicId = UUID()
+                return [
                     .foundation(),
                     ModelPickerItem(
                         id: "mlx-community/Llama-3.2-3B-Instruct-4bit",
@@ -430,12 +511,17 @@ struct ModelPickerView: View {
                     ModelPickerItem(
                         id: "openai/gpt-4o",
                         displayName: "gpt-4o",
-                        source: .remote(providerName: "OpenAI", providerId: UUID())
+                        source: .remote(providerName: "OpenAI", providerId: openAIId)
                     ),
                     ModelPickerItem(
                         id: "openai/gpt-3.5-turbo",
                         displayName: "gpt-3.5-turbo",
-                        source: .remote(providerName: "OpenAI", providerId: UUID())
+                        source: .remote(providerName: "OpenAI", providerId: openAIId)
+                    ),
+                    ModelPickerItem(
+                        id: "anthropic/claude-opus-4",
+                        displayName: "claude-opus-4",
+                        source: .remote(providerName: "Anthropic", providerId: anthropicId)
                     ),
                 ]
             }

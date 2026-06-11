@@ -1059,7 +1059,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let obj: [String: Any] = [
                 "status": "ok",
                 "timestamp": Date().ISO8601Format(),
-                "source": "last effective settings resolved by Osaurus; stage indicates whether they are pending preload or submitted to vmlx BatchEngine",
+                "source":
+                    "last effective settings resolved by Osaurus; stage indicates whether they are pending preload or submitted to vmlx BatchEngine",
                 "models": lastEffectiveGenerationSettings.keys.sorted(),
                 "generation_defaults_by_model": defaultsByModel,
                 "last_effective_generation_by_model": effectiveByModel,
@@ -1210,7 +1211,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             if previous.network != next.network {
                 let body = Self.errorBody(
                     .openai(type: "invalid_request_error"),
-                    message: "Network runtime settings require the Server Settings panel because they can restart/rebind the HTTP server. Keep network unchanged for /admin/runtime-settings."
+                    message:
+                        "Network runtime settings require the Server Settings panel because they can restart/rebind the HTTP server. Keep network unchanged for /admin/runtime-settings."
                 )
                 let headers = [("Content-Type", "application/json; charset=utf-8")] + cors
                 hop {
@@ -1288,7 +1290,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 "loaded_model_refresh_needed": loadedModelRefreshNeeded,
                 "runtime_config_invalidated": runtimeConfigInvalidated,
                 "network_restart_rejected": false,
-                "validation_warnings": validationIssues
+                "validation_warnings":
+                    validationIssues
                     .filter { $0.severity == .warning }
                     .map(Self.settingsIssueJSONObject),
             ]
