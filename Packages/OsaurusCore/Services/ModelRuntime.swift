@@ -102,6 +102,7 @@ public actor ModelRuntime {
         let draftStrategy: MLXLMCommon.DraftStrategy?
         let statusLine: String?
         let reason: String
+        let memorySafetySummary: String
     }
 
     /// Sendable wrapper around an immutable snapshot of chat messages.
@@ -1287,7 +1288,7 @@ public actor ModelRuntime {
                 settings: serverSettings
             )
             genLog.info(
-                "loadContainer: native MTP plan model=\(name, privacy: .public) nativeMTP=\(mtpPlan.loadConfiguration.nativeMTP, privacy: .public) draftStrategy=\(Self.describeDraftStrategy(mtpPlan.draftStrategy), privacy: .public) reason=\(mtpPlan.reason, privacy: .public) status=\(mtpPlan.statusLine ?? "none", privacy: .public)"
+                "loadContainer: native MTP plan model=\(name, privacy: .public) nativeMTP=\(mtpPlan.loadConfiguration.nativeMTP, privacy: .public) draftStrategy=\(Self.describeDraftStrategy(mtpPlan.draftStrategy), privacy: .public) reason=\(mtpPlan.reason, privacy: .public) status=\(mtpPlan.statusLine ?? "none", privacy: .public) memorySafety=\(mtpPlan.memorySafetySummary, privacy: .public)"
             )
             let container = try await loadModelContainer(
                 from: localURL,
@@ -2198,11 +2199,19 @@ public actor ModelRuntime {
         settings: VMLXServerRuntimeSettings
     ) -> NativeMTPLaunchPlan {
         if ModelFamilyNames.isMiMoOrN2JANGRuntimeFamily(modelName) {
+            let memorySafetyPlan = Self.resolveMemorySafetyLoadPlan(
+                modelName: modelName,
+                modelDirectory: modelDirectory,
+                settings: settings,
+                baseLoadConfiguration: .osaurusProduction,
+                inspectBundleFacts: false
+            )
             return NativeMTPLaunchPlan(
-                loadConfiguration: .osaurusProduction,
+                loadConfiguration: memorySafetyPlan.loadConfiguration,
                 draftStrategy: nil,
                 statusLine: nil,
-                reason: "MiMo/N2 JANG text runtime is not an MTP bundle; using autoregressive load."
+                reason: "MiMo/N2 JANG text runtime is not an MTP bundle; using autoregressive load.",
+                memorySafetySummary: memorySafetyPlan.displaySummary
             )
         }
         let configData = try? Data(contentsOf: modelDirectory.appendingPathComponent("config.json"))
@@ -2217,11 +2226,19 @@ public actor ModelRuntime {
             genLog.error(
                 "native MTP inspection failed for \(modelDirectory.lastPathComponent, privacy: .public): \(String(describing: error), privacy: .public)"
             )
+            let memorySafetyPlan = Self.resolveMemorySafetyLoadPlan(
+                modelName: modelName,
+                modelDirectory: modelDirectory,
+                settings: settings,
+                baseLoadConfiguration: .osaurusProduction,
+                inspectBundleFacts: true
+            )
             return NativeMTPLaunchPlan(
-                loadConfiguration: .osaurusProduction,
+                loadConfiguration: memorySafetyPlan.loadConfiguration,
                 draftStrategy: nil,
                 statusLine: nil,
-                reason: "MTP inspection failed; using autoregressive load."
+                reason: "MTP inspection failed; using autoregressive load.",
+                memorySafetySummary: memorySafetyPlan.displaySummary
             )
         }
 
@@ -2241,13 +2258,48 @@ public actor ModelRuntime {
             jangConfig: jangConfig,
             status: status
         )
+        let memorySafetyPlan = Self.resolveMemorySafetyLoadPlan(
+            modelName: modelName,
+            modelDirectory: modelDirectory,
+            settings: settings,
+            baseLoadConfiguration: loadConfiguration,
+            inspectBundleFacts: true
+        )
 
         return NativeMTPLaunchPlan(
-            loadConfiguration: loadConfiguration,
+            loadConfiguration: memorySafetyPlan.loadConfiguration,
             draftStrategy: draftStrategy,
             statusLine: status?.statusLine,
-            reason: launch.reason
+            reason: launch.reason,
+            memorySafetySummary: memorySafetyPlan.displaySummary
         )
+    }
+
+    private nonisolated static func resolveMemorySafetyLoadPlan(
+        modelName: String,
+        modelDirectory: URL,
+        settings: VMLXServerRuntimeSettings,
+        baseLoadConfiguration: LoadConfiguration,
+        inspectBundleFacts: Bool
+    ) -> VMLXResolvedMemorySafetyPlan {
+        let bundleFacts = inspectBundleFacts
+            ? LoadBundleFacts.inspect(bundleURL: modelDirectory)
+            : nil
+        let plan = settings.resolvedMemorySafetyPlan(
+            baseLoadConfiguration: baseLoadConfiguration,
+            bundleFacts: bundleFacts,
+            host: MemoryStatus.snapshot(),
+            request: nil
+        )
+        if !plan.blockingIssues.isEmpty {
+            let issueSummary = plan.blockingIssues
+                .map { "\($0.field): \($0.message)" }
+                .joined(separator: "; ")
+            genLog.warning(
+                "loadContainer: memory safety plan produced advisory blocking issues for \(modelName, privacy: .public): \(issueSummary, privacy: .public)"
+            )
+        }
+        return plan
     }
 
     private nonisolated static func describeDraftStrategy(

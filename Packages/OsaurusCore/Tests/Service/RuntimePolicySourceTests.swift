@@ -1732,10 +1732,17 @@ struct RuntimePolicySourceTests {
 
         #expect(runtime.contains("loadConfiguration: mtpPlan.loadConfiguration"))
         #expect(runtime.contains("resolvedLoadConfiguration("))
+        #expect(runtime.contains("resolveMemorySafetyLoadPlan("))
+        #expect(runtime.contains("settings.resolvedMemorySafetyPlan("))
+        #expect(runtime.contains("baseLoadConfiguration: loadConfiguration"))
+        #expect(runtime.contains("request: nil"))
+        #expect(runtime.contains("memorySafetySummary: memorySafetyPlan.displaySummary"))
         #expect(runtime.contains("base: .osaurusProduction"))
-        #expect(runtime.contains("loadConfiguration: .osaurusProduction"))
+        #expect(runtime.contains("baseLoadConfiguration: .osaurusProduction"))
+        #expect(runtime.contains("loadConfiguration: memorySafetyPlan.loadConfiguration"))
         #expect(!runtime.contains("base: .default"))
         #expect(!runtime.contains("loadConfiguration: .default"))
+        #expect(!runtime.contains("throw LoadRefusedError("))
         #expect(
             !runtime.contains(
                 "loadModelContainer(\n                from: localURL,\n                using: tokenizerLoader\n            )"
