@@ -288,12 +288,24 @@ This does not claim MiMo VL/audio/video generation.
 
 Nex N2 remains a follow-up lane. Existing evidence shows useful topology proof
 but slow or blocked rows; do not block the Gemma checkpoint on N2 unless a
-shared runtime change regresses Gemma. After macOS disk notification approval,
-the currently available external runtime root still did not expose a launchable
-`nex-n2-pro-jangtq2` bundle. The drive contains the source bundle at
-`/Volumes/EricsLLMDrive/jangq-ai/sources/Nex-N2-Pro` and JANG build/proof
-outputs under `/Users/eric/jang/build`, so current N2 JANGTQ status is
-bundle-availability/discovery blocked, not runtime-proven.
+shared runtime change regresses Gemma.
+
+After macOS disk notification approval, the currently available roots still do
+not expose a launchable `nex-n2-pro-jangtq2` runtime bundle. Current inventory:
+
+- `/Users/eric/.mlxstudio/models` does not list `nex-n2-pro-jangtq2`.
+- `/Volumes/EricsLLMDrive/jangq-ai/sources/Nex-N2-Pro` is the source bundle,
+  not the JANGTQ runtime id.
+- `/Users/eric/jang/build/n2-jangtq2-vmlx-control-20260610` contains only cache
+  DB files and `server.log`, with no config/tokenizer/safetensors runtime
+  bundle files.
+- Other `/Users/eric/jang/build/n2-*` directories are analysis/proof/smoke
+  outputs, not launchable Osaurus model bundles.
+
+Current N2 JANGTQ status is `BLOCKED` on bundle availability/discovery. The next
+gate is to place or build a real launchable runtime bundle, then run the same
+Osaurus live `/v1/models`, load, multi-turn tool, no-leak, token/s, topology
+cache, and health proof used for Gemma.
 
 ## Required Release Checkers
 
