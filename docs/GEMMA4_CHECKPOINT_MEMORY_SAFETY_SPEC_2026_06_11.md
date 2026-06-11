@@ -9,20 +9,25 @@ what can be shared in the repo without pretending unproven rows are complete.
 
 Status: `PARTIAL RELEASE CHECKPOINT`.
 
-Gemma 4 text/chat/tool/cache behavior is usable on the current main app build
-for a checkpoint. Audio/video generation and full all-family Sentry closure are
-not complete. Memory-safety controls now have manual UI save proof on PR #1462.
+Gemma 4 text/chat/tool/cache behavior is usable on the current PR #1465 app
+build for a checkpoint. Audio/video generation and full all-family Sentry
+closure are not complete. Memory-safety controls have API/admin proof on PR
+#1465 and prior manual UI save proof on PR #1462.
 
-Current app proof baseline:
+Current PR #1465 proof baseline:
 
-- Osaurus commit: `0f5f060ca7e0660cea0a5d095012e1d60ebc58c8`
-- vMLX Swift pin: `ef025f2556978d033131f745c00dd8128c8d5151`
-- Built app: `build/DerivedData-gemma-current-main-0f5f060-20260610-210706/Build/Products/Release/osaurus.app`
-- Build log: `.agents/gemma-final/artifacts/osaurus-main-0f5f060-live-e2e-build-20260610-210706.log`
+- Osaurus PR: `#1465`
+- Osaurus commit: `1b5214469716e86577b77f4dbea7bd47270f10e3`
+- vMLX Swift pin: `76047f3b4492d4fae316267a30fba55163b1c5cd`
+- GitHub checks: `test-core`, `test-cli`, `swiftlint`, `shellcheck`, and
+  `update_release_draft` were green on the commit above.
+- External-root proof after macOS disk access approval:
+  `.agents/gemma-final/artifacts/pr1465-external-root-post-disk-approval-vmlx_76047f3-20260611-071401/SUMMARY.json`
 
 ## Gemma 4 Live Proof
 
-Current-main live Osaurus API proof passed for all ten local Gemma 4 text rows:
+Current PR #1465 live Osaurus API proof passed for all ten local Gemma 4 text
+rows:
 
 - `gemma-4-e2b-it-qat-mxfp4`
 - `gemma-4-e2b-it-qat-jang_4m`
@@ -46,10 +51,10 @@ Each row passed the live multi-turn required-tool harness:
   leakage was observed.
 - Cache topology matched Gemma rotating/full KV with disk-backed restore.
 
-Current-main weird-character replay also passed for each row with default
-settings and with `thinking: disabled`.
+Current PR #1465 weird-character replay also passed for each row with default
+settings and with thinking disabled.
 
-Representative current-main speed from API-reported token/s:
+Representative release-speed proof from API-reported token/s:
 
 | Row | Default | Thinking Disabled |
 | --- | ---: | ---: |
@@ -64,13 +69,26 @@ Representative current-main speed from API-reported token/s:
 | 31B MXFP4 | 21.73 | 21.62 |
 | 31B JANG_4M | 16.98 | 16.83 |
 
-Representative current-main repeat-cache proof passed for E2B MXFP4 and
-JANG_4M: repeated identical prompts kept a stable prefix hash and produced a
-repeat disk L2 hit.
+Current PR #1465 all-ten text/tool/cache artifact:
+`.agents/gemma-final/artifacts/pr1465-gemma-42fd-debug-all10-live-20260611-051547/tool-cache-all10/SUMMARY.json`.
+
+Current PR #1465 no-weird-character/tool-leak artifact:
+`.agents/gemma-final/artifacts/pr1465-gemma-42fd-debug-all10-live-20260611-051547/no-weird-chars-tool-leak-all10.json`.
+
+Current PR #1465 issue #1432 replay artifact:
+`.agents/gemma-final/artifacts/pr1465-gemma-42fd-debug-all10-live-20260611-051547/issue1432-ai-short-paragraph-all10-corrected-eval.json`.
+
+Representative repeat-cache proof passed for E2B MXFP4 and JANG_4M: repeated
+identical prompts kept a stable prefix hash and produced a repeat disk L2 hit.
 
 ## Gemma Media And Reasoning Boundary
 
-Representative image proof passed on current main for:
+All-ten Gemma image/VL routing proof passed on current PR #1465:
+
+- Artifact:
+  `.agents/gemma-final/artifacts/pr1465-gemma-all-media-vl-audio-video-vmlx_76047f3-20260611-065406/SUMMARY.json`
+
+Earlier representative image proof also passed for:
 
 - `gemma-4-12b-it-qat-mxfp4`
 - `gemma-4-12b-it-qat-jang_4m`
@@ -95,7 +113,8 @@ Reasoning behavior is bundle/API driven:
 
 ## Memory Safety Settings Contract
 
-The runtime contract exists, is visible, and has PR #1462 manual UI save proof.
+The runtime contract exists, is visible, and has PR #1465 API/admin proof plus
+PR #1462 manual UI save proof.
 
 Current default resolved plan visible in `/admin/cache-stats.memory_safety`:
 
@@ -129,7 +148,8 @@ Important display rule:
 
 ## Settings Control Surface
 
-Changed-setting proof is currently `FIXED for PR #1462 UI/app/API application`.
+Changed-setting proof is currently `FIXED for PR #1465 API/admin application`
+and `FIXED for PR #1462 manual UI application`.
 
 The app exposes memory-safety status through `/admin/cache-stats.memory_safety`
 and now exposes a Server Settings section that edits
@@ -151,7 +171,24 @@ The Server Settings section persists:
 - `memorySafety.customDefaultMaxKVSize`
 - `memorySafety.customMaxConcurrentSequences`
 
-Live proof now shows:
+Current PR #1465 API/admin live proof shows:
+
+1. `GET /admin/runtime-settings` returns the persisted vMLX runtime settings.
+2. `PUT /admin/runtime-settings` persists valid generation, cache,
+   memory-safety, media, MTP, and concurrency settings.
+3. Network mutations are rejected from this endpoint because they can restart or
+   rebind the HTTP server.
+4. Cache/media/MTP changes clear loaded models when needed, and
+   generation/concurrency changes invalidate runtime config.
+5. Generation/concurrency, prefix cache, dependent paged KV/block disk, and
+   Strict memory safety were toggled through the API/admin surface.
+6. Each changed state was followed by live Gemma chat, health, cache/status
+   telemetry, and restore-original confirmation.
+
+Artifact:
+`.agents/gemma-final/artifacts/pr1465-gemma-runtime-settings-endpoint-live-vmlx_76047f3-20260611-060337/SUMMARY.json`.
+
+Prior PR #1462 UI proof shows:
 
 1. The user changes and saves the setting through the Server Settings UI.
 2. `/admin/cache-stats.memory_safety` shows the changed mode/slider.
@@ -222,14 +259,19 @@ Forbidden behavior:
 ## Adjacent Rows
 
 Qwen MTP MXFP4 27B and 35B have current-main live chat/tool/cache proof with
-hybrid SSM companion plus disk L2 hits. Native MTP acceleration remains partial
-because the local bundles report preserved MTP weights but no production
-`vmlx_mtp_tuning.json`.
+hybrid SSM companion plus disk L2 hits. PR #1465 replay artifact:
+`.agents/gemma-final/artifacts/pr1465-qwen-mtp-tool-cache-20260611-002516`.
+Native MTP acceleration remains partial because the local bundles report
+preserved MTP weights but no production `vmlx_mtp_tuning.json`; do not force
+greedy sampling or fake native MTP activation.
 
-MiMo V2.5 JANGTQ_2 remains partial: required tool-call arguments passed and
-cache topology matched the bundle, but the visible tool-result follow-up
-answered the line count incorrectly. Do not mark MiMo release-green until
-tool-result grounding is fixed and live proof passes.
+MiMo V2.5 JANGTQ_2 is fixed for the shared text/tool-result regression on PR
+#1465: first required tool call preserved exact args, the ordinary tool-result
+follow-up answered `3 lines were counted.`, a second required tool call after
+history preserved exact args, no parser/protocol markers leaked, and cache
+telemetry showed 9 KV plus 39 rotating layers with disk L2. Artifact:
+`.agents/gemma-final/artifacts/pr1465-mimo-tool-history-fix-live-vmlx_76047f3-20260611-073345/SUMMARY.json`.
+This does not claim MiMo VL/audio/video.
 
 Nex N2 remains a follow-up lane. Existing evidence shows useful topology proof
 but slow or blocked rows; do not block the Gemma checkpoint on N2 unless a
