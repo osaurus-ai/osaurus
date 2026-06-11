@@ -1957,6 +1957,23 @@ struct RuntimePolicySourceTests {
         #expect(httpHandler.contains("\"native_mtp_status\""))
         #expect(httpHandler.contains("\"native_mtp_reason\""))
         #expect(httpHandler.contains("\"mlx_press\""))
+        #expect(httpHandler.contains("\"generation_defaults\""))
+        #expect(httpHandler.contains("\"last_effective_generation\""))
+        #expect(httpHandler.contains("\"stage\": settings.stage"))
+        #expect(httpHandler.contains("LocalGenerationDefaults.defaults(forModelId: summary.name)"))
+        #expect(httpHandler.contains("lastEffectiveGenerationSettingsSnapshot()"))
+        #expect(httpHandler.contains("path == \"/admin/generation-settings\""))
+        #expect(httpHandler.contains("handleGenerationSettingsEndpoint("))
+        #expect(httpHandler.contains("\"generation_defaults_by_model\""))
+        #expect(httpHandler.contains("\"last_effective_generation_by_model\""))
+        #expect(httpHandler.contains("It intentionally avoids `ModelRuntime`"))
+
+        let adapter = try Self.source("Services/ModelRuntime/MLXBatchAdapter.swift")
+        let runtime = try Self.source("Services/ModelRuntime.swift")
+        #expect(adapter.contains("recordPendingEffectiveGenerationSettings("))
+        #expect(adapter.contains("stage: \"pending_preload\""))
+        #expect(adapter.contains("stage: \"submitted_to_batch_engine\""))
+        #expect(runtime.contains("MLXBatchAdapter.recordPendingEffectiveGenerationSettings("))
     }
 
     @Test("admin cache stats exposes resolved memory safety status without load refusal")

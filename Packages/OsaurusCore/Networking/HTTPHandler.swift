@@ -585,6 +585,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     method: method,
                     path: path
                 )
+            } else if head.method == .GET, path == "/admin/generation-settings" {
+                handleGenerationSettingsEndpoint(
+                    head: head,
+                    context: context,
+                    startTime: startTime,
+                    userAgent: userAgent,
+                    method: method,
+                    path: path
+                )
             } else if head.method == .GET, path == "/models" {
                 handleModelsEndpoint(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .GET, path == "/tags" {
@@ -763,6 +772,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         runRequestTask(priority: .userInitiated) {
             let cached = await ModelRuntime.shared.cachedModelSummaries()
             let diagnostics = await MLXBatchAdapter.snapshotDiagnostics()
+            let lastEffectiveGenerationSettings =
+                await MLXBatchAdapter.lastEffectiveGenerationSettingsSnapshot()
             var aggregate: [String: Int] = [
                 "prefix_hits": 0,
                 "prefix_misses": 0,
@@ -800,6 +811,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 }
                 row["native_mtp_status"] = summary.nativeMTPStatus ?? NSNull()
                 row["native_mtp_reason"] = summary.nativeMTPReason ?? NSNull()
+                row["generation_defaults"] = Self.generationDefaultsJSONObject(
+                    LocalGenerationDefaults.defaults(forModelId: summary.name)
+                )
+                if let effective = lastEffectiveGenerationSettings[summary.name] {
+                    row["last_effective_generation"] = Self.effectiveGenerationSettingsJSONObject(effective)
+                } else {
+                    row["last_effective_generation"] = NSNull()
+                }
                 let mlxPress = summary.mlxPressStatus
                 var mlxPressStatus: [String: Any] = [
                     "enabled": mlxPress.enabled,
@@ -991,6 +1010,78 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         }
     }
 
+    /// `/admin/generation-settings` exposes the bundle-derived defaults and
+    /// the last effective generation settings that were actually submitted to
+    /// vmlx. It intentionally avoids `ModelRuntime` so it remains responsive
+    /// when an in-flight MLX prepare/decode path is blocked.
+    private func handleGenerationSettingsEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?,
+        method: String,
+        path: String
+    ) {
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let cors = stateRef.value.corsHeaders
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        let version = head.version
+        let logSelf = self
+        let logStartTime = startTime
+        let logUserAgent = userAgent
+        let logMethod = method
+        let logPath = path
+
+        runRequestTask(priority: .userInitiated) {
+            let lastEffectiveGenerationSettings =
+                await MLXBatchAdapter.lastEffectiveGenerationSettingsSnapshot()
+            var defaultsByModel: [String: Any] = [:]
+            var effectiveByModel: [String: Any] = [:]
+            for modelName in lastEffectiveGenerationSettings.keys.sorted() {
+                defaultsByModel[modelName] = Self.generationDefaultsJSONObject(
+                    LocalGenerationDefaults.defaults(forModelId: modelName)
+                )
+                if let effective = lastEffectiveGenerationSettings[modelName] {
+                    effectiveByModel[modelName] = Self.effectiveGenerationSettingsJSONObject(effective)
+                }
+            }
+
+            let obj: [String: Any] = [
+                "status": "ok",
+                "timestamp": Date().ISO8601Format(),
+                "source": "last effective settings resolved by Osaurus; stage indicates whether they are pending preload or submitted to vmlx BatchEngine",
+                "models": lastEffectiveGenerationSettings.keys.sorted(),
+                "generation_defaults_by_model": defaultsByModel,
+                "last_effective_generation_by_model": effectiveByModel,
+            ]
+            let data = try? JSONSerialization.data(withJSONObject: obj, options: .osaurusCanonical)
+            let body = data.flatMap { String(decoding: $0, as: UTF8.self) } ?? "{}"
+            let headers: [(String, String)] =
+                [("Content-Type", "application/json; charset=utf-8")]
+                + cors
+
+            hop {
+                logSelf.sendResponse(
+                    context: ctx.value,
+                    version: version,
+                    status: .ok,
+                    headers: headers,
+                    body: body
+                )
+            }
+            logSelf.logRequest(
+                method: logMethod,
+                path: logPath,
+                userAgent: logUserAgent,
+                requestBody: nil,
+                responseBody: body,
+                responseStatus: 200,
+                startTime: logStartTime
+            )
+        }
+    }
+
     private static func memorySafetyJSONObject(
         settings: VMLXServerRuntimeSettings,
         plan: VMLXResolvedMemorySafetyPlan,
@@ -1051,6 +1142,35 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             "default_max_kv_size": cache.defaultMaxKVSize as Any? ?? NSNull(),
             "long_prompt_multiplier": cache.longPromptMultiplier,
             "enable_ssm_rederive": cache.enableSSMReDerive,
+        ]
+    }
+
+    private static func generationDefaultsJSONObject(
+        _ defaults: LocalGenerationDefaults.Defaults
+    ) -> [String: Any] {
+        [
+            "max_tokens": defaults.maxTokens as Any? ?? NSNull(),
+            "temperature": defaults.temperature as Any? ?? NSNull(),
+            "top_p": defaults.topP as Any? ?? NSNull(),
+            "top_k": defaults.topK as Any? ?? NSNull(),
+            "min_p": defaults.minP as Any? ?? NSNull(),
+            "repetition_penalty": defaults.repetitionPenalty as Any? ?? NSNull(),
+            "do_sample": defaults.doSample as Any? ?? NSNull(),
+        ]
+    }
+
+    private static func effectiveGenerationSettingsJSONObject(
+        _ settings: MLXBatchAdapter.EffectiveGenerationSettings
+    ) -> [String: Any] {
+        [
+            "stage": settings.stage,
+            "temperature": settings.temperature,
+            "max_tokens": settings.maxTokens,
+            "top_p": settings.topP,
+            "top_k": settings.topK,
+            "min_p": settings.minP,
+            "repetition_penalty": settings.repetitionPenalty as Any? ?? NSNull(),
+            "compiled_batch_decode": settings.compiledBatchDecode,
         ]
     }
 

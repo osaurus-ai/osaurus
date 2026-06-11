@@ -1820,6 +1820,12 @@ public actor ModelRuntime {
         // that is a cache hit and must not flash the UI back to
         // "Loading Model..." on every message.
         let cfg = await getConfig()
+        await MLXBatchAdapter.recordPendingEffectiveGenerationSettings(
+            modelName: modelName,
+            generation: parameters,
+            runtimeDefaults: cfg.generation,
+            maxBatchSize: InferenceFeatureFlags.mlxBatchEngineMaxBatchSize
+        )
         trace?.mark("load_container_start")
         let shouldReportModelLoad = modelCache[modelName] == nil
         if shouldReportModelLoad {
