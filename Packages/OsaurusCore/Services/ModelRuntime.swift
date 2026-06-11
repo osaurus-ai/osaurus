@@ -45,6 +45,8 @@ public actor ModelRuntime {
         let isCurrent: Bool
         let draftStrategyDescription: String?
         let nativeMTPDepth: Int?
+        let nativeMTPStatus: String?
+        let nativeMTPReason: String?
         let mlxPressStatus: MLXPressStatus
         let cacheStats: CacheCoordinatorStatsSnapshot?
         let cacheTopology: ModelCacheTopologySnapshot?
@@ -73,19 +75,25 @@ public actor ModelRuntime {
         let weightsSizeBytes: Int64
         let isVLM: Bool
         let draftStrategy: MLXLMCommon.DraftStrategy?
+        let nativeMTPStatus: String?
+        let nativeMTPReason: String?
         var cacheTopology: ModelCacheTopologySnapshot?
         init(
             name: String,
             container: ModelContainer,
             weightsSizeBytes: Int64,
             isVLM: Bool = false,
-            draftStrategy: MLXLMCommon.DraftStrategy? = nil
+            draftStrategy: MLXLMCommon.DraftStrategy? = nil,
+            nativeMTPStatus: String? = nil,
+            nativeMTPReason: String? = nil
         ) {
             self.name = name
             self.container = container
             self.weightsSizeBytes = weightsSizeBytes
             self.isVLM = isVLM
             self.draftStrategy = draftStrategy
+            self.nativeMTPStatus = nativeMTPStatus
+            self.nativeMTPReason = nativeMTPReason
         }
     }
 
@@ -187,6 +195,8 @@ public actor ModelRuntime {
                 isCurrent: holder.name == currentModelName,
                 draftStrategyDescription: Self.describeDraftStrategy(holder.draftStrategy),
                 nativeMTPDepth: Self.nativeMTPDepth(holder.draftStrategy),
+                nativeMTPStatus: holder.nativeMTPStatus,
+                nativeMTPReason: holder.nativeMTPReason,
                 mlxPressStatus: holder.container.mlxPressStatus(),
                 cacheStats: holder.container.cacheCoordinator?.snapshotStats(),
                 cacheTopology: holder.cacheTopology
@@ -1305,7 +1315,9 @@ public actor ModelRuntime {
                 container: container,
                 weightsSizeBytes: loadFootprintBytes,
                 isVLM: isVLM,
-                draftStrategy: mtpPlan.draftStrategy
+                draftStrategy: mtpPlan.draftStrategy,
+                nativeMTPStatus: mtpPlan.statusLine,
+                nativeMTPReason: mtpPlan.reason
             )
         }
 

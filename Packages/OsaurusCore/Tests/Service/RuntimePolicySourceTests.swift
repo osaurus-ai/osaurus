@@ -1947,6 +1947,8 @@ struct RuntimePolicySourceTests {
         let httpHandler = try Self.source("Networking/HTTPHandler.swift")
         #expect(httpHandler.contains("\"draft_strategy\""))
         #expect(httpHandler.contains("\"native_mtp_depth\""))
+        #expect(httpHandler.contains("\"native_mtp_status\""))
+        #expect(httpHandler.contains("\"native_mtp_reason\""))
         #expect(httpHandler.contains("\"mlx_press\""))
     }
 

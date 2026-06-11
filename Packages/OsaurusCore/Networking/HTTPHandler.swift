@@ -797,6 +797,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 } else {
                     row["native_mtp_depth"] = NSNull()
                 }
+                row["native_mtp_status"] = summary.nativeMTPStatus ?? NSNull()
+                row["native_mtp_reason"] = summary.nativeMTPReason ?? NSNull()
                 let mlxPress = summary.mlxPressStatus
                 var mlxPressStatus: [String: Any] = [
                     "enabled": mlxPress.enabled,
