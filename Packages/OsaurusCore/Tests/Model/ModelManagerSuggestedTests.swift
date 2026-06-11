@@ -11,6 +11,7 @@ import Testing
 
 @testable import OsaurusCore
 
+@Suite(.serialized)
 struct ModelManagerSuggestedTests {
 
     /// Suppress the background OsaurusAI HF org fetch that `ModelManager.init()`
@@ -20,6 +21,26 @@ struct ModelManagerSuggestedTests {
     /// flaking the suite (CI > local because CI consistently has network).
     init() {
         ModelManager.skipBackgroundOrgFetchForTests = true
+    }
+
+    /// `ModelManager.loadAvailableModels()` intentionally overlays cached
+    /// download sizes onto curated entries. Keep this suite on a throwaway
+    /// root so catalog metadata assertions do not depend on a developer or CI
+    /// machine's persisted `ModelSizeCache`.
+    private func withIsolatedModelSizeCache<T>(_ body: () -> T) -> T {
+        OsaurusTestGlobals.withPathsLock {
+            let previous = OsaurusPaths.overrideRoot
+            let root = FileManager.default.temporaryDirectory
+                .appendingPathComponent("osaurus-suggested-models-\(UUID().uuidString)", isDirectory: true)
+            OsaurusPaths.overrideRoot = root
+            ModelSizeCache.invalidateInMemory()
+            defer {
+                OsaurusPaths.overrideRoot = previous
+                ModelSizeCache.invalidateInMemory()
+                try? FileManager.default.removeItem(at: root)
+            }
+            return body()
+        }
     }
 
     // MARK: - Curated catalog
@@ -36,8 +57,8 @@ struct ModelManagerSuggestedTests {
         #expect(ids.contains("osaurusai/ling-2.6-flash-jangtq"))
     }
 
-    @Test func curatedSuggestedIds_matchInitialSuggestedModels() async {
-        let suggested = await MainActor.run { ModelManager().suggestedModels }
+    @Test @MainActor func curatedSuggestedIds_matchInitialSuggestedModels() {
+        let suggested = withIsolatedModelSizeCache { ModelManager().suggestedModels }
         let curatedIds = ModelManager.curatedSuggestedIds
         let suggestedIds = Set(suggested.map { $0.id.lowercased() })
         // On a fresh manager (before any HF fetch resolves), `suggestedModels`
@@ -45,8 +66,8 @@ struct ModelManagerSuggestedTests {
         #expect(suggestedIds == curatedIds)
     }
 
-    @Test func curatedOsaurusEntries_haveValidReleaseDates() async {
-        let suggested = await MainActor.run { ModelManager().suggestedModels }
+    @Test @MainActor func curatedOsaurusEntries_haveValidReleaseDates() {
+        let suggested = withIsolatedModelSizeCache { ModelManager().suggestedModels }
         let osaurusEntries = suggested.filter { $0.id.hasPrefix("OsaurusAI/") }
 
         // All curated OsaurusAI entries should carry a release date and it
@@ -61,8 +82,8 @@ struct ModelManagerSuggestedTests {
         }
     }
 
-    @Test func miniMaxEntries_haveExpectedMetadata() async {
-        let suggested = await MainActor.run { ModelManager().suggestedModels }
+    @Test @MainActor func miniMaxEntries_haveExpectedMetadata() {
+        let suggested = withIsolatedModelSizeCache { ModelManager().suggestedModels }
         let jangtq4 = suggested.first { $0.id == "OsaurusAI/MiniMax-M2.7-JANGTQ4" }
         let jangtq = suggested.first { $0.id == "OsaurusAI/MiniMax-M2.7-JANGTQ" }
 
@@ -83,8 +104,8 @@ struct ModelManagerSuggestedTests {
         #expect(jangtq?.releasedAt != nil)
     }
 
-    @Test func lingEntries_haveExpectedMetadata() async {
-        let suggested = await MainActor.run { ModelManager().suggestedModels }
+    @Test @MainActor func lingEntries_haveExpectedMetadata() {
+        let suggested = withIsolatedModelSizeCache { ModelManager().suggestedModels }
         let mxfp4 = suggested.first { $0.id == "OsaurusAI/Ling-2.6-flash-MXFP4" }
         let jangtq = suggested.first { $0.id == "OsaurusAI/Ling-2.6-flash-JANGTQ" }
 
@@ -96,8 +117,8 @@ struct ModelManagerSuggestedTests {
         #expect(jangtq?.releasedAt != nil)
     }
 
-    @Test func lfm25Entry_haveExpectedMetadata() async {
-        let suggested = await MainActor.run { ModelManager().suggestedModels }
+    @Test @MainActor func lfm25Entry_haveExpectedMetadata() {
+        let suggested = withIsolatedModelSizeCache { ModelManager().suggestedModels }
         let mxfp8 = suggested.first { $0.id == "OsaurusAI/LFM2.5-8B-A1B-MXFP8" }
 
         #expect(mxfp8 != nil)
@@ -110,8 +131,8 @@ struct ModelManagerSuggestedTests {
 
     // MARK: - OsaurusAI org auto-discovery merge
 
-    @Test func applyOsaurusOrgFetch_addsNewEntriesAfterCurated() async {
-        let manager = await MainActor.run { ModelManager() }
+    @Test @MainActor func applyOsaurusOrgFetch_addsNewEntriesAfterCurated() {
+        let manager = withIsolatedModelSizeCache { ModelManager() }
         let curatedCount = ModelManager.curatedSuggestedIds.count
 
         let fresh = MLXModel(
@@ -122,17 +143,15 @@ struct ModelManagerSuggestedTests {
             releasedAt: Date()
         )
 
-        await MainActor.run {
-            manager.applyOsaurusOrgFetch(autoFetched: [fresh])
-        }
+        manager.applyOsaurusOrgFetch(autoFetched: [fresh])
 
-        let after = await MainActor.run { manager.suggestedModels }
+        let after = manager.suggestedModels
         #expect(after.count == curatedCount + 1)
         #expect(after.contains { $0.id == fresh.id })
     }
 
-    @Test func applyOsaurusOrgFetch_curatedEntryWinsOnDuplicateId() async {
-        let manager = await MainActor.run { ModelManager() }
+    @Test @MainActor func applyOsaurusOrgFetch_curatedEntryWinsOnDuplicateId() {
+        let manager = withIsolatedModelSizeCache { ModelManager() }
 
         // Try to clobber a curated entry with auto-fetched metadata.
         let imposter = MLXModel(
@@ -142,20 +161,16 @@ struct ModelManagerSuggestedTests {
             downloadURL: "https://huggingface.co/OsaurusAI/MiniMax-M2.7-JANGTQ4"
         )
 
-        await MainActor.run {
-            manager.applyOsaurusOrgFetch(autoFetched: [imposter])
-        }
+        manager.applyOsaurusOrgFetch(autoFetched: [imposter])
 
-        let curated = await MainActor.run {
-            manager.suggestedModels.first { $0.id == "OsaurusAI/MiniMax-M2.7-JANGTQ4" }
-        }
+        let curated = manager.suggestedModels.first { $0.id == "OsaurusAI/MiniMax-M2.7-JANGTQ4" }
         #expect(curated != nil)
         // Curated metadata should be intact.
         #expect(curated?.modelType == "minimax_m2")
         #expect(curated?.description.contains("MiniMax M2.7") == true)
     }
 
-    @Test func applyOsaurusOrgFetch_dropsStaleAutoFetchedOnReapply() async {
+    @Test @MainActor func applyOsaurusOrgFetch_dropsStaleAutoFetchedOnReapply() {
         let stale = MLXModel(
             id: "OsaurusAI/Stale-Repo",
             name: "Stale Repo",
@@ -169,8 +184,7 @@ struct ModelManagerSuggestedTests {
             downloadURL: "https://huggingface.co/OsaurusAI/Kept-Repo"
         )
 
-        // keep init + both applies + read atomic on MainActor to block it out
-        let after = await MainActor.run { () -> [MLXModel] in
+        let after = withIsolatedModelSizeCache { () -> [MLXModel] in
             let manager = ModelManager()
             manager.applyOsaurusOrgFetch(autoFetched: [stale])
             manager.applyOsaurusOrgFetch(autoFetched: [kept])
@@ -180,8 +194,8 @@ struct ModelManagerSuggestedTests {
         #expect(!after.contains { $0.id == stale.id })
     }
 
-    @Test func applyOsaurusOrgFetch_preservesNonOsaurusInjectedEntries() async {
-        let manager = await MainActor.run { ModelManager() }
+    @Test @MainActor func applyOsaurusOrgFetch_preservesNonOsaurusInjectedEntries() {
+        let manager = withIsolatedModelSizeCache { ModelManager() }
 
         let foreign = MLXModel(
             id: "some-org/unrelated-model",
@@ -190,12 +204,10 @@ struct ModelManagerSuggestedTests {
             downloadURL: "https://huggingface.co/some-org/unrelated-model"
         )
 
-        await MainActor.run {
-            manager.suggestedModels.append(foreign)
-            manager.applyOsaurusOrgFetch(autoFetched: [])
-        }
+        manager.suggestedModels.append(foreign)
+        manager.applyOsaurusOrgFetch(autoFetched: [])
 
-        let after = await MainActor.run { manager.suggestedModels }
+        let after = manager.suggestedModels
         #expect(after.contains { $0.id == foreign.id })
     }
 }
