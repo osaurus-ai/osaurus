@@ -273,8 +273,19 @@ final class ModelManager: NSObject, ObservableObject {
         downloadService.syncStates(for: availableModels + suggestedModels)
         let registry = Self.registryModels()
         mergeAvailable(with: registry)
-        let localModels = Self.discoverLocalModels()
-        mergeAvailable(with: localModels)
+
+        // Discover locally downloaded models off the main thread. The scan
+        // runs on a background queue but `discoverLocalModels()` blocks the
+        // caller waiting for it (up to a 10s limit), and this runs inside the
+        // synchronous `ModelManager.shared` init forced on the main thread at
+        // launch — long enough on a cold disk to trip the app-hang watchdog.
+        // Merge the results back on the main actor when they land. The wait
+        // is pushed off-main by `discoverLocalModelsOffMain()`; this `Task`
+        // stays main-actor isolated so `self` never crosses actor boundaries.
+        Task { [weak self] in
+            let localModels = await Self.discoverLocalModelsOffMain()
+            self?.mergeAvailable(with: localModels)
+        }
 
         isLoadingModels = false
 
@@ -1430,6 +1441,21 @@ extension ModelManager {
         localModelsCacheCondition.unlock()
         LocalReasoningCapability.invalidate()
         LocalGenerationDefaults.invalidate()
+    }
+
+    /// Run the blocking local-model discovery off the main actor.
+    /// `discoverLocalModels()` waits (up to 10s) on the background scan, so it
+    /// is dispatched to a GCD queue that can grow on demand. Calling it
+    /// directly from an `async` context would block a Swift cooperative-pool
+    /// thread for the duration of that wait and can starve the pool (delaying
+    /// every other in-flight `Task`); the continuation suspends the caller
+    /// instead of blocking it.
+    nonisolated static func discoverLocalModelsOffMain() async -> [MLXModel] {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .utility).async {
+                continuation.resume(returning: discoverLocalModels())
+            }
+        }
     }
 
     /// Discover locally downloaded models. Cached until invalidated by model download/delete.
