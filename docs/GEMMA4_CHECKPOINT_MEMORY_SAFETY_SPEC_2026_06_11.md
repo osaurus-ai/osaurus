@@ -10,8 +10,8 @@ what can be shared in the repo without pretending unproven rows are complete.
 Status: `PARTIAL RELEASE CHECKPOINT`.
 
 Gemma 4 text/chat/tool/cache behavior is usable on the current main app build
-for a checkpoint. Audio/video generation, full all-family Sentry closure, and
-manual UI-click proof for memory-safety controls are not complete.
+for a checkpoint. Audio/video generation and full all-family Sentry closure are
+not complete. Memory-safety controls now have manual UI save proof on PR #1462.
 
 Current app proof baseline:
 
@@ -95,7 +95,7 @@ Reasoning behavior is bundle/API driven:
 
 ## Memory Safety Settings Contract
 
-The runtime contract exists and is visible, but user controls are not complete.
+The runtime contract exists, is visible, and has PR #1462 manual UI save proof.
 
 Current default resolved plan visible in `/admin/cache-stats.memory_safety`:
 
@@ -129,7 +129,7 @@ Important display rule:
 
 ## Settings Control Surface
 
-Changed-setting proof is currently `PARTIAL: app/API apply proof passed; manual UI click/save proof pending`.
+Changed-setting proof is currently `FIXED for PR #1462 UI/app/API application`.
 
 The app exposes memory-safety status through `/admin/cache-stats.memory_safety`
 and now exposes a Server Settings section that edits
@@ -151,7 +151,7 @@ The Server Settings section persists:
 - `memorySafety.customDefaultMaxKVSize`
 - `memorySafety.customMaxConcurrentSequences`
 
-Live proof still must show:
+Live proof now shows:
 
 1. The user changes and saves the setting through the Server Settings UI.
 2. `/admin/cache-stats.memory_safety` shows the changed mode/slider.
@@ -173,6 +173,26 @@ Current PR #1462 app/API proof:
 - The loaded E2B cache row kept Gemma's expected topology: 15 layers, 3 KV
   layers, 12 rotating KV layers, disk-backed restore required, block disk
   enabled, MLXPress disabled, and TurboQuant KV layer count 0.
+
+Current PR #1462 manual UI proof:
+
+- Artifact root: `.agents/gemma-final/artifacts/memory-safety-ui-proof-pr1462-20260610-221751`
+- The PR-built Debug app exposed Server Settings -> Memory Safety.
+- The UI was changed to `mode=strict`, `slider=3`, then saved and reported
+  `Settings saved successfully` / `All changes saved`.
+- `/admin/cache-stats.memory_safety` after the UI save reported
+  `mode=strict slider=3 load_cap=0.6 allocator_cap=absolute(134217728) max_concurrent=1 kv_cap=65536`.
+- A live `gemma-4-e2b-it-qat-mxfp4` chat after the UI save answered exactly
+  `ui memory safety applied`, stopped normally, and reported `28.8658`
+  completion token/s in `usage.tokens_per_second`.
+- The status endpoint after that generation still reported the same Strict
+  plan, `use_mmap_safetensors=true`, `jang_press_policy.kind=disabled`,
+  `paged_kv_enabled=true`, `block_disk_enabled=true`, and
+  `max_concurrent_sequences=1`.
+- Nuance: this UI proof preserved the existing Cache page per-session window
+  override, so Strict reported `kv_cap=65536`. The earlier isolated app/API
+  proof without that override reported `kv_cap=4096`. This is intentional
+  user-setting precedence, not a hidden hardcoded RAM rule.
 
 Do not substitute cache toggles for the memory-safety slider. Cache controls are
 real settings, but they do not prove the memory-safety contract is user
