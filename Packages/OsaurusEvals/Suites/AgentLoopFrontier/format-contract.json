@@ -1,0 +1,32 @@
+{
+  "id": "frontier.format-contract",
+  "domain": "agent_loop",
+  "label": "frontier • machine-checked JSON output contract",
+  "query": "products.txt lists one product per line as '<name> <price>'. Write answer.json containing EXACTLY one JSON object with these keys and nothing else: 'count' (number of products, as a number), 'total' (sum of all prices, as a number), and 'cheapest' (name of the cheapest product, as a string). The file must be raw JSON — no markdown fences, no comments, no trailing prose.",
+  "notes": "Format-contract pin: the post-run command parses answer.json with a strict checker (count==3, total==37.5, cheapest=='pencil', exactly those three keys), so fences or extra keys fail mechanically.",
+  "fixtures": {
+    "workspaceFiles": [
+      {
+        "path": "products.txt",
+        "contents": "pencil 2.50\nnotebook 10.00\nbackpack 25.00\n"
+      }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 8,
+      "files": [
+        {
+          "path": "answer.json",
+          "exists": true
+        }
+      ],
+      "commands": [
+        {
+          "command": "python3 -c \"import json; d = json.load(open('answer.json')); assert set(d.keys()) == {'count', 'total', 'cheapest'}, d.keys(); assert d['count'] == 3; assert abs(d['total'] - 37.5) < 1e-9; assert d['cheapest'] == 'pencil'\"",
+          "expectExitCode": 0
+        }
+      ]
+    }
+  }
+}

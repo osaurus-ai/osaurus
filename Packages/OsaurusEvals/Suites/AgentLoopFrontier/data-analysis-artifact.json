@@ -1,0 +1,33 @@
+{
+  "id": "frontier.data-analysis-artifact",
+  "domain": "agent_loop",
+  "label": "frontier • clean a messy CSV, compute stats, deliver a report artifact",
+  "query": "sales.csv in this folder is messy: it contains a blank line, a duplicated header row, a row with quantity N/A, and a malformed garbage row. Identify the valid data rows, then compute (a) total revenue = sum of quantity * unit_price over valid rows and (b) average revenue per valid order, both with exactly two decimal places. Write REPORT.md containing exactly one line 'Total revenue: <amount>' and one line 'Average order value: <amount>' (you may add other prose), then share REPORT.md with me as an artifact.",
+  "notes": "Data hygiene + arithmetic + delivery. The numbers are fully determined by the fixture (total 150.00 over 4 valid orders → average 37.50) so the file assertions are deterministic; fabricated or sloppily-parsed numbers fail the contains pins.",
+  "fixtures": {
+    "workspaceFiles": [
+      {
+        "path": "sales.csv",
+        "contents": "order_id,product,quantity,unit_price\n1001,widget,2,10.00\n1002,gadget,1,25.50\n\n1003,widget,N/A,10.00\norder_id,product,quantity,unit_price\n1004,doohickey,4,5.25\nthis row is garbage and has no commas\n1005,deluxe-kit,1,83.50\n"
+      }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 15,
+      "artifactShared": {
+        "filenameContains": "REPORT.md"
+      },
+      "files": [
+        {
+          "path": "REPORT.md",
+          "contains": "Total revenue: 150.00"
+        },
+        {
+          "path": "REPORT.md",
+          "contains": "Average order value: 37.50"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,49 @@
+{
+  "id": "frontier.agent-db-workflow",
+  "domain": "agent_loop",
+  "label": "frontier • agent database workflow: create, insert, aggregate",
+  "query": "Read the three warehouse files in this folder. In your agent database, create a table named inventory with columns name (TEXT) and qty (INTEGER), insert exactly one row per warehouse file with that warehouse's item name and quantity, then query the table to compute the total quantity across all warehouses and tell me the total.",
+  "notes": "First eval to exercise the db_* surface end to end (dbEnabled fixture). dbState assertions read the isolated per-eval-agent database AFTER the run: 3 rows, SUM(qty)=60. A model that computes 60 in prose without persisting rows fails.",
+  "fixtures": {
+    "agentCapabilities": {
+      "dbEnabled": true
+    },
+    "workspaceFiles": [
+      {
+        "path": "warehouse_a.txt",
+        "contents": "item: widget\nqty: 12\n"
+      },
+      {
+        "path": "warehouse_b.txt",
+        "contents": "item: gadget\nqty: 25\n"
+      },
+      {
+        "path": "warehouse_c.txt",
+        "contents": "item: doohickey\nqty: 23\n"
+      }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 18,
+      "mustCallTools": [
+        "db_create_table",
+        "db_insert",
+        "db_query"
+      ],
+      "dbState": [
+        {
+          "sql": "SELECT COUNT(*) FROM inventory",
+          "expectFirstValue": "3"
+        },
+        {
+          "sql": "SELECT SUM(qty) FROM inventory",
+          "expectFirstValue": "60"
+        }
+      ],
+      "finalTextContains": [
+        "60"
+      ]
+    }
+  }
+}

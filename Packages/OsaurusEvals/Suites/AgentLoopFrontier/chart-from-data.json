@@ -1,0 +1,36 @@
+{
+  "id": "frontier.chart-from-data",
+  "domain": "agent_loop",
+  "label": "frontier • render a chart from workspace data via the chart tool",
+  "query": "Read metrics.csv in this folder and render a column chart of revenue by month using your chart tool, titled 'Monthly Revenue'. Then tell me which month had the highest revenue.",
+  "notes": "render_chart surface (renderChartEnabled fixture). The audit demands at least one render_chart call with zero error envelopes — pinning that the model passes raw CSV + column refs correctly on the first try instead of fumbling the schema.",
+  "fixtures": {
+    "agentCapabilities": {
+      "renderChartEnabled": true
+    },
+    "workspaceFiles": [
+      {
+        "path": "metrics.csv",
+        "contents": "month,revenue\nJan,1200\nFeb,2400\nMar,1800\nApr,3100\nMay,2200\n"
+      }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 10,
+      "mustCallTools": [
+        "render_chart"
+      ],
+      "toolUsageAudit": [
+        {
+          "tool": "render_chart",
+          "minCalls": 1,
+          "maxErrors": 0
+        }
+      ],
+      "finalTextContains": [
+        "Apr"
+      ]
+    }
+  }
+}

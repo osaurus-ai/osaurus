@@ -2,7 +2,7 @@
   "id": "agent_loop.repeated-call-nudge",
   "domain": "agent_loop",
   "label": "agent loop • repeated identical exec call arms the stuck-loop nudge",
-  "query": "Run the shell command `echo ping` exactly three times. Issue one shell_run call per step, with identical arguments every time — do not vary the command. After the third run, tell me how many times you ran it.",
+  "query": "Run the shell command `echo ping` exactly three times. Issue one shell_run call per step, with identical arguments every time — do not vary the command. After the third run, tell me how many times you ran it, spelling the count out as a word (write \"three\", not the digit 3).",
   "notes": "Pins that the harness's strongest stuck signal actually fires: shell_run is exec-like so identical calls re-execute by design (no dedupe), and the third identical call must arm the repeated-call nudge, which the driver stages as a notice on the following step. Asserts the notice text landed — independent of whether the model obeyed it.",
   "fixtures": {},
   "expect": {

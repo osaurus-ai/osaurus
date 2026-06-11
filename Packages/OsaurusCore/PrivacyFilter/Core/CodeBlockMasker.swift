@@ -122,10 +122,14 @@ public enum CodeBlockMasker {
             let utf16 = originalCopy.utf16
             guard start <= end, end <= utf16.count,
                 let lower = utf16.index(
-                    utf16.startIndex, offsetBy: start, limitedBy: utf16.endIndex
+                    utf16.startIndex,
+                    offsetBy: start,
+                    limitedBy: utf16.endIndex
                 )?.samePosition(in: originalCopy),
                 let upper = utf16.index(
-                    utf16.startIndex, offsetBy: end, limitedBy: utf16.endIndex
+                    utf16.startIndex,
+                    offsetBy: end,
+                    limitedBy: utf16.endIndex
                 )?.samePosition(in: originalCopy)
             else {
                 return nil

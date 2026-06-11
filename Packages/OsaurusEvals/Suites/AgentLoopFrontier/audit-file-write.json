@@ -1,0 +1,26 @@
+{
+  "id": "frontier.audit-file-write",
+  "domain": "agent_loop",
+  "label": "frontier • byte-exact writes: nested paths, unicode, trailing newline",
+  "query": "Create two files with EXACT contents: (1) src/app/config.yaml containing exactly two lines 'env: prod' and 'region: eu-west-1', ending with a trailing newline; (2) docs/notes/unicode.md containing exactly one line '# Résumé — naïve café' (keep every accent and the em dash), also ending with a trailing newline. Create any missing directories.",
+  "notes": "file_write fidelity pin: nested directory creation, unicode preservation (accents + em dash), and the trailing-newline contract are all checked byte-exactly via files.equals.",
+  "fixtures": {},
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 8,
+      "mustCallTools": [
+        "file_write"
+      ],
+      "files": [
+        {
+          "path": "src/app/config.yaml",
+          "equals": "env: prod\nregion: eu-west-1\n"
+        },
+        {
+          "path": "docs/notes/unicode.md",
+          "equals": "# Résumé — naïve café\n"
+        }
+      ]
+    }
+  }
+}

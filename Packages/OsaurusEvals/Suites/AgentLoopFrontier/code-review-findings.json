@@ -1,0 +1,45 @@
+{
+  "id": "frontier.code-review-findings",
+  "domain": "agent_loop",
+  "label": "frontier • find all planted defects, change nothing",
+  "query": "Review server.py in this folder. It contains exactly four defects. Write REVIEW.md listing every defect you find, each with the function name, the approximate line, and a one-sentence explanation. Do NOT modify server.py or any other source file — this is a review, not a fix. Finish by summarizing the four defects in your final reply.",
+  "notes": "Planted: (1) off-by-one in first_n_items (range starts at 1, skips index 0), (2) unclosed file handle in load_rows, (3) SQL injection via %-interpolation in find_user, (4) dead duplicate `code == 0` branch in status_label. files.equals pins zero source edits; recall of all four is scored deterministically against REVIEW.md (the deliverable), since the judge only sees the final reply, which is legitimately a brief summary. Recalibrated after run 1: the original rubric graded the final text for per-function detail that the task put in REVIEW.md.",
+  "fixtures": {
+    "workspaceFiles": [
+      {
+        "path": "server.py",
+        "contents": "import sqlite3\n\n\ndef load_rows(path):\n    f = open(path)\n    rows = f.read().splitlines()\n    return rows\n\n\ndef first_n_items(items, n):\n    result = []\n    for i in range(1, n):\n        result.append(items[i])\n    return result\n\n\ndef find_user(db_path, username):\n    conn = sqlite3.connect(db_path)\n    cur = conn.cursor()\n    query = \"SELECT * FROM users WHERE name = '%s'\" % username\n    cur.execute(query)\n    return cur.fetchone()\n\n\ndef status_label(code):\n    if code == 0:\n        return \"ok\"\n    elif code == 1:\n        return \"warn\"\n    elif code == 0:\n        return \"zero\"\n    return \"error\"\n"
+      }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 12,
+      "files": [
+        {
+          "path": "server.py",
+          "equals": "import sqlite3\n\n\ndef load_rows(path):\n    f = open(path)\n    rows = f.read().splitlines()\n    return rows\n\n\ndef first_n_items(items, n):\n    result = []\n    for i in range(1, n):\n        result.append(items[i])\n    return result\n\n\ndef find_user(db_path, username):\n    conn = sqlite3.connect(db_path)\n    cur = conn.cursor()\n    query = \"SELECT * FROM users WHERE name = '%s'\" % username\n    cur.execute(query)\n    return cur.fetchone()\n\n\ndef status_label(code):\n    if code == 0:\n        return \"ok\"\n    elif code == 1:\n        return \"warn\"\n    elif code == 0:\n        return \"zero\"\n    return \"error\"\n"
+        },
+        {
+          "path": "REVIEW.md",
+          "contains": "first_n_items"
+        },
+        {
+          "path": "REVIEW.md",
+          "contains": "load_rows"
+        },
+        {
+          "path": "REVIEW.md",
+          "contains": "find_user"
+        },
+        {
+          "path": "REVIEW.md",
+          "contains": "status_label"
+        }
+      ],
+      "rubric": [
+        "The final reply summarizes four code defects (mentioning themes like an off-by-one/skipped item, an unclosed file or resource leak, SQL injection, and a duplicate or unreachable branch)"
+      ]
+    }
+  }
+}

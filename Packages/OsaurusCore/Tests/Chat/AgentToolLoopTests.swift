@@ -555,9 +555,12 @@ struct AgentToolLoopTests {
         #expect(surface.batchOutcomes[0].map(\.wasDeduped) == [false, false, true])
     }
 
-    @Test func batchExecutorDuplicateSiblingExecutesWhenFirstReadFails() async throws {
-        // Serial parity: if the first read FAILS, no fresh read is recorded,
-        // so the identical sibling re-executes instead of replaying.
+    @Test func batchExecutorDuplicateSiblingReplaysHeldNotFoundError() async throws {
+        // Serial parity with held-error replay: a `not_found` from
+        // `file_read` is DETERMINISTIC (nothing wrote between the two
+        // calls), so the identical sibling replays the held error instead
+        // of re-executing — the duplicate cannot succeed where the first
+        // call just failed.
         let args = #"{"path":"missing.txt"}"#
         let failure = ToolEnvelope.failure(kind: .notFound, message: "gone", tool: "file_read")
         let surface = ScriptedLoopSurface(steps: [
@@ -576,11 +579,12 @@ struct AgentToolLoopTests {
             hooks: hooks
         )
         #expect(result.exit == .finalResponse)
-        // Wave 1 ran the first; the deferred duplicate executed in the
-        // in-order pass as a single-call batch.
-        #expect(batchCalls == [["file_read"], ["file_read"]])
-        #expect(surface.dedupedCalls.isEmpty)
-        #expect(surface.batchOutcomes[0].map(\.wasDeduped) == [false, false])
+        // Wave 1 ran the first; the deferred duplicate resolved against the
+        // live state in the in-order pass and replayed the held error.
+        #expect(batchCalls == [["file_read"]])
+        #expect(surface.dedupedCalls.map(\.name) == ["file_read"])
+        #expect(surface.dedupedCalls.first?.held == failure)
+        #expect(surface.batchOutcomes[0].map(\.wasDeduped) == [false, true])
     }
 
     @Test func batchExecutorNonReadDuplicatesAllExecute() async throws {

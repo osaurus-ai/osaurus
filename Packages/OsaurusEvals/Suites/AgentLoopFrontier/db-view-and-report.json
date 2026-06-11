@@ -1,0 +1,38 @@
+{
+  "id": "frontier.db-view-and-report",
+  "domain": "agent_loop",
+  "label": "frontier • define a saved view, run it, deliver the result as an artifact",
+  "query": "In your agent database: create a table metrics with columns day (TEXT) and value (INTEGER); insert exactly these rows: mon 3, tue 5, wed 7. Then define a saved view named weekly_total that selects SUM(value) AS total FROM metrics, run that view, and share a short markdown artifact named metrics.md summarizing the weekly total.",
+  "notes": "Saved-view lifecycle (db_define_view → db_run_view) chained into artifact delivery, with ordering asserted. dbState pins the persisted rows (SUM 15) independent of the prose.",
+  "fixtures": {
+    "agentCapabilities": {
+      "dbEnabled": true
+    }
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 18,
+      "mustCallTools": [
+        "db_create_table",
+        "db_insert",
+        "db_define_view",
+        "db_run_view",
+        "share_artifact"
+      ],
+      "mustCallToolsInOrder": [
+        "db_define_view",
+        "db_run_view",
+        "share_artifact"
+      ],
+      "dbState": [
+        {
+          "sql": "SELECT SUM(value) FROM metrics",
+          "expectFirstValue": "15"
+        }
+      ],
+      "artifactShared": {
+        "filenameContains": "metrics"
+      }
+    }
+  }
+}

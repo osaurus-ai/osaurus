@@ -1,0 +1,44 @@
+{
+  "id": "frontier.no-false-clarify",
+  "domain": "agent_loop",
+  "label": "frontier • fully-specified hard task must not be punted back via clarify",
+  "query": "Set up this project skeleton exactly as specified — everything you need is in this message, so do not ask me anything: (1) create directories src/, tests/, and docs/; (2) src/app.py must define main() printing exactly 'hello from app' and call it under the __main__ guard; (3) tests/test_app.py must contain a unittest TestCase asserting that running 'python3 src/app.py' outputs 'hello from app' (use subprocess); (4) docs/README.md must start with the line '# Demo Project'; (5) create .gitignore containing the line '__pycache__/'; (6) finally run 'python3 -m unittest discover -s tests -q' and make sure it passes.",
+  "notes": "Anti-punt case: long but fully-specified work. A frontier model must not bounce clear-but-laborious instructions back to the user — `clarify` is forbidden and the outcome is checked end to end.",
+  "fixtures": {},
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 18,
+      "mustNotCallTools": [
+        "clarify"
+      ],
+      "files": [
+        {
+          "path": "src/app.py",
+          "contains": "hello from app"
+        },
+        {
+          "path": "tests/test_app.py",
+          "contains": "subprocess"
+        },
+        {
+          "path": "docs/README.md",
+          "contains": "# Demo Project"
+        },
+        {
+          "path": ".gitignore",
+          "contains": "__pycache__/"
+        }
+      ],
+      "commands": [
+        {
+          "command": "python3 -m unittest discover -s tests -q",
+          "expectExitCode": 0
+        },
+        {
+          "command": "test \"$(python3 src/app.py)\" = \"hello from app\"",
+          "expectExitCode": 0
+        }
+      ]
+    }
+  }
+}

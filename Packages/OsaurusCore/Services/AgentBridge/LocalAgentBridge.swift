@@ -559,6 +559,15 @@ public final class LocalAgentBridge: @unchecked Sendable, AgentRuntimeBridge {
         body: String,
         viewRef: String?
     ) throws {
+        // `UNUserNotificationCenter.current()` (created on first access
+        // of `NotificationService.shared`) raises an Objective-C
+        // exception in processes without an app bundle — e.g. the
+        // `osaurus-evals` CLI. Log instead of crashing the headless run;
+        // the bundled app path is unaffected.
+        guard Bundle.main.bundleIdentifier != nil else {
+            print("[Osaurus] notify (headless, suppressed): \(agentName) · \(title) — \(body)")
+            return
+        }
         // `postAgentEvent` is `nonisolated` (it dispatches the actual
         // `UNNotificationCenter.add` into a `Task @MainActor`), but
         // `NotificationService.shared` itself is MainActor-isolated.

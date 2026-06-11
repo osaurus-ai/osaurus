@@ -155,12 +155,21 @@ enum FolderToolHelpers {
         return .unknown
     }
 
+    /// Convert a filename glob (`*` / `?` wildcards) into an anchored regex
+    /// with every OTHER regex metacharacter escaped. The old conversion only
+    /// escaped `.` and rewrote `*`, so a pattern containing `+ ( [ {` became
+    /// a broken (or wrong) regex that silently matched nothing.
+    static func globToRegex(_ pattern: String) -> String {
+        let body = NSRegularExpression.escapedPattern(for: pattern)
+            .replacingOccurrences(of: "\\*", with: ".*")
+            .replacingOccurrences(of: "\\?", with: ".")
+        return "^\(body)$"
+    }
+
     /// Check if pattern matches filename
     static func matchesPattern(_ name: String, pattern: String) -> Bool {
         if pattern.contains("*") {
-            let regex = pattern.replacingOccurrences(of: ".", with: "\\.")
-                .replacingOccurrences(of: "*", with: ".*")
-            return name.range(of: "^\(regex)$", options: .regularExpression) != nil
+            return name.range(of: globToRegex(pattern), options: .regularExpression) != nil
         }
         return name == pattern
     }
@@ -848,13 +857,18 @@ struct FileReadTool: OsaurusTool {
         var output = ""
         var lastLineIncluded = validStart - 1
         var outputTruncated = false
+        // Line cut mid-way by the char cap. Tracked separately so it is
+        // never counted as "included": treating the cut line as complete
+        // made the truncation notice (and `end_line`) overstate what the
+        // model actually saw by one line.
+        var partialLine: Int? = nil
         for i in (validStart - 1) ..< validEnd {
             let line = String(format: "%6d| %@\n", i + 1, lines[i])
             if output.count + line.count > charCap {
                 let remaining = charCap - output.count
                 if remaining > 0 {
                     output += String(line.prefix(remaining))
-                    lastLineIncluded = i + 1
+                    partialLine = i + 1
                 }
                 outputTruncated = true
                 break
@@ -869,8 +883,14 @@ struct FileReadTool: OsaurusTool {
 
         // If truncated, inform the model and suggest using line ranges
         if outputTruncated || lastLineIncluded < validEnd {
-            output +=
-                "\n... (truncated at \(lastLineIncluded) of \(Self.lineCountLabel(lines.count, rawRead: content.rawRead)) lines — use start_line/end_line for specific ranges)"
+            let totalLabel = Self.lineCountLabel(lines.count, rawRead: content.rawRead)
+            if let partialLine {
+                output +=
+                    "\n... (truncated mid-line: line \(partialLine) is only PARTIALLY shown; complete lines end at \(lastLineIncluded) of \(totalLabel) — use start_line/end_line for specific ranges)"
+            } else {
+                output +=
+                    "\n... (truncated at \(lastLineIncluded) of \(totalLabel) lines — use start_line/end_line for specific ranges)"
+            }
         }
         if let rawRead = content.rawRead, rawRead.truncatedByByteLimit {
             output +=
@@ -882,7 +902,12 @@ struct FileReadTool: OsaurusTool {
         let text: String
         if validStart > 1 || validEnd < lines.count || content.rawRead?.truncatedByByteLimit == true {
             let totalLines = Self.lineCountLabel(lines.count, rawRead: content.rawRead)
-            text = "Lines \(validStart)-\(lastLineIncluded) of \(totalLines):\n" + output
+            // When the char cap cut the FIRST line mid-way there is no
+            // complete line at all — say so instead of an inverted range.
+            let endLabel =
+                lastLineIncluded >= validStart
+                ? "\(lastLineIncluded)" : "\(validStart) (partial)"
+            text = "Lines \(validStart)-\(endLabel) of \(totalLines):\n" + output
         } else {
             text = output
         }
@@ -897,6 +922,9 @@ struct FileReadTool: OsaurusTool {
             "truncated": outputTruncated || lastLineIncluded < validEnd
                 || content.rawRead?.truncatedByByteLimit == true,
         ]
+        if let partialLine {
+            result["partial_line"] = partialLine
+        }
         if let rawRead = content.rawRead {
             result["bytes_read"] = rawRead.bytesRead
             result["byte_limit"] = rawRead.byteLimit
@@ -1589,10 +1617,11 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
         var content = originalContent
 
         guard let range = content.range(of: oldString) else {
+            let diagnosis = Self.noMatchDiagnosis(oldString: oldString, content: content)
             return ToolEnvelope.failure(
                 kind: .invalidArgs,
                 message:
-                    "Could not find `old_string` in \(relativePath). Make sure it exactly matches the file content.",
+                    "Could not find `old_string` in \(relativePath). \(diagnosis)",
                 field: "old_string",
                 expected: "exact non-empty text present once in the target file",
                 tool: name
@@ -1648,6 +1677,92 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
             result: preview.payload,
             warnings: preview.warnings
         )
+    }
+
+    /// Truthful diagnosis for a 0-match `old_string`, computed against the
+    /// already-loaded file content. The generic "make sure it matches"
+    /// message left models re-issuing the identical failing call (observed
+    /// live: grok-4.3 copied the leading space from `file_read`'s `N| `
+    /// line-number formatting into `old_string` and repeated the same edit
+    /// until the iteration cap). Three checks, cheapest signal first:
+    ///   1. `N|` line-number prefixes pasted from `file_read` output.
+    ///   2. A whitespace-only mismatch — the trimmed lines match a unique
+    ///      region of the file; quote the exact file bytes to copy.
+    ///   3. A closest-line anchor — quote the real file line most similar
+    ///      to the first non-empty `old_string` line.
+    /// All hints quote VERBATIM file content (never invented text), so the
+    /// recovery path stays honest.
+    static func noMatchDiagnosis(oldString: String, content: String) -> String {
+        let fallback = "Make sure it exactly matches the file content."
+        let oldLines = oldString.components(separatedBy: "\n")
+
+        // 1. Line-number prefix contamination (`   42| item 042 ...`).
+        let prefixPattern = #"^\s*\d+\|"#
+        if oldLines.contains(where: { $0.range(of: prefixPattern, options: .regularExpression) != nil }) {
+            return "Your `old_string` contains `N|` line-number prefixes from file_read output — "
+                + "those prefixes are display metadata, not file content. Copy the raw file text only."
+        }
+
+        let contentLines = content.components(separatedBy: "\n")
+        let trimmedOldLines = oldLines.map { $0.trimmingCharacters(in: .whitespaces) }
+
+        // 2. Whitespace-only mismatch: the trimmed old_string lines match a
+        // unique consecutive run of trimmed file lines. Quote the exact
+        // file bytes for that region so the model can copy them verbatim.
+        if !trimmedOldLines.allSatisfy({ $0.isEmpty }), trimmedOldLines.count <= contentLines.count {
+            let trimmedContentLines = contentLines.map { $0.trimmingCharacters(in: .whitespaces) }
+            var matchStarts: [Int] = []
+            for start in 0 ... (trimmedContentLines.count - trimmedOldLines.count) {
+                if Array(trimmedContentLines[start ..< start + trimmedOldLines.count]) == trimmedOldLines {
+                    matchStarts.append(start)
+                    if matchStarts.count > 1 { break }
+                }
+            }
+            if matchStarts.count == 1, let start = matchStarts.first {
+                let exact = contentLines[start ..< start + trimmedOldLines.count]
+                    .joined(separator: "\n")
+                return "Found text differing only in whitespace at line \(start + 1). "
+                    + "The exact file content there is:\n\(Self.boundedQuote(exact))\n"
+                    + "Use that exact text (including its whitespace) as `old_string`."
+            }
+        }
+
+        // 3. Closest-line anchor: score every file line against the first
+        // non-empty trimmed old_string line (containment either way, or
+        // shared prefix — cheap but catches the common "the line changed
+        // after the model last read it" case) and quote the best one when
+        // it is similar enough to be a plausible anchor.
+        if let needle = trimmedOldLines.first(where: { !$0.isEmpty }), needle.count >= 4 {
+            let needleLower = needle.lowercased()
+            var best: (index: Int, line: String, score: Int)?
+            for (index, line) in contentLines.enumerated() {
+                let trimmedLine = line.trimmingCharacters(in: .whitespaces)
+                guard !trimmedLine.isEmpty else { continue }
+                let lineLower = trimmedLine.lowercased()
+                let score: Int
+                if lineLower.contains(needleLower) || needleLower.contains(lineLower) {
+                    score = min(needle.count, trimmedLine.count)
+                } else {
+                    score = zip(needleLower, lineLower).prefix(while: { $0 == $1 }).count
+                }
+                if score > (best?.score ?? 0) { best = (index, line, score) }
+            }
+            let minScore = max(4, needle.count / 2)
+            if let best, best.score >= minScore {
+                return "The closest matching line in the file is line \(best.index + 1):\n"
+                    + "\(Self.boundedQuote(best.line))\n"
+                    + "Compare it against your `old_string` — they differ. \(fallback)"
+            }
+        }
+
+        return fallback
+    }
+
+    /// Cap a quoted file excerpt so a pathological match can't inflate the
+    /// error envelope. Quotes are verbatim up to the cap.
+    private static func boundedQuote(_ text: String, cap: Int = 600) -> String {
+        guard text.count > cap else { return text }
+        return String(text.prefix(cap)) + "… (excerpt truncated)"
     }
 }
 
@@ -1984,6 +2099,10 @@ struct FileSearchTool: OsaurusTool {
 
         var results: [String] = []
         var totalMatches = 0
+        // Files the search never looked inside (binary extension, over the
+        // size cap, or undecodable). Counted so "No matches" can't silently
+        // mean "the file you care about was skipped".
+        var skippedFiles = 0
 
         // Determine if searching a file or directory
         var isDirectory: ObjCBool = false
@@ -2045,11 +2164,12 @@ struct FileSearchTool: OsaurusTool {
                     continue
                 }
 
-                // Check file pattern
+                // Check file pattern (proper glob → regex conversion: all
+                // metacharacters escaped, so `*.+(test)*` can't silently
+                // become a regex that matches nothing).
                 if let pattern = filePattern {
-                    let regex = pattern.replacingOccurrences(of: ".", with: "\\.")
-                        .replacingOccurrences(of: "*", with: ".*")
-                    if fileURL.lastPathComponent.range(of: "^\(regex)$", options: .regularExpression)
+                    let regex = FolderToolHelpers.globToRegex(pattern)
+                    if fileURL.lastPathComponent.range(of: regex, options: .regularExpression)
                         == nil
                     {
                         continue
@@ -2057,16 +2177,22 @@ struct FileSearchTool: OsaurusTool {
                 }
 
                 // Search file
-                if let matches = searchFile(fileURL, pattern: pattern, maxResults: maxResults - totalMatches) {
+                switch searchFile(fileURL, pattern: pattern, maxResults: maxResults - totalMatches) {
+                case .matches(let matches):
                     results.append(contentsOf: matches)
                     totalMatches += matches.count
+                case .skipped:
+                    skippedFiles += 1
                 }
             }
         } else {
             // Search single file
-            if let matches = searchFile(searchURL, pattern: pattern, maxResults: maxResults) {
+            switch searchFile(searchURL, pattern: pattern, maxResults: maxResults) {
+            case .matches(let matches):
                 results.append(contentsOf: matches)
                 totalMatches = matches.count
+            case .skipped:
+                skippedFiles += 1
             }
         }
 
@@ -2089,10 +2215,17 @@ struct FileSearchTool: OsaurusTool {
                     warnings: fallback.truncated ? [note, Self.searchBudgetWarning] : [note]
                 )
             }
-            let base = "No matches found for '\(pattern)'"
+            let skippedNote = Self.skippedFilesNote(skippedFiles)
+            var base = "No matches found for '\(pattern)'"
+            if let skippedNote { base += "\n\n(\(skippedNote))" }
+            if budgetTruncated { base += Self.budgetTruncationNote }
+            var warnings: [String] = []
+            if let skippedNote { warnings.append(skippedNote) }
+            if budgetTruncated { warnings.append(Self.searchBudgetWarning) }
             return ToolEnvelope.success(
                 tool: name,
-                text: budgetTruncated ? base + Self.budgetTruncationNote : base
+                text: base,
+                warnings: warnings.isEmpty ? nil : warnings
             )
         }
 
@@ -2108,17 +2241,43 @@ struct FileSearchTool: OsaurusTool {
         }
         output += body
 
+        // Truncation/skip state is ALSO carried as structured `warnings` on
+        // the envelope (mirroring files-mode `ToolEnvelope.search`), so the
+        // harness and scorers can branch on it without parsing prose.
+        var warnings: [String] = []
         if charTruncated {
-            output +=
-                "\n\n(output truncated at \(ToolOutputCaps.fileSearch) chars; narrow the `path`, "
-                + "tighten the pattern, or add a `file_pattern` filter)"
+            let note =
+                "Output truncated at \(ToolOutputCaps.fileSearch) chars; narrow the `path`, "
+                + "tighten the pattern, or add a `file_pattern` filter."
+            output += "\n\n(\(note))"
+            warnings.append(note)
         } else if totalMatches >= maxResults {
-            output += "\n\n(results truncated at \(maxResults))"
+            let note = "Results truncated at \(maxResults)."
+            output += "\n\n(\(note))"
+            warnings.append(note)
         } else if budgetTruncated {
             output += Self.budgetTruncationNote
+            warnings.append(Self.searchBudgetWarning)
+        }
+        if let skippedNote = Self.skippedFilesNote(skippedFiles) {
+            output += "\n\n(\(skippedNote))"
+            warnings.append(skippedNote)
         }
 
-        return ToolEnvelope.success(tool: name, text: output)
+        return ToolEnvelope.success(
+            tool: name,
+            text: output,
+            warnings: warnings.isEmpty ? nil : warnings
+        )
+    }
+
+    /// Human/structured note for files the content search never read.
+    /// Returns nil when nothing was skipped.
+    private static func skippedFilesNote(_ count: Int) -> String? {
+        guard count > 0 else { return nil }
+        let mb = FolderToolHelpers.maxContentSearchFileBytes / (1024 * 1024)
+        return
+            "\(count) file(s) skipped (binary or >\(mb)MB) — their contents were not searched."
     }
 
     /// Appended when a search stops at `maxEntriesVisited` rather than from
@@ -2286,21 +2445,33 @@ struct FileSearchTool: OsaurusTool {
         "Search stopped after scanning the entry limit; results may be incomplete — narrow the "
         + "`path` or use a more specific token."
 
-    private func searchFile(_ url: URL, pattern: String, maxResults: Int) -> [String]? {
+    /// Outcome of attempting a content search of one file. `skipped` is
+    /// distinct from "searched and found nothing" so the caller can COUNT
+    /// skips — otherwise "No matches" silently lies about files that were
+    /// never looked at.
+    enum ContentSearchFileOutcome {
+        /// File was searched; the array may be empty (no hits).
+        case matches([String])
+        /// File was never searched: binary extension, over the size cap,
+        /// or not decodable as UTF-8.
+        case skipped
+    }
+
+    private func searchFile(_ url: URL, pattern: String, maxResults: Int) -> ContentSearchFileOutcome {
         // Skip obvious binaries by extension and any file over the size cap
         // before loading it into memory; the UTF-8 decode below is the final
         // backstop for misnamed or unexpectedly-large text.
         if FolderToolHelpers.contentSearchSkippedExtensions.contains(
             url.pathExtension.lowercased()
         ) {
-            return nil
+            return .skipped
         }
         if let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize,
             size > FolderToolHelpers.maxContentSearchFileBytes
         {
-            return nil
+            return .skipped
         }
-        guard let content = try? String(contentsOf: url, encoding: .utf8) else { return nil }
+        guard let content = try? String(contentsOf: url, encoding: .utf8) else { return .skipped }
 
         let relativePath =
             url.path.hasPrefix(rootPath.path)
@@ -2319,7 +2490,7 @@ struct FileSearchTool: OsaurusTool {
             }
         }
 
-        return matches.isEmpty ? nil : matches
+        return .matches(matches)
     }
 }
 
@@ -2334,9 +2505,9 @@ struct ShellRunTool: OsaurusTool, PermissionedTool {
         + "`file_*` tools. This action requires approval. Long-running commands stream their "
         + "output live to the chat and the user can press [Terminate] at any time. Output is "
         + "truncated to 10,000 characters (head + tail kept). No built-in timeout: pass "
-        + "`timeout: <seconds>` ONLY if you want a hard idle ceiling (kill the process "
-        + "if no output for N seconds). Avoid `2>/dev/null` in pipelines — pipefail is on "
-        + "and suppressing stderr will trigger an empty-output warning."
+        + "`timeout: <seconds>` (1-3600) ONLY if you want a hard idle ceiling (kill the "
+        + "process if no output for N seconds). Avoid `2>/dev/null` in pipelines — pipefail "
+        + "is on and suppressing stderr will trigger an empty-output warning."
     let parameters: JSONValue? = .object([
         "type": .string("object"),
         "additionalProperties": .bool(false),
@@ -2386,7 +2557,16 @@ struct ShellRunTool: OsaurusTool, PermissionedTool {
         }
 
         // Optional idle ceiling; nil = run forever (user terminates).
-        let idleTimeout: TimeInterval? = coerceInt(args["timeout"]).map(TimeInterval.init)
+        // Clamped to 1...3600s — `0`/negative is treated as omitted (the
+        // model almost certainly meant "no timeout", and an instant-kill
+        // watchdog would terminate every command before its first byte),
+        // and anything above an hour is capped. When the model passed no
+        // timeout at all, a headless surface may supply a default via
+        // `ChatExecutionContext.defaultShellIdleTimeout` (there is no
+        // [Terminate] button on those surfaces).
+        let requestedTimeout = Self.clampIdleTimeout(coerceInt(args["timeout"]))
+        let idleTimeout: TimeInterval? =
+            requestedTimeout ?? ChatExecutionContext.defaultShellIdleTimeout
 
         // Pre-exec undo planning: simple `mv`/`cp`/`rm`/`mkdir` forms are
         // captured into the same operation log as `file_write`/`file_edit`
@@ -2456,6 +2636,9 @@ struct ShellRunTool: OsaurusTool, PermissionedTool {
 
         // Idle-timeout watchdog. Only runs when `idleTimeout` is set;
         // resets implicitly on every chunk via `collector.lastActivity`.
+        // A watchdog kill is flagged on the collector so the result
+        // envelope can say WHY output stopped (`killed_by: idle_timeout`)
+        // instead of looking like a spontaneous non-zero exit.
         let idleWatcher: Task<Void, Never>?
         if let idleTimeout {
             idleWatcher = Task.detached { @Sendable in
@@ -2465,6 +2648,7 @@ struct ShellRunTool: OsaurusTool, PermissionedTool {
                     if Task.isCancelled { return }
                     let last = collector.lastActivity
                     if Date().timeIntervalSince(last) >= idleTimeout {
+                        collector.markIdleKilled()
                         await processBox.terminate()
                         return
                     }
@@ -2516,6 +2700,9 @@ struct ShellRunTool: OsaurusTool, PermissionedTool {
         ]
         if sink.terminationReason == .user {
             payload["killed_by"] = "user"
+        } else if collector.wasIdleKilled, let idleTimeout {
+            payload["killed_by"] = "idle_timeout"
+            payload["idle_timeout_seconds"] = Int(idleTimeout)
         }
         var warnings = diagnosticWarnings(
             command: command,
@@ -2523,6 +2710,12 @@ struct ShellRunTool: OsaurusTool, PermissionedTool {
             stdout: trimmedStdout,
             stderr: trimmedStderr
         )
+        if payload["killed_by"] as? String == "idle_timeout", let idleTimeout {
+            warnings.append(
+                "Process was killed by the idle-timeout watchdog: no output for \(Int(idleTimeout))s. "
+                    + "The command did not finish on its own — the output above is incomplete."
+            )
+        }
 
         // Undo-log bookkeeping for the mutation plan computed pre-exec.
         if exitCode == 0 {
@@ -2558,6 +2751,15 @@ struct ShellRunTool: OsaurusTool, PermissionedTool {
             result: payload,
             warnings: warnings.isEmpty ? nil : warnings
         )
+    }
+
+    /// Clamp the model-supplied idle timeout to 1...3600 seconds. `nil`,
+    /// zero, and negative all mean "omitted" — zero/negative would
+    /// otherwise arm a watchdog that kills the process before it can emit
+    /// a single byte.
+    static func clampIdleTimeout(_ raw: Int?) -> TimeInterval? {
+        guard let raw, raw > 0 else { return nil }
+        return TimeInterval(min(raw, 3600))
     }
 
     /// Install a `readabilityHandler` that streams every chunk into
@@ -2616,9 +2818,21 @@ final class ShellRunOutputCollector: @unchecked Sendable {
     private var stdoutBuf = Data()
     private var stderrBuf = Data()
     private var _lastActivity = Date()
+    private var _idleKilled = false
 
     var lastActivity: Date {
         lock.withLock { _lastActivity }
+    }
+
+    /// True when the idle-timeout watchdog terminated the process. Set by
+    /// the watchdog task BEFORE it sends the terminate, read after exit to
+    /// stamp `killed_by: "idle_timeout"` on the result envelope.
+    var wasIdleKilled: Bool {
+        lock.withLock { _idleKilled }
+    }
+
+    func markIdleKilled() {
+        lock.withLock { _idleKilled = true }
     }
 
     func append(_ chunk: Data, isStderr: Bool) {

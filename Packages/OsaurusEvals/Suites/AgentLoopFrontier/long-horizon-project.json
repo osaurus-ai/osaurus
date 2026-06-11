@@ -1,0 +1,47 @@
+{
+  "id": "frontier.long-horizon-project",
+  "domain": "agent_loop",
+  "label": "frontier • build a tested Python CLI end to end and deliver it",
+  "query": "Build a small Python CLI tool in this folder. Requirements: (1) create calc.py using argparse with two subcommands — 'add A B' prints the integer sum of A and B, 'mul A B' prints the integer product — printing ONLY the number; (2) create test_calc.py with unittest tests covering both subcommands; (3) run the tests with 'python3 -m unittest discover -q' and make sure they pass before finishing; (4) track your work with a todo list and update it as you go; (5) when everything is green, share calc.py with me as an artifact.",
+  "notes": "Frontier full-loop discipline: plan (todo), build, self-verify (tests must actually run green), deliver (share_artifact), and exit cleanly. Outcome-scored via post-run unittest + CLI smoke commands; todoUpdatedBeforeComplete pins mark-as-you-go, artifactShared pins real delivery (not just a tool-name match).",
+  "fixtures": {},
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 25,
+      "mustCallTools": [
+        "todo",
+        "file_write",
+        "shell_run",
+        "share_artifact"
+      ],
+      "todoUpdatedBeforeComplete": true,
+      "artifactShared": {
+        "filenameContains": "calc.py"
+      },
+      "files": [
+        {
+          "path": "calc.py",
+          "exists": true
+        },
+        {
+          "path": "test_calc.py",
+          "exists": true
+        }
+      ],
+      "commands": [
+        {
+          "command": "python3 -m unittest discover -q",
+          "expectExitCode": 0
+        },
+        {
+          "command": "test \"$(python3 calc.py add 2 3)\" = \"5\"",
+          "expectExitCode": 0
+        },
+        {
+          "command": "test \"$(python3 calc.py mul 4 5)\" = \"20\"",
+          "expectExitCode": 0
+        }
+      ]
+    }
+  }
+}

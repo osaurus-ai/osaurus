@@ -1,0 +1,55 @@
+{
+  "id": "frontier.multi-file-refactor-with-todo",
+  "domain": "agent_loop",
+  "label": "frontier • cross-file rename with todo tracking and verification",
+  "query": "Rename the function calc_total to compute_total across every Python file in this folder — the definition in lib.py and every usage in mod_a.py through mod_e.py — keeping behavior identical. Use a todo list to track the files and update it as you finish each one. Verify your work by running 'zsh verify.sh' and only finish once it prints ok.",
+  "notes": "Multi-file refactor under todo discipline. verify.sh greps for the old name and exercises every module, so partial renames or broken imports fail the post-run command deterministically.",
+  "fixtures": {
+    "workspaceFiles": [
+      {
+        "path": "lib.py",
+        "contents": "def calc_total(items):\n    return sum(items)\n"
+      },
+      {
+        "path": "mod_a.py",
+        "contents": "from lib import calc_total\n\n\ndef total_a(values):\n    # module a wraps the shared helper\n    return calc_total(values)\n"
+      },
+      {
+        "path": "mod_b.py",
+        "contents": "from lib import calc_total\n\n\ndef total_b(values):\n    # module b wraps the shared helper\n    return calc_total(values)\n"
+      },
+      {
+        "path": "mod_c.py",
+        "contents": "from lib import calc_total\n\n\ndef total_c(values):\n    # module c wraps the shared helper\n    return calc_total(values)\n"
+      },
+      {
+        "path": "mod_d.py",
+        "contents": "from lib import calc_total\n\n\ndef total_d(values):\n    # module d wraps the shared helper\n    return calc_total(values)\n"
+      },
+      {
+        "path": "mod_e.py",
+        "contents": "from lib import calc_total\n\n\ndef total_e(values):\n    # module e wraps the shared helper\n    return calc_total(values)\n"
+      },
+      {
+        "path": "verify.sh",
+        "contents": "#!/bin/zsh\n# Fails if the old name survives anywhere, or behavior broke.\nif grep -rn 'calc_total' --include='*.py' .; then\n  echo 'FAIL: old name calc_total still present' >&2\n  exit 1\nfi\npython3 -c \"\nfrom lib import compute_total\nimport mod_a, mod_b, mod_c, mod_d, mod_e\nassert compute_total([1, 2, 3]) == 6\nassert mod_a.total_a([1, 2]) == 3\nassert mod_b.total_b([2, 3]) == 5\nassert mod_c.total_c([3, 4]) == 7\nassert mod_d.total_d([4, 5]) == 9\nassert mod_e.total_e([5, 6]) == 11\n\" || exit 1\necho ok\n"
+      }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 22,
+      "mustCallTools": [
+        "todo",
+        "shell_run"
+      ],
+      "todoUpdatedBeforeComplete": true,
+      "commands": [
+        {
+          "command": "zsh verify.sh",
+          "expectExitCode": 0
+        }
+      ]
+    }
+  }
+}

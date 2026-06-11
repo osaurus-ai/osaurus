@@ -33,6 +33,24 @@ public enum EvalCaseOutcome: String, Sendable, Codable {
     }
 }
 
+/// Per-tool usage counters for one `agent_loop` case — the
+/// tool-discipline scorecard. `calls` counts every processed call
+/// (executed + dedupe replays), `errors` counts error envelopes,
+/// `deduped` counts dedupe replays.
+public struct ToolUsageStat: Sendable, Codable {
+    public let tool: String
+    public let calls: Int
+    public let errors: Int
+    public let deduped: Int
+
+    public init(tool: String, calls: Int, errors: Int, deduped: Int) {
+        self.tool = tool
+        self.calls = calls
+        self.errors = errors
+        self.deduped = deduped
+    }
+}
+
 /// Single-case row in the eval report.
 public struct EvalCaseReport: Sendable, Codable {
     public let id: String
@@ -55,6 +73,10 @@ public struct EvalCaseReport: Sendable, Codable {
     public let notes: [String]
     public let modelId: String
     public let latencyMs: Double?
+    /// Per-tool usage counters for `agent_loop` rows. nil for other
+    /// domains. Aggregated suite-wide into the console summary so each
+    /// model gets a tool-discipline scorecard, not just pass/fail.
+    public let toolUsage: [ToolUsageStat]?
 
     public init(
         id: String,
@@ -65,7 +87,8 @@ public struct EvalCaseReport: Sendable, Codable {
         capabilitySearch: CapabilitySearchEvaluation? = nil,
         notes: [String],
         modelId: String,
-        latencyMs: Double?
+        latencyMs: Double?,
+        toolUsage: [ToolUsageStat]? = nil
     ) {
         self.id = id
         self.label = label
@@ -76,6 +99,7 @@ public struct EvalCaseReport: Sendable, Codable {
         self.notes = notes
         self.modelId = modelId
         self.latencyMs = latencyMs
+        self.toolUsage = toolUsage
     }
 
     /// Build an early-exit row (decode failure, unknown domain, missing
@@ -168,7 +192,39 @@ public struct EvalReport: Sendable, Codable {
             for note in row.notes { lines.append("       · \(note)") }
             if verbose { appendVerboseDiagnostics(for: row, into: &lines) }
         }
+        if let usageLines = formatAggregatedToolUsage() {
+            lines.append("")
+            lines.append(contentsOf: usageLines)
+        }
         return lines.joined(separator: "\n")
+    }
+
+    /// Suite-wide tool-usage table aggregated across every `agent_loop`
+    /// row that carried per-tool counters. nil when no row did (non-loop
+    /// suites print nothing extra).
+    private func formatAggregatedToolUsage() -> [String]? {
+        var calls: [String: Int] = [:]
+        var errors: [String: Int] = [:]
+        var deduped: [String: Int] = [:]
+        for row in cases {
+            for stat in row.toolUsage ?? [] {
+                calls[stat.tool, default: 0] += stat.calls
+                errors[stat.tool, default: 0] += stat.errors
+                deduped[stat.tool, default: 0] += stat.deduped
+            }
+        }
+        guard !calls.isEmpty else { return nil }
+        var lines = ["[tool usage] (agent_loop rows, suite-wide)"]
+        for tool in calls.keys.sorted() {
+            let total = calls[tool] ?? 0
+            let err = errors[tool] ?? 0
+            let dd = deduped[tool] ?? 0
+            let toolCol = tool.padding(toLength: max(22, tool.count), withPad: " ", startingAt: 0)
+            lines.append(
+                "  \(toolCol) calls=\(total)  errors=\(err)  deduped=\(dd)"
+            )
+        }
+        return lines
     }
 
     /// Add per-case diagnostic lines (the case query) to `lines`. Pulled

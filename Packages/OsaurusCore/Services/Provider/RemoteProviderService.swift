@@ -1966,6 +1966,20 @@ public actor RemoteProviderService: ToolCapableService {
             )
         let isReasoningModel = OpenAIReasoningProfile.matches(modelId: model)
 
+        // Providers that 400 on restricted top-level schema keys get
+        // sanitized tool parameters; everyone else receives the full schema.
+        let wireTools: [Tool]?
+        if let tools,
+            Self.enforcesTopLevelParameterSchemaRestrictions(
+                providerType: provider.providerType,
+                host: provider.host
+            )
+        {
+            wireTools = tools.map(Self.strippingRestrictedTopLevelSchemaKeys)
+        } else {
+            wireTools = tools
+        }
+
         return RemoteChatRequest(
             model: model,
             messages: messages,
@@ -1981,7 +1995,7 @@ public actor RemoteProviderService: ToolCapableService {
             frequency_penalty: isReasoningModel ? nil : parameters.frequencyPenalty,
             presence_penalty: isReasoningModel ? nil : parameters.presencePenalty,
             stop: nil,
-            tools: tools,
+            tools: wireTools,
             tool_choice: toolChoice,
             reasoning_effort: effortValue,
             reasoning: allowsReasoningObject ? effortValue.map { ReasoningConfig(effort: $0) } : nil,
@@ -2790,14 +2804,23 @@ struct RemoteChatRequest: Encodable {
             }
         }
 
+        // claude-fable-family models reject sampler knobs outright — HTTP 400
+        // "`temperature` is deprecated for this model." (observed live on
+        // claude-fable-5). Omit them so the model runs on its native
+        // defaults instead of failing the whole request.
+        let bareModel =
+            model.lowercased().split(separator: "/").last.map(String.init)
+            ?? model.lowercased()
+        let deprecatesSamplerKnobs = bareModel.hasPrefix("claude-fable")
+
         return AnthropicMessagesRequest(
             model: model,
             max_tokens: max_completion_tokens ?? 4096,
             system: systemContent,
             messages: anthropicMessages,
             stream: stream,
-            temperature: temperature.map { Double($0) },
-            top_p: top_p.map { Double($0) },
+            temperature: deprecatesSamplerKnobs ? nil : temperature.map { Double($0) },
+            top_p: deprecatesSamplerKnobs ? nil : top_p.map { Double($0) },
             top_k: nil,
             stop_sequences: stop,
             tools: anthropicTools,
@@ -3297,6 +3320,55 @@ extension OpenResponsesRequest {
         object.removeValue(forKey: "max_output_tokens")
 
         return try JSONSerialization.data(withJSONObject: object, options: .osaurusCanonical)
+    }
+}
+
+// MARK: - Top-level parameter schema sanitization
+
+extension RemoteProviderService {
+    /// Whether the provider rejects restricted JSON Schema keys at the TOP
+    /// level of a function's `parameters`. OpenAI's official API 400s with
+    /// `invalid_function_parameters` on top-level
+    /// `oneOf`/`anyOf`/`allOf`/`enum`/`const`/`not` (nested uses are
+    /// accepted); Azure OpenAI runs the same validator, and Anthropic's
+    /// Messages API rejects top-level `oneOf`/`allOf`/`anyOf` on
+    /// `input_schema` the same way. Third-party OpenAI-compatible
+    /// providers (xAI, Groq, OpenRouter, …) accept the full schema, so
+    /// they keep it unmodified.
+    static func enforcesTopLevelParameterSchemaRestrictions(
+        providerType: RemoteProviderType,
+        host: String
+    ) -> Bool {
+        switch providerType {
+        case .azureOpenAI, .openAICodex, .anthropic: return true
+        default: break
+        }
+        let normalizedHost = host.lowercased()
+        return normalizedHost == "api.openai.com" || normalizedHost.hasSuffix(".openai.com")
+    }
+
+    /// JSON Schema combinators the providers above forbid at the top level
+    /// of a function's `parameters` object.
+    private static let restrictedTopLevelSchemaKeys: Set<String> = [
+        "oneOf", "anyOf", "allOf", "enum", "const", "not",
+    ]
+
+    /// Strip only the top-level offenders; everything nested is preserved.
+    /// Osaurus's own preflight still validates tool arguments against the
+    /// full schema, so the constraint is enforced locally — it's just not
+    /// advertised to a provider that would reject the request outright.
+    static func strippingRestrictedTopLevelSchemaKeys(_ tool: Tool) -> Tool {
+        guard case .object(let object)? = tool.function.parameters else { return tool }
+        let sanitized = object.filter { !restrictedTopLevelSchemaKeys.contains($0.key) }
+        guard sanitized.count != object.count else { return tool }
+        return Tool(
+            type: tool.type,
+            function: ToolFunction(
+                name: tool.function.name,
+                description: tool.function.description,
+                parameters: .object(sanitized)
+            )
+        )
     }
 }
 

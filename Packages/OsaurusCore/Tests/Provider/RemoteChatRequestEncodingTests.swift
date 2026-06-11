@@ -1190,6 +1190,83 @@ struct RemoteChatRequestEncodingTests {
         #expect(anyOf.count == 2)
     }
 
+    // MARK: - OpenAI top-level parameter schema sanitization
+
+    /// OpenAI 400s on `oneOf`/`anyOf`/`allOf`/`enum`/`const`/`not` at the top
+    /// level of a function's `parameters` (observed live with `share_artifact`,
+    /// whose schema carries a top-level `anyOf` for path-OR-content). The
+    /// sanitizer must strip exactly the top-level offenders and nothing nested.
+    @Test func openAISanitizer_stripsTopLevelAnyOfOnly() throws {
+        let tool = Self.makeTool(
+            name: "share_artifact",
+            parameters: .object([
+                "type": .string("object"),
+                "properties": .object([
+                    "path": .object(["type": .string("string")]),
+                    "mode": .object([
+                        "anyOf": .array([
+                            .object(["type": .string("string")]),
+                            .object(["type": .string("number")]),
+                        ])
+                    ]),
+                ]),
+                "anyOf": .array([
+                    .object(["required": .array([.string("path")])])
+                ]),
+            ])
+        )
+
+        let sanitized = RemoteProviderService.strippingRestrictedTopLevelSchemaKeys(tool)
+        guard case .object(let params)? = sanitized.function.parameters else {
+            Issue.record("parameters lost")
+            return
+        }
+        #expect(params["anyOf"] == nil)
+        #expect(params["type"] == .string("object"))
+        guard case .object(let properties)? = params["properties"],
+            case .object(let mode)? = properties["mode"]
+        else {
+            Issue.record("properties lost")
+            return
+        }
+        #expect(mode["anyOf"] != nil, "nested anyOf must survive")
+    }
+
+    @Test func openAISanitizer_passThroughWhenClean() throws {
+        let sanitized = RemoteProviderService.strippingRestrictedTopLevelSchemaKeys(Self.weatherTool)
+        #expect(sanitized.function.parameters == Self.weatherTool.function.parameters)
+    }
+
+    @Test func openAISanitizer_gateMatchesOnlyEnforcingProviders() {
+        #expect(
+            RemoteProviderService.enforcesTopLevelParameterSchemaRestrictions(
+                providerType: .openaiLegacy,
+                host: "api.openai.com"
+            )
+        )
+        #expect(
+            RemoteProviderService.enforcesTopLevelParameterSchemaRestrictions(
+                providerType: .azureOpenAI,
+                host: "myorg.example.azure.com"
+            )
+        )
+        #expect(
+            !RemoteProviderService.enforcesTopLevelParameterSchemaRestrictions(
+                providerType: .openaiLegacy,
+                host: "api.x.ai"
+            )
+        )
+        // Anthropic 400s on top-level oneOf/allOf/anyOf in input_schema
+        // (observed live: "input_schema does not support oneOf, allOf, or
+        // anyOf at the top level").
+        #expect(
+            RemoteProviderService.enforcesTopLevelParameterSchemaRestrictions(
+                providerType: .anthropic,
+                host: "api.anthropic.com"
+            )
+        )
+    }
+
     // MARK: - Fixtures
 
     private static func makeRequest(

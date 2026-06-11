@@ -1,0 +1,38 @@
+{
+  "id": "frontier.audit-file-edit",
+  "domain": "agent_loop",
+  "label": "frontier • surgical edits in a 300-line file, full rewrite forbidden",
+  "query": "In items.txt, make exactly two changes: on the line for item 042 change the value to value=999, and on the line for item 250 change the value to value=777. Every other line must remain untouched. Use surgical edits — do not rewrite the whole file.",
+  "notes": "file_edit semantics pin: mustNotCallTools forbids the file_write clobber path, and the post-run checker verifies all 300 lines — the two targets changed, the other 298 byte-identical. toolUsageAudit bounds EXECUTED file_edit errors at 2: with the 0-match diagnostics (N| prefix / whitespace hints) the model must recover after at most a couple of misses, and held-error replay means an unrecovered repeat shows up as deduped replays, never as an executed-error spiral.",
+  "fixtures": {
+    "workspaceFiles": [
+      {
+        "path": "items.txt",
+        "contents": "item 001 value=1\nitem 002 value=2\nitem 003 value=3\nitem 004 value=4\nitem 005 value=5\nitem 006 value=6\nitem 007 value=7\nitem 008 value=8\nitem 009 value=9\nitem 010 value=10\nitem 011 value=11\nitem 012 value=12\nitem 013 value=13\nitem 014 value=14\nitem 015 value=15\nitem 016 value=16\nitem 017 value=17\nitem 018 value=18\nitem 019 value=19\nitem 020 value=20\nitem 021 value=21\nitem 022 value=22\nitem 023 value=23\nitem 024 value=24\nitem 025 value=25\nitem 026 value=26\nitem 027 value=27\nitem 028 value=28\nitem 029 value=29\nitem 030 value=30\nitem 031 value=31\nitem 032 value=32\nitem 033 value=33\nitem 034 value=34\nitem 035 value=35\nitem 036 value=36\nitem 037 value=37\nitem 038 value=38\nitem 039 value=39\nitem 040 value=40\nitem 041 value=41\nitem 042 value=42\nitem 043 value=43\nitem 044 value=44\nitem 045 value=45\nitem 046 value=46\nitem 047 value=47\nitem 048 value=48\nitem 049 value=49\nitem 050 value=50\nitem 051 value=51\nitem 052 value=52\nitem 053 value=53\nitem 054 value=54\nitem 055 value=55\nitem 056 value=56\nitem 057 value=57\nitem 058 value=58\nitem 059 value=59\nitem 060 value=60\nitem 061 value=61\nitem 062 value=62\nitem 063 value=63\nitem 064 value=64\nitem 065 value=65\nitem 066 value=66\nitem 067 value=67\nitem 068 value=68\nitem 069 value=69\nitem 070 value=70\nitem 071 value=71\nitem 072 value=72\nitem 073 value=73\nitem 074 value=74\nitem 075 value=75\nitem 076 value=76\nitem 077 value=77\nitem 078 value=78\nitem 079 value=79\nitem 080 value=80\nitem 081 value=81\nitem 082 value=82\nitem 083 value=83\nitem 084 value=84\nitem 085 value=85\nitem 086 value=86\nitem 087 value=87\nitem 088 value=88\nitem 089 value=89\nitem 090 value=90\nitem 091 value=91\nitem 092 value=92\nitem 093 value=93\nitem 094 value=94\nitem 095 value=95\nitem 096 value=96\nitem 097 value=97\nitem 098 value=98\nitem 099 value=99\nitem 100 value=100\nitem 101 value=101\nitem 102 value=102\nitem 103 value=103\nitem 104 value=104\nitem 105 value=105\nitem 106 value=106\nitem 107 value=107\nitem 108 value=108\nitem 109 value=109\nitem 110 value=110\nitem 111 value=111\nitem 112 value=112\nitem 113 value=113\nitem 114 value=114\nitem 115 value=115\nitem 116 value=116\nitem 117 value=117\nitem 118 value=118\nitem 119 value=119\nitem 120 value=120\nitem 121 value=121\nitem 122 value=122\nitem 123 value=123\nitem 124 value=124\nitem 125 value=125\nitem 126 value=126\nitem 127 value=127\nitem 128 value=128\nitem 129 value=129\nitem 130 value=130\nitem 131 value=131\nitem 132 value=132\nitem 133 value=133\nitem 134 value=134\nitem 135 value=135\nitem 136 value=136\nitem 137 value=137\nitem 138 value=138\nitem 139 value=139\nitem 140 value=140\nitem 141 value=141\nitem 142 value=142\nitem 143 value=143\nitem 144 value=144\nitem 145 value=145\nitem 146 value=146\nitem 147 value=147\nitem 148 value=148\nitem 149 value=149\nitem 150 value=150\nitem 151 value=151\nitem 152 value=152\nitem 153 value=153\nitem 154 value=154\nitem 155 value=155\nitem 156 value=156\nitem 157 value=157\nitem 158 value=158\nitem 159 value=159\nitem 160 value=160\nitem 161 value=161\nitem 162 value=162\nitem 163 value=163\nitem 164 value=164\nitem 165 value=165\nitem 166 value=166\nitem 167 value=167\nitem 168 value=168\nitem 169 value=169\nitem 170 value=170\nitem 171 value=171\nitem 172 value=172\nitem 173 value=173\nitem 174 value=174\nitem 175 value=175\nitem 176 value=176\nitem 177 value=177\nitem 178 value=178\nitem 179 value=179\nitem 180 value=180\nitem 181 value=181\nitem 182 value=182\nitem 183 value=183\nitem 184 value=184\nitem 185 value=185\nitem 186 value=186\nitem 187 value=187\nitem 188 value=188\nitem 189 value=189\nitem 190 value=190\nitem 191 value=191\nitem 192 value=192\nitem 193 value=193\nitem 194 value=194\nitem 195 value=195\nitem 196 value=196\nitem 197 value=197\nitem 198 value=198\nitem 199 value=199\nitem 200 value=200\nitem 201 value=201\nitem 202 value=202\nitem 203 value=203\nitem 204 value=204\nitem 205 value=205\nitem 206 value=206\nitem 207 value=207\nitem 208 value=208\nitem 209 value=209\nitem 210 value=210\nitem 211 value=211\nitem 212 value=212\nitem 213 value=213\nitem 214 value=214\nitem 215 value=215\nitem 216 value=216\nitem 217 value=217\nitem 218 value=218\nitem 219 value=219\nitem 220 value=220\nitem 221 value=221\nitem 222 value=222\nitem 223 value=223\nitem 224 value=224\nitem 225 value=225\nitem 226 value=226\nitem 227 value=227\nitem 228 value=228\nitem 229 value=229\nitem 230 value=230\nitem 231 value=231\nitem 232 value=232\nitem 233 value=233\nitem 234 value=234\nitem 235 value=235\nitem 236 value=236\nitem 237 value=237\nitem 238 value=238\nitem 239 value=239\nitem 240 value=240\nitem 241 value=241\nitem 242 value=242\nitem 243 value=243\nitem 244 value=244\nitem 245 value=245\nitem 246 value=246\nitem 247 value=247\nitem 248 value=248\nitem 249 value=249\nitem 250 value=250\nitem 251 value=251\nitem 252 value=252\nitem 253 value=253\nitem 254 value=254\nitem 255 value=255\nitem 256 value=256\nitem 257 value=257\nitem 258 value=258\nitem 259 value=259\nitem 260 value=260\nitem 261 value=261\nitem 262 value=262\nitem 263 value=263\nitem 264 value=264\nitem 265 value=265\nitem 266 value=266\nitem 267 value=267\nitem 268 value=268\nitem 269 value=269\nitem 270 value=270\nitem 271 value=271\nitem 272 value=272\nitem 273 value=273\nitem 274 value=274\nitem 275 value=275\nitem 276 value=276\nitem 277 value=277\nitem 278 value=278\nitem 279 value=279\nitem 280 value=280\nitem 281 value=281\nitem 282 value=282\nitem 283 value=283\nitem 284 value=284\nitem 285 value=285\nitem 286 value=286\nitem 287 value=287\nitem 288 value=288\nitem 289 value=289\nitem 290 value=290\nitem 291 value=291\nitem 292 value=292\nitem 293 value=293\nitem 294 value=294\nitem 295 value=295\nitem 296 value=296\nitem 297 value=297\nitem 298 value=298\nitem 299 value=299\nitem 300 value=300\n"
+      }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 10,
+      "mustCallTools": [
+        "file_edit"
+      ],
+      "mustNotCallTools": [
+        "file_write"
+      ],
+      "toolUsageAudit": [
+        {
+          "tool": "file_edit",
+          "maxErrors": 2
+        }
+      ],
+      "commands": [
+        {
+          "command": "python3 -c \"lines = open('items.txt').read().splitlines(); exp = ['item %03d value=%d' % (i, 999 if i == 42 else 777 if i == 250 else i) for i in range(1, 301)]; assert len(lines) == 300, f'expected 300 lines, got {len(lines)}'; bad = [n for n, (a, b) in enumerate(zip(lines, exp), 1) if a != b]; assert not bad, f'lines differ at {bad[:5]}'\"",
+          "expectExitCode": 0
+        }
+      ]
+    }
+  }
+}

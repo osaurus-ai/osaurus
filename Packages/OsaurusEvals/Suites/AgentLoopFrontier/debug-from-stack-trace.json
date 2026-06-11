@@ -1,0 +1,37 @@
+{
+  "id": "frontier.debug-from-stack-trace",
+  "domain": "agent_loop",
+  "label": "frontier • reproduce a crash, read the traceback, fix it",
+  "query": "Running 'python3 app.py' in this folder crashes. Reproduce the crash yourself by actually running it, diagnose the problem from the traceback, fix it (you may change app.py or config.json — your call), and make sure 'python3 app.py' then exits cleanly and prints 'done' as its final line.",
+  "notes": "Debug-from-evidence lane: mustCallTools shell_run forces an actual reproduction (no eyeball-only diagnosis). The crash is a KeyError ('count' missing on the second item); any correct fix passes the post-run command.",
+  "fixtures": {
+    "workspaceFiles": [
+      {
+        "path": "app.py",
+        "contents": "import json\n\n\ndef load_config():\n    with open(\"config.json\") as f:\n        return json.load(f)\n\n\ndef main():\n    cfg = load_config()\n    total = 0\n    for item in cfg[\"items\"]:\n        total += item[\"price\"] * item[\"count\"]\n    print(f\"total={total}\")\n    print(\"done\")\n\n\nmain()\n"
+      },
+      {
+        "path": "config.json",
+        "contents": "{\"items\": [{\"price\": 5, \"count\": 2}, {\"price\": 3}]}\n"
+      }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 14,
+      "mustCallTools": [
+        "shell_run"
+      ],
+      "commands": [
+        {
+          "command": "python3 app.py",
+          "expectExitCode": 0
+        },
+        {
+          "command": "python3 app.py | tail -1 | grep -q done",
+          "expectExitCode": 0
+        }
+      ]
+    }
+  }
+}

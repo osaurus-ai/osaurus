@@ -168,7 +168,10 @@ struct FolderToolsResilienceTests {
         let text = EnvelopeAssertions.successText(result) ?? ""
         #expect(text.hasPrefix("     1| "), "got: \(text.prefix(40))")
         #expect(text.contains("(empty file)") == false)
-        #expect(text.contains("truncated at 1 of 1 lines"))
+        // The char cap cut line 1 mid-way: it is reported as PARTIAL, not
+        // counted as an included line (honest partial-line accounting).
+        #expect(text.contains("line 1 is only PARTIALLY shown"))
+        #expect(payload["partial_line"] as? Int == 1)
         #expect(payload["truncated"] as? Bool == true)
         #expect(payload["raw_bytes_truncated"] as? Bool == false)
     }

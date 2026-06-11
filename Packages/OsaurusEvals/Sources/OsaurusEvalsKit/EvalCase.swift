@@ -114,6 +114,16 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// `expect.agentLoop` assertions against the resulting tree, and
         /// deletes the directory afterwards. Other domains ignore this.
         public let workspaceFiles: [WorkspaceFile]?
+        /// Per-case agent capability flags for `agent_loop` cases. When
+        /// present, the runner registers a TEMPORARY agent carrying these
+        /// flags (and a `reactive` schedule preset so self-scheduling
+        /// isn't quiet-hours-clamped mid-eval), runs the loop under that
+        /// agent's id so `AgentConfigSnapshot` / prompt gating / tool
+        /// resolution see the flags exactly as production would, then
+        /// deletes the agent — including its per-agent database and
+        /// scheduler rows (`AgentStore.delete` cleans both). Other
+        /// domains ignore this.
+        public let agentCapabilities: AgentCapabilitiesFixture?
 
         public init(
             requirePlugins: [String]? = nil,
@@ -121,7 +131,8 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             enableSkills: [String]? = nil,
             enableTools: [String]? = nil,
             ensureToolsDisabled: [String]? = nil,
-            workspaceFiles: [WorkspaceFile]? = nil
+            workspaceFiles: [WorkspaceFile]? = nil,
+            agentCapabilities: AgentCapabilitiesFixture? = nil
         ) {
             self.requirePlugins = requirePlugins
             self.seedMethods = seedMethods
@@ -129,6 +140,46 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.enableTools = enableTools
             self.ensureToolsDisabled = ensureToolsDisabled
             self.workspaceFiles = workspaceFiles
+            self.agentCapabilities = agentCapabilities
+        }
+    }
+
+    /// Opt-in capability flags for the temporary eval agent an
+    /// `agent_loop` case runs under. Every field defaults to the
+    /// production default (off) when omitted, so existing cases keep
+    /// running under a plain ephemeral agent.
+    public struct AgentCapabilitiesFixture: Sendable, Codable {
+        /// Expose the `db_*` agent-database tool family.
+        public let dbEnabled: Bool?
+        /// Expose `schedule_next_run` / `cancel_next_run` / `notify`.
+        public let selfSchedulingEnabled: Bool?
+        /// Expose the `render_chart` tool.
+        public let renderChartEnabled: Bool?
+        /// Expose the `speak` tool.
+        public let speakEnabled: Bool?
+        /// Expose the `search_memory` recall tool.
+        public let searchMemoryEnabled: Bool?
+
+        public init(
+            dbEnabled: Bool? = nil,
+            selfSchedulingEnabled: Bool? = nil,
+            renderChartEnabled: Bool? = nil,
+            speakEnabled: Bool? = nil,
+            searchMemoryEnabled: Bool? = nil
+        ) {
+            self.dbEnabled = dbEnabled
+            self.selfSchedulingEnabled = selfSchedulingEnabled
+            self.renderChartEnabled = renderChartEnabled
+            self.speakEnabled = speakEnabled
+            self.searchMemoryEnabled = searchMemoryEnabled
+        }
+
+        /// True when any flag is explicitly enabled — the runner only
+        /// pays the temp-agent setup cost when something is on.
+        public var requestsAnyCapability: Bool {
+            (dbEnabled ?? false) || (selfSchedulingEnabled ?? false)
+                || (renderChartEnabled ?? false) || (speakEnabled ?? false)
+                || (searchMemoryEnabled ?? false)
         }
     }
 
@@ -320,6 +371,28 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// call (or before the run ends, when there is no `complete`) —
         /// pins "mark items done as you go", not just "made a list once".
         public let todoUpdatedBeforeComplete: Bool?
+        /// Ordered-subsequence assertion: these tool names must appear in
+        /// the transcript IN THIS ORDER (other calls may interleave).
+        /// Pins procedures where order matters (todo before edits, backup
+        /// before mutate, db insert before query, artifact before complete).
+        public let mustCallToolsInOrder: [String]?
+        /// Artifact-delivery assertion: at least `minCount` (default 1)
+        /// successful `share_artifact` calls whose result parses as a real
+        /// artifact envelope (`Artifact shared:` header), optionally
+        /// pinning the shared filename and requiring a description.
+        public let artifactShared: ArtifactSharedAssertion?
+        /// Self-scheduling outcome: a `schedule_next_run` write must have
+        /// landed in the scheduler store for the run's agent (checked
+        /// post-run via `LocalAgentBridge.nextRun`). Requires
+        /// `fixtures.agentCapabilities.selfSchedulingEnabled`.
+        public let scheduledRun: ScheduledRunAssertion?
+        /// Post-run SQL checks against the run agent's database. Requires
+        /// `fixtures.agentCapabilities.dbEnabled`. Each query runs through
+        /// the same `LocalAgentBridge` the `db_*` tools use.
+        public let dbState: [DbStateAssertion]?
+        /// Per-tool transcript hygiene audits (call-count bounds, error
+        /// ceilings, argument substrings). The folder-tool discipline lane.
+        public let toolUsageAudit: [ToolUsageAudit]?
 
         public init(
             maxIterations: Int? = nil,
@@ -338,7 +411,12 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             rubric: [String]? = nil,
             contextWindowOverride: Int? = nil,
             stopOnToolRejection: Bool? = nil,
-            todoUpdatedBeforeComplete: Bool? = nil
+            todoUpdatedBeforeComplete: Bool? = nil,
+            mustCallToolsInOrder: [String]? = nil,
+            artifactShared: ArtifactSharedAssertion? = nil,
+            scheduledRun: ScheduledRunAssertion? = nil,
+            dbState: [DbStateAssertion]? = nil,
+            toolUsageAudit: [ToolUsageAudit]? = nil
         ) {
             self.maxIterations = maxIterations
             self.mustCallTools = mustCallTools
@@ -357,6 +435,11 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.contextWindowOverride = contextWindowOverride
             self.stopOnToolRejection = stopOnToolRejection
             self.todoUpdatedBeforeComplete = todoUpdatedBeforeComplete
+            self.mustCallToolsInOrder = mustCallToolsInOrder
+            self.artifactShared = artifactShared
+            self.scheduledRun = scheduledRun
+            self.dbState = dbState
+            self.toolUsageAudit = toolUsageAudit
         }
 
         /// One workspace-file assertion. `path` is relative to the
@@ -391,6 +474,94 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             public init(command: String, expectExitCode: Int) {
                 self.command = command
                 self.expectExitCode = expectExitCode
+            }
+        }
+
+        /// Artifact-delivery assertion. A qualifying call is a
+        /// `share_artifact` transcript entry whose result was NOT an
+        /// error envelope and whose result text carries the artifact
+        /// header (`Artifact shared:`). `filenameContains` matches the
+        /// reported `Filename:` line; `descriptionRequired` demands a
+        /// `Description:` line (i.e. the model passed `description`).
+        public struct ArtifactSharedAssertion: Sendable, Codable {
+            public let minCount: Int?
+            public let filenameContains: String?
+            public let descriptionRequired: Bool?
+
+            public init(
+                minCount: Int? = nil,
+                filenameContains: String? = nil,
+                descriptionRequired: Bool? = nil
+            ) {
+                self.minCount = minCount
+                self.filenameContains = filenameContains
+                self.descriptionRequired = descriptionRequired
+            }
+        }
+
+        /// Self-scheduling outcome assertion, checked against the
+        /// scheduler store after the loop ends (not just the transcript —
+        /// a clamped/rejected `schedule_next_run` would still appear in
+        /// the transcript but never land a row).
+        public struct ScheduledRunAssertion: Sendable, Codable {
+            /// Substring the persisted next-run `instructions` must contain.
+            public let instructionsContain: String?
+
+            public init(instructionsContain: String? = nil) {
+                self.instructionsContain = instructionsContain
+            }
+        }
+
+        /// One post-run SQL check against the run agent's database.
+        /// `expectRowCountAtLeast` floors the returned row count;
+        /// `expectFirstValue` string-compares the first column of the
+        /// first row (numbers compared by canonical string form).
+        public struct DbStateAssertion: Sendable, Codable {
+            public let sql: String
+            public let expectRowCountAtLeast: Int?
+            public let expectFirstValue: String?
+
+            public init(
+                sql: String,
+                expectRowCountAtLeast: Int? = nil,
+                expectFirstValue: String? = nil
+            ) {
+                self.sql = sql
+                self.expectRowCountAtLeast = expectRowCountAtLeast
+                self.expectFirstValue = expectFirstValue
+            }
+        }
+
+        /// Per-tool transcript hygiene audit. Counts include dedupe
+        /// replays (they're processed calls the model asked for);
+        /// `maxErrors` counts error envelopes returned by the tool.
+        /// `argsMustContain` requires at least one call whose arguments
+        /// contain the substring; `argsMustNotContain` forbids the
+        /// substring across every call to the tool (e.g. `shell_run`
+        /// args must never contain `cat ` when `file_read` is the
+        /// sanctioned read path).
+        public struct ToolUsageAudit: Sendable, Codable {
+            public let tool: String
+            public let maxCalls: Int?
+            public let minCalls: Int?
+            public let maxErrors: Int?
+            public let argsMustContain: String?
+            public let argsMustNotContain: String?
+
+            public init(
+                tool: String,
+                maxCalls: Int? = nil,
+                minCalls: Int? = nil,
+                maxErrors: Int? = nil,
+                argsMustContain: String? = nil,
+                argsMustNotContain: String? = nil
+            ) {
+                self.tool = tool
+                self.maxCalls = maxCalls
+                self.minCalls = minCalls
+                self.maxErrors = maxErrors
+                self.argsMustContain = argsMustContain
+                self.argsMustNotContain = argsMustNotContain
             }
         }
     }

@@ -1,0 +1,77 @@
+{
+  "id": "frontier.kitchen-sink",
+  "domain": "agent_loop",
+  "label": "frontier • one run: todo → files → db → shell verify → artifact → complete",
+  "query": "Complete this workflow, tracking every step with a todo list that you update as you go: (1) read the three order files under orders/; (2) in your agent database create a table orders with columns id (TEXT) and amount (INTEGER) and insert one row per order; (3) query the table to compute the total amount; (4) write summary.md containing the line 'Total: <total>'; (5) verify by running 'zsh verify.sh' and make sure it prints ok; (6) share summary.md with me as an artifact; (7) then mark the task complete with a short summary.",
+  "notes": "Composite stress: every loop surface in one run with ordering pinned (todo before db work, artifact before complete) and a tool-call ceiling against aimless wandering. dbState pins persisted rows (COUNT 3, SUM 47); verify.sh pins the workspace outcome.",
+  "fixtures": {
+    "agentCapabilities": {
+      "dbEnabled": true
+    },
+    "workspaceFiles": [
+      {
+        "path": "orders/order1.txt",
+        "contents": "id: A-100\namount: 12\n"
+      },
+      {
+        "path": "orders/order2.txt",
+        "contents": "id: A-101\namount: 15\n"
+      },
+      {
+        "path": "orders/order3.txt",
+        "contents": "id: A-102\namount: 20\n"
+      },
+      {
+        "path": "verify.sh",
+        "contents": "#!/bin/zsh\ngrep -q 'Total: 47' summary.md || { echo 'summary.md missing Total: 47' >&2; exit 1; }\necho ok\n"
+      }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 28,
+      "maxToolCalls": 32,
+      "mustCallTools": [
+        "todo",
+        "db_create_table",
+        "db_insert",
+        "db_query",
+        "shell_run",
+        "share_artifact",
+        "complete"
+      ],
+      "mustCallToolsInOrder": [
+        "todo",
+        "db_insert",
+        "share_artifact",
+        "complete"
+      ],
+      "todoUpdatedBeforeComplete": true,
+      "dbState": [
+        {
+          "sql": "SELECT COUNT(*) FROM orders",
+          "expectFirstValue": "3"
+        },
+        {
+          "sql": "SELECT SUM(amount) FROM orders",
+          "expectFirstValue": "47"
+        }
+      ],
+      "artifactShared": {
+        "filenameContains": "summary"
+      },
+      "files": [
+        {
+          "path": "summary.md",
+          "contains": "Total: 47"
+        }
+      ],
+      "commands": [
+        {
+          "command": "zsh verify.sh",
+          "expectExitCode": 0
+        }
+      ]
+    }
+  }
+}

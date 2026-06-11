@@ -61,11 +61,28 @@ extension EvalRunner {
         }
         defer { try? FileManager.default.removeItem(at: workspace) }
 
+        // Per-case capability fixtures: register a TEMPORARY agent whose
+        // settings carry the requested flags so prompt gating / tool
+        // resolution see them exactly as production would. The agent (and
+        // its per-agent database + scheduler rows) is deleted after the
+        // outcome assertions run — `dbState` / `scheduledRun` read the
+        // isolated stores BEFORE teardown.
+        var evalAgentId: UUID?
+        if let caps = testCase.fixtures.agentCapabilities, caps.requestsAnyCapability {
+            evalAgentId = installEvalAgent(caps)
+        }
+        defer {
+            if let evalAgentId {
+                removeEvalAgent(evalAgentId)
+            }
+        }
+
         let judgeModel = ProcessInfo.processInfo.environment["JUDGE_MODEL"]
         let started = Date()
         let transcript = await AgentLoopEvaluator.run(
             task: testCase.query,
             workspace: workspace,
+            agentId: evalAgentId,
             maxIterations: exp.maxIterations ?? 10,
             contextWindowOverride: exp.contextWindowOverride,
             stopOnToolRejection: exp.stopOnToolRejection ?? false
@@ -93,7 +110,8 @@ extension EvalRunner {
                 outcome: .errored,
                 notes: ["agent loop error: \(err)"],
                 modelId: modelId,
-                latencyMs: latency
+                latencyMs: latency,
+                toolUsage: toolUsageStats(transcript)
             )
         }
 
@@ -101,6 +119,33 @@ extension EvalRunner {
 
         // 1+2. Exit shape + transcript assertions.
         scoreTranscriptAssertions(exp, transcript: transcript, into: &score)
+
+        // 2b. Frontier-lane transcript assertions (ordering, artifact
+        // delivery, per-tool hygiene audits).
+        if let ordered = exp.mustCallToolsInOrder {
+            let result = scoreOrderedSubsequence(ordered, transcript: transcript)
+            score.record(result.passed, note: result.note)
+        }
+        if let artifact = exp.artifactShared {
+            let result = scoreArtifactShared(artifact, transcript: transcript)
+            score.record(result.passed, note: result.note)
+        }
+        for audit in exp.toolUsageAudit ?? [] {
+            let result = scoreToolUsageAudit(audit, transcript: transcript)
+            score.record(result.passed, note: result.note)
+        }
+
+        // 2c. Capability-store outcomes (isolated per-eval-agent stores;
+        // must run BEFORE the deferred agent teardown — which is
+        // guaranteed, since defers run after this whole function body).
+        if let scheduled = exp.scheduledRun {
+            let result = scoreScheduledRun(scheduled, agentId: evalAgentId)
+            score.record(result.passed, note: result.note)
+        }
+        for assertion in exp.dbState ?? [] {
+            let result = scoreDbState(assertion, agentId: evalAgentId)
+            score.record(result.passed, note: result.note)
+        }
 
         // 3. Workspace outcomes.
         for assertion in exp.files ?? [] {
@@ -157,8 +202,73 @@ extension EvalRunner {
             outcome: score.passed ? .passed : .failed,
             notes: score.notes,
             modelId: modelId,
-            latencyMs: latency
+            latencyMs: latency,
+            toolUsage: toolUsageStats(transcript)
         )
+    }
+
+    // MARK: - Capability fixtures (temp eval agent)
+
+    /// Register a temporary agent carrying the fixture's capability
+    /// flags. Persisted via `AgentStore.save` directly (NOT
+    /// `AgentManager.add`) so the eval path never trips telemetry,
+    /// agent-added notifications, or the crypto-address assignment
+    /// (which can prompt for the master key in a headless CLI).
+    /// The schedule preset is `reactive` — no quiet hours and a
+    /// 5-minute min interval — so self-scheduling cases aren't
+    /// quiet-hours-clamped depending on when the eval runs.
+    private static func installEvalAgent(
+        _ caps: EvalCase.AgentCapabilitiesFixture
+    ) -> UUID {
+        let agent = Agent(
+            id: UUID(),
+            name: "Osaurus Eval Agent",
+            description: "Temporary agent registered by OsaurusEvals; safe to delete.",
+            settings: AgentSettings(
+                dbEnabled: caps.dbEnabled ?? false,
+                schedule: AgentScheduleSettings.defaults(for: .reactive),
+                renderChartEnabled: caps.renderChartEnabled ?? false,
+                speakEnabled: caps.speakEnabled ?? false,
+                searchMemoryEnabled: caps.searchMemoryEnabled ?? false,
+                selfSchedulingEnabled: caps.selfSchedulingEnabled ?? false
+            )
+        )
+        AgentStore.save(agent)
+        AgentManager.shared.refresh()
+        return agent.id
+    }
+
+    /// Tear down the temporary eval agent: clear any next-run slot it
+    /// scheduled (so the host app's scheduler never wakes a deleted
+    /// agent), then delete the agent record — `AgentStore.delete` also
+    /// drops the per-agent database directory and scheduler rows.
+    private static func removeEvalAgent(_ agentId: UUID) {
+        _ = try? LocalAgentBridge.shared.cancelNextRun(agentId: agentId)
+        AgentStore.delete(id: agentId)
+        AgentManager.shared.refresh()
+    }
+
+    // MARK: - Telemetry
+
+    /// Fold the transcript into per-tool usage counters for the report.
+    private static func toolUsageStats(_ transcript: AgentLoopTranscript) -> [ToolUsageStat]? {
+        guard !transcript.toolCalls.isEmpty else { return nil }
+        var calls: [String: Int] = [:]
+        var errors: [String: Int] = [:]
+        var deduped: [String: Int] = [:]
+        for call in transcript.toolCalls {
+            calls[call.name, default: 0] += 1
+            if call.wasError { errors[call.name, default: 0] += 1 }
+            if call.wasDeduped { deduped[call.name, default: 0] += 1 }
+        }
+        return calls.keys.sorted().map {
+            ToolUsageStat(
+                tool: $0,
+                calls: calls[$0] ?? 0,
+                errors: errors[$0] ?? 0,
+                deduped: deduped[$0] ?? 0
+            )
+        }
     }
 
     // MARK: - Transcript scoring
@@ -282,6 +392,197 @@ extension EvalRunner {
                 pass: "todo updated (≥1 checked box) before complete",
                 fail: "no todo call with a checked box before complete/run end"
             )
+        }
+    }
+
+    /// Ordered-subsequence assertion: `ordered` must appear in the
+    /// transcript's call sequence in order (other calls may interleave).
+    private static func scoreOrderedSubsequence(
+        _ ordered: [String],
+        transcript: AgentLoopTranscript
+    ) -> (passed: Bool, note: String) {
+        var cursor = 0
+        for call in transcript.toolCalls where cursor < ordered.count {
+            if call.name == ordered[cursor] { cursor += 1 }
+        }
+        if cursor == ordered.count {
+            return (true, "mustCallToolsInOrder ok: [\(ordered.joined(separator: " → "))]")
+        }
+        return (
+            false,
+            "mustCallToolsInOrder failed at step \(cursor) ('\(ordered[cursor])'): "
+                + "sequence [\(transcript.toolCalls.map(\.name).joined(separator: ","))]"
+        )
+    }
+
+    /// Artifact-delivery assertion: count successful `share_artifact`
+    /// calls whose result carries the real artifact header (the marker
+    /// blob `SharedArtifact.processToolResult` parses downstream), not
+    /// just a tool-name match. Result previews are capped at 300 chars
+    /// but the header (`Artifact shared:` / `- Filename:` /
+    /// `- Description:`) always leads the payload, so the checks below
+    /// see it regardless of artifact size.
+    private static func scoreArtifactShared(
+        _ assertion: EvalCase.AgentLoopExpectations.ArtifactSharedAssertion,
+        transcript: AgentLoopTranscript
+    ) -> (passed: Bool, note: String) {
+        let qualifying = transcript.toolCalls.filter { call in
+            guard call.name == "share_artifact", !call.wasError else { return false }
+            guard call.resultPreview.contains("Artifact shared:") else { return false }
+            if let needle = assertion.filenameContains {
+                guard
+                    call.resultPreview.range(
+                        of: "Filename: [^\\\\n]*\(NSRegularExpression.escapedPattern(for: needle))",
+                        options: [.regularExpression, .caseInsensitive]
+                    ) != nil
+                else { return false }
+            }
+            if assertion.descriptionRequired == true {
+                guard call.resultPreview.contains("Description:") else { return false }
+            }
+            return true
+        }
+        let minCount = assertion.minCount ?? 1
+        if qualifying.count >= minCount {
+            return (true, "artifactShared ok: \(qualifying.count) qualifying call(s)")
+        }
+        let attempts = transcript.toolCalls.filter { $0.name == "share_artifact" }
+        return (
+            false,
+            "artifactShared failed: \(qualifying.count)/\(minCount) qualifying "
+                + "(\(attempts.count) share_artifact call(s), "
+                + "\(attempts.filter(\.wasError).count) errored)"
+        )
+    }
+
+    /// Per-tool hygiene audit over the transcript.
+    private static func scoreToolUsageAudit(
+        _ audit: EvalCase.AgentLoopExpectations.ToolUsageAudit,
+        transcript: AgentLoopTranscript
+    ) -> (passed: Bool, note: String) {
+        let calls = transcript.toolCalls.filter { $0.name == audit.tool }
+        var failures: [String] = []
+        if let maxCalls = audit.maxCalls, calls.count > maxCalls {
+            failures.append("calls \(calls.count) > max \(maxCalls)")
+        }
+        if let minCalls = audit.minCalls, calls.count < minCalls {
+            failures.append("calls \(calls.count) < min \(minCalls)")
+        }
+        if let maxErrors = audit.maxErrors {
+            let errs = calls.filter(\.wasError).count
+            if errs > maxErrors {
+                failures.append("errors \(errs) > max \(maxErrors)")
+            }
+        }
+        if let needle = audit.argsMustContain,
+            !calls.contains(where: { $0.arguments.contains(needle) })
+        {
+            failures.append("no call args contain '\(needle)'")
+        }
+        if let forbidden = audit.argsMustNotContain {
+            let offenders = calls.filter { $0.arguments.contains(forbidden) }
+            if !offenders.isEmpty {
+                failures.append("\(offenders.count) call(s) args contain forbidden '\(forbidden)'")
+            }
+        }
+        if failures.isEmpty {
+            return (true, "toolUsageAudit ok: \(audit.tool) (\(calls.count) calls)")
+        }
+        return (false, "toolUsageAudit \(audit.tool): \(failures.joined(separator: "; "))")
+    }
+
+    /// Scheduler-store outcome: a next-run row must exist for the eval
+    /// agent. Reads the same store `schedule_next_run` wrote through, so
+    /// a clamped-to-rejection call (daily cap, manual mode) fails here
+    /// even though the tool call itself returned a success envelope.
+    private static func scoreScheduledRun(
+        _ assertion: EvalCase.AgentLoopExpectations.ScheduledRunAssertion,
+        agentId: UUID?
+    ) -> (passed: Bool, note: String) {
+        guard let agentId else {
+            return (
+                false,
+                "scheduledRun requires fixtures.agentCapabilities.selfSchedulingEnabled"
+            )
+        }
+        let entry: NextRunEntry?
+        do {
+            entry = try LocalAgentBridge.shared.nextRun(agentId: agentId)
+        } catch {
+            return (false, "scheduledRun: scheduler store read failed: \(error.localizedDescription)")
+        }
+        guard let entry else {
+            return (false, "scheduledRun: no next-run row landed in the scheduler store")
+        }
+        if let needle = assertion.instructionsContain,
+            !entry.instructions.localizedCaseInsensitiveContains(needle)
+        {
+            return (
+                false,
+                "scheduledRun: instructions missing '\(needle)' (got: \(entry.instructions.prefix(120)))"
+            )
+        }
+        return (
+            true,
+            "scheduledRun ok: scheduled_at=\(entry.scheduledAt) instructions=\(entry.instructions.prefix(80))"
+        )
+    }
+
+    /// Post-run SQL check against the eval agent's database, through the
+    /// same bridge the `db_*` tools write through.
+    private static func scoreDbState(
+        _ assertion: EvalCase.AgentLoopExpectations.DbStateAssertion,
+        agentId: UUID?
+    ) -> (passed: Bool, note: String) {
+        guard let agentId else {
+            return (false, "dbState requires fixtures.agentCapabilities.dbEnabled")
+        }
+        let result: AgentQueryResult
+        do {
+            result = try LocalAgentBridge.shared.query(
+                agentId: agentId,
+                sql: assertion.sql,
+                params: []
+            )
+        } catch {
+            return (false, "dbState query failed (\(assertion.sql)): \(error.localizedDescription)")
+        }
+        if let floor = assertion.expectRowCountAtLeast, result.rows.count < floor {
+            return (
+                false,
+                "dbState (\(assertion.sql)): \(result.rows.count) rows < required \(floor)"
+            )
+        }
+        if let expected = assertion.expectFirstValue {
+            guard let first = result.rows.first?.first else {
+                return (false, "dbState (\(assertion.sql)): no rows, expected first value '\(expected)'")
+            }
+            let actual = canonicalSQLValueString(first)
+            guard actual == expected else {
+                return (
+                    false,
+                    "dbState (\(assertion.sql)): first value '\(actual)' != expected '\(expected)'"
+                )
+            }
+        }
+        return (true, "dbState ok (\(assertion.sql)): \(result.rows.count) rows")
+    }
+
+    /// Canonical string form for first-value comparisons: integers render
+    /// without decimals, doubles drop a trailing `.0` so a SUM() that
+    /// comes back as REAL still compares equal to "42".
+    private static func canonicalSQLValueString(_ value: AgentSQLValue) -> String {
+        switch value {
+        case .null: return "null"
+        case .integer(let n): return String(n)
+        case .double(let d):
+            if d == d.rounded(), abs(d) < 1e15 {
+                return String(Int64(d))
+            }
+            return String(d)
+        case .text(let s): return s
+        case .blob: return "<blob>"
+        case .bool(let b): return b ? "1" : "0"
         }
     }
 

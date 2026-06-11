@@ -1,0 +1,30 @@
+{
+  "id": "frontier.ordered-procedure",
+  "domain": "agent_loop",
+  "label": "frontier • numbered procedure where the backup must happen first",
+  "query": "Follow this procedure exactly, in order: 1) Read database.cfg. 2) Create a backup copy named database.cfg.bak containing the ORIGINAL contents byte for byte. 3) Only after the backup exists, change port=5432 to port=6543 in database.cfg, touching nothing else in the file. 4) Confirm the backup still contains port=5432. 5) Reply with one line stating both file names and their port values.",
+  "notes": "Order-sensitive procedure. The outcome contract is byte-exact: .bak must equal the pristine original and the live file must equal the original with only the port line changed — any reformatting fails.",
+  "fixtures": {
+    "workspaceFiles": [
+      {
+        "path": "database.cfg",
+        "contents": "host=localhost\nport=5432\nname=appdb\nssl=true\n"
+      }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 10,
+      "files": [
+        {
+          "path": "database.cfg.bak",
+          "equals": "host=localhost\nport=5432\nname=appdb\nssl=true\n"
+        },
+        {
+          "path": "database.cfg",
+          "equals": "host=localhost\nport=6543\nname=appdb\nssl=true\n"
+        }
+      ]
+    }
+  }
+}

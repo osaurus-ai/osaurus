@@ -324,10 +324,15 @@ public enum AgentLoopEvaluator {
             do {
                 return try await ChatExecutionContext.$currentSessionId.withValue(sessionId) {
                     try await ChatExecutionContext.$autoApproveToolPrompts.withValue(true) {
-                        try await ToolRegistry.shared.execute(
-                            name: inv.toolName,
-                            argumentsJSON: inv.jsonArguments
-                        )
+                        // Headless idle ceiling for `shell_run` when the model
+                        // passed no `timeout`: there is no [Terminate] button
+                        // here, so a hung command would wedge the eval run.
+                        try await ChatExecutionContext.$defaultShellIdleTimeout.withValue(300) {
+                            try await ToolRegistry.shared.execute(
+                                name: inv.toolName,
+                                argumentsJSON: inv.jsonArguments
+                            )
+                        }
                     }
                 }
             } catch {
@@ -516,11 +521,13 @@ public enum AgentLoopEvaluator {
                 // same-path slots serialized. Auto-approve stays bound: eval
                 // runs are headless, an approval panel would hang the run.
                 let results = await ChatExecutionContext.$autoApproveToolPrompts.withValue(true) {
-                    await AgentToolLoop.runBatchInParallel(
-                        calls,
-                        sessionId: sessionId,
-                        agentId: resolvedAgentId
-                    )
+                    await ChatExecutionContext.$defaultShellIdleTimeout.withValue(300) {
+                        await AgentToolLoop.runBatchInParallel(
+                            calls,
+                            sessionId: sessionId,
+                            agentId: resolvedAgentId
+                        )
+                    }
                 }
                 var executions: [AgentLoopToolExecution] = []
                 executions.reserveCapacity(calls.count)

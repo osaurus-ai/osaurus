@@ -99,6 +99,13 @@ public enum ChatExecutionContext {
     /// untouched.
     @TaskLocal public static var sandboxReadBridge: SandboxReadBridge?
 
+    /// Default idle-timeout (seconds) for `shell_run`, applied ONLY when the
+    /// model passed no `timeout` argument. Bound by headless drivers
+    /// (`AgentLoopEvaluator`) where no user [Terminate] button exists, so a
+    /// hung command can't wedge a run forever. `nil` on the chat / HTTP /
+    /// plugin surfaces, preserving run-to-completion semantics there.
+    @TaskLocal public static var defaultShellIdleTimeout: TimeInterval?
+
     /// True when the current tool execution was initiated by an EXTERNAL
     /// surface (the HTTP `/agents/{id}/run` loop or the `/mcp/call`
     /// bridge) rather than the in-app chat/plugin surfaces. The registry

@@ -865,7 +865,12 @@ enum AgentToolLoop {
                                 wasDeduped: true,
                                 wasError: false
                             )
-                            if policy.dedupeNoticeEnabled {
+                            // A held-ERROR replay escalates on every surface
+                            // (it is a correctness signal, not chat polish);
+                            // fresh-read replays keep the per-policy notice.
+                            if let escalation = state.lastReplayNotice {
+                                pendingStateNotice = "[System Notice] " + escalation
+                            } else if policy.dedupeNoticeEnabled {
                                 pendingStateNotice = Self.dedupeNotice
                             }
                             continue
@@ -943,7 +948,9 @@ enum AgentToolLoop {
                                     wasDeduped: true,
                                     wasError: false
                                 )
-                                if policy.dedupeNoticeEnabled {
+                                if let escalation = state.lastReplayNotice {
+                                    pendingStateNotice = "[System Notice] " + escalation
+                                } else if policy.dedupeNoticeEnabled {
                                     pendingStateNotice = Self.dedupeNotice
                                 }
                             } else if let execution = await executeBatch(
@@ -1011,7 +1018,9 @@ enum AgentToolLoop {
                                     wasError: false
                                 )
                             )
-                            if policy.dedupeNoticeEnabled {
+                            if let escalation = state.lastReplayNotice {
+                                pendingStateNotice = "[System Notice] " + escalation
+                            } else if policy.dedupeNoticeEnabled {
                                 pendingStateNotice = Self.dedupeNotice
                             }
                             continue

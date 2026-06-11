@@ -1,0 +1,38 @@
+{
+  "id": "frontier.audit-shell-run",
+  "domain": "agent_loop",
+  "label": "frontier • chained shell flow: read output, pass it forward, low error rate",
+  "query": "Run 'zsh step1.sh' in this folder; it prints a token. Then run 'zsh step2.sh <token>' passing that token as the argument. Write step2's RESULT line to result.txt.",
+  "notes": "shell_run discipline: exit codes and stdout must actually be read and acted on (step2 fails without the token from step1), with a tight error budget and call cap.",
+  "fixtures": {
+    "workspaceFiles": [
+      {
+        "path": "step1.sh",
+        "contents": "#!/bin/zsh\necho \"token: alpha42\"\n"
+      },
+      {
+        "path": "step2.sh",
+        "contents": "#!/bin/zsh\nif [ \"$1\" != \"alpha42\" ]; then\n  echo \"wrong or missing token — run step1.sh to obtain it\" >&2\n  exit 1\nfi\necho \"RESULT: ok-alpha42\"\n"
+      }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 10,
+      "toolUsageAudit": [
+        {
+          "tool": "shell_run",
+          "minCalls": 2,
+          "maxCalls": 8,
+          "maxErrors": 1
+        }
+      ],
+      "files": [
+        {
+          "path": "result.txt",
+          "contains": "ok-alpha42"
+        }
+      ]
+    }
+  }
+}

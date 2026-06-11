@@ -1,0 +1,35 @@
+{
+  "id": "frontier.build-then-iterate",
+  "domain": "agent_loop",
+  "label": "frontier • build, run the verifier, iterate on its failure messages",
+  "query": "Create greeter.py with a function greet(name) and make 'python3 verify.py' pass. The verifier's assertion messages tell you exactly what behavior it demands — run it, read the failures, and iterate until it prints 'verification passed'. Do not modify verify.py.",
+  "notes": "Iteration lane: a natural first implementation (plain f-string greeting) fails the title-case and ValueError demands, so the model must read failure output and adjust. Tool errors are expected mid-run; the only contract is the final green verifier plus the pinned verify.py.",
+  "fixtures": {
+    "workspaceFiles": [
+      {
+        "path": "verify.py",
+        "contents": "import subprocess\nimport sys\n\nfrom greeter import greet\n\n# Phase 1: basic greeting shape.\nassert greet(\"world\") == \"Hello, World!\", (\n    f'greet(\"world\") returned {greet(\"world\")!r} — expected exactly \"Hello, World!\" '\n    \"(title-case the name, comma after Hello, trailing exclamation mark)\"\n)\nassert greet(\"ADA lovelace\") == \"Hello, Ada Lovelace!\", (\n    f'greet(\"ADA lovelace\") returned {greet(\"ADA lovelace\")!r} — expected \"Hello, Ada Lovelace!\" '\n    \"(normalize any input casing to title case)\"\n)\n\n# Phase 2: empty input must be rejected, not greeted.\ntry:\n    greet(\"\")\nexcept ValueError:\n    pass\nelse:\n    print('greet(\"\") must raise ValueError — an empty name is invalid input')\n    sys.exit(1)\n\nprint(\"verification passed\")\n"
+      }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 16,
+      "mustCallTools": [
+        "shell_run"
+      ],
+      "files": [
+        {
+          "path": "verify.py",
+          "equals": "import subprocess\nimport sys\n\nfrom greeter import greet\n\n# Phase 1: basic greeting shape.\nassert greet(\"world\") == \"Hello, World!\", (\n    f'greet(\"world\") returned {greet(\"world\")!r} — expected exactly \"Hello, World!\" '\n    \"(title-case the name, comma after Hello, trailing exclamation mark)\"\n)\nassert greet(\"ADA lovelace\") == \"Hello, Ada Lovelace!\", (\n    f'greet(\"ADA lovelace\") returned {greet(\"ADA lovelace\")!r} — expected \"Hello, Ada Lovelace!\" '\n    \"(normalize any input casing to title case)\"\n)\n\n# Phase 2: empty input must be rejected, not greeted.\ntry:\n    greet(\"\")\nexcept ValueError:\n    pass\nelse:\n    print('greet(\"\") must raise ValueError — an empty name is invalid input')\n    sys.exit(1)\n\nprint(\"verification passed\")\n"
+        }
+      ],
+      "commands": [
+        {
+          "command": "python3 verify.py",
+          "expectExitCode": 0
+        }
+      ]
+    }
+  }
+}

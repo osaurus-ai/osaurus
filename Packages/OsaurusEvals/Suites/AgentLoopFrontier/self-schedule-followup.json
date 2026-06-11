@@ -1,0 +1,30 @@
+{
+  "id": "frontier.self-schedule-followup",
+  "domain": "agent_loop",
+  "label": "frontier • start now, schedule the follow-up, notify the user",
+  "query": "Start drafting a status report: write part1.md beginning with the line '# Status Report — Part 1' plus two bullet points summarizing this workspace. Then schedule yourself to wake up in about an hour to write part 2 — the wake-up instructions must mention 'part 2'. Also send me a notification confirming the follow-up is scheduled. Then finish up.",
+  "notes": "Self-scheduling surface (selfSchedulingEnabled fixture). scheduledRun reads the scheduler store after the run — a clamped-to-rejection schedule_next_run call passes the transcript but fails here. The eval agent uses the reactive bounds preset so quiet hours can't clamp the one-hour wake.",
+  "fixtures": {
+    "agentCapabilities": {
+      "selfSchedulingEnabled": true
+    }
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 14,
+      "mustCallTools": [
+        "schedule_next_run",
+        "notify"
+      ],
+      "scheduledRun": {
+        "instructionsContain": "part 2"
+      },
+      "files": [
+        {
+          "path": "part1.md",
+          "contains": "Part 1"
+        }
+      ]
+    }
+  }
+}

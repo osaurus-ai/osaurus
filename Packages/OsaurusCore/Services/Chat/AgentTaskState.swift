@@ -102,6 +102,24 @@ public final class AgentTaskState {
     /// before failing.
     private static let execLikeTools: Set<String> = ["shell_run", "sandbox_exec"]
 
+    /// Folder tools whose `invalid_args` / `not_found` failures are
+    /// DETERMINISTIC given an unchanged filesystem: re-issuing the identical
+    /// call must return the identical error. Their held errors are replayed
+    /// instead of re-executed (observed live: a model repeating the same
+    /// failing `file_edit` 8× until the iteration cap). `shell_run` and
+    /// `db_*` are deliberately excluded — identical re-runs there are
+    /// legitimate retries that may succeed.
+    private static let deterministicErrorTools: Set<String> = [
+        "file_read", "file_search", "file_edit",
+    ]
+
+    /// Error kinds eligible for held-error replay. Both depend only on the
+    /// arguments + current file state, never on transient conditions.
+    private static let deterministicErrorKinds: Set<String> = [
+        ToolEnvelope.Kind.invalidArgs.rawValue,
+        ToolEnvelope.Kind.notFound.rawValue,
+    ]
+
     /// The listing nudge is REACTIVE, not proactive: it fires only once the
     /// model has produced this many listings without an intervening read —
     /// i.e. it is observed to be wandering rather than descending. A capable
@@ -127,6 +145,16 @@ public final class AgentTaskState {
         let envelope: String
     }
 
+    /// A deterministic error envelope held for replay: the exact error the
+    /// model received and the canonical path the failing call targeted (nil
+    /// for path-less searches). Invalidated by the same rules as fresh
+    /// reads — a write to the path or any exec clears it, because the
+    /// filesystem may have changed and the identical call could now succeed.
+    private struct HeldError {
+        let canonicalPath: String?
+        let envelope: String
+    }
+
     /// The class of the most recently recorded result.
     public private(set) var lastResultClass: ToolResultClass?
     /// The most recent directory listing (survives across messages in
@@ -138,6 +166,14 @@ public final class AgentTaskState {
     /// read's path invalidates its entry so a verify-read re-executes instead
     /// of replaying stale pre-edit content.
     private var freshReads: [CallSignature: FreshRead] = [:]
+    /// Deterministic folder-tool errors held for replay, keyed by signature.
+    private var heldErrors: [CallSignature: HeldError] = [:]
+    /// How many times each held error has been replayed (drives escalation).
+    private var heldErrorReplays: [CallSignature: Int] = [:]
+    /// Notice produced by the most recent `heldResult` hit when it replayed
+    /// a held ERROR (nil for fresh-read replays — the driver's standard
+    /// dedupe notice covers those). The driver stages this verbatim.
+    public private(set) var lastReplayNotice: String?
     /// Listings recorded since the last file read; gates the listing nudge.
     private var consecutiveListingsWithoutRead = 0
     /// Execution counts per signature for NON-read tools (reads go through
@@ -160,6 +196,9 @@ public final class AgentTaskState {
     public func beginMessage() {
         lastResultEnvelope = nil
         freshReads.removeAll(keepingCapacity: true)
+        heldErrors.removeAll(keepingCapacity: true)
+        heldErrorReplays.removeAll(keepingCapacity: true)
+        lastReplayNotice = nil
         consecutiveListingsWithoutRead = 0
         nonReadCallCounts.removeAll(keepingCapacity: true)
         repeatedCallName = nil
@@ -175,15 +214,33 @@ public final class AgentTaskState {
         readLikeTools.contains(name)
     }
 
-    /// If this read re-issues a still-fresh read (same tool + canonical args,
-    /// not invalidated by an intervening write to its path), return the EXACT
-    /// envelope the model already received so the loop can replay it instead
-    /// of re-executing. Returns nil for non-reads, novel calls, or reads
-    /// whose path was written since. The replay is verbatim — never a
-    /// collapsed/summarized form — so the short-circuit is neutral.
+    /// If this call re-issues something the loop already holds the exact
+    /// answer for, return that EXACT envelope so the loop replays it instead
+    /// of re-executing. Two sources, checked in order:
+    ///   1. Fresh reads — a still-fresh read (same tool + canonical args,
+    ///      not invalidated by an intervening write to its path).
+    ///   2. Held deterministic errors — an `invalid_args`/`not_found` error
+    ///      from a deterministic folder tool, with no intervening write/exec
+    ///      that could change the outcome. Replaying it (with an escalating
+    ///      notice via `lastReplayNotice`) converts an observed N-execution
+    ///      failure spiral into one execution + cached replays.
+    /// Returns nil for novel calls or invalidated entries. The replay is
+    /// verbatim — never a collapsed/summarized form — so it is neutral.
     public func heldResult(name: String, argsJSON: String) -> String? {
-        guard Self.readLikeTools.contains(name) else { return nil }
-        return freshReads[signature(name: name, argsJSON: argsJSON)]?.envelope
+        lastReplayNotice = nil
+        let sig = signature(name: name, argsJSON: argsJSON)
+        if Self.readLikeTools.contains(name), let fresh = freshReads[sig] {
+            return fresh.envelope
+        }
+        if Self.deterministicErrorTools.contains(name), let held = heldErrors[sig] {
+            let replays = (heldErrorReplays[sig] ?? 0) + 1
+            heldErrorReplays[sig] = replays
+            let failures = replays + 1  // original execution + replays
+            lastReplayNotice =
+                "This exact `\(name)` call has now failed \(failures) times with the same error (the result above is a replay — it was NOT re-executed, and re-issuing it cannot succeed). You MUST change the arguments, or report what is blocking you."
+            return held.envelope
+        }
+        return nil
     }
 
     /// Convenience boolean mirror of `heldResult`.
@@ -203,8 +260,13 @@ public final class AgentTaskState {
 
         // An exec can mutate ANY path (rm/mv/redirects, scripts) — wipe all
         // fresh reads so no post-mutation verify-read replays stale content.
+        // Held errors follow the same rule: the exec may have created the
+        // missing path or fixed the file, so the identical call could now
+        // succeed and must re-execute.
         if Self.execLikeTools.contains(name) {
             freshReads.removeAll(keepingCapacity: true)
+            heldErrors.removeAll(keepingCapacity: true)
+            heldErrorReplays.removeAll(keepingCapacity: true)
         }
 
         // A write/edit invalidates any fresh read of the same path so the
@@ -212,11 +274,40 @@ public final class AgentTaskState {
         // Read and write canonicalize the path through the SAME helper, so
         // `file_read "config.json"` and `file_edit "./config.json"` match.
         // Search results span many paths, so ANY write stales them.
+        // Held errors use the same rules: a write to the failing call's path
+        // may make the identical call succeed (e.g. file_write creates the
+        // file a held `not_found` read complained about), and search errors
+        // depend on many paths so any write clears them.
         if Self.writeLikeTools.contains(name), let target = pathArgument(argsJSON) {
             let targetCanonical = Self.canonicalPath(target)
             freshReads = freshReads.filter { entry in
                 if Self.searchLikeTools.contains(entry.key.name) { return false }
                 return entry.value.canonicalPath != targetCanonical
+            }
+            heldErrors = heldErrors.filter { entry in
+                if Self.searchLikeTools.contains(entry.key.name) { return false }
+                return entry.value.canonicalPath != targetCanonical
+            }
+        }
+
+        // Capture (or clear) a held deterministic error for this signature.
+        // Only `invalid_args`/`not_found` from the deterministic folder tools
+        // qualify: given an unchanged filesystem, re-executing the identical
+        // call must return the identical error, so replaying is honest.
+        if Self.deterministicErrorTools.contains(name) {
+            if ToolEnvelope.isError(result),
+                let kind = Self.errorKind(result),
+                Self.deterministicErrorKinds.contains(kind)
+            {
+                heldErrors[sig] = HeldError(
+                    canonicalPath: pathArgument(argsJSON).map(Self.canonicalPath),
+                    envelope: result
+                )
+            } else {
+                // A success (or non-deterministic error) supersedes any held
+                // error for this exact call.
+                heldErrors[sig] = nil
+                heldErrorReplays[sig] = nil
             }
         }
 
@@ -349,6 +440,14 @@ public final class AgentTaskState {
         default:
             return .other
         }
+    }
+
+    /// Pull the `kind` field from an error envelope, or nil.
+    private static func errorKind(_ envelope: String) -> String? {
+        guard let data = envelope.data(using: .utf8),
+            let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return nil }
+        return dict["kind"] as? String
     }
 
     // MARK: - Path canonicalization (shared)

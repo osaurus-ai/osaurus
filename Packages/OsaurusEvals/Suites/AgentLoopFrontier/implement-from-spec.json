@@ -1,0 +1,43 @@
+{
+  "id": "frontier.implement-from-spec",
+  "domain": "agent_loop",
+  "label": "frontier • implement a module from a written spec until verification passes",
+  "query": "Read SPEC.md in this folder and implement the module it describes. Then run 'python3 verify.py' and iterate until it prints 'all cases pass'. Do not modify SPEC.md or verify.py.",
+  "notes": "Spec-adherence lane: edge cases (unicode stripping, empty input sentinel, hyphen collapsing) are pinned by the seeded verifier, which is itself pinned byte-identical so it can't be weakened.",
+  "fixtures": {
+    "workspaceFiles": [
+      {
+        "path": "SPEC.md",
+        "contents": "# slugify module specification\n\nImplement `slugify.py` exposing a single function `slugify(text: str) -> str`:\n\n1. Lowercase the input.\n2. Replace every run of spaces and/or underscores with a single hyphen.\n3. Remove every character that is not a lowercase letter, digit, or hyphen.\n4. Collapse consecutive hyphens into one.\n5. Strip leading and trailing hyphens.\n6. If the result is empty, return exactly 'n-a'.\n"
+      },
+      {
+        "path": "verify.py",
+        "contents": "import sys\n\nfrom slugify import slugify\n\nCASES = [\n    (\"Hello World\", \"hello-world\"),\n    (\"  Already--Slugged__text  \", \"already-slugged-text\"),\n    (\"Caf\\u00e9 au Lait!!\", \"caf-au-lait\"),\n    (\"___\", \"n-a\"),\n    (\"\", \"n-a\"),\n    (\"A B_C  D\", \"a-b-c-d\"),\n    (\"100% Pure\", \"100-pure\"),\n    (\"-lead and trail-\", \"lead-and-trail\"),\n]\n\nfailures = 0\nfor raw, expected in CASES:\n    got = slugify(raw)\n    if got != expected:\n        failures += 1\n        print(f\"FAIL: slugify({raw!r}) = {got!r}, expected {expected!r}\")\n\nif failures:\n    sys.exit(1)\nprint(\"all cases pass\")\n"
+      }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 18,
+      "mustCallTools": [
+        "shell_run"
+      ],
+      "files": [
+        {
+          "path": "verify.py",
+          "equals": "import sys\n\nfrom slugify import slugify\n\nCASES = [\n    (\"Hello World\", \"hello-world\"),\n    (\"  Already--Slugged__text  \", \"already-slugged-text\"),\n    (\"Caf\\u00e9 au Lait!!\", \"caf-au-lait\"),\n    (\"___\", \"n-a\"),\n    (\"\", \"n-a\"),\n    (\"A B_C  D\", \"a-b-c-d\"),\n    (\"100% Pure\", \"100-pure\"),\n    (\"-lead and trail-\", \"lead-and-trail\"),\n]\n\nfailures = 0\nfor raw, expected in CASES:\n    got = slugify(raw)\n    if got != expected:\n        failures += 1\n        print(f\"FAIL: slugify({raw!r}) = {got!r}, expected {expected!r}\")\n\nif failures:\n    sys.exit(1)\nprint(\"all cases pass\")\n"
+        },
+        {
+          "path": "SPEC.md",
+          "equals": "# slugify module specification\n\nImplement `slugify.py` exposing a single function `slugify(text: str) -> str`:\n\n1. Lowercase the input.\n2. Replace every run of spaces and/or underscores with a single hyphen.\n3. Remove every character that is not a lowercase letter, digit, or hyphen.\n4. Collapse consecutive hyphens into one.\n5. Strip leading and trailing hyphens.\n6. If the result is empty, return exactly 'n-a'.\n"
+        }
+      ],
+      "commands": [
+        {
+          "command": "python3 verify.py",
+          "expectExitCode": 0
+        }
+      ]
+    }
+  }
+}

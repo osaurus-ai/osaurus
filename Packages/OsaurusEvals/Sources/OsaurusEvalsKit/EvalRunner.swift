@@ -103,7 +103,8 @@ public enum EvalRunner {
             capabilitySearch: row.capabilitySearch,
             notes: ["note: \(extra)"] + row.notes,
             modelId: row.modelId,
-            latencyMs: row.latencyMs
+            latencyMs: row.latencyMs,
+            toolUsage: row.toolUsage
         )
     }
 

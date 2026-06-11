@@ -67,6 +67,15 @@ struct OsaurusEvalsCLI {
         await EvalBootstrap.run(bootstrapPlan)
         startupWatchdog?.cancel()
 
+        // Remote-model support: the CLI process never auto-connects the
+        // user's configured providers, so `--model xai/grok-4.3` (or a
+        // remote JUDGE_MODEL) needs an ephemeral in-process provider
+        // whose API key comes from the environment (e.g. XAI_API_KEY).
+        // Torn down after the run; never persisted to disk or Keychain.
+        let ephemeralProviderIds = await EvalRemoteProviderBootstrap.connectIfNeeded(
+            modelIds: EvalRemoteProviderBootstrap.candidateModelIds(runModel: opts.model)
+        )
+
         let report = await EvalRunner.run(
             suite: suite,
             model: opts.model,
@@ -74,6 +83,8 @@ struct OsaurusEvalsCLI {
             thresholdOverride: opts.threshold,
             bootstrapMode: .alreadyLoaded
         )
+
+        EvalRemoteProviderBootstrap.teardown(ephemeralProviderIds)
 
         print(report.formatHumanReadable(verbose: opts.verbose))
 

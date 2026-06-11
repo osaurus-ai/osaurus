@@ -614,26 +614,46 @@ public struct ContextBudgetManager: Sendable {
             return "[Compressed: \(count) file match(es) for '\(query)']"
         }
 
+        // Compressed summaries carry ZERO semantic content; without an
+        // explicit warning the model recalls "specifics" from thin air
+        // (observed live: invented filenames and error codes in a summary
+        // written after the underlying tool output was trimmed). The steer
+        // makes the trim observable so the model re-fetches instead.
+        let refetchSteer = "details no longer visible; re-fetch them, do not recall from memory"
+
+        // Structured file-content envelope: keep the real path so the model
+        // knows exactly which file to re-read.
+        if ToolEnvelope.isSuccess(content),
+            let payload = ToolEnvelope.successPayload(content) as? [String: Any],
+            payload["kind"] as? String == "file"
+        {
+            let path = payload["path"] as? String ?? "unknown"
+            let totalLines = payload["total_lines"] as? Int ?? lineCount
+            return
+                "[Compressed: file content of '\(path)', \(totalLines) lines — no longer in context; re-read the file if you need specifics]"
+        }
+
         // Try to detect the tool type from content patterns
         if content.hasPrefix("Lines ") || content.contains("| ") {
             // file_read result
             let firstLine = content.components(separatedBy: .newlines).first ?? ""
-            return "[Compressed: file content, \(lineCount) lines, \(charCount) chars — \(firstLine)]"
+            return
+                "[Compressed: file content, \(lineCount) lines, \(charCount) chars — \(firstLine); \(refetchSteer)]"
         } else if content.hasPrefix("Found ") && content.contains("match") {
             // file_search result
             let firstLine = content.components(separatedBy: .newlines).first ?? ""
-            return "[Compressed: \(firstLine)]"
+            return "[Compressed: \(firstLine); \(refetchSteer)]"
         } else if content.hasPrefix("Exit code:") {
             // shell_run result
             let exitLine = content.components(separatedBy: .newlines).first ?? "Exit code: unknown"
-            return "[Compressed: command output, \(lineCount) lines — \(exitLine)]"
+            return "[Compressed: command output, \(lineCount) lines — \(exitLine); \(refetchSteer)]"
         } else if content.hasPrefix("diff ") || content.hasPrefix("--- ") {
             // git_diff result
-            return "[Compressed: git diff, \(lineCount) lines, \(charCount) chars]"
+            return "[Compressed: git diff, \(lineCount) lines, \(charCount) chars; \(refetchSteer)]"
         } else if charCount > 200 {
             // Generic large result
             let preview = String(content.prefix(150)).replacingOccurrences(of: "\n", with: " ")
-            return "[Compressed: \(charCount) chars — \(preview)...]"
+            return "[Compressed: \(charCount) chars — \(preview)...; \(refetchSteer)]"
         }
 
         // Small results are kept as-is

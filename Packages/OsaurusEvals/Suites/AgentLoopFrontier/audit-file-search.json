@@ -1,0 +1,143 @@
+{
+  "id": "frontier.audit-file-search",
+  "domain": "agent_loop",
+  "label": "frontier • find the needle with search, not a 30-file read walk",
+  "query": "Exactly one file under notes/ contains the string 'magic-token-z9x'. Find which file it is and write that file's name (just the filename) to found.txt.",
+  "notes": "file_search discipline: 30 candidate files make a read-everything walk blow the maxToolCalls cap, so only a search-first strategy passes.",
+  "fixtures": {
+    "workspaceFiles": [
+      {
+        "path": "notes/note_01.txt",
+        "contents": "# note 01\nroutine status update number 1.\nnothing unusual to report in this note.\n"
+      },
+      {
+        "path": "notes/note_02.txt",
+        "contents": "# note 02\nroutine status update number 2.\nnothing unusual to report in this note.\n"
+      },
+      {
+        "path": "notes/note_03.txt",
+        "contents": "# note 03\nroutine status update number 3.\nnothing unusual to report in this note.\n"
+      },
+      {
+        "path": "notes/note_04.txt",
+        "contents": "# note 04\nroutine status update number 4.\nnothing unusual to report in this note.\n"
+      },
+      {
+        "path": "notes/note_05.txt",
+        "contents": "# note 05\nroutine status update number 5.\nnothing unusual to report in this note.\n"
+      },
+      {
+        "path": "notes/note_06.txt",
+        "contents": "# note 06\nroutine status update number 6.\nnothing unusual to report in this note.\n"
+      },
+      {
+        "path": "notes/note_07.txt",
+        "contents": "# note 07\nroutine status update number 7.\nnothing unusual to report in this note.\n"
+      },
+      {
+        "path": "notes/note_08.txt",
+        "contents": "# note 08\nroutine status update number 8.\nnothing unusual to report in this note.\n"
+      },
+      {
+        "path": "notes/note_09.txt",
+        "contents": "# note 09\nroutine status update number 9.\nnothing unusual to report in this note.\n"
+      },
+      {
+        "path": "notes/note_10.txt",
+        "contents": "# note 10\nroutine status update number 10.\nnothing unusual to report in this note.\n"
+      },
+      {
+        "path": "notes/note_11.txt",
+        "contents": "# note 11\nroutine status update number 11.\nnothing unusual to report in this note.\n"
+      },
+      {
+        "path": "notes/note_12.txt",
+        "contents": "# note 12\nroutine status update number 12.\nnothing unusual to report in this note.\n"
+      },
+      {
+        "path": "notes/note_13.txt",
+        "contents": "# note 13\nroutine status update number 13.\nnothing unusual to report in this note.\n"
+      },
+      {
+        "path": "notes/note_14.txt",
+        "contents": "# note 14\nroutine status update number 14.\nnothing unusual to report in this note.\n"
+      },
+      {
+        "path": "notes/note_15.txt",
+        "contents": "# note 15\nroutine status update number 15.\nnothing unusual to report in this note.\n"
+      },
+      {
+        "path": "notes/note_16.txt",
+        "contents": "# note 16\nroutine status update number 16.\nnothing unusual to report in this note.\n"
+      },
+      {
+        "path": "notes/note_17.txt",
+        "contents": "# note 17\nroutine status update number 17.\nnothing unusual to report in this note.\ndeploy credential rotation flag: magic-token-z9x\n"
+      },
+      {
+        "path": "notes/note_18.txt",
+        "contents": "# note 18\nroutine status update number 18.\nnothing unusual to report in this note.\n"
+      },
+      {
+        "path": "notes/note_19.txt",
+        "contents": "# note 19\nroutine status update number 19.\nnothing unusual to report in this note.\n"
+      },
+      {
+        "path": "notes/note_20.txt",
+        "contents": "# note 20\nroutine status update number 20.\nnothing unusual to report in this note.\n"
+      },
+      {
+        "path": "notes/note_21.txt",
+        "contents": "# note 21\nroutine status update number 21.\nnothing unusual to report in this note.\n"
+      },
+      {
+        "path": "notes/note_22.txt",
+        "contents": "# note 22\nroutine status update number 22.\nnothing unusual to report in this note.\n"
+      },
+      {
+        "path": "notes/note_23.txt",
+        "contents": "# note 23\nroutine status update number 23.\nnothing unusual to report in this note.\n"
+      },
+      {
+        "path": "notes/note_24.txt",
+        "contents": "# note 24\nroutine status update number 24.\nnothing unusual to report in this note.\n"
+      },
+      {
+        "path": "notes/note_25.txt",
+        "contents": "# note 25\nroutine status update number 25.\nnothing unusual to report in this note.\n"
+      },
+      {
+        "path": "notes/note_26.txt",
+        "contents": "# note 26\nroutine status update number 26.\nnothing unusual to report in this note.\n"
+      },
+      {
+        "path": "notes/note_27.txt",
+        "contents": "# note 27\nroutine status update number 27.\nnothing unusual to report in this note.\n"
+      },
+      {
+        "path": "notes/note_28.txt",
+        "contents": "# note 28\nroutine status update number 28.\nnothing unusual to report in this note.\n"
+      },
+      {
+        "path": "notes/note_29.txt",
+        "contents": "# note 29\nroutine status update number 29.\nnothing unusual to report in this note.\n"
+      },
+      {
+        "path": "notes/note_30.txt",
+        "contents": "# note 30\nroutine status update number 30.\nnothing unusual to report in this note.\n"
+      }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 8,
+      "maxToolCalls": 8,
+      "files": [
+        {
+          "path": "found.txt",
+          "contains": "note_17"
+        }
+      ]
+    }
+  }
+}
