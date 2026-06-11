@@ -1145,6 +1145,25 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // this, a quit within the 1s save debounce silently throws
         // away the latest seeds and the next launch is cold again.
         flushGreetingPoolSync()
+
+        // Aptabase batches analytics in an in-memory queue and normally drains
+        // it from its own `willTerminate` observer — but that flush is async and
+        // the `_exit(0)` below skips it. Kick a final bounded, best-effort send
+        // so the last session's events have a chance to leave first. No-op unless
+        // telemetry is live and consented, so most quits pay nothing here.
+        TelemetryService.shared.flushForQuit()
+
+        // Hard-exit without running `atexit`/C++ static destructors.
+        // AppKit's `terminate:` would otherwise call `exit()`, which runs
+        // `__cxa_finalize_ranges` on the main thread and tears down MLX/Metal's
+        // global compute-pipeline cache. If any thread still touches GPU state
+        // during that teardown — an abandoned generation we cancelled but
+        // couldn't join (see `clearAll(quit:)`'s stuck-lease path), or live
+        // Network/QUIC work — the dealloc races it into a use-after-free
+        // SIGSEGV that macOS reports as a crash on quit. `_exit` skips all of
+        // that: the kernel reclaims the address space and GPU resources
+        // atomically, so no in-flight thread can lose its objects mid-call.
+        Darwin._exit(0)
     }
 
     /// Synchronously bridge to the greeting-pool actor so its
