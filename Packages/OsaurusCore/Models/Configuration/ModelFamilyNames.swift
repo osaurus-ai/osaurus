@@ -5,7 +5,43 @@
 //  Small, exact family-name helpers shared by catalog/profile/runtime code.
 //
 
+import Foundation
+
 enum ModelFamilyNames {
+    /// Compiled-regex cache. `String.range(of:options:.regularExpression)`
+    /// recompiles its pattern on every call, and these helpers run inside
+    /// SwiftUI body getters (the model-type badge and capability rows read
+    /// `MLXModel.isVLM`, which fans out to several family checks). Repeated
+    /// renders turned that per-call compilation into a main-thread hang, so
+    /// every pattern is compiled once and reused.
+    private static let regexCache = RegexCache()
+
+    private static func matches(_ pattern: String, in string: String) -> Bool {
+        let regex = regexCache.regex(for: pattern)
+        let range = NSRange(string.startIndex..., in: string)
+        return regex.firstMatch(in: string, range: range) != nil
+    }
+
+    /// Thread-safe pattern -> compiled-regex cache. Family checks are read
+    /// from SwiftUI body getters (main actor today) but the cache is left
+    /// lock-guarded so callers don't need any isolation guarantees.
+    final class RegexCache: @unchecked Sendable {
+        private let lock = NSLock()
+        private var cache: [String: NSRegularExpression] = [:]
+
+        func regex(for pattern: String) -> NSRegularExpression {
+            lock.lock()
+            defer { lock.unlock() }
+            if let cached = cache[pattern] { return cached }
+            // Patterns are compile-time literals validated by the helpers
+            // below, so a compilation failure is a programmer error.
+            // swiftlint:disable:next force_try
+            let compiled = try! NSRegularExpression(pattern: pattern)
+            cache[pattern] = compiled
+            return compiled
+        }
+    }
+
     static func isLingFamily(_ modelId: String) -> Bool {
         let lower = modelId.lowercased()
         return lower.hasPrefix("ling-") || lower.contains("/ling-")
@@ -17,11 +53,7 @@ enum ModelFamilyNames {
     /// forms as the same family while rejecting unrelated names like
     /// `notminimax` or `minimaxed`.
     static func isMiniMaxFamily(_ modelId: String) -> Bool {
-        let lower = modelId.lowercased()
-        return lower.range(
-            of: #"(^|/|[\-_])minimax($|[\-_/\.])"#,
-            options: .regularExpression
-        ) != nil
+        matches(#"(^|/|[\-_])minimax($|[\-_/\.])"#, in: modelId.lowercased())
     }
 
     /// Qwen/Qwen3.x bundles in repo, local-folder, and picker alias forms.
@@ -29,33 +61,21 @@ enum ModelFamilyNames {
     /// `notqwen`, while accepting slash, dash, underscore, and versioned
     /// forms such as `qwen3.6-35b-a3b-mxfp4`.
     static func isQwenFamily(_ modelId: String) -> Bool {
-        let lower = modelId.lowercased()
-        return lower.range(
-            of: #"(^|/|[\-_])qwen($|[\-_/\.0-9])"#,
-            options: .regularExpression
-        ) != nil
+        matches(#"(^|/|[\-_])qwen($|[\-_/\.0-9])"#, in: modelId.lowercased())
     }
 
     /// Gemma/Gemma3n/Gemma4 bundles in repo, local-folder, and picker alias
     /// forms. This is used for metadata surfaces only; tokenizer/template
     /// selection still comes from the resolved bundle.
     static func isGemmaFamily(_ modelId: String) -> Bool {
-        let lower = modelId.lowercased()
-        return lower.range(
-            of: #"(^|/|[\-_])gemma($|[\-_/\.0-9])"#,
-            options: .regularExpression
-        ) != nil
+        matches(#"(^|/|[\-_])gemma($|[\-_/\.0-9])"#, in: modelId.lowercased())
     }
 
     /// LFM2 / LFM2.5 text and MoE bundles. Accept LiquidAI repo ids,
     /// local JANG bundle ids, and bare picker aliases while rejecting adjacent
     /// future-family names like `lfm21` / `lfm2x`.
     static func isLFM2Family(_ modelId: String) -> Bool {
-        let lower = modelId.lowercased()
-        return lower.range(
-            of: #"(^|/)lfm2(([\._-]?5)?([\-_].*)?)?$"#,
-            options: .regularExpression
-        ) != nil
+        matches(#"(^|/)lfm2(([\._-]?5)?([\-_].*)?)?$"#, in: modelId.lowercased())
     }
 
     /// StepFun Step 3.5 / 3.7 bundles. Step 3.7 VLM-wrapped local
@@ -63,11 +83,7 @@ enum ModelFamilyNames {
     /// native template, but explicit required-tool calls need the corrected
     /// Step fallback template instead of the native always-open thinking rail.
     static func isStepFamily(_ modelId: String) -> Bool {
-        let lower = modelId.lowercased()
-        return lower.range(
-            of: #"(^|/|[\-_])step($|[\-_/\.0-9])"#,
-            options: .regularExpression
-        ) != nil
+        matches(#"(^|/|[\-_])step($|[\-_/\.0-9])"#, in: modelId.lowercased())
     }
 
     /// MiMo V2.5 and Nex N2 local JANG/JANGTQ bundles are text/tool runtimes in
@@ -90,25 +106,15 @@ enum ModelFamilyNames {
     /// runtime names (`DSV4-...`, `deepseekv4-...`) while avoiding
     /// DeepSeek-V3 / R1 / generic DeepSeek matches.
     static func isDSV4Family(_ modelId: String) -> Bool {
-        let lower = modelId.lowercased()
-        return lower.range(
-            of: #"(^|/|[\-_])(dsv4|deepseek[\-_]?v4|deepseekv4)($|[\-_/\.])"#,
-            options: .regularExpression
-        ) != nil
+        matches(#"(^|/|[\-_])(dsv4|deepseek[\-_]?v4|deepseekv4)($|[\-_/\.])"#, in: modelId.lowercased())
     }
 
     /// Nemotron Omni bundles. Match both the long public `Nemotron-3-Nano-Omni`
     /// naming and shorter local picker/API ids like `Nemotron-Omni-Nano`.
     static func isNemotronOmniFamily(_ modelId: String) -> Bool {
         let lower = modelId.lowercased()
-        return lower.range(
-            of: #"(^|/)nemotron[\-_]3[\-_][^/]*omni($|[\-_/\.0-9])"#,
-            options: .regularExpression
-        ) != nil
-            || lower.range(
-                of: #"(^|/)nemotron[\-_]omni($|[\-_/\.0-9])"#,
-                options: .regularExpression
-            ) != nil
+        return matches(#"(^|/)nemotron[\-_]3[\-_][^/]*omni($|[\-_/\.0-9])"#, in: lower)
+            || matches(#"(^|/)nemotron[\-_]omni($|[\-_/\.0-9])"#, in: lower)
     }
 
     /// Nemotron bundles whose native template exposes an `enable_thinking`
@@ -117,14 +123,8 @@ enum ModelFamilyNames {
     static func isNemotronThinkingFamily(_ modelId: String) -> Bool {
         let lower = modelId.lowercased()
         return isNemotronOmniFamily(modelId)
-            || lower.range(
-                of: #"(^|/)nvidia[\-_]?nemotron[\-_]3[\-_]ultra($|[\-_/\.0-9])"#,
-                options: .regularExpression
-            ) != nil
-            || lower.range(
-                of: #"(^|/)nemotron[\-_]3[\-_]ultra($|[\-_/\.0-9])"#,
-                options: .regularExpression
-            ) != nil
+            || matches(#"(^|/)nvidia[\-_]?nemotron[\-_]3[\-_]ultra($|[\-_/\.0-9])"#, in: lower)
+            || matches(#"(^|/)nemotron[\-_]3[\-_]ultra($|[\-_/\.0-9])"#, in: lower)
     }
 
     /// Match Zyphra ZAYA bundles (`model_type=zaya`). Matches the bare
@@ -134,11 +134,7 @@ enum ModelFamilyNames {
     /// `lazyaardvark`, or `dazaya-llm` — mirror of `isLingFamily`'s
     /// dash-boundary trick, adjusted for ZAYA's digit-suffix naming.
     static func isZayaFamily(_ modelId: String) -> Bool {
-        let lower = modelId.lowercased()
-        return lower.range(
-            of: #"(^|/)zaya[\-0-9]"#,
-            options: .regularExpression
-        ) != nil
+        matches(#"(^|/)zaya[\-0-9]"#, in: modelId.lowercased())
     }
 
     /// ZAYA1-VL is a sibling family to text ZAYA: it shares the ZAYA name and
@@ -147,10 +143,6 @@ enum ModelFamilyNames {
     /// `enable_thinking` branch. Keep the matcher separate so UI profiles do
     /// not advertise a toggle that the active template cannot consume.
     static func isZayaVLFamily(_ modelId: String) -> Bool {
-        let lower = modelId.lowercased()
-        return lower.range(
-            of: #"(^|/)zaya[\-_]?1[\-_]?vl($|[\-_/\.0-9])"#,
-            options: .regularExpression
-        ) != nil
+        matches(#"(^|/)zaya[\-_]?1[\-_]?vl($|[\-_/\.0-9])"#, in: modelId.lowercased())
     }
 }
