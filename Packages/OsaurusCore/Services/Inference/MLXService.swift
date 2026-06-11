@@ -258,19 +258,22 @@ actor MLXService: ToolCapableService {
         )
 
         var issues = serverResult.issues.map { $0.message }
-        let mediaDescriptor = mediaCapabilityDescriptor(
-            modelId: modelId,
-            modelDirectory: modelDirectory
-        )
-        let media = mediaDescriptor.capabilities
-        if modalities.contains(.vision), !media.supportsImage {
-            issues.append(mediaDescriptor.descriptor(for: .image).reason)
-        }
-        if modalities.contains(.video), !media.supportsVideo {
-            issues.append(mediaDescriptor.descriptor(for: .video).reason)
-        }
-        if modalities.contains(.audio), !media.supportsAudio {
-            issues.append(mediaDescriptor.descriptor(for: .audio).reason)
+        let mediaModalities: Set<ModelRuntimeRequestModality> = [.vision, .video, .audio]
+        if !modalities.isDisjoint(with: mediaModalities) {
+            let mediaDescriptor = mediaCapabilityDescriptor(
+                modelId: modelId,
+                modelDirectory: modelDirectory
+            )
+            let media = mediaDescriptor.capabilities
+            if modalities.contains(.vision), !media.supportsImage {
+                issues.append(mediaDescriptor.descriptor(for: .image).reason)
+            }
+            if modalities.contains(.video), !media.supportsVideo {
+                issues.append(mediaDescriptor.descriptor(for: .video).reason)
+            }
+            if modalities.contains(.audio), !media.supportsAudio {
+                issues.append(mediaDescriptor.descriptor(for: .audio).reason)
+            }
         }
         if !tools.isEmpty,
             !supportsLocalToolCalling(
@@ -307,6 +310,13 @@ actor MLXService: ToolCapableService {
         modelId: String,
         modelDirectory: URL? = nil
     ) -> Bool {
+        let combined = "\(modelName) \(modelId)"
+            .lowercased()
+            .replacingOccurrences(of: "-", with: "_")
+        if combined.contains("gemma_3n") || combined.contains("gemma3n") {
+            return false
+        }
+
         if ModelFamilyNames.isStepFamily(modelName) || ModelFamilyNames.isStepFamily(modelId) {
             // Step 3.7 tool parsing/template selection is owned by the pinned
             // vMLX runtime. Do not block request preflight on large external
@@ -320,18 +330,17 @@ actor MLXService: ToolCapableService {
             // vMLX can load and validate the actual runtime contract.
             return true
         }
+        if ModelFamilyNames.isGemmaFamily(modelName) || ModelFamilyNames.isGemmaFamily(modelId) {
+            // Gemma/Gemma4 tool parser/template selection is owned by vMLX.
+            // Avoid synchronous external-bundle metadata reads on text/tool
+            // preflight; media requests are gated separately above.
+            return true
+        }
 
         if let directory = modelDirectory ?? localModelDirectory(modelId: modelId),
             let format = resolvedToolCallFormat(in: directory)
         {
             return format != nil
-        }
-
-        let combined = "\(modelName) \(modelId)"
-            .lowercased()
-            .replacingOccurrences(of: "-", with: "_")
-        if combined.contains("gemma_3n") || combined.contains("gemma3n") {
-            return false
         }
 
         // Unknown/local-unscanned bundles remain permissive; vmlx still owns

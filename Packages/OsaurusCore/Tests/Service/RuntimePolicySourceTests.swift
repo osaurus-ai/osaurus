@@ -2513,6 +2513,37 @@ struct RuntimePolicySourceTests {
         )
     }
 
+    @Test("Gemma text tool preflight avoids media bundle reads")
+    func gemmaTextToolPreflightAvoidsMediaBundleReads() throws {
+        let service = try Self.source("Services/Inference/MLXService.swift")
+        let validate = try #require(service.range(of: "static func validateRuntimePolicy"))
+        let support = try #require(service.range(of: "nonisolated static func supportsLocalToolCalling"))
+
+        let validateEnd =
+            service.range(
+                of: "nonisolated static func supportsLocalToolCalling",
+                range: validate.lowerBound ..< service.endIndex
+            )
+            .map(\.lowerBound) ?? service.endIndex
+        let validateBody = String(service[validate.lowerBound ..< validateEnd])
+        #expect(validateBody.contains("let mediaModalities: Set<ModelRuntimeRequestModality> = [.vision, .video, .audio]"))
+        #expect(validateBody.contains("if !modalities.isDisjoint(with: mediaModalities)"))
+
+        let supportEnd =
+            service.range(
+                of: "private nonisolated static func localModelDirectory",
+                range: support.lowerBound ..< service.endIndex
+            )
+            .map(\.lowerBound) ?? service.endIndex
+        let supportBody = String(service[support.lowerBound ..< supportEnd])
+        let gemmaFastPath = try #require(supportBody.range(of: "ModelFamilyNames.isGemmaFamily"))
+        let bundleLookup = try #require(supportBody.range(of: "localModelDirectory(modelId: modelId)"))
+        #expect(
+            gemmaFastPath.lowerBound < bundleLookup.lowerBound,
+            "Gemma tool preflight must not synchronously read external bundle metadata."
+        )
+    }
+
     @Test("Runtime docs keep upstream Metal fault boundaries explicit")
     func inferenceDocsKeepUpstreamMetalFaultBoundaries() throws {
         let runtimeDoc = try Self.source("../../docs/INFERENCE_RUNTIME.md")
