@@ -74,6 +74,10 @@ struct ModelDetailView: View, Identifiable {
     /// Transient "copied" feedback for the external-model path copy button
     @State private var didCopyPath = false
 
+    /// Runtime compatibility report, computed off the main thread. `nil`
+    /// while the bundle's config files are still being read from disk.
+    @State private var diagnostics: ModelCompatibilityDiagnostics.Report? = nil
+
     /// Normalized model ID for API usage
     private var apiModelId: String {
         let last = model.id.split(separator: "/").last.map(String.init) ?? model.name
@@ -124,11 +128,33 @@ struct ModelDetailView: View, Identifiable {
             }
 
             Task {
+                await loadDiagnostics()
+            }
+
+            Task {
                 await estimateIfNeeded()
                 await loadHFDetails()
                 await loadReadmeIfNeeded()
             }
         }
+    }
+
+    /// Build the runtime compatibility report off the main thread. The
+    /// report reads `config.json` and enumerates the local bundle, which
+    /// used to run inside the view body getter and could hang the main
+    /// thread on a cold or slow disk.
+    private func loadDiagnostics() async {
+        guard diagnostics == nil else { return }
+        let report = await Self.computeDiagnostics(for: model)
+        await MainActor.run {
+            self.diagnostics = report
+        }
+    }
+
+    nonisolated private static func computeDiagnostics(
+        for model: MLXModel
+    ) async -> ModelCompatibilityDiagnostics.Report {
+        ModelCompatibilityDiagnostics.report(for: model)
     }
 
     /// Load the README model card lazily (only when the section is first
@@ -273,12 +299,35 @@ struct ModelDetailView: View, Identifiable {
         return model.isVLM
     }
 
-    private var diagnosticsReport: ModelCompatibilityDiagnostics.Report {
-        ModelCompatibilityDiagnostics.report(for: model)
+    @ViewBuilder
+    private var runtimeDiagnosticsCard: some View {
+        if let report = diagnostics {
+            diagnosticsCard(for: report)
+        } else {
+            diagnosticsLoadingCard
+        }
     }
 
-    private var runtimeDiagnosticsCard: some View {
-        let report = diagnosticsReport
+    /// Placeholder shown while `diagnostics` is being read from disk so the
+    /// card slot keeps its place and the layout doesn't jump when the real
+    /// report lands.
+    private var diagnosticsLoadingCard: some View {
+        HStack(spacing: 10) {
+            ProgressView()
+                .controlSize(.small)
+            Text("Checking runtime compatibility…", bundle: .module)
+                .font(.system(size: 12))
+                .foregroundColor(theme.tertiaryText)
+            Spacer(minLength: 0)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .detailCardSurface()
+    }
+
+    private func diagnosticsCard(
+        for report: ModelCompatibilityDiagnostics.Report
+    ) -> some View {
         let tint = runtimeDiagnosticTint(report.runtime.kind)
 
         return VStack(alignment: .leading, spacing: 12) {
