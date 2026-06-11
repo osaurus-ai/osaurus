@@ -570,12 +570,15 @@ struct RuntimePolicySourceTests {
         // audio/media/cache source proof from crashing under Swift Testing,
         // and the Gemma4 required-tool template ordering fix that keeps
         // preserving-newlines user content as the final model-visible copy
-        // target before generation.
+        // target before generation, plus the memory-safety resolver fix that
+        // preserves explicit disabled prefix-cache settings and disables
+        // dependent paged-KV/block-disk cache topology instead of forcing the
+        // default cache stack back on.
         // That avoids Xcode PIF
         // duplicate-product collisions with the app graph while keeping yyjson
         // as one shared C dependency. Osaurus must not carry SwiftPM
         // moduleAliases for that collision.
-        let expectedRuntimeHardenedRevision = "ef025f2556978d033131f745c00dd8128c8d5151"
+        let expectedRuntimeHardenedRevision = "76047f3b4492d4fae316267a30fba55163b1c5cd"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
         let appRevision = try Self.vmlxPinRevision(in: appResolved)
