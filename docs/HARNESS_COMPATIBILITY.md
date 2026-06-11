@@ -40,10 +40,10 @@ published) from **model findings** (real behavior, scored honestly).
 | Model | Route | Frontier (27) | AgentLoop (17) | Sandbox (13) | Tested | Notes |
 |---|---|---|---|---|---|---|
 | claude-fable-5 | `anthropic/claude-fable-5` | 26 ✓ / 1 ✗* | 17 ✓ | 10 ✓ / 3 refused† | 2026-06-11 | Strongest lane overall. *Sole fail (empty first response) passed on re-run; coincided with API credit exhaustion. †All 3 sandbox misses are Anthropic's API-level cyber safeguard refusing secret/token-flavored prompts (`stop_reason: refusal`) — provider policy, not model capability. |
-| gpt-5.5 | `openai/gpt-5.5` | 24 ✓ / 3 ✗ | 16 ✓ / 1 ✗ | — | 2026-06-10 | Flawless tool discipline; fails are terse final replies and ignoring budget warnings (does the work, under-reports it). |
+| gpt-5.5 | `openai/gpt-5.5` | 24 ✓ / 3 ✗ | 16 ✓ / 1 ✗ | 11 ✓ / 2 ✗ | 2026-06-11 | Flawless tool discipline; frontier fails are terse final replies and ignoring budget warnings (does the work, under-reports it). Sandbox fails: refuses to pass a secret value to `sandbox_secret_set` (model-side policy; insists on the interactive prompt flow), and the same unadvertised-plugin-tool reluctance as grok-4.3. |
 | grok-4.3 | `xai/grok-4.3` | 25 ✓ / 2 ✗ | 17 ✓ | 12 ✓ / 1 ✗ | 2026-06-11 | Frontier fails: post-compaction confabulation (intermittent) and whitespace drift in a byte-exact `file_write`. Sandbox fail: won't invoke a just-registered plugin tool that isn't in the advertised schema (executes the underlying script via `sandbox_exec` instead). |
-| gemini-3.1-pro-preview | `google/gemini-3.1-pro-preview` | 26 ✓ / 1 ✗ | 16 ✓ / 1 ✗* | — | 2026-06-10 | Fastest frontier lane. Fail: final reply says it explained the script without including the explanation. *One-off empty first response; passed on retry. |
-| deepseek-v4-pro | `deepseek/deepseek-v4-pro` | 25 ✓ / 2 ✗ | 16 ✓ / 1 ✗ | — | 2026-06-10 | All three fails are budget overruns: keeps working past the iteration cap instead of wrapping up. |
+| gemini-3.1-pro-preview | `google/gemini-3.1-pro-preview` | 26 ✓ / 1 ✗ | 16 ✓ / 1 ✗* | 13 ✓ | 2026-06-11 | Fastest frontier lane; only clean sandbox sweep to date. Fail: final reply says it explained the script without including the explanation. *One-off empty first response; passed on retry. |
+| deepseek-v4-pro | `deepseek/deepseek-v4-pro` | 25 ✓ / 2 ✗ | 16 ✓ / 1 ✗ | 12 ✓ / 1 ✗ | 2026-06-11 | Frontier/loop fails are budget overruns: keeps working past the iteration cap instead of wrapping up. Sandbox fail: tried a raw `sandbox_read_file` on the seeded logs before delegating to `sandbox_reduce` (discipline cap is zero raw reads). |
 
 "—" = lane not yet run for that model.
 
@@ -103,13 +103,22 @@ harness bugs; they're scored honestly and tracked across model versions.
   `sandbox_secret_set` and reading it back. Rewording helps only partially;
   Anthropic offers a policy-exemption request flow. No model-behavior
   negative findings to date.
-- **grok-4.3 — unadvertised-tool reluctance.** Will not call a freshly
-  registered plugin tool (`{pluginId}_{toolId}`) that is absent from the
-  request's tool schema, even when told it is callable; it routes around it
-  by executing the plugin's script via `sandbox_exec` instead. claude-fable-5
-  calls the unadvertised tool correctly. (Osaurus intentionally freezes the
-  tool schema for the run — deferred-schema policy — and resolves
-  registered tools by name at execution time.)
+- **grok-4.3, gpt-5.5 — unadvertised-tool reluctance.** Will not call a
+  freshly registered plugin tool (`{pluginId}_{toolId}`) that is absent from
+  the request's tool schema, even when told it is callable; both route
+  around it by executing the plugin's script via `sandbox_exec` instead
+  (gpt-5.5 even discovers and loads the tool via `capabilities_load` but
+  still never invokes it). claude-fable-5 and gemini-3.1-pro-preview call
+  the unadvertised tool correctly. (Osaurus intentionally freezes the tool
+  schema for the run — deferred-schema policy — and resolves registered
+  tools by name at execution time.)
+- **gpt-5.5 — model-side secret-handling policy.** Refuses to call
+  `sandbox_secret_set` with an inline `value`, citing its own
+  secret-handling rules, and insists on the interactive no-value prompt
+  flow — which only exists in the chat UI. Unlike claude-fable-5's
+  API-level safeguard this is the model's own choice (the request is never
+  blocked by the provider). Headless/automated secret seeding with gpt-5.5
+  is unreliable; store secrets via the UI prompt flow instead.
 
 ## Testing a new model
 

@@ -1929,8 +1929,12 @@ private struct SandboxExecTool: OsaurusTool, @unchecked Sendable {
             // single-quoted; we escape any internal `'` per shell rules.
             let logFile = "\(home)/bg-\(UUID().uuidString.prefix(8)).log"
             let escaped = command.replacingOccurrences(of: "'", with: "'\\''")
+            // `setsid` makes the wrapper a session/process-group leader so a
+            // later `kill -- -<pid>` can take down the whole job tree —
+            // signalling only the wrapper pid leaves its children (the actual
+            // workload) running as orphans.
             let fullCmd =
-                "cd '\(cwd)' && nohup bash -c 'set -o pipefail; \(escaped)' "
+                "cd '\(cwd)' && nohup setsid bash -c 'set -o pipefail; \(escaped)' "
                 + "> \(logFile) 2>&1 & echo $!"
 
             let result = try await SandboxToolCommandRunnerRegistry.shared.exec(
@@ -2206,25 +2210,45 @@ private final class StatusSubjectBox: @unchecked Sendable {
 }
 
 /// Container-side process lifecycle helpers for background jobs. Keep
-/// the in-VM `kill` invocations in one place so the polling watcher
-/// and the user-terminate path can't drift in their command shape.
-private enum BackgroundExecLiveness {
+/// the in-VM `kill` invocations in one place so the polling watcher,
+/// `sandbox_process`, and the user-terminate path can't drift in their
+/// command shape.
+///
+/// Liveness must be zombie-aware: the background wrapper is reparented
+/// to the container's init when its launching shell exits, and if it
+/// dies before being reaped it lingers as a zombie. `kill -0` succeeds
+/// on zombies, so a bare probe reports a killed job as alive forever —
+/// the exact loop frontier models got stuck in during sandbox evals.
+internal enum BackgroundExecLiveness {
+    /// Shell snippet that exits 0 iff `pid` exists and is NOT a zombie.
+    static func aliveCondition(pid: String) -> String {
+        "kill -0 \(pid) 2>/dev/null && ! grep -q '^State:[[:space:]]*Z' /proc/\(pid)/status 2>/dev/null"
+    }
+
     static func isPidAlive(pid: String, agentName: String) async -> Bool {
         guard
             let result = try? await SandboxToolCommandRunnerRegistry.shared.execAsAgent(
                 agentName,
-                command: "kill -0 \(pid) 2>/dev/null && echo a || echo d"
+                command: "{ \(aliveCondition(pid: pid)); } && echo a || echo d"
             )
         else { return false }
         return result.stdout.contains("a")
     }
 
-    /// `kill -<signal> <pid>` as root, fire-and-forget. Used to signal
-    /// background jobs when the user presses [Terminate]. `|| true` so
-    /// a process that's already exited doesn't surface as a runner error.
+    /// Signal the job's whole process group (the launch wraps jobs in
+    /// `setsid`, making the wrapper a group leader) so children — the
+    /// actual workload — die with it. Falls back to the bare pid for
+    /// jobs that predate the `setsid` launch shape. Fire-and-forget:
+    /// `|| true` so an already-exited process doesn't surface as a
+    /// runner error.
+    static func killCommand(pid: String, signal: String) -> String {
+        "kill -\(signal) -- -\(pid) 2>/dev/null || kill -\(signal) \(pid) 2>/dev/null || true"
+    }
+
+    /// Used to signal background jobs when the user presses [Terminate].
     static func kill(pid: String, signal: String) async {
         _ = try? await SandboxToolCommandRunnerRegistry.shared.execAsRoot(
-            command: "kill -\(signal) \(pid) 2>/dev/null || true",
+            command: killCommand(pid: pid, signal: signal),
             timeout: 5
         )
     }
@@ -2322,7 +2346,8 @@ private struct SandboxProcessTool: OsaurusTool, @unchecked Sendable {
         case "poll":
             let aliveResult = try await SandboxToolCommandRunnerRegistry.shared.execAsAgent(
                 agentName,
-                command: "kill -0 \(pid) 2>/dev/null && echo alive || echo dead"
+                command:
+                    "{ \(BackgroundExecLiveness.aliveCondition(pid: pid)); } && echo alive || echo dead"
             )
             let alive = aliveResult.stdout.trimmingCharacters(in: .whitespacesAndNewlines) == "alive"
             let tail = await tailIfTracked(job: job, lines: tailLines)
@@ -2345,7 +2370,7 @@ private struct SandboxProcessTool: OsaurusTool, @unchecked Sendable {
             // an ssh round-trip every second.
             let cmd =
                 "for i in $(seq 1 \(timeoutSec)); do "
-                + "kill -0 \(pid) 2>/dev/null || { echo exited; exit 0; }; "
+                + "{ \(BackgroundExecLiveness.aliveCondition(pid: pid)); } || { echo exited; exit 0; }; "
                 + "sleep 1; "
                 + "done; echo timeout"
             let waitResult = try await SandboxToolCommandRunnerRegistry.shared.execAsAgent(
@@ -2373,10 +2398,11 @@ private struct SandboxProcessTool: OsaurusTool, @unchecked Sendable {
 
         case "kill":
             let force = coerceBool(args["force"]) ?? false
-            let signal = force ? "-9" : "-15"
+            let signal = force ? "9" : "15"
             let killResult = try await SandboxToolCommandRunnerRegistry.shared.execAsAgent(
                 agentName,
-                command: "kill \(signal) \(pid) 2>&1; sleep 0.2; kill -0 \(pid) 2>/dev/null && echo alive || echo dead"
+                command: "\(BackgroundExecLiveness.killCommand(pid: pid, signal: signal)); sleep 0.2; "
+                    + "{ \(BackgroundExecLiveness.aliveCondition(pid: pid)); } && echo alive || echo dead"
             )
             let dead = killResult.stdout.contains("dead")
             if dead {

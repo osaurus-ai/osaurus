@@ -116,3 +116,11 @@ zero content blocks) before the model sees them. The remote-provider stream
 surfaces this as an explicit `Anthropic refused this request` error, so
 affected cases show up as `errored` rows with the provider's explanation —
 attribute these to the provider, not the harness.
+
+Harness defects this lane has already caught (fixed, lane re-run before
+publishing): `background-process` once looped models forever because the
+job wrapper lingered as an unreaped zombie and every liveness probe was a
+bare `kill -0` (which counts zombies as alive), and killing the wrapper pid
+orphaned the actual workload. Background jobs now launch under `setsid`,
+kills signal the whole process group, and liveness probes are zombie-aware
+(`/proc/<pid>/status`).

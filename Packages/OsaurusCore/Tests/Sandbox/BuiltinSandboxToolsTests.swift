@@ -406,16 +406,18 @@ struct BuiltinSandboxToolsTests {
             Issue.record("Expected exec call")
             return
         }
-        // Background is wrapped via `nohup bash -c 'set -o pipefail; <cmd>'`
-        // so a pipeline failure in the spawned command surfaces as the
-        // rightmost non-zero exit, mirroring the foreground path.
-        #expect(command.contains("nohup bash -c 'set -o pipefail; python3 server.py'"))
+        // Background is wrapped via `nohup setsid bash -c 'set -o pipefail;
+        // <cmd>'` so a pipeline failure in the spawned command surfaces as
+        // the rightmost non-zero exit (mirroring the foreground path) and
+        // the wrapper leads its own process group so `kill -- -<pid>` can
+        // take down the whole job tree.
+        #expect(command.contains("nohup setsid bash -c 'set -o pipefail; python3 server.py'"))
         #expect(command.contains("echo $!"))
     }
 
     @Test @MainActor
     func sandboxProcess_pollReportsAlive() async throws {
-        // Probe `kill -0 <pid>` returns "alive" → tool surfaces alive=true.
+        // Zombie-aware probe returns "alive" → tool surfaces alive=true.
         let runner = MockSandboxToolCommandRunner(
             rootResults: [],
             agentResults: [
@@ -442,7 +444,10 @@ struct BuiltinSandboxToolsTests {
             Issue.record("Expected agent call")
             return
         }
+        // The probe must be zombie-aware: `kill -0` alone reports a dead
+        // unreaped wrapper as alive forever.
         #expect(command.contains("kill -0 42"))
+        #expect(command.contains("/proc/42/status"))
     }
 
     @Test @MainActor
@@ -474,6 +479,7 @@ struct BuiltinSandboxToolsTests {
         }
         #expect(command.contains("for i in $(seq 1 1)"))
         #expect(command.contains("kill -0 42"))
+        #expect(command.contains("/proc/42/status"))
     }
 
     @Test @MainActor
@@ -502,7 +508,11 @@ struct BuiltinSandboxToolsTests {
             Issue.record("Expected agent call")
             return
         }
+        // Group kill first (jobs are setsid leaders), bare-pid fallback for
+        // pre-setsid jobs, then a zombie-aware dead check.
+        #expect(command.contains("kill -9 -- -42"))
         #expect(command.contains("kill -9 42"))
+        #expect(command.contains("/proc/42/status"))
     }
 
     @Test @MainActor
