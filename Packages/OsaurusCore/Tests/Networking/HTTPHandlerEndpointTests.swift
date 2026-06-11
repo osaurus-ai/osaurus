@@ -12,6 +12,7 @@
 //
 
 import Foundation
+@preconcurrency import MLXLMCommon
 import NIOCore
 import NIOHTTP1
 import NIOPosix
@@ -19,6 +20,7 @@ import Testing
 
 @testable import OsaurusCore
 
+@Suite(.serialized)
 struct HTTPHandlerEndpointTests {
 
     @Test func health_endpoint_returns_healthy_json() async throws {
@@ -73,6 +75,99 @@ struct HTTPHandlerEndpointTests {
         #expect((resp as? HTTPURLResponse)?.statusCode == 404)
     }
 
+    @Test func runtimeSettings_get_returnsPersistedSnapshot() async throws {
+        let dir = try makeTempDirectory()
+        try await withOverriddenRuntimeSettingsDirectory(dir) {
+            var settings = VMLXServerRuntimeSettings()
+            settings.generation.temperature = 0.31
+            ServerRuntimeSettingsStore.save(settings)
+
+            let server = try await startServer()
+            defer { Task { await server.shutdown() } }
+
+            let (data, resp) = try await URLSession.shared.data(
+                from: URL(string: "http://\(server.host):\(server.port)/admin/runtime-settings")!
+            )
+
+            #expect((resp as? HTTPURLResponse)?.statusCode == 200)
+            let decoded = try JSONDecoder().decode(RuntimeSettingsResponse.self, from: data)
+            #expect(decoded.status == "ok")
+            #expect(decoded.settings.generation.temperature == 0.31)
+        }
+    }
+
+    @Test func runtimeSettings_put_persistsAndReportsRuntimeEffects() async throws {
+        let dir = try makeTempDirectory()
+        try await withOverriddenRuntimeSettingsDirectory(dir) {
+            let initial = VMLXServerRuntimeSettings()
+            ServerRuntimeSettingsStore.save(initial)
+
+            let server = try await startServer()
+            defer { Task { await server.shutdown() } }
+
+            var next = initial
+            next.generation.temperature = 0.42
+            next.concurrency.maxConcurrentSequences = 2
+            let (data, resp) = try await putRuntimeSettings(next, server: server)
+
+            #expect((resp as? HTTPURLResponse)?.statusCode == 200)
+            let decoded = try JSONDecoder().decode(RuntimeSettingsResponse.self, from: data)
+            #expect(decoded.settings.generation.temperature == 0.42)
+            #expect(decoded.settings.concurrency.maxConcurrentSequences == 2)
+            #expect(decoded.effects?.runtimeConfigInvalidated == true)
+            #expect(decoded.effects?.loadedModelRefreshNeeded == false)
+
+            ServerRuntimeSettingsStore.invalidateSnapshot()
+            let persisted = ServerRuntimeSettingsStore.snapshot()
+            #expect(persisted.generation.temperature == 0.42)
+            #expect(persisted.concurrency.maxConcurrentSequences == 2)
+        }
+    }
+
+    @Test func runtimeSettings_put_rejectsNetworkRebindChanges() async throws {
+        let dir = try makeTempDirectory()
+        try await withOverriddenRuntimeSettingsDirectory(dir) {
+            let initial = VMLXServerRuntimeSettings()
+            ServerRuntimeSettingsStore.save(initial)
+
+            let server = try await startServer()
+            defer { Task { await server.shutdown() } }
+
+            var next = initial
+            next.network.port = 4242
+            let (_, resp) = try await putRuntimeSettings(next, server: server)
+
+            #expect((resp as? HTTPURLResponse)?.statusCode == 400)
+            ServerRuntimeSettingsStore.invalidateSnapshot()
+            let persisted = ServerRuntimeSettingsStore.snapshot()
+            #expect(persisted.network.port == initial.network.port)
+        }
+    }
+
+    @Test func runtimeSettings_put_rejectsValidationErrors() async throws {
+        let dir = try makeTempDirectory()
+        try await withOverriddenRuntimeSettingsDirectory(dir) {
+            let initial = VMLXServerRuntimeSettings()
+            ServerRuntimeSettingsStore.save(initial)
+
+            let server = try await startServer()
+            defer { Task { await server.shutdown() } }
+
+            var next = initial
+            next.concurrency.maxConcurrentSequences = 0
+            let (data, resp) = try await putRuntimeSettings(next, server: server)
+
+            #expect((resp as? HTTPURLResponse)?.statusCode == 400)
+            let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+            let error = obj?["error"] as? [String: Any]
+            #expect(error?["type"] as? String == "invalid_request_error")
+
+            ServerRuntimeSettingsStore.invalidateSnapshot()
+            let persisted = ServerRuntimeSettingsStore.snapshot()
+            #expect(persisted.concurrency.maxConcurrentSequences == initial.concurrency.maxConcurrentSequences)
+        }
+    }
+
     // MARK: - Test Server Bootstrap
 
     private struct TestServer {
@@ -124,5 +219,59 @@ struct HTTPHandlerEndpointTests {
             await lease.release()
             throw error
         }
+    }
+
+    private struct RuntimeSettingsResponse: Decodable {
+        let status: String
+        let settings: VMLXServerRuntimeSettings
+        let effects: RuntimeSettingsEffects?
+    }
+
+    private struct RuntimeSettingsEffects: Decodable {
+        let loadedModelRefreshNeeded: Bool?
+        let runtimeConfigInvalidated: Bool?
+
+        private enum CodingKeys: String, CodingKey {
+            case loadedModelRefreshNeeded = "loaded_model_refresh_needed"
+            case runtimeConfigInvalidated = "runtime_config_invalidated"
+        }
+    }
+
+    private func putRuntimeSettings(
+        _ settings: VMLXServerRuntimeSettings,
+        server: TestServer
+    ) async throws -> (Data, URLResponse) {
+        var request = URLRequest(
+            url: URL(string: "http://\(server.host):\(server.port)/admin/runtime-settings")!
+        )
+        request.httpMethod = "PUT"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(settings)
+        return try await URLSession.shared.data(for: request)
+    }
+
+    private func makeTempDirectory() throws -> URL {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "osaurus-runtime-settings-endpoint-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    @MainActor
+    private func withOverriddenRuntimeSettingsDirectory(
+        _ dir: URL,
+        _ body: () async throws -> Void
+    ) async throws {
+        let previous = ServerRuntimeSettingsStore.overrideDirectory
+        ServerRuntimeSettingsStore.overrideDirectory = dir
+        ServerRuntimeSettingsStore.invalidateSnapshot()
+        defer {
+            ServerRuntimeSettingsStore.overrideDirectory = previous
+            ServerRuntimeSettingsStore.invalidateSnapshot()
+            try? FileManager.default.removeItem(at: dir)
+        }
+        try await body()
     }
 }

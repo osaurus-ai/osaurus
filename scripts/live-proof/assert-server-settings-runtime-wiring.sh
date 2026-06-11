@@ -172,6 +172,16 @@ require_text "$ROOT/Packages/OsaurusCore/Networking/HTTPHandler.swift" '"display
   "memory-safety status exposes display summary"
 require_text "$ROOT/Packages/OsaurusCore/Networking/HTTPHandler.swift" '"memory_status": memoryStatusJSONObject' \
   "memory-safety status exposes live memory status"
+require_text "$ROOT/Packages/OsaurusCore/Networking/HTTPHandler.swift" 'path == "/admin/runtime-settings"' \
+  "runtime settings admin endpoint is routed"
+require_text "$ROOT/Packages/OsaurusCore/Networking/HTTPHandler.swift" 'previous\.network != next\.network' \
+  "runtime settings endpoint rejects network rebind changes"
+require_text "$ROOT/Packages/OsaurusCore/Networking/HTTPHandler.swift" 'ServerRuntimeSettingsStore\.save\(next\)' \
+  "runtime settings endpoint persists through ServerRuntimeSettingsStore"
+require_text "$ROOT/Packages/OsaurusCore/Networking/HTTPHandler.swift" 'await ModelRuntime\.shared\.clearAll\(\)' \
+  "runtime settings endpoint refreshes loaded models after cache/media/MTP changes"
+require_text "$ROOT/Packages/OsaurusCore/Networking/HTTPHandler.swift" 'await ModelRuntime\.shared\.invalidateConfig\(\)' \
+  "runtime settings endpoint invalidates runtime config after generation/concurrency changes"
 require_text "$ADAPTER" 'turboQuantCompressions' \
   "runtime diagnostics report TurboQuant compression count"
 require_text "$ADAPTER" 'nativeMTPDepthSummary' \
