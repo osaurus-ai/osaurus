@@ -44,6 +44,9 @@ struct ServerRuntimeSettingsStoreTests {
             #expect(migrated.cache.longPromptMultiplier == 2.0)
             #expect(migrated.cache.enableSSMReDerive == true)
             #expect(migrated.mtp.mode == .auto)
+            #expect(migrated.memorySafety.mode == .safeAuto)
+            #expect(migrated.memorySafety.slider == 2)
+            #expect(migrated.memorySafety.allowExperimentalMLXPress == false)
 
             // File should now exist.
             let url = dir.appendingPathComponent("server-runtime.json")
@@ -70,6 +73,9 @@ struct ServerRuntimeSettingsStoreTests {
             #expect(snapshot.cache.longPromptMultiplier == 2.0)
             #expect(snapshot.cache.enableSSMReDerive == true)
             #expect(snapshot.mtp.mode == .auto)
+            #expect(snapshot.memorySafety.mode == .safeAuto)
+            #expect(snapshot.memorySafety.slider == 2)
+            #expect(snapshot.memorySafety.allowExperimentalMLXPress == false)
         }
     }
 
@@ -83,6 +89,8 @@ struct ServerRuntimeSettingsStoreTests {
             settings.generation.temperature = 0.42
             settings.concurrency.maxConcurrentSequences = 5
             settings.cache.defaultMaxKVSize = 16_384
+            settings.memorySafety.mode = .strict
+            settings.memorySafety.slider = 3
 
             ServerRuntimeSettingsStore.save(settings)
             ServerRuntimeSettingsStore.invalidateSnapshot()

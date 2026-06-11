@@ -7,6 +7,7 @@
 
 import Foundation
 import LocalAuthentication
+@preconcurrency import MLXLMCommon
 import NIOCore
 import NIOHTTP1
 import NIOPosix
@@ -944,6 +945,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             } else {
                 batchDiagnostics = NSNull()
             }
+            let runtimeSettings = ServerRuntimeSettingsStore.snapshot()
+            let memoryStatus = MemoryStatus.snapshot()
+            let memorySafetyPlan = runtimeSettings.resolvedMemorySafetyPlan(
+                baseLoadConfiguration: .osaurusProduction,
+                host: memoryStatus
+            )
 
             let obj: [String: Any] = [
                 "status": "ok",
@@ -951,6 +958,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 "models": models,
                 "aggregate": aggregate,
                 "batch_diagnostics": batchDiagnostics,
+                "memory_safety": Self.memorySafetyJSONObject(
+                    settings: runtimeSettings,
+                    plan: memorySafetyPlan,
+                    memoryStatus: memoryStatus
+                ),
             ]
             let data = try? JSONSerialization.data(withJSONObject: obj, options: .osaurusCanonical)
             let body = data.flatMap { String(decoding: $0, as: UTF8.self) } ?? "{}"
@@ -977,6 +989,124 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 startTime: logStartTime
             )
         }
+    }
+
+    private static func memorySafetyJSONObject(
+        settings: VMLXServerRuntimeSettings,
+        plan: VMLXResolvedMemorySafetyPlan,
+        memoryStatus: MemoryStatus
+    ) -> [String: Any] {
+        let memorySafety = settings.memorySafety
+        let validationIssues = memorySafety.validationIssues()
+        let issues = validationIssues + plan.blockingIssues
+        return [
+            "mode": memorySafety.mode.rawValue,
+            "slider": memorySafety.slider,
+            "allowed": plan.blockingIssues.isEmpty,
+            "display_summary": plan.displaySummary,
+            "resolved_physical_memory_bytes": plan.resolvedPhysicalMemoryBytes,
+            "resolved_load_budget_bytes": plan.resolvedLoadBudgetBytes as Any? ?? NSNull(),
+            "load_configuration": loadConfigurationJSONObject(plan.loadConfiguration),
+            "cache": cacheSettingsJSONObject(plan.cache),
+            "concurrency": concurrencySettingsJSONObject(plan.concurrency),
+            "memory_status": memoryStatusJSONObject(memoryStatus),
+            "warnings": plan.warnings,
+            "blocking_issues": plan.blockingIssues.map(settingsIssueJSONObject),
+            "validation_issues": validationIssues.map(settingsIssueJSONObject),
+            "issues": issues.map(settingsIssueJSONObject),
+        ]
+    }
+
+    private static func loadConfigurationJSONObject(
+        _ configuration: LoadConfiguration
+    ) -> [String: Any] {
+        [
+            "memory_limit": residentCapJSONObject(configuration.memoryLimit),
+            "max_resident_bytes": residentCapJSONObject(configuration.maxResidentBytes),
+            "use_mmap_safetensors": configuration.useMmapSafetensors,
+            "jang_press_policy": jangPressPolicyJSONObject(configuration.jangPress),
+            "native_mtp": configuration.nativeMTP,
+        ]
+    }
+
+    private static func cacheSettingsJSONObject(
+        _ cache: VMLXServerCacheSettings
+    ) -> [String: Any] {
+        [
+            "prefix_enabled": cache.prefix.enabled,
+            "prefix_memory_limit_mb": cache.prefix.memoryLimitMB as Any? ?? NSNull(),
+            "prefix_memory_percent": cache.prefix.memoryPercent as Any? ?? NSNull(),
+            "prefix_ttl_minutes": cache.prefix.ttlMinutes as Any? ?? NSNull(),
+            "paged_kv_enabled": cache.pagedKV.enabled,
+            "paged_kv_block_size": cache.pagedKV.blockSize as Any? ?? NSNull(),
+            "paged_kv_max_blocks": cache.pagedKV.maxBlocks as Any? ?? NSNull(),
+            "block_disk_enabled": cache.blockDisk.enabled,
+            "block_disk_max_size_gb": cache.blockDisk.maxSizeGB as Any? ?? NSNull(),
+            "block_disk_directory": cache.blockDisk.directory as Any? ?? NSNull(),
+            "legacy_disk_enabled": cache.legacyDisk.enabled,
+            "live_kv_codec": cache.liveKVCodec.rawValue,
+            "stored_kv_codec": cache.storedKVCodec.rawValue,
+            "turbo_quant_key_bits": cache.turboQuantKeyBits as Any? ?? NSNull(),
+            "turbo_quant_value_bits": cache.turboQuantValueBits as Any? ?? NSNull(),
+            "default_max_kv_size": cache.defaultMaxKVSize as Any? ?? NSNull(),
+            "long_prompt_multiplier": cache.longPromptMultiplier,
+            "enable_ssm_rederive": cache.enableSSMReDerive,
+        ]
+    }
+
+    private static func concurrencySettingsJSONObject(
+        _ concurrency: VMLXServerConcurrencySettings
+    ) -> [String: Any] {
+        [
+            "max_concurrent_sequences": concurrency.maxConcurrentSequences as Any? ?? NSNull(),
+            "prefill_batch_size": concurrency.prefillBatchSize as Any? ?? NSNull(),
+            "prefill_step_size": concurrency.prefillStepSize as Any? ?? NSNull(),
+            "completion_batch_size": concurrency.completionBatchSize as Any? ?? NSNull(),
+            "continuous_batching": concurrency.continuousBatching,
+            "smelt_mode": concurrency.smeltMode.rawValue,
+        ]
+    }
+
+    private static func memoryStatusJSONObject(_ status: MemoryStatus) -> [String: Any] {
+        [
+            "memory_limit": status.memoryLimit,
+            "cache_limit": status.cacheLimit,
+            "recommended_working_set_bytes": status.recommendedWorkingSetBytes as Any? ?? NSNull(),
+            "physical_memory": status.physicalMemory,
+            "current_rss": status.currentRSS,
+        ]
+    }
+
+    private static func residentCapJSONObject(_ cap: ResidentCap) -> [String: Any] {
+        switch cap {
+        case .unlimited:
+            return ["kind": "unlimited", "value": NSNull()]
+        case .fraction(let fraction):
+            return ["kind": "fraction", "value": fraction]
+        case .absolute(let bytes):
+            return ["kind": "absolute", "value": bytes]
+        }
+    }
+
+    private static func jangPressPolicyJSONObject(_ policy: JangPressPolicy) -> [String: Any] {
+        switch policy {
+        case .disabled:
+            return ["kind": "disabled"]
+        case .enabled(let coldFraction):
+            return ["kind": "enabled", "cold_fraction": coldFraction]
+        case .auto(let envFallback):
+            return ["kind": "auto", "env_fallback": envFallback]
+        }
+    }
+
+    private static func settingsIssueJSONObject(
+        _ issue: VMLXServerSettingsIssue
+    ) -> [String: Any] {
+        [
+            "severity": issue.severity.rawValue,
+            "field": issue.field,
+            "message": issue.message,
+        ]
     }
 
     // MARK: - Plugin Route Handler

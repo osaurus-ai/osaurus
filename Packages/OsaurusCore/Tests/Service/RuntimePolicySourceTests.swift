@@ -1952,6 +1952,32 @@ struct RuntimePolicySourceTests {
         #expect(httpHandler.contains("\"mlx_press\""))
     }
 
+    @Test("admin cache stats exposes resolved memory safety status without load refusal")
+    func adminCacheStatsExposesResolvedMemorySafetyStatus() throws {
+        let httpHandler = try Self.source("Networking/HTTPHandler.swift")
+        let runtimeSettingsTests = try Self.source("Tests/Networking/ServerRuntimeSettingsStoreTests.swift")
+
+        #expect(httpHandler.contains("@preconcurrency import MLXLMCommon"))
+        #expect(httpHandler.contains("let runtimeSettings = ServerRuntimeSettingsStore.snapshot()"))
+        #expect(httpHandler.contains("let memoryStatus = MemoryStatus.snapshot()"))
+        #expect(httpHandler.contains("resolvedMemorySafetyPlan("))
+        #expect(httpHandler.contains("\"memory_safety\""))
+        #expect(httpHandler.contains("\"mode\": memorySafety.mode.rawValue"))
+        #expect(httpHandler.contains("\"slider\": memorySafety.slider"))
+        #expect(httpHandler.contains("\"allowed\": plan.blockingIssues.isEmpty"))
+        #expect(httpHandler.contains("\"load_configuration\": loadConfigurationJSONObject(plan.loadConfiguration)"))
+        #expect(httpHandler.contains("\"memory_status\": memoryStatusJSONObject(memoryStatus)"))
+        #expect(httpHandler.contains("\"warnings\": plan.warnings"))
+        #expect(httpHandler.contains("\"blocking_issues\": plan.blockingIssues.map(settingsIssueJSONObject)"))
+        #expect(httpHandler.contains("case .disabled:"))
+        #expect(httpHandler.contains("case .enabled(let coldFraction):"))
+        #expect(httpHandler.contains("case .auto(let envFallback):"))
+        #expect(!httpHandler.contains("throw LoadRefusedError("))
+
+        #expect(runtimeSettingsTests.contains("memorySafety.mode == .safeAuto"))
+        #expect(runtimeSettingsTests.contains("memorySafety.slider == 2"))
+    }
+
     @Test("ModelRuntime does not repair reasoning parser output")
     func modelRuntimeDoesNotRepairReasoningParserOutput() throws {
         let runtime = try Self.source("Services/ModelRuntime.swift")
