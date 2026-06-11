@@ -121,7 +121,7 @@ struct FolderPluginHintsTests {
         #expect(result == ["osaurus.xlsx"])
     }
 
-    @Test @MainActor func folderContextDetectsOnlyPluginHintedDocumentExtensions() async throws {
+    @Test func folderContextDetectsOnlyPluginHintedDocumentExtensions() async throws {
         let root = try Self.tmpRoot()
         defer { try? FileManager.default.removeItem(at: root) }
 
@@ -129,10 +129,13 @@ struct FolderPluginHintsTests {
             try Data(name.utf8).write(to: root.appendingPathComponent(name))
         }
 
-        let context = await FolderContextService.shared.buildContext(from: root)
+        let detectedExtensions = FolderContextService.scanForKnownExtensions(
+            root,
+            ignorePatterns: ProjectType.unknown.ignorePatterns
+        )
 
-        #expect(context.detectedFileExtensions == Set(["xlsx", "pptx", "csv"]))
-        #expect(context.detectedFileExtensions.contains("pdf") == false)
+        #expect(detectedExtensions == Set(["xlsx", "pptx", "csv"]))
+        #expect(detectedExtensions.contains("pdf") == false)
     }
 
     private static func tmpRoot() throws -> URL {

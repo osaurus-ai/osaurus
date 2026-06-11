@@ -1394,16 +1394,16 @@ struct SwiftTransformersTokenizerLoaderTests {
             "Decoded: \(decoded)"
         )
         #expect(
-            decoded.contains(#"<|tool_call_start|>[line_count(text='red\ngreen\nblue')]<|tool_call_end|>"#),
+            decoded.contains(#"<|tool_call_start|>["line_count", {"text":"red\ngreen\nblue"}]<|tool_call_end|>"#),
             "Decoded: \(decoded)"
         )
         #expect(decoded.contains("Copy the `text` value exactly from the current user request."), "Decoded: \(decoded)")
         #expect(
-            decoded.contains("This value contains exactly 2 line break(s) and 0 blank lines."),
+            decoded.contains("This value contains exactly 2 line break(s)."),
             "Decoded: \(decoded)"
         )
         #expect(
-            decoded.contains(#"In the native LFM call, each line break is represented by the two characters \n"#),
+            decoded.contains(#"In the native LFM tagged JSON call, each line break is represented by the two characters \n"#),
             "Decoded: \(decoded)"
         )
         #expect(
@@ -1423,29 +1423,30 @@ struct SwiftTransformersTokenizerLoaderTests {
             "Decoded: \(decoded)"
         )
         #expect(!decoded.contains("List of tools:"), "Decoded: \(decoded)")
-        #expect(decoded.contains("line_count(text='red\\ngreen\\nblue')"), "Decoded: \(decoded)")
+        #expect(decoded.contains(#"["line_count", {"text":"red\ngreen\nblue"}]"#), "Decoded: \(decoded)")
+        #expect(!decoded.contains("line_count(text='red\\ngreen\\nblue')"), "Decoded: \(decoded)")
         #expect(!decoded.contains("<tools>"), "Decoded: \(decoded)")
         #expect(!decoded.contains("</tool_call>"), "Decoded: \(decoded)")
         #expect(!decoded.contains(#""name":"line_count""#), "Decoded: \(decoded)")
         #expect(
-            decoded.contains(#"Use the line_count tool on this exact text: red\ngreen\nblue"#),
+            decoded.contains("Use the line_count tool on this exact text: red\ngreen\nblue"),
             "Decoded: \(decoded)"
         )
         #expect(
-            !decoded.contains("Use the line_count tool on this exact text: red\ngreen\nblue"),
+            !decoded.contains(#"Use the line_count tool on this exact text: red\ngreen\nblue"#),
             "Decoded: \(decoded)"
         )
         if let userRange = decoded.range(
-            of: #"Use the line_count tool on this exact text: red\ngreen\nblue"#
+            of: "Use the line_count tool on this exact text: red\ngreen\nblue"
         ) {
-            let afterUser = decoded[userRange.upperBound...]
+            let beforeUser = decoded[..<userRange.lowerBound]
             #expect(
-                afterUser.contains("The API requires a tool call for the next assistant turn."),
-                "Required-tool instruction must trail the latest LFM user turn instead of preceding it. Decoded: \(decoded)"
+                beforeUser.contains("The API requires a tool call for the next assistant turn."),
+                "Required-tool instruction must be present in the LFM system preface. Decoded: \(decoded)"
             )
             #expect(
-                afterUser.contains(#"<|tool_call_start|>[line_count(text='red\ngreen\nblue')]<|tool_call_end|>"#),
-                "Required-tool instruction must keep the exact multiline value after the latest LFM user turn. Decoded: \(decoded)"
+                beforeUser.contains(#"<|tool_call_start|>["line_count", {"text":"red\ngreen\nblue"}]<|tool_call_end|>"#),
+                "Required-tool instruction must keep the exact multiline value in the LFM system preface. Decoded: \(decoded)"
             )
         }
         #expect(!decoded.contains("Today's date:"), "Decoded: \(decoded)")

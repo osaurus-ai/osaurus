@@ -120,7 +120,7 @@ public final class FolderContextService: ObservableObject {
                 let manifest = readManifest(url, projectType: projectType)
                 let isGitRepo = checkIsGitRepo(url)
                 let contextFiles = readContextFiles(url)
-                let detectedExtensions = scanForKnownExtensions(
+                let detectedExtensions = Self.scanForKnownExtensions(
                     url,
                     ignorePatterns: projectType.ignorePatterns
                 )
@@ -159,7 +159,7 @@ public final class FolderContextService: ObservableObject {
     /// into `.git` / `node_modules` / `.build` looking for spreadsheets
     /// that the agent would never see anyway. Hidden files are skipped
     /// for the same reason.
-    nonisolated private func scanForKnownExtensions(
+    nonisolated internal static func scanForKnownExtensions(
         _ url: URL,
         ignorePatterns: [String]
     ) -> Set<String> {
@@ -335,7 +335,7 @@ public final class FolderContextService: ObservableObject {
     // MARK: - File Tree Building
 
     /// Check if a filename matches any ignore pattern (wildcard or exact)
-    nonisolated private func shouldIgnore(_ name: String, patterns: [String]) -> Bool {
+    nonisolated private static func shouldIgnore(_ name: String, patterns: [String]) -> Bool {
         for pattern in patterns {
             if pattern.contains("*") {
                 let regex = pattern.replacingOccurrences(of: ".", with: "\\.")
@@ -378,7 +378,7 @@ public final class FolderContextService: ObservableObject {
 
             // Filter out ignored items first
             let visible = contents.filter {
-                !shouldIgnore($0.lastPathComponent, patterns: patterns)
+                !Self.shouldIgnore($0.lastPathComponent, patterns: patterns)
             }
 
             // Sort: directories first, then files, both alphabetically
@@ -479,7 +479,7 @@ public final class FolderContextService: ObservableObject {
                 includingPropertiesForKeys: nil,
                 options: [.skipsHiddenFiles]
             )) ?? []
-        return subContents.filter { !shouldIgnore($0.lastPathComponent, patterns: patterns) }.count
+        return subContents.filter { !Self.shouldIgnore($0.lastPathComponent, patterns: patterns) }.count
     }
 
     /// Compute adaptive max depth based on top-level item count.
@@ -526,7 +526,7 @@ public final class FolderContextService: ObservableObject {
 
         for case let fileURL as URL in enumerator {
             let name = fileURL.lastPathComponent
-            if shouldIgnore(name, patterns: patterns) {
+            if Self.shouldIgnore(name, patterns: patterns) {
                 enumerator.skipDescendants()
                 continue
             }
