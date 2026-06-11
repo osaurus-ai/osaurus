@@ -226,42 +226,52 @@ struct MLXModel: Identifiable, Codable {
     /// that need a freshness guarantee (e.g. immediately after a manual
     /// file mutation) can bypass the cache.
     func computeIsDownloadedFromDisk() -> Bool {
-        let fileManager = FileManager.default
         let directory = localDirectory
 
-        func exists(_ name: String) -> Bool {
-            fileManager.fileExists(atPath: directory.appendingPathComponent(name).path)
+        // Enumerate the bundle directory once and test membership against the
+        // resulting set, rather than issuing a `fileExists` probe per
+        // candidate filename. The previous approach could fire well over 250
+        // `lstat` syscalls on a cache miss — the sharded-weights check alone
+        // probed shard counts 2...256 — and `isDownloaded` is read straight
+        // from SwiftUI body getters, enough to trip the main-thread hang
+        // watchdog on a cold or slow disk.
+        guard
+            let names = try? FileManager.default.contentsOfDirectory(atPath: directory.path)
+        else {
+            return false
         }
+        let entries = Set(names)
 
-        guard exists("config.json") else { return false }
+        guard entries.contains("config.json") else { return false }
 
-        let hasTokenizerJSON = exists("tokenizer.json")
-        let hasBPE = exists("merges.txt") && (exists("vocab.json") || exists("vocab.txt"))
-        let hasSentencePiece = exists("tokenizer.model") || exists("spiece.model")
+        let hasTokenizerJSON = entries.contains("tokenizer.json")
+        let hasBPE =
+            entries.contains("merges.txt")
+            && (entries.contains("vocab.json") || entries.contains("vocab.txt"))
+        let hasSentencePiece =
+            entries.contains("tokenizer.model") || entries.contains("spiece.model")
         let hasTokenizerAssets = hasTokenizerJSON || hasBPE || hasSentencePiece
         guard hasTokenizerAssets else { return false }
 
-        let directWeightSentinels = [
+        let directWeightSentinels: Set<String> = [
             "model.safetensors",
             "weights.safetensors",
             "model-00001-of-00001.safetensors",
             "weights-00001-of-00001.safetensors",
         ]
-        if directWeightSentinels.contains(where: exists) {
+        if !entries.isDisjoint(with: directWeightSentinels) {
             return true
         }
-        if exists("model.safetensors.index.json")
-            || exists("pytorch_model.safetensors.index.json")
+        if entries.contains("model.safetensors.index.json")
+            || entries.contains("pytorch_model.safetensors.index.json")
         {
             return true
         }
-        for shardCount in 2 ... 256 {
-            let candidate = String(format: "model-00001-of-%05d.safetensors", shardCount)
-            if exists(candidate) {
-                return true
-            }
+        // Any first shard of a multi-file safetensors export
+        // (model-00001-of-NNNNN.safetensors) is sufficient proof of weights.
+        return entries.contains { name in
+            name.hasPrefix("model-00001-of-") && name.hasSuffix(".safetensors")
         }
-        return false
     }
 
     /// Approximate download timestamp based on directory creation/modification time
