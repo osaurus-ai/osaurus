@@ -128,16 +128,26 @@ fi
 
 if [[ -f "$TOKENIZER_MACROS" ]]; then
   pass "SwiftPM checkout HuggingFaceIntegrationMacros.swift exists"
-  if rg -Fq 'let gemmaRequiredToolChoice' "$TOKENIZER_MACROS" \
-    && rg -Fq 'chat-template required tools -> Gemma4WithTools fallback engaged' "$TOKENIZER_MACROS" \
+  if rg -Fq 'let gemmaToolSchemasPresent' "$TOKENIZER_MACROS" \
+    && rg -Fq 'chat-template tools -> Gemma4WithTools fallback engaged' "$TOKENIZER_MACROS" \
     && rg -Fq 'MLXLMCommon.ChatTemplateFallbacks.gemma4WithTools' "$TOKENIZER_MACROS"; then
-    pass "Gemma4 required tool_choice routes through explicit Gemma fallback"
+    pass "Gemma4 tool schemas route through explicit Gemma fallback"
   else
-    fail_msg "Gemma4 required tool_choice does not route through explicit Gemma fallback"
+    fail_msg "Gemma4 tool schemas do not route through explicit Gemma fallback"
   fi
 else
   warn "SwiftPM vmlx tokenizer macro source missing; cannot inspect Gemma4 required-tool template routing"
   fail=1
+fi
+
+if [[ -f "$FALLBACKS" ]] && [[ -f "$TOKENIZER_MACROS" ]]; then
+  if rg -Fq "additionalContext['tool_choice'] == 'required'" "$FALLBACKS" \
+    && rg -Fq 'render_required_tool_choice_instruction' "$FALLBACKS" \
+    && rg -Fq 'Required tool_choice must not inject a synthetic prompt directive' "$CHECKOUT/Tests/MLXLMTests/Gemma4ChatTemplateProbeTests.swift"; then
+    pass "Gemma4 required tool_choice is handled inside fallback without synthetic prompt directive"
+  else
+    fail_msg "Gemma4 required tool_choice fallback contract is missing or untested"
+  fi
 fi
 
 if [[ -f "$VLM" ]]; then

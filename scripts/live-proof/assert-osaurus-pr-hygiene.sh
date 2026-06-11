@@ -149,14 +149,16 @@ reject_status_pattern '(^|\s)(\.build|DerivedData|build/|\.DS_Store|.*\.xcuserst
 echo "--- required PR files ---"
 if git -C "$ROOT" rev-parse --verify origin/main >/dev/null 2>&1; then
   agents_diff="$(git -C "$ROOT" diff --unified=0 origin/main...HEAD -- AGENTS.md || true)"
-  if [[ -n "$agents_diff" ]] \
-    && ! printf '%s\n' "$agents_diff" \
-      | rg -q 'Do not spawn recursive local "agent" workers, Python subagents, or delegated' \
-    && ! printf '%s\n' "$agents_diff" \
-      | rg -q 'Do not use Python or shell wrappers as an orchestration layer'; then
-    fail_msg "AGENTS.md contains unrelated PR-only agent rules; keep agent policy local"
-  elif [[ -n "$agents_diff" ]]; then
-    pass "AGENTS.md delta is limited to explicit no-recursive-agent release rule"
+  if [[ -n "$agents_diff" ]]; then
+    unexpected_agent_bullets="$(printf '%s\n' "$agents_diff" \
+      | rg '^\+[[:space:]]*-' \
+      | rg -v '^\+[[:space:]]*-[[:space:]]*(Never add fake guards|Reasoning fixes must preserve|Memory limits must apply|Server settings are part of runtime proof|Tool, memory, and cache setting proof must exercise|Do not spawn recursive local "agent" workers)' || true)"
+    if [[ -n "$unexpected_agent_bullets" ]]; then
+      echo "$unexpected_agent_bullets" >&2
+      fail_msg "AGENTS.md contains unexpected PR-only agent rules; keep agent policy local"
+    else
+      pass "AGENTS.md delta is limited to explicit release proof/no-fake/no-recursive-agent rules"
+    fi
   else
     pass "AGENTS.md has no PR delta"
   fi
