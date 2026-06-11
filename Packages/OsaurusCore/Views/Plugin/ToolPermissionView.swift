@@ -132,12 +132,14 @@ struct ToolPermissionView: View {
         }
         .environment(\.theme, themeManager.currentTheme)
         .themedAlert(
-            "Always Allow \"\(toolName)\"?",
+            L("Always Allow \"\(toolName)\"?"),
             isPresented: $showAlwaysAllowConfirm,
             message:
-                "This tool will be automatically allowed to run without prompting in the future. You can change this in the Tools settings.",
-            primaryButton: .primary("Always Allow") { onAlwaysAllow() },
-            secondaryButton: .cancel("Cancel")
+                L(
+                    "This tool will be automatically allowed to run without prompting in the future. You can change this in the Tools settings."
+                ),
+            primaryButton: .primary(L("Always Allow")) { onAlwaysAllow() },
+            secondaryButton: .cancel(L("Cancel"))
         )
         .themedAlertScope(alertScope)
         .overlay(ThemedAlertHost(scope: alertScope))

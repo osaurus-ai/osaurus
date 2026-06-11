@@ -2282,7 +2282,8 @@ public actor ModelRuntime {
         baseLoadConfiguration: LoadConfiguration,
         inspectBundleFacts: Bool
     ) -> VMLXResolvedMemorySafetyPlan {
-        let bundleFacts = inspectBundleFacts
+        let bundleFacts =
+            inspectBundleFacts
             ? LoadBundleFacts.inspect(bundleURL: modelDirectory)
             : nil
         let plan = settings.resolvedMemorySafetyPlan(

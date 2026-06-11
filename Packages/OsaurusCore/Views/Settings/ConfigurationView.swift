@@ -1014,7 +1014,7 @@ struct ConfigurationView: View {
             // RuntimeConfig invalidation flow.
         }
 
-        showSuccess("Settings saved successfully")
+        showSuccess(L("Settings saved successfully"))
     }
 
     // MARK: - Core Model Picker

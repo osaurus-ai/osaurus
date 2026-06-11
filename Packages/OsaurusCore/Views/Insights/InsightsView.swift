@@ -70,11 +70,11 @@ struct InsightsView: View {
             applyPendingFocus(newValue)
         }
         .themedAlert(
-            "Clear All Logs",
+            L("Clear All Logs"),
             isPresented: $showClearConfirmation,
-            message: "Are you sure you want to clear all request logs? This action cannot be undone.",
-            primaryButton: .destructive("Clear") { insightsService.clear() },
-            secondaryButton: .cancel("Cancel")
+            message: L("Are you sure you want to clear all request logs? This action cannot be undone."),
+            primaryButton: .destructive(L("Clear")) { insightsService.clear() },
+            secondaryButton: .cancel(L("Cancel"))
         )
     }
 

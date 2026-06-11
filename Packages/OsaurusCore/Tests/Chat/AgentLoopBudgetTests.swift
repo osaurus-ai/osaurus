@@ -26,20 +26,20 @@ struct AgentLoopBudgetTests {
     ) -> ContextBreakdown {
         var ctx: [ContextBreakdown.Entry] = []
         if system > 0 {
-            ctx.append(.init(id: "platform", label: "Platform", tokens: system, tint: .indigo))
+            ctx.append(.init(id: "platform", label: L("Platform"), tokens: system, tint: .indigo))
         }
         if tools > 0 {
-            ctx.append(.init(id: "tools", label: "Tools", tokens: tools, tint: .orange))
+            ctx.append(.init(id: "tools", label: L("Tools"), tokens: tools, tint: .orange))
         }
         var msgs: [ContextBreakdown.Entry] = []
         if conversation > 0 {
-            msgs.append(.init(id: "conversation", label: "Conversation", tokens: conversation, tint: .gray))
+            msgs.append(.init(id: "conversation", label: L("Conversation"), tokens: conversation, tint: .gray))
         }
         if input > 0 {
-            msgs.append(.init(id: "input", label: "Input", tokens: input, tint: .cyan))
+            msgs.append(.init(id: "input", label: L("Input"), tokens: input, tint: .cyan))
         }
         if output > 0 {
-            msgs.append(.init(id: "output", label: "Output", tokens: output, tint: .green))
+            msgs.append(.init(id: "output", label: L("Output"), tokens: output, tint: .green))
         }
         return ContextBreakdown(context: ctx, messages: msgs, disable: nil)
     }

@@ -70,10 +70,10 @@ public enum ClaudePluginArtifactKind: CaseIterable, Sendable {
     /// instead of an abbreviation.
     public var titlePlural: String {
         switch self {
-        case .skill: return "Skills"
-        case .schedule: return "Schedules"
-        case .command: return "Slash commands"
-        case .mcp: return "MCP providers"
+        case .skill: return L("Skills")
+        case .schedule: return L("Schedules")
+        case .command: return L("Slash commands")
+        case .mcp: return L("MCP providers")
         }
     }
 }

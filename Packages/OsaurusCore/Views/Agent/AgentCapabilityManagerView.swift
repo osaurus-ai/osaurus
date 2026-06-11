@@ -46,11 +46,11 @@ enum CapabilitySource: Hashable {
 
     var displayName: String {
         switch self {
-        case .builtIn: return "Built-in"
+        case .builtIn: return L("Built-in")
         case .plugin(_, let name): return name
         case .mcpProvider(let name): return name
         case .sandboxPlugin(let pluginId): return pluginId
-        case .standaloneSkills: return "Standalone Skills"
+        case .standaloneSkills: return L("Standalone Skills")
         }
     }
 
@@ -86,10 +86,10 @@ enum CapabilityFilter: String, CaseIterable, Identifiable {
 
     var label: String {
         switch self {
-        case .all: return "All"
-        case .enabled: return "Enabled"
-        case .toolsOnly: return "Tools"
-        case .skillsOnly: return "Skills"
+        case .all: return L("All")
+        case .enabled: return L("Enabled")
+        case .toolsOnly: return L("Tools")
+        case .skillsOnly: return L("Skills")
         }
     }
 }

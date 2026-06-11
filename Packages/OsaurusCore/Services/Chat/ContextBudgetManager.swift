@@ -95,18 +95,18 @@ public struct ContextBreakdown: Equatable, Sendable {
             .filter { $0.estimatedTokens > 0 }
             .map { Entry(id: $0.id, label: $0.label, tokens: $0.estimatedTokens, tint: tint(for: $0.id)) }
         if memoryTokens > 0 {
-            ctx.append(Entry(id: "memory", label: "Memory", tokens: memoryTokens, tint: tint(for: "memory")))
+            ctx.append(Entry(id: "memory", label: L("Memory"), tokens: memoryTokens, tint: tint(for: "memory")))
         }
         if toolTokens > 0 {
-            ctx.append(Entry(id: "tools", label: "Tools", tokens: toolTokens, tint: .orange))
+            ctx.append(Entry(id: "tools", label: L("Tools"), tokens: toolTokens, tint: .orange))
         }
 
         var msgs: [Entry] = []
         if conversationTokens > 0 {
-            msgs.append(Entry(id: "conversation", label: "Conversation", tokens: conversationTokens, tint: .gray))
+            msgs.append(Entry(id: "conversation", label: L("Conversation"), tokens: conversationTokens, tint: .gray))
         }
-        if inputTokens > 0 { msgs.append(Entry(id: "input", label: "Input", tokens: inputTokens, tint: .cyan)) }
-        if outputTokens > 0 { msgs.append(Entry(id: "output", label: "Output", tokens: outputTokens, tint: .green)) }
+        if inputTokens > 0 { msgs.append(Entry(id: "input", label: L("Input"), tokens: inputTokens, tint: .cyan)) }
+        if outputTokens > 0 { msgs.append(Entry(id: "output", label: L("Output"), tokens: outputTokens, tint: .green)) }
 
         return ContextBreakdown(context: ctx, messages: msgs, disable: nil)
     }
@@ -670,7 +670,7 @@ final class ContextBudgetTracker {
         if let turn = finishedOutputTurn, turn.role == .assistant {
             cumulativeOutputTokens += ContextBudgetManager.estimateOutputTokens(for: turn)
         }
-        breakdown?.setTokens(for: "conversation", in: \.messages, tokens: tokens, label: "Conversation", tint: .gray)
+        breakdown?.setTokens(for: "conversation", in: \.messages, tokens: tokens, label: L("Conversation"), tint: .gray)
     }
 
     /// Surface history compaction in the context popover: `savedTokens` is
@@ -681,7 +681,7 @@ final class ContextBudgetTracker {
             for: "compacted",
             in: \.messages,
             tokens: savedTokens,
-            label: "Compacted (saved)",
+            label: L("Compacted (saved)"),
             tint: .teal
         )
     }

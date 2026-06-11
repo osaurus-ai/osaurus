@@ -35,20 +35,20 @@ enum ServerSettingsSection: String, CaseIterable, Hashable, Identifiable {
     /// User-facing row title.
     var title: String {
         switch self {
-        case .connection: return "Connection"
-        case .globalProxy: return "Global Proxy"
-        case .authentication: return "Authentication"
-        case .sampling: return "Sampling Defaults"
-        case .concurrency: return "Concurrency & Batching"
-        case .cache: return "Cache"
-        case .memorySafety: return "Memory Safety"
-        case .speculative: return "Speculative Decoding"
-        case .liveActivity: return "Live Activity"
-        case .multimodal: return "Multimodal"
-        case .tools: return "Tools & Templates"
-        case .modelMemory: return "Model Memory"
-        case .power: return "Power & Sleep"
-        case .requestLimits: return "Request Limits"
+        case .connection: return L("Connection")
+        case .globalProxy: return L("Global Proxy")
+        case .authentication: return L("Authentication")
+        case .sampling: return L("Sampling Defaults")
+        case .concurrency: return L("Concurrency & Batching")
+        case .cache: return L("Cache")
+        case .memorySafety: return L("Memory Safety")
+        case .speculative: return L("Speculative Decoding")
+        case .liveActivity: return L("Live Activity")
+        case .multimodal: return L("Multimodal")
+        case .tools: return L("Tools & Templates")
+        case .modelMemory: return L("Model Memory")
+        case .power: return L("Power & Sleep")
+        case .requestLimits: return L("Request Limits")
         }
     }
 
@@ -99,11 +99,11 @@ enum ServerSettingsSectionGroup: String, CaseIterable, Hashable {
 
     var title: String {
         switch self {
-        case .server: return "Server"
-        case .generation: return "Generation"
-        case .performance: return "Performance"
-        case .capabilities: return "Capabilities"
-        case .lifecycle: return "Lifecycle"
+        case .server: return L("Server")
+        case .generation: return L("Generation")
+        case .performance: return L("Performance")
+        case .capabilities: return L("Capabilities")
+        case .lifecycle: return L("Lifecycle")
         }
     }
 

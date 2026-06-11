@@ -1208,15 +1208,15 @@ private struct PluginCard: View {
     @ViewBuilder
     private var statusBadge: some View {
         if plugin.hasLoadError {
-            StatusCapsuleBadge(icon: "exclamationmark.triangle.fill", text: "Error", color: .red)
+            StatusCapsuleBadge(icon: "exclamationmark.triangle.fill", text: L("Error"), color: .red)
         } else if hasMissingSecrets {
-            StatusCapsuleBadge(icon: "key.fill", text: "Key Required", color: theme.warningColor)
+            StatusCapsuleBadge(icon: "key.fill", text: L("Key Required"), color: theme.warningColor)
         } else if hasMissingPermissions {
-            StatusCapsuleBadge(icon: "lock.shield", text: "Permission", color: theme.warningColor)
+            StatusCapsuleBadge(icon: "lock.shield", text: L("Permission"), color: theme.warningColor)
         } else if plugin.hasUpdate {
-            StatusCapsuleBadge(icon: "arrow.up.circle.fill", text: "Update", color: .orange)
+            StatusCapsuleBadge(icon: "arrow.up.circle.fill", text: L("Update"), color: .orange)
         } else if plugin.isInstalled {
-            StatusCapsuleBadge(icon: "checkmark.circle.fill", text: "Installed", color: .green)
+            StatusCapsuleBadge(icon: "checkmark.circle.fill", text: L("Installed"), color: .green)
         }
     }
 
@@ -1649,14 +1649,14 @@ private struct PluginDetailView: View {
                         let toolCount = caps.tools?.count ?? 0
                         let skillCount = caps.skills?.count ?? 0
                         if toolCount > 0 {
-                            heroStatBadge(icon: "wrench.and.screwdriver", text: "\(toolCount) tools", color: .orange)
+                            heroStatBadge(icon: "wrench.and.screwdriver", text: L("\(toolCount) tools"), color: .orange)
                         }
                         if skillCount > 0 {
-                            heroStatBadge(icon: "lightbulb", text: "\(skillCount) skills", color: .cyan)
+                            heroStatBadge(icon: "lightbulb", text: L("\(skillCount) skills"), color: .cyan)
                         }
                     }
                     if loadedPlugin?.webConfig != nil {
-                        heroStatBadge(icon: "globe", text: "Web App", color: .purple)
+                        heroStatBadge(icon: "globe", text: L("Web App"), color: .purple)
                     }
                 }
             }
@@ -1938,7 +1938,7 @@ private struct PluginDetailView: View {
     // MARK: - README Section
 
     private var readmeSection: some View {
-        detailSection(title: "README", icon: "doc.text.fill") {
+        detailSection(title: L("README"), icon: "doc.text.fill") {
             if let content = readmeContent {
                 MarkdownMessageView(text: content, baseWidth: 600)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -1961,7 +1961,7 @@ private struct PluginDetailView: View {
         let specTools = plugin.capabilities?.tools ?? []
         let specSkills = plugin.capabilities?.skills ?? []
         if !specTools.isEmpty || !specSkills.isEmpty {
-            detailSection(title: "Capabilities", icon: "wrench.and.screwdriver.fill") {
+            detailSection(title: L("Capabilities"), icon: "wrench.and.screwdriver.fill") {
                 PluginProvidesSummary(tools: specTools, skills: specSkills)
             }
         }
@@ -1972,7 +1972,7 @@ private struct PluginDetailView: View {
     @ViewBuilder
     private var routesSection: some View {
         if let loaded = loadedPlugin, !loaded.routes.isEmpty {
-            detailSection(title: "HTTP Routes", icon: "arrow.left.arrow.right") {
+            detailSection(title: L("HTTP Routes"), icon: "arrow.left.arrow.right") {
                 PluginRoutesSummary(pluginId: plugin.pluginId, routes: loaded.routes)
             }
         }
@@ -1981,7 +1981,7 @@ private struct PluginDetailView: View {
     // MARK: - Changelog Section
 
     private var changelogSection: some View {
-        detailSection(title: "Changelog", icon: "clock.arrow.circlepath") {
+        detailSection(title: L("Changelog"), icon: "clock.arrow.circlepath") {
             if let content = changelogContent {
                 ScrollView {
                     Text(content)
@@ -2003,7 +2003,7 @@ private struct PluginDetailView: View {
             let links = loaded.plugin.manifest.docs?.links,
             !links.isEmpty
         {
-            detailSection(title: "Links", icon: "link") {
+            detailSection(title: L("Links"), icon: "link") {
                 HStack(spacing: 12) {
                     ForEach(links, id: \.url) { link in
                         Button {

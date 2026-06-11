@@ -45,12 +45,12 @@ public struct SystemPromptComposer: Sendable {
         append(
             .static(
                 id: "platform",
-                label: "Platform",
+                label: L("Platform"),
                 content: SystemPromptTemplates.platformIdentity
             )
         )
         let effective = SystemPromptTemplates.effectivePersona(systemPrompt)
-        append(.static(id: "persona", label: "Persona", content: effective))
+        append(.static(id: "persona", label: L("Persona"), content: effective))
     }
 
     // MARK: - Memory Assembly
@@ -682,7 +682,7 @@ public struct SystemPromptComposer: Sendable {
             composer.append(
                 .static(
                     id: "selfImprovement",
-                    label: "Self-Improvement",
+                    label: L("Self-Improvement"),
                     content: SystemPromptTemplates.selfImprovementGuidance(
                         canCreatePlugins: snapshot.canCreatePlugins
                     )
@@ -707,7 +707,7 @@ public struct SystemPromptComposer: Sendable {
             composer.append(
                 .static(
                     id: "agentDB",
-                    label: "Agent DB",
+                    label: L("Agent DB"),
                     content: OnboardingPrompt.block
                 )
             )
@@ -735,7 +735,7 @@ public struct SystemPromptComposer: Sendable {
             composer.append(
                 .static(
                     id: "modelFamilyGuidance",
-                    label: "Model Family Guidance",
+                    label: L("Model Family Guidance"),
                     content: familyGuidance
                 )
             )
@@ -754,7 +754,7 @@ public struct SystemPromptComposer: Sendable {
             composer.append(
                 .static(
                     id: "grounding",
-                    label: "Grounding",
+                    label: L("Grounding"),
                     content: SystemPromptTemplates.groundingDirective(
                         discoveryAvailable: resolvedNames.contains("capabilities_discover")
                     )
@@ -773,7 +773,7 @@ public struct SystemPromptComposer: Sendable {
             composer.append(
                 .static(
                     id: "codeStyle",
-                    label: "Code Style",
+                    label: L("Code Style"),
                     content: SystemPromptTemplates.codeStyleGuidance
                 )
             )
@@ -784,7 +784,7 @@ public struct SystemPromptComposer: Sendable {
             composer.append(
                 .static(
                     id: "riskAware",
-                    label: "Risk-Aware Actions",
+                    label: L("Risk-Aware Actions"),
                     content: SystemPromptTemplates.riskAwareGuidance
                 )
             )
@@ -800,7 +800,7 @@ public struct SystemPromptComposer: Sendable {
             composer.append(
                 .static(
                     id: "secretHandling",
-                    label: "Secret Handling",
+                    label: L("Secret Handling"),
                     content: SystemPromptTemplates.secretHandlingGuidance
                 )
             )
@@ -821,7 +821,7 @@ public struct SystemPromptComposer: Sendable {
             composer.append(
                 .static(
                     id: "agentLoopGuidance",
-                    label: "Agent Loop",
+                    label: L("Agent Loop"),
                     content: SystemPromptTemplates.agentLoopGuidance
                 )
             )
@@ -847,7 +847,7 @@ public struct SystemPromptComposer: Sendable {
             composer.append(
                 .static(
                     id: "sandbox",
-                    label: "Chat Sandbox",
+                    label: L("Chat Sandbox"),
                     content: SystemPromptTemplates.sandbox(
                         home: sandboxHome,
                         hostReadCombined: executionMode.hostReadContext != nil,
@@ -880,7 +880,7 @@ public struct SystemPromptComposer: Sendable {
                 composer.append(
                     .static(
                         id: "combinedHostRead",
-                        label: "Host Workspace (read-only)",
+                        label: L("Host Workspace (read-only)"),
                         content: SystemPromptTemplates.combinedHostRead(
                             from: hostRead,
                             allowSecretReads: snapshot.autonomousConfig?.allowHostSecretReads ?? false
@@ -892,7 +892,7 @@ public struct SystemPromptComposer: Sendable {
             composer.append(
                 .static(
                     id: "folderContext",
-                    label: "Working Directory",
+                    label: L("Working Directory"),
                     content: SystemPromptTemplates.folderContext(from: folder)
                 )
             )
@@ -924,7 +924,7 @@ public struct SystemPromptComposer: Sendable {
             composer.append(
                 .static(
                     id: "capabilityNudge",
-                    label: "Capability Discovery",
+                    label: L("Capability Discovery"),
                     content: nudge
                 )
             )
@@ -952,14 +952,14 @@ public struct SystemPromptComposer: Sendable {
             composer.append(
                 .static(
                     id: "enabledManifest",
-                    label: "Enabled Capabilities",
+                    label: L("Enabled Capabilities"),
                     content: manifestSection
                 )
             )
             composer.append(
                 .static(
                     id: "skillsGovern",
-                    label: "Skills that govern tool groups",
+                    label: L("Skills that govern tool groups"),
                     content: SystemPromptTemplates.skillsGovernToolGroups
                 )
             )
@@ -999,7 +999,7 @@ public struct SystemPromptComposer: Sendable {
             composer.append(
                 .static(
                     id: "pluginCreator",
-                    label: "Plugin Creator",
+                    label: L("Plugin Creator"),
                     content: PluginCreatorGate.section(
                         instructions: SystemPromptTemplates.pluginCreatorInstructions
                     )
@@ -1020,7 +1020,7 @@ public struct SystemPromptComposer: Sendable {
             composer.append(
                 .dynamic(
                     id: "agentDBSchema",
-                    label: "Agent DB Schema",
+                    label: L("Agent DB Schema"),
                     content: agentDBSchemaSection
                 )
             )
@@ -1029,7 +1029,7 @@ public struct SystemPromptComposer: Sendable {
             composer.append(
                 .dynamic(
                     id: "sandboxState",
-                    label: "Sandbox State",
+                    label: L("Sandbox State"),
                     content: sandboxStateSection
                 )
             )
@@ -1045,7 +1045,7 @@ public struct SystemPromptComposer: Sendable {
             composer.append(
                 .dynamic(
                     id: "sandboxUnavailable",
-                    label: "Sandbox Unavailable",
+                    label: L("Sandbox Unavailable"),
                     content: Self.sandboxUnavailableNotice(reason: reason)
                 )
             )

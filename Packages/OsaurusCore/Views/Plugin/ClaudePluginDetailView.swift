@@ -565,20 +565,20 @@ struct ClaudePluginDetailView: View {
             if declared > 0 {
                 switch kind {
                 case .skill:
-                    return "No skills imported; \(declared) declared."
+                    return L("No skills imported; \(declared) declared.")
                 case .schedule:
-                    return "No schedules imported; \(declared) declared."
+                    return L("No schedules imported; \(declared) declared.")
                 case .command:
-                    return "No slash commands imported; \(declared) declared."
+                    return L("No slash commands imported; \(declared) declared.")
                 case .mcp:
-                    return "No MCP providers imported; \(declared) declared."
+                    return L("No MCP providers imported; \(declared) declared.")
                 }
             } else {
                 switch kind {
-                case .skill: return "No skills shipped with this plugin."
-                case .schedule: return "No schedules shipped with this plugin."
-                case .command: return "No slash commands shipped with this plugin."
-                case .mcp: return "No MCP providers shipped with this plugin."
+                case .skill: return L("No skills shipped with this plugin.")
+                case .schedule: return L("No schedules shipped with this plugin.")
+                case .command: return L("No slash commands shipped with this plugin.")
+                case .mcp: return L("No MCP providers shipped with this plugin.")
                 }
             }
         }()
