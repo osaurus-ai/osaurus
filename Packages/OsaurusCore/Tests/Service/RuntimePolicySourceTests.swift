@@ -2161,9 +2161,14 @@ struct RuntimePolicySourceTests {
         #expect(manager.contains("MLXModel.localDirectory"))
         #expect(defaults.contains("ModelManager.findInstalledMLXModel(named: modelId)"))
         #expect(defaults.contains("return found.localDirectory"))
+        #expect(defaults.contains("readSmallConfigFile"))
+        #expect(!defaults.contains("Data(contentsOf:"))
         #expect(!defaults.contains("parts.reduce(base)"))
         #expect(reasoning.contains("ModelManager.findInstalledMLXModel(named: modelId)"))
         #expect(reasoning.contains("return found.localDirectory"))
+        #expect(reasoning.contains("readSmallConfigFile"))
+        #expect(!reasoning.contains("Data(contentsOf:"))
+        #expect(!reasoning.contains("String(contentsOf:"))
         #expect(!reasoning.contains("parts.reduce(base)"))
     }
 

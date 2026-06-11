@@ -16,6 +16,7 @@
 //
 
 import Foundation
+import Darwin
 
 enum LocalReasoningCapability {
     struct Capability: Sendable {
@@ -168,9 +169,7 @@ enum LocalReasoningCapability {
     /// `additionalContext` passes it to whatever renderer the model uses.
     static func readJangConfigReasoning(at dir: URL) -> Capability? {
         let url = dir.appendingPathComponent("jang_config.json")
-        guard FileManager.default.fileExists(atPath: url.path),
-            let data = try? Data(contentsOf: url)
-        else {
+        guard let data = readSmallConfigFile(url) else {
             return nil
         }
         return analyzeJangConfig(data: data)
@@ -196,10 +195,9 @@ enum LocalReasoningCapability {
     }
 
     static func readChatTemplate(at dir: URL) -> String? {
-        let fm = FileManager.default
         let jinja = dir.appendingPathComponent("chat_template.jinja")
-        if fm.fileExists(atPath: jinja.path),
-            let s = try? String(contentsOf: jinja, encoding: .utf8)
+        if let data = readSmallConfigFile(jinja),
+            let s = String(data: data, encoding: .utf8)
         {
             return s
         }
@@ -210,8 +208,7 @@ enum LocalReasoningCapability {
             return sidecar
         }
         let tokenizerCfg = dir.appendingPathComponent("tokenizer_config.json")
-        if fm.fileExists(atPath: tokenizerCfg.path),
-            let data = try? Data(contentsOf: tokenizerCfg),
+        if let data = readSmallConfigFile(tokenizerCfg),
             let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         {
             if let tmpl = obj["chat_template"] as? String { return tmpl }
@@ -228,8 +225,7 @@ enum LocalReasoningCapability {
 
     private static func readChatTemplateSidecar(at dir: URL) -> String? {
         let url = dir.appendingPathComponent("chat_template.json")
-        guard FileManager.default.fileExists(atPath: url.path),
-            let data = try? Data(contentsOf: url),
+        guard let data = readSmallConfigFile(url),
             let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
             let template = obj["chat_template"] as? String
         else {
@@ -247,8 +243,7 @@ enum LocalReasoningCapability {
 
     private static func readTokenizerConfigTemplate(at dir: URL) -> String? {
         let tokenizerCfg = dir.appendingPathComponent("tokenizer_config.json")
-        guard FileManager.default.fileExists(atPath: tokenizerCfg.path),
-            let data = try? Data(contentsOf: tokenizerCfg),
+        guard let data = readSmallConfigFile(tokenizerCfg),
             let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else {
             return nil
@@ -261,6 +256,33 @@ enum LocalReasoningCapability {
             return tmpl
         }
         return nil
+    }
+
+    private static func readSmallConfigFile(_ url: URL, maxBytes: Int = 1_048_576) -> Data? {
+        let path = url.path
+        return path.withCString { rawPath in
+            let fd = Darwin.open(rawPath, O_RDONLY | O_CLOEXEC)
+            guard fd >= 0 else { return nil }
+            defer { Darwin.close(fd) }
+
+            var statBuffer = stat()
+            guard Darwin.fstat(fd, &statBuffer) == 0,
+                (statBuffer.st_mode & S_IFMT) == S_IFREG,
+                statBuffer.st_size >= 0,
+                statBuffer.st_size <= maxBytes
+            else {
+                return nil
+            }
+
+            var data = Data(count: Int(statBuffer.st_size))
+            let count = data.count
+            guard count > 0 else { return Data() }
+            let readCount = data.withUnsafeMutableBytes { bytes in
+                Darwin.read(fd, bytes.baseAddress, count)
+            }
+            guard readCount == count else { return nil }
+            return data
+        }
     }
 
     private static func isVisionChatTemplate(_ template: String) -> Bool {
