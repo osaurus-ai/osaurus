@@ -11,7 +11,7 @@ Status: `PARTIAL RELEASE CHECKPOINT`.
 
 Gemma 4 text/chat/tool/cache behavior is usable on the current main app build
 for a checkpoint. Audio/video generation, full all-family Sentry closure, and
-user-mutable memory-safety controls are not complete.
+manual UI-click proof for memory-safety controls are not complete.
 
 Current app proof baseline:
 
@@ -129,7 +129,7 @@ Important display rule:
 
 ## Settings Control Surface
 
-Changed-setting proof is currently `PARTIAL: source/UI path added, live app proof pending`.
+Changed-setting proof is currently `PARTIAL: app/API apply proof passed; manual UI click/save proof pending`.
 
 The app exposes memory-safety status through `/admin/cache-stats.memory_safety`
 and now exposes a Server Settings section that edits
@@ -153,11 +153,26 @@ The Server Settings section persists:
 
 Live proof still must show:
 
-1. The user changes and saves the setting.
+1. The user changes and saves the setting through the Server Settings UI.
 2. `/admin/cache-stats.memory_safety` shows the changed mode/slider.
 3. The next model load uses the changed `load_configuration`.
 4. If a reload is required, the UI says the setting takes effect on next load.
 5. Gemma chat/tool/cache/weird-character proof still passes after the change.
+
+Current PR #1462 app/API proof:
+
+- Artifact root: `.agents/gemma-final/artifacts/memory-safety-apply-pr1462-20260610-220637`
+- Built app: `/Users/eric/Library/Developer/Xcode/DerivedData/osaurus-fknwhdrdztffeoffkagufseezytr/Build/Products/Debug/osaurus.app`
+- Default isolated launch reported Safe Auto through `/admin/cache-stats.memory_safety`:
+  `mode=safe_auto slider=2 load_cap=0.7 allocator_cap=absolute(134217728) max_concurrent=1 kv_cap=65536`.
+- Changed isolated launch reported Strict through `/admin/cache-stats.memory_safety`:
+  `mode=strict slider=3 load_cap=0.6 allocator_cap=absolute(67108864) max_concurrent=1 kv_cap=4096`.
+- Live `gemma-4-e2b-it-qat-mxfp4` chat under the changed Strict plan answered
+  exactly `memory safety applied`, stopped normally, and reported
+  `29.1005` completion token/s for the three-token response.
+- The loaded E2B cache row kept Gemma's expected topology: 15 layers, 3 KV
+  layers, 12 rotating KV layers, disk-backed restore required, block disk
+  enabled, MLXPress disabled, and TurboQuant KV layer count 0.
 
 Do not substitute cache toggles for the memory-safety slider. Cache controls are
 real settings, but they do not prove the memory-safety contract is user
