@@ -310,8 +310,8 @@ struct ModelMediaCapabilitiesMCDCTests {
         #expect(ModelMediaCapabilities.Capabilities.omni.anyMedia)
     }
 
-    @Test("Descriptor marks Gemma4 audio as proof-required, not supported")
-    func descriptor_gemma4AudioProofRequired() {
+    @Test("Descriptor marks Gemma4 audio as runtime-unwired, not supported")
+    func descriptor_gemma4AudioRuntimeUnwired() {
         let descriptor = ModelMediaCapabilities.descriptor(
             modelId: "OsaurusAI/Gemma-4-12B-it-MXFP4"
         )
@@ -320,7 +320,7 @@ struct ModelMediaCapabilitiesMCDCTests {
         #expect(descriptor.image.status == .supported)
         #expect(descriptor.audio.status == .unproven)
         #expect(!descriptor.audio.isUsable)
-        #expect(descriptor.rejectionMessage(for: .audio).contains("live model proof"))
+        #expect(descriptor.rejectionMessage(for: .audio).contains("audio_tower/embed_audio"))
     }
 
     @Test("Descriptor keeps Nemotron Omni audio supported")

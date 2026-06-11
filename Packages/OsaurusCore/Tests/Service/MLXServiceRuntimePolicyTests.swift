@@ -109,7 +109,7 @@ struct MLXServiceRuntimePolicyTests {
         }
     }
 
-    @Test func modelCapabilityRejectsGemma4AudioAsProofRequired() {
+    @Test func modelCapabilityRejectsGemma4AudioAsRuntimeUnwired() {
         let message = ChatMessage(
             role: "user",
             content: "hear this",
@@ -128,11 +128,11 @@ struct MLXServiceRuntimePolicyTests {
                 tools: [],
                 runtime: VMLXServerRuntimeSettings()
             )
-            Issue.record("Gemma4 audio should remain blocked until live proof exists.")
+            Issue.record("Gemma4 audio should remain blocked until vMLX wires the runtime audio path.")
         } catch let error as MLXService.RuntimePolicyError {
             let description = error.errorDescription ?? ""
             #expect(description.contains("Gemma4 audio input is not enabled"))
-            #expect(description.contains("live model proof"))
+            #expect(description.contains("audio_tower/embed_audio"))
         } catch {
             Issue.record("Unexpected error type: \(error)")
         }

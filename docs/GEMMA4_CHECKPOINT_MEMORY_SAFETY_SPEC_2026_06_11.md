@@ -10,17 +10,20 @@ what can be shared in the repo without pretending unproven rows are complete.
 Status: `PARTIAL RELEASE CHECKPOINT`.
 
 Gemma 4 text/chat/tool/cache behavior is usable on the current PR #1465 app
-build for a checkpoint. Audio/video generation and full all-family Sentry
-closure are not complete. Memory-safety controls have API/admin proof on PR
-#1465 and prior manual UI save proof on PR #1462.
+build for a checkpoint. Gemma4 audio generation remains a real runtime gap:
+the bundles advertise `audio_config`/audio modality metadata, but the pinned
+vMLX Gemma4 runtime drops `audio_tower.*` / `embed_audio.*` weights and has no
+audio module wired. Video generation and full all-family Sentry closure are not
+complete. Memory-safety controls have API/admin proof on PR #1465 and prior
+manual UI save proof on PR #1462.
 
 Current PR #1465 proof baseline:
 
 - Osaurus PR: `#1465`
-- Osaurus proof/code commit: `15618727da01b71074626837b414e1d77c5fbe0c`
+- Osaurus proof/code branch: `codex/request-cancel-model-admission` (PR head is authoritative)
 - vMLX Swift pin: `76047f3b4492d4fae316267a30fba55163b1c5cd`
 - GitHub checks: `test-core`, `test-cli`, `swiftlint`, `shellcheck`, and
-  `update_release_draft` were green on the commit above.
+  `update_release_draft` were green on the previous pushed PR head; recheck after each new push.
 - External-root proof after macOS disk access approval:
   `.agents/gemma-final/artifacts/pr1465-external-root-post-disk-approval-vmlx_76047f3-20260611-071401/SUMMARY.json`
 - Post-notification-approval tool/cache proof after macOS disk approval:
@@ -101,8 +104,10 @@ prefix/cache behavior, and kept the server healthy.
 Audio/video are not claimed as generation features. Current live behavior is a
 typed refusal boundary:
 
-- Audio returns HTTP 400: `Gemma4 audio input is not enabled because native audio routing still needs live model proof.`
+- Audio returns HTTP 400: `Gemma4 audio input is not enabled because the pinned vMLX Gemma4 runtime does not wire audio_tower/embed_audio yet.`
 - Video returns HTTP 400 when the bundle does not advertise video.
+- Current root-cause refusal proof artifact:
+  `.agents/gemma-final/artifacts/pr1465-gemma-audio-rootcause-refusal-vmlx_76047f3-20260611-093714/SUMMARY.json`
 
 Reasoning behavior is bundle/API driven:
 
@@ -247,6 +252,9 @@ Allowed behavior:
 
 - Advisory feasibility status.
 - Graceful typed refusal when a strict user-selected policy cannot be satisfied.
+- Graceful typed refusal for Gemma4 audio until the vMLX Gemma4 runtime wires
+  the real audio tower/embed path; do not infer audio support from bundle
+  metadata alone.
 - Clear UI/status warnings when estimates are unknown or over budget.
 - Conservative defaults that preserve model behavior.
 

@@ -419,7 +419,7 @@ public enum ModelMediaCapabilities {
                 modality: .audio,
                 status: .unproven,
                 reason:
-                    "Gemma4 audio input is not enabled because native audio routing still needs live model proof."
+                    "Gemma4 audio input is not enabled because the pinned vMLX Gemma4 runtime does not wire audio_tower/embed_audio yet."
             )
         }
         return ModalityDescriptor(
