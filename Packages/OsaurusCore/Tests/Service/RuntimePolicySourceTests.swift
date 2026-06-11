@@ -2151,6 +2151,22 @@ struct RuntimePolicySourceTests {
         )
     }
 
+    @Test("Local bundle config readers preserve discovered bundle paths")
+    func localBundleConfigReadersPreserveDiscoveredBundlePaths() throws {
+        let defaults = try Self.source("Services/LocalGenerationDefaults.swift")
+        let reasoning = try Self.source("Services/LocalReasoningCapability.swift")
+        let manager = try Self.source("Managers/Model/ModelManager.swift")
+
+        #expect(manager.contains("findInstalledMLXModel(named name: String) -> MLXModel?"))
+        #expect(manager.contains("MLXModel.localDirectory"))
+        #expect(defaults.contains("ModelManager.findInstalledMLXModel(named: modelId)"))
+        #expect(defaults.contains("return found.localDirectory"))
+        #expect(!defaults.contains("parts.reduce(base)"))
+        #expect(reasoning.contains("ModelManager.findInstalledMLXModel(named: modelId)"))
+        #expect(reasoning.contains("return found.localDirectory"))
+        #expect(!reasoning.contains("parts.reduce(base)"))
+    }
+
     @Test("Resident same-model turns do not flash model-loading UI")
     func residentSameModelTurnsDoNotFlashModelLoadingUI() throws {
         let runtime = try Self.source("Services/ModelRuntime.swift")

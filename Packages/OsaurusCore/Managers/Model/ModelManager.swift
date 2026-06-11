@@ -1075,7 +1075,7 @@ extension ModelManager {
 
     /// Find an installed model by user-provided name.
     /// Accepts repo name (case-insensitive) or full id (case-insensitive).
-    nonisolated static func findInstalledModel(named name: String) -> (name: String, id: String)? {
+    nonisolated static func findInstalledMLXModel(named name: String) -> MLXModel? {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
         let models = discoverLocalModels()
@@ -1084,18 +1084,26 @@ extension ModelManager {
         if let match = models.first(where: { m in
             m.id.split(separator: "/").last.map(String.init)?.lowercased() == trimmed.lowercased()
         }) {
-            let repo =
-                match.id.split(separator: "/").last.map(String.init)?.lowercased() ?? trimmed.lowercased()
-            return (repo, match.id)
+            return match
         }
 
         // Try full id match
         if let match = models.first(where: { m in m.id.lowercased() == trimmed.lowercased() }) {
-            let repo =
-                match.id.split(separator: "/").last.map(String.init)?.lowercased() ?? trimmed.lowercased()
-            return (repo, match.id)
+            return match
         }
         return nil
+    }
+
+    /// Find an installed model by user-provided name, returning the canonical
+    /// picker key and model id. Callers that need files inside the bundle must
+    /// use `findInstalledMLXModel(named:)` and `MLXModel.localDirectory` so
+    /// externally-discovered and symlinked bundles keep their real path.
+    nonisolated static func findInstalledModel(named name: String) -> (name: String, id: String)? {
+        guard let match = findInstalledMLXModel(named: name) else { return nil }
+        let repo =
+            match.id.split(separator: "/").last.map(String.init)?.lowercased()
+                ?? name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return (repo, match.id)
     }
 }
 

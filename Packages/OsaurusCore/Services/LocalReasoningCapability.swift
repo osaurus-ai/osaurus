@@ -131,12 +131,10 @@ enum LocalReasoningCapability {
         // `ORG/REPO` id, case-insensitive. Re-implementing the match here was
         // silently returning nil whenever the caller passed a form neither of
         // our candidate heuristics covered.
-        guard let found = ModelManager.findInstalledModel(named: modelId) else {
+        guard let found = ModelManager.findInstalledMLXModel(named: modelId) else {
             return nil
         }
-        let parts = found.id.split(separator: "/").map(String.init)
-        let base = DirectoryPickerService.effectiveModelsDirectory()
-        return parts.reduce(base) { $0.appendingPathComponent($1, isDirectory: true) }
+        return found.localDirectory
     }
 
     /// Read `jang_config.json > chat > reasoning` and surface it as a
