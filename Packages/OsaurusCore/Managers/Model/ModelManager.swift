@@ -1440,6 +1440,8 @@ extension ModelManager {
     private static nonisolated(unsafe) var cachedLocalModels: [MLXModel]?
     private static nonisolated(unsafe) var localModelsScanInFlight = false
     private static nonisolated let localModelsScanWaitLimit: TimeInterval = 10
+    nonisolated(unsafe) static var scanLocalModelsOverrideForTests: ((URL) -> [MLXModel])?
+    nonisolated(unsafe) static var localModelsScanWaitLimitOverrideForTests: TimeInterval?
 
     nonisolated static func invalidateLocalModelsCache() {
         localModelsCacheCondition.lock()
@@ -1484,12 +1486,14 @@ extension ModelManager {
         }
 
         if localModelsScanInFlight {
-            let cached = waitForLocalModelsScan(until: Date().addingTimeInterval(localModelsScanWaitLimit)) ?? []
+            let waitLimit = localModelsScanWaitLimitOverrideForTests ?? localModelsScanWaitLimit
+            let cached = waitForLocalModelsScan(until: Date().addingTimeInterval(waitLimit)) ?? []
             localModelsCacheCondition.unlock()
             return mergeExternalModels(into: cached)
         }
 
-        let deadline = Date().addingTimeInterval(localModelsScanWaitLimit)
+        let waitLimit = localModelsScanWaitLimitOverrideForTests ?? localModelsScanWaitLimit
+        let deadline = Date().addingTimeInterval(waitLimit)
         localModelsScanInFlight = true
         DispatchQueue.global(qos: .utility).async {
             let scanned = scanLocalModels()
@@ -1505,9 +1509,6 @@ extension ModelManager {
             localModelsCacheCondition.unlock()
             return mergeExternalModels(into: cached)
         } else {
-            if cachedLocalModels == nil {
-                cachedLocalModels = []
-            }
             let cached = cachedLocalModels ?? []
             localModelsCacheCondition.unlock()
             return mergeExternalModels(into: cached)
@@ -1526,7 +1527,11 @@ extension ModelManager {
     }
 
     private nonisolated static func scanLocalModels() -> [MLXModel] {
-        return scanLocalModels(at: DirectoryPickerService.effectiveModelsDirectory())
+        let root = DirectoryPickerService.effectiveModelsDirectory()
+        if let override = scanLocalModelsOverrideForTests {
+            return override(root)
+        }
+        return scanLocalModels(at: root)
     }
 
     /// Internal entry point used by tests so they can supply a fixture root.

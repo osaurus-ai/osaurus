@@ -359,6 +359,49 @@ struct ModelManagerTests {
         #expect(detected.map(\.id) == ["Nex-N2-Pro-JANGTQ2"])
     }
 
+    @Test func discoverLocalModels_timeoutDoesNotCacheEmptyResult() async throws {
+        let previousOverride = ModelManager.scanLocalModelsOverrideForTests
+        let previousWait = ModelManager.localModelsScanWaitLimitOverrideForTests
+        let previousExternalOverride = ExternalModelLocator.testRootsOverride
+        let previousRoot = OsaurusPaths.overrideRoot
+        let manifestRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("osu-model-manager-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: manifestRoot, withIntermediateDirectories: true)
+        OsaurusPaths.overrideRoot = manifestRoot
+        ModelManager.invalidateLocalModelsCache()
+        ExternalModelLocator.testRootsOverride = []
+        ExternalModelLocator.invalidateInMemory()
+        ExternalModelLocator.rescan()
+        ModelManager.localModelsScanWaitLimitOverrideForTests = 0.02
+        ModelManager.scanLocalModelsOverrideForTests = { _ in
+            Thread.sleep(forTimeInterval: 0.12)
+            return [
+                MLXModel(
+                    id: "gemma-4-E2B-it-qat-MXFP4",
+                    name: "Gemma 4 E2B",
+                    description: "fixture",
+                    downloadURL: "https://example.invalid/gemma"
+                )
+            ]
+        }
+        defer {
+            ModelManager.scanLocalModelsOverrideForTests = previousOverride
+            ModelManager.localModelsScanWaitLimitOverrideForTests = previousWait
+            ExternalModelLocator.testRootsOverride = previousExternalOverride
+            OsaurusPaths.overrideRoot = previousRoot
+            ExternalModelLocator.invalidateInMemory()
+            ModelManager.invalidateLocalModelsCache()
+            try? FileManager.default.removeItem(at: manifestRoot)
+        }
+
+        let first = ModelManager.discoverLocalModels()
+        #expect(first.isEmpty)
+
+        try await Task.sleep(nanoseconds: 200_000_000)
+        let second = ModelManager.discoverLocalModels()
+        #expect(second.map(\.id) == ["gemma-4-E2B-it-qat-MXFP4"])
+    }
+
     @Test func deleteModel_removesDirectoryAndResetsState() async throws {
         let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
