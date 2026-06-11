@@ -273,7 +273,10 @@ follow-up answered `3 lines were counted.`, a second required tool call after
 history preserved exact args, no parser/protocol markers leaked, and cache
 telemetry showed 9 KV plus 39 rotating layers with disk L2. Artifact:
 `.agents/gemma-final/artifacts/pr1465-mimo-tool-history-fix-live-vmlx_76047f3-20260611-073345/SUMMARY.json`.
-This does not claim MiMo VL/audio/video.
+MiMo image/audio/video requests are also live-proven as typed HTTP 400 refusal
+boundaries that preserve server health and do not load the 79G bundle. Artifact:
+`.agents/gemma-final/artifacts/pr1465-mimo-media-refusal-vmlx_76047f3-20260611-091152/SUMMARY.json`.
+This does not claim MiMo VL/audio/video generation.
 
 Nex N2 remains a follow-up lane. Existing evidence shows useful topology proof
 but slow or blocked rows; do not block the Gemma checkpoint on N2 unless a
