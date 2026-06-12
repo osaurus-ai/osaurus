@@ -134,6 +134,28 @@ struct ToolEnvelopeTests {
         #expect(ToolEnvelope.isError("[TIMEOUT] 30s"))
     }
 
+    /// Detection only scans a bounded head of the payload, so the `ok` marker
+    /// must lead the envelope. A failure with a message far larger than that
+    /// window would otherwise sort `ok` past it (keys are canonically sorted)
+    /// and be mis-read as a non-error — which laundered oversized errors into
+    /// successes at the registry boundary.
+    @Test func isErrorDetectsFailureWithVeryLargeMessage() {
+        let bigMessage = String(repeating: "e", count: 200_000)
+        let json = ToolEnvelope.failure(kind: .executionError, message: bigMessage, tool: "boom")
+        #expect(json.hasPrefix("{\"ok\":false"))
+        #expect(ToolEnvelope.isError(json))
+        #expect(!ToolEnvelope.isSuccess(json))
+    }
+
+    /// Symmetric guard for success envelopes carrying a large payload.
+    @Test func isSuccessDetectsEnvelopeWithVeryLargePayload() {
+        let bigText = String(repeating: "x", count: 200_000)
+        let json = ToolEnvelope.success(tool: "dump", text: bigText)
+        #expect(json.hasPrefix("{\"ok\":true"))
+        #expect(ToolEnvelope.isSuccess(json))
+        #expect(!ToolEnvelope.isError(json))
+    }
+
     @Test func isErrorDetectsLegacyEnvelope() {
         // Legacy `ToolErrorEnvelope` output — now routes through the shim
         // which emits the new shape, but third-party callers that still

@@ -460,36 +460,52 @@ public enum ToolEnvelope {
         }
     }
 
+    /// Serialize `dict` canonically but with `ok` guaranteed as the FIRST key.
+    ///
+    /// `isError`/`isSuccess` detect the envelope from a bounded head window to
+    /// stay O(1) on huge payloads (see `sniffWindow`). With plain `.sortedKeys`
+    /// the `ok` marker sorts after `content`/`message`/`kind`, so a large field
+    /// could push it past that window — which let an oversized failure get
+    /// mis-detected as a success. Forcing `ok` to the front makes the marker
+    /// always sit in the first bytes, restoring detection regardless of size.
+    /// The remaining keys keep their canonical sorted order, so output stays
+    /// deterministic.
+    private static func canonicalJSONLeadingOK(_ dict: [String: Any], ok: Bool) -> String? {
+        var rest = dict
+        rest.removeValue(forKey: "ok")
+        guard
+            let data = try? JSONSerialization.data(
+                withJSONObject: rest,
+                options: .osaurusCanonical
+            ),
+            let restJSON = String(data: data, encoding: .utf8)
+        else { return nil }
+        // `restJSON` is a canonical object string ("{...}" with no `ok`). Splice
+        // the marker to the front: "{" + "\"ok\":<bool>," + <sorted rest>.
+        if restJSON == "{}" { return "{\"ok\":\(ok)}" }
+        return "{\"ok\":\(ok)," + restJSON.dropFirst()
+    }
+
     private static func encodeOrFallbackFailure(
         _ dict: [String: Any],
         kind: Kind,
         message: String
     ) -> String {
-        if let data = try? JSONSerialization.data(
-            withJSONObject: dict,
-            options: .osaurusCanonical
-        ),
-            let json = String(data: data, encoding: .utf8)
-        {
+        if let json = canonicalJSONLeadingOK(dict, ok: false) {
             return json
         }
         // Hand-built fallback so we never return malformed output if the
         // caller passes something exotic. Only `kind` + `message` survive.
         let escaped = escape(message)
         return
-            "{\"kind\":\"\(kind.rawValue)\",\"message\":\"\(escaped)\",\"ok\":false,\"retryable\":\(defaultRetryable(for: kind))}"
+            "{\"ok\":false,\"kind\":\"\(kind.rawValue)\",\"message\":\"\(escaped)\",\"retryable\":\(defaultRetryable(for: kind))}"
     }
 
     private static func encodeOrFallbackSuccess(
         _ dict: [String: Any],
         tool: String?
     ) -> String {
-        if let data = try? JSONSerialization.data(
-            withJSONObject: dict,
-            options: .osaurusCanonical
-        ),
-            let json = String(data: data, encoding: .utf8)
-        {
+        if let json = canonicalJSONLeadingOK(dict, ok: true) {
             return json
         }
         // Fallback should never trigger for well-typed inputs; if it does,
