@@ -108,7 +108,7 @@ Current model capability metadata from local `config.json`:
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `osaurusai--gemma-4-e2b-it-qat-mxfp4` | MXFP4 | `gemma4` | yes | yes | PROVEN | PROVEN | PROVEN | PROVEN | PARTIAL | PROVEN | PROVEN complete / PARTIAL side-effect | PARTIAL 11/17 | TODO | TODO | PARTIAL | PARTIAL |
 | `osaurusai--gemma-4-e2b-it-qat-jang_4m` | JANG_4M | `gemma4` | yes | yes | PROVEN | PROVEN | PROVEN | PROVEN | PARTIAL | PROVEN | PROVEN complete / PARTIAL side-effect | PARTIAL 13/17 | PROVEN API | BLOCKED policy | PROVEN API / TODO UI | PARTIAL |
-| `osaurusai--gemma-4-e4b-it-qat-mxfp4` | MXFP4 | `gemma4` | yes | yes | PROVEN | PROVEN agent | PROVEN agent | PROVEN agent | PARTIAL | TODO | PROVEN forced complete | TODO | TODO | TODO | TODO | PARTIAL |
+| `osaurusai--gemma-4-e4b-it-qat-mxfp4` | MXFP4 | `gemma4` | yes | yes | PROVEN | PROVEN agent | PROVEN agent | PROVEN agent | PARTIAL | TODO | PROVEN forced complete | PARTIAL 15/17 | TODO | TODO | TODO | PARTIAL |
 | `osaurusai--gemma-4-e4b-it-qat-jang_4m` | JANG_4M | `gemma4` | yes | yes | PROVEN | PROVEN agent | PROVEN agent | PROVEN agent | PARTIAL | TODO | PROVEN forced complete | PARTIAL 14/17 | TODO | TODO | TODO | PARTIAL |
 | `osaurusai--gemma-4-12b-it-qat-mxfp4` | MXFP4 | `gemma4_unified` | yes | yes | PROVEN | PROVEN UI+agent | PROVEN UI+agent | PROVEN UI+agent | PROVEN UI+agent | TODO | PARTIAL UI status count | TODO | TODO | TODO | PROVEN API / PARTIAL UI percent | PARTIAL |
 | `osaurusai--gemma-4-12b-it-qat-jang_4m` | JANG_4M | `gemma4_unified` | yes | yes | PROVEN | PARTIAL UI / PROVEN API | PROVEN UI+agent | PROVEN UI+agent | PROVEN UI+agent | TODO | PARTIAL clean auto status tool / no usage | TODO | TODO | TODO | PARTIAL UI / PROVEN API | PARTIAL |
@@ -265,6 +265,29 @@ Current evidence behind non-TODO cells:
   corrupted in several finals, including examples like `reaal-2.xt`,
   `contaitns`, `daota.txt`, and `exshellactly`. The harness root also contains
   88 disk KV safetensor cache entries, about `8.1G` total, with 88 rows in
+  `cache/kv_v2/cache_index.db`; this proves cache material was written during
+  the harness run, but it is not a standalone TTFT/L2-hit proof.
+- Current PR head E4B MXFP4 AgentLoop harness proof on commit
+  `343ca2f2`:
+  `/tmp/osaurus-gemma-proof/pr1469-343ca2f2-harness-e4b-mxfp4-20260612T114705Z/e4b-mxfp4-agentloop.json`
+  records 17 total, 15 passed, 2 failed, 0 skipped, and 0 errored for
+  `osaurusai--gemma-4-e4b-it-qat-mxfp4`. Summary artifact:
+  `/tmp/osaurus-gemma-proof/pr1469-343ca2f2-harness-e4b-mxfp4-20260612T114705Z/e4b-mxfp4-agentloop.summary.json`.
+  The run exercised real Osaurus tools across `capabilities_load`, `clarify`,
+  `complete`, `file_edit`, `file_read`, `file_search`, `file_write`,
+  `share_artifact`, `shell_run`, and `todo`. Failed cases are
+  `duplicate-call-avoidance` and `write-new-file`. `duplicate-call-avoidance`
+  produced the same wrong arithmetic family seen on the JANG_4M row: it read
+  `data.txt` but treated the first line as `1` instead of `41`, returning
+  `10` instead of `50`. `write-new-file` ultimately produced a correct
+  `TODO.md`, but first emitted malformed `file_write` JSON with the checklist
+  text in an argument key, so the row remains a real tool-call quality failure.
+  The JSON text scan found `replacement_count=0` and no `<think>`, raw
+  tool/protocol, U+FFFE, `tool:`, `args:`, or `done:` marker leakage. The row
+  still stays `PARTIAL` because visible ordinary text is corrupted in several
+  finals, including examples like `north outh`, `EcoRROR`, `VERScION`,
+  `exeuted cthe`, and `directocsry`. The harness root contains 75 disk KV
+  safetensor cache entries, about `6.9G` total, with 75 rows in
   `cache/kv_v2/cache_index.db`; this proves cache material was written during
   the harness run, but it is not a standalone TTFT/L2-hit proof.
 - Current PR head release-app proof on commit
