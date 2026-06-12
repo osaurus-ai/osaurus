@@ -4769,7 +4769,22 @@ extension ChatView {
                     return event
                 }
 
-                // Stage 1: Themed alert is up (e.g. "Keep this chat
+                // Stage 1: A transient popover (model picker, model
+                // options, context breakdown, agent picker…) is anchored
+                // to this window. The popover never becomes key here, so
+                // its Esc events land on the chat window and would fall
+                // through to window close. Popover windows attach as
+                // child windows, and the NSPopover sits in the content
+                // view controller's responder chain — performClose keeps
+                // SwiftUI's isPresented binding in sync via the delegate.
+                for child in ourWindow.childWindows ?? [] {
+                    if let popover = child.contentViewController?.nextResponder as? NSPopover {
+                        popover.performClose(nil)
+                        return nil
+                    }
+                }
+
+                // Stage 2: Themed alert is up (e.g. "Keep this chat
                 // running?"). Cancel it instead of re-entering the
                 // close path, which would just re-arm the same alert.
                 // Handled even when the alert has no cancel button so
@@ -4778,7 +4793,7 @@ extension ChatView {
                     return nil
                 }
 
-                // Stage 2: Voice overlay is visible.
+                // Stage 3: Voice overlay is visible.
                 if session.showVoiceOverlay {
                     if SpeechService.shared.isRecording {
                         // Cancel voice input; the overlay hides via the
@@ -4795,7 +4810,7 @@ extension ChatView {
                     return nil
                 }
 
-                // Stage 3: In-chat prompt overlay (clarify / secret).
+                // Stage 4: In-chat prompt overlay (clarify / secret).
                 // Cancel just the prompt, not the window. User-initiated
                 // so clarify keeps its question in the transcript.
                 if let currentPrompt = session.promptQueue.current {
@@ -4804,7 +4819,7 @@ extension ChatView {
                     return nil
                 }
 
-                // Stage 4: A text view that opted into local Esc
+                // Stage 5: A text view that opted into local Esc
                 // handling (inline message editor) has focus — pass the
                 // event through so its `cancelOperation(_:)` cancels the
                 // edit instead of the window closing.
@@ -4814,7 +4829,7 @@ extension ChatView {
                     return event
                 }
 
-                // Stage 5: Inline edit is active but its text view lost
+                // Stage 6: Inline edit is active but its text view lost
                 // focus (user clicked the thread background mid-edit) —
                 // cancel the edit via the imperative hook ChatView
                 // registers in `beginEditingTurn`.
@@ -4823,14 +4838,14 @@ extension ChatView {
                     return nil
                 }
 
-                // Stage 6: Completion banner — dismiss it; the next Esc
+                // Stage 7: Completion banner — dismiss it; the next Esc
                 // closes the window.
                 if session.lastCompletionSummary != nil {
                     session.lastCompletionSummary = nil
                     return nil
                 }
 
-                // Stage 7: Close chat window
+                // Stage 8: Close chat window
                 print("[ChatView] Esc pressed: Closing chat window")
 
                 // Also ensure we cleanup any zombie recording if it exists (hidden but recording)
