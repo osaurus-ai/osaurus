@@ -75,14 +75,14 @@ Current PR #1469 live proof also makes visible-text quality a hard gate.
 Older 12B JANG_4M rows on head `f58bb924` successfully executed the real
 built-in `osaurus_status` tool through `/agents/default/run`, but corrupted
 ordinary text (`saurus_status toool`) in the visible answer. Current head
-`f7deb7ec` adds `started` trace coverage for non-intercept agent tool batches
-and the UI-style auto row returns exact clean visible text
-`f7deb7ec osaurus_status auto proof complete` with `osaurus_status` phases
-`started` and `completed`, no non-ASCII characters, and no protocol/tool marker
-leakage. This is a useful checkpoint, not a full release pass: the named
-forced-tool row still showed visible text corruption, the agent route still
-does not emit usage/prefill telemetry, and every QAT MXFP4/JANG_4M model still
-needs its own AgentLoop harness score with attached failure causes.
+`fb8e741c` has the trace fix and a clean UI-style auto row: the stream returns
+exact visible text `fb8e741c osaurus_status agent tool call proven` with
+`osaurus_status` phases `started` and `completed`, no non-ASCII characters,
+and no protocol/tool marker leakage. This is a useful tool-call checkpoint,
+not a full release pass: the agent route still does not emit usage/prefill
+telemetry, the 12B JANG_4M row still needs a full AgentLoop harness score, and
+every QAT MXFP4/JANG_4M model still needs its own scored row with attached
+failure causes.
 
 The Gemma QAT harness target is deliberately practical: each MXFP4 and JANG_4M
 bundle must score decently enough to prove real Osaurus tool use and teammate
@@ -92,7 +92,14 @@ or counting source/BF16 Gemma folders instead of the OsaurusAI QAT bundles.
 
 | Model | Route | AgentLoop (17) | Tested | Notes |
 |---|---|---|---|---|
-| Gemma 4 12B QAT JANG_4M | `osaurusai--gemma-4-12b-it-qat-jang_4m` | pending | 2026-06-12 | Live `/agents/default/run` checkpoint on PR #1469 head `f7deb7ec`: `/tmp/osaurus-gemma-proof/pr1469-f7deb7ec-agenttool-20260612T105825Z/agent-default-12b-jang4m-auto-osaurus-status-trace-fix.summary.json` proves real `osaurus_status` execution with `started` and `completed` trace frames and exact clean final text. This is not a harness score yet and stays partial because the agent route lacks usage/prefill telemetry and the named forced-tool row still had visible text corruption. |
+| Gemma 4 31B QAT MXFP4 | `osaurusai--gemma-4-31b-it-qat-mxfp4` | pending | 2026-06-12 | Required QAT row. Must prove load, real tool calls, tool-result continuation, no visible text corruption or marker leakage, cache topology, and AgentLoop score before promotion. Source/BF16 rows do not count. |
+| Gemma 4 31B QAT JANG_4M | `osaurusai--gemma-4-31b-it-qat-jang_4m` | pending | 2026-06-12 | Required QAT row. Must prove load, real tool calls, tool-result continuation, no visible text corruption or marker leakage, cache topology, and AgentLoop score before promotion. Source/BF16 rows do not count. |
+| Gemma 4 26B A4B QAT MXFP4 | `osaurusai--gemma-4-26b-a4b-it-qat-mxfp4` | pending | 2026-06-12 | Required QAT row. Must prove load, real tool calls, tool-result continuation, no visible text corruption or marker leakage, cache topology, and AgentLoop score before promotion. Source/BF16 rows do not count. |
+| Gemma 4 26B A4B QAT JANG_4M | `osaurusai--gemma-4-26b-a4b-it-qat-jang_4m` | pending | 2026-06-12 | Required QAT row. Must prove load, real tool calls, tool-result continuation, no visible text corruption or marker leakage, cache topology, and AgentLoop score before promotion. Source/BF16 rows do not count. |
+| Gemma 4 12B QAT MXFP4 | `osaurusai--gemma-4-12b-it-qat-mxfp4` | pending | 2026-06-12 | Required QAT row. Must prove load, real tool calls, tool-result continuation, no visible text corruption or marker leakage, cache topology, and AgentLoop score before promotion. Source/BF16 rows do not count. |
+| Gemma 4 12B QAT JANG_4M | `osaurusai--gemma-4-12b-it-qat-jang_4m` | pending | 2026-06-12 | Live `/agents/default/run` checkpoint on PR #1469 head `fb8e741c`: `/tmp/osaurus-gemma-proof/pr1469-fb8e741c-agenttool-live-20260612T111951Z/agent-default-12b-jang4m-osaurus-status-auto.summary.json` proves real non-intercept `osaurus_status` execution with `started` and `completed` trace frames and exact clean final text. This is not a harness score yet and stays partial because the agent route lacks usage/prefill telemetry. |
+| Gemma 4 E4B QAT MXFP4 | `osaurusai--gemma-4-e4b-it-qat-mxfp4` | pending | 2026-06-12 | Required QAT row. Must prove load, real tool calls, tool-result continuation, no visible text corruption or marker leakage, cache topology, and AgentLoop score before promotion. Source/BF16 rows do not count. |
+| Gemma 4 E4B QAT JANG_4M | `osaurusai--gemma-4-e4b-it-qat-jang_4m` | pending | 2026-06-12 | Required QAT row. Must prove load, real tool calls, tool-result continuation, no visible text corruption or marker leakage, cache topology, and AgentLoop score before promotion. Source/BF16 rows do not count. |
 | Gemma 4 E2B QAT MXFP4 | `osaurusai--gemma-4-e2b-it-qat-mxfp4` | 11 ✓ / 6 ✗ | 2026-06-12 | First full MXFP4 AgentLoop row on PR #1469 head `eb9fe17f`. Artifact: `/tmp/osaurus-gemma-proof/pr1469-eb9fe17f-harness-20260612T102258Z/e2b-mxfp4-agentloop.json`; smoke artifact `e2b-mxfp4-write-new-file-agentloop.json` passed `write-new-file` with `file_write` and correct `TODO.md` contents. Full row proves real tool use across `capabilities_load`, `clarify`, `file_edit`, `file_read`, `file_search`, `file_write`, `shell_run`, and `todo`, but stays partial. Fails `clarify-on-ambiguity`, `compaction-stress`, `duplicate-call-avoidance`, `recover-from-failing-command`, `search-then-multi-file-edit`, and `todo-discipline-multistep`; multiple finals show visible character/spelling corruption, so this is decent tool capability evidence but not a clean promotion. |
 | Gemma 4 E2B QAT JANG_4M | `osaurusai--gemma-4-e2b-it-qat-jang_4m` | 13 ✓ / 4 ✗ | 2026-06-12 | First full QAT Gemma local AgentLoop row on PR #1469 head `e03cecf9`. Artifact: `/tmp/osaurus-gemma-proof/pr1469-e03cecf9-harness-20260612T095729Z/e2b-jang4m-agentloop.json`. Fails `compaction-stress`, `duplicate-call-avoidance`, `search-then-multi-file-edit`, and `todo-discipline-multistep`; several finals show visible character/spelling drift, so do not promote this row beyond partial. A rejected follow-up experiment forcing post-tool `tool_choice:none` inside `AgentLoopEvaluator` kept `duplicate-call-avoidance` failed and made `search-then-multi-file-edit` stop after only `file_search` with fake edit prose, so the harness loop must preserve auto tools until a proven finalization signal exists. |
 | Qwen3.5-4B-OptiQ-4bit | `mlx-community/Qwen3.5-4B-OptiQ-4bit` | 16 ✓ / 1 flaky (passed on retry) | 2026-06-11 | Small-model regression lane; re-confirmed after the sandbox-eval harness changes (same documented `search-then-multi-file-edit` path-thrashing flake, passes on retry). |

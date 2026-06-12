@@ -171,6 +171,47 @@ Current evidence behind non-TODO cells:
   prefill telemetry, the named forced-tool row on the same proof pass still
   showed visible text corruption, and 12B JANG_4M still needs a full AgentLoop
   harness score before it can move out of pending.
+- Current PR head `fb8e741c` 12B JANG_4M default-agent tool proof:
+  proof root
+  `/tmp/osaurus-gemma-proof/pr1469-fb8e741c-agenttool-live-20260612T111951Z`.
+  The keychain-free Release app rebuild succeeded in `build.log` and launched
+  from
+  `build/XcodeDerivedData-pr1469-fb8e741c-agenttool-live/Build/Products/Release/osaurus.app`
+  with `OSU_MODELS_DIR=/Users/eric/models` and `OSU_PORT=1337`.
+  `health.initial.json` reports a healthy app and `models.initial.json` lists
+  all ten local OsaurusAI Gemma 4 QAT MXFP4/JANG_4M ids. The request
+  `request.agent-default-12b-jang4m-osaurus-status-auto.json` calls
+  `/agents/default/run` with `tool_choice="auto"` and no client-supplied
+  fake tool schema. The summary
+  `agent-default-12b-jang4m-osaurus-status-auto.summary.json` records exact
+  final text `fb8e741c osaurus_status agent tool call proven`, real
+  non-intercept `osaurus_status` phases `started` and `completed`,
+  `hasOnlyLoopInterceptTool=false`, `nonAscii=[]`, `replacement=[]`,
+  `markerLeak=false`, and `usage=null`. This proves the current Default agent
+  route can parse and execute a real built-in tool with 12B JANG_4M QAT and
+  return clean visible text, but it is still `PARTIAL` because the agent route
+  does not emit usage, token/s, or prefill telemetry.
+- Current PR head `fb8e741c` 12B JANG_4M direct chat cache/prefill proof:
+  first and repeat artifacts are
+  `chat-12b-jang4m-cache-first.summary.json`,
+  `chat-12b-jang4m-cache-repeat.summary.json`,
+  `cache.after-chat-12b-jang4m-first.json`, and
+  `cache.after-chat-12b-jang4m-repeat.json` under the same proof root. Both
+  chat runs return exact visible text with no non-ASCII, replacement
+  character, or marker leakage. The first run reports wall `4159 ms` and first
+  content at `3902 ms`; the repeat reports wall `3987 ms` and first content at
+  `3732 ms`. Both streams emit prefill progress over `2898` units with chunks
+  `0`, `512`, `1024`, `1536`, `2048`, `2560`, then `2898`. Repeat cache
+  reports `paged_cache.enabled=false`, `paged_hits=0`, `paged_misses=0`,
+  `block_disk_store.enabled=true`, `disk_l2_misses=9`, `disk_l2_stores=4`,
+  `disk_l2_hits=0`, `effective_kv_mode="turbo(3,3)"`,
+  `batch_diagnostics.turbo_quant_compressions=2`, `kv_layer_count=8`,
+  `rotating_kv_layer_count=40`, `requires_disk_backed_restore=true`, and
+  `turbo_quant_kv_layer_count=0`. This proves paged RAM KV stays off,
+  disk-backed restore and TurboQuant-mode KV policy are active, and prefill
+  percentage units are visible in the stream. It does not prove L2 reuse on
+  this fresh pair because the repeat still has `disk_l2_hits=0`, and both
+  summary files have `usage=null`, so token/s is not proven by this row.
 - Current PR head `f58bb924` 12B JANG_4M cache and prefill proof:
   `direct-chat-prefill-12b-jang4m/first.sse` and `repeat.sse` answer exactly
   `f58bb924 direct prefill proof complete.` with no replacement, non-ASCII, or
@@ -2666,12 +2707,10 @@ BatchEngine compile status:
 Updated boundary:
 
 - Pushed Osaurus PR checkpoint: PR #1469 branch
-  `codex/gemma-cache-prefill-checkpoint-main` is at commit `cf4bbd09`
-  (`Share Gemma QAT post-tool finalization policy`). GitHub CI restarted for
-  that commit on 2026-06-12; at the time of this note `test-core`, `test-cli`,
-  and `swiftlint` were still in progress, while `shellcheck` and
-  `update_release_draft` had passed. Do not merge until CI is green and the
-  remaining proof gaps below are either fixed or explicitly accepted.
+  `codex/gemma-cache-prefill-checkpoint-main` is at commit `fb8e741c`
+  (`Emit started trace for Gemma agent tool proof`). GitHub CI restarted for
+  that commit on 2026-06-12. Do not merge until CI is green and the remaining
+  proof gaps below are either fixed or explicitly accepted.
 - vMLX main/pin reconciliation remains open. Osaurus currently pins
   `Packages/OsaurusCore/Package.swift` to vMLX
   `dc52096743215a153522c9b260c8191f133d7288`, while remote
@@ -2687,10 +2726,11 @@ Updated boundary:
 - The concrete Gemma QAT cache topology still reports rotating KV plus
   disk-backed restore with `turbo_quant_kv_layer_count=0`; keep saying that
   exactly until runtime stats prove a nonzero TurboQuant KV layer count.
-- Literal `/agents/default/run` is now proven for E2B JANG_4M and E2B MXFP4.
-  The larger-model matrix is already proven through the built-in Default agent
-  UUID route and should be re-smoked through the alias only if release review
-  requires identical path coverage for every size.
+- Literal `/agents/default/run` is now proven for E2B JANG_4M, E2B MXFP4, and
+  12B JANG_4M. The 12B row proves a real non-intercept `osaurus_status` call,
+  not only the loop-intercept `complete` tool. The remaining QAT matrix still
+  needs full AgentLoop harness scores per MXFP4/JANG_4M bundle before the
+  checkpoint can be called broad teammate-testable.
 - Rejected eval-loop mitigation on 2026-06-12: wiring
   `AgentLoopEvaluator.makeRequest` through
   `ChatToolChoicePolicy.finalizingPostToolChoice` cleaned up some post-tool
