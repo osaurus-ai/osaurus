@@ -399,8 +399,12 @@ struct ModelManagerTests {
             let first = ModelManager.discoverLocalModels()
             #expect(first.isEmpty)
 
-            try await Task.sleep(nanoseconds: 200_000_000)
-            let second = ModelManager.discoverLocalModels()
+            var second: [MLXModel] = []
+            for _ in 0 ..< 40 {
+                try await Task.sleep(nanoseconds: 50_000_000)
+                second = ModelManager.discoverLocalModels()
+                if !second.isEmpty { break }
+            }
             #expect(second.map(\.id) == ["gemma-4-E2B-it-qat-MXFP4"])
         }
     }

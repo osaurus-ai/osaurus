@@ -57,6 +57,12 @@ causes, but rows with missing tool execution, malformed tool JSON,
 tool/protocol marker leakage, corrupted visible text, or unproven cache
 telemetry stay partial until fixed or explicitly scoped.
 
+This is an all-model gate, not an E2B-only smoke. The required local set is
+the ten OsaurusAI Gemma 4 QAT bundles under `/Users/eric/models`: E2B, E4B,
+12B, 26B-A4B, and 31B for both MXFP4 and JANG_4M. Each row needs its own
+artifact path and score; source/BF16 or Google-style Gemma folders do not
+count for this checkpoint.
+
 For this Gemma QAT checkpoint, the minimum useful row is: the model loads from
 the OsaurusAI QAT bundle, executes at least one real tool call through Osaurus,
 continues from the tool result into visible text, and produces an AgentLoop
@@ -64,6 +70,15 @@ score with every failed case labeled as either a model finding or a scoped
 runtime bug. The goal is a decent, team-testable score for each MXFP4 and
 JANG_4M model, not a fake perfect score created by disabling tools, hiding
 corrupt text, or skipping failing cases.
+
+Current PR #1469 live proof also makes visible-text quality a hard gate:
+12B JANG_4M on head `f58bb924` successfully executed the real built-in
+`osaurus_status` tool through `/agents/default/run`, but the final visible
+answer corrupted ordinary text (`saurus_status toool`). That row proves the
+tool loop is wired, yet it stays partial. Harness rows must record the same
+distinction: real tool execution is necessary, but not sufficient, when the
+post-tool user-visible answer has spelling/character corruption or marker
+leakage.
 
 | Model | Route | AgentLoop (17) | Tested | Notes |
 |---|---|---|---|---|

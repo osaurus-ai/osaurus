@@ -111,7 +111,7 @@ Current model capability metadata from local `config.json`:
 | `osaurusai--gemma-4-e4b-it-qat-mxfp4` | MXFP4 | `gemma4` | yes | yes | PROVEN | PROVEN agent | PROVEN agent | PROVEN agent | PARTIAL | TODO | PROVEN forced complete | TODO | TODO | TODO | TODO | PARTIAL |
 | `osaurusai--gemma-4-e4b-it-qat-jang_4m` | JANG_4M | `gemma4` | yes | yes | PROVEN | PROVEN agent | PROVEN agent | PROVEN agent | PARTIAL | TODO | PROVEN forced complete | TODO | TODO | TODO | TODO | PARTIAL |
 | `osaurusai--gemma-4-12b-it-qat-mxfp4` | MXFP4 | `gemma4_unified` | yes | yes | PROVEN | PROVEN UI+agent | PROVEN UI+agent | PROVEN UI+agent | PROVEN UI+agent | TODO | PARTIAL UI status count | TODO | TODO | TODO | PROVEN API / PARTIAL UI percent | PARTIAL |
-| `osaurusai--gemma-4-12b-it-qat-jang_4m` | JANG_4M | `gemma4_unified` | yes | yes | PROVEN | PARTIAL UI / PROVEN API | PROVEN UI+agent | PROVEN UI+agent | PROVEN UI+agent | TODO | PARTIAL UI status tool | TODO | TODO | TODO | PARTIAL UI / PROVEN API | PARTIAL |
+| `osaurusai--gemma-4-12b-it-qat-jang_4m` | JANG_4M | `gemma4_unified` | yes | yes | PROVEN | PARTIAL UI / PROVEN API | PROVEN UI+agent | PROVEN UI+agent | PROVEN UI+agent | TODO | PARTIAL status tool | TODO | TODO | TODO | PARTIAL UI / PROVEN API | PARTIAL |
 | `osaurusai--gemma-4-26b-a4b-it-qat-mxfp4` | MXFP4 | `gemma4` | yes | no | PROVEN | PROVEN agent | PROVEN agent | PROVEN agent | PARTIAL | TODO | PROVEN forced complete | TODO | TODO | N/A | TODO | PARTIAL |
 | `osaurusai--gemma-4-26b-a4b-it-qat-jang_4m` | JANG_4M | `gemma4` | yes | no | PROVEN | PROVEN agent | PROVEN agent | PROVEN agent | PARTIAL | TODO | PROVEN forced complete | TODO | TODO | N/A | TODO | PARTIAL |
 | `osaurusai--gemma-4-31b-it-qat-mxfp4` | MXFP4 | `gemma4` | yes | no | PROVEN | PROVEN agent | PROVEN agent | PROVEN agent | PARTIAL | TODO | PROVEN forced complete | TODO | TODO | N/A | TODO | PARTIAL |
@@ -119,6 +119,50 @@ Current model capability metadata from local `config.json`:
 
 Current evidence behind non-TODO cells:
 
+- Current PR head `f58bb924` no-sign Release app build:
+  `scripts/live-proof/build-keychain-free-osaurus.sh` produced
+  `** BUILD SUCCEEDED **` for
+  `/tmp/osaurus-gemma-checkpoint-main/build/XcodeDerivedData-pr1469-f58bb924-nosign/Build/Products/Release/osaurus.app`.
+  The surrounding zsh wrapper exited nonzero after build because it referenced
+  Bash-only `PIPESTATUS`; that is a proof-command footer bug, not an app build
+  failure. The built app was launched attached/keychain-free with
+  `OSU_MODELS_DIR=/Users/eric/models`, `OSU_PORT=1337`, and proof root
+  `/tmp/osaurus-gemma-proof/pr1469-f58bb924-live-attached-20260612T104430Z`.
+  `/health` returned `status="healthy"`, `local_model_scan.model_count=27`,
+  and the app process was the current PR build at about 238 MB RSS before
+  model load. Detached `nohup` launch exits immediately for this build, so
+  current live proof kept the app attached; do not treat detached launch as
+  proven until fixed or separately explained.
+- Current PR head `f58bb924` 12B JANG_4M real Osaurus tool proof:
+  `request.agent-default-12b-jang4m-osaurus-status.json`,
+  `agent-12b-jang4m-osaurus-status.first.sse`, and
+  `agent-12b-jang4m-osaurus-status.repeat.sse` call `/agents/default/run`
+  with named `tool_choice=osaurus_status`. Both streams include
+  `osaurus_agent_tool` chunks with `name="osaurus_status"`,
+  `phase="completed"`, and `is_error=false`, proving the real built-in tool
+  executes on the current app. The row remains `PARTIAL`: final visible text is
+  corrupted in both runs as
+  `f58bb924 saurus_status toool proof complete.` instead of the requested
+  `f58bb924 osaurus_status tool proof complete.`. There are no replacement,
+  non-ASCII, or protocol/tool marker leaks, but visible spelling/character
+  corruption is still a release blocker for claiming clean Gemma tool use.
+  Timings were first `real 7.38` and repeat `real 5.93`; the agent route still
+  does not emit TTFT/prefill/usage telemetry.
+- Current PR head `f58bb924` 12B JANG_4M cache and prefill proof:
+  `direct-chat-prefill-12b-jang4m/first.sse` and `repeat.sse` answer exactly
+  `f58bb924 direct prefill proof complete.` with no replacement, non-ASCII, or
+  protocol marker leaks. Both streams emit `osaurus_prefill` queued/prefill/
+  complete progress over `1147` prefill units (`0`, `512`, `1024`, `1147`) and
+  usage with `prompt_tokens=1173`, `completion_tokens=17`, and token/s
+  `8.9758` first / `8.8332` repeat. Repeat cache reports
+  `disk_l2_hits=4`, `disk_l2_stores=6`, `paged_hits=0`, `paged_misses=0`,
+  `paged_cache.enabled=false`, `block_disk_store.enabled=true`,
+  `effective_kv_mode="turbo(3,3)"`, `batch_diagnostics.turbo_quant_compressions=2`,
+  `kv_layer_count=8`, `rotating_kv_layer_count=40`,
+  `requires_disk_backed_restore=true`, and `turbo_quant_kv_layer_count=0`.
+  Current app RSS after repeat was about `7,686,995,968` bytes. This proves
+  the direct API prefill/cache surface, but it does not clean the agent
+  `osaurus_status` visible-text corruption above.
 - Current PR head E2B MXFP4 AgentLoop harness proof on commit
   `eb9fe17f`:
   `/tmp/osaurus-gemma-proof/pr1469-eb9fe17f-harness-20260612T102258Z/e2b-mxfp4-agentloop.json`
