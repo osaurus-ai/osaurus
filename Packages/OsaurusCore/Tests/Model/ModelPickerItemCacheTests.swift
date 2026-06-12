@@ -117,4 +117,73 @@ struct ModelPickerItemCacheTests {
             #expect(final.count == initialCount)
         }
     }
+
+    /// Embedding/encoder-only bundles (e.g. potion-base-4M pulled into the
+    /// HF cache by the memory feature) must be excluded from the chat
+    /// picker's item list, while regular causal-LM bundles pass through.
+    @Test func computeItems_excludesLocalEmbeddingBundles() async throws {
+        try await RemoteProviderTestLock.shared.run {
+            // Two on-disk fixture bundles classified purely via config.json.
+            func makeBundle(config: [String: Any]) throws -> URL {
+                let dir = FileManager.default.temporaryDirectory
+                    .appendingPathComponent(
+                        "osu-picker-cache-\(UUID().uuidString)",
+                        isDirectory: true
+                    )
+                try FileManager.default.createDirectory(
+                    at: dir,
+                    withIntermediateDirectories: true
+                )
+                try JSONSerialization.data(withJSONObject: config)
+                    .write(to: dir.appendingPathComponent("config.json"))
+                return dir
+            }
+            let chatDir = try makeBundle(config: [
+                "model_type": "qwen2",
+                "architectures": ["Qwen2ForCausalLM"],
+            ])
+            let embedDir = try makeBundle(config: [
+                "model_type": "model2vec",
+                "architectures": ["StaticModel"],
+            ])
+
+            let fixtures = [
+                MLXModel(
+                    id: "fixture/chat-model-4bit",
+                    name: "Fixture Chat Model",
+                    description: "fixture",
+                    downloadURL: "https://example.invalid/chat",
+                    bundleDirectory: chatDir
+                ),
+                MLXModel(
+                    id: "fixture/potion-base-4M",
+                    name: "Fixture Embedding Model",
+                    description: "fixture",
+                    downloadURL: "https://example.invalid/potion",
+                    bundleDirectory: embedDir
+                ),
+            ]
+
+            let prevScan = ModelManager.scanLocalModelsOverrideForTests
+            let prevWait = ModelManager.localModelsScanWaitLimitOverrideForTests
+            ModelManager.localModelsScanWaitLimitOverrideForTests = 2.0
+            ModelManager.scanLocalModelsOverrideForTests = { _ in fixtures }
+            ModelManager.invalidateLocalModelsCache()
+
+            let items = await ModelPickerItemCache.shared.buildModelPickerItems()
+            let ids = items.map(\.id)
+
+            // Restore globals and rebuild before asserting so fixture
+            // entries can't linger in the shared cache for later suites.
+            ModelManager.scanLocalModelsOverrideForTests = prevScan
+            ModelManager.localModelsScanWaitLimitOverrideForTests = prevWait
+            ModelManager.invalidateLocalModelsCache()
+            await ModelPickerItemCache.shared.buildModelPickerItems()
+            try? FileManager.default.removeItem(at: chatDir)
+            try? FileManager.default.removeItem(at: embedDir)
+
+            #expect(ids.contains("fixture/chat-model-4bit"))
+            #expect(!ids.contains("fixture/potion-base-4M"))
+        }
+    }
 }

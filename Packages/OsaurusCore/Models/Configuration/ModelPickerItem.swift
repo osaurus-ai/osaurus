@@ -65,6 +65,11 @@ struct ModelPickerItem: Identifiable, Hashable {
     /// Whether this is a Vision Language Model
     let isVLM: Bool
 
+    /// Whether this is an embedding/encoder-only model (BERT family,
+    /// model2vec, etc.). Set from `MLXModel.isEmbedding` for local items so
+    /// `isLikelyChatCapable` can exclude them without re-reading config.json.
+    let isEmbedding: Bool
+
     /// Description of the model (optional)
     let description: String?
 
@@ -75,6 +80,7 @@ struct ModelPickerItem: Identifiable, Hashable {
         parameterCount: String? = nil,
         quantization: String? = nil,
         isVLM: Bool = false,
+        isEmbedding: Bool = false,
         description: String? = nil
     ) {
         self.id = id
@@ -83,6 +89,7 @@ struct ModelPickerItem: Identifiable, Hashable {
         self.parameterCount = parameterCount
         self.quantization = quantization
         self.isVLM = isVLM
+        self.isEmbedding = isEmbedding
         self.description = description
     }
 
@@ -115,6 +122,7 @@ extension ModelPickerItem {
             parameterCount: model.parameterCount,
             quantization: model.quantization,
             isVLM: model.isVLM,
+            isEmbedding: model.isEmbedding,
             description: model.description
         )
     }
@@ -158,10 +166,15 @@ extension ModelPickerItem {
     /// picker is never left empty when models exist.
     var isLikelyChatCapable: Bool {
         switch source {
-        case .foundation, .local:
-            // Foundation is Apple's on-device chat model; `.local` items come
-            // from the curated MLX catalog, which is chat-only.
+        case .foundation:
+            // Foundation is Apple's on-device chat model.
             return true
+        case .local:
+            // `.local` items include disk-scanned and externally-imported
+            // bundles (HF cache, LM Studio), not just the curated chat
+            // catalog, so an embedding repo can appear here. The flag is
+            // detected from the bundle's config.json at item construction.
+            return !isEmbedding
         case .remote:
             return !Self.isLikelyEmbeddingOrRerankerID(id)
         }

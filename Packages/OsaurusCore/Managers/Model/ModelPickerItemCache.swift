@@ -128,7 +128,14 @@ final class ModelPickerItemCache: ObservableObject {
         }
 
         let localModels = await Task.detached(priority: .userInitiated) {
+            // Exclude embedding/encoder-only bundles (e.g. potion-base-4M
+            // pulled into the HF cache by the memory feature): they can't
+            // generate chat completions. They remain visible in the Models
+            // management UI and usable via /v1/embeddings. Reading
+            // `isEmbedding` here also warms its memoized verdict off the
+            // main actor, like the `isVLM` warm-up below.
             let models = ModelManager.discoverLocalModels()
+                .filter { !$0.isEmbedding }
             // Warm the memoized VLM verdicts while still off the main actor:
             // `fromMLXModel` below reads `isVLM` on the MainActor, and a cold
             // cache would otherwise fault one config.json read per model there.

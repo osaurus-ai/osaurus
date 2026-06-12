@@ -318,6 +318,15 @@ struct MLXModel: Identifiable, Codable {
         return VLMDetection.isVLM(modelId: id)
     }
 
+    /// Whether this bundle is an embedding/encoder-only model (BERT family,
+    /// model2vec, etc.) that cannot generate chat completions. Detected from
+    /// the on-disk config.json; bundles that aren't on disk return false.
+    /// Used to keep embedding repos imported from the HF cache / LM Studio
+    /// out of chat surfaces while leaving them available to `/v1/embeddings`.
+    var isEmbedding: Bool {
+        EmbeddingDetection.isEmbedding(at: localDirectory)
+    }
+
     /// Extracts the model family from the name/id (e.g., "Llama", "Qwen", "Gemma", "Phi")
     var family: String {
         let name = self.name.lowercased()

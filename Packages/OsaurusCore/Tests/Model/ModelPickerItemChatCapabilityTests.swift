@@ -131,16 +131,75 @@ struct ModelPickerItemChatCapabilityTests {
         #expect(ModelPickerItem.foundation().isLikelyChatCapable)
     }
 
-    @Test func localModelsAreAlwaysChatCapable() {
-        // Local models come from the curated MLX catalog (chat-only), so the
-        // heuristic is bypassed even if the name happens to match an
-        // embedding pattern.
+    @Test func localNonEmbeddingModelsAreChatCapable() {
+        // Local items use the config.json-derived `isEmbedding` flag, not
+        // the name heuristic — an embedding-looking name must not trip it.
         let localLooksLikeEmbedding = ModelPickerItem(
             id: "mlx-community/some-embedded-model-name",
             displayName: "Some Embedded",
             source: .local
         )
         #expect(localLooksLikeEmbedding.isLikelyChatCapable)
+    }
+
+    @Test func localEmbeddingModelsAreNotChatCapable() {
+        // An embedding bundle imported from the HF cache (e.g.
+        // minishlab/potion-base-4M downloaded by the memory feature) is not
+        // chat-capable, even though its name matches no embedding token.
+        let item = ModelPickerItem(
+            id: "minishlab/potion-base-4M",
+            displayName: "Potion Base 4M",
+            source: .local,
+            isEmbedding: true
+        )
+        #expect(!item.isLikelyChatCapable)
+    }
+
+    @Test func firstChatCapable_skipsLeadingLocalEmbedding() {
+        // Alphabetical ordering frequently puts all-MiniLM/potion first in
+        // the local list; default selection must skip past them.
+        let items: [ModelPickerItem] = [
+            ModelPickerItem(
+                id: "sentence-transformers/all-MiniLM-L6-v2",
+                displayName: "All MiniLM L6 v2",
+                source: .local,
+                isEmbedding: true
+            ),
+            ModelPickerItem(
+                id: "mlx-community/Llama-3.2-3B-Instruct-4bit",
+                displayName: "Llama 3.2 3B",
+                source: .local
+            ),
+        ]
+        #expect(items.firstChatCapable?.id == "mlx-community/Llama-3.2-3B-Instruct-4bit")
+    }
+
+    @Test func fromMLXModel_carriesEmbeddingVerdictFromBundleConfig() throws {
+        // The picker item's flag must come from the bundle's config.json via
+        // MLXModel.isEmbedding, so HF-cache imports are classified by
+        // architecture rather than by name.
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("osu-picker-embed-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let config: [String: Any] = [
+            "model_type": "bert",
+            "architectures": ["BertModel"],
+        ]
+        try JSONSerialization.data(withJSONObject: config)
+            .write(to: dir.appendingPathComponent("config.json"))
+
+        let model = MLXModel(
+            id: "sentence-transformers/all-MiniLM-L6-v2",
+            name: "All MiniLM L6 v2",
+            description: "fixture",
+            downloadURL: "https://example.invalid/minilm",
+            bundleDirectory: dir,
+            externalSource: "Hugging Face cache"
+        )
+        let item = ModelPickerItem.fromMLXModel(model)
+        #expect(item.isEmbedding)
+        #expect(!item.isLikelyChatCapable)
     }
 
     @Test func remoteEmbeddingIsNotChatCapable() {
