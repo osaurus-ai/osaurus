@@ -3769,3 +3769,82 @@ Status from this 563ee034 proof:
   the live proof does not clear the 31B MXFP4 AgentLoop failed cases.
 - `BLOCKED`: lower-spec physical-footprint proof and Gemma4 audio remain
   separate open gates.
+
+Current PR head `777736b2` 31B JANG_4M `/agents/default/run` and VL proof:
+
+- Root:
+  `/tmp/osaurus-gemma-proof/pr1469-777736b2-agent-31b-jang-20260612T153239Z`
+- Running app:
+  `/private/tmp/osaurus-gemma-checkpoint-main/build/XcodeDerivedData-pr1469-67b2070a-nosign/Build/Products/Release/osaurus.app/Contents/MacOS/osaurus`
+- The app health after the rows stayed `healthy` with current model
+  `osaurusai--gemma-4-31b-it-qat-jang_4m`.
+- RAM feasibility after load reports verdict `ok`, projected memory
+  `31819264141` bytes, incoming weights `26516053451` bytes, and required
+  available memory `31819264141` bytes. This is live load feasibility on this
+  M5 Max MacBook, not lower-spec Activity Monitor physical-footprint proof.
+- Request:
+  `request.agent-default-31b-jang-complete.json`
+- SSE:
+  `agent-default-31b-jang-complete.sse`
+- Summary:
+  `agent-default-31b-jang-complete.summary.json`
+- The `/agents/default/run` request uses `tool_choice="required"` and returns
+  HTTP 200.
+- The SSE emits `osaurus_agent_tool` started/completed frames for `complete`;
+  the completed frame has `is_error=false` and `end_run=true`.
+- Final text is exact:
+  `777736b2 current PR agent loop executed complete tool with Gemma 31B JANG_4M QAT and no parser leak.`
+- The scan finds no replacement characters, no U+FFFE sentinel, no raw
+  `<think>`, no raw tool/protocol markers, no configured weird-word hits, and
+  no non-ASCII output.
+- The agent route took `real 13.75`. It still does not emit usage or prefill
+  telemetry, so token/s and prefill proof come from direct chat and VL rows.
+- Cache after the agent row reports aggregate `disk_l2_hits=0`,
+  `disk_l2_misses=19`, `disk_l2_stores=0`, `paged_hits=0`, and
+  `paged_misses=0`. Per-model topology is paged off,
+  `block_disk_store.enabled=true`, `effective_kv_mode="turbo(3,3)"`,
+  `kv_layer_count=10`, `rotating_kv_layer_count=50`,
+  `requires_disk_backed_restore=true`, and `turbo_quant_kv_layer_count=0`.
+  This proves the cache policy stayed paged-off on the short agent row; it is
+  not standalone L2-hit proof.
+- Process RSS sample after the agent row:
+  `ps.after-agent-31b-jang.txt` records `RSS=18208768 KB`. This is only a
+  local process RSS sample and is not lower-spec Activity Monitor
+  physical-footprint proof.
+
+31B JANG_4M VL red-image row from the same root:
+
+- Request:
+  `request.vl-31b-jang-red32.json`
+- SSE:
+  `vl-31b-jang-red32-first.sse` and
+  `vl-31b-jang-red32-repeat.sse`
+- Summary:
+  `vl-31b-jang-red32.summary.json`
+- The payload includes a real inline red 32x32 PNG `image_url` data URL.
+- First and repeat rows return HTTP 200, exact `Red`, and `finish="stop"`.
+- Both rows emit prefill progress:
+  `queued 0/307`, `prefill 0/307`, and `complete 307/307`.
+- Usage is present: first `prompt_tokens=17`, `completion_tokens=5`,
+  `tokens_per_second=8.2956`; repeat `prompt_tokens=17`,
+  `completion_tokens=5`, `tokens_per_second=7.9948`.
+- The VL scans find no replacement characters, no U+FFFE sentinel, no raw
+  `<think>`, no raw tool/protocol markers, no configured weird-word hits, and
+  no non-ASCII output.
+- Repeat cache reports aggregate `disk_l2_hits=1`, `disk_l2_misses=23`,
+  `disk_l2_stores=5`, `paged_hits=0`, and `paged_misses=0`. Per-model topology
+  remains paged off, disk-backed, `effective_kv_mode="turbo(3,3)"`,
+  `kv_layer_count=10`, `rotating_kv_layer_count=50`,
+  `requires_disk_backed_restore=true`, and `turbo_quant_kv_layer_count=0`.
+
+Status from this 777736b2 proof:
+
+- `PROVEN`: 31B JANG_4M literal `/agents/default/run` completes a real tool
+  call with clean final text; 31B JANG_4M API VL works with prefill, token/s,
+  paged KV off, disk L2 telemetry, and no marker/corruption leakage on the
+  live app.
+- `PARTIAL`: `/agents/default/run` still lacks usage/prefill telemetry, and
+  the live proof does not clear the 31B JANG_4M AgentLoop failed cases or
+  visible text corruption in the longer harness row.
+- `BLOCKED`: lower-spec physical-footprint proof and Gemma4 audio remain
+  separate open gates.
