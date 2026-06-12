@@ -95,6 +95,31 @@ the remaining QAT MXFP4/JANG_4M models still need scored AgentLoop rows, and
 every failed case needs an attached cause before the checkpoint is
 teammate-testable.
 
+Current head `67b2070a` adds exact Chat UI proof on the built no-sign Release
+app, launched from
+`build/XcodeDerivedData-pr1469-67b2070a-nosign/Build/Products/Release/osaurus.app`
+with proof root
+`/tmp/osaurus-gemma-proof/pr1469-67b2070a-ui-tool-20260612T143110Z`.
+The visible UI row uses `OsaurusAI Gemma 4 12B it qat MXFP4`, shows the
+`Osaurus status` tool card, and returns exact visible text
+`UI MXFP4 67b2070a tool proof complete.` with UI metrics
+`TTFT 4.07s`, `4739.7 tok/s`, and `21 tokens`. A same-chat second turn shows
+a second `Osaurus status` tool card after tool history and returns exact
+visible text `UI MXFP4 67b2070a second tool proof complete.` with UI metrics
+`TTFT 3.40s`, `6920.7 tok/s`, and `22 tokens`. Screenshots and summaries are
+`ui-mxfp4-tool-proof.png`, `ui-mxfp4-tool-proof.txt`,
+`ui-mxfp4-second-tool-proof.png`, and `ui-mxfp4-second-tool-proof.txt` under
+that proof root. The second-turn cache stats show
+`paged_kv_enabled=false`, aggregate `paged_hits=0`, `paged_misses=0`,
+`block_disk_store.enabled=true`, `disk_l2_hits=1`, `disk_l2_stores=4`,
+`effective_kv_mode="turbo(3,3)"`, `turbo_quant_compressions=4`,
+`kv_layer_count=8`, `rotating_kv_layer_count=40`,
+`requires_disk_backed_restore=true`, and `turbo_quant_kv_layer_count=0`.
+This promotes the 12B MXFP4 UI tool/cache row to a current-head clean proof,
+but does not promote the full Gemma QAT checkpoint: the other MXFP4/JANG_4M
+models still need equivalent clean app-facing tool rows or documented
+partials, and the harness text-corruption findings remain open.
+
 The Gemma QAT harness target is deliberately practical: each MXFP4 and JANG_4M
 bundle must score decently enough to prove real Osaurus tool use and teammate
 testability, even if the score is not perfect. A row is not acceptable if it
