@@ -4755,6 +4755,21 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                             }
                             return executions
                         }
+                        if emitAgentToolTrace {
+                            for call in calls {
+                                hop {
+                                    writerBound.value.writeAgentToolTrace(
+                                        phase: "started",
+                                        toolName: call.invocation.toolName,
+                                        callId: call.callId,
+                                        model: model,
+                                        responseId: responseId,
+                                        created: created,
+                                        context: ctx.value
+                                    )
+                                }
+                            }
+                        }
                         // Two-phase canonical batch: approvals resolve serially
                         // in model order FIRST (no stacked/racing permission
                         // prompts), then the approved set runs in parallel via

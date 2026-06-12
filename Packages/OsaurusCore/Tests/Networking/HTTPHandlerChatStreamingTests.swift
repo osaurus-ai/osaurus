@@ -1036,6 +1036,77 @@ struct HTTPHandlerChatStreamingTests {
         }
     }
 
+    @Test func agentRun_streamsStartedAndCompletedForNonInterceptToolBatch() async throws {
+        actor StatusToolEngine: ChatEngineProtocol {
+            private var calls = 0
+
+            func streamChat(request: ChatCompletionRequest) async throws -> AsyncThrowingStream<
+                String, Error
+            > {
+                calls += 1
+                if calls == 1 {
+                    return AsyncThrowingStream { continuation in
+                        continuation.finish(
+                            throwing: ServiceToolInvocation(
+                                toolName: "osaurus_status",
+                                jsonArguments: "{}"
+                            )
+                        )
+                    }
+                }
+
+                return AsyncThrowingStream { continuation in
+                    continuation.yield("status tool finished")
+                    continuation.finish()
+                }
+            }
+
+            func completeChat(request: ChatCompletionRequest) async throws -> ChatCompletionResponse {
+                fatalError("not used")
+            }
+        }
+
+        try await SandboxTestLock.runWithStoragePaths {
+            ConfigurationDomainBootstrap.registerBuiltIns()
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+                "osaurus-http-agent-run-non-intercept-trace-\(UUID().uuidString)",
+                isDirectory: true
+            )
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            let previousRoot = OsaurusPaths.overrideRoot
+            OsaurusPaths.overrideRoot = root
+            AgentManager.shared.refresh()
+            defer {
+                OsaurusPaths.overrideRoot = previousRoot
+                AgentManager.shared.refresh()
+                try? FileManager.default.removeItem(at: root)
+            }
+
+            let server = try await startTestServer(with: StatusToolEngine(), trustLoopback: true)
+            defer { Task { await server.shutdown() } }
+
+            var request = URLRequest(
+                url: URL(string: "http://\(server.host):\(server.port)/agents/default/run")!
+            )
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+            request.disablePersistenceForTests()
+            request.httpBody = #"""
+                {"model":"fake","stream":true,"tool_choice":"auto","messages":[{"role":"user","content":"use osaurus_status"}]}
+                """#.data(using: .utf8)
+
+            let (data, resp) = try await URLSession.shared.data(for: request)
+            let body = String(decoding: data, as: UTF8.self)
+            #expect((resp as? HTTPURLResponse)?.statusCode == 200)
+            #expect(body.contains("\"osaurus_agent_tool\""))
+            #expect(body.contains("\"phase\":\"started\""))
+            #expect(body.contains("\"phase\":\"completed\""))
+            #expect(body.contains("\"name\":\"osaurus_status\""))
+            #expect(body.contains("status tool finished"))
+        }
+    }
+
     // MARK: - Built-in agent loopback exposure (App Intents surface)
 
     /// `/agents/{id}/run` must use the same composer-resolved tool surface it

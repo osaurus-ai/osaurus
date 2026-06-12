@@ -111,7 +111,7 @@ Current model capability metadata from local `config.json`:
 | `osaurusai--gemma-4-e4b-it-qat-mxfp4` | MXFP4 | `gemma4` | yes | yes | PROVEN | PROVEN agent | PROVEN agent | PROVEN agent | PARTIAL | TODO | PROVEN forced complete | TODO | TODO | TODO | TODO | PARTIAL |
 | `osaurusai--gemma-4-e4b-it-qat-jang_4m` | JANG_4M | `gemma4` | yes | yes | PROVEN | PROVEN agent | PROVEN agent | PROVEN agent | PARTIAL | TODO | PROVEN forced complete | TODO | TODO | TODO | TODO | PARTIAL |
 | `osaurusai--gemma-4-12b-it-qat-mxfp4` | MXFP4 | `gemma4_unified` | yes | yes | PROVEN | PROVEN UI+agent | PROVEN UI+agent | PROVEN UI+agent | PROVEN UI+agent | TODO | PARTIAL UI status count | TODO | TODO | TODO | PROVEN API / PARTIAL UI percent | PARTIAL |
-| `osaurusai--gemma-4-12b-it-qat-jang_4m` | JANG_4M | `gemma4_unified` | yes | yes | PROVEN | PARTIAL UI / PROVEN API | PROVEN UI+agent | PROVEN UI+agent | PROVEN UI+agent | TODO | PARTIAL status tool | TODO | TODO | TODO | PARTIAL UI / PROVEN API | PARTIAL |
+| `osaurusai--gemma-4-12b-it-qat-jang_4m` | JANG_4M | `gemma4_unified` | yes | yes | PROVEN | PARTIAL UI / PROVEN API | PROVEN UI+agent | PROVEN UI+agent | PROVEN UI+agent | TODO | PARTIAL clean auto status tool / no usage | TODO | TODO | TODO | PARTIAL UI / PROVEN API | PARTIAL |
 | `osaurusai--gemma-4-26b-a4b-it-qat-mxfp4` | MXFP4 | `gemma4` | yes | no | PROVEN | PROVEN agent | PROVEN agent | PROVEN agent | PARTIAL | TODO | PROVEN forced complete | TODO | TODO | N/A | TODO | PARTIAL |
 | `osaurusai--gemma-4-26b-a4b-it-qat-jang_4m` | JANG_4M | `gemma4` | yes | no | PROVEN | PROVEN agent | PROVEN agent | PROVEN agent | PARTIAL | TODO | PROVEN forced complete | TODO | TODO | N/A | TODO | PARTIAL |
 | `osaurusai--gemma-4-31b-it-qat-mxfp4` | MXFP4 | `gemma4` | yes | no | PROVEN | PROVEN agent | PROVEN agent | PROVEN agent | PARTIAL | TODO | PROVEN forced complete | TODO | TODO | N/A | TODO | PARTIAL |
@@ -148,6 +148,29 @@ Current evidence behind non-TODO cells:
   corruption is still a release blocker for claiming clean Gemma tool use.
   Timings were first `real 7.38` and repeat `real 5.93`; the agent route still
   does not emit TTFT/prefill/usage telemetry.
+- Current PR head `f7deb7ec` 12B JANG_4M `osaurus_status` trace-fix proof:
+  proof root
+  `/tmp/osaurus-gemma-proof/pr1469-f7deb7ec-agenttool-20260612T105825Z`.
+  The keychain-free Release app rebuild after the patch succeeded in
+  `build-after-agent-tool-trace-fix.log` and launched from
+  `build/XcodeDerivedData-pr1469-f7deb7ec-agenttool/Build/Products/Release/osaurus.app`.
+  `health.after-trace-fix.json` and `models.after-trace-fix.json` prove the
+  patched app was healthy with the normalized local model id
+  `osaurusai--gemma-4-12b-it-qat-jang_4m`.
+  `agent-default-12b-jang4m-auto-osaurus-status-trace-fix.sse` calls
+  `/agents/default/run` with `tool_choice="auto"` and the real
+  `osaurus_status` built-in. The stream emits sanitized `osaurus_agent_tool`
+  frames for `osaurus_status` with `phase="started"` and `phase="completed"`,
+  `is_error=false`, then returns exact visible text
+  `f7deb7ec osaurus_status auto proof complete`.
+  `agent-default-12b-jang4m-auto-osaurus-status-trace-fix.summary.json`
+  records `exactContent=true`, `hasStarted=true`, `hasCompleted=true`,
+  `nonAscii=[]`, `markerLeak=false`, and `usage=null`.
+  This is a real improvement over the old completion-only agent trace, but the
+  row stays `PARTIAL` for release: `/agents/{id}/run` still has no usage or
+  prefill telemetry, the named forced-tool row on the same proof pass still
+  showed visible text corruption, and 12B JANG_4M still needs a full AgentLoop
+  harness score before it can move out of pending.
 - Current PR head `f58bb924` 12B JANG_4M cache and prefill proof:
   `direct-chat-prefill-12b-jang4m/first.sse` and `repeat.sse` answer exactly
   `f58bb924 direct prefill proof complete.` with no replacement, non-ASCII, or
