@@ -39,12 +39,17 @@ public final class ActivityTracker: ObservableObject {
     }
 
     private func purgeIfNeeded() {
-        let config = MemoryConfigurationStore.load()
-        guard config.enabled else { return }
+        // The interval gate uses the in-memory `lastPurge`, so it's cheap to
+        // run on the timer's main-actor hop. Everything else — the
+        // `MemoryConfigurationStore.load()` disk read and the SQLite purge —
+        // runs off the main actor; loading the config on the main thread every
+        // 30s was enough to trip the app-hang watchdog. Advance `lastPurge`
+        // up front so a slow load can't let the next tick re-enter.
         let now = Date()
         guard now.timeIntervalSince(lastPurge) >= Self.purgeInterval else { return }
         lastPurge = now
         Task.detached {
+            guard MemoryConfigurationStore.load().enabled else { return }
             do {
                 try MemoryDatabase.shared.purgeOldEventData()
             } catch {
