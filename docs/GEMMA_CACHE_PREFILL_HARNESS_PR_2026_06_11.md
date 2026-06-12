@@ -106,7 +106,7 @@ Current model capability metadata from local `config.json`:
 
 | Model | Format | Config family | Vision | Audio | Inventory | Load/Chat | Prefix/L2 | TQ/SWA | Speed | Tools | Agent | Harness | VL | Audio | Prefill UI/API | Memory |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `osaurusai--gemma-4-e2b-it-qat-mxfp4` | MXFP4 | `gemma4` | yes | yes | PROVEN | PROVEN | PROVEN | PROVEN | PARTIAL | PROVEN | PROVEN complete / PARTIAL side-effect | TODO | TODO | TODO | PARTIAL | PARTIAL |
+| `osaurusai--gemma-4-e2b-it-qat-mxfp4` | MXFP4 | `gemma4` | yes | yes | PROVEN | PROVEN | PROVEN | PROVEN | PARTIAL | PROVEN | PROVEN complete / PARTIAL side-effect | PARTIAL 11/17 | TODO | TODO | PARTIAL | PARTIAL |
 | `osaurusai--gemma-4-e2b-it-qat-jang_4m` | JANG_4M | `gemma4` | yes | yes | PROVEN | PROVEN | PROVEN | PROVEN | PARTIAL | PROVEN | PROVEN complete / PARTIAL side-effect | PARTIAL 13/17 | PROVEN API | BLOCKED policy | PROVEN API / TODO UI | PARTIAL |
 | `osaurusai--gemma-4-e4b-it-qat-mxfp4` | MXFP4 | `gemma4` | yes | yes | PROVEN | PROVEN agent | PROVEN agent | PROVEN agent | PARTIAL | TODO | PROVEN forced complete | TODO | TODO | TODO | TODO | PARTIAL |
 | `osaurusai--gemma-4-e4b-it-qat-jang_4m` | JANG_4M | `gemma4` | yes | yes | PROVEN | PROVEN agent | PROVEN agent | PROVEN agent | PARTIAL | TODO | PROVEN forced complete | TODO | TODO | TODO | TODO | PARTIAL |
@@ -119,6 +119,24 @@ Current model capability metadata from local `config.json`:
 
 Current evidence behind non-TODO cells:
 
+- Current PR head E2B MXFP4 AgentLoop harness proof on commit
+  `eb9fe17f`:
+  `/tmp/osaurus-gemma-proof/pr1469-eb9fe17f-harness-20260612T102258Z/e2b-mxfp4-agentloop.json`
+  records 17 total, 11 passed, 6 failed, 0 skipped, and 0 errored for
+  `osaurusai--gemma-4-e2b-it-qat-mxfp4`. The run exercised real Osaurus
+  tools (`capabilities_load`, `clarify`, `file_edit`, `file_read`,
+  `file_search`, `file_write`, `shell_run`, and `todo`) through the
+  `AgentLoopEvaluator`; the smoke subset
+  `e2b-mxfp4-write-new-file-agentloop.json` also passed `write-new-file`
+  with a `file_write` call and correct `TODO.md` contents. The full row
+  failed `clarify-on-ambiguity`, `compaction-stress`,
+  `duplicate-call-avoidance`, `recover-from-failing-command`,
+  `search-then-multi-file-edit`, and `todo-discipline-multistep`. Several
+  passing and failing finals contain corrupted ordinary words such as
+  `ntents`, `recoal-2.xt`, `wafint`, `secarvice`, `cothe`, `filcome`,
+  `imprts`, and `funtin`; keep the row `PARTIAL` even though the harness
+  score is decent enough to prove real tool use. This is a model/runtime
+  coherency blocker to trace, not a harness error to hide.
 - Current PR head release-app proof on commit
   `8a0cf96576940858c2f0dcda591d55e18a15ba2c`:
   `/tmp/osaurus-gemma-proof/xcode-build-release-app-agentloop-8a0cf965.status`
