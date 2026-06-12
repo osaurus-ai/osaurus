@@ -470,6 +470,40 @@ Post-main merge checkpoint for Osaurus PR #1469, 2026-06-12:
   paged cache off by default, disk L2/prefix telemetry, prefill events on the
   direct chat surface, and repeat cache hits.
 
+## Gemma Speed + Audio Checkpoint (vMLX main 1ab081eb)
+
+Follow-up checkpoint, 2026-06-12, after merged `osaurus-ai/vmlx-swift`
+PR #46 (vMLX main `1ab081eb1d51568ae636f64b9ac76cd3ab4d2534`):
+
+- The audio and raw-speed deferrals from the previous checkpoint are
+  resolved at the engine level. vMLX main now carries:
+  - the TaskLocal prefill reporter crash fix (`dc52096`), which the
+    previous `020ec0d5` pin was missing — raw Gemma 4 QAT generation on
+    that pin segfaults at generation start (`RunBench` repro,
+    `/tmp/gemma4-speed-proof/e2b-mxfp4-perf.log`);
+  - Gemma 4 audio for every checkpoint that ships audio tensors: 12B
+    unified raw-waveform chunking (Gemma4UnifiedAudioFeatureExtractor
+    parity) and the E-series conformer `audio_tower` port (proof: E2B
+    transcribed synthesized speech verbatim,
+    `/tmp/gemma4-audio-proof/PROOF-SUMMARY.txt`). 26B-A4B/31B ship no
+    audio tensors; Osaurus now reports audio per-bundle from the weight
+    map instead of a blanket "runtime unwired" refusal;
+  - decode-speed levers vs the documented llama.cpp E2B GGUF baseline
+    (7384.7 prefill / 173.7 decode tok/s): TaskLocal fix 120.1 →
+    tied-head q6 132.5 → compiled decode 165.3 tok/s (MXFP4; JANG_4M
+    165.1), and prefill measured at 10,068 tok/s on a 1,957-token
+    prompt — above the GGUF prefill baseline. Bench artifacts under
+    `/tmp/gemma4-speed-proof/`.
+- Osaurus wires the levers as the Decode Performance settings section
+  (`performance.tiedHeadCodec`, default fp16 passthrough;
+  `performance.compiledDecode`, default off — experimental pending the
+  PR #1173 model-switch corruption root cause). Defaults change no
+  behavior; both levers act on the next model load via
+  `ModelRuntime.applyPerformancePolicy`.
+- The E2B JANG_4M ~7 GB load footprint is the bundle's own on-disk size
+  (7.3 GB, mixed-precision profile) mapped via mmap — not a runtime
+  leak. MXFP4 E2B is 3.8 GB on disk / ~1.7 GB footprint.
+
 ## Provider wire-format requirements
 
 Quirks discovered live, handled automatically by Osaurus. Useful if you
