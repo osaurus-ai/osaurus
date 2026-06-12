@@ -3393,3 +3393,72 @@ the row still has real tool calls, parseable arguments, tool-result
 continuation, clean visible text, paged-KV-off cache telemetry, and recorded
 disk/L2 behavior. Source/BF16 Gemma folders remain excluded from this QAT
 checkpoint.
+
+Current PR head `23a8cf50` E4B MXFP4 `/agents/default/run` and VL proof:
+
+- Root:
+  `/tmp/osaurus-gemma-proof/pr1469-23a8cf50-agent-e4b-mxfp4-20260612T151426Z`
+- Running app:
+  `/private/tmp/osaurus-gemma-checkpoint-main/build/XcodeDerivedData-pr1469-67b2070a-nosign/Build/Products/Release/osaurus.app/Contents/MacOS/osaurus`
+- The app health before/after the rows stayed `healthy` with current model
+  `osaurusai--gemma-4-e4b-it-qat-mxfp4`.
+- Request:
+  `request.agent-default-e4b-mxfp4-complete.json`
+- SSE:
+  `agent-default-e4b-mxfp4-complete.sse`
+- Summary:
+  `agent-default-e4b-mxfp4-complete.summary.json`
+- The `/agents/default/run` request uses `tool_choice="required"` and returns
+  HTTP 200.
+- The SSE emits `osaurus_agent_tool` started/completed frames for `complete`;
+  the completed frame has `is_error=false` and `end_run=true`.
+- Final text is exact:
+  `23a8cf50 current PR agent loop executed complete tool with Gemma E4B MXFP4 QAT and no parser leak.`
+- The scan finds no replacement characters, no U+FFFE sentinel, no raw
+  `<think>`, no raw tool/protocol markers, no configured weird-word hits, and
+  no non-ASCII output.
+- The agent route took `real 4.28`. It still does not emit usage or prefill
+  telemetry, so token/s and prefill proof come from direct chat and VL rows.
+- Cache after the agent row reports aggregate `disk_l2_hits=2`,
+  `disk_l2_misses=51`, `disk_l2_stores=5`, `paged_hits=0`, and
+  `paged_misses=0`. Per-model topology is paged off,
+  `block_disk_store.enabled=true`, `effective_kv_mode="turbo(3,3)"`,
+  `kv_layer_count=4`, `rotating_kv_layer_count=20`,
+  `requires_disk_backed_restore=true`, and `turbo_quant_kv_layer_count=0`.
+- Process RSS sample after the agent row:
+  `ps.after-agent-e4b-mxfp4.txt` records `RSS=696928 KB`. This is only a local
+  process RSS sample, not lower-spec Activity Monitor physical-footprint proof.
+
+E4B MXFP4 VL red-image row from the same root:
+
+- Request:
+  `request.vl-e4b-mxfp4-red32.json`
+- SSE:
+  `vl-e4b-mxfp4-red32-first.sse` and
+  `vl-e4b-mxfp4-red32-repeat.sse`
+- Summary:
+  `vl-e4b-mxfp4-red32.summary.json`
+- The payload includes a real inline red 32x32 PNG `image_url` data URL.
+- First and repeat rows return HTTP 200, exact `Red`, and `finish="stop"`.
+- Both rows emit prefill progress:
+  `queued 0/307`, `prefill 0/307`, and `complete 307/307`.
+- Usage is present: first `prompt_tokens=17`, `completion_tokens=1`,
+  `tokens_per_second=48.302`; repeat `prompt_tokens=17`,
+  `completion_tokens=1`, `tokens_per_second=44.5354`.
+- The VL scans find no replacement characters, no U+FFFE sentinel, no raw
+  `<think>`, no raw tool/protocol markers, and no non-ASCII output.
+- Repeat cache reports aggregate `disk_l2_hits=3`, `disk_l2_misses=54`,
+  `disk_l2_stores=10`, `paged_hits=0`, and `paged_misses=0`. Per-model
+  topology remains paged off, disk-backed, `effective_kv_mode="turbo(3,3)"`,
+  `kv_layer_count=4`, `rotating_kv_layer_count=20`,
+  `requires_disk_backed_restore=true`, and `turbo_quant_kv_layer_count=0`.
+
+Status from this 23a8cf50 proof:
+
+- `PROVEN`: E4B MXFP4 literal `/agents/default/run` completes a real tool call
+  with clean final text; E4B MXFP4 API VL still works with prefill, token/s,
+  paged KV off, disk L2 telemetry, and no marker/corruption leakage.
+- `PARTIAL`: `/agents/default/run` still lacks usage/prefill telemetry, and
+  this is not Chat UI image-attachment proof.
+- `BLOCKED`: Gemma4 audio remains blocked until vMLX wires the Gemma4 audio
+  tower/embed path.

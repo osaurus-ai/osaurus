@@ -223,6 +223,34 @@ aggregate `paged_hits=0`, `paged_misses=0`, `disk_l2_hits=1`, and
 `rotating_kv_layer_count=20`, `requires_disk_backed_restore=true`, and
 `turbo_quant_kv_layer_count=0`.
 
+Current PR head `23a8cf50` adds a fresh E4B MXFP4 `/agents/default/run`
+tool-execution and VL cache pass on the same running PR app. Proof root:
+`/tmp/osaurus-gemma-proof/pr1469-23a8cf50-agent-e4b-mxfp4-20260612T151426Z`.
+The agent request uses `tool_choice="required"` and emits real
+`osaurus_agent_tool` frames: `complete` started, `complete` completed with
+`is_error=false` and `end_run=true`, then exact final text
+`23a8cf50 current PR agent loop executed complete tool with Gemma E4B MXFP4 QAT and no parser leak.`.
+The SSE scan has no replacement characters, U+FFFE, raw `<think>`, raw
+tool/protocol markers, configured weird-word hits, or non-ASCII output. Cache
+after the agent row reports paged KV off, `block_disk_store.enabled=true`,
+`disk_l2_hits=2`, `disk_l2_stores=5`, `effective_kv_mode="turbo(3,3)"`,
+`kv_layer_count=4`, `rotating_kv_layer_count=20`,
+`requires_disk_backed_restore=true`, and `turbo_quant_kv_layer_count=0`.
+Because `/agents/default/run` still does not emit usage or prefill chunks, use
+the direct chat/VL rows for token-rate and prefill proof.
+
+The same proof root also has an E4B MXFP4 VL red-image API row using a real
+inline 32x32 PNG data URL. First and repeat requests both return exact `Red`,
+emit prefill progress `0/307` queued, `0/307` running, and `307/307`
+complete, and include usage. Token rates are `48.302 tok/s` first and
+`44.5354 tok/s` repeat. The VL scans have no replacement/control/non-ASCII or
+protocol marker leakage. Repeat cache reports paged KV off,
+`disk_l2_hits=3`, `disk_l2_stores=10`, `block_disk_store.enabled=true`,
+`effective_kv_mode="turbo(3,3)"`, `kv_layer_count=4`,
+`rotating_kv_layer_count=20`, `requires_disk_backed_restore=true`, and
+`turbo_quant_kv_layer_count=0`. This promotes the E4B MXFP4 API VL/cache cell;
+Chat UI image attachment and Gemma4 audio remain separate gates.
+
 The Gemma QAT harness target is deliberately practical: each MXFP4 and JANG_4M
 bundle must score decently enough to prove real Osaurus tool use and teammate
 testability, even if the score is not perfect. A row is not acceptable if it
