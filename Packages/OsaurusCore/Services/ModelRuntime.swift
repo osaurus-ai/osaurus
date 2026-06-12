@@ -1603,9 +1603,17 @@ public actor ModelRuntime {
             return false
         }
         if let cacheTopology {
-            if ModelFamilyNames.isGemmaFamily(modelName) {
-                return cacheTopology.kvLayerCount > 0
-            }
+            // No Gemma special case: Gemma 4's SWA topology (5:1 sliding
+            // 1024-token rotating windows + MQA full layers) keeps native KV
+            // tiny (~70 MB at 4k ctx on 26B-A4B), so TurboQuant buys almost
+            // no RAM while costing real decode throughput — measured
+            // 2026-06-12 on M5 Max RunBench, greedy, kvMode none vs tq33:
+            // 26B-A4B MXFP4 92.3 -> 54.0 tok/s (-42%), 12B MXFP4 48.6 ->
+            // 34.5 (-29%). The earlier forced `return kvLayerCount > 0`
+            // here is what regressed Gemma app decode from the documented
+            // 100+ tok/s 26B rows. The generic rotating-layer rule below
+            // now applies; TurboQuant stays available for Gemma via the
+            // explicit cache.liveKVCodec=turboQuant setting.
             if cacheTopology.mambaLayerCount > 0
                 || cacheTopology.arraysLayerCount > 0
                 || cacheTopology.hybridPoolLayerCount > 0
