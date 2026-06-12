@@ -559,8 +559,8 @@ Current evidence behind non-TODO cells:
   final visible text `The current PR UI proof is 5dc82e0a.` with no weird
   characters or protocol leakage. The UI displayed `TTFT 3.93s`, `5383.4 tok/s`,
   and `19 tokens`. This proves current-built UI tool execution for 12B MXFP4;
-  JANG_4M UI tool execution still needs a UI picker run, while JANG_4M default
-  agent/tool execution is proven through the live `/agents/default/run` route.
+  the newer `a2694c14` row below proves the corresponding 12B JANG_4M UI
+  picker/tool path.
 - Current PR-head Release app proof on commit
   `a2694c1444cc3ffbf8afff507aefd3955ec99302`:
   `scripts/live-proof/build-keychain-free-osaurus.sh
@@ -1653,6 +1653,36 @@ swift run --package-path Packages/OsaurusEvals osaurus-evals run \
 - Run QAT MXFP4 and JANG_4M harness rows and record scores, token/s, cache
   topology, memory footprint, and multi-turn visible behavior. Improve model
   or runtime behavior only where the harness score/logs show a real failure.
+- Current full AgentLoop score for
+  `osaurusai--gemma-4-e2b-it-qat-jang_4m` on PR head `e03cecf9`:
+  `/tmp/osaurus-gemma-proof/pr1469-e03cecf9-harness-20260612T095729Z/e2b-jang4m-agentloop.json`
+  completed all 17 `Packages/OsaurusEvals/Suites/AgentLoop` cases with
+  `13 passed`, `4 failed`, `0 skipped`, and `0 errored`. The run used
+  `OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1`,
+  `OSU_MODELS_DIR=/Users/eric/models`,
+  `OSAURUS_DISABLE_MEMORY_VECTOR_SEARCH=1`, and isolated test root
+  `/tmp/osaurus-gemma-proof/pr1469-e03cecf9-harness-20260612T095729Z/test-root-e2b-jang4m-agentloop`.
+  It executed real tool traffic across `file_read`, `file_write`,
+  `file_edit`, `file_search`, `shell_run`, `todo`, `clarify`, `complete`, and
+  `capabilities_load`. Suite-wide tool usage was:
+  `capabilities_load=1`, `clarify=1`, `complete=5`, `file_edit=4`,
+  `file_read=19`, `file_search=1`, `file_write=5`, `shell_run=5`, and
+  `todo=1`. The isolated `cache/kv_v2` directory contained 53 `.safetensors`
+  L2 blocks totaling about 1.5 GB by the end of the run.
+- Current AgentLoop failures for E2B JANG_4M are real model/runtime findings,
+  not harness bootstrap failures:
+  `agent_loop.compaction-stress` did not record compaction and missed `log4`;
+  `agent_loop.duplicate-call-avoidance` read the file once but answered the
+  wrong sum and had visible character drift; `agent_loop.search-then-multi-file-edit`
+  stopped after `file_search` and left `fetchDataV1`; and
+  `agent_loop.todo-discipline-multistep` completed file edits but never updated
+  the todo list with a checked item before completion. Multiple passing and
+  failing finals also show visible spelling/character corruption such as
+  `tlog2.xt`, `thfie`, `numbler`, `Efxtrat`, `Tlhe`, `fethDataV1`,
+  `prjeoct`, and `recquested`. This keeps full harness scoring and visible
+  text integrity `PARTIAL`; do not promote the QAT harness lane until these
+  failures are understood and fixed without prompt coercion or hidden sampler
+  changes.
 - Token/s is now exposed through OpenAI-compatible SSE usage chunks when
   `stream_options.include_usage=true`. Add normal visible-generation token/s
   rows for every model family before merge-ready wording.
