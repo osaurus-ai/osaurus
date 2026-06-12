@@ -378,19 +378,40 @@ public enum ToolEnvelope {
     /// legacy `ToolErrorEnvelope` JSON OR a legacy `[REJECTED]` /
     /// `[TIMEOUT]` prefix string. Used by UI / accounting code that
     /// needs to count failures without a full parse.
+    /// Leading window used for envelope detection.
+    ///
+    /// `isError`/`isSuccess` only need the head of the payload: the canonical
+    /// envelope emits `ok`/`error`/`retryable` as leading top-level keys, and
+    /// the `[REJECTED]`/`[TIMEOUT]` tags are prefixes. Tool outputs can be
+    /// hundreds of megabytes (file reads, base64 blobs) and these checks run
+    /// on the main-actor registry path, so trimming and scanning the whole
+    /// string could hang the UI. Skipping leading whitespace and bounding the
+    /// scan to a small head keeps detection O(1) in the payload size while
+    /// still covering every real envelope (the markers sit in the first bytes).
+    private static let sniffWindow = 2048
+
+    private static func envelopeHead(_ result: String) -> Substring {
+        guard let start = result.firstIndex(where: { !$0.isWhitespace }) else {
+            return ""
+        }
+        let end = result.index(start, offsetBy: sniffWindow, limitedBy: result.endIndex)
+            ?? result.endIndex
+        return result[start..<end]
+    }
+
     public static func isError(_ result: String) -> Bool {
-        let trimmed = result.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty { return false }
-        if trimmed.hasPrefix("[REJECTED]") || trimmed.hasPrefix("[TIMEOUT]") {
+        let head = envelopeHead(result)
+        if head.isEmpty { return false }
+        if head.hasPrefix("[REJECTED]") || head.hasPrefix("[TIMEOUT]") {
             return true
         }
-        guard trimmed.first == "{" else { return false }
+        guard head.first == "{" else { return false }
         // New envelope: `"ok":false`. Cheap structural sniff before parse.
-        if trimmed.contains("\"ok\":false") || trimmed.contains("\"ok\": false") {
+        if head.contains("\"ok\":false") || head.contains("\"ok\": false") {
             return true
         }
         // Legacy ToolErrorEnvelope shape.
-        if trimmed.contains("\"error\":") && trimmed.contains("\"retryable\":") {
+        if head.contains("\"error\":") && head.contains("\"retryable\":") {
             return true
         }
         return false
@@ -399,9 +420,9 @@ public enum ToolEnvelope {
     /// True when `result` looks like a success envelope. Symmetric with
     /// `isError`.
     public static func isSuccess(_ result: String) -> Bool {
-        let trimmed = result.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.first == "{" else { return false }
-        return trimmed.contains("\"ok\":true") || trimmed.contains("\"ok\": true")
+        let head = envelopeHead(result)
+        guard head.first == "{" else { return false }
+        return head.contains("\"ok\":true") || head.contains("\"ok\": true")
     }
 
     /// Attempt to extract the `result` payload from a success envelope.

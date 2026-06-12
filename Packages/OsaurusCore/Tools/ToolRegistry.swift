@@ -756,7 +756,11 @@ final class ToolRegistry: ObservableObject {
         // `SecretPromptParser` keys off `action` at the JSON root and the
         // chat loop replaces it with a real envelope after the overlay
         // resolves. Wrapping it here would break the secure-input flow.
-        if raw.contains("\"action\":\"\(SecretPromptAction.actionKey)\""),
+        // Bound the marker scan to the payload head — `raw` can be hundreds of
+        // MB and this runs on the (main-actor) registry path; the secret-prompt
+        // marker is a leading root key, so scanning the whole string just to
+        // detect it could hang the UI.
+        if raw.prefix(4096).contains("\"action\":\"\(SecretPromptAction.actionKey)\""),
             SecretPromptParser.parse(raw) != nil
         {
             return raw
