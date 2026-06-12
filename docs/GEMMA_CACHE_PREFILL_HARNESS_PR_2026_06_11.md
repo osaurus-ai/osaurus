@@ -112,7 +112,7 @@ Current model capability metadata from local `config.json`:
 | `osaurusai--gemma-4-e4b-it-qat-jang_4m` | JANG_4M | `gemma4` | yes | yes | PROVEN | PROVEN agent | PROVEN agent | PROVEN agent | PARTIAL | TODO | PROVEN forced complete | PARTIAL 14/17 | TODO | TODO | TODO | PARTIAL |
 | `osaurusai--gemma-4-12b-it-qat-mxfp4` | MXFP4 | `gemma4_unified` | yes | yes | PROVEN | PROVEN UI+agent | PROVEN UI+agent | PROVEN UI+agent | PROVEN UI+agent | TODO | PARTIAL UI status count | PARTIAL 16/17 | TODO | TODO | PROVEN API / PARTIAL UI percent | PARTIAL |
 | `osaurusai--gemma-4-12b-it-qat-jang_4m` | JANG_4M | `gemma4_unified` | yes | yes | PROVEN | PARTIAL UI / PROVEN API | PROVEN UI+agent | PROVEN UI+agent | PROVEN UI+agent | TODO | PARTIAL clean auto status tool / no usage | PARTIAL 16/17 | TODO | TODO | PARTIAL UI / PROVEN API | PARTIAL |
-| `osaurusai--gemma-4-26b-a4b-it-qat-mxfp4` | MXFP4 | `gemma4` | yes | no | PROVEN | PROVEN agent | PROVEN agent | PROVEN agent | PARTIAL | TODO | PROVEN forced complete | TODO | TODO | N/A | TODO | PARTIAL |
+| `osaurusai--gemma-4-26b-a4b-it-qat-mxfp4` | MXFP4 | `gemma4` | yes | no | PROVEN | PROVEN agent | PROVEN agent | PROVEN agent | PARTIAL | TODO | PROVEN forced complete | BLOCKED 13/17 + Metal abort | TODO | N/A | TODO | PARTIAL |
 | `osaurusai--gemma-4-26b-a4b-it-qat-jang_4m` | JANG_4M | `gemma4` | yes | no | PROVEN | PROVEN agent | PROVEN agent | PROVEN agent | PARTIAL | TODO | PROVEN forced complete | TODO | TODO | N/A | TODO | PARTIAL |
 | `osaurusai--gemma-4-31b-it-qat-mxfp4` | MXFP4 | `gemma4` | yes | no | PROVEN | PROVEN agent | PROVEN agent | PROVEN agent | PARTIAL | TODO | PROVEN forced complete | TODO | TODO | N/A | TODO | PARTIAL |
 | `osaurusai--gemma-4-31b-it-qat-jang_4m` | JANG_4M | `gemma4` | yes | no | PROVEN | PROVEN agent | PROVEN agent | PROVEN agent | PARTIAL | TODO | PROVEN forced complete | TODO | TODO | N/A | TODO | PARTIAL |
@@ -2798,6 +2798,65 @@ BatchEngine compile status:
   later command reports BatchEngine errors, keep the exact command, checkout,
   commit, and full log with this doc before fixing; do not infer it from the
   filename alone.
+
+## 2026-06-12 26B A4B MXFP4 Harness Blocker
+
+This checkpoint now has a first full AgentLoop attempt for
+`osaurusai--gemma-4-26b-a4b-it-qat-mxfp4`, but it is blocked proof, not a
+usable partial.
+
+Run:
+
+```sh
+/usr/bin/time -p env OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1 \
+  OSAURUS_TEST_ROOT=/tmp/osaurus-gemma-proof/pr1469-c7892240-harness-26b-a4b-mxfp4-20260612T123831Z \
+  OSU_MODELS_DIR=/Users/eric/models \
+  OSAURUS_EVALS_STARTUP_TIMEOUT_SECONDS=180 \
+  swift run --package-path Packages/OsaurusEvals osaurus-evals run \
+    --suite Packages/OsaurusEvals/Suites/AgentLoop \
+    --model osaurusai--gemma-4-26b-a4b-it-qat-mxfp4 \
+    --out /tmp/osaurus-gemma-proof/pr1469-c7892240-harness-26b-a4b-mxfp4-20260612T123831Z/26b-a4b-mxfp4-agentloop.json
+```
+
+Artifacts:
+
+- Report:
+  `/tmp/osaurus-gemma-proof/pr1469-c7892240-harness-26b-a4b-mxfp4-20260612T123831Z/26b-a4b-mxfp4-agentloop.json`
+- Summary:
+  `/tmp/osaurus-gemma-proof/pr1469-c7892240-harness-26b-a4b-mxfp4-20260612T123831Z/26b-a4b-mxfp4-agentloop.summary.json`
+- Case table:
+  `/tmp/osaurus-gemma-proof/pr1469-c7892240-harness-26b-a4b-mxfp4-20260612T123831Z/26b-a4b-mxfp4-agentloop.case-table.tsv`
+- Marker scan:
+  `/tmp/osaurus-gemma-proof/pr1469-c7892240-harness-26b-a4b-mxfp4-20260612T123831Z/26b-a4b-mxfp4-agentloop.marker-scan.txt`
+- Cache artifacts:
+  `/tmp/osaurus-gemma-proof/pr1469-c7892240-harness-26b-a4b-mxfp4-20260612T123831Z/26b-a4b-mxfp4-agentloop.cache-artifacts.txt`
+
+Observed result:
+
+- JSON report totals: 17 total, 13 passed, 4 failed, 0 skipped, 0 errored.
+- Failed cases: `capabilities-load-midrun`, `compaction-stress`,
+  `duplicate-call-avoidance`, and `search-then-multi-file-edit`.
+- Tool use was real: `capabilities_load`, `clarify`, `complete`, `file_edit`,
+  `file_read`, `file_write`, `shell_run`, and `todo`.
+- The process terminated abnormally after a fatal Metal command-buffer error:
+  `MLX/ErrorHandler.swift:343: Fatal error: [METAL] Command buffer execution failed: Internal Error ... stream.cpp:78`.
+- The compaction case looped and emitted visibly corrupted text, including
+  `log2.xt`, `tlog4.xt`, `havte heckecd`, `shofuld hek`, and repeated
+  `I'lll hekcc og4.txt` / `I'lll hekcc og5.txt`.
+- `duplicate-call-avoidance` misread the file and answered `10` instead of
+  `50`.
+- `search-then-multi-file-edit` exited with no tool calls and left `fetchDataV1`
+  in the tree.
+- Marker scan found `replacement_count=0` and no raw protocol/tool marker
+  leakage, but the fatal log line and visible corruption keep this row blocked.
+- Cache artifacts show 36 disk KV safetensor files, about `9.9G`, and 36 cache
+  index rows. This is cache-material evidence only; it does not prove good TTFT,
+  repeat L2-hit behavior, or a safe final cache topology.
+
+Regression rule from this row: a QAT Gemma harness score must not be promoted
+just because a JSON report exists. If the command aborts, visible text corrupts
+or loops, tool calls are skipped, or cache proof is only material-on-disk, the
+row stays `BLOCKED` or `PARTIAL` with the exact artifacts above.
 
 Updated boundary:
 
