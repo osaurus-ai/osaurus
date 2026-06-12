@@ -2854,6 +2854,22 @@
         }
       }
     },
+    "A local model is already running" : {
+    "localizations" : {
+      "de" : {
+        "stringUnit" : {
+          "state" : "translated",
+          "value" : "Ein lokales Modell wird bereits ausgeführt"
+        }
+      },
+      "zh-Hans" : {
+        "stringUnit" : {
+          "state" : "translated",
+          "value" : "本地模型已在运行"
+        }
+      }
+    }
+  },
     "A microphone button will appear in the chat input when voice is ready" : {
       "localizations" : {
         "de" : {
@@ -32027,6 +32043,22 @@
         }
       }
     },
+    "Only one local model can run at a time, and another chat window is using it right now. Wait for that reply to finish, or switch this chat to a remote model." : {
+    "localizations" : {
+      "de" : {
+        "stringUnit" : {
+          "state" : "translated",
+          "value" : "Es kann immer nur ein lokales Modell gleichzeitig ausgeführt werden, und ein anderes Chat-Fenster verwendet es gerade. Warte, bis diese Antwort abgeschlossen ist, oder wechsle in diesem Chat zu einem Remote-Modell."
+        }
+      },
+      "zh-Hans" : {
+        "stringUnit" : {
+          "state" : "translated",
+          "value" : "一次只能运行一个本地模型，目前另一个聊天窗口正在使用它。请等待该回复完成，或将此聊天切换为远程模型。"
+        }
+      }
+    }
+  },
     "Only use this on trusted hardware for long-running work" : {
       "localizations" : {
         "de" : {
