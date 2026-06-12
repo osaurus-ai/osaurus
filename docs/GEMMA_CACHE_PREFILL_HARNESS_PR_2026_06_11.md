@@ -109,7 +109,7 @@ Current model capability metadata from local `config.json`:
 | `osaurusai--gemma-4-e2b-it-qat-mxfp4` | MXFP4 | `gemma4` | yes | yes | PROVEN | PROVEN | PROVEN | PROVEN | PARTIAL | PROVEN | PROVEN complete / PARTIAL side-effect | PARTIAL 11/17 | TODO | TODO | PARTIAL | PARTIAL |
 | `osaurusai--gemma-4-e2b-it-qat-jang_4m` | JANG_4M | `gemma4` | yes | yes | PROVEN | PROVEN | PROVEN | PROVEN | PARTIAL | PROVEN | PROVEN complete / PARTIAL side-effect | PARTIAL 13/17 | PROVEN API | BLOCKED policy | PROVEN API / TODO UI | PARTIAL |
 | `osaurusai--gemma-4-e4b-it-qat-mxfp4` | MXFP4 | `gemma4` | yes | yes | PROVEN | PROVEN agent | PROVEN agent | PROVEN agent | PARTIAL | TODO | PROVEN forced complete | PARTIAL 15/17 | TODO | TODO | TODO | PARTIAL |
-| `osaurusai--gemma-4-e4b-it-qat-jang_4m` | JANG_4M | `gemma4` | yes | yes | PROVEN | PROVEN agent | PROVEN agent | PROVEN agent | PARTIAL | TODO | PROVEN forced complete | PARTIAL 14/17 | TODO | TODO | TODO | PARTIAL |
+| `osaurusai--gemma-4-e4b-it-qat-jang_4m` | JANG_4M | `gemma4` | yes | yes | PROVEN | PROVEN UI+agent | PROVEN API / UI stores only | PROVEN API+UI | PROVEN UI+API | PROVEN UI status | PROVEN forced complete | PARTIAL 14/17 | TODO | TODO | PROVEN API / TODO UI | PARTIAL |
 | `osaurusai--gemma-4-12b-it-qat-mxfp4` | MXFP4 | `gemma4_unified` | yes | yes | PROVEN | PROVEN UI+agent | PROVEN UI+agent | PROVEN UI+agent | PROVEN UI+agent | PROVEN UI status | PROVEN UI same-chat status tool | PARTIAL 16/17 | TODO | TODO | PROVEN API / PARTIAL UI percent | PARTIAL |
 | `osaurusai--gemma-4-12b-it-qat-jang_4m` | JANG_4M | `gemma4_unified` | yes | yes | PROVEN | PROVEN UI+API | PROVEN API+agent | PROVEN API+agent | PROVEN API+agent | PROVEN UI+agent status | PROVEN UI+agent status / agent no usage | PARTIAL 16/17 | PROVEN API | TODO | PROVEN API / TODO UI | PARTIAL |
 | `osaurusai--gemma-4-26b-a4b-it-qat-mxfp4` | MXFP4 | `gemma4` | yes | no | PROVEN | PROVEN agent | PROVEN agent | PROVEN agent | PARTIAL | TODO | PROVEN forced complete | BLOCKED 13/17 + Metal abort | TODO | N/A | TODO | PARTIAL |
@@ -178,6 +178,31 @@ Current evidence behind non-TODO cells:
   topology, and `turbo_quant_kv_layer_count=0`. This proves current-head
   12B JANG_4M VL API behavior with cache topology; it does not prove Chat UI
   image attachment, audio, or other model sizes.
+- Current E4B JANG_4M Chat UI proof root
+  `/tmp/osaurus-gemma-proof/pr1469-67b2070a-ui-e4b-jang-tool-20260612T145655Z`
+  shows the visible selector switched to
+  `OsaurusAI Gemma 4 E4B it qat JANG_4M`, two same-chat visible `Osaurus status`
+  tool cards, exact final text
+  `UI E4B JANG 67b2070a status tool proof complete.` and
+  `UI E4B JANG 67b2070a second status tool proof complete.`, UI metrics
+  `TTFT 2.88s` / `5350.2 tok/s` / `20 tokens` then `TTFT 2.86s` /
+  `83.9 tok/s` / `21 tokens`, and no visible weird/control/protocol marker
+  leakage. UI cache snapshots prove paged KV stayed off and disk stores
+  occurred (`disk_l2_stores=4`) but did not prove a UI disk hit
+  (`disk_l2_hits=0`), so separate direct-chat cache rows were run for the same
+  model. The first 4888-token repeat produced `disk_l2_hits=1` but failed
+  quality by length-stopping after copying prefix text; it remains a failed
+  cache-quality diagnostic. The promoted shorter direct-chat row emits prefill
+  `0/984` through `984/984`, returns exact
+  `E4B JANG short cache proof complete.` on first and repeat, has no
+  replacement/control/non-ASCII/protocol marker leakage, and final cache
+  reports `paged_kv_enabled=false`, aggregate `paged_hits=0`,
+  `paged_misses=0`, `disk_l2_hits=3`, `disk_l2_stores=9`,
+  `block_disk_store.enabled=true`, `effective_kv_mode="turbo(3,3)"`,
+  `turbo_quant_compressions=9`, `kv_layer_count=4`,
+  `rotating_kv_layer_count=20`, `requires_disk_backed_restore=true`, and
+  `turbo_quant_kv_layer_count=0`. The non-stream copy records
+  `tokens_per_second=15.0615`.
 - Current PR head `f58bb924` no-sign Release app build:
   `scripts/live-proof/build-keychain-free-osaurus.sh` produced
   `** BUILD SUCCEEDED **` for

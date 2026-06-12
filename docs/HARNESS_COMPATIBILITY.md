@@ -176,6 +176,31 @@ leakage. A non-stream row returns exact `Red` with
 This promotes only the 12B JANG_4M VL API cell; Chat UI attachment, audio, and
 other model sizes remain unproven here.
 
+Code head `67b2070a` now also has a current E4B JANG_4M Chat UI tool/cache
+proof. Proof root:
+`/tmp/osaurus-gemma-proof/pr1469-67b2070a-ui-e4b-jang-tool-20260612T145655Z`.
+The visible selector is `OsaurusAI Gemma 4 E4B it qat JANG_4M`; two same-chat
+turns show `Osaurus status` tool cards and exact final text
+`UI E4B JANG 67b2070a status tool proof complete.` then
+`UI E4B JANG 67b2070a second status tool proof complete.`. UI metrics are
+`TTFT 2.88s`, `5350.2 tok/s`, `20 tokens` and then `TTFT 2.86s`,
+`83.9 tok/s`, `21 tokens`, with no visible weird/control/protocol marker
+leakage. The UI cache snapshots show paged KV stayed off and disk stores
+occurred, but `disk_l2_hits` stayed 0, so UI cache-hit proof remains partial.
+Direct-chat cache proof for the same E4B JANG_4M model then passed on the
+short stable-prefix row: streamed first and repeat outputs are exact
+`E4B JANG short cache proof complete.`, prefill runs `0/984` through
+`984/984`, no replacement/control/non-ASCII/protocol marker leaks appear, and
+the final cache snapshot reports `paged_kv_enabled=false`,
+aggregate `paged_hits=0`, `paged_misses=0`, `disk_l2_hits=3`,
+`disk_l2_stores=9`, `block_disk_store.enabled=true`,
+`effective_kv_mode="turbo(3,3)"`, `turbo_quant_compressions=9`,
+`kv_layer_count=4`, `rotating_kv_layer_count=20`,
+`requires_disk_backed_restore=true`, and `turbo_quant_kv_layer_count=0`. A
+non-stream copy records `tokens_per_second=15.0615`. The earlier 4888-token
+repeat diagnostic hit disk L2 but length-stopped after copying prefix text, so
+it is recorded as a failed cache-quality diagnostic, not promoted proof.
+
 The Gemma QAT harness target is deliberately practical: each MXFP4 and JANG_4M
 bundle must score decently enough to prove real Osaurus tool use and teammate
 testability, even if the score is not perfect. A row is not acceptable if it
