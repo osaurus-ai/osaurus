@@ -111,7 +111,7 @@ Current model capability metadata from local `config.json`:
 | `osaurusai--gemma-4-e4b-it-qat-mxfp4` | MXFP4 | `gemma4` | yes | yes | PROVEN | PROVEN agent | PROVEN agent | PROVEN agent | PARTIAL | TODO | PROVEN forced complete | PARTIAL 15/17 | TODO | TODO | TODO | PARTIAL |
 | `osaurusai--gemma-4-e4b-it-qat-jang_4m` | JANG_4M | `gemma4` | yes | yes | PROVEN | PROVEN agent | PROVEN agent | PROVEN agent | PARTIAL | TODO | PROVEN forced complete | PARTIAL 14/17 | TODO | TODO | TODO | PARTIAL |
 | `osaurusai--gemma-4-12b-it-qat-mxfp4` | MXFP4 | `gemma4_unified` | yes | yes | PROVEN | PROVEN UI+agent | PROVEN UI+agent | PROVEN UI+agent | PROVEN UI+agent | PROVEN UI status | PROVEN UI same-chat status tool | PARTIAL 16/17 | TODO | TODO | PROVEN API / PARTIAL UI percent | PARTIAL |
-| `osaurusai--gemma-4-12b-it-qat-jang_4m` | JANG_4M | `gemma4_unified` | yes | yes | PROVEN | PARTIAL UI / PROVEN API | PROVEN API+agent | PROVEN API+agent | PROVEN API+agent | PROVEN agent status | PROVEN agent status / no usage | PARTIAL 16/17 | TODO | TODO | PROVEN API / TODO UI | PARTIAL |
+| `osaurusai--gemma-4-12b-it-qat-jang_4m` | JANG_4M | `gemma4_unified` | yes | yes | PROVEN | PROVEN UI+API | PROVEN API+agent | PROVEN API+agent | PROVEN API+agent | PROVEN UI+agent status | PROVEN UI+agent status / agent no usage | PARTIAL 16/17 | PROVEN API | TODO | PROVEN API / TODO UI | PARTIAL |
 | `osaurusai--gemma-4-26b-a4b-it-qat-mxfp4` | MXFP4 | `gemma4` | yes | no | PROVEN | PROVEN agent | PROVEN agent | PROVEN agent | PARTIAL | TODO | PROVEN forced complete | BLOCKED 13/17 + Metal abort | TODO | N/A | TODO | PARTIAL |
 | `osaurusai--gemma-4-26b-a4b-it-qat-jang_4m` | JANG_4M | `gemma4` | yes | no | PROVEN | PROVEN agent | PROVEN agent | PROVEN agent | PARTIAL | TODO | PROVEN forced complete | TODO | TODO | N/A | TODO | PARTIAL |
 | `osaurusai--gemma-4-31b-it-qat-mxfp4` | MXFP4 | `gemma4` | yes | no | PROVEN | PROVEN agent | PROVEN agent | PROVEN agent | PARTIAL | TODO | PROVEN forced complete | TODO | TODO | N/A | TODO | PARTIAL |
@@ -163,6 +163,21 @@ Current evidence behind non-TODO cells:
   visual tool-card proof gap. It does not claim full clean harness,
   lower-spec physical footprint proof, other-size JANG UI proof, or successful
   Gemma4 audio.
+- Current 12B JANG_4M VL API proof root
+  `/tmp/osaurus-gemma-proof/pr1469-67b2070a-vl-jang-red-20260612T145209Z`
+  uses a real inline red PNG `image_url` payload through
+  `/v1/chat/completions` on the same exact app. Streamed first and repeat rows
+  both return exact final text `Red`, finish `stop`, stable prefix hash
+  `6e340b9cffb37a989ca544e6bb780a2c`, prefill events `0/279` through
+  `279/279`, and no replacement/control/non-ASCII/protocol marker leakage.
+  A non-stream row returns exact `Red` with usage `tokens_per_second=11.1953`.
+  Final cache snapshot reports `paged_kv_enabled=false`, aggregate
+  `paged_hits=0`, `paged_misses=0`, `disk_l2_hits=3`, `disk_l2_stores=12`,
+  `block_disk_store.enabled=true`, `effective_kv_mode="turbo(3,3)"`,
+  `turbo_quant_compressions=7`, the same 8 KV / 40 rotating disk-backed
+  topology, and `turbo_quant_kv_layer_count=0`. This proves current-head
+  12B JANG_4M VL API behavior with cache topology; it does not prove Chat UI
+  image attachment, audio, or other model sizes.
 - Current PR head `f58bb924` no-sign Release app build:
   `scripts/live-proof/build-keychain-free-osaurus.sh` produced
   `** BUILD SUCCEEDED **` for

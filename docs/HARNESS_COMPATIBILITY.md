@@ -160,6 +160,22 @@ and direct-chat prefill/cache telemetry on the current dev app, while
 preserving the remaining boundary that the broader QAT matrix is not yet
 complete.
 
+The same exact app also has a fresh 12B JANG_4M VL API proof. Proof root:
+`/tmp/osaurus-gemma-proof/pr1469-67b2070a-vl-jang-red-20260612T145209Z`.
+Streamed first and repeat `/v1/chat/completions` rows use a real inline red
+PNG `image_url` payload, both return exact final text `Red`, finish `stop`,
+reuse prefix hash `6e340b9cffb37a989ca544e6bb780a2c`, emit prefill `0/279`
+through `279/279`, and show no replacement/control/non-ASCII/protocol marker
+leakage. A non-stream row returns exact `Red` with
+`tokens_per_second=11.1953`. Final cache snapshot reports
+`paged_kv_enabled=false`, aggregate `paged_hits=0`, `paged_misses=0`,
+`disk_l2_hits=3`, `disk_l2_stores=12`, `block_disk_store.enabled=true`,
+`effective_kv_mode="turbo(3,3)"`, `turbo_quant_compressions=7`,
+`kv_layer_count=8`, `rotating_kv_layer_count=40`,
+`requires_disk_backed_restore=true`, and `turbo_quant_kv_layer_count=0`.
+This promotes only the 12B JANG_4M VL API cell; Chat UI attachment, audio, and
+other model sizes remain unproven here.
+
 The Gemma QAT harness target is deliberately practical: each MXFP4 and JANG_4M
 bundle must score decently enough to prove real Osaurus tool use and teammate
 testability, even if the score is not perfect. A row is not acceptable if it
