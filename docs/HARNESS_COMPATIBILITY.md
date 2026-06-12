@@ -75,20 +75,25 @@ Current PR #1469 live proof also makes visible-text quality a hard gate.
 Older 12B JANG_4M rows on head `f58bb924` successfully executed the real
 built-in `osaurus_status` tool through `/agents/default/run`, but corrupted
 ordinary text (`saurus_status toool`) in the visible answer. Current head
-`ddd8cf9d` has a clean current-built Release-app proof for the
-`complete` tool on 12B JANG_4M: first and repeat `/agents/default/run` streams
-emit sanitized `osaurus_agent_tool` `started`/`completed` chunks, exact final
-text `ddd8cf9d current-built default agent 12b jang4m complete tool execution
-proof.`, no non-ASCII/control/protocol marker leakage, and repeat cache with
-`disk_l2_hits=1`, `paged_cache.enabled=false`, `block_disk_store.enabled=true`,
-`effective_kv_mode="turbo(3,3)"`, and `turbo_quant_kv_layer_count=0`. A paired
-direct-chat prefill row on the same app emits progress from `0/1227` through
-`1227/1227`, usage with `tokens_per_second=5.0905`, and repeat cache with
-`disk_l2_hits=2`. This is a useful current-head tool/cache/prefill checkpoint,
-not a full release pass: `/agents/default/run` still does not emit usage or
-prefill telemetry, the remaining QAT MXFP4/JANG_4M models still need scored
-AgentLoop rows, and every failed case needs an attached cause before the
-checkpoint is teammate-testable.
+`5e87c496` has a clean current-built Release-app proof for the `complete` tool
+on 12B JANG_4M: `/agents/default/run` emits sanitized `osaurus_agent_tool`
+`started`/`completed` chunks, exact final text
+`5e87c496 current-built default agent 12b jang4m complete tool execution
+proof.`, and no non-ASCII/control/protocol marker leakage. Cache telemetry
+reports `paged_cache.enabled=false`, `block_disk_store.enabled=true`,
+`effective_kv_mode="turbo(3,3)"`, `kv_layer_count=8`,
+`rotating_kv_layer_count=40`, `requires_disk_backed_restore=true`, and
+`turbo_quant_kv_layer_count=0`. A paired direct-chat prefill repeat on the same
+app emits progress from `0/1470` through `1470/1470`, usage with
+`tokens_per_second=4.9309`, and repeat cache with `disk_l2_hits=1`,
+`disk_l2_stores=3`, and paged hits/misses both zero. E2B JANG_4M VL red-image
+proof on the same app returns `Red` with prefill `0/307` through `307/307`.
+This is a useful current-head tool/cache/prefill/VL checkpoint, not a full
+release pass: `/agents/default/run` still does not emit usage or prefill
+telemetry, Chat UI visual proof was blocked by app-bundle automation ambiguity,
+the remaining QAT MXFP4/JANG_4M models still need scored AgentLoop rows, and
+every failed case needs an attached cause before the checkpoint is
+teammate-testable.
 
 The Gemma QAT harness target is deliberately practical: each MXFP4 and JANG_4M
 bundle must score decently enough to prove real Osaurus tool use and teammate

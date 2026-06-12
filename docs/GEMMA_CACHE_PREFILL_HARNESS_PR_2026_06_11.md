@@ -3035,3 +3035,98 @@ Updated boundary:
   prose/JSON about edits that were never executed. Do not reintroduce
   post-tool `tool_choice:none` inside the canonical harness loop unless it is
   gated by a proven finalization signal that preserves later tool calls.
+
+Current-head `5e87c496` Release-app reproof on 2026-06-12:
+
+- Proof root:
+  `/tmp/osaurus-gemma-proof/pr1469-5e87c496-current-live-20260612T132946Z`
+- Keychain-free Release app build succeeded from exact branch head
+  `5e87c496`:
+  `build/XcodeDerivedData-pr1469-5e87c496-nosign/Build/Products/Release/osaurus.app`.
+- The exact PR app was launched with `OSU_MODELS_DIR=/Users/eric/models`,
+  `OSAURUS_TEST_ROOT` set to the proof root, and `OSU_PORT=1337`. Initial
+  health reported `status="healthy"`, `model_count=27`, and no resident model.
+- A stale installed `/Applications/osaurus.app` process was detected during UI
+  automation attempts and killed. Apple Events activation relaunched the
+  installed bundle, and Computer Use timed out on the `osaurus` accessibility
+  state, so Chat UI-visible tool proof remains `BLOCKED` by automation
+  ambiguity for this pass. Do not count this as final UI proof.
+
+Agent/tool proof on `5e87c496`:
+
+- Request:
+  `request.agent-default-12b-jang4m-complete.json`
+- SSE:
+  `agent-default-12b-jang4m-complete.sse`
+- Model: `osaurusai--gemma-4-12b-it-qat-jang_4m`.
+- `/agents/default/run` emitted sanitized `osaurus_agent_tool` frames:
+  `phase="started"`, `name="complete"`, followed by `phase="completed"`,
+  `is_error=false`, and `end_run=true`.
+- Final text was exactly
+  `5e87c496 current-built default agent 12b jang4m complete tool execution proof.`
+- Text scan found no replacement character, internal tool sentinels, raw
+  `<think>`, raw tool/protocol markers, `tool:`, `args:`, `done:`, or the
+  previously observed visible corruptions such as `seleed`, `protctoocol`,
+  `leaketo`, `28a`, `emperature`, or `functiotns`.
+- Cache after the agent turn:
+  `cache.after-agent.json` reports `paged_cache.enabled=false`,
+  `block_disk_store.enabled=true`, `effective_kv_mode="turbo(3,3)"`,
+  `kv_layer_count=8`, `rotating_kv_layer_count=40`,
+  `requires_disk_backed_restore=true`, and `turbo_quant_kv_layer_count=0`.
+  This short prompt produced `disk_l2_misses=1` and no L2 hit; use the
+  long-prefix repeat below for TTFT/L2-hit proof.
+
+Prefill and L2 repeat proof on `5e87c496`:
+
+- Request:
+  `request.direct-chat-12b-jang4m-prefill.json`
+- First/repeat SSE:
+  `direct-chat-12b-jang4m-prefill-first.sse` and
+  `direct-chat-12b-jang4m-prefill-repeat.sse`.
+- Model: `osaurusai--gemma-4-12b-it-qat-jang_4m`.
+- Both turns emitted `osaurus_prefill` progress:
+  `0/1470 queued`, `0/1470 running`, `512/1470`, `1024/1470`, and
+  `1470/1470 complete`.
+- Both turns returned exactly
+  `5e87c496 direct chat prefill proof complete.` with no marker or visible
+  corruption scan hits.
+- Usage was recorded on the streaming OpenAI-compatible path:
+  first `prompt_tokens=1135`, `completion_tokens=19`, `tokens_per_second=4.955`;
+  repeat `prompt_tokens=1135`, `completion_tokens=19`,
+  `tokens_per_second=4.9309`.
+- Repeat cache telemetry:
+  `cache.after-direct-prefill-repeat.json` reports aggregate
+  `disk_l2_hits=1`, `disk_l2_misses=3`, `disk_l2_stores=3`, `paged_hits=0`,
+  and `paged_misses=0`. Per-model cache remains paged-off, disk-backed,
+  `effective_kv_mode="turbo(3,3)"`, and `turbo_quant_kv_layer_count=0`.
+
+VL/audio proof on `5e87c496`:
+
+- VL request/SSE:
+  `vl-e2b-jang4m-red32-5e87c496.request.json` and
+  `vl-e2b-jang4m-red32-5e87c496.sse`.
+- Model: `osaurusai--gemma-4-e2b-it-qat-jang_4m`.
+- Red 32x32 PNG data URL returned exactly `Red`, emitted prefill progress
+  `0/307` through `307/307`, recorded `tokens_per_second=30.6054`, and had no
+  marker or visible corruption scan hits. Cache after the VL row still had
+  `paged_hits=0` and `paged_misses=0`.
+- Audio request/SSE:
+  `audio-e2b-jang4m-tone-5e87c496.request.json` and
+  `audio-e2b-jang4m-tone-5e87c496.sse`.
+- Audio remains a typed policy block, not a crash: the response says
+  `Gemma4 audio input is not enabled because the pinned vMLX Gemma4 runtime
+  does not wire audio_tower/embed_audio yet.` Keep audio `BLOCKED policy`
+  until vMLX wires the Gemma4 audio path.
+
+Current `5e87c496` status:
+
+- `PROVEN`: exact-head keychain-free Release build, health, 12B JANG_4M
+  `/agents/default/run` tool execution, clean final text for that tool row,
+  direct-chat prefill progress and token/s, repeat disk L2 hit with paged KV
+  off, and E2B JANG_4M VL red-image row.
+- `PARTIAL`: this is still not a merge-ready final proof because Chat UI visual
+  tool proof was blocked by automation ambiguity, `/agents/default/run` still
+  does not emit usage chunks, and the broader harness matrix still has visible
+  ordinary text corruption in several QAT rows.
+- `BLOCKED`: Gemma4 audio remains blocked by missing pinned-vMLX audio tower
+  wiring.
