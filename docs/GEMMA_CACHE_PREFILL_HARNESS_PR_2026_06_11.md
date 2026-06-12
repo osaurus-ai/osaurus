@@ -3130,3 +3130,58 @@ Current `5e87c496` status:
   ordinary text corruption in several QAT rows.
 - `BLOCKED`: Gemma4 audio remains blocked by missing pinned-vMLX audio tower
   wiring.
+
+31B JANG_4M full AgentLoop harness row on PR head `c21b9988`:
+
+- Root:
+  `/tmp/osaurus-gemma-proof/pr1469-c21b9988-harness-31b-jang4m-20260612T133706Z`
+- Command:
+  ```bash
+  OSU_MODELS_DIR=/Users/eric/models \
+  OSAURUS_MODELS_DIR=/Users/eric/models \
+  OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1 \
+  OSAURUS_TEST_ROOT=/tmp/osaurus-gemma-proof/pr1469-c21b9988-harness-31b-jang4m-20260612T133706Z \
+  swift run --package-path Packages/OsaurusEvals osaurus-evals run \
+    --suite Packages/OsaurusEvals/Suites/AgentLoop \
+    --model osaurusai--gemma-4-31b-it-qat-jang_4m \
+    --out /tmp/osaurus-gemma-proof/pr1469-c21b9988-harness-31b-jang4m-20260612T133706Z/31b-jang4m-agentloop.json
+  ```
+- Result: 17 total, 15 passed, 2 failed, 0 skipped, 0 errored.
+- Runtime: `real 1010.63`, `user 443.20`, `sys 144.43`.
+- Peak sampled process RSS during the run was about `17.9G`
+  (`ps` sample: `RSS=17950736 KB`), so this is not lower-spec physical
+  footprint proof.
+- The row proves real tool use across `capabilities_load`, `clarify`,
+  `complete`, `file_edit`, `file_read`, `file_search`, `file_write`,
+  `shell_run`, and `todo`. Suite-wide tool usage was:
+  `capabilities_load=1`, `clarify=1`, `complete=9`, `file_edit=13`,
+  `file_read=25`, `file_search=3`, `file_write=5`, `shell_run=6`, and
+  `todo=27`. Recorded tool errors were expected within the harness cases:
+  `capabilities_load=1`, `file_edit=3`, and `file_read=2`.
+- Failed cases:
+  - `compaction-stress`: compaction occurred, but the run ended at
+    `iterationCapReached`, emitted no final text, and the final text therefore
+    missed `log4`.
+  - `wrap-up-on-budget`: budget notices fired, but the run ended at
+    `iterationCapReached` with empty final text after reading `main.py` and
+    `converter.py`.
+- Passing-but-not-clean evidence:
+  - `duplicate-call-avoidance` passed and answered `50`, but the visible final
+    had ordinary text corruption: `The um of the number on the first line (41)
+    and t number on the lashest line (9) is 50.`
+- Protocol marker scan:
+  `31b-jang4m-agentloop.protocol-marker-scan.txt` has no replacement
+  characters, U+FFFE, raw `<think>`, raw tool/protocol markers, `tool:`,
+  `args:`, or `done:` leakage.
+- Cache artifacts:
+  `31b-jang4m-agentloop.cache-artifacts.txt` records 11 disk KV safetensor
+  files, about `9.7G`, and `cache_index.db` has 11 `cache_entries`. This proves
+  cache material was written during the harness run, but it is not standalone
+  TTFT or repeat L2-hit proof.
+
+Current diagnosis from the 31B JANG_4M AgentLoop row: it is a useful
+team-testable partial score and materially closes one pending all-QAT matrix
+row, but it is not a clean release row. The remaining 31B MXFP4 full AgentLoop
+score is still pending, and the repeated failure shape is now clearer:
+budget/compaction finalization can hit `iterationCapReached` with empty final
+text, while ordinary visible text corruption can still appear in passing rows.
