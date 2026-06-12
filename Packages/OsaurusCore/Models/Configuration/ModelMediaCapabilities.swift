@@ -343,6 +343,25 @@ public enum ModelMediaCapabilities {
             return .textOnly
         }
 
+        // Gemma4: audio capability is checkpoint-fact-driven, not
+        // name-driven. The same family ships three different audio
+        // realities (verified against the OsaurusAI QAT weight maps):
+        //   12B (gemma4_unified)  — encoder-free `embed_audio` raw-frame
+        //                           projection; vMLX decodes raw audio
+        //                           natively via unified chunking.
+        //   E2B/E4B (gemma4)      — mel + conformer `audio_tower` plus
+        //                           `embed_audio`.
+        //   26B-A4B / 31B         — NO audio tensors in the checkpoint;
+        //                           audio is impossible there, not
+        //                           "unwired", so it stays unsupported.
+        if modelType.hasPrefix("gemma4") {
+            return Capabilities(
+                supportsImage: true,
+                supportsVideo: false,
+                supportsAudio: gemma4BundleSupportsAudio(directory: directory)
+            )
+        }
+
         // Cross-check the family-by-model_type for video support.
         // model_types known to support video at the engine level:
         let videoCapableModelTypes: Set<String> = [
@@ -368,6 +387,32 @@ public enum ModelMediaCapabilities {
             capabilities: from(directory: directory, modelId: modelId),
             source: "bundle config"
         )
+    }
+
+    /// True when a locally-installed Gemma4 bundle ships the audio input
+    /// tensors the runtime needs. Checks the safetensors weight map for
+    /// `embed_audio.embedding_projection` — present in the 12B unified
+    /// (raw-frame) and E2B/E4B (mel + `audio_tower`) checkpoints, absent
+    /// from 26B-A4B / 31B. A raw byte scan is used instead of full JSON
+    /// decoding because the 12B index is multi-MB and this runs on the
+    /// capability-resolution path.
+    private static func gemma4BundleSupportsAudio(directory: URL) -> Bool {
+        let indexURL = directory.appendingPathComponent("model.safetensors.index.json")
+        if let data = try? Data(contentsOf: indexURL, options: .mappedIfSafe) {
+            return data.range(of: Data("embed_audio.embedding_projection".utf8)) != nil
+        }
+        // Single-file bundles: fall back to the config's audio marker.
+        // Gemma4 configs always carry audio_token_id, so use audio_config
+        // presence (E-series) only; without an index we cannot prove the
+        // unified embed_audio tensor exists, so stay conservative.
+        let configURL = directory.appendingPathComponent("config.json")
+        if let data = try? Data(contentsOf: configURL),
+            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let audioConfig = json["audio_config"], !(audioConfig is NSNull)
+        {
+            return true
+        }
+        return false
     }
 
     // MARK: - Helpers
@@ -415,11 +460,27 @@ public enum ModelMediaCapabilities {
             )
         }
         if isGemma4VisionFamily(modelId, capabilities: capabilities) {
+            // Bundle-fact gate: `from(directory:)` only reports audio for
+            // Gemma4 bundles whose weight map actually ships
+            // `embed_audio.embedding_projection`. When detection ran against
+            // the installed bundle, reaching here means this checkpoint has
+            // no audio input tensors (26B-A4B / 31B) — audio is impossible
+            // for the checkpoint, not pending runtime wiring. Name-only
+            // detection cannot see the weight map, so it must not claim
+            // checkpoint facts.
+            if source == "bundle config" {
+                return ModalityDescriptor(
+                    modality: .audio,
+                    status: .unsupported,
+                    reason:
+                        "This Gemma4 checkpoint ships no audio input tensors (no embed_audio/audio_tower in the weight map); audio input is not possible for this bundle."
+                )
+            }
             return ModalityDescriptor(
                 modality: .audio,
                 status: .unproven,
                 reason:
-                    "Gemma4 audio input is not enabled because the pinned vMLX Gemma4 runtime does not wire audio_tower/embed_audio yet."
+                    "Gemma4 audio is enabled per-bundle from the installed weight map (12B unified and E-series ship audio tensors; 26B-A4B/31B do not). Install the model so the bundle can be inspected."
             )
         }
         return ModalityDescriptor(

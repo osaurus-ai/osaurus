@@ -109,7 +109,7 @@ struct MLXServiceRuntimePolicyTests {
         }
     }
 
-    @Test func modelCapabilityRejectsGemma4AudioAsRuntimeUnwired() {
+    @Test func modelCapabilityGatesGemma4AudioOnBundleFacts() {
         let message = ChatMessage(
             role: "user",
             content: "hear this",
@@ -119,6 +119,11 @@ struct MLXServiceRuntimePolicyTests {
             ]
         )
 
+        // Name-only detection cannot see the weight map, so audio stays
+        // rejected with the per-bundle gating message — NOT a blanket
+        // "runtime unwired" claim. With an installed bundle directory,
+        // capability comes from the weight map itself: 12B unified and
+        // E-series checkpoints ship audio tensors; 26B-A4B/31B do not.
         do {
             try MLXService.validateRuntimePolicy(
                 modelName: "gemma-4-12b-it-mxfp4",
@@ -128,11 +133,10 @@ struct MLXServiceRuntimePolicyTests {
                 tools: [],
                 runtime: VMLXServerRuntimeSettings()
             )
-            Issue.record("Gemma4 audio should remain blocked until vMLX wires the runtime audio path.")
+            Issue.record("Gemma4 audio must stay rejected when bundle facts are unavailable.")
         } catch let error as MLXService.RuntimePolicyError {
             let description = error.errorDescription ?? ""
-            #expect(description.contains("Gemma4 audio input is not enabled"))
-            #expect(description.contains("audio_tower/embed_audio"))
+            #expect(description.contains("Gemma4 audio is enabled per-bundle"))
         } catch {
             Issue.record("Unexpected error type: \(error)")
         }
