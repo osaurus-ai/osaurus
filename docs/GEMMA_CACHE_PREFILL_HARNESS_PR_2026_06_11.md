@@ -25,6 +25,12 @@ This is the active Osaurus integration checklist for the paired vMLX work.
   runtime bugs. Tool-template leakage, corrupted user-visible text, missing
   tool execution, or disabled cache telemetry keeps the row `PARTIAL` or
   `BLOCKED`.
+- Harness score acceptance is deliberately not "perfect or useless." The
+  checkpoint target is that every Gemma 4 QAT MXFP4/JANG_4M model can load,
+  call tools, consume tool results, and complete enough AgentLoop cases to be
+  useful for Osaurus teammate testing. Low or imperfect scores are acceptable
+  only as evidence-backed model/runtime findings with artifact paths, failed
+  case names, and the exact reason each miss is not a harness bug.
 - Do not load, benchmark, or count non-QAT/source-looking Gemma bundles for this
   checkpoint. The active scope is only the OsaurusAI Gemma 4 QAT MXFP4 and
   JANG_4M repos listed below.

@@ -57,6 +57,14 @@ causes, but rows with missing tool execution, malformed tool JSON,
 tool/protocol marker leakage, corrupted visible text, or unproven cache
 telemetry stay partial until fixed or explicitly scoped.
 
+For this Gemma QAT checkpoint, the minimum useful row is: the model loads from
+the OsaurusAI QAT bundle, executes at least one real tool call through Osaurus,
+continues from the tool result into visible text, and produces an AgentLoop
+score with every failed case labeled as either a model finding or a scoped
+runtime bug. The goal is a decent, team-testable score for each MXFP4 and
+JANG_4M model, not a fake perfect score created by disabling tools, hiding
+corrupt text, or skipping failing cases.
+
 | Model | Route | AgentLoop (17) | Tested | Notes |
 |---|---|---|---|---|
 | Gemma 4 E2B QAT JANG_4M | `osaurusai--gemma-4-e2b-it-qat-jang_4m` | 13 ✓ / 4 ✗ | 2026-06-12 | First full QAT Gemma local AgentLoop row on PR #1469 head `e03cecf9`. Artifact: `/tmp/osaurus-gemma-proof/pr1469-e03cecf9-harness-20260612T095729Z/e2b-jang4m-agentloop.json`. Fails `compaction-stress`, `duplicate-call-avoidance`, `search-then-multi-file-edit`, and `todo-discipline-multistep`; several finals show visible character/spelling drift, so do not promote this row beyond partial. A rejected follow-up experiment forcing post-tool `tool_choice:none` inside `AgentLoopEvaluator` kept `duplicate-call-avoidance` failed and made `search-then-multi-file-edit` stop after only `file_search` with fake edit prose, so the harness loop must preserve auto tools until a proven finalization signal exists. |
