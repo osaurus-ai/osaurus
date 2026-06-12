@@ -68,6 +68,31 @@ This is the active tracking matrix for the team-testable checkpoint. Do not
 mark a row `PROVEN` unless the artifact paths exist and the row proves the
 production Osaurus path, not just source inspection.
 
+## Raw Speed Attribution Boundary
+
+Do not treat short Osaurus tool/chat rows as raw decode-speed comparisons
+against llama.cpp. Those rows prove app-facing correctness, tool execution,
+cache topology, prefill visibility, and user-visible text quality for the
+named app build. Raw decode speed must be proven separately through
+vmlx-swift `RunBench BENCH_PERF=1`.
+
+Current blocker recorded on 2026-06-12:
+
+- llama.cpp E2B GGUF baseline:
+  `/tmp/vmlx-gemma4-e2b-compare-20260612T155643Z/gguf-llama-bench.json`
+  reports prompt eval `7384.720274 tok/s` and decode `173.677288 tok/s`.
+- raw vMLX `RunBench BENCH_PERF=1` did not reach decode for the QAT MXFP4 row.
+  It failed while loading
+  `language_model.model.per_layer_model_projection` because Gemma 4
+  `G4ScaledLinear` rejected the quantized sidecar key `scales`.
+- Artifact:
+  `/tmp/vmlx-gemma4-e2b-compare-20260612T155643Z/runbench-perf-20260612T160512Z/mxfp4.runbench.err`.
+
+Until a fresh raw `RunBench` build loads MXFP4 and JANG_4M and emits real
+decode tok/s, the speed/runtime blocker belongs to vMLX loader/runtime
+verification, not Osaurus app overhead. Osaurus overhead should be measured
+only after the raw vMLX row is healthy.
+
 Required proof columns:
 
 - `Inventory`: local bundle exists under `/Users/eric/models`, has config,
