@@ -121,6 +121,32 @@ but does not promote the full Gemma QAT checkpoint: the other MXFP4/JANG_4M
 models still need equivalent clean app-facing tool rows or documented
 partials, and the harness text-corruption findings remain open.
 
+The same `67b2070a` dev app also closes the previous JANG_4M agent-loop
+tool gap for 12B. Proof root:
+`/tmp/osaurus-gemma-proof/pr1469-67b2070a-jang-agenttool-20260612T143245Z`.
+`/agents/default/run` with
+`model="osaurusai--gemma-4-12b-it-qat-jang_4m"` and
+`tool_choice="auto"` emits real `osaurus_agent_tool` frames for
+`osaurus_status` with `phase="started"` and `phase="completed"`,
+`is_error=false`, then returns exact visible text
+`JANG agent loop 67b2070a osaurus_status tool proof complete.` with no
+replacement/control/non-ASCII/protocol marker leakage. The agent route still
+does not emit usage or prefill telemetry, so the same proof root includes
+paired direct `/v1/chat/completions` long-prefix rows for the same JANG_4M
+model. Those rows emit prefill progress from `0/4034` through `4034/4034`,
+return exact visible text
+`JANG direct chat 67b2070a prefill cache proof complete.`, and report
+`tokens_per_second=8.4939` then `8.4819`. Repeat cache stats show
+`paged_kv_enabled=false`, aggregate `paged_hits=0`, `paged_misses=0`,
+`disk_l2_hits=1`, `disk_l2_stores=4`, `block_disk_store.enabled=true`,
+`effective_kv_mode="turbo(3,3)"`, `turbo_quant_compressions=2`,
+`kv_layer_count=8`, `rotating_kv_layer_count=40`,
+`requires_disk_backed_restore=true`, and `turbo_quant_kv_layer_count=0`.
+This proves 12B JANG_4M agent-loop tool execution plus direct-chat
+prefill/cache telemetry on the current dev app, while preserving the remaining
+boundary that Chat UI visual JANG_4M proof and the broader QAT matrix are not
+yet complete.
+
 The Gemma QAT harness target is deliberately practical: each MXFP4 and JANG_4M
 bundle must score decently enough to prove real Osaurus tool use and teammate
 testability, even if the score is not perfect. A row is not acceptable if it
