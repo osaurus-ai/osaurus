@@ -49,9 +49,17 @@ published) from **model findings** (real behavior, scored honestly).
 
 ## Local models
 
+Gemma 4 local rows are checkpoint gates for this release lane. Every
+OsaurusAI QAT MXFP4 and JANG_4M route must get a real AgentLoop harness row
+before the checkpoint is promoted for broad teammate testing. A non-perfect
+score can be useful when it includes real tool calls and attached failure
+causes, but rows with missing tool execution, malformed tool JSON,
+tool/protocol marker leakage, corrupted visible text, or unproven cache
+telemetry stay partial until fixed or explicitly scoped.
+
 | Model | Route | AgentLoop (17) | Tested | Notes |
 |---|---|---|---|---|
-| Gemma 4 E2B QAT JANG_4M | `osaurusai--gemma-4-e2b-it-qat-jang_4m` | 13 ✓ / 4 ✗ | 2026-06-12 | First full QAT Gemma local AgentLoop row on PR #1469 head `e03cecf9`. Artifact: `/tmp/osaurus-gemma-proof/pr1469-e03cecf9-harness-20260612T095729Z/e2b-jang4m-agentloop.json`. Fails `compaction-stress`, `duplicate-call-avoidance`, `search-then-multi-file-edit`, and `todo-discipline-multistep`; several finals show visible character/spelling drift, so do not promote this row beyond partial. |
+| Gemma 4 E2B QAT JANG_4M | `osaurusai--gemma-4-e2b-it-qat-jang_4m` | 13 ✓ / 4 ✗ | 2026-06-12 | First full QAT Gemma local AgentLoop row on PR #1469 head `e03cecf9`. Artifact: `/tmp/osaurus-gemma-proof/pr1469-e03cecf9-harness-20260612T095729Z/e2b-jang4m-agentloop.json`. Fails `compaction-stress`, `duplicate-call-avoidance`, `search-then-multi-file-edit`, and `todo-discipline-multistep`; several finals show visible character/spelling drift, so do not promote this row beyond partial. A rejected follow-up experiment forcing post-tool `tool_choice:none` inside `AgentLoopEvaluator` kept `duplicate-call-avoidance` failed and made `search-then-multi-file-edit` stop after only `file_search` with fake edit prose, so the harness loop must preserve auto tools until a proven finalization signal exists. |
 | Qwen3.5-4B-OptiQ-4bit | `mlx-community/Qwen3.5-4B-OptiQ-4bit` | 16 ✓ / 1 flaky (passed on retry) | 2026-06-11 | Small-model regression lane; re-confirmed after the sandbox-eval harness changes (same documented `search-then-multi-file-edit` path-thrashing flake, passes on retry). |
 
 Apple Foundation Models are classified `tiny` with tools disabled and are

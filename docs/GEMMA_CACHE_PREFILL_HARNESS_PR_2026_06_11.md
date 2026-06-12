@@ -16,6 +16,15 @@ This is the active Osaurus integration checklist for the paired vMLX work.
 - Gemma 4 QAT MXFP4 and JANG_4M rows must run through the harness contract in
   `docs/HARNESS_COMPATIBILITY.md`, with scores recorded and score blockers
   fixed, before this is called merge-ready.
+- Tool-call capability is a checkpoint gate for every local Gemma 4 QAT row,
+  not a benchmark extra. Each MXFP4 and JANG_4M bundle must prove at least one
+  real Osaurus harness/tool-loop pass with exact tool names, parseable JSON
+  arguments, tool-result history, and a final visible answer. A score can be
+  accepted as partial/decent for teammate testing before it is perfect, but
+  only when the failures are documented as model capability limits or scoped
+  runtime bugs. Tool-template leakage, corrupted user-visible text, missing
+  tool execution, or disabled cache telemetry keeps the row `PARTIAL` or
+  `BLOCKED`.
 - Do not load, benchmark, or count non-QAT/source-looking Gemma bundles for this
   checkpoint. The active scope is only the OsaurusAI Gemma 4 QAT MXFP4 and
   JANG_4M repos listed below.
@@ -73,6 +82,11 @@ Required proof columns:
   exact JSON arguments, and a tool-result continuation with visible answer.
 - `Agent`: Osaurus agent/tool loop route runs without Gemma chat-template
   failures and records tool/result behavior where the branch supports it.
+- `Harness`: each Gemma 4 QAT MXFP4/JANG_4M model must have a recorded
+  AgentLoop harness row. The first checkpoint target is a usable, non-perfect
+  score with real tool calls and attached failure causes; no row is promoted if
+  it shows visible text corruption, leaked protocol/tool markers, missing
+  tool-result history, or an unproven cache path.
 - `VL`: real image payload through Osaurus works for rows whose config has
   `vision_config`.
 - `Audio`: real audio payload through Osaurus works for rows whose config has
@@ -84,18 +98,18 @@ Required proof columns:
 
 Current model capability metadata from local `config.json`:
 
-| Model | Format | Config family | Vision | Audio | Inventory | Load/Chat | Prefix/L2 | TQ/SWA | Speed | Tools | Agent | VL | Audio | Prefill UI/API | Memory |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `osaurusai--gemma-4-e2b-it-qat-mxfp4` | MXFP4 | `gemma4` | yes | yes | PROVEN | PROVEN | PROVEN | PROVEN | PARTIAL | PROVEN | PROVEN complete / PARTIAL side-effect | TODO | TODO | PARTIAL | PARTIAL |
-| `osaurusai--gemma-4-e2b-it-qat-jang_4m` | JANG_4M | `gemma4` | yes | yes | PROVEN | PROVEN | PROVEN | PROVEN | PARTIAL | PROVEN | PROVEN complete / PARTIAL side-effect | PROVEN API | BLOCKED policy | PROVEN API / TODO UI | PARTIAL |
-| `osaurusai--gemma-4-e4b-it-qat-mxfp4` | MXFP4 | `gemma4` | yes | yes | PROVEN | PROVEN agent | PROVEN agent | PROVEN agent | PARTIAL | TODO | PROVEN forced complete | TODO | TODO | TODO | PARTIAL |
-| `osaurusai--gemma-4-e4b-it-qat-jang_4m` | JANG_4M | `gemma4` | yes | yes | PROVEN | PROVEN agent | PROVEN agent | PROVEN agent | PARTIAL | TODO | PROVEN forced complete | TODO | TODO | TODO | PARTIAL |
-| `osaurusai--gemma-4-12b-it-qat-mxfp4` | MXFP4 | `gemma4_unified` | yes | yes | PROVEN | PROVEN UI+agent | PROVEN UI+agent | PROVEN UI+agent | PROVEN UI+agent | TODO | PARTIAL UI status count | TODO | TODO | PROVEN API / PARTIAL UI percent | PARTIAL |
-| `osaurusai--gemma-4-12b-it-qat-jang_4m` | JANG_4M | `gemma4_unified` | yes | yes | PROVEN | PARTIAL UI / PROVEN API | PROVEN UI+agent | PROVEN UI+agent | PROVEN UI+agent | TODO | PARTIAL UI status tool | TODO | TODO | PARTIAL UI / PROVEN API | PARTIAL |
-| `osaurusai--gemma-4-26b-a4b-it-qat-mxfp4` | MXFP4 | `gemma4` | yes | no | PROVEN | PROVEN agent | PROVEN agent | PROVEN agent | PARTIAL | TODO | PROVEN forced complete | TODO | N/A | TODO | PARTIAL |
-| `osaurusai--gemma-4-26b-a4b-it-qat-jang_4m` | JANG_4M | `gemma4` | yes | no | PROVEN | PROVEN agent | PROVEN agent | PROVEN agent | PARTIAL | TODO | PROVEN forced complete | TODO | N/A | TODO | PARTIAL |
-| `osaurusai--gemma-4-31b-it-qat-mxfp4` | MXFP4 | `gemma4` | yes | no | PROVEN | PROVEN agent | PROVEN agent | PROVEN agent | PARTIAL | TODO | PROVEN forced complete | TODO | N/A | TODO | PARTIAL |
-| `osaurusai--gemma-4-31b-it-qat-jang_4m` | JANG_4M | `gemma4` | yes | no | PROVEN | PROVEN agent | PROVEN agent | PROVEN agent | PARTIAL | TODO | PROVEN forced complete | TODO | N/A | TODO | PARTIAL |
+| Model | Format | Config family | Vision | Audio | Inventory | Load/Chat | Prefix/L2 | TQ/SWA | Speed | Tools | Agent | Harness | VL | Audio | Prefill UI/API | Memory |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `osaurusai--gemma-4-e2b-it-qat-mxfp4` | MXFP4 | `gemma4` | yes | yes | PROVEN | PROVEN | PROVEN | PROVEN | PARTIAL | PROVEN | PROVEN complete / PARTIAL side-effect | TODO | TODO | TODO | PARTIAL | PARTIAL |
+| `osaurusai--gemma-4-e2b-it-qat-jang_4m` | JANG_4M | `gemma4` | yes | yes | PROVEN | PROVEN | PROVEN | PROVEN | PARTIAL | PROVEN | PROVEN complete / PARTIAL side-effect | PARTIAL 13/17 | PROVEN API | BLOCKED policy | PROVEN API / TODO UI | PARTIAL |
+| `osaurusai--gemma-4-e4b-it-qat-mxfp4` | MXFP4 | `gemma4` | yes | yes | PROVEN | PROVEN agent | PROVEN agent | PROVEN agent | PARTIAL | TODO | PROVEN forced complete | TODO | TODO | TODO | TODO | PARTIAL |
+| `osaurusai--gemma-4-e4b-it-qat-jang_4m` | JANG_4M | `gemma4` | yes | yes | PROVEN | PROVEN agent | PROVEN agent | PROVEN agent | PARTIAL | TODO | PROVEN forced complete | TODO | TODO | TODO | TODO | PARTIAL |
+| `osaurusai--gemma-4-12b-it-qat-mxfp4` | MXFP4 | `gemma4_unified` | yes | yes | PROVEN | PROVEN UI+agent | PROVEN UI+agent | PROVEN UI+agent | PROVEN UI+agent | TODO | PARTIAL UI status count | TODO | TODO | TODO | PROVEN API / PARTIAL UI percent | PARTIAL |
+| `osaurusai--gemma-4-12b-it-qat-jang_4m` | JANG_4M | `gemma4_unified` | yes | yes | PROVEN | PARTIAL UI / PROVEN API | PROVEN UI+agent | PROVEN UI+agent | PROVEN UI+agent | TODO | PARTIAL UI status tool | TODO | TODO | TODO | PARTIAL UI / PROVEN API | PARTIAL |
+| `osaurusai--gemma-4-26b-a4b-it-qat-mxfp4` | MXFP4 | `gemma4` | yes | no | PROVEN | PROVEN agent | PROVEN agent | PROVEN agent | PARTIAL | TODO | PROVEN forced complete | TODO | TODO | N/A | TODO | PARTIAL |
+| `osaurusai--gemma-4-26b-a4b-it-qat-jang_4m` | JANG_4M | `gemma4` | yes | no | PROVEN | PROVEN agent | PROVEN agent | PROVEN agent | PARTIAL | TODO | PROVEN forced complete | TODO | TODO | N/A | TODO | PARTIAL |
+| `osaurusai--gemma-4-31b-it-qat-mxfp4` | MXFP4 | `gemma4` | yes | no | PROVEN | PROVEN agent | PROVEN agent | PROVEN agent | PARTIAL | TODO | PROVEN forced complete | TODO | TODO | N/A | TODO | PARTIAL |
+| `osaurusai--gemma-4-31b-it-qat-jang_4m` | JANG_4M | `gemma4` | yes | no | PROVEN | PROVEN agent | PROVEN agent | PROVEN agent | PARTIAL | TODO | PROVEN forced complete | TODO | TODO | N/A | TODO | PARTIAL |
 
 Current evidence behind non-TODO cells:
 
@@ -2586,3 +2600,16 @@ Updated boundary:
   The larger-model matrix is already proven through the built-in Default agent
   UUID route and should be re-smoked through the alias only if release review
   requires identical path coverage for every size.
+- Rejected eval-loop mitigation on 2026-06-12: wiring
+  `AgentLoopEvaluator.makeRequest` through
+  `ChatToolChoicePolicy.finalizingPostToolChoice` cleaned up some post-tool
+  visible text but broke multi-step harness behavior by forcing a tool-free
+  final answer immediately after the first tool result. Proof artifacts:
+  `/tmp/osaurus-gemma-proof/pr1469-agentloop-policy-20260612T101408Z/e2b-jang4m-duplicate-agentloop.json`
+  still fails `duplicate-call-avoidance` with final answer `10` instead of
+  `50`, and
+  `/tmp/osaurus-gemma-proof/pr1469-agentloop-policy-search-20260612T101525Z/e2b-jang4m-search-edit-agentloop.json`
+  fails `search-then-multi-file-edit` after only `file_search`, with fake
+  prose/JSON about edits that were never executed. Do not reintroduce
+  post-tool `tool_choice:none` inside the canonical harness loop unless it is
+  gated by a proven finalization signal that preserves later tool calls.
