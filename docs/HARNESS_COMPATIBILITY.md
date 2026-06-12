@@ -332,6 +332,33 @@ protocol marker leakage. Repeat cache reports paged KV off,
 post-agent process RSS sample is `13338640 KB`, so this is live proof on the
 M5 Max MacBook, not lower-spec physical-footprint proof.
 
+Current PR head `563ee034` adds fresh 31B MXFP4 live `/agents/default/run` and
+VL cache proof. Proof root:
+`/tmp/osaurus-gemma-proof/pr1469-563ee034-agent-31b-mxfp4-20260612T152853Z`.
+The agent request uses `tool_choice="required"` and emits real
+`osaurus_agent_tool` frames: `complete` started, `complete` completed with
+`is_error=false` and `end_run=true`, then exact final text
+`563ee034 current PR agent loop executed complete tool with Gemma 31B MXFP4 QAT and no parser leak.`.
+The agent SSE scan has no replacement characters, U+FFFE, raw `<think>`, raw
+tool/protocol markers, configured weird-word hits, or non-ASCII output. The
+agent-only cache snapshot shows paged KV off, disk-backed restore,
+`effective_kv_mode="turbo(3,3)"`, `kv_layer_count=10`,
+`rotating_kv_layer_count=50`, and `turbo_quant_kv_layer_count=0`, but only
+misses and no disk L2 hit/store on that short tool row.
+
+The same proof root has a 31B MXFP4 VL red-image API row using a real inline
+32x32 PNG data URL. First and repeat requests both return exact `Red`, emit
+prefill progress `0/307` queued, `0/307` running, and `307/307` complete, and
+include usage. Token rates are `7.7439 tok/s` first and `7.7445 tok/s`
+repeat. The VL scans have no replacement/control/non-ASCII or protocol marker
+leakage. Repeat cache reports paged KV off, `disk_l2_hits=1`,
+`disk_l2_stores=5`, `block_disk_store.enabled=true`,
+`effective_kv_mode="turbo(3,3)"`, `kv_layer_count=10`,
+`rotating_kv_layer_count=50`, `requires_disk_backed_restore=true`, and
+`turbo_quant_kv_layer_count=0`. Health reports RAM feasibility `ok` with
+projected memory `23437801305` bytes; this is live proof on the M5 Max
+MacBook, not lower-spec physical-footprint proof.
+
 The Gemma QAT harness target is deliberately practical: each MXFP4 and JANG_4M
 bundle must score decently enough to prove real Osaurus tool use and teammate
 testability, even if the score is not perfect. A row is not acceptable if it
