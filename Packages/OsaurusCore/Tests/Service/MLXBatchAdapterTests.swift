@@ -693,6 +693,10 @@ struct MLXBatchAdapterTests {
                 modelName: "JANGQ-AI/Step-3.7-Flash-JANG_2L"
             ) == "fp16"
         )
+        // Gemma SWA topologies stay native even when topology facts are
+        // present: rotating layers route through the generic rule (no Gemma
+        // special case). Forcing turbo(3,3) here measured -42% decode on
+        // 26B-A4B and -29% on 12B for ~70 MB of KV savings (2026-06-12).
         let gemmaSWATopology = ModelCacheTopologySnapshot(
             layerCount: 6,
             kvLayerCount: 3,
@@ -708,7 +712,7 @@ struct MLXBatchAdapterTests {
                 for: settings.cache,
                 modelName: "Gemma-4-26B-A4B-it-JANG_4M-CRACK",
                 cacheTopology: gemmaSWATopology
-            ) == "turbo(3,3)"
+            ) == "fp16"
         )
         #expect(
             ModelRuntime.cacheKVModeTag(

@@ -310,8 +310,12 @@ struct ModelMediaCapabilitiesMCDCTests {
         #expect(ModelMediaCapabilities.Capabilities.omni.anyMedia)
     }
 
-    @Test("Descriptor marks Gemma4 audio as runtime-unwired, not supported")
-    func descriptor_gemma4AudioRuntimeUnwired() {
+    @Test("Descriptor gates Gemma4 audio per-bundle when only the name is known")
+    func descriptor_gemma4AudioBundleGatedByName() {
+        // Name-only detection cannot see the weight map, so audio stays
+        // unproven with the per-bundle gating message. Installed-bundle
+        // detection (`from(directory:)`) flips audio on iff the weight map
+        // ships embed_audio.embedding_projection (12B unified + E-series).
         let descriptor = ModelMediaCapabilities.descriptor(
             modelId: "OsaurusAI/Gemma-4-12B-it-MXFP4"
         )
@@ -320,7 +324,7 @@ struct ModelMediaCapabilitiesMCDCTests {
         #expect(descriptor.image.status == .supported)
         #expect(descriptor.audio.status == .unproven)
         #expect(!descriptor.audio.isUsable)
-        #expect(descriptor.rejectionMessage(for: .audio).contains("audio_tower/embed_audio"))
+        #expect(descriptor.rejectionMessage(for: .audio).contains("Gemma4 audio is enabled per-bundle"))
     }
 
     @Test("Descriptor keeps Nemotron Omni audio supported")
