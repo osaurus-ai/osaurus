@@ -95,8 +95,9 @@ the remaining QAT MXFP4/JANG_4M models still need scored AgentLoop rows, and
 every failed case needs an attached cause before the checkpoint is
 teammate-testable.
 
-Current head `67b2070a` adds exact Chat UI proof on the built no-sign Release
-app, launched from
+Code head `67b2070a` adds exact Chat UI proof on the built no-sign Release
+app; later PR head `692da0b2` only records this documentation on top. The
+proof app launched from
 `build/XcodeDerivedData-pr1469-67b2070a-nosign/Build/Products/Release/osaurus.app`
 with proof root
 `/tmp/osaurus-gemma-proof/pr1469-67b2070a-ui-tool-20260612T143110Z`.
