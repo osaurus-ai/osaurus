@@ -412,6 +412,70 @@ Current evidence behind non-TODO cells:
   `turbo_quant_kv_layer_count=0`. `ui-policy-after-tool-second-ps.txt`
   records the app at about 1,010,288 KB RSS after both UI tool turns, and the
   cache endpoint reports `current_rss=1034485760`.
+- Fresh literal `/agents/default/run` proof on PR head `db2f788b`:
+  artifact root
+  `/tmp/osaurus-gemma-proof/pr1469-db2f788b-agent-default-jang-20260612T085813Z`
+  was produced from the current PR Release app binary
+  `/tmp/osaurus-gemma-checkpoint-main/build/XcodeDerivedData-gemma-ui-policy-20260612T084231Z/Build/Products/Release/osaurus.app`.
+  The only newer PR commit after that build is documentation-only. The app was
+  launched through LaunchServices with keychain disabled,
+  `OSU_MODELS_DIR=/Users/eric/models`, and `OSU_PORT=1337`; initial health
+  `health.initial.json` reports `status="healthy"` and
+  `local_model_scan.model_count=27`.
+- Literal default-agent 12B JANG_4M tool proof on `db2f788b`:
+  `request.agent-default-12b-jang4m-complete.json` calls
+  `/agents/default/run` with model
+  `osaurusai--gemma-4-12b-it-qat-jang_4m`, no debug trace header, and named
+  `tool_choice=complete`. `first.sse` and `repeat.sse` both contain two
+  sanitized `osaurus_agent_tool` chunks for `complete`, phases `started` and
+  `completed`, `is_error=false`, `end_run=true`, `finish_reason="stop"`,
+  visible final text
+  `db2f788b literal default agent 12b jang4m complete tool execution proof.`,
+  and no U+FFFE/replacement/control characters, `<|tool`, `<tool_call`,
+  `<tool_response`, `<think`, or raw `tool:/args:/done:` marker leakage.
+  `first.validation.json` and `repeat.validation.json` both report
+  `"pass": true`. `repeat.cache.summary.json` reports `disk_l2_hits=1`,
+  `disk_l2_stores=1`, `paged_hits=0`, `paged_misses=0`,
+  `effective_kv_mode="turbo(3,3)"`, `paged_cache.enabled=false`,
+  `block_disk_store.enabled=true`, `kv_layer_count=8`,
+  `rotating_kv_layer_count=40`, `requires_disk_backed_restore=true`, and
+  `turbo_quant_kv_layer_count=0`. Timing artifacts report first `real 7.06`
+  and repeat `real 5.83`; the `/agents/default/run` stream still does not emit
+  TTFT/prefill/usage chunks, so do not report those wall times as TTFT.
+- Literal default-agent beyond-E2B matrix on `db2f788b`:
+  `/tmp/osaurus-gemma-proof/pr1469-db2f788b-agent-default-jang-20260612T085813Z/literal-default-matrix/summary.tsv`
+  proves first and repeat `/agents/default/run` named-`complete` rows for
+  every remaining QAT row beyond E2B:
+  E4B JANG_4M, E4B MXFP4, 12B MXFP4, 26B-A4B JANG_4M, 26B-A4B MXFP4,
+  31B JANG_4M, and 31B MXFP4. Every row has `first_pass=True`,
+  `repeat_pass=True`, `disk_l2_hits=1`, `paged_enabled=False`, and
+  `effective_kv_mode="turbo(3,3)"`. Repeat wall times were:
+  12B MXFP4 `6.98s`, 26B-A4B JANG_4M `8.14s`, 26B-A4B MXFP4 `2.88s`,
+  31B JANG_4M `9.76s`, 31B MXFP4 `13.22s`, E4B JANG_4M `4.37s`, and
+  E4B MXFP4 `4.24s`. RSS samples were about 0.66 GB for 12B MXFP4,
+  13.60 GB for 26B-A4B JANG_4M, 1.01 GB for 26B-A4B MXFP4, 18.59 GB for
+  31B JANG_4M, 0.66 GB for 31B MXFP4, 2.95 GB for E4B JANG_4M, and
+  0.66 GB for E4B MXFP4. These are same-machine RSS samples, not lower-spec
+  Activity Monitor physical-footprint proof.
+- Fresh VL proof on `db2f788b`:
+  `/tmp/osaurus-gemma-proof/pr1469-db2f788b-agent-default-jang-20260612T085813Z/vl-e2b-jang4m-red32-db2f788b.summary.json`
+  repeats the 32x32 red PNG row against
+  `osaurusai--gemma-4-e2b-it-qat-jang_4m`. First and repeat streams both
+  mention `red`, emit three `osaurus_prefill` chunks, include usage and
+  `tokens_per_second`, finish with `stop`, and have zero marker/control leaks.
+  Repeat cache reports `disk_l2_hits=1`, `disk_l2_stores=4`,
+  `paged_hits=0`, `paged_misses=0`, `effective_kv_mode="turbo(3,3)"`,
+  `kv_layer_count=3`, `rotating_kv_layer_count=12`,
+  `requires_disk_backed_restore=true`, and `turbo_quant_kv_layer_count=0`.
+  Timing improved from `real 1.85` to `real 0.21` on repeat.
+- Fresh audio row on `db2f788b` remains `BLOCKED policy`, not fixed:
+  `/tmp/osaurus-gemma-proof/pr1469-db2f788b-agent-default-jang-20260612T085813Z/audio-e2b-jangm-tone-db2f788b.summary.json`
+  sends a WAV tone payload to `osaurusai--gemma-4-e2b-it-qat-jang_4m` and
+  returns a typed stream error:
+  `Gemma4 audio input is not enabled because the pinned vMLX Gemma4 runtime does not wire audio_tower/embed_audio yet.`
+  The row does not crash, but it emits no prefill, usage, token/s, or final
+  audio answer. Keep Gemma4 raw audio blocked until vMLX wires and proves the
+  audio tower/embed path through Osaurus.
 - Current-head boundary after the full matrix/VL/UI rerun: lower-spec Activity
   Monitor physical-footprint proof, successful Gemma4 audio, and full
   `docs/HARNESS_COMPATIBILITY.md` harness scoring remain open gates. Do not
