@@ -111,7 +111,7 @@ Current model capability metadata from local `config.json`:
 | `osaurusai--gemma-4-e4b-it-qat-mxfp4` | MXFP4 | `gemma4` | yes | yes | PROVEN | PROVEN agent | PROVEN agent | PROVEN agent | PARTIAL | TODO | PROVEN forced complete | PARTIAL 15/17 | TODO | TODO | TODO | PARTIAL |
 | `osaurusai--gemma-4-e4b-it-qat-jang_4m` | JANG_4M | `gemma4` | yes | yes | PROVEN | PROVEN agent | PROVEN agent | PROVEN agent | PARTIAL | TODO | PROVEN forced complete | PARTIAL 14/17 | TODO | TODO | TODO | PARTIAL |
 | `osaurusai--gemma-4-12b-it-qat-mxfp4` | MXFP4 | `gemma4_unified` | yes | yes | PROVEN | PROVEN UI+agent | PROVEN UI+agent | PROVEN UI+agent | PROVEN UI+agent | TODO | PARTIAL UI status count | TODO | TODO | TODO | PROVEN API / PARTIAL UI percent | PARTIAL |
-| `osaurusai--gemma-4-12b-it-qat-jang_4m` | JANG_4M | `gemma4_unified` | yes | yes | PROVEN | PARTIAL UI / PROVEN API | PROVEN UI+agent | PROVEN UI+agent | PROVEN UI+agent | TODO | PARTIAL clean auto status tool / no usage | TODO | TODO | TODO | PARTIAL UI / PROVEN API | PARTIAL |
+| `osaurusai--gemma-4-12b-it-qat-jang_4m` | JANG_4M | `gemma4_unified` | yes | yes | PROVEN | PARTIAL UI / PROVEN API | PROVEN UI+agent | PROVEN UI+agent | PROVEN UI+agent | TODO | PARTIAL clean auto status tool / no usage | PARTIAL 16/17 | TODO | TODO | PARTIAL UI / PROVEN API | PARTIAL |
 | `osaurusai--gemma-4-26b-a4b-it-qat-mxfp4` | MXFP4 | `gemma4` | yes | no | PROVEN | PROVEN agent | PROVEN agent | PROVEN agent | PARTIAL | TODO | PROVEN forced complete | TODO | TODO | N/A | TODO | PARTIAL |
 | `osaurusai--gemma-4-26b-a4b-it-qat-jang_4m` | JANG_4M | `gemma4` | yes | no | PROVEN | PROVEN agent | PROVEN agent | PROVEN agent | PARTIAL | TODO | PROVEN forced complete | TODO | TODO | N/A | TODO | PARTIAL |
 | `osaurusai--gemma-4-31b-it-qat-mxfp4` | MXFP4 | `gemma4` | yes | no | PROVEN | PROVEN agent | PROVEN agent | PROVEN agent | PARTIAL | TODO | PROVEN forced complete | TODO | TODO | N/A | TODO | PARTIAL |
@@ -212,6 +212,34 @@ Current evidence behind non-TODO cells:
   percentage units are visible in the stream. It does not prove L2 reuse on
   this fresh pair because the repeat still has `disk_l2_hits=0`, and both
   summary files have `usage=null`, so token/s is not proven by this row.
+- Current PR head `923f7edb` 12B JANG_4M AgentLoop harness proof:
+  proof root
+  `/tmp/osaurus-gemma-proof/pr1469-923f7edb-harness-12b-jang4m-20260612T120129Z`.
+  The first attempt built `osaurus-evals` but failed before model execution
+  because SwiftPM's clean build output lacked MLX `default.metallib`; this
+  was repaired by running the pinned vMLX prep script and installing
+  `default.metallib` / `mlx.metallib` beside the eval binary. Prep artifacts:
+  `prepare-mlx-metal-checkout.log` and
+  `prepare-mlx-metal-evals-binarydir.log`. The rerun report
+  `12b-jang4m-agentloop.json` records 17 total, 16 passed, 1 failed, 0
+  skipped, and 0 errored for
+  `osaurusai--gemma-4-12b-it-qat-jang_4m`; summary artifact
+  `12b-jang4m-agentloop.summary.json`; case table
+  `12b-jang4m-agentloop.case-table.tsv`; marker scan
+  `12b-jang4m-agentloop.marker-scan.txt`; cache artifact summary
+  `12b-jang4m-agentloop.cache-artifacts.txt`. The row proves real tool use
+  across `capabilities_load`, `clarify`, `complete`, `file_edit`,
+  `file_read`, `file_search`, `file_write`, `share_artifact`, `shell_run`,
+  and `todo`. The only failed case is `compaction-stress`: the expected
+  compaction watermark never recorded, the final text missed `log4`, and the
+  visible answer is corrupted (`taskcompleted`, `heckingc het`,
+  `Summfary`, `ndings`, `Nonel`, `fivet og files containl`). The JSON text
+  scan found `replacement_count=0` and no raw `<think>`, raw tool/protocol,
+  U+FFFE, `tool:`, `args:`, or `done:` marker leakage. The harness root has
+  25 disk KV safetensor cache entries, about `9.7G` total, and 25 rows in
+  `cache/kv_v2/cache_index.db`; this proves cache material was written during
+  the harness run, but it is not standalone TTFT/L2-hit proof. Keep the row
+  `PARTIAL` because visible text corruption remains a hard release gate.
 - Current PR head `f58bb924` 12B JANG_4M cache and prefill proof:
   `direct-chat-prefill-12b-jang4m/first.sse` and `repeat.sse` answer exactly
   `f58bb924 direct prefill proof complete.` with no replacement, non-ASCII, or
