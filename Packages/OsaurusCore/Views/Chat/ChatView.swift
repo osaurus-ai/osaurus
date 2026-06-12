@@ -664,6 +664,34 @@ final class ChatSession: ObservableObject {
         return pickerItems.first { $0.id == model }
     }
 
+    /// True when the selected model is a local model — the kind that runs on
+    /// the device's shared inference context. Covers both osaurus-downloaded
+    /// models and externally-discovered ones (LM Studio, Hugging Face cache),
+    /// since `findInstalledModel` resolves the merged local catalog. Foundation
+    /// (Apple on-device) and remote provider models run on separate engines and
+    /// don't contend. Resolved against the catalog so it doesn't depend on
+    /// `pickerItems` being populated.
+    var selectedModelIsLocal: Bool {
+        guard let model = selectedModel else { return false }
+        return ModelManager.findInstalledModel(named: model) != nil
+    }
+
+    /// True while this session is streaming a reply from a local model.
+    var isStreamingLocalModel: Bool {
+        isStreaming && selectedModelIsLocal
+    }
+
+    /// A local generation would collide with one already running in another
+    /// window. The shared inference context runs a single generation at a time,
+    /// and loading this model could evict (and cancel) the active one — so the
+    /// caller surfaces an alert and refuses the send instead.
+    var localModelBusyInOtherWindow: Bool {
+        selectedModelIsLocal
+            && ChatWindowManager.shared.isOtherWindowStreamingLocalModel(
+                excluding: windowState?.windowId
+            )
+    }
+
     /// Backing store for the streaming-mutated `visibleBlocks` / group-header map.
     /// Deliberately NOT `@Published` — mutations go through the store's own
     /// `objectWillChange`, not the session's, so ChatView's body + every sibling
@@ -966,6 +994,13 @@ final class ChatSession: ObservableObject {
 
     func sendCurrent() {
         guard !isStreaming else { return }
+        // One local generation at a time across all windows: the shared
+        // inference context can't run two, and loading a second would evict and
+        // cancel the active one. Surface the alert and keep the draft intact.
+        if localModelBusyInOtherWindow {
+            windowState?.showLocalModelBusyAlert = true
+            return
+        }
         let text = input
         let attachments = pendingAttachments
         input = ""
@@ -1249,6 +1284,26 @@ final class ChatSession: ObservableObject {
                     for: snapshot,
                     model: model
                 )
+                return
+            }
+
+            // Don't start a local greeting generation while another window is
+            // already running a local model. The shared inference context runs
+            // one generation at a time, so a greeting load here would stall behind
+            // the active user stream (and on the strict-eviction path could
+            // disturb it). Fall back to the static greeting; the pool refills
+            // once inference goes idle. Remote/foundation greetings don't
+            // contend, so they're unaffected.
+            let greetingModelIsLocal = ModelManager.findInstalledModel(named: model) != nil
+            let localStreamBusy = await MainActor.run {
+                ChatWindowManager.shared.isAnyWindowStreamingLocalModel
+            }
+            if greetingModelIsLocal, localStreamBusy {
+                await MainActor.run {
+                    guard let self = self else { return }
+                    guard self.generativeGreetingKey == key else { return }
+                    self.generativeGreetingState = .failed
+                }
                 return
             }
 
@@ -2325,6 +2380,15 @@ final class ChatSession: ObservableObject {
         let isRegeneration = !hasContent && !turns.isEmpty
         guard hasContent || isRegeneration else { return }
         guard activeRunId == nil, !isStreaming else { return }
+
+        // Authoritative guard for every send path (interactive, regeneration,
+        // queued, VAD, programmatic): never start a local generation while
+        // another window is already running one. `sendCurrent` checks this
+        // first so the draft survives; this backstops the rest.
+        if localModelBusyInOtherWindow {
+            windowState?.showLocalModelBusyAlert = true
+            return
+        }
 
         // Fresh run: a previous stop() may have left the flag true. The
         // auto-flush in completeRunCleanup keys off this, so clear it
@@ -3695,6 +3759,17 @@ struct ChatView: View {
                     .primary(L("Continue in Background")) { windowState.confirmCloseInBackground() },
                     .destructive(L("Stop and Close")) { windowState.confirmCloseAndStop() },
                     .cancel(L("Cancel")),
+                ]
+            )
+            .themedAlert(
+                L("A local model is already running"),
+                isPresented: $windowState.showLocalModelBusyAlert,
+                message:
+                    L(
+                        "Only one local model can run at a time, and another chat window is using it right now. Wait for that reply to finish, or switch this chat to a remote model."
+                    ),
+                buttons: [
+                    .cancel(L("OK"))
                 ]
             )
             .themedAlertScope(.chat(windowState.windowId))

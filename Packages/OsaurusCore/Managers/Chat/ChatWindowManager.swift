@@ -341,6 +341,23 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         windowStates.values.contains { $0.session.isStreaming }
     }
 
+    /// True when a chat window OTHER than `excluding` is currently streaming a
+    /// local model. Enforces one local generation at a time across windows: the
+    /// shared inference context can only run one, and loading a second would
+    /// evict the first and cancel its in-flight stream.
+    func isOtherWindowStreamingLocalModel(excluding windowId: UUID?) -> Bool {
+        windowStates.contains { id, state in
+            id != windowId && state.session.isStreamingLocalModel
+        }
+    }
+
+    /// True when ANY chat window is currently streaming a local model. Used to
+    /// defer local empty-state greeting generation while a user stream is in
+    /// flight.
+    var isAnyWindowStreamingLocalModel: Bool {
+        windowStates.values.contains { $0.session.isStreamingLocalModel }
+    }
+
     /// Get the count of active windows
     public var windowCount: Int {
         windows.count
