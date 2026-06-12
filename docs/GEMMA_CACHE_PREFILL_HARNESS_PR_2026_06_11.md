@@ -476,6 +476,91 @@ Current evidence behind non-TODO cells:
   The row does not crash, but it emits no prefill, usage, token/s, or final
   audio answer. Keep Gemma4 raw audio blocked until vMLX wires and proves the
   audio tower/embed path through Osaurus.
+- Current-built Release app proof on PR head `5dc82e0a`:
+  `scripts/live-proof/build-keychain-free-osaurus.sh
+  build/XcodeDerivedData-pr1469-5dc82e0a-nosign` completed with
+  `** BUILD SUCCEEDED **` and ad-hoc sealed
+  `/tmp/osaurus-gemma-checkpoint-main/build/XcodeDerivedData-pr1469-5dc82e0a-nosign/Build/Products/Release/osaurus.app`.
+  The app was launched through LaunchServices with keychain disabled,
+  `OSU_MODELS_DIR=/Users/eric/models`, `OSU_PORT=1337`, and proof root
+  `/tmp/osaurus-gemma-proof/pr1469-5dc82e0a-currentbuild-20260612T091530Z`.
+  `/health` reports `status="healthy"`, `local_model_scan.model_count=27`,
+  and the server listener belongs to the current-built PR app process, not the
+  separately running `/Applications/osaurus.app`.
+- Current-built `/agents/default/run` 12B JANG_4M proof:
+  `request.agent-default-12b-jang4m-complete.json`, `first.sse`, and
+  `repeat.sse` prove named `complete` execution on
+  `osaurusai--gemma-4-12b-it-qat-jang_4m`. Both streams include top-level
+  `osaurus_agent_tool` events for phases `started` and `completed`, exact
+  final text
+  `5dc82e0a current-built default agent 12b jang4m complete tool execution proof.`,
+  `finish_reason="stop"`, and zero replacement/control/protocol marker leaks.
+  `first.validation.json` and `repeat.validation.json` both report
+  `"pass": true`. Repeat cache reports `disk_l2_hits=1`,
+  `disk_l2_stores=1`, `paged_cache.enabled=false`, `block_disk_store.enabled=true`,
+  `effective_kv_mode="turbo(3,3)"`, `kv_layer_count=8`,
+  `rotating_kv_layer_count=40`, `requires_disk_backed_restore=true`, and
+  `turbo_quant_kv_layer_count=0`. Timing was first `real 17.76` and repeat
+  `real 11.13`; `/agents/default/run` still does not emit TTFT/prefill/usage,
+  so those wall times are not TTFT.
+- Current-built full QAT default-agent matrix:
+  `/tmp/osaurus-gemma-proof/pr1469-5dc82e0a-currentbuild-20260612T091530Z/full-qat-agent-matrix/summary.tsv`
+  runs all ten OsaurusAI Gemma 4 QAT rows through first and repeat
+  `/agents/default/run` named-`complete` calls on the same current-built app.
+  Nine of ten rows pass the strict validation: E2B JANG_4M, E4B JANG_4M,
+  E4B MXFP4, 12B JANG_4M, 12B MXFP4, 26B-A4B JANG_4M, 26B-A4B MXFP4,
+  31B JANG_4M, and 31B MXFP4. Each passing row has started/completed
+  `complete`, clean final text, `finish_reason="stop"`, no marker/control
+  leakage, `disk_l2_hits=1`, `effective_kv_mode="turbo(3,3)"`, and
+  `turbo_quant_kv_layer_count=0`. Same-machine repeat RSS samples include
+  about 1.92 GB for E2B JANG_4M, 3.02 GB for E4B JANG_4M, 7.21 GB for
+  12B JANG_4M, 13.35 GB for 26B-A4B JANG_4M, and 18.23 GB for 31B JANG_4M.
+  These are process RSS samples, not lower-spec Activity Monitor physical
+  footprint proof.
+- Current-built E2B MXFP4 matrix row remains `PARTIAL`, not green:
+  `full-qat-agent-matrix/osaurusai__gemma_4_e2b_it_qat_mxfp4.*` and the focused
+  rerun in `e2b-mxfp4-exact-rerun/` both show the model calls and completes
+  the `complete` tool with no marker/control leakage and repeat `disk_l2_hits=1`,
+  but the visible final answer ignores the requested exact final text. The first
+  row says it executed the requested matrix task; the focused rerun says it
+  executed the `complete` tool, but neither emits the requested literal
+  `OK_E2B_MXFP4_5dc82e0a`. Keep this row `PARTIAL` until either the model
+  contract accepts non-exact finalization or the real finalization behavior is
+  fixed without prompt coercion.
+- Current-built direct chat prefill/TTFT proxy row:
+  `/tmp/osaurus-gemma-proof/pr1469-5dc82e0a-currentbuild-20260612T091530Z/direct-chat-prefill-12b-jang4m/`
+  repeats a direct `/v1/chat/completions` text row on
+  `osaurusai--gemma-4-12b-it-qat-jang_4m`. Both streams answer blue, emit
+  three top-level `osaurus_prefill` events, include `usage.tokens_per_second`,
+  finish with `stop`, and have no marker/control leakage. Repeat cache reports
+  `disk_l2_hits=1`, `disk_l2_stores=4`, `paged_cache.enabled=false`,
+  `block_disk_store.enabled=true`, `effective_kv_mode="turbo(3,3)"`,
+  `kv_layer_count=8`, `rotating_kv_layer_count=40`,
+  `requires_disk_backed_restore=true`, and `turbo_quant_kv_layer_count=0`.
+  Wall time improved from `real 1.74` to `real 0.36`; this is the current
+  prefill-progress evidence surface because `/agents/default/run` still lacks
+  equivalent prefill/usage events.
+- Current-built VL/audio re-proof:
+  `/tmp/osaurus-gemma-proof/pr1469-5dc82e0a-currentbuild-20260612T091530Z/vl-e2b-jang4m-red32-5dc82e0a.*`
+  repeats the 32x32 red PNG row. First and repeat streams answer `Red`, emit
+  three top-level `osaurus_prefill` events, include usage and token/s, finish
+  with `stop`, and have no marker/control leakage; repeat cache reports
+  `disk_l2_hits=1`, `disk_l2_stores=4`, `paged_cache.enabled=false`, and
+  `turbo_quant_kv_layer_count=0`. Timing improved from `real 1.91` to
+  `real 0.20`. The audio row
+  `audio-e2b-jang4m-tone-5dc82e0a.*` still returns the same typed policy error
+  because the pinned vMLX runtime does not wire Gemma4 `audio_tower/embed_audio`;
+  it is a clean no-crash block, not a working audio row.
+- Current-built UI proof:
+  Computer Use inspected the PR build window by exact app path
+  `/tmp/osaurus-gemma-checkpoint-main/build/XcodeDerivedData-pr1469-5dc82e0a-nosign/Build/Products/Release/osaurus.app`.
+  The visible app selected `OsaurusAI Gemma 4 12B it qat MXFP4`; a chat prompt
+  asking to use Osaurus status showed a visible `Osaurus status` tool row and
+  final visible text `The current PR UI proof is 5dc82e0a.` with no weird
+  characters or protocol leakage. The UI displayed `TTFT 3.93s`, `5383.4 tok/s`,
+  and `19 tokens`. This proves current-built UI tool execution for 12B MXFP4;
+  JANG_4M UI tool execution still needs a UI picker run, while JANG_4M default
+  agent/tool execution is proven through the live `/agents/default/run` route.
 - Current-head boundary after the full matrix/VL/UI rerun: lower-spec Activity
   Monitor physical-footprint proof, successful Gemma4 audio, and full
   `docs/HARNESS_COMPATIBILITY.md` harness scoring remain open gates. Do not
