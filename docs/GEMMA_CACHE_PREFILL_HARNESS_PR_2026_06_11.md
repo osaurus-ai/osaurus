@@ -561,6 +561,74 @@ Current evidence behind non-TODO cells:
   and `19 tokens`. This proves current-built UI tool execution for 12B MXFP4;
   JANG_4M UI tool execution still needs a UI picker run, while JANG_4M default
   agent/tool execution is proven through the live `/agents/default/run` route.
+- Current PR-head Release app proof on commit
+  `a2694c1444cc3ffbf8afff507aefd3955ec99302`:
+  `scripts/live-proof/build-keychain-free-osaurus.sh
+  build/XcodeDerivedData-pr1469-a2694c14-nosign` completed with
+  `** BUILD SUCCEEDED **` and ad-hoc sealed
+  `/tmp/osaurus-gemma-checkpoint-main/build/XcodeDerivedData-pr1469-a2694c14-nosign/Build/Products/Release/osaurus.app`.
+  The app was launched through LaunchServices with keychain disabled,
+  `OSU_MODELS_DIR=/Users/eric/models`, `OSU_PORT=1337`, and proof root
+  `/tmp/osaurus-gemma-proof/pr1469-a2694c14-currentbuild-20260612T095128Z`.
+  Initial health reports `status="healthy"` and
+  `local_model_scan.model_count=27`. At the same poll, PR #1469 checks had
+  `shellcheck`, `swiftlint`, `test-cli`, and `update_release_draft` passing,
+  with `test-core` still pending. Do not call this merge-ready until that CI
+  job is green and the remaining runtime gates below are either proven or
+  explicitly accepted as out of scope. A later `gh pr checks 1469` poll after
+  the current-build proof reported all checks green, including `test-core`.
+- Current PR-head `/agents/default/run` 12B JANG_4M proof on `a2694c14`:
+  `request.agent-default-12b-jang4m-complete.json`,
+  `agent-12b-jang4m.first.sse`, and `agent-12b-jang4m.repeat.sse` prove named
+  `complete` execution on `osaurusai--gemma-4-12b-it-qat-jang_4m`. Both
+  streams include top-level `osaurus_agent_tool` events for phases `started`
+  and `completed`, exact final text
+  `a2694c14 current-built default agent 12b jang4m complete tool execution proof.`,
+  `finish_reason="stop"`, and no obvious protocol-marker or replacement
+  character leakage. Repeat cache reports `disk_l2_hits=1`,
+  `disk_l2_stores=1`, `paged_cache.enabled=false`,
+  `block_disk_store.enabled=true`, `effective_kv_mode="turbo(3,3)"`,
+  `kv_layer_count=8`, `rotating_kv_layer_count=40`,
+  `requires_disk_backed_restore=true`, and `turbo_quant_kv_layer_count=0`.
+  Timing was first `real 7.71` and repeat `real 6.30`; the agent route still
+  does not emit TTFT/prefill/usage chunks, so these wall times are not TTFT.
+- Current PR-head direct chat prefill row on `a2694c14`:
+  `direct-chat-prefill-12b-jang4m/first.sse` and `repeat.sse` answer
+  `A clear daytime sky is blue.`, emit `osaurus_prefill` queued, prefill, and
+  complete chunks, include `usage.tokens_per_second`, finish with `stop`, and
+  have no marker/control leakage. The repeat stream shows prefill progress at
+  `29/30` before completion, then `30/30`; token/s is `38.5197`. Repeat cache
+  reports `disk_l2_hits=2`, `disk_l2_stores=6`, `paged_cache.enabled=false`,
+  `block_disk_store.enabled=true`, `effective_kv_mode="turbo(3,3)"`,
+  `kv_layer_count=8`, `rotating_kv_layer_count=40`,
+  `requires_disk_backed_restore=true`, and `turbo_quant_kv_layer_count=0`.
+- Current PR-head VL row on `a2694c14`:
+  `vl-e2b-jang4m-red32-a2694c14.request.json` repeats the deterministic 32x32
+  red PNG row against `osaurusai--gemma-4-e2b-it-qat-jang_4m`. First and
+  repeat streams answer `Red`, emit prefill queued/prefill/complete chunks at
+  `307/307`, include usage and token/s, finish with `stop`, and have no
+  marker/control leakage. Repeat timing improved from `real 5.00` to
+  `real 0.36`. Repeat cache reports `disk_l2_hits=1`, `disk_l2_stores=4`,
+  `paged_cache.enabled=false`, `block_disk_store.enabled=true`,
+  `effective_kv_mode="turbo(3,3)"`, `kv_layer_count=3`,
+  `rotating_kv_layer_count=12`, `requires_disk_backed_restore=true`, and
+  `turbo_quant_kv_layer_count=0`.
+- Current PR-head Chat UI tool proof for 12B JANG_4M on `a2694c14`:
+  Computer Use inspected the exact PR-built app path above, switched the
+  visible model picker to `OsaurusAI Gemma 4 12B it qat JANG_4M`, and sent a
+  chat prompt requiring the Osaurus status tool. The UI rendered an
+  `Osaurus status` tool row, then final visible text
+  `UI JANG4M a2694c14 tool proof complete.` with no visible weird characters,
+  protocol markers, or reasoning/tool leakage. The UI displayed
+  `TTFT 4.45s`, `5602.7 tok/s`, and `21 tokens`. Post-UI health reports
+  current model `osaurusai--gemma-4-12b-it-qat-jang_4m`, RAM feasibility
+  `verdict="ok"`, and the app RSS sample was about 7,643,568 KB. Post-UI cache
+  confirms `paged_cache.enabled=false`, `block_disk_store.enabled=true`,
+  `effective_kv_mode="turbo(3,3)"`, `kv_layer_count=8`,
+  `rotating_kv_layer_count=40`, and `requires_disk_backed_restore=true`; it is
+  not a repeat-hit proof by itself because the visible current-model counters
+  were reset by the model switch. Use the API agent/direct-chat artifacts above
+  for repeat L2 hits.
 - Current-head boundary after the full matrix/VL/UI rerun: lower-spec Activity
   Monitor physical-footprint proof, successful Gemma4 audio, and full
   `docs/HARNESS_COMPATIBILITY.md` harness scoring remain open gates. Do not
