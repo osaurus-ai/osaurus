@@ -3330,3 +3330,66 @@ OsaurusAI MXFP4/JANG_4M Gemma 4 bundles; it is not clean enough to mark the
 release goal complete because several rows still have failed cases, visible
 ordinary text corruption, a prior 26B MXFP4 Metal abort, missing Chat UI proof,
 missing lower-spec physical-footprint proof, and blocked Gemma4 audio.
+
+Current E4B MXFP4 Chat UI and cache proof on runtime code head `67b2070a`:
+
+- Root:
+  `/tmp/osaurus-gemma-proof/pr1469-67b2070a-ui-e4b-mxfp4-tool-20260612T150504Z`
+- The visible Chat UI selector is `OsaurusAI Gemma 4 E4B it qat MXFP4`.
+- Prompt:
+  `Use the Osaurus status tool, then reply exactly: UI E4B MXFP4 67b2070a status tool proof complete. Do not mention internal tool names except the visible tool card.`
+- The UI shows an `Osaurus status` tool card and exact visible final text
+  `UI E4B MXFP4 67b2070a status tool proof complete.`.
+- UI metrics: `TTFT 2.96s`, `6744.2 tok/s`, `21 tokens`.
+- UI artifacts:
+  `ui-e4b-mxfp4-tool-proof.png`, `ui-e4b-mxfp4-tool-proof.txt`,
+  `health.after-ui-e4b-mxfp4-tool.json`, and
+  `cache.after-ui-e4b-mxfp4-tool.json`.
+- Health after the UI row reports current model
+  `osaurusai--gemma-4-e4b-it-qat-mxfp4` and RAM feasibility `ok`
+  with projected memory about `7.09 GB`.
+- The UI cache snapshot proves paged KV stayed off and disk stores occurred:
+  aggregate `paged_hits=0`, `paged_misses=0`, `disk_l2_hits=0`,
+  `disk_l2_stores=2`, `block_disk_store.enabled=true`,
+  `effective_kv_mode="turbo(3,3)"`, `turbo_quant_compressions=2`,
+  `kv_layer_count=4`, `rotating_kv_layer_count=20`,
+  `requires_disk_backed_restore=true`, and `turbo_quant_kv_layer_count=0`.
+  Because this first visible turn has no disk L2 hit, count it as UI
+  tool/cache-policy proof, not UI cache-hit proof.
+
+Direct E4B MXFP4 stable-prefix cache proof on the same running app:
+
+- Requests:
+  `request.chat-e4b-mxfp4-short-cache-first.json`,
+  `request.chat-e4b-mxfp4-short-cache-repeat.json`, and
+  `request.chat-e4b-mxfp4-short-cache-nonstream.json`.
+- SSE/non-stream artifacts:
+  `chat-e4b-mxfp4-short-cache-first.sse`,
+  `chat-e4b-mxfp4-short-cache-repeat.sse`, and
+  `chat-e4b-mxfp4-short-cache-nonstream.json`.
+- First and repeat streamed rows return exact
+  `E4B MXFP4 short cache proof complete.` with `finish="stop"`.
+- Prefill progress is emitted from `0/1225` through `1225/1225`.
+- Stream summaries report no replacement characters, no U+FFFE sentinel, no
+  raw `<think>`, no raw tool/protocol markers, no `tool:`, `args:`, or
+  `done:` leakage, and no non-ASCII output.
+- Repeat cache reports aggregate `disk_l2_hits=1`, `disk_l2_misses=37`,
+  `disk_l2_stores=4`, `paged_hits=0`, and `paged_misses=0`.
+- The non-stream copy is exact, records `tokens_per_second=14.7365`, and final
+  cache reports aggregate `disk_l2_hits=2`, `disk_l2_misses=38`,
+  `disk_l2_stores=5`, `paged_hits=0`, and `paged_misses=0`.
+- Final topology remains rotating KV plus disk-backed restore:
+  `block_disk_store.enabled=true`, `effective_kv_mode="turbo(3,3)"`,
+  `turbo_quant_compressions=5`, `kv_layer_count=4`,
+  `rotating_kv_layer_count=20`, `requires_disk_backed_restore=true`, and
+  `turbo_quant_kv_layer_count=0`. Do not describe this row as nonzero
+  TurboQuant KV layers until runtime telemetry actually reports that.
+
+Checkpoint rule reinforced by this row: every OsaurusAI Gemma 4 QAT MXFP4 and
+JANG_4M bundle must prove real Osaurus tool use and produce a scored AgentLoop
+harness row before benchmark numbers are meaningful. A decent, non-perfect
+score is acceptable for team testing only when all failures are attributed and
+the row still has real tool calls, parseable arguments, tool-result
+continuation, clean visible text, paged-KV-off cache telemetry, and recorded
+disk/L2 behavior. Source/BF16 Gemma folders remain excluded from this QAT
+checkpoint.

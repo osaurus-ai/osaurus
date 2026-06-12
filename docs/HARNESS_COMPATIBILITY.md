@@ -201,6 +201,28 @@ non-stream copy records `tokens_per_second=15.0615`. The earlier 4888-token
 repeat diagnostic hit disk L2 but length-stopped after copying prefix text, so
 it is recorded as a failed cache-quality diagnostic, not promoted proof.
 
+Code head `67b2070a` now also has current E4B MXFP4 Chat UI tool/cache proof.
+Proof root:
+`/tmp/osaurus-gemma-proof/pr1469-67b2070a-ui-e4b-mxfp4-tool-20260612T150504Z`.
+The visible selector is `OsaurusAI Gemma 4 E4B it qat MXFP4`; the UI shows an
+`Osaurus status` tool card and exact final text
+`UI E4B MXFP4 67b2070a status tool proof complete.` with UI metrics
+`TTFT 2.96s`, `6744.2 tok/s`, and `21 tokens`. The visible row has no
+weird/control/protocol marker leakage. The UI cache snapshot proves paged KV
+stayed off and disk stores occurred, but `disk_l2_hits=0`, so UI cache-hit
+proof is not promoted from that first visible turn. Direct-chat cache proof for
+the same E4B MXFP4 model passed on a short stable-prefix row: streamed first
+and repeat outputs are exact `E4B MXFP4 short cache proof complete.`, prefill
+runs `0/1225` through `1225/1225`, no replacement/control/non-ASCII/protocol
+marker leaks appear, and repeat cache reports `paged_kv_enabled=false`,
+aggregate `paged_hits=0`, `paged_misses=0`, `disk_l2_hits=1`, and
+`disk_l2_stores=4`. The non-stream copy is also exact, records
+`tokens_per_second=14.7365`, and final cache reports `disk_l2_hits=2`,
+`disk_l2_stores=5`, `effective_kv_mode="turbo(3,3)"`,
+`turbo_quant_compressions=5`, `kv_layer_count=4`,
+`rotating_kv_layer_count=20`, `requires_disk_backed_restore=true`, and
+`turbo_quant_kv_layer_count=0`.
+
 The Gemma QAT harness target is deliberately practical: each MXFP4 and JANG_4M
 bundle must score decently enough to prove real Osaurus tool use and teammate
 testability, even if the score is not perfect. A row is not acceptable if it
