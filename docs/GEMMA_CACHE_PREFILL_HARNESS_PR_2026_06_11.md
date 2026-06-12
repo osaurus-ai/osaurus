@@ -3737,30 +3737,30 @@ Current correctness scope:
 Current vMLX pin:
 
 - Osaurus PR #1469 now pins
-  `834498a86126679d8d932a6da82ab94ff6f73efd` on all four pin surfaces:
+  `020ec0d5f96cc158dd82ea1973cae66c0b70face` on all four pin surfaces:
   `Packages/OsaurusCore/Package.swift`,
   `Packages/OsaurusCore/Package.resolved`,
   `osaurus.xcworkspace/xcshareddata/swiftpm/Package.resolved`, and
   `App/osaurus.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved`.
-- `834498a8` is the combined `osaurus-ai/vmlx-swift` PR #44 head. It includes
+- `020ec0d5` is the merged `osaurus-ai/vmlx-swift` PR #44 main commit. It includes
   the `c7613dcc` Gemma 4 QAT loading/parser work and main's cache defaults,
   prefill progress, and Model2Vec static embedding APIs required by current
   Osaurus main.
 - The exact live app proof root remains
   `/tmp/osaurus-gemma-proof/pr1469-c7613dcc-fresh-live-20260612T183743Z`.
-  Do not rewrite that as an `834498a8` live proof unless a new app build and
+  Do not rewrite that as a `020ec0d5` live proof unless a new app build and
   live rows are run. The `c7613dcc` rows remain valid evidence for Gemma QAT
   load, tool, parser, prefill, VL, paged-off policy, and repeat L2 behavior.
 
-Post-merge proof on the current `834498a8` pin:
+Post-merge proof on the current vMLX main `020ec0d5` pin:
 
 - Focused Xcode test artifact:
-  `/tmp/osaurus-gemma-proof/pr1469-merge-focus-xcode-20260612T190648Z/focused-tests.log`.
+  `/tmp/osaurus-gemma-proof/pr1469-vmlx-main-pin-20260612T202611Z/focused-tests.log`.
 - Command shape:
-  `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1 swift test --package-path Packages/OsaurusCore --filter 'AgentToolLoopParallelBatchTests|ModelManagerTests/discoverLocalModels_timeoutDoesNotCacheEmptyResult'`.
-- Result: 9 selected tests passed across `AgentToolLoopParallelBatchTests` and
-  `ModelManagerTests`.
-- Current-pin Release app build proof:
+  `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1 swift test --package-path Packages/OsaurusCore --filter 'RuntimePolicySourceTests|AgentToolLoopParallelBatchTests|ModelManagerTests/discoverLocalModels_timeoutDoesNotCacheEmptyResult'`.
+- Result: 94 selected tests passed across `RuntimePolicySourceTests`,
+  `AgentToolLoopParallelBatchTests`, and `ModelManagerTests`.
+- Pre-main-merge Release app build proof on the combined PR-head `834498a8`:
   `/tmp/osaurus-gemma-proof/xcode-build-release-app-pin-834498a8-direct-20260612T192605Z.log`.
   The log reports `** BUILD SUCCEEDED **`; the ad-hoc signed app verifies with
   `codesign --verify --deep --strict` at
@@ -3768,7 +3768,7 @@ Post-merge proof on the current `834498a8` pin:
 - `scripts/live-proof/assert-osaurus-vmlx-pr-readiness.sh` passes on the
   merged tree. The guard verifies the keychain-free proof path, no hidden local
   sampler defaults, OpenResponses/cache source wiring, server settings runtime
-  wiring, matching `834498a8` vMLX pin surfaces, SwiftPM checkout HEAD matching
+  wiring, matching `020ec0d5` vMLX pin surfaces, SwiftPM checkout HEAD matching
   the pin, and Gemma parser/tool regressions in the wired checkout.
 
 Current PR head `a9a6e4fc` 26B A4B JANG_4M `/agents/default/run` and VL proof:

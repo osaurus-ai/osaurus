@@ -440,25 +440,26 @@ not run against the agent suites.
 Post-main merge checkpoint for Osaurus PR #1469, 2026-06-12:
 
 - Current Osaurus pin target is
-  `834498a86126679d8d932a6da82ab94ff6f73efd` from
-  `osaurus-ai/vmlx-swift` PR #44. This is the combined vMLX branch containing
+  `020ec0d5f96cc158dd82ea1973cae66c0b70face` from
+  merged `osaurus-ai/vmlx-swift` PR #44. This is the vMLX main commit containing
   the Gemma 4 QAT loader fix plus main's paged-cache default, prefill progress,
   and Model2Vec static embedding APIs. The earlier live app proof on
   `c7613dcc7c3a94432230f684d7a2619a5fdcec4e` remains valid as live evidence
   for the Gemma QAT loader/parser/cache behavior, but the shipping PR pin is
-  now the combined `834498a8` revision.
-- Focused post-merge source proof passed with full Xcode:
-  `/tmp/osaurus-gemma-proof/pr1469-merge-focus-xcode-20260612T190648Z/focused-tests.log`.
-  The run executed 9 selected tests across
-  `AgentToolLoopParallelBatchTests` and
+  now the vMLX main `020ec0d5` revision.
+- Focused post-vMLX-main source proof passed with full Xcode:
+  `/tmp/osaurus-gemma-proof/pr1469-vmlx-main-pin-20260612T202611Z/focused-tests.log`.
+  The run executed 94 selected tests across `RuntimePolicySourceTests`,
+  `AgentToolLoopParallelBatchTests`, and
   `ModelManagerTests/discoverLocalModels_timeoutDoesNotCacheEmptyResult`.
-- Current-pin Release app build proof also passed on `834498a8`:
+- Pre-main-merge Release app build proof passed on the combined PR-head
+  `834498a8`:
   `/tmp/osaurus-gemma-proof/xcode-build-release-app-pin-834498a8-direct-20260612T192605Z.log`
   reports `** BUILD SUCCEEDED **`, and the ad-hoc signed app verifies with
   `codesign --verify --deep --strict` at
   `build/XcodeDerivedData-gemma-834498a8-direct-nosign-20260612T192605Z/Build/Products/Release/osaurus.app`.
 - `scripts/live-proof/assert-osaurus-vmlx-pr-readiness.sh` passes on the
-  merged tree with all four vMLX pin surfaces set to `834498a8`, the SwiftPM
+  merged tree with all four vMLX pin surfaces set to `020ec0d5`, the SwiftPM
   checkout HEAD matching that pin, keychain-free proof paths intact, no hidden
   local sampler defaults, OpenResponses/cache wiring intact, server settings
   runtime wiring intact, and Gemma parser/tool regressions present in the wired
