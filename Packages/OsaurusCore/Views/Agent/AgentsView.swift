@@ -619,8 +619,8 @@ private struct AgentCard: View {
                 L(
                     "Are you sure you want to delete \"\(agent.name)\"? This action cannot be undone. Any sandbox resources provisioned for this agent will also be removed."
                 ),
-            primaryButton: .destructive("Delete", action: onDelete),
-            secondaryButton: .cancel("Cancel")
+            primaryButton: .destructive(L("Delete"), action: onDelete),
+            secondaryButton: .cancel(L("Cancel"))
         )
     }
 
@@ -5920,7 +5920,7 @@ private struct AgentEditorSheet: View {
             draftMode == .auto
             ? L("Loaded on demand from your enabled set.")
             : L("All enabled items are sent every turn.")
-        return "\(toolCount) tools and \(skillCount) skills enabled · \(modeBlurb)"
+        return L("\(toolCount) tools and \(skillCount) skills enabled · \(modeBlurb)")
     }
 
     private var promptField: some View {
