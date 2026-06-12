@@ -3534,3 +3534,82 @@ Status from this bfff6e27 proof:
   the agent-only cache row did not itself produce a disk L2 hit.
 - `BLOCKED`: Gemma4 audio remains blocked until vMLX wires the Gemma4 audio
   tower/embed path.
+
+Current PR head `81813403` 26B A4B MXFP4 `/agents/default/run` and VL proof:
+
+- Root:
+  `/tmp/osaurus-gemma-proof/pr1469-81813403-agent-26b-a4b-mxfp4-20260612T152129Z`
+- Running app:
+  `/private/tmp/osaurus-gemma-checkpoint-main/build/XcodeDerivedData-pr1469-67b2070a-nosign/Build/Products/Release/osaurus.app/Contents/MacOS/osaurus`
+- The app health after the rows stayed `healthy` with current model
+  `osaurusai--gemma-4-26b-a4b-it-qat-mxfp4`.
+- RAM feasibility after load reports verdict `ok`, projected memory
+  `18763344427` bytes, incoming weights `15636120356` bytes, and required
+  available memory `18763344427` bytes. This is live load feasibility on this
+  M5 Max MacBook, not lower-spec Activity Monitor physical-footprint proof.
+- Request:
+  `request.agent-default-26b-a4b-mxfp4-complete.json`
+- SSE:
+  `agent-default-26b-a4b-mxfp4-complete.sse`
+- Summary:
+  `agent-default-26b-a4b-mxfp4-complete.summary.json`
+- The `/agents/default/run` request uses `tool_choice="required"` and returns
+  HTTP 200.
+- The SSE emits `osaurus_agent_tool` started/completed frames for `complete`;
+  the completed frame has `is_error=false` and `end_run=true`.
+- Final text is exact:
+  `81813403 current PR agent loop executed complete tool with Gemma 26B A4B MXFP4 QAT and no parser leak.`
+- The scan finds no replacement characters, no U+FFFE sentinel, no raw
+  `<think>`, no raw tool/protocol markers, no configured weird-word hits, and
+  no non-ASCII output.
+- The agent route took `real 5.93`. It still does not emit usage or prefill
+  telemetry, so token/s and prefill proof come from direct chat and VL rows.
+- Cache after the agent row reports aggregate `disk_l2_hits=0`,
+  `disk_l2_misses=16`, `disk_l2_stores=0`, `paged_hits=0`, and
+  `paged_misses=0`. Per-model topology is paged off,
+  `block_disk_store.enabled=true`, `effective_kv_mode="turbo(3,3)"`,
+  `kv_layer_count=5`, `rotating_kv_layer_count=25`,
+  `requires_disk_backed_restore=true`, and `turbo_quant_kv_layer_count=0`.
+  This proves the cache policy stayed paged-off on the short agent row; it is
+  not standalone L2-hit proof.
+- Process RSS sample after the agent row:
+  `ps.after-agent-26b-a4b-mxfp4.txt` records `RSS=705728 KB`. This is only a
+  local process RSS sample, not lower-spec Activity Monitor physical-footprint
+  proof.
+
+26B A4B MXFP4 VL red-image row from the same root:
+
+- Request:
+  `request.vl-26b-a4b-mxfp4-red32.json`
+- SSE:
+  `vl-26b-a4b-mxfp4-red32-first.sse` and
+  `vl-26b-a4b-mxfp4-red32-repeat.sse`
+- Summary:
+  `vl-26b-a4b-mxfp4-red32.summary.json`
+- The payload includes a real inline red 32x32 PNG `image_url` data URL.
+- First and repeat rows return HTTP 200, exact `Red`, and `finish="stop"`.
+- Both rows emit prefill progress:
+  `queued 0/307`, `prefill 0/307`, and `complete 307/307`.
+- Usage is present: first `prompt_tokens=17`, `completion_tokens=5`,
+  `tokens_per_second=28.8095`; repeat `prompt_tokens=17`,
+  `completion_tokens=5`, `tokens_per_second=29.8502`.
+- The VL scans find no replacement characters, no U+FFFE sentinel, no raw
+  `<think>`, no raw tool/protocol markers, no configured weird-word hits, and
+  no non-ASCII output.
+- Repeat cache reports aggregate `disk_l2_hits=1`, `disk_l2_misses=20`,
+  `disk_l2_stores=5`, `paged_hits=0`, and `paged_misses=0`. Per-model topology
+  remains paged off, disk-backed, `effective_kv_mode="turbo(3,3)"`,
+  `kv_layer_count=5`, `rotating_kv_layer_count=25`,
+  `requires_disk_backed_restore=true`, and `turbo_quant_kv_layer_count=0`.
+
+Status from this 81813403 proof:
+
+- `PROVEN`: 26B A4B MXFP4 literal `/agents/default/run` completes a real tool
+  call with clean final text; 26B A4B MXFP4 API VL works with prefill, token/s,
+  paged KV off, disk L2 telemetry, and no marker/corruption leakage on the
+  live app.
+- `PARTIAL`: this does not erase the earlier 26B A4B MXFP4 full AgentLoop
+  Metal abort or the long-harness visible text corruption. The live agent row
+  itself also does not emit usage/prefill and did not produce a disk L2 hit.
+- `BLOCKED`: lower-spec physical-footprint proof and Gemma4 audio remain
+  separate open gates.
