@@ -154,6 +154,8 @@ struct ServerSettingsTabContent: View {
                         .id(ServerSettingsSection.cache)
                     MemorySafetySection(draft: $draft)
                         .id(ServerSettingsSection.memorySafety)
+                    DecodePerformanceSection(draft: $draft)
+                        .id(ServerSettingsSection.decodePerformance)
                     MTPSection(draft: $draft)
                         .id(ServerSettingsSection.speculative)
                     LiveActivitySection()
