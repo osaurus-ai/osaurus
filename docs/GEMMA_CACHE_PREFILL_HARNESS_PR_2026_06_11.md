@@ -2858,6 +2858,31 @@ just because a JSON report exists. If the command aborts, visible text corrupts
 or loops, tool calls are skipped, or cache proof is only material-on-disk, the
 row stays `BLOCKED` or `PARTIAL` with the exact artifacts above.
 
+Follow-up focused repro on head `aabd8907` narrowed the 26B A4B MXFP4 issue:
+
+- Root:
+  `/tmp/osaurus-gemma-proof/pr1469-aabd8907-repro-26b-a4b-mxfp4-compaction-20260612T124909Z`
+- Command: same AgentLoop suite and model, filtered with
+  `--filter compaction-stress`.
+- Result: 1 total, 0 passed, 1 failed, 0 skipped, 0 errored.
+- This focused run did not reproduce the fatal Metal abort.
+- The behavioral failure did reproduce: only three `file_read` tool calls were
+  emitted, the third was a deduped repeat of `log2.txt`, compaction watermark
+  still never recorded, and the final falsely reported `log3`, `log4`, and
+  `log5` despite not reading them in this run.
+- Visible corruption remained: `log1.xt`, `tlog2.xt`, `tlog5.xt does nott
+  ntain`, and `coNone f the files contaoin`.
+- Marker scan found no replacement characters, no raw tool/protocol markers,
+  and no fatal Metal lines.
+- Cache artifacts for the focused run: 4 disk KV safetensor files, about
+  `1.8G`, and 4 cache index rows. This remains cache-material evidence only.
+
+Current diagnosis from the full run plus focused repro: the full-suite Metal
+abort is not yet single-case reproducible, but the compaction/tool-continuation
+failure and visible text corruption are reproducible on 26B A4B MXFP4. Next
+root-cause work should stay on the compaction/tool-history/runtime path before
+promoting this row or using its score as teammate-ready evidence.
+
 Updated boundary:
 
 - Pushed Osaurus PR checkpoint: PR #1469 branch
