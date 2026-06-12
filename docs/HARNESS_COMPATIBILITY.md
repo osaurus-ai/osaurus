@@ -142,10 +142,23 @@ return exact visible text
 `effective_kv_mode="turbo(3,3)"`, `turbo_quant_compressions=2`,
 `kv_layer_count=8`, `rotating_kv_layer_count=40`,
 `requires_disk_backed_restore=true`, and `turbo_quant_kv_layer_count=0`.
-This proves 12B JANG_4M agent-loop tool execution plus direct-chat
-prefill/cache telemetry on the current dev app, while preserving the remaining
-boundary that Chat UI visual JANG_4M proof and the broader QAT matrix are not
-yet complete.
+The same exact app now also has visible Chat UI JANG_4M proof. Proof root:
+`/tmp/osaurus-gemma-proof/pr1469-67b2070a-ui-jang-tool-20260612T144811Z`.
+After switching the visible selector to
+`OsaurusAI Gemma 4 12B it qat JANG_4M`, the UI shows an `Osaurus status` tool
+card, exact final text `UI JANG 67b2070a status tool proof complete.`, and
+UI metrics `TTFT 4.81s`, `8673.1 tok/s`, and `21 tokens`, with no visible
+weird/control/protocol marker leakage. Cache snapshot
+`cache.after-ui-jang-tool.json` reports `paged_kv_enabled=false`,
+aggregate `paged_hits=0`, `paged_misses=0`, `disk_l2_hits=1`,
+`disk_l2_stores=6`, `block_disk_store.enabled=true`,
+`effective_kv_mode="turbo(3,3)"`, `turbo_quant_compressions=4`,
+`kv_layer_count=8`, `rotating_kv_layer_count=40`,
+`requires_disk_backed_restore=true`, and `turbo_quant_kv_layer_count=0`.
+This proves 12B JANG_4M Chat UI tool execution plus agent-loop tool execution
+and direct-chat prefill/cache telemetry on the current dev app, while
+preserving the remaining boundary that the broader QAT matrix is not yet
+complete.
 
 The Gemma QAT harness target is deliberately practical: each MXFP4 and JANG_4M
 bundle must score decently enough to prove real Osaurus tool use and teammate

@@ -146,10 +146,23 @@ Current evidence behind non-TODO cells:
   `8.4939` then `8.4819`, repeat `disk_l2_hits=1`, `disk_l2_stores=4`,
   paged hits/misses zero, `effective_kv_mode="turbo(3,3)"`,
   `turbo_quant_compressions=2`, and the same 8 KV / 40 rotating
-  disk-backed topology with `turbo_quant_kv_layer_count=0`. This closes the
-  explicit 12B JANG_4M agent-loop no-tool-call blocker. It does not claim
-  visible Chat UI JANG_4M proof, full clean harness, lower-spec physical
-  footprint proof, or successful Gemma4 audio.
+  disk-backed topology with `turbo_quant_kv_layer_count=0`. Current
+  12B JANG_4M Chat UI proof root
+  `/tmp/osaurus-gemma-proof/pr1469-67b2070a-ui-jang-tool-20260612T144811Z`
+  shows the visible selector switched to
+  `OsaurusAI Gemma 4 12B it qat JANG_4M`, a visible `Osaurus status` tool
+  card, exact final text `UI JANG 67b2070a status tool proof complete.`, UI
+  metrics `TTFT 4.81s` / `8673.1 tok/s` / `21 tokens`, and no visible
+  weird/control/protocol marker leakage. `cache.after-ui-jang-tool.json`
+  reports `paged_kv_enabled=false`, aggregate `paged_hits=0`,
+  `paged_misses=0`, `disk_l2_hits=1`, `disk_l2_stores=6`,
+  `block_disk_store.enabled=true`, `effective_kv_mode="turbo(3,3)"`,
+  `turbo_quant_compressions=4`, the same 8 KV / 40 rotating disk-backed
+  topology, and `turbo_quant_kv_layer_count=0`. This closes the explicit
+  12B JANG_4M agent-loop no-tool-call blocker and the 12B JANG_4M Chat UI
+  visual tool-card proof gap. It does not claim full clean harness,
+  lower-spec physical footprint proof, other-size JANG UI proof, or successful
+  Gemma4 audio.
 - Current PR head `f58bb924` no-sign Release app build:
   `scripts/live-proof/build-keychain-free-osaurus.sh` produced
   `** BUILD SUCCEEDED **` for
