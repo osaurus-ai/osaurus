@@ -118,9 +118,10 @@ struct XAIOAuthServiceTests {
         let error = XAIOAuthError.loopbackBindFailed("Address already in use")
         let message = XAIOAuthService.diagnosticMessage(for: error)
 
-        // Port number may be locale-formatted (e.g. "56,121" with thousands
-        // separator) when interpolated inside a localized string.
-        #expect(message.contains("56121") || message.contains("56,121"))
+        // Port number may be locale-formatted with a thousands separator
+        // when interpolated inside a localized string.
+        let digitsOnly = String(message.filter(\.isNumber))
+        #expect(digitsOnly.contains("56121"))
         #expect(message.contains("Close any other in-progress sign-in"))
         #expect(message.contains("Address already in use"))
     }

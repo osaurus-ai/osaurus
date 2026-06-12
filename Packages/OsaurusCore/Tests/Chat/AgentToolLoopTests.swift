@@ -759,38 +759,155 @@ private actor CompletionRecorder {
     }
 }
 
+/// Lets tests measure overlap without relying on task-start jitter.
+private actor BatchStartBarrier {
+    private let expectedCount: Int
+    private var started: Set<String> = []
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    init(expectedCount: Int) {
+        self.expectedCount = expectedCount
+    }
+
+    func waitForAllStarted(_ name: String) async {
+        started.insert(name)
+        if started.count >= expectedCount {
+            releaseWaiters()
+            return
+        }
+        await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+            if started.count >= expectedCount {
+                releaseWaiters()
+            }
+        }
+    }
+
+    private func releaseWaiters() {
+        let pending = waiters
+        waiters.removeAll()
+        for waiter in pending {
+            waiter.resume()
+        }
+    }
+}
+
+/// Releases batch calls in a deterministic completion order once all tasks are parked.
+private actor BatchCompletionController {
+    private let expectedNames: Set<String>
+    private var started: Set<String> = []
+    private var released: Set<String> = []
+    private var completed: [String] = []
+    private var startWaiters: [CheckedContinuation<Void, Never>] = []
+    private var releaseWaiters: [String: [CheckedContinuation<Void, Never>]] = [:]
+    private var completionWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
+
+    init(expectedNames: Set<String>) {
+        self.expectedNames = expectedNames
+    }
+
+    var completionOrder: [String] { completed }
+
+    func markStarted(_ name: String) {
+        started.insert(name)
+        if expectedNames.isSubset(of: started) {
+            releaseStartWaiters()
+        }
+    }
+
+    func waitForAllStarted() async {
+        if expectedNames.isSubset(of: started) {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            startWaiters.append(continuation)
+            if expectedNames.isSubset(of: started) {
+                releaseStartWaiters()
+            }
+        }
+    }
+
+    func waitForRelease(_ name: String) async {
+        if released.contains(name) {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            releaseWaiters[name, default: []].append(continuation)
+            if released.contains(name) {
+                releaseWaiters.removeValue(forKey: name)?.forEach { $0.resume() }
+            }
+        }
+    }
+
+    func release(_ name: String) {
+        released.insert(name)
+        releaseWaiters.removeValue(forKey: name)?.forEach { $0.resume() }
+    }
+
+    func markCompleted(_ name: String) {
+        completed.append(name)
+        releaseCompletionWaiters()
+    }
+
+    func waitForCompletedCount(_ count: Int) async {
+        if completed.count >= count {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            completionWaiters.append((count, continuation))
+            releaseCompletionWaiters()
+        }
+    }
+
+    private func releaseStartWaiters() {
+        let pending = startWaiters
+        startWaiters.removeAll()
+        for waiter in pending {
+            waiter.resume()
+        }
+    }
+
+    private func releaseCompletionWaiters() {
+        let ready = completionWaiters.filter { completed.count >= $0.0 }
+        completionWaiters.removeAll { completed.count >= $0.0 }
+        for waiter in ready {
+            waiter.1.resume()
+        }
+    }
+}
+
 struct AgentToolLoopParallelBatchTests {
 
     @Test func resultsComeBackInInputOrderUnderRandomCompletion() async {
         // slow finishes LAST but is FIRST in the input; the executor must
-        // re-sort by input index, not completion order. Use an explicit gate
-        // instead of small sleeps so the test stays deterministic on loaded CI
-        // runners.
-        let recorder = CompletionRecorder()
+        // re-sort by input index, not completion order.
         let calls: [(invocation: ServiceToolInvocation, callId: String)] = [
             (ServiceToolInvocation(toolName: "slow", jsonArguments: "{}", toolCallId: nil), "call_slow"),
             (ServiceToolInvocation(toolName: "fast", jsonArguments: "{}", toolCallId: nil), "call_fast"),
             (ServiceToolInvocation(toolName: "medium", jsonArguments: "{}", toolCallId: nil), "call_med"),
         ]
-        let executions = await AgentToolLoop.runBatchInParallel(calls) { invocation, _ in
-            if invocation.toolName == "slow" {
-                let releasedByParallelCompletions = await recorder.waitForCompletions(
-                    ["fast", "medium"],
-                    timeoutNanoseconds: 2_000_000_000
-                )
-                if !releasedByParallelCompletions {
-                    return "timed-out:\(invocation.toolName)"
-                }
+        let controller = BatchCompletionController(expectedNames: Set(calls.map { $0.invocation.toolName }))
+        let batchTask = Task {
+            await AgentToolLoop.runBatchInParallel(calls) { invocation, _ in
+                await controller.markStarted(invocation.toolName)
+                await controller.waitForRelease(invocation.toolName)
+                await controller.markCompleted(invocation.toolName)
+                return "ran:\(invocation.toolName)"
             }
-            await recorder.record(invocation.toolName)
-            return "ran:\(invocation.toolName)"
         }
+
+        await controller.waitForAllStarted()
+        await controller.release("fast")
+        await controller.waitForCompletedCount(1)
+        await controller.release("medium")
+        await controller.waitForCompletedCount(2)
+        await controller.release("slow")
+        let executions = await batchTask.value
 
         #expect(executions.map(\.result) == ["ran:slow", "ran:fast", "ran:medium"])
         #expect(executions.allSatisfy { !$0.isError })
-        let completion = await recorder.order
-        #expect(completion.count == 3)
-        #expect(completion.last == "slow")
+        // The calls actually overlapped: fast completed before slow.
+        #expect(await controller.completionOrder == ["fast", "medium", "slow"])
     }
 
     @Test func throwingCallBecomesErrorEnvelopeWithoutAbortingBatch() async {

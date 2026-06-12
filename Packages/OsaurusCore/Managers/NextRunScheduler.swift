@@ -63,6 +63,22 @@ public final class NextRunScheduler {
 
     private init() {}
 
+    /// Run a synchronous `SchedulerDatabase` call off the main actor.
+    ///
+    /// This type is `@MainActor`, and `SchedulerDatabase` serializes every
+    /// operation through its own `DispatchQueue` with a blocking `queue.sync`.
+    /// Calling it directly from the loop ran the SQLite parse/execute on the
+    /// main thread and tripped the app-hang watchdog. The database is
+    /// `Sendable` and internally synchronized, so hopping to a detached task
+    /// keeps the query off-main without changing its serialization.
+    private nonisolated func runOffMain<T: Sendable>(
+        _ body: @escaping @Sendable () throws -> T
+    ) async throws -> T {
+        try await Task.detached(priority: .utility) {
+            try body()
+        }.value
+    }
+
     // MARK: - Lifecycle
 
     /// Boot the scheduler. Idempotent — calling twice from app delegate
@@ -99,7 +115,7 @@ public final class NextRunScheduler {
     private func runLoop() async {
         while !Task.isCancelled {
             do {
-                try SchedulerDatabase.shared.open()
+                try await runOffMain { try SchedulerDatabase.shared.open() }
             } catch {
                 print("[NextRunScheduler] open failed: \(error.localizedDescription)")
                 try? await Task.sleep(nanoseconds: UInt64(Self.idleSleep * 1_000_000_000))
@@ -121,8 +137,11 @@ public final class NextRunScheduler {
         // active agents.
         lastDispatch = lastDispatch.filter { now.timeIntervalSince($0.value) < Self.coalesceWindow }
         let due: [NextRunEntry]
+        let limit = Self.maxConcurrent
         do {
-            due = try SchedulerDatabase.shared.dueNextRuns(asOf: now, limit: Self.maxConcurrent)
+            due = try await runOffMain {
+                try SchedulerDatabase.shared.dueNextRuns(asOf: now, limit: limit)
+            }
         } catch {
             print("[NextRunScheduler] dueNextRuns failed: \(error.localizedDescription)")
             return
@@ -133,7 +152,7 @@ public final class NextRunScheduler {
             // Pause check (spec §9.2): a paused agent never wakes. We
             // leave the row in place so it dispatches naturally when
             // the pause expires.
-            if let pause = try? SchedulerDatabase.shared.pauseInfo(for: entry.agentId),
+            if let pause = try? await runOffMain({ try SchedulerDatabase.shared.pauseInfo(for: entry.agentId) }),
                 pause.pausedUntil > now
             {
                 continue
@@ -148,7 +167,7 @@ public final class NextRunScheduler {
                 // Mark as cancelled in `agent_runs` so the Activity tab
                 // shows the miss, then clear the row.
                 await recordSkippedRun(entry: entry, reason: "stale-skip")
-                clearRow(entry.agentId)
+                await clearRow(entry.agentId)
                 continue
             case (.runCatchup, .stale):
                 // Catch-up dispatches one run per missed interval. We
@@ -179,7 +198,7 @@ public final class NextRunScheduler {
             // `schedule_next_run` again during the run. Clearing first
             // avoids the race where a slow dispatch lets the scheduler
             // re-pick the same row on the next tick.
-            clearRow(entry.agentId)
+            await clearRow(entry.agentId)
             await dispatch(entry: entry)
         }
     }
@@ -219,8 +238,8 @@ public final class NextRunScheduler {
         }
     }
 
-    private func clearRow(_ agentId: UUID) {
-        try? SchedulerDatabase.shared.clearNextRun(for: agentId)
+    private func clearRow(_ agentId: UUID) async {
+        try? await runOffMain { try SchedulerDatabase.shared.clearNextRun(for: agentId) }
     }
 
     /// Record a `cancelled` row in `agent_runs` for a missed-and-skipped
@@ -228,17 +247,19 @@ public final class NextRunScheduler {
     /// can see why a wake didn't run.
     private func recordSkippedRun(entry: NextRunEntry, reason: String) async {
         do {
-            let id = try SchedulerDatabase.shared.recordRunStart(
-                agentId: entry.agentId,
-                triggerKind: .schedule,
-                triggerPayload: reason,
-                instructions: entry.instructions
-            )
-            try SchedulerDatabase.shared.recordRunEnd(
-                runId: id,
-                status: .cancelled,
-                error: "Skipped: \(reason)"
-            )
+            try await runOffMain {
+                let id = try SchedulerDatabase.shared.recordRunStart(
+                    agentId: entry.agentId,
+                    triggerKind: .schedule,
+                    triggerPayload: reason,
+                    instructions: entry.instructions
+                )
+                try SchedulerDatabase.shared.recordRunEnd(
+                    runId: id,
+                    status: .cancelled,
+                    error: "Skipped: \(reason)"
+                )
+            }
         } catch {
             // Best-effort; if we can't write to scheduler.sqlite the
             // run-hook isn't critical and we'd rather keep ticking than
@@ -257,7 +278,7 @@ public final class NextRunScheduler {
     /// resumes it after `interval`, `notifyRowChanged()` resumes it
     /// early. Whichever wins clears the slot so the loser is a no-op.
     private func sleepUntilNext() async {
-        let interval = nextSleepInterval()
+        let interval = await nextSleepInterval()
         let timerTask = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
             guard !Task.isCancelled else { return }
@@ -287,18 +308,21 @@ public final class NextRunScheduler {
         c.resume()
     }
 
-    private func nextSleepInterval() -> TimeInterval {
+    private func nextSleepInterval() async -> TimeInterval {
         // Peek at the very next row; if none, sleep the idle fallback.
         // We do a single-row LIMIT 1 by reusing `dueNextRuns` with a
         // far-future cutoff — adding a dedicated `peekNextRun` to
         // `SchedulerDatabase` would be cleaner but the cost is trivial
         // (one bound stmt) and this keeps the storage layer simpler.
         let now = Date()
+        let cutoff = now.addingTimeInterval(Self.idleSleep)
         do {
-            let upcoming = try SchedulerDatabase.shared.dueNextRuns(
-                asOf: now.addingTimeInterval(Self.idleSleep),
-                limit: 1
-            )
+            let upcoming = try await runOffMain {
+                try SchedulerDatabase.shared.dueNextRuns(
+                    asOf: cutoff,
+                    limit: 1
+                )
+            }
             if let first = upcoming.first {
                 let delta = first.scheduledAt.timeIntervalSince(now)
                 return max(0.5, min(Self.idleSleep, delta))

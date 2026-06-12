@@ -21,21 +21,30 @@ struct ModelManagerTests {
     }
 
     @Test func loadAvailableModels_initializesStates() async throws {
-        // `ModelManager.init` calls `loadAvailableModels()` synchronously, which
-        // populates `availableModels` + `downloadStates` before init returns. No
-        // sleep needed; the previous 2s `Task.sleep` predated the sync refactor.
+        // `ModelManager.init` calls `loadAvailableModels()` synchronously, while
+        // download-state probing is intentionally applied off-main so startup
+        // does not block on disk scans. Wait for that async state sync here.
         let manager = await MainActor.run { ModelManager() }
 
-        let isLoading = await MainActor.run { manager.isLoadingModels }
-        let models = await MainActor.run { manager.availableModels }
-        let states = await MainActor.run { manager.downloadStates }
+        var models: [MLXModel] = []
+        var states: [String: DownloadState] = [:]
+        for _ in 0 ..< 100 {
+            (models, states) = await MainActor.run {
+                (manager.availableModels, manager.downloadStates)
+            }
+            if !models.isEmpty, models.allSatisfy({ states[$0.id] != nil }) {
+                break
+            }
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
 
+        let isLoading = await MainActor.run { manager.isLoadingModels }
         #expect(isLoading == false)
 
         if models.count > 0 {
-            for model in models {
-                #expect(states[model.id] != nil)
-            }
+            let missing = models.filter { states[$0.id] == nil }.map(\.id)
+            let missingList = missing.joined(separator: ", ")
+            #expect(missing.isEmpty, "missing download state for models: \(missingList)")
         }
     }
 
@@ -400,10 +409,12 @@ struct ModelManagerTests {
             #expect(first.isEmpty)
 
             var second: [MLXModel] = []
-            for _ in 0 ..< 40 {
-                try await Task.sleep(nanoseconds: 50_000_000)
+            for _ in 0 ..< 100 {
                 second = ModelManager.discoverLocalModels()
-                if !second.isEmpty { break }
+                if second.map(\.id) == ["gemma-4-E2B-it-qat-MXFP4"] {
+                    break
+                }
+                try await Task.sleep(nanoseconds: 25_000_000)
             }
             #expect(second.map(\.id) == ["gemma-4-E2B-it-qat-MXFP4"])
         }

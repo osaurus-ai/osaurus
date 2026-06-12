@@ -125,12 +125,6 @@ enum OnboardingMetrics {
     /// segmented control because it pairs with a labelled form field).
     static let protocolToggleHeight: CGFloat = 36
 
-    // Selectable rows (e.g. OpenAI auth choice)
-    /// Corner radius of the bordered selectable row.
-    static let selectableRowRadius: CGFloat = 9
-    /// Padding inside a selectable row.
-    static let selectableRowPadding: CGFloat = 10
-
     // Banners (warning / error / info / success callouts)
     /// Corner radius for inline banners and callouts.
     static let bannerCornerRadius: CGFloat = 8

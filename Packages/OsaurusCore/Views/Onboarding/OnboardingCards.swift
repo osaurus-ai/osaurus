@@ -127,7 +127,10 @@ struct OnboardingGlassCard<Content: View>: View {
 /// Trailing accessory for `OnboardingRowCard`.
 enum OnboardingRowAccessory {
     case none
+    /// Pick-one selection indicator (e.g. the model picker).
     case radio(isSelected: Bool)
+    /// Pick-many selection indicator (e.g. the tools picker).
+    case checkbox(isSelected: Bool)
     case toggle(isOn: Bool)
     case chevron
 }
@@ -324,8 +327,9 @@ struct OnboardingRowCard: View {
 
     @ViewBuilder
     private var accessoryView: some View {
-        // A radio circle on a grayed row would read as "selectable but
-        // unselected", so disabled rows drop the accessory entirely.
+        // A selection accessory (radio/checkbox) on a grayed row would read
+        // as "selectable but unselected", so disabled rows drop the
+        // accessory entirely.
         if isDisabled {
             EmptyView()
         } else {
@@ -344,6 +348,24 @@ struct OnboardingRowCard: View {
                         Circle().fill(Color.white).frame(width: 7, height: 7)
                     }
                 }
+            case .checkbox(let selected):
+                let box = RoundedRectangle(cornerRadius: 6, style: .continuous)
+                box
+                    .fill(selected ? theme.accentColor : Color.clear)
+                    .overlay(
+                        box.strokeBorder(
+                            selected ? theme.accentColor : theme.primaryBorder,
+                            lineWidth: 1.5
+                        )
+                    )
+                    .overlay {
+                        if selected {
+                            Image(systemName: "checkmark")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundColor(.white)
+                        }
+                    }
+                    .frame(width: 20, height: 20)
             case .toggle(let isOn):
                 Toggle("", isOn: .constant(isOn))
                     .labelsHidden()
@@ -356,91 +378,6 @@ struct OnboardingRowCard: View {
                     .foregroundColor(theme.tertiaryText)
             }
         }
-    }
-}
-
-// MARK: - Selectable Row
-
-/// A single bordered radio-row used *inside* an `OnboardingGlassCard`'s
-/// content (e.g. the OpenAI auth choices). Distinct from
-/// `OnboardingRowCard` — that variant is a stand-alone glass card; this
-/// one is a flat bordered selection row meant to live in a list within
-/// another card.
-struct OnboardingSelectableRow: View {
-    let icon: String
-    let title: LocalizedStringKey
-    let subtitle: LocalizedStringKey
-    let isSelected: Bool
-    let action: () -> Void
-
-    @Environment(\.theme) private var theme
-
-    init(
-        icon: String,
-        title: LocalizedStringKey,
-        subtitle: LocalizedStringKey,
-        isSelected: Bool,
-        action: @escaping () -> Void
-    ) {
-        self.icon = icon
-        self.title = title
-        self.subtitle = subtitle
-        self.isSelected = isSelected
-        self.action = action
-    }
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 10) {
-                ZStack {
-                    Circle()
-                        .fill(
-                            isSelected
-                                ? theme.accentColor.opacity(0.12)
-                                : theme.tertiaryBackground
-                        )
-                        .frame(width: 26, height: 26)
-                    Image(systemName: icon)
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundColor(isSelected ? theme.accentColor : theme.secondaryText)
-                }
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title, bundle: .module)
-                        .font(theme.font(size: 12, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
-                    Text(subtitle, bundle: .module)
-                        .font(theme.font(size: 11))
-                        .foregroundColor(theme.secondaryText)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-
-                Spacer(minLength: 0)
-
-                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(isSelected ? theme.accentColor : theme.tertiaryText)
-            }
-            .padding(OnboardingMetrics.selectableRowPadding)
-            .background(
-                RoundedRectangle(cornerRadius: OnboardingMetrics.selectableRowRadius, style: .continuous)
-                    .fill(
-                        isSelected
-                            ? theme.accentColor.opacity(0.08)
-                            : theme.cardBackground.opacity(0.4)
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: OnboardingMetrics.selectableRowRadius, style: .continuous)
-                            .stroke(
-                                isSelected ? theme.accentColor.opacity(0.55) : theme.cardBorder,
-                                lineWidth: 1
-                            )
-                    )
-                    .animation(.spring(response: 0.35, dampingFraction: 0.85), value: isSelected)
-            )
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
     }
 }
 

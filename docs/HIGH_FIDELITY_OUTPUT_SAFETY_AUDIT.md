@@ -9,8 +9,14 @@ fidelity lanes moved workbook reading into core `file_read`.
 risk warnings before applying, creates parent directories when explicitly
 applied, writes atomically, and refuses structured package targets (`.xlsx`,
 `.pdf`, `.pptx` families) so an agent cannot create invalid office/PDF output by
-writing plain text with a package extension. For tabular text output, agents
-should write CSV/TSV.
+writing plain text with a package extension. For simple tabular text output,
+agents can still write CSV/TSV text; structured CSV/TSV conversion/export uses
+the explicit document workflow path below.
+
+Structured table output stays on the document-emitter/plugin path.
+`CSVTableWorkflowService` previews bounded samples, reports schema/type
+metadata, validates export bounds and formula-like spreadsheet prefixes, then
+emits CSV/TSV through `CSVEmitter`.
 
 Structured workbook output stays on the document-emitter/plugin path.
 `WorkbookWorkflowService` inspects typed workbooks, reports validation issues
@@ -38,6 +44,7 @@ No workbook writer is added to the default schema.
 | Dry-run write/edit | `dry_run: true` returns a bounded diff/risk preview, does not mutate files, and does not log fake operations | `FolderToolsResilienceTests.fileWrite_dryRunPreviewsDiffWithoutWritingOrLogging`, `FolderToolsResilienceTests.fileEdit_dryRunPreviewsDiffWithoutMutatingOrLogging` |
 | Operation history | Applied file writes/edits are visible through a session-scoped history tool | `FolderToolsResilienceTests.fileWrite_applyLogsInspectableOperationHistory` |
 | CSV output | Text tabular output remains allowed through `file_write` | `FolderToolsResilienceTests.fileWrite_allowsCSVTextOutput` |
+| CSV/TSV workflow | Explicit table export validates row/cell bounds and formula-like spreadsheet prefixes before writing CSV/TSV through an emitter | `CSVTableWorkflowServiceTests` |
 | XLSX emitter | Valid scalar workbooks round-trip through the XLSX adapter | `XLSXEmitterTests.emit_roundTripsScalarWorkbookThroughXLSXAdapter` |
 | XLSX formula safety | Formula cells are rejected, while formula-looking strings stay inert shared strings | `XLSXEmitterTests.emit_rejectsFormulaCellsWithoutFlatteningThem`, `XLSXEmitterTests.emit_keepsFormulaLookingTextInert` |
 | XLSX bounds | Empty exports, whitespace-only exports, overlong cell text, invalid names/references, non-finite numbers, and ZIP32 overflows are rejected before package write | `XLSXEmitterTests`, `XLSXAdapterTests` |

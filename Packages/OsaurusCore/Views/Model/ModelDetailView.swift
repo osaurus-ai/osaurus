@@ -78,6 +78,20 @@ struct ModelDetailView: View, Identifiable {
     /// while the bundle's config files are still being read from disk.
     @State private var diagnostics: ModelCompatibilityDiagnostics.Report? = nil
 
+    /// On-disk download state, resolved off the main thread. Reading
+    /// `model.isDownloaded` directly from the view body could enumerate the
+    /// bundle directory on a cold cache and hang the main thread, so the body
+    /// renders from this precomputed value instead. Seeded from the O(1)
+    /// shared cache in `init` so a warm cache shows the checkmark immediately.
+    @State private var resolvedIsDownloaded: Bool
+
+    init(model: MLXModel) {
+        self.model = model
+        self._resolvedIsDownloaded = State(
+            initialValue: MLXModelDownloadCache.value(for: model.id) ?? false
+        )
+    }
+
     /// Normalized model ID for API usage
     private var apiModelId: String {
         let last = model.id.split(separator: "/").last.map(String.init) ?? model.name
@@ -132,11 +146,34 @@ struct ModelDetailView: View, Identifiable {
             }
 
             Task {
+                await loadDownloadState()
+            }
+
+            Task {
                 await estimateIfNeeded()
                 await loadHFDetails()
                 await loadReadmeIfNeeded()
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .localModelsChanged)) { _ in
+            // The shared cache is invalidated on this notification; re-resolve
+            // off-main so the checkmark stays in sync after a download or delete.
+            Task { await loadDownloadState() }
+        }
+    }
+
+    /// Resolve `model.isDownloaded` off the main thread and publish it. Reading
+    /// it goes through the shared cache and, on a miss, enumerates the bundle
+    /// directory — too slow to run inside the view body on a cold or slow disk.
+    private func loadDownloadState() async {
+        let value = await Self.computeDownloadState(for: model)
+        await MainActor.run {
+            self.resolvedIsDownloaded = value
+        }
+    }
+
+    nonisolated private static func computeDownloadState(for model: MLXModel) async -> Bool {
+        model.isDownloaded
     }
 
     /// Build the runtime compatibility report off the main thread. The
@@ -218,7 +255,7 @@ struct ModelDetailView: View, Identifiable {
                     .lineLimit(1)
                     .truncationMode(.tail)
 
-                if model.isDownloaded {
+                if resolvedIsDownloaded {
                     Image(systemName: "checkmark.circle.fill")
                         .font(.system(size: 14))
                         .foregroundColor(theme.accentColor)
@@ -292,7 +329,7 @@ struct ModelDetailView: View, Identifiable {
 
     /// Detect if model is VLM
     private func detectIsVLM() -> Bool {
-        if model.isDownloaded { return model.isVLM }
+        if resolvedIsDownloaded { return model.isVLM }
         if let details = hfDetails, let mt = details.modelType {
             return VLMDetection.isVLM(modelType: mt)
         }
@@ -483,7 +520,7 @@ struct ModelDetailView: View, Identifiable {
                     MetaItem(label: L("Source"), value: source)
                 }
 
-                if model.isDownloaded, let downloadedAt = model.downloadedAt {
+                if resolvedIsDownloaded, let downloadedAt = model.downloadedAt {
                     MetaItem(
                         label: L("Downloaded"),
                         value: RelativeDateTimeFormatter().localizedString(

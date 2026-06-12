@@ -145,6 +145,17 @@ struct CSVAdapterTests {
         #expect(records[1].metadata["documentId"] == reference.id.uuidString)
     }
 
+    @Test func bootstrap_registersCSVEmitters() async throws {
+        let url = try Self.write("name,age\nAda,37\n", filename: "people.csv")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let document = try await CSVAdapter(delimiter: .comma).parse(url: url, sizeLimit: 0)
+        let registry = DocumentFormatRegistry()
+
+        DocumentAdaptersBootstrap.registerBuiltIns(registry: registry)
+
+        #expect(registry.emitter(for: document)?.formatId == "csv")
+    }
+
     private static func write(_ content: String, filename: String) throws -> URL {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(UUID().uuidString)-\(filename)")

@@ -11,6 +11,7 @@ import Testing
 
 @testable import OsaurusCore
 
+@Suite(.serialized)
 struct SkillSearchServiceTests {
 
     @Test func searchFallsBackToBuiltInSkillsWhenUninitialized() async {

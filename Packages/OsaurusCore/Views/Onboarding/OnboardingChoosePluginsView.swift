@@ -253,9 +253,9 @@ struct ChoosePluginsBody: View {
         let installed = entry.state.isInstalled
         let installing = entry.state.isInstalling
         let selected = state.isSelected(pluginId)
-        // Installed picks read as a passive "Installed" badge with no radio
-        // (the disabled row hides the accessory), matching the model picker's
-        // already-downloaded treatment.
+        // Installed picks read as a passive "Installed" badge with no
+        // checkbox (the disabled row hides the accessory), matching the
+        // model picker's already-downloaded treatment.
         let badges: [OnboardingRowBadge] =
             installed ? [OnboardingRowBadge(L("Installed"), style: .success)] : []
 
@@ -264,7 +264,7 @@ struct ChoosePluginsBody: View {
             title: entry.pick.displayName,
             subtitle: entry.pick.blurb,
             badges: badges,
-            accessory: .radio(isSelected: selected),
+            accessory: .checkbox(isSelected: selected),
             isSelected: selected,
             isDisabled: installed || installing
         ) {

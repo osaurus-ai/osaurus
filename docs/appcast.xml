@@ -3,6 +3,35 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.19.19</title>
+            <pubDate>Fri, 12 Jun 2026 13:11:25 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.19.19</sparkle:version>
+            <sparkle:shortVersionString>0.19.19</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.19.19/Osaurus-0.19.19.dmg" length="52437758" type="application/octet-stream" sparkle:edSignature="bl+fi7mS2fVvAaRywqXB9wfJvzghBeMA7R1xPBFFrBg1/atch/95rAXORtWohATGTXdjnUSh0W3Iz0duAPTmCA=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Add CSV table workflow previews and export (#1369) by @mimeding
+- updated chinese translations (#1470) by @ftzahao
+- Expose applied generation diagnostics (#1465) by @jjang-ai
+
+## 🐛 Bug Fixes
+
+- fixed main thread app hangs (#1472) by @RaajeevChandran
+
+## 🧰 Maintenance
+
+- minor UI cleanups (#1479) by @tpae
+- cascading esc on chat view states (#1468) by @tpae
+- improved model picker view UX (#1467) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.19.18...0.19.19
+]]></description>
+        </item>
+        <item>
             <title>0.19.18</title>
             <pubDate>Thu, 11 Jun 2026 17:03:01 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>

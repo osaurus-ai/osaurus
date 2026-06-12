@@ -387,19 +387,40 @@ final class CustomNSTextView: NSTextView {
 
     // MARK: Paste interception
 
-    /// Intercept Cmd+V / menu Paste. If a plain-text payload is present and
-    /// `onPasteText` consumes it (returns true), we swallow the paste; the
-    /// owner has already routed the content elsewhere (e.g. converted to a
-    /// pasted-content attachment). Otherwise fall back to the default
-    /// NSTextView behavior so rich-text / file pastes and short text inserts
-    /// keep working as before.
+    /// Intercept Cmd+V / menu Paste.
+    ///
+    /// The plain-text payload is read with the cheap `string(forType:)`
+    /// accessor. The default `super.paste(_:)` path instead goes through
+    /// `readObjectsForClasses:`, a heavier synchronous XPC round-trip to the
+    /// pasteboard server that can block the main thread for seconds (and is
+    /// the same accessor implicated in the earlier pasteboard-corruption
+    /// crash). This view is a plain-text input (`isRichText == false`), so
+    /// `super.paste(_:)` would only insert the string representation anyway —
+    /// inserting it ourselves is behavior-preserving and keeps paste fast.
+    ///
+    /// If `onPasteText` consumes the text (returns true) we swallow the
+    /// paste; the owner has routed the content elsewhere (e.g. converted it
+    /// to a pasted-content attachment). When there's no string payload at all
+    /// (image / file / rich-only), we fall back to the default machinery,
+    /// which knows how to read those representations.
     override func paste(_ sender: Any?) {
-        if let handler = onPasteText,
-            let text = NSPasteboard.general.string(forType: .string),
-            handler(text)
-        {
+        let plainText = NSPasteboard.general.string(forType: .string)
+
+        if let handler = onPasteText, let text = plainText, handler(text) {
             return
         }
+
+        if let text = plainText {
+            // Route through the normal user-edit path so undo and the
+            // delegate's text-change hooks still fire.
+            let range = selectedRange()
+            if shouldChangeText(in: range, replacementString: text) {
+                replaceCharacters(in: range, with: text)
+                didChangeText()
+            }
+            return
+        }
+
         super.paste(sender)
     }
 }

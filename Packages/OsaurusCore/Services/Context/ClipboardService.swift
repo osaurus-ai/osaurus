@@ -99,10 +99,11 @@ public final class ClipboardService: ObservableObject {
     private func performPasteboardRefresh() async {
         let knownChangeCount = lastChangeCount
 
-        // Only the per-tick `changeCount` poll runs off-main. Content reads must stay
-        // on the main actor: `NSPasteboard.general` is shared and unlocked, and reading
-        // items from a pool thread races main-thread copy/paste traffic. They only
-        // happen on an actual clipboard change, so the main actor pays the XPC cost rarely.
+        // Both the `changeCount` poll and the content read run off-main: every
+        // `NSPasteboard` accessor makes a synchronous XPC round-trip to the pasteboard
+        // server that can block for seconds when that server is slow, hanging the UI.
+        // The reads only use the typed `string(forType:)`/`data(forType:)` accessors
+        // (never `readObjects(forClasses:)`), which are safe to call off the main actor.
         let changeCount = await Task.detached(priority: .utility) {
             NSPasteboard.general.changeCount
         }.value
@@ -111,7 +112,10 @@ public final class ClipboardService: ObservableObject {
         print("[ClipboardService] Pasteboard change detected. Count: \(changeCount) (was \(knownChangeCount))")
         lastChangeCount = changeCount
 
-        guard let content = Self.detectContent(in: NSPasteboard.general) else {
+        let detected = await Task.detached(priority: .utility) {
+            Self.detectContent(in: NSPasteboard.general)
+        }.value
+        guard let content = detected else {
             print("[ClipboardService] Change detected but no meaningful content found on pasteboard.")
             return
         }

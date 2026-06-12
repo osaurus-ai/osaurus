@@ -30,6 +30,12 @@ final class ChatWindowState: ObservableObject {
     /// button actions in `ChatView`.
     @Published var showCloseConfirmation: Bool = false
 
+    /// Drives the "a local model is already running in another window" alert
+    /// raised when the user tries to start a second local generation. Only one
+    /// local generation can run at a time across windows; the alert is
+    /// dismissed by its OK button in `ChatView`.
+    @Published var showLocalModelBusyAlert: Bool = false
+
     /// Imperative hook set by `ChatView` while the inline message editor
     /// is active (and cleared on save/cancel). The window-level Esc
     /// monitor invokes it so Esc cancels the edit even when the editor's

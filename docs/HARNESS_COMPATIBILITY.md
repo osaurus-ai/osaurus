@@ -435,6 +435,40 @@ or counting source/BF16 Gemma folders instead of the OsaurusAI QAT bundles.
 Apple Foundation Models are classified `tiny` with tools disabled and are
 not run against the agent suites.
 
+## Gemma QAT PR Checkpoint
+
+Post-main merge checkpoint for Osaurus PR #1469, 2026-06-12:
+
+- Current Osaurus pin target is
+  `834498a86126679d8d932a6da82ab94ff6f73efd` from
+  `osaurus-ai/vmlx-swift` PR #44. This is the combined vMLX branch containing
+  the Gemma 4 QAT loader fix plus main's paged-cache default, prefill progress,
+  and Model2Vec static embedding APIs. The earlier live app proof on
+  `c7613dcc7c3a94432230f684d7a2619a5fdcec4e` remains valid as live evidence
+  for the Gemma QAT loader/parser/cache behavior, but the shipping PR pin is
+  now the combined `834498a8` revision.
+- Focused post-merge source proof passed with full Xcode:
+  `/tmp/osaurus-gemma-proof/pr1469-merge-focus-xcode-20260612T190648Z/focused-tests.log`.
+  The run executed 9 selected tests across
+  `AgentToolLoopParallelBatchTests` and
+  `ModelManagerTests/discoverLocalModels_timeoutDoesNotCacheEmptyResult`.
+- Current-pin Release app build proof also passed on `834498a8`:
+  `/tmp/osaurus-gemma-proof/xcode-build-release-app-pin-834498a8-direct-20260612T192605Z.log`
+  reports `** BUILD SUCCEEDED **`, and the ad-hoc signed app verifies with
+  `codesign --verify --deep --strict` at
+  `build/XcodeDerivedData-gemma-834498a8-direct-nosign-20260612T192605Z/Build/Products/Release/osaurus.app`.
+- `scripts/live-proof/assert-osaurus-vmlx-pr-readiness.sh` passes on the
+  merged tree with all four vMLX pin surfaces set to `834498a8`, the SwiftPM
+  checkout HEAD matching that pin, keychain-free proof paths intact, no hidden
+  local sampler defaults, OpenResponses/cache wiring intact, server settings
+  runtime wiring intact, and Gemma parser/tool regressions present in the wired
+  checkout.
+- Audio is deferred for this PR. It is not part of the correctness merge gate.
+  Speed benchmarking is also deferred; the current merge gate is Gemma QAT
+  correctness: MXFP4/JANG_4M loads, real tool calls, parser/no-leak behavior,
+  paged cache off by default, disk L2/prefix telemetry, prefill events on the
+  direct chat surface, and repeat cache hits.
+
 ## Provider wire-format requirements
 
 Quirks discovered live, handled automatically by Osaurus. Useful if you

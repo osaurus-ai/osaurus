@@ -31,12 +31,12 @@ enum AgentStarterTemplate: String, CaseIterable, Identifiable {
 
     var label: String {
         switch self {
-        case .blank: return "Blank"
-        case .assistant: return "Assistant"
-        case .writer: return "Writer"
-        case .researcher: return "Researcher"
-        case .coder: return "Coder"
-        case .productivity: return "Productivity"
+        case .blank: return L("Blank")
+        case .assistant: return L("Assistant")
+        case .writer: return L("Writer")
+        case .researcher: return L("Researcher")
+        case .coder: return L("Coder")
+        case .productivity: return L("Productivity")
         }
     }
 
@@ -56,11 +56,11 @@ enum AgentStarterTemplate: String, CaseIterable, Identifiable {
     var defaultName: String {
         switch self {
         case .blank: return ""
-        case .assistant: return "Assistant"
-        case .writer: return "Writer"
-        case .researcher: return "Researcher"
-        case .coder: return "Coder"
-        case .productivity: return "Productivity"
+        case .assistant: return L("Assistant")
+        case .writer: return L("Writer")
+        case .researcher: return L("Researcher")
+        case .coder: return L("Coder")
+        case .productivity: return L("Productivity")
         }
     }
 
@@ -72,15 +72,15 @@ enum AgentStarterTemplate: String, CaseIterable, Identifiable {
         case .blank:
             return ""
         case .assistant:
-            return "A friendly all-rounder for everyday questions and tasks."
+            return L("A friendly all-rounder for everyday questions and tasks.")
         case .writer:
-            return "A thoughtful partner for drafting, editing, and polishing prose."
+            return L("A thoughtful partner for drafting, editing, and polishing prose.")
         case .researcher:
-            return "A careful guide for digging into topics and weighing sources."
+            return L("A careful guide for digging into topics and weighing sources.")
         case .coder:
-            return "A pragmatic pair-programmer for reading and writing code."
+            return L("A pragmatic pair-programmer for reading and writing code.")
         case .productivity:
-            return "A focused helper for planning, todos, and staying on track."
+            return L("A focused helper for planning, todos, and staying on track.")
         }
     }
 

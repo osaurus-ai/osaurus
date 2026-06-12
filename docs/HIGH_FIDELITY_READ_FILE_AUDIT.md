@@ -26,7 +26,7 @@ weight because core `file_read` already owns their read path.
 
 | Format | Current surface | Proof |
 | --- | --- | --- |
-| CSV/TSV | Raw line-numbered `file_read`; structured adapter remains available for document parsing | `FileReadDocumentFormatsTests.fileReadCSVStaysRawLineNumbered`, `CSVAdapterTests` |
+| CSV/TSV | Raw line-numbered `file_read`; structured adapter and table workflow previews remain available for explicit document parsing/export paths | `FileReadDocumentFormatsTests.fileReadCSVStaysRawLineNumbered`, `CSVAdapterTests`, `CSVTableWorkflowServiceTests` |
 | XLSX | Bounded workbook preview through `file_read`, with sheet, row, row-cap, column-cap, formula, merged-range, and security summary controls | `FileReadWorkbookTests`, `XLSXAdapterTests` |
 | PPTX | Text extraction through `file_read` and the in-tree PPTX adapter; typed workflow previews expose slide, hidden-slide, notes, and table metadata | `FileReadDocumentFormatsTests.fileReadExtractsPPTXSlideText`, `PPTXAdapterTests`, `PDFPPTXWorkflowServiceTests` |
 | PDF | Text-layer extraction through `file_read` and the in-tree PDF adapter; typed workflow previews expose page, text-layer table, cell, and bounding-box metadata | `FileReadDocumentFormatsTests.fileReadExtractsPDFTextLayerPages`, `PDFAdapterTests`, `PDFPPTXWorkflowServiceTests` |

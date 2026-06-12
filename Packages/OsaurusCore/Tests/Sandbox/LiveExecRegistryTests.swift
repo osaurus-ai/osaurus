@@ -72,14 +72,21 @@ struct LiveExecRegistryTests {
         await registry.register(makeEntry(toolCallId: "live-1"))
         await registry.register(makeEntry(toolCallId: "live-2"))
 
-        // Give the sink enough time to drain the two emissions.
-        try? await Task.sleep(nanoseconds: 50_000_000)
-        let history = await collector.snapshots
-        // 1 initial empty + 1 per register.
-        #expect(history.count >= 2)
-        let lastIds = history.last.map { Set($0.keys) } ?? []
-        #expect(lastIds.contains("live-1"))
-        #expect(lastIds.contains("live-2"))
+        let expectedIds: Set<String> = ["live-1", "live-2"]
+        var history = await collector.snapshots
+        for _ in 0 ..< 200 {
+            if history.contains(where: { Set($0.keys).isSuperset(of: expectedIds) }) {
+                break
+            }
+            try? await Task.sleep(nanoseconds: 10_000_000)
+            history = await collector.snapshots
+        }
+        let observedIds =
+            history
+            .last(where: { Set($0.keys).isSuperset(of: expectedIds) })
+            .map { Set($0.keys) } ?? []
+        #expect(observedIds.contains("live-1"))
+        #expect(observedIds.contains("live-2"))
         await registry.clearAll()
     }
 

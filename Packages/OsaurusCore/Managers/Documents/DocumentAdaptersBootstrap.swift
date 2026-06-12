@@ -31,6 +31,8 @@ public enum DocumentAdaptersBootstrap {
         registry.register(adapter: PPTXAdapter())
         registry.register(adapter: RichDocumentAdapter())
         registry.register(adapter: XLSXAdapter())
+        registry.register(emitter: CSVEmitter(delimiter: .comma))
+        registry.register(emitter: CSVEmitter(delimiter: .tab))
         registry.register(emitter: XLSXEmitter())
         if registry === DocumentFormatRegistry.shared {
             didRegisterShared = true

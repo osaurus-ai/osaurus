@@ -378,19 +378,40 @@ public enum ToolEnvelope {
     /// legacy `ToolErrorEnvelope` JSON OR a legacy `[REJECTED]` /
     /// `[TIMEOUT]` prefix string. Used by UI / accounting code that
     /// needs to count failures without a full parse.
+    /// Leading window used for envelope detection.
+    ///
+    /// `isError`/`isSuccess` only need the head of the payload: the canonical
+    /// envelope emits `ok`/`error`/`retryable` as leading top-level keys, and
+    /// the `[REJECTED]`/`[TIMEOUT]` tags are prefixes. Tool outputs can be
+    /// hundreds of megabytes (file reads, base64 blobs) and these checks run
+    /// on the main-actor registry path, so trimming and scanning the whole
+    /// string could hang the UI. Skipping leading whitespace and bounding the
+    /// scan to a small head keeps detection O(1) in the payload size while
+    /// still covering every real envelope (the markers sit in the first bytes).
+    private static let sniffWindow = 2048
+
+    private static func envelopeHead(_ result: String) -> Substring {
+        guard let start = result.firstIndex(where: { !$0.isWhitespace }) else {
+            return ""
+        }
+        let end = result.index(start, offsetBy: sniffWindow, limitedBy: result.endIndex)
+            ?? result.endIndex
+        return result[start..<end]
+    }
+
     public static func isError(_ result: String) -> Bool {
-        let trimmed = result.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty { return false }
-        if trimmed.hasPrefix("[REJECTED]") || trimmed.hasPrefix("[TIMEOUT]") {
+        let head = envelopeHead(result)
+        if head.isEmpty { return false }
+        if head.hasPrefix("[REJECTED]") || head.hasPrefix("[TIMEOUT]") {
             return true
         }
-        guard trimmed.first == "{" else { return false }
+        guard head.first == "{" else { return false }
         // New envelope: `"ok":false`. Cheap structural sniff before parse.
-        if trimmed.contains("\"ok\":false") || trimmed.contains("\"ok\": false") {
+        if head.contains("\"ok\":false") || head.contains("\"ok\": false") {
             return true
         }
         // Legacy ToolErrorEnvelope shape.
-        if trimmed.contains("\"error\":") && trimmed.contains("\"retryable\":") {
+        if head.contains("\"error\":") && head.contains("\"retryable\":") {
             return true
         }
         return false
@@ -399,9 +420,9 @@ public enum ToolEnvelope {
     /// True when `result` looks like a success envelope. Symmetric with
     /// `isError`.
     public static func isSuccess(_ result: String) -> Bool {
-        let trimmed = result.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.first == "{" else { return false }
-        return trimmed.contains("\"ok\":true") || trimmed.contains("\"ok\": true")
+        let head = envelopeHead(result)
+        guard head.first == "{" else { return false }
+        return head.contains("\"ok\":true") || head.contains("\"ok\": true")
     }
 
     /// Attempt to extract the `result` payload from a success envelope.
@@ -439,36 +460,52 @@ public enum ToolEnvelope {
         }
     }
 
+    /// Serialize `dict` canonically but with `ok` guaranteed as the FIRST key.
+    ///
+    /// `isError`/`isSuccess` detect the envelope from a bounded head window to
+    /// stay O(1) on huge payloads (see `sniffWindow`). With plain `.sortedKeys`
+    /// the `ok` marker sorts after `content`/`message`/`kind`, so a large field
+    /// could push it past that window — which let an oversized failure get
+    /// mis-detected as a success. Forcing `ok` to the front makes the marker
+    /// always sit in the first bytes, restoring detection regardless of size.
+    /// The remaining keys keep their canonical sorted order, so output stays
+    /// deterministic.
+    private static func canonicalJSONLeadingOK(_ dict: [String: Any], ok: Bool) -> String? {
+        var rest = dict
+        rest.removeValue(forKey: "ok")
+        guard
+            let data = try? JSONSerialization.data(
+                withJSONObject: rest,
+                options: .osaurusCanonical
+            ),
+            let restJSON = String(data: data, encoding: .utf8)
+        else { return nil }
+        // `restJSON` is a canonical object string ("{...}" with no `ok`). Splice
+        // the marker to the front: "{" + "\"ok\":<bool>," + <sorted rest>.
+        if restJSON == "{}" { return "{\"ok\":\(ok)}" }
+        return "{\"ok\":\(ok)," + restJSON.dropFirst()
+    }
+
     private static func encodeOrFallbackFailure(
         _ dict: [String: Any],
         kind: Kind,
         message: String
     ) -> String {
-        if let data = try? JSONSerialization.data(
-            withJSONObject: dict,
-            options: .osaurusCanonical
-        ),
-            let json = String(data: data, encoding: .utf8)
-        {
+        if let json = canonicalJSONLeadingOK(dict, ok: false) {
             return json
         }
         // Hand-built fallback so we never return malformed output if the
         // caller passes something exotic. Only `kind` + `message` survive.
         let escaped = escape(message)
         return
-            "{\"kind\":\"\(kind.rawValue)\",\"message\":\"\(escaped)\",\"ok\":false,\"retryable\":\(defaultRetryable(for: kind))}"
+            "{\"ok\":false,\"kind\":\"\(kind.rawValue)\",\"message\":\"\(escaped)\",\"retryable\":\(defaultRetryable(for: kind))}"
     }
 
     private static func encodeOrFallbackSuccess(
         _ dict: [String: Any],
         tool: String?
     ) -> String {
-        if let data = try? JSONSerialization.data(
-            withJSONObject: dict,
-            options: .osaurusCanonical
-        ),
-            let json = String(data: data, encoding: .utf8)
-        {
+        if let json = canonicalJSONLeadingOK(dict, ok: true) {
             return json
         }
         // Fallback should never trigger for well-typed inputs; if it does,
