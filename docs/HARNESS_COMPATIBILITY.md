@@ -75,14 +75,20 @@ Current PR #1469 live proof also makes visible-text quality a hard gate.
 Older 12B JANG_4M rows on head `f58bb924` successfully executed the real
 built-in `osaurus_status` tool through `/agents/default/run`, but corrupted
 ordinary text (`saurus_status toool`) in the visible answer. Current head
-`fb8e741c` has the trace fix and a clean UI-style auto row: the stream returns
-exact visible text `fb8e741c osaurus_status agent tool call proven` with
-`osaurus_status` phases `started` and `completed`, no non-ASCII characters,
-and no protocol/tool marker leakage. This is a useful tool-call checkpoint,
-not a full release pass: the agent route still does not emit usage/prefill
-telemetry, the 12B JANG_4M row still needs a full AgentLoop harness score, and
-every QAT MXFP4/JANG_4M model still needs its own scored row with attached
-failure causes.
+`ddd8cf9d` has a clean current-built Release-app proof for the
+`complete` tool on 12B JANG_4M: first and repeat `/agents/default/run` streams
+emit sanitized `osaurus_agent_tool` `started`/`completed` chunks, exact final
+text `ddd8cf9d current-built default agent 12b jang4m complete tool execution
+proof.`, no non-ASCII/control/protocol marker leakage, and repeat cache with
+`disk_l2_hits=1`, `paged_cache.enabled=false`, `block_disk_store.enabled=true`,
+`effective_kv_mode="turbo(3,3)"`, and `turbo_quant_kv_layer_count=0`. A paired
+direct-chat prefill row on the same app emits progress from `0/1227` through
+`1227/1227`, usage with `tokens_per_second=5.0905`, and repeat cache with
+`disk_l2_hits=2`. This is a useful current-head tool/cache/prefill checkpoint,
+not a full release pass: `/agents/default/run` still does not emit usage or
+prefill telemetry, the remaining QAT MXFP4/JANG_4M models still need scored
+AgentLoop rows, and every failed case needs an attached cause before the
+checkpoint is teammate-testable.
 
 The Gemma QAT harness target is deliberately practical: each MXFP4 and JANG_4M
 bundle must score decently enough to prove real Osaurus tool use and teammate

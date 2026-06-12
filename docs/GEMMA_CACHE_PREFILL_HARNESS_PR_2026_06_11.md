@@ -870,6 +870,62 @@ Current evidence behind non-TODO cells:
   not a repeat-hit proof by itself because the visible current-model counters
   were reset by the model switch. Use the API agent/direct-chat artifacts above
   for repeat L2 hits.
+- Current PR-head Release app proof on commit `ddd8cf9d`:
+  `scripts/live-proof/build-keychain-free-osaurus.sh
+  build/XcodeDerivedData-pr1469-ddd8cf9d-nosign` completed with
+  `** BUILD SUCCEEDED **` and ad-hoc sealed
+  `/tmp/osaurus-gemma-checkpoint-main/build/XcodeDerivedData-pr1469-ddd8cf9d-nosign/Build/Products/Release/osaurus.app`.
+  A direct detached executable launch reached health briefly but exited, so
+  the counted proof uses LaunchServices with keychain disabled,
+  `OSU_MODELS_DIR=/Users/eric/models`, `OSU_PORT=1337`, and proof root
+  `/tmp/osaurus-gemma-proof/pr1469-ddd8cf9d-launchservices-20260612T130225Z`.
+  Initial health reports `status="healthy"` and
+  `local_model_scan.model_count=27`; post-agent health reports current model
+  `osaurusai--gemma-4-12b-it-qat-jang_4m`, resident load, and RAM feasibility
+  `verdict="ok"`.
+- Current PR-head `/agents/default/run` 12B JANG_4M proof on `ddd8cf9d`:
+  `request.agent-default-12b-jang4m-complete.json`,
+  `agent-12b-jang4m.first.sse`, and `agent-12b-jang4m.repeat.sse` prove named
+  `complete` execution on `osaurusai--gemma-4-12b-it-qat-jang_4m`. Both
+  streams include top-level `osaurus_agent_tool` events for phases `started`
+  and `completed`, exact final text
+  `ddd8cf9d current-built default agent 12b jang4m complete tool execution proof.`,
+  `finish_reason="stop"`, and no replacement, non-ASCII/control, or
+  protocol/tool marker leakage. Repeat cache reports `disk_l2_hits=1`,
+  `disk_l2_stores=1`, `paged_cache.enabled=false`,
+  `block_disk_store.enabled=true`, `effective_kv_mode="turbo(3,3)"`,
+  `kv_layer_count=8`, `rotating_kv_layer_count=40`,
+  `requires_disk_backed_restore=true`, and `turbo_quant_kv_layer_count=0`.
+  Timing was first `real 7.19` and repeat `real 8.86`; the agent route still
+  does not emit TTFT, prefill, usage, or token/s chunks, so these wall times
+  are not reported as TTFT.
+- Current PR-head direct chat prefill/cache row on `ddd8cf9d`:
+  `request.direct-chat-12b-jang4m-prefill.json`,
+  `direct-chat-12b-jang4m-prefill.first.sse`, and
+  `direct-chat-12b-jang4m-prefill.repeat.sse` run a long-prefix direct
+  `/v1/chat/completions` row on
+  `osaurusai--gemma-4-12b-it-qat-jang_4m`. The repeat stream emits
+  `osaurus_prefill` queued/running/chunk/complete progress at `0/1227`,
+  `512/1227`, `1024/1227`, and `1227/1227`, then exact visible text
+  `ddd8cf9d direct chat prefill proof complete.`, `finish_reason="stop"`,
+  and usage with `prompt_tokens=1135`, `completion_tokens=16`,
+  `total_tokens=1151`, and `tokens_per_second=5.0905`. Repeat cache reports
+  `disk_l2_hits=2`, `disk_l2_stores=4`, `paged_hits=0`, `paged_misses=0`,
+  `paged_cache.enabled=false`, `block_disk_store.enabled=true`,
+  `effective_kv_mode="turbo(3,3)"`, `kv_layer_count=8`,
+  `rotating_kv_layer_count=40`, `requires_disk_backed_restore=true`, and
+  `turbo_quant_kv_layer_count=0`. `ps.after-agent.txt` records the app process
+  at `7038832` KB RSS after the agent row; this is a same-machine RSS sample,
+  not lower-spec Activity Monitor physical-footprint proof.
+- Current `ddd8cf9d` boundary: this refresh proves the current-built app can
+  load 12B JANG_4M, execute a real agent tool, stream clean direct-chat prefill
+  progress, keep paged RAM KV off, and hit disk/L2 cache. It does not replace
+  the required full AgentLoop matrix for all ten QAT MXFP4/JANG_4M models,
+  does not prove `/agents/default/run` usage/prefill telemetry, does not close
+  lower-spec physical-footprint testing, and does not change the honest cache
+  topology claim: Gemma rows currently report rotating KV plus disk-backed
+  restore with `effective_kv_mode="turbo(3,3)"` and
+  `turbo_quant_kv_layer_count=0`.
 - Current-head boundary after the full matrix/VL/UI rerun: lower-spec Activity
   Monitor physical-footprint proof, successful Gemma4 audio, and full
   `docs/HARNESS_COMPATIBILITY.md` harness scoring remain open gates. Do not
@@ -2886,10 +2942,10 @@ promoting this row or using its score as teammate-ready evidence.
 Updated boundary:
 
 - Pushed Osaurus PR checkpoint: PR #1469 branch
-  `codex/gemma-cache-prefill-checkpoint-main` is at commit `fb8e741c`
-  (`Emit started trace for Gemma agent tool proof`). GitHub CI restarted for
-  that commit on 2026-06-12. Do not merge until CI is green and the remaining
-  proof gaps below are either fixed or explicitly accepted.
+  `codex/gemma-cache-prefill-checkpoint-main` is at commit `ddd8cf9d`
+  (`Record 26B MXFP4 compaction repro`) before this documentation refresh.
+  Do not merge until CI is green and the remaining proof gaps below are either
+  fixed or explicitly accepted.
 - vMLX main/pin reconciliation remains open. Osaurus currently pins
   `Packages/OsaurusCore/Package.swift` to vMLX
   `dc52096743215a153522c9b260c8191f133d7288`, while remote
@@ -2905,11 +2961,11 @@ Updated boundary:
 - The concrete Gemma QAT cache topology still reports rotating KV plus
   disk-backed restore with `turbo_quant_kv_layer_count=0`; keep saying that
   exactly until runtime stats prove a nonzero TurboQuant KV layer count.
-- Literal `/agents/default/run` is now proven for E2B JANG_4M, E2B MXFP4, and
-  12B JANG_4M. The 12B row proves a real non-intercept `osaurus_status` call,
-  not only the loop-intercept `complete` tool. The remaining QAT matrix still
-  needs full AgentLoop harness scores per MXFP4/JANG_4M bundle before the
-  checkpoint can be called broad teammate-testable.
+- Literal `/agents/default/run` has clean current-head proof for 12B JANG_4M
+  named `complete` on `ddd8cf9d`, and older clean proof exists for additional
+  QAT rows as recorded above. The remaining QAT matrix still needs full
+  AgentLoop harness scores per MXFP4/JANG_4M bundle before the checkpoint can
+  be called broad teammate-testable.
 - Rejected eval-loop mitigation on 2026-06-12: wiring
   `AgentLoopEvaluator.makeRequest` through
   `ChatToolChoicePolicy.finalizingPostToolChoice` cleaned up some post-tool

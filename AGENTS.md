@@ -109,6 +109,15 @@ and deletes rather than calling `SecItemCopyMatching` / `SecItemAdd` /
   proof must include baseline, changed setting, reload when next-load-only,
   live chat, `/admin/cache-stats`, and typed incompatibility rather than silent
   ignore for unsupported combinations.
+- For the active Gemma 4 QAT checkpoint, every OsaurusAI MXFP4 and JANG_4M
+  bundle must prove real Osaurus tool use before harness or benchmark results
+  are treated as meaningful. A row needs load, at least one executed tool with
+  exact name and parseable JSON arguments, tool-result continuation, clean
+  visible text, no protocol/reasoning/tool marker leakage, cache telemetry with
+  paged KV off and disk/L2 behavior recorded, and a scored AgentLoop harness
+  artifact with every failed case attributed. Decent non-perfect scores are
+  acceptable for teammate testing only when the failures are documented; source
+  or BF16 Gemma folders do not count for this QAT checkpoint.
 - Do not spawn recursive local "agent" workers, Python subagents, or delegated
   helper agents for Gemma/Osaurus release work unless the user explicitly asks.
   Do not use Python or shell wrappers as an orchestration layer to farm work out
