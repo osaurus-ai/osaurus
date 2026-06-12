@@ -504,6 +504,30 @@ public actor ModelRuntime {
         Memory.clearCache()
     }
 
+    /// Evict `other` for the strict-single-model policy WITHOUT cancelling an
+    /// in-flight generation.
+    ///
+    /// `unload` shuts the model's batch engine down and cancels its tracked
+    /// generation task, so calling it on a model that is mid-stream kills the
+    /// user's reply — exactly what happened when a second chat window loaded a
+    /// different model while the first was still generating. Wait for the
+    /// active generation's lease to drain first so it finishes cleanly, then
+    /// evict. The wait is bounded so a wedged stream can't block the new load
+    /// forever; the lease is always released in the generation task's teardown,
+    /// so the timeout is a pure safety valve. The UI enforces one local
+    /// generation at a time, so this mainly backstops non-interactive loaders
+    /// (server requests, scheduler) and races.
+    private func strictEvict(_ other: String) async {
+        if await ModelLease.shared.count(for: other) > 0 {
+            genLog.info(
+                "loadContainer: deferring strict eviction of \(other, privacy: .public) until in-flight generation drains"
+            )
+            _ = await ModelLease.shared.waitForZero(other, timeoutSeconds: 300)
+        }
+        genLog.info("loadContainer: strict eviction of \(other, privacy: .public)")
+        await unload(name: other)
+    }
+
     /// Unloads any loaded model whose name is not in `activeNames`.
     /// Models with active leases (in-flight generations) are also kept; the
     /// per-model `unload` call internally waits for the lease to drop before
@@ -1092,8 +1116,7 @@ public actor ModelRuntime {
             if policy == .strictSingleModel,
                 let other = modelCache.keys.first(where: { $0 != name })
             {
-                genLog.info("loadContainer: strict eviction of \(other, privacy: .public)")
-                await unload(name: other)
+                await strictEvict(other)
                 continue
             }
 
@@ -1165,8 +1188,7 @@ public actor ModelRuntime {
             if policy == .strictSingleModel,
                 let other = modelCache.keys.first(where: { $0 != name })
             {
-                genLog.info("loadContainer: strict eviction after cold-load wait of \(other, privacy: .public)")
-                await unload(name: other)
+                await strictEvict(other)
                 continue
             }
 
