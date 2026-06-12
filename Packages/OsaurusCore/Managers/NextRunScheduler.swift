@@ -137,9 +137,10 @@ public final class NextRunScheduler {
         // active agents.
         lastDispatch = lastDispatch.filter { now.timeIntervalSince($0.value) < Self.coalesceWindow }
         let due: [NextRunEntry]
+        let limit = Self.maxConcurrent
         do {
             due = try await runOffMain {
-                try SchedulerDatabase.shared.dueNextRuns(asOf: now, limit: Self.maxConcurrent)
+                try SchedulerDatabase.shared.dueNextRuns(asOf: now, limit: limit)
             }
         } catch {
             print("[NextRunScheduler] dueNextRuns failed: \(error.localizedDescription)")
@@ -314,10 +315,11 @@ public final class NextRunScheduler {
         // `SchedulerDatabase` would be cleaner but the cost is trivial
         // (one bound stmt) and this keeps the storage layer simpler.
         let now = Date()
+        let cutoff = now.addingTimeInterval(Self.idleSleep)
         do {
             let upcoming = try await runOffMain {
                 try SchedulerDatabase.shared.dueNextRuns(
-                    asOf: now.addingTimeInterval(Self.idleSleep),
+                    asOf: cutoff,
                     limit: 1
                 )
             }
