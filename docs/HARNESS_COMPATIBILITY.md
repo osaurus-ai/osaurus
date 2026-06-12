@@ -95,6 +95,31 @@ the remaining QAT MXFP4/JANG_4M models still need scored AgentLoop rows, and
 every failed case needs an attached cause before the checkpoint is
 teammate-testable.
 
+Exact-pin checkpoint `c7613dcc` refresh on the keychain-free Release app closes
+the load/tool/cache smoke for all ten OsaurusAI QAT bundles. Build log:
+`/tmp/osaurus-gemma-proof/xcode-build-release-app-pin-c7613dcc-12e16b65-20260612T183001Z.log`;
+proof root:
+`/tmp/osaurus-gemma-proof/pr1469-c7613dcc-fresh-live-20260612T183743Z`.
+Direct `/agents/default/run` first/repeat rows for E2B, E4B, 12B, 26B-A4B,
+and 31B across both JANG_4M and MXFP4 are summarized in
+`direct-full-qat-agent-curl-c7613dcc-20260612T184903Z/NORMALIZED.tsv`.
+Every row loaded from the OsaurusAI QAT bundle, emitted real `complete`
+`osaurus_agent_tool` started/completed frames on first and repeat requests,
+recorded repeat `disk_l2_hits +1`, reported `paged_cache.enabled=false`,
+reported rotating/disk-backed topology, and had `turbo_quant_kv_layer_count=0`
+with zero marker/weird-text scan hits. 12B JANG_4M and 12B MXFP4 also have
+strict OpenAI-compatible `line_count` multi-turn tool rows and direct streaming
+prefill rows with progress `0/3552` through `3552/3552`, stable prefix hash,
+usage token/s, and repeat L2 hits. E2B JANG_4M and E2B MXFP4 have real red-PNG
+VL rows returning `Red` with repeat L2 hits. This promotes the checkpoint as a
+team-testable load/tool/cache/VL smoke, not a full harness-score pass: full
+AgentLoop scoring, lower-spec physical-footprint proof, and Gemma4 audio remain
+separate gates. `scripts/live-proof/assert-osaurus-vmlx-pr-readiness.sh` also
+passes after clearing an unrelated focused `swift-test` process from another
+checkout; the guard confirms keychain-safe proof paths, no hidden sampler
+defaults, cache/Responses wiring, server runtime settings wiring, matching
+vMLX pin surfaces, and the wired `c7613dcc` parser checkout.
+
 Code head `67b2070a` adds exact Chat UI proof on the built no-sign Release
 app; later PR head `692da0b2` only records this documentation on top. The
 proof app launched from

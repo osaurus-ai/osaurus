@@ -3240,6 +3240,89 @@ Current `5e87c496` status:
 - `BLOCKED`: Gemma4 audio remains blocked by missing pinned-vMLX audio tower
   wiring.
 
+Exact-pin `c7613dcc` Release-app checkpoint on 2026-06-12:
+
+- vMLX pin:
+  `c7613dcc7c3a94432230f684d7a2619a5fdcec4e`.
+- Build log:
+  `/tmp/osaurus-gemma-proof/xcode-build-release-app-pin-c7613dcc-12e16b65-20260612T183001Z.log`.
+- Built app:
+  `build/XcodeDerivedData-gemma-c7613dcc-nosign-20260612T183001Z/Build/Products/Release/osaurus.app`.
+- Proof root:
+  `/tmp/osaurus-gemma-proof/pr1469-c7613dcc-fresh-live-20260612T183743Z`.
+- Initial health:
+  `health.initial.json` reports `status="healthy"`, `model_count=27`, and no
+  loaded model.
+- Source readiness guard:
+  `scripts/live-proof/assert-osaurus-vmlx-pr-readiness.sh` passes after clearing
+  an unrelated focused `swift-test` process from another checkout. The guard
+  confirms keychain-safe proof paths, no hidden sampler defaults,
+  OpenResponses/cache source wiring, server runtime settings wiring, matching
+  vMLX pin surfaces, and wired `c7613dcc` parser checkout.
+
+Strict 12B text/tool/cache proof on `c7613dcc`:
+
+- 12B JANG_4M warm strict OpenAI-compatible `line_count` row:
+  `tool-cache-12b-jang-warm-20260612T183912Z/SUMMARY.json`.
+- 12B MXFP4 warm strict OpenAI-compatible `line_count` row:
+  `tool-cache-12b-mxfp4-warm-20260612T183956Z/SUMMARY.json`.
+- Both rows pass required tool call one, post-tool visible answer, and required
+  tool call after tool history. Exact arguments are `red\ngreen\nblue` and
+  `one\ntwo`; no marker/protocol leaks are present.
+- Both rows report paged KV off, block disk L2 enabled, rotating KV topology
+  (`kv_layer_count=8`, `rotating_kv_layer_count=40`),
+  `requires_disk_backed_restore=true`, `effective_kv_mode="turbo(3,3)"`, and
+  `turbo_quant_kv_layer_count=0`. Warm rows record disk L2 hits.
+
+Default-agent all-QAT load/tool/cache matrix on `c7613dcc`:
+
+- Direct curl matrix artifact:
+  `direct-full-qat-agent-curl-c7613dcc-20260612T184903Z/NORMALIZED.tsv`.
+- Covers all ten OsaurusAI QAT bundles: E2B, E4B, 12B, 26B-A4B, and 31B for
+  both JANG_4M and MXFP4.
+- Every row has `load_tool_first=1`, `load_tool_repeat=1`,
+  `repeat_l2_delta=1`, `paged_enabled=false`, `tq_kv_layers=0`, nonzero
+  rotating layer count, `restore=true`, and `marker_hits=0`.
+- E2B MXFP4 has one narrow final-text note: the first matrix row produced clean
+  explanatory final text instead of only the exact literal summary. Focused
+  rerun
+  `e2b-mxfp4-direct-rerun-c7613dcc-20260612T185316Z/SUMMARY.json` proves the
+  same model loads, executes `complete` first/repeat, includes the requested
+  summary, has no marker/weird-text leakage, and records repeat
+  `disk_l2_hits +1`. Treat this as tool/cache green and exact-final-text
+  partial for that narrow row.
+
+Direct streaming prefill/token proof on `c7613dcc`:
+
+- Artifact:
+  `direct-chat-prefill-c7613dcc-20260612T184431Z/SUMMARY.json`.
+- 12B JANG_4M and 12B MXFP4 both emit `osaurus_prefill` chunks from `0/3552`
+  through `3552/3552`, keep a stable prefix hash, emit usage token/s, return
+  exact clean final text `c7613dcc direct prefill proof complete.`, and record
+  repeat `disk_l2_hits +1` with paged KV off and
+  `turbo_quant_kv_layer_count=0`.
+
+VL proof on `c7613dcc`:
+
+- Artifact:
+  `vl-red-c7613dcc-20260612T184528Z/SUMMARY.json`.
+- E2B JANG_4M and E2B MXFP4 both process a real 32x32 red PNG data URL,
+  answer `Red` on first and repeat, keep stable prefix hash, record repeat
+  `disk_l2_hits +1`, and show no marker/protocol leakage.
+
+Current `c7613dcc` status:
+
+- `PROVEN`: keychain-free Release build, health, all ten QAT bundle loads,
+  default-agent `complete` tool execution first/repeat, repeat disk L2 hits,
+  paged KV off, rotating/disk-backed cache topology, no marker/weird-text
+  leakage in the all-QAT agent smoke, 12B strict multi-turn `line_count` rows,
+  12B prefill/token/s rows, and E2B VL red-image rows.
+- `PARTIAL`: raw vMLX speed is still below the GGUF baseline, full AgentLoop
+  harness scores still include partial/failing cases, and E2B MXFP4 exact
+  literal final text is not perfect even though tool/cache execution is green.
+- `BLOCKED/DEFERRED`: Gemma4 audio remains out of this PR until vMLX wires the
+  real Gemma4 audio tower/embed path.
+
 31B JANG_4M full AgentLoop harness row on PR head `c21b9988`:
 
 - Root:
