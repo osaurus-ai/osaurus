@@ -110,8 +110,8 @@ Current model capability metadata from local `config.json`:
 | `osaurusai--gemma-4-e2b-it-qat-jang_4m` | JANG_4M | `gemma4` | yes | yes | PROVEN | PROVEN | PROVEN | PROVEN | PARTIAL | PROVEN | PROVEN complete / PARTIAL side-effect | PARTIAL 13/17 | PROVEN API | BLOCKED policy | PROVEN API / TODO UI | PARTIAL |
 | `osaurusai--gemma-4-e4b-it-qat-mxfp4` | MXFP4 | `gemma4` | yes | yes | PROVEN | PROVEN agent | PROVEN agent | PROVEN agent | PARTIAL | TODO | PROVEN forced complete | PARTIAL 15/17 | TODO | TODO | TODO | PARTIAL |
 | `osaurusai--gemma-4-e4b-it-qat-jang_4m` | JANG_4M | `gemma4` | yes | yes | PROVEN | PROVEN agent | PROVEN agent | PROVEN agent | PARTIAL | TODO | PROVEN forced complete | PARTIAL 14/17 | TODO | TODO | TODO | PARTIAL |
-| `osaurusai--gemma-4-12b-it-qat-mxfp4` | MXFP4 | `gemma4_unified` | yes | yes | PROVEN | PROVEN UI+agent | PROVEN UI+agent | PROVEN UI+agent | PROVEN UI+agent | TODO | PARTIAL UI status count | PARTIAL 16/17 | TODO | TODO | PROVEN API / PARTIAL UI percent | PARTIAL |
-| `osaurusai--gemma-4-12b-it-qat-jang_4m` | JANG_4M | `gemma4_unified` | yes | yes | PROVEN | PARTIAL UI / PROVEN API | PROVEN UI+agent | PROVEN UI+agent | PROVEN UI+agent | TODO | PARTIAL clean auto status tool / no usage | PARTIAL 16/17 | TODO | TODO | PARTIAL UI / PROVEN API | PARTIAL |
+| `osaurusai--gemma-4-12b-it-qat-mxfp4` | MXFP4 | `gemma4_unified` | yes | yes | PROVEN | PROVEN UI+agent | PROVEN UI+agent | PROVEN UI+agent | PROVEN UI+agent | PROVEN UI status | PROVEN UI same-chat status tool | PARTIAL 16/17 | TODO | TODO | PROVEN API / PARTIAL UI percent | PARTIAL |
+| `osaurusai--gemma-4-12b-it-qat-jang_4m` | JANG_4M | `gemma4_unified` | yes | yes | PROVEN | PARTIAL UI / PROVEN API | PROVEN API+agent | PROVEN API+agent | PROVEN API+agent | PROVEN agent status | PROVEN agent status / no usage | PARTIAL 16/17 | TODO | TODO | PROVEN API / TODO UI | PARTIAL |
 | `osaurusai--gemma-4-26b-a4b-it-qat-mxfp4` | MXFP4 | `gemma4` | yes | no | PROVEN | PROVEN agent | PROVEN agent | PROVEN agent | PARTIAL | TODO | PROVEN forced complete | BLOCKED 13/17 + Metal abort | TODO | N/A | TODO | PARTIAL |
 | `osaurusai--gemma-4-26b-a4b-it-qat-jang_4m` | JANG_4M | `gemma4` | yes | no | PROVEN | PROVEN agent | PROVEN agent | PROVEN agent | PARTIAL | TODO | PROVEN forced complete | TODO | TODO | N/A | TODO | PARTIAL |
 | `osaurusai--gemma-4-31b-it-qat-mxfp4` | MXFP4 | `gemma4` | yes | no | PROVEN | PROVEN agent | PROVEN agent | PROVEN agent | PARTIAL | TODO | PROVEN forced complete | TODO | TODO | N/A | TODO | PARTIAL |
@@ -119,6 +119,37 @@ Current model capability metadata from local `config.json`:
 
 Current evidence behind non-TODO cells:
 
+- Current dev app proof on runtime code head `67b2070a`, documented on PR head
+  `cbe890f1`: keychain-free no-sign Release app build succeeded at
+  `build/XcodeDerivedData-pr1469-67b2070a-nosign/Build/Products/Release/osaurus.app`.
+  The app launched by exact path with `/Users/eric/models` and proof roots
+  `/tmp/osaurus-gemma-proof/pr1469-67b2070a-ui-tool-20260612T143110Z` and
+  `/tmp/osaurus-gemma-proof/pr1469-67b2070a-jang-agenttool-20260612T143245Z`.
+  12B MXFP4 Chat UI proof: two same-chat turns show visible `Osaurus status`
+  tool cards, exact final text
+  `UI MXFP4 67b2070a tool proof complete.` and
+  `UI MXFP4 67b2070a second tool proof complete.`, UI metrics
+  `TTFT 4.07s` / `4739.7 tok/s` / `21 tokens` then `TTFT 3.40s` /
+  `6920.7 tok/s` / `22 tokens`, and no weird/control/protocol marker leakage.
+  12B MXFP4 repeat cache proves `paged_kv_enabled=false`,
+  `disk_l2_hits=1`, `disk_l2_stores=4`, `block_disk_store.enabled=true`,
+  `effective_kv_mode="turbo(3,3)"`, `turbo_quant_compressions=4`,
+  `kv_layer_count=8`, `rotating_kv_layer_count=40`,
+  `requires_disk_backed_restore=true`, and `turbo_quant_kv_layer_count=0`.
+  12B JANG_4M `/agents/default/run` with `tool_choice=auto` now emits real
+  `osaurus_agent_tool` frames for `osaurus_status` (`started`, `completed`,
+  `is_error=false`) and exact final text
+  `JANG agent loop 67b2070a osaurus_status tool proof complete.`. The agent
+  route still emits no usage/prefill telemetry, so paired direct JANG chat
+  rows prove prefill `0/4034` through `4034/4034`, exact final text
+  `JANG direct chat 67b2070a prefill cache proof complete.`, token/s
+  `8.4939` then `8.4819`, repeat `disk_l2_hits=1`, `disk_l2_stores=4`,
+  paged hits/misses zero, `effective_kv_mode="turbo(3,3)"`,
+  `turbo_quant_compressions=2`, and the same 8 KV / 40 rotating
+  disk-backed topology with `turbo_quant_kv_layer_count=0`. This closes the
+  explicit 12B JANG_4M agent-loop no-tool-call blocker. It does not claim
+  visible Chat UI JANG_4M proof, full clean harness, lower-spec physical
+  footprint proof, or successful Gemma4 audio.
 - Current PR head `f58bb924` no-sign Release app build:
   `scripts/live-proof/build-keychain-free-osaurus.sh` produced
   `** BUILD SUCCEEDED **` for
