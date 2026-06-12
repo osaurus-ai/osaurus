@@ -110,7 +110,7 @@ Current model capability metadata from local `config.json`:
 | `osaurusai--gemma-4-e2b-it-qat-jang_4m` | JANG_4M | `gemma4` | yes | yes | PROVEN | PROVEN | PROVEN | PROVEN | PARTIAL | PROVEN | PROVEN complete / PARTIAL side-effect | PARTIAL 13/17 | PROVEN API | BLOCKED policy | PROVEN API / TODO UI | PARTIAL |
 | `osaurusai--gemma-4-e4b-it-qat-mxfp4` | MXFP4 | `gemma4` | yes | yes | PROVEN | PROVEN agent | PROVEN agent | PROVEN agent | PARTIAL | TODO | PROVEN forced complete | PARTIAL 15/17 | TODO | TODO | TODO | PARTIAL |
 | `osaurusai--gemma-4-e4b-it-qat-jang_4m` | JANG_4M | `gemma4` | yes | yes | PROVEN | PROVEN agent | PROVEN agent | PROVEN agent | PARTIAL | TODO | PROVEN forced complete | PARTIAL 14/17 | TODO | TODO | TODO | PARTIAL |
-| `osaurusai--gemma-4-12b-it-qat-mxfp4` | MXFP4 | `gemma4_unified` | yes | yes | PROVEN | PROVEN UI+agent | PROVEN UI+agent | PROVEN UI+agent | PROVEN UI+agent | TODO | PARTIAL UI status count | TODO | TODO | TODO | PROVEN API / PARTIAL UI percent | PARTIAL |
+| `osaurusai--gemma-4-12b-it-qat-mxfp4` | MXFP4 | `gemma4_unified` | yes | yes | PROVEN | PROVEN UI+agent | PROVEN UI+agent | PROVEN UI+agent | PROVEN UI+agent | TODO | PARTIAL UI status count | PARTIAL 16/17 | TODO | TODO | PROVEN API / PARTIAL UI percent | PARTIAL |
 | `osaurusai--gemma-4-12b-it-qat-jang_4m` | JANG_4M | `gemma4_unified` | yes | yes | PROVEN | PARTIAL UI / PROVEN API | PROVEN UI+agent | PROVEN UI+agent | PROVEN UI+agent | TODO | PARTIAL clean auto status tool / no usage | PARTIAL 16/17 | TODO | TODO | PARTIAL UI / PROVEN API | PARTIAL |
 | `osaurusai--gemma-4-26b-a4b-it-qat-mxfp4` | MXFP4 | `gemma4` | yes | no | PROVEN | PROVEN agent | PROVEN agent | PROVEN agent | PARTIAL | TODO | PROVEN forced complete | TODO | TODO | N/A | TODO | PARTIAL |
 | `osaurusai--gemma-4-26b-a4b-it-qat-jang_4m` | JANG_4M | `gemma4` | yes | no | PROVEN | PROVEN agent | PROVEN agent | PROVEN agent | PARTIAL | TODO | PROVEN forced complete | TODO | TODO | N/A | TODO | PARTIAL |
@@ -240,6 +240,28 @@ Current evidence behind non-TODO cells:
   `cache/kv_v2/cache_index.db`; this proves cache material was written during
   the harness run, but it is not standalone TTFT/L2-hit proof. Keep the row
   `PARTIAL` because visible text corruption remains a hard release gate.
+- Current PR head `5c29f17d` 12B MXFP4 AgentLoop harness proof:
+  proof root
+  `/tmp/osaurus-gemma-proof/pr1469-5c29f17d-harness-12b-mxfp4-20260612T122047Z`.
+  Report `12b-mxfp4-agentloop.json` records 17 total, 16 passed, 1 failed,
+  0 skipped, and 0 errored for
+  `osaurusai--gemma-4-12b-it-qat-mxfp4`; summary artifact
+  `12b-mxfp4-agentloop.summary.json`; case table
+  `12b-mxfp4-agentloop.case-table.tsv`; marker scan
+  `12b-mxfp4-agentloop.marker-scan.txt`; cache artifact summary
+  `12b-mxfp4-agentloop.cache-artifacts.txt`. The row proves real tool use
+  across `capabilities_load`, `clarify`, `complete`, `file_edit`,
+  `file_read`, `file_search`, `file_write`, `shell_run`, and `todo`.
+  The only failed case is again `compaction-stress`: the expected compaction
+  watermark never recorded, the final text missed `log4`, and the run ended
+  that case with empty final text after only `todo`, `file_read`, and `todo`.
+  The JSON text scan found `replacement_count=0` and no raw `<think>`, raw
+  tool/protocol, U+FFFE, `tool:`, `args:`, or `done:` marker leakage. The
+  row still stays `PARTIAL` because visible ordinary text corruption remains
+  in a passing final (`I have reated`, `recquested checklist`). The harness
+  root has 25 disk KV safetensor cache entries, about `9.7G` total, and
+  25 rows in `cache/kv_v2/cache_index.db`; this proves cache material was
+  written during the harness run, but it is not standalone TTFT/L2-hit proof.
 - Current PR head `f58bb924` 12B JANG_4M cache and prefill proof:
   `direct-chat-prefill-12b-jang4m/first.sse` and `repeat.sse` answer exactly
   `f58bb924 direct prefill proof complete.` with no replacement, non-ASCII, or
