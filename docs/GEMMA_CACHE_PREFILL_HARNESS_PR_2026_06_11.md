@@ -2939,6 +2939,62 @@ failure and visible text corruption are reproducible on 26B A4B MXFP4. Next
 root-cause work should stay on the compaction/tool-history/runtime path before
 promoting this row or using its score as teammate-ready evidence.
 
+This checkpoint now also has a first full AgentLoop row for
+`osaurusai--gemma-4-26b-a4b-it-qat-jang_4m` on PR head `eb54672e`:
+
+- Root:
+  `/tmp/osaurus-gemma-proof/pr1469-eb54672e-harness-26b-a4b-jang4m-20260612T130918Z`
+- Command:
+  ```bash
+  swift run --package-path Packages/OsaurusEvals osaurus-evals run \
+    --suite Packages/OsaurusEvals/Suites/AgentLoop \
+    --model osaurusai--gemma-4-26b-a4b-it-qat-jang_4m \
+    --out /tmp/osaurus-gemma-proof/pr1469-eb54672e-harness-26b-a4b-jang4m-20260612T130918Z/26b-a4b-jang4m-agentloop.json
+  ```
+- Result: 17 total, 15 passed, 2 failed, 0 skipped, 0 errored.
+- Runtime: `real 571.50`, `user 309.26`, `sys 252.02`. The process completed
+  normally; no `Fatal error`, Metal command-buffer failure, or abnormal
+  termination marker was found in the log/report.
+- The row proves real tool use across `capabilities_load`, `clarify`,
+  `complete`, `file_edit`, `file_read`, `file_search`, `file_write`,
+  `shell_run`, and `todo`. Suite-wide tool usage was
+  `capabilities_load=1`, `clarify=1`, `complete=8`, `file_edit=11`,
+  `file_read=25`, `file_search=2`, `file_write=4`, `shell_run=5`, and
+  `todo=11`.
+- Failed cases:
+  - `capabilities-load-midrun`: `capabilities_load({"ids":["tool/file_write"]})`
+    was rejected as disabled/already-loaded, `file_write` was never called, and
+    `loaded.txt` was missing.
+  - `duplicate-call-avoidance`: dedupe behavior was okay, but the model read
+    `data.txt` once and answered `10` instead of the expected `50`.
+- Passing-but-not-clean evidence:
+  - `compaction-stress` passed functionally and recorded compaction, including
+    `log4`, but the visible answer still contained ordinary text corruption:
+    `log1.xt`, `tlog2.xt`, `tlog3.xt`, `tlog5.xt`, `Thet file hatt ntains`,
+    and `coERROR`.
+  - `wrap-up-on-budget` passed the judge rubric but the visible final had
+    heavy corruption: `emperature`, `functiotns`, `nvert`, `whcoich`,
+    `logcoi`, `demonstractote`, `nvecorsion`, `basitc`, `mathematial`,
+    `temperaturecs`, `presenace`, `directoory`, and `convertetr`.
+- Protocol marker scan:
+  `26b-a4b-jang4m-agentloop.protocol-marker-scan.txt` has zero lines for
+  replacement characters, U+FFFE, raw `<think>`, raw tool/protocol markers,
+  `tool:`, `args:`, or `done:`.
+- Cache artifacts:
+  `26b-a4b-jang4m-agentloop.cache-artifacts.txt` records 35 disk KV
+  safetensor files, about `9.9G`, and 35 rows in `cache_index.db`. This proves
+  cache material was written during the harness run, but it is not standalone
+  TTFT or repeat L2-hit proof.
+
+Current diagnosis from the 26B A4B JANG_4M row: this is a materially better
+tool/harness score than the 26B A4B MXFP4 attempt because it completes without
+the Metal abort and passes 15/17 cases, including compaction and
+search/edit. It is still only `PARTIAL` for release because the failed
+`capabilities_load` and arithmetic rows are real, and visible ordinary text
+corruption remains in passing finals. Do not promote this row until the
+coherency/root-cause issue is traced or explicitly accepted as a teammate-test
+boundary.
+
 Updated boundary:
 
 - Pushed Osaurus PR checkpoint: PR #1469 branch
