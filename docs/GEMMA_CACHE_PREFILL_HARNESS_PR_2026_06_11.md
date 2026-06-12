@@ -109,7 +109,7 @@ Current model capability metadata from local `config.json`:
 | `osaurusai--gemma-4-e2b-it-qat-mxfp4` | MXFP4 | `gemma4` | yes | yes | PROVEN | PROVEN | PROVEN | PROVEN | PARTIAL | PROVEN | PROVEN complete / PARTIAL side-effect | PARTIAL 11/17 | TODO | TODO | PARTIAL | PARTIAL |
 | `osaurusai--gemma-4-e2b-it-qat-jang_4m` | JANG_4M | `gemma4` | yes | yes | PROVEN | PROVEN | PROVEN | PROVEN | PARTIAL | PROVEN | PROVEN complete / PARTIAL side-effect | PARTIAL 13/17 | PROVEN API | BLOCKED policy | PROVEN API / TODO UI | PARTIAL |
 | `osaurusai--gemma-4-e4b-it-qat-mxfp4` | MXFP4 | `gemma4` | yes | yes | PROVEN | PROVEN agent | PROVEN agent | PROVEN agent | PARTIAL | TODO | PROVEN forced complete | TODO | TODO | TODO | TODO | PARTIAL |
-| `osaurusai--gemma-4-e4b-it-qat-jang_4m` | JANG_4M | `gemma4` | yes | yes | PROVEN | PROVEN agent | PROVEN agent | PROVEN agent | PARTIAL | TODO | PROVEN forced complete | TODO | TODO | TODO | TODO | PARTIAL |
+| `osaurusai--gemma-4-e4b-it-qat-jang_4m` | JANG_4M | `gemma4` | yes | yes | PROVEN | PROVEN agent | PROVEN agent | PROVEN agent | PARTIAL | TODO | PROVEN forced complete | PARTIAL 14/17 | TODO | TODO | TODO | PARTIAL |
 | `osaurusai--gemma-4-12b-it-qat-mxfp4` | MXFP4 | `gemma4_unified` | yes | yes | PROVEN | PROVEN UI+agent | PROVEN UI+agent | PROVEN UI+agent | PROVEN UI+agent | TODO | PARTIAL UI status count | TODO | TODO | TODO | PROVEN API / PARTIAL UI percent | PARTIAL |
 | `osaurusai--gemma-4-12b-it-qat-jang_4m` | JANG_4M | `gemma4_unified` | yes | yes | PROVEN | PARTIAL UI / PROVEN API | PROVEN UI+agent | PROVEN UI+agent | PROVEN UI+agent | TODO | PARTIAL clean auto status tool / no usage | TODO | TODO | TODO | PARTIAL UI / PROVEN API | PARTIAL |
 | `osaurusai--gemma-4-26b-a4b-it-qat-mxfp4` | MXFP4 | `gemma4` | yes | no | PROVEN | PROVEN agent | PROVEN agent | PROVEN agent | PARTIAL | TODO | PROVEN forced complete | TODO | TODO | N/A | TODO | PARTIAL |
@@ -245,6 +245,28 @@ Current evidence behind non-TODO cells:
   `imprts`, and `funtin`; keep the row `PARTIAL` even though the harness
   score is decent enough to prove real tool use. This is a model/runtime
   coherency blocker to trace, not a harness error to hide.
+- Current PR head E4B JANG_4M AgentLoop harness proof on commit
+  `8d16e648`:
+  `/tmp/osaurus-gemma-proof/pr1469-8d16e648-harness-e4b-jang4m-20260612T113615Z/e4b-jang4m-agentloop.json`
+  records 17 total, 14 passed, 3 failed, 0 skipped, and 0 errored for
+  `osaurusai--gemma-4-e4b-it-qat-jang_4m`. Summary artifact:
+  `/tmp/osaurus-gemma-proof/pr1469-8d16e648-harness-e4b-jang4m-20260612T113615Z/e4b-jang4m-agentloop.summary.json`.
+  The run exercised real Osaurus tools across `capabilities_load`, `clarify`,
+  `complete`, `file_edit`, `file_read`, `file_search`, `file_write`,
+  `share_artifact`, `shell_run`, and `todo`. Failed cases are
+  `duplicate-call-avoidance`, `search-then-multi-file-edit`, and
+  `wrap-up-on-budget`. The failure causes are real model/runtime findings:
+  wrong arithmetic from the read file in `duplicate-call-avoidance`, path
+  recovery loop on `client.py` instead of `src/client.py` in
+  `search-then-multi-file-edit`, and iteration-cap exit with empty final in
+  `wrap-up-on-budget`. The JSON text scan found `replacement_count=0` and no
+  `<think>`, raw tool/protocol, U+FFFE, `tool:`, `args:`, or `done:` marker
+  leakage. The row still stays `PARTIAL` because visible ordinary text is
+  corrupted in several finals, including examples like `reaal-2.xt`,
+  `contaitns`, `daota.txt`, and `exshellactly`. The harness root also contains
+  88 disk KV safetensor cache entries, about `8.1G` total, with 88 rows in
+  `cache/kv_v2/cache_index.db`; this proves cache material was written during
+  the harness run, but it is not a standalone TTFT/L2-hit proof.
 - Current PR head release-app proof on commit
   `8a0cf96576940858c2f0dcda591d55e18a15ba2c`:
   `/tmp/osaurus-gemma-proof/xcode-build-release-app-agentloop-8a0cf965.status`
