@@ -2313,6 +2313,23 @@ BatchEngine compile status:
 
 Updated boundary:
 
+- Pushed Osaurus PR checkpoint: PR #1469 branch
+  `codex/gemma-cache-prefill-checkpoint-main` is at commit `cf4bbd09`
+  (`Share Gemma QAT post-tool finalization policy`). GitHub CI restarted for
+  that commit on 2026-06-12; at the time of this note `test-core`, `test-cli`,
+  and `swiftlint` were still in progress, while `shellcheck` and
+  `update_release_draft` had passed. Do not merge until CI is green and the
+  remaining proof gaps below are either fixed or explicitly accepted.
+- vMLX main/pin reconciliation remains open. Osaurus currently pins
+  `Packages/OsaurusCore/Package.swift` to vMLX
+  `dc52096743215a153522c9b260c8191f133d7288`, while remote
+  `osaurus-ai/vmlx-swift main` is
+  `76047f3b4492d4fae316267a30fba55163b1c5cd`. The local
+  `/Users/eric/vmlx-swift` checkout is dirty on
+  `codex/mimo-v25-cache-contract` and must not be treated as merge-ready by
+  this Osaurus checkpoint. The final release path still needs the required
+  Gemma/cache runtime changes landed on vMLX main and Osaurus repinned to the
+  exact proven main SHA.
 - Source/unquantized Gemma bundles remain excluded. Do not load them for this
   checkpoint and do not treat their expert-weight key failures as QAT blockers.
 - The concrete Gemma QAT cache topology still reports rotating KV plus
