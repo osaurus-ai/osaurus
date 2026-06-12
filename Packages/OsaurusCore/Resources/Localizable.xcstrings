@@ -14295,6 +14295,22 @@
         }
       }
     },
+    "Decode Performance" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dekodier-Leistung"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "\u89e3\u7801\u6027\u80fd"
+          }
+        }
+      }
+    },
     "Decode-split count" : {
       "localizations" : {
         "de" : {
