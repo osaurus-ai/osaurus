@@ -3185,3 +3185,64 @@ row, but it is not a clean release row. The remaining 31B MXFP4 full AgentLoop
 score is still pending, and the repeated failure shape is now clearer:
 budget/compaction finalization can hit `iterationCapReached` with empty final
 text, while ordinary visible text corruption can still appear in passing rows.
+
+31B MXFP4 full AgentLoop harness row on PR head `84752a8a`:
+
+- Root:
+  `/tmp/osaurus-gemma-proof/pr1469-84752a8a-harness-31b-mxfp4-20260612T135746Z`
+- Command:
+  ```bash
+  OSU_MODELS_DIR=/Users/eric/models \
+  OSAURUS_MODELS_DIR=/Users/eric/models \
+  OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1 \
+  OSAURUS_TEST_ROOT=/tmp/osaurus-gemma-proof/pr1469-84752a8a-harness-31b-mxfp4-20260612T135746Z \
+  swift run --package-path Packages/OsaurusEvals osaurus-evals run \
+    --suite Packages/OsaurusEvals/Suites/AgentLoop \
+    --model osaurusai--gemma-4-31b-it-qat-mxfp4 \
+    --out /tmp/osaurus-gemma-proof/pr1469-84752a8a-harness-31b-mxfp4-20260612T135746Z/31b-mxfp4-agentloop.json
+  ```
+- Result: 17 total, 14 passed, 3 failed, 0 skipped, 0 errored.
+- Runtime: `real 1361.82`, `user 461.94`, `sys 679.79`.
+- Sampled process RSS varied during the run: early samples were about
+  `429328 KB`, later samples reached about `1976112 KB`, and the final active
+  sample before completion was about `440304 KB`. This is ordinary process RSS
+  only, not lower-spec Activity Monitor physical-footprint proof.
+- The row proves real tool use across `capabilities_load`, `clarify`,
+  `complete`, `file_edit`, `file_read`, `file_search`, `file_write`,
+  `shell_run`, and `todo`. Suite-wide tool usage was:
+  `capabilities_load=1`, `clarify=1`, `complete=11`, `file_edit=11`,
+  `file_read=28`, `file_search=2`, `file_write=5`, `shell_run=9`, and
+  `todo=38`. Recorded tool errors were expected within the harness cases:
+  `capabilities_load=1`, `file_edit=3`, and `file_read=2`.
+- Failed cases:
+  - `compaction-stress`: expected compaction watermark never recorded, the run
+    ended at `iterationCapReached`, and the empty final text missed `log4`.
+  - `parallel-batch-reads`: `combined.txt` was correctly written with
+    `alpha-beta-gamma`, but the run ended at `iterationCapReached` with empty
+    final text instead of finalizing.
+  - `search-then-multi-file-edit`: the model first used wrong paths, then
+    shell `sed` commands that did not remove all `fetchDataV1` references; the
+    final `grep -rq fetchDataV1 src/` still exited 0.
+- Passing row quality:
+  `duplicate-call-avoidance`, `wrap-up-on-budget`, and `write-new-file` passed
+  cleanly in this row. The configured visible-corruption scan found no hits in
+  final text.
+- Protocol marker scan:
+  `31b-mxfp4-agentloop.protocol-marker-scan.txt` has no replacement
+  characters, U+FFFE, raw `<think>`, raw tool/protocol markers, `tool:`,
+  `args:`, or `done:` leakage.
+- Cache artifacts:
+  `31b-mxfp4-agentloop.cache-artifacts.txt` records 11 disk KV safetensor
+  files, about `9.7G`, and `cache_index.db` has 11 `cache_entries`. This proves
+  cache material was written during the harness run, but it is not standalone
+  TTFT or repeat L2-hit proof.
+
+Current diagnosis from the 31B MXFP4 AgentLoop row: this removes the last
+`pending` full AgentLoop row from the QAT table, but it is still partial. The
+remaining hard failures cluster around compaction/finalization, budget
+finalization, and path/tool recovery in larger workspaces, not around raw tool
+availability. The full QAT matrix now has first-pass harness scores for all ten
+OsaurusAI MXFP4/JANG_4M Gemma 4 bundles; it is not clean enough to mark the
+release goal complete because several rows still have failed cases, visible
+ordinary text corruption, a prior 26B MXFP4 Metal abort, missing Chat UI proof,
+missing lower-spec physical-footprint proof, and blocked Gemma4 audio.
