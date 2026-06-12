@@ -1325,8 +1325,10 @@ struct RuntimePolicySourceTests {
     @Test("Gemma QAT agent final answer disables auto tools after tool results")
     func gemmaQATAgentFinalAnswerDisablesAutoToolsAfterToolResults() throws {
         let handler = try Self.source("Networking/HTTPHandler.swift")
-        let helper = try Self.functionBody("private static func gemmaQATPostToolFinalToolChoice(", in: handler)
+        let chatPolicy = try Self.source("Services/Chat/ChatToolChoicePolicy.swift")
+        let helper = try Self.functionBody("static func finalizingPostToolChoice(", in: chatPolicy)
         let agentRun = try Self.functionBody("private func handleAgentRunEndpoint(", in: handler)
+        let chatView = try Self.source("Views/Chat/ChatView.swift")
 
         #expect(helper.contains("messages.last?.role == \"tool\""))
         #expect(helper.contains("modelId.contains(\"gemma-4\")"))
@@ -1337,8 +1339,11 @@ struct RuntimePolicySourceTests {
             helper.contains("case .some(.required), .some(.function):"),
             "Required/named tool-choice requests must stay fail-closed instead of being silently downgraded."
         )
-        #expect(agentRun.contains("gemmaQATPostToolFinalToolChoice("))
+        #expect(agentRun.contains("ChatToolChoicePolicy.finalizingPostToolChoice("))
         #expect(agentRun.contains("tool_choice: iterationToolChoice"))
+        #expect(chatView.contains("let requestedToolChoice = ChatToolChoicePolicy.resolve("))
+        #expect(chatView.contains("let finalToolChoice = ChatToolChoicePolicy.finalizingPostToolChoice("))
+        #expect(chatView.contains("tool_choice: finalToolChoice"))
     }
 
     @Test("OpenAI chat completions endpoint does not inject agent context")
@@ -2294,7 +2299,8 @@ struct RuntimePolicySourceTests {
             "Chat UI should only send tool schemas when the composer resolved a non-empty tool set."
         )
         #expect(
-            chatView.contains("tool_choice: ChatToolChoicePolicy.resolve("),
+            chatView.contains("let requestedToolChoice = ChatToolChoicePolicy.resolve(")
+                && chatView.contains("tool_choice: finalToolChoice"),
             "Chat UI should route explicit tool-use prompts through the shared policy instead of hard-coding auto for every tool-enabled turn."
         )
         #expect(

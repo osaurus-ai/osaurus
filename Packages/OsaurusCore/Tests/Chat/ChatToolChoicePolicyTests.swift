@@ -119,10 +119,52 @@ struct ChatToolChoicePolicyTests {
         #expect(choice == nil)
     }
 
+    @Test
+    func gemmaQATPostToolFinalAnswerDisablesAutoTools() {
+        let choice = ChatToolChoicePolicy.finalizingPostToolChoice(
+            model: "osaurusai--gemma-4-12b-it-qat-mxfp4",
+            messages: [Self.toolResultMessage()],
+            requested: .auto
+        )
+
+        #expect(Self.isNone(choice))
+    }
+
+    @Test
+    func gemmaQATPostToolFinalAnswerPreservesExplicitRequiredToolChoice() {
+        let choice = ChatToolChoicePolicy.finalizingPostToolChoice(
+            model: "osaurusai--gemma-4-12b-it-qat-jang_4m",
+            messages: [Self.toolResultMessage()],
+            requested: .required
+        )
+
+        #expect(Self.isRequired(choice))
+    }
+
+    @Test
+    func nonGemmaQATPostToolFinalAnswerKeepsAutoTools() {
+        let choice = ChatToolChoicePolicy.finalizingPostToolChoice(
+            model: "osaurusai--lfm2-1.2b",
+            messages: [Self.toolResultMessage()],
+            requested: .auto
+        )
+
+        #expect(Self.isAuto(choice))
+    }
+
     private static func tool(_ name: String) -> Tool {
         Tool(
             type: "function",
             function: ToolFunction(name: name, description: nil, parameters: nil)
+        )
+    }
+
+    private static func toolResultMessage() -> ChatMessage {
+        ChatMessage(
+            role: "tool",
+            content: #"{"ok":true}"#,
+            tool_calls: nil,
+            tool_call_id: "call_1"
         )
     }
 
@@ -133,6 +175,11 @@ struct ChatToolChoicePolicyTests {
 
     private static func isAuto(_ choice: ToolChoiceOption?) -> Bool {
         guard case .auto = choice else { return false }
+        return true
+    }
+
+    private static func isNone(_ choice: ToolChoiceOption?) -> Bool {
+        guard case .some(.none) = choice else { return false }
         return true
     }
 }

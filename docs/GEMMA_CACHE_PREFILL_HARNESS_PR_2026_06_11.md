@@ -90,7 +90,7 @@ Current model capability metadata from local `config.json`:
 | `osaurusai--gemma-4-e2b-it-qat-jang_4m` | JANG_4M | `gemma4` | yes | yes | PROVEN | PROVEN | PROVEN | PROVEN | PARTIAL | PROVEN | PROVEN complete / PARTIAL side-effect | PROVEN API | BLOCKED policy | PROVEN API / TODO UI | PARTIAL |
 | `osaurusai--gemma-4-e4b-it-qat-mxfp4` | MXFP4 | `gemma4` | yes | yes | PROVEN | PROVEN agent | PROVEN agent | PROVEN agent | PARTIAL | TODO | PROVEN forced complete | TODO | TODO | TODO | PARTIAL |
 | `osaurusai--gemma-4-e4b-it-qat-jang_4m` | JANG_4M | `gemma4` | yes | yes | PROVEN | PROVEN agent | PROVEN agent | PROVEN agent | PARTIAL | TODO | PROVEN forced complete | TODO | TODO | TODO | PARTIAL |
-| `osaurusai--gemma-4-12b-it-qat-mxfp4` | MXFP4 | `gemma4_unified` | yes | yes | PROVEN | PROVEN agent | PROVEN agent | PROVEN agent | PARTIAL | TODO | PROVEN forced complete | TODO | TODO | TODO | PARTIAL |
+| `osaurusai--gemma-4-12b-it-qat-mxfp4` | MXFP4 | `gemma4_unified` | yes | yes | PROVEN | PROVEN UI+agent | PROVEN UI+agent | PROVEN UI+agent | PROVEN UI+agent | TODO | PARTIAL UI status count | TODO | TODO | PROVEN API / PARTIAL UI percent | PARTIAL |
 | `osaurusai--gemma-4-12b-it-qat-jang_4m` | JANG_4M | `gemma4_unified` | yes | yes | PROVEN | PARTIAL UI / PROVEN API | PROVEN UI+agent | PROVEN UI+agent | PROVEN UI+agent | TODO | PARTIAL UI status tool | TODO | TODO | PARTIAL UI / PROVEN API | PARTIAL |
 | `osaurusai--gemma-4-26b-a4b-it-qat-mxfp4` | MXFP4 | `gemma4` | yes | no | PROVEN | PROVEN agent | PROVEN agent | PROVEN agent | PARTIAL | TODO | PROVEN forced complete | TODO | N/A | TODO | PARTIAL |
 | `osaurusai--gemma-4-26b-a4b-it-qat-jang_4m` | JANG_4M | `gemma4` | yes | no | PROVEN | PROVEN agent | PROVEN agent | PROVEN agent | PARTIAL | TODO | PROVEN forced complete | TODO | N/A | TODO | PARTIAL |
@@ -351,6 +351,67 @@ Current evidence behind non-TODO cells:
   prefill signal on the final patched app. It does not close the product gap
   that `/agents/default/run` still lacks equivalent usage/prefill telemetry in
   its final stream.
+- Post-tool UI corruption follow-up on PR commit `2966ea35` found the first
+  fix was incomplete: `/agents/default/run` was clean, but the Chat UI path
+  still sent Gemma 4 QAT post-tool finalization through local chat wiring with
+  auto tools enabled. The failing screenshot is
+  `/tmp/osaurus-gemma-proof/pr1469-current-2966ea35-20260612T0830Z/ui/ui-mxfp4-tool-malformed-20260612T083451Z.png`;
+  visible text contained corrupted words such as `satus`, `mels`,
+  `roviders`, and `todpinstalled`. The actual fix is now shared in
+  `ChatToolChoicePolicy.finalizingPostToolChoice(model:messages:requested:)`,
+  used by both `ChatView` and `HTTPHandler`, and preserves explicit
+  `.required` or named tool choices while changing Gemma 4 QAT
+  `auto`/nil post-tool final-answer turns to `.none`.
+- Shared-policy source proof:
+  `/tmp/osaurus-gemma-proof/pr1469-current-2966ea35-20260612T0830Z/swift-test-posttool-shared-policy.log`
+  passed 14 focused tests under Xcode Swift:
+  `ChatToolChoicePolicyTests`,
+  `HTTPHandlerChatStreamingTests.agentRun_gemmaQATPostToolFinalizationDisablesAutoToolChoice`,
+  and
+  `RuntimePolicySourceTests.gemmaQATAgentFinalAnswerDisablesAutoToolsAfterToolResults`.
+  The plain `/usr/bin/swift test` path failed earlier with the local toolchain
+  issue `no such module 'Testing'`; the passing proof uses
+  `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcrun swift test`.
+- Shared-policy Release-app proof:
+  `/tmp/osaurus-gemma-proof/pr1469-current-2966ea35-20260612T0830Z/xcodebuild-release-ui-policy-20260612T084231Z.log`
+  reports `** BUILD SUCCEEDED **` for the unsigned Release app at
+  `/tmp/osaurus-gemma-checkpoint-main/build/XcodeDerivedData-gemma-ui-policy-20260612T084231Z/Build/Products/Release/osaurus.app`.
+  The direct executable launch exited before opening the server, so the proof
+  uses LaunchServices with temporary `launchctl setenv` values:
+  `OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1`,
+  `OSAURUS_KEYCHAIN_FREE_SHOW_UI=1`,
+  `OSU_MODELS_DIR=/Users/eric/models`, and `OSU_PORT=1337`. Health artifact
+  `/tmp/osaurus-gemma-proof/pr1469-current-2966ea35-20260612T0830Z/ui/ui-policy-open-health.json`
+  reports `status="healthy"` and `local_model_scan.model_count=27`.
+- Shared-policy Chat UI tool proof for
+  `osaurusai--gemma-4-12b-it-qat-mxfp4`: Computer Use verified the default
+  picker as `OsaurusAI Gemma 4 12B it qat MXFP4`. Two UI turns invoked
+  `osaurus_status`, displayed tool cards, and produced clean final sentences
+  with no weird/control characters, no parser/tool/reasoning marker leakage,
+  and no loop. The first turn reported `TTFT 3.96s`, `22.7 tok/s`,
+  `26 tokens`; the second reported `TTFT 3.19s`, `23.7 tok/s`,
+  `27 tokens`. Screenshot artifacts:
+  `/tmp/osaurus-gemma-proof/pr1469-current-2966ea35-20260612T0830Z/ui/ui-mxfp4-tool-clean-count-mismatch-20260612T085249Z.png`
+  and
+  `/tmp/osaurus-gemma-proof/pr1469-current-2966ea35-20260612T0830Z/ui/ui-mxfp4-tool-second-clean-count-mismatch-20260612T085342Z.png`.
+  Remaining blocker: status-count semantics are inconsistent across surfaces
+  in the isolated live root. `/health` reports `local_model_scan.model_count=27`,
+  the first UI status final answer reported `1 installed model(s)`, and the
+  second reported `28 installed model(s)`. Treat that as a separate status-tool
+  data-source issue; it is not the original corrupted-text regression.
+- Shared-policy cache/RAM proof after the second UI turn:
+  `/tmp/osaurus-gemma-proof/pr1469-current-2966ea35-20260612T0830Z/ui/ui-policy-after-tool-second-cache.json`
+  reports `paged_cache.enabled=false`, `block_disk_store.enabled=true`,
+  `disk_l2_hits=1`, `disk_l2_misses=6`, `disk_l2_stores=4`,
+  `effective_kv_mode="turbo(3,3)"`, `kv_layer_count=8`,
+  `rotating_kv_layer_count=40`, `requires_disk_backed_restore=true`,
+  `turbo_quant_kv_layer_count=0`, and
+  `batch_diagnostics.turbo_quant_compressions=4`. The honest claim remains
+  rotating KV plus disk-backed restore with an engine-selected turbo mode tag;
+  do not claim real TurboQuant KV layers for this Gemma row while
+  `turbo_quant_kv_layer_count=0`. `ui-policy-after-tool-second-ps.txt`
+  records the app at about 1,010,288 KB RSS after both UI tool turns, and the
+  cache endpoint reports `current_rss=1034485760`.
 - Current-head boundary after the full matrix/VL/UI rerun: lower-spec Activity
   Monitor physical-footprint proof, successful Gemma4 audio, and full
   `docs/HARNESS_COMPATIBILITY.md` harness scoring remain open gates. Do not

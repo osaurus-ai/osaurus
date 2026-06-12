@@ -4239,32 +4239,6 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         }
     }
 
-    private static func gemmaQATPostToolFinalToolChoice(
-        model: String,
-        messages: [ChatMessage],
-        requestedToolChoice: ToolChoiceOption?
-    ) -> ToolChoiceOption? {
-        guard messages.last?.role == "tool" else { return requestedToolChoice }
-
-        switch requestedToolChoice {
-        case .some(.required), .some(.function):
-            return requestedToolChoice
-        case .some(.auto), .some(.none), nil:
-            break
-        }
-
-        let modelId = model.lowercased()
-        guard
-            modelId.contains("gemma-4"),
-            modelId.contains("qat"),
-            modelId.contains("jang_4m") || modelId.contains("mxfp4")
-        else {
-            return requestedToolChoice
-        }
-
-        return ToolChoiceOption.none
-    }
-
     /// POST /agents/{id}/run — run the full agent chat loop server-side.
     ///
     /// Accepts a `ChatCompletionRequest` body. Runs inference with the agent's
@@ -4595,10 +4569,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     )
                 },
                 modelStep: { msgs, _ in
-                    let iterationToolChoice = Self.gemmaQATPostToolFinalToolChoice(
+                    let iterationToolChoice = ChatToolChoicePolicy.finalizingPostToolChoice(
                         model: model,
                         messages: msgs,
-                        requestedToolChoice: resolvedToolChoice
+                        requested: resolvedToolChoice
                     )
                     var iterationReq = ChatCompletionRequest(
                         model: model,

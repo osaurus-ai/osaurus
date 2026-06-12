@@ -16,6 +16,32 @@ enum ChatToolChoicePolicy {
         return requiresToolCall(tools: tools, userText: userText) ? .required : .auto
     }
 
+    static func finalizingPostToolChoice(
+        model: String,
+        messages: [ChatMessage],
+        requested: ToolChoiceOption?
+    ) -> ToolChoiceOption? {
+        guard messages.last?.role == "tool" else { return requested }
+
+        switch requested {
+        case .some(.required), .some(.function):
+            return requested
+        case .some(.auto), .some(.none), nil:
+            break
+        }
+
+        let modelId = model.lowercased()
+        guard
+            modelId.contains("gemma-4"),
+            modelId.contains("qat"),
+            modelId.contains("jang_4m") || modelId.contains("mxfp4")
+        else {
+            return requested
+        }
+
+        return ToolChoiceOption.none
+    }
+
     private static func requiresToolCall(tools: [Tool], userText: String) -> Bool {
         let text = userText.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return false }
