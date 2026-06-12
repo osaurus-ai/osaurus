@@ -3859,6 +3859,11 @@ struct ChatView: View {
                             },
                             onRename: { id, title in
                                 ChatSessionsManager.shared.rename(id: id, title: title)
+                                // Keep the open view-model in sync so the
+                                // next auto-save doesn't clobber the rename.
+                                if session.sessionId == id {
+                                    session.title = title
+                                }
                                 windowState.refreshSessions()
                             },
                             onSetArchived: { id, archived in
