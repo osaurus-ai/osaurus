@@ -886,6 +886,14 @@ final class ToolRegistry: ObservableObject {
             }
     }
 
+    /// Number of registered tools. O(1), and crucially avoids building the
+    /// full `ToolEntry` list — `listTools()` sorts every tool and constructs
+    /// each one's `parameters` JSON schema, which is slow enough to trip the
+    /// main-thread hang watchdog when called just to read a count.
+    var toolCount: Int {
+        return toolsByName.count
+    }
+
     /// Set enablement for a tool and persist.
     func setEnabled(_ enabled: Bool, for name: String) {
         configuration.setEnabled(enabled, for: name)

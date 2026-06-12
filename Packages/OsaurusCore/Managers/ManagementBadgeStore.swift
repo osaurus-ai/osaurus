@@ -139,7 +139,7 @@ public final class ManagementBadgeStore: ObservableObject {
             RemoteProviderManager.shared.providerStates.values.filter(\.isConnected).count
         counts[.plugins] = PluginRepositoryService.shared.plugins.filter { $0.isInstalled }.count
         counts[.sandbox] = SandboxPluginLibrary.shared.plugins.count
-        counts[.tools] = ToolRegistry.shared.listTools().count
+        counts[.tools] = ToolRegistry.shared.toolCount
         counts[.skills] = SkillManager.shared.skills.count
         counts[.commands] = SlashCommandRegistry.shared.customCommands.count
         counts[.agents] = AgentManager.shared.agents.filter { !$0.isBuiltIn }.count
