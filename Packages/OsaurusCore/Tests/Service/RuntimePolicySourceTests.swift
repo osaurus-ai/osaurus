@@ -598,12 +598,16 @@ struct RuntimePolicySourceTests {
         // target before generation, plus the memory-safety resolver fix that
         // preserves explicit disabled prefix-cache settings and disables
         // dependent paged-KV/block-disk cache topology instead of forcing the
-        // default cache stack back on.
+        // default cache stack back on,
+        // plus the DiffusionGemma MoE-router crash fix that dequantizes the
+        // QuantizedEmbedding tied head before the soft self-conditioning
+        // matmul so the 26B-A4B diffusion router no longer traps (SIGTRAP)
+        // on denoising step >= 2.
         // That avoids Xcode PIF
         // duplicate-product collisions with the app graph while keeping yyjson
         // as one shared C dependency. Osaurus must not carry SwiftPM
         // moduleAliases for that collision.
-        let expectedRuntimeHardenedRevision = "7d9a85fe2e568063292daa9ffba1f6a65ddcf175"
+        let expectedRuntimeHardenedRevision = "357c81d4c786fb75f6b912bd09df009662655ac1"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
         let appRevision = try Self.vmlxPinRevision(in: appResolved)
