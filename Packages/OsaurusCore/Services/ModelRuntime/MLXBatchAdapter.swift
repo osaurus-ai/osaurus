@@ -1085,6 +1085,12 @@ struct MLXBatchAdapter {
             MLXRandom.seed(seed)
         }
 
+        await MainActor.run {
+            InferenceProgressManager.shared.prefillWillStart(
+                tokenCount: prepared.promptTokens.count
+            )
+        }
+
         // `engine.generate` returns `AsyncStream<Generation>` directly with
         // reasoning + tool-call extraction handled inside vmlx. We re-wrap
         // it so we can attach a producer `Task` for cancellation.

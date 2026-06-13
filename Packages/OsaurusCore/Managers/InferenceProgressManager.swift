@@ -70,10 +70,6 @@ final class InferenceProgressManager: ObservableObject, @unchecked Sendable {
     /// Latest runtime-reported prefill stage. Nil means no prompt prefill is active.
     @MainActor @Published var prefillProgress: PrefillProgressState? = nil
 
-    /// True while the request has entered the local generation path but the
-    /// runtime has not reported a token count or cache/prefill stage yet.
-    @MainActor @Published var isPreflighting: Bool = false
-
     init() {}
 
     #if DEBUG
@@ -86,7 +82,6 @@ final class InferenceProgressManager: ObservableObject, @unchecked Sendable {
     @MainActor func prefillWillStart(tokenCount: Int) {
         if prefillTokenCount == nil { prefillStartedAt = Date() }
         prefillTokenCount = tokenCount
-        isPreflighting = tokenCount == 0
         prefillProgress = PrefillProgressState(
             stage: .queued,
             completedUnitCount: 0,
@@ -99,7 +94,6 @@ final class InferenceProgressManager: ObservableObject, @unchecked Sendable {
     @MainActor func prefillDidUpdate(_ progress: PrefillProgressState) {
         if prefillStartedAt == nil { prefillStartedAt = Date() }
         prefillTokenCount = progress.totalUnitCount
-        isPreflighting = false
         prefillProgress = progress
         if progress.stage == .complete {
             prefillDidFinish()
@@ -112,7 +106,6 @@ final class InferenceProgressManager: ObservableObject, @unchecked Sendable {
         prefillTokenCount = nil
         prefillStartedAt = nil
         prefillProgress = nil
-        isPreflighting = false
     }
 
     /// Fire-and-forget variant for call sites that are not on MainActor.

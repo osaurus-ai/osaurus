@@ -1900,8 +1900,6 @@ public actor ModelRuntime {
             ModelRuntime.makeTokenizerTools(tools: tools, toolChoice: toolChoice)
         }
 
-        InferenceProgressManager.shared.prefillWillStartAsync(tokenCount: 0)
-
         let prepared: MLXBatchAdapter.PreparedStream
         do {
             prepared = try await MLXBatchAdapter.generate(
@@ -1925,9 +1923,6 @@ public actor ModelRuntime {
         }
 
         trace?.set("promptTokens", prepared.promptTokens.count)
-        InferenceProgressManager.shared.prefillWillStartAsync(
-            tokenCount: prepared.promptTokens.count
-        )
         genLog.info(
             "generateEventStream: stream created tokenCount=\(prepared.promptTokens.count, privacy: .public)"
         )

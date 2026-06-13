@@ -47,13 +47,15 @@ struct InferenceProgressManagerTests {
         state.prefillWillStart(tokenCount: 0)
         #expect(state.prefillTokenCount == 0)
         #expect(state.prefillStartedAt != nil)
-        #expect(state.isPreflighting)
+        #expect(state.prefillProgress?.stage == .queued)
+        #expect(state.prefillProgress?.totalUnitCount == 0)
     }
 
-    @Test func prefillWillStart_withKnownCountLeavesPreflight() {
+    @Test func prefillWillStart_withKnownCount_seedsQueuedProgress() {
         let state = InferenceProgressManager._testMake()
         state.prefillWillStart(tokenCount: 128)
-        #expect(!state.isPreflighting)
+        #expect(state.prefillProgress?.stage == .queued)
+        #expect(state.prefillProgress?.totalUnitCount == 128)
     }
 
     // MARK: prefillWillStart (second call — count update, preserve startedAt)
@@ -67,7 +69,6 @@ struct InferenceProgressManagerTests {
         state.prefillWillStart(tokenCount: 1234)
 
         #expect(state.prefillTokenCount == 1234)
-        #expect(!state.isPreflighting)
         // startedAt must not have been reset on the second call.
         #expect(state.prefillStartedAt == firstStartedAt)
     }
@@ -80,7 +81,6 @@ struct InferenceProgressManagerTests {
         state.prefillDidFinish()
         #expect(state.prefillTokenCount == nil)
         #expect(state.prefillProgress == nil)
-        #expect(!state.isPreflighting)
     }
 
     @Test func prefillDidFinish_clearsPrefillStartedAt() {
@@ -103,7 +103,6 @@ struct InferenceProgressManagerTests {
         #expect(state.prefillStartedAt != nil)
         #expect(state.prefillProgress == progress)
         #expect(state.prefillProgress?.percentCompleted == 25)
-        #expect(!state.isPreflighting)
     }
 
     @Test func completePrefillProgressClearsState() {

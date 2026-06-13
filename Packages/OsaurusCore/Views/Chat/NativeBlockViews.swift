@@ -24,6 +24,13 @@ final class NativeTypingIndicatorView: NSView {
     private let memoryIcon = NSImageView()
     private let memoryLabel = NSTextField(labelWithString: "")
     private var memoryStack: NSStackView?
+    /// Inline prefill token counter rendered as a small status badge next to the
+    /// RAM indicator. Kept separate from `loadingLabel` so prefill never hides
+    /// the bouncing dots; it augments the existing indicator instead of
+    /// replacing it.
+    private let prefillBadge = NSStackView()
+    private let prefillTitleLabel = NSTextField(labelWithString: "Prefill")
+    private let prefillCountLabel = NSTextField(labelWithString: "")
     private let loadingLabel = NSTextField(labelWithString: "")
 
     // MARK: Animation
@@ -37,6 +44,15 @@ final class NativeTypingIndicatorView: NSView {
 
     private var theme: (any ThemeProtocol)?
     private var isShowingLoadingLabel = false
+
+    /// Latest prefill state, captured from the Combine stream's emitted value
+    /// rather than re-read from the singleton. Prefill updates can arrive in a
+    /// tight burst (e.g. a cold prompt where vmlx buffers prompt-processing
+    /// events and releases them together); re-reading the singleton in a
+    /// deferred sink would collapse those to the final (already-cleared) state,
+    /// dropping every intermediate percentage. Carrying the value keeps each
+    /// delivered frame honest.
+    private var cachedPrefill: PrefillProgressState?
 
     // MARK: Init
 
@@ -134,33 +150,20 @@ final class NativeTypingIndicatorView: NSView {
         updateMemoryLabel(monitor: monitor)
     }
 
-    /// Mutually-exclusive states the typing indicator can advertise on its
-    /// inline label. Order of evaluation in `currentLoadingPhase` encodes
-    /// priority: sandbox provisioning blocks the rest of the turn, so it
-    /// wins over a raw model-load tick.
+    /// Mutually-exclusive loading states. Order of evaluation in
+    /// `currentLoadingPhase` encodes priority: sandbox provisioning blocks the
+    /// rest of the turn, so it wins over a raw model-load tick.
     private enum LoadingPhase {
         case sandbox
-        case preflight
         case prefill(PrefillProgressState)
         case modelLoad
 
-        var labelText: String {
+        var replacementText: String? {
             switch self {
             case .sandbox:
                 return "Sandbox is still loading..."
-            case .preflight:
-                return "Searching capabilities..."
-            case .prefill(let progress):
-                if progress.totalUnitCount > 0 {
-                    return "Prefill \(Int(progress.percentCompleted.rounded()))%..."
-                }
-                return switch progress.stage {
-                case .queued: "Prefill queued..."
-                case .cacheLookup: "Checking cache..."
-                case .cacheRestore: "Restoring cache..."
-                case .prefill: "Prefilling prompt..."
-                case .complete: "Prefill complete..."
-                }
+            case .prefill:
+                return nil
             case .modelLoad:
                 return "Loading Model..."
             }
@@ -177,10 +180,22 @@ final class NativeTypingIndicatorView: NSView {
         let sandbox = SandboxManager.State.shared
         let agents = AgentManager.shared
 
+        cachedPrefill = progress.prefillProgress
+
+        // Prefill is observed on its own so the emitted value is captured
+        // directly (see `cachedPrefill`), instead of being flattened to a Void
+        // tick that forces a stale re-read of the singleton.
+        cancellables.append(
+            progress.$prefillProgress
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] state in
+                    self?.cachedPrefill = state
+                    self?.refreshLoadingPhase()
+                }
+        )
+
         let triggers: [AnyPublisher<Void, Never>] = [
             progress.$loadInFlightCount.map { _ in () }.eraseToAnyPublisher(),
-            progress.$isPreflighting.map { _ in () }.eraseToAnyPublisher(),
-            progress.$prefillProgress.map { _ in () }.eraseToAnyPublisher(),
             sandbox.$status.map { _ in () }.eraseToAnyPublisher(),
             sandbox.$isProvisioning.map { _ in () }.eraseToAnyPublisher(),
             agents.$activeAgentId.map { _ in () }.eraseToAnyPublisher(),
@@ -210,15 +225,30 @@ final class NativeTypingIndicatorView: NSView {
         let sandboxBooting = sandbox.status == .starting || sandbox.isProvisioning
 
         if agentUsesSandbox && sandboxBooting { return .sandbox }
-        if progress.isPreflighting { return .preflight }
-        if let prefillProgress = progress.prefillProgress { return .prefill(prefillProgress) }
+        if let prefillProgress = cachedPrefill { return .prefill(prefillProgress) }
         if progress.loadInFlightCount > 0 { return .modelLoad }
         return nil
     }
 
     private func applyLoadingPhase(_ phase: LoadingPhase?) {
+        // Prefill is rendered inline next to the RAM indicator (`completed/total`)
+        // and keeps the bouncing dots visible. The coarse phases (sandbox boot,
+        // model load) still take over the whole row with a replacement label.
+        if case .prefill(let progress) = phase {
+            applyReplacementLabel(nil)
+            updatePrefillBadge(progress)
+            return
+        }
+        updatePrefillBadge(nil)
+        applyReplacementLabel(phase)
+    }
+
+    /// Drive the full-width replacement label used for the coarse loading phases
+    /// (sandbox / model load). When `phase` is nil the dots + RAM indicator are
+    /// restored.
+    private func applyReplacementLabel(_ phase: LoadingPhase?) {
         let showing = phase != nil
-        let expectedText = phase?.labelText ?? loadingLabel.stringValue
+        let expectedText = phase?.replacementText ?? loadingLabel.stringValue
 
         guard
             showing != isShowingLoadingLabel
@@ -232,6 +262,22 @@ final class NativeTypingIndicatorView: NSView {
         memoryStack?.isHidden = showing
     }
 
+    /// Show/refresh the inline prefill token counter next to the RAM indicator.
+    /// Renders `completed/total` (e.g. `0/12345`) while a prefill with a known
+    /// token total is in flight; hides otherwise.
+    private func updatePrefillBadge(_ progress: PrefillProgressState?) {
+        guard let progress, progress.totalUnitCount > 0 else {
+            prefillBadge.isHidden = true
+            prefillCountLabel.stringValue = ""
+            return
+        }
+        prefillCountLabel.stringValue = "\(progress.completedUnitCount)/\(progress.totalUnitCount)"
+        prefillBadge.isHidden = false
+        // The counter lives inside the RAM stack, so make sure that stack is
+        // visible even if the periodic memory poll hasn't fired yet.
+        memoryStack?.isHidden = false
+    }
+
     private func updateMemoryLabel(monitor: SystemMonitorService) {
         guard monitor.totalMemoryGB > 0, !isShowingLoadingLabel else {
             memoryStack?.isHidden = true
@@ -240,33 +286,66 @@ final class NativeTypingIndicatorView: NSView {
         let used = monitor.usedMemoryGB
         let total = monitor.totalMemoryGB
         memoryLabel.stringValue = String(format: "%.1f / %.0f GB", used, total)
-
-        if memoryStack == nil {
-            let stack = NSStackView()
-            stack.orientation = .horizontal
-            stack.spacing = 4
-            stack.translatesAutoresizingMaskIntoConstraints = false
-
-            memoryIcon.image = NSImage(systemSymbolName: "memorychip", accessibilityDescription: nil)
-            memoryIcon.contentTintColor = .orange
-            memoryIcon.translatesAutoresizingMaskIntoConstraints = false
-            memoryIcon.widthAnchor.constraint(equalToConstant: 12).isActive = true
-            memoryIcon.heightAnchor.constraint(equalToConstant: 12).isActive = true
-
-            memoryLabel.translatesAutoresizingMaskIntoConstraints = false
-            memoryLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .regular)
-            memoryLabel.textColor = .orange
-
-            stack.addArrangedSubview(memoryIcon)
-            stack.addArrangedSubview(memoryLabel)
-            addSubview(stack)
-            NSLayoutConstraint.activate([
-                stack.leadingAnchor.constraint(equalTo: dotStack.trailingAnchor, constant: 10),
-                stack.centerYAnchor.constraint(equalTo: centerYAnchor),
-            ])
-            memoryStack = stack
-        }
+        ensureMemoryStack()
         memoryStack?.isHidden = false
+    }
+
+    private func ensureMemoryStack() {
+        guard memoryStack == nil else { return }
+
+        let stack = NSStackView()
+        stack.orientation = .horizontal
+        stack.spacing = 4
+        stack.translatesAutoresizingMaskIntoConstraints = false
+
+        configureMemoryViews()
+        configurePrefillBadge()
+
+        stack.addArrangedSubview(memoryIcon)
+        stack.addArrangedSubview(memoryLabel)
+        stack.addArrangedSubview(prefillBadge)
+        addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: dotStack.trailingAnchor, constant: 10),
+            stack.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+        memoryStack = stack
+        updatePrefillBadge(cachedPrefill)
+    }
+
+    private func configureMemoryViews() {
+        memoryIcon.image = NSImage(systemSymbolName: "memorychip", accessibilityDescription: nil)
+        memoryIcon.contentTintColor = .orange
+        memoryIcon.translatesAutoresizingMaskIntoConstraints = false
+        memoryIcon.widthAnchor.constraint(equalToConstant: 12).isActive = true
+        memoryIcon.heightAnchor.constraint(equalToConstant: 12).isActive = true
+
+        memoryLabel.translatesAutoresizingMaskIntoConstraints = false
+        memoryLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .regular)
+        memoryLabel.textColor = .orange
+    }
+
+    private func configurePrefillBadge() {
+        prefillBadge.orientation = .horizontal
+        prefillBadge.alignment = .centerY
+        prefillBadge.spacing = 4
+        prefillBadge.edgeInsets = NSEdgeInsets(top: 2, left: 6, bottom: 2, right: 6)
+        prefillBadge.translatesAutoresizingMaskIntoConstraints = false
+        prefillBadge.wantsLayer = true
+        prefillBadge.layer?.cornerRadius = 6
+        prefillBadge.layer?.cornerCurve = .continuous
+        prefillBadge.layer?.borderWidth = 1
+        prefillBadge.isHidden = true
+
+        prefillTitleLabel.translatesAutoresizingMaskIntoConstraints = false
+        prefillTitleLabel.font = NSFont.systemFont(ofSize: 10, weight: .medium)
+
+        prefillCountLabel.translatesAutoresizingMaskIntoConstraints = false
+        prefillCountLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .semibold)
+
+        prefillBadge.addArrangedSubview(prefillTitleLabel)
+        prefillBadge.addArrangedSubview(prefillCountLabel)
+        applyPrefillBadgeColors()
     }
 
     private func updateColors(_ theme: any ThemeProtocol) {
@@ -276,6 +355,16 @@ final class NativeTypingIndicatorView: NSView {
             dot.backgroundColor = (i == currentDot ? primary : secondary).cgColor
         }
         loadingLabel.textColor = NSColor(theme.secondaryText)
+        applyPrefillBadgeColors()
+    }
+
+    private func applyPrefillBadgeColors() {
+        let accent = theme.map { NSColor($0.accentColor) } ?? .controlAccentColor
+        let secondary = theme.map { NSColor($0.secondaryText) } ?? .secondaryLabelColor
+        prefillTitleLabel.textColor = secondary.withAlphaComponent(0.9)
+        prefillCountLabel.textColor = accent
+        prefillBadge.layer?.backgroundColor = accent.withAlphaComponent(0.12).cgColor
+        prefillBadge.layer?.borderColor = accent.withAlphaComponent(0.24).cgColor
     }
 
     private func startAnimation() {
