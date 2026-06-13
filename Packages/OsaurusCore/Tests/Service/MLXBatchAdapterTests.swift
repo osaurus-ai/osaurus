@@ -656,12 +656,17 @@ struct MLXBatchAdapterTests {
     @Test func cacheKVModeTagTracksEffectiveCoordinatorPolicy() {
         var settings = VMLXServerRuntimeSettings()
 
+        // POLICY (2026-06-12): engineSelected resolves to native fp16 for
+        // EVERY family — TurboQuant is never auto-enabled. Previously MiniMax
+        // (full-KV) resolved to turbo(3,3); the per-step compress/decompress
+        // tax regresses decode across families, so engine-selected stays fp16.
+        // TurboQuant is opt-in only via an explicit liveKVCodec=turboQuant.
         settings.cache.liveKVCodec = .engineSelected
         #expect(
             ModelRuntime.cacheKVModeTag(
                 for: settings.cache,
                 modelName: "MiniMax-M2.7-JANG_K-CRACK"
-            ) == "turbo(3,3)"
+            ) == "fp16"
         )
         #expect(
             ModelRuntime.cacheKVModeTag(
@@ -744,6 +749,8 @@ struct MLXBatchAdapterTests {
                 )
             ) == "fp16"
         )
+        // MiniMax full-KV topology also stays native under engineSelected now
+        // (was turbo(3,3) before the blanket-off policy).
         #expect(
             ModelRuntime.cacheKVModeTag(
                 for: settings.cache,
@@ -754,6 +761,18 @@ struct MLXBatchAdapterTests {
                     turboQuantKVLayerCount: 0,
                     rotatingKVLayerCount: 0
                 )
+            ) == "fp16"
+        )
+
+        // Explicit opt-in still works: liveKVCodec=turboQuant resolves to
+        // turbo(3,3) regardless of family (bypasses the auto gate).
+        settings.cache.liveKVCodec = .turboQuant
+        settings.cache.turboQuantKeyBits = 3
+        settings.cache.turboQuantValueBits = 3
+        #expect(
+            ModelRuntime.cacheKVModeTag(
+                for: settings.cache,
+                modelName: "MiniMax-M2.7-JANG_K-CRACK"
             ) == "turbo(3,3)"
         )
 

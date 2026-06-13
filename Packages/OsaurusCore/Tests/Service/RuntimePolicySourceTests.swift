@@ -913,28 +913,26 @@ struct RuntimePolicySourceTests {
         let runtime = try Self.source("Services/ModelRuntime.swift")
         #expect(
             runtime.contains("shouldUseTurboQuantByDefault"),
-            "ModelRuntime must resolve engine-selected cache policy per family/topology instead of enabling TurboQuant globally"
+            "ModelRuntime must own the engine-selected TurboQuant gate"
         )
+        // POLICY (2026-06-12): TurboQuant KV is never auto-enabled for ANY
+        // family. shouldUseTurboQuantByDefault must unconditionally return
+        // false so engineSelected resolves to native fp16 everywhere; the
+        // per-step compress/decompress tax regresses decode across families
+        // (Gemma 26B-A4B -42%, 12B -29%). TQ is opt-in only via explicit
+        // liveKVCodec=turboQuant.
         #expect(
-            runtime.contains("ModelFamilyNames.isDSV4Family(modelName)")
-                && runtime.contains("ModelFamilyNames.isZayaFamily(modelName)")
-                && runtime.contains("ModelFamilyNames.isZayaVLFamily(modelName)")
-                && runtime.contains("ModelFamilyNames.isGemmaFamily(modelName)")
-                && runtime.contains("Self.isKnownHybridModel(name: modelName)"),
-            "Engine-selected TurboQuant must stay off by default for DSV4, ZAYA/ZAYA-VL, Gemma, and hybrid topologies until exact rows prove it"
+            runtime.contains("Eric directive 2026-06-12")
+                && runtime.contains("TurboQuant KV is NEVER enabled")
+                && runtime.contains("liveKVCodec=turboQuant"),
+            "shouldUseTurboQuantByDefault must document and enforce the blanket TurboQuant-off-by-default policy"
         )
+        // The function must NOT reintroduce a family/topology branch that can
+        // return true (which is what silently force-enabled TurboQuant before).
         #expect(
-            runtime.contains("ModelFamilyNames.isStepFamily(modelName)")
-                && runtime.contains("return false")
-                && runtime.contains("Step 3.7 mixes full-attention KV layers with rotating/SWA layers"),
-            "Step 3.7 mixed-SWA topology must stay native/fp16 by default until a warm tool-history row proves TurboQuant-KV stability"
-        )
-        #expect(
-            !runtime.contains("warm disk hit path is not stable yet")
-                && !runtime.contains(
-                    "ModelFamilyNames.isLFM2Family(modelName) {\n            // Current live Osaurus rows prove LFM2.5"
-                ),
-            "LFM2 must not carry the temporary disk-restore disable gate once required-tool history stability is fixed in vMLX"
+            !runtime.contains("return cacheTopology.kvLayerCount > 0")
+                && !runtime.contains("return ModelFamilyNames.isMiniMaxFamily(modelName)"),
+            "shouldUseTurboQuantByDefault must not auto-select TurboQuant for full-KV families (MiniMax) or KV-bearing topologies"
         )
         let mlxService = try Self.source("Services/Inference/MLXService.swift")
         #expect(
@@ -943,12 +941,6 @@ struct RuntimePolicySourceTests {
                 && mlxService.contains("Step 3.7 tool parsing/template selection is owned by the pinned")
                 && mlxService.contains("return ModelMediaCapabilities.descriptor(modelId: modelId)"),
             "Step 3.7 runtime policy must stay text-only/tool-capable and must not block preflight on external bundle metadata until Step VLM is wired and proven"
-        )
-        #expect(
-            !runtime.contains(
-                "if ModelFamilyNames.isGemmaFamily(modelName) {\n                return cacheTopology.kvLayerCount > 0")
-                && runtime.contains("rotatingKVLayerCount > 0"),
-            "Gemma SWA must NOT be special-cased into TurboQuant KV: the generic rotating-topology rule keeps it native. Forcing TQ on Gemma 4 measured -42% decode on 26B-A4B and -29% on 12B (2026-06-12 RunBench) for ~70 MB of KV savings; TurboQuant remains available via explicit cache.liveKVCodec=turboQuant."
         )
     }
 

@@ -1674,7 +1674,26 @@ extension ModelManager {
 
         func isLikelyOrganizationContainer(_ entry: URL) -> Bool {
             let name = entry.lastPathComponent
-            return !name.contains(".") && name.split(separator: "-").count <= 2
+            // Model-leaf directory names carry several hyphen-separated parts
+            // (e.g. "gemma-4-12B-it-qat-MXFP4"); organization containers are
+            // short ("google", "JANGQ"). Hyphen count is the primary signal.
+            guard name.split(separator: "-").count <= 2 else { return false }
+            // Allow a domain-style org name such as "dealign.ai": a single dot
+            // separating a short alphabetic top-level suffix. Without this,
+            // every bundle under ~/models/dealign.ai/ (LFM2.5, Qwen3.6-MTP,
+            // DeepSeek-V4) is silently invisible to discovery, while a
+            // version-dotted model leaf like "laguna-xs.2" is still rejected
+            // (its suffix "2" is non-alphabetic).
+            let dotParts = name.split(separator: ".")
+            if dotParts.count == 1 { return true }
+            if dotParts.count == 2,
+                let suffix = dotParts.last,
+                (2...4).contains(suffix.count),
+                suffix.allSatisfy({ $0.isLetter })
+            {
+                return true
+            }
+            return false
         }
 
         // Three layouts are supported and may coexist under the same root:

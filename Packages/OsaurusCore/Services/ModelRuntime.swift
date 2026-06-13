@@ -1583,48 +1583,39 @@ public actor ModelRuntime {
         modelName: String,
         cacheTopology: ModelCacheTopologySnapshot? = nil
     ) -> Bool {
-        // Hybrid and path-dependent caches keep fp16 live KV by default until
-        // a row proves TurboQuant for that exact topology. TurboQuant KV is
-        // not a substitute for SSM/CCA/CSA/HSA/SWA companion-state restore.
+        // POLICY (Eric directive 2026-06-12): TurboQuant KV is NEVER enabled
+        // automatically for ANY family. `liveKVCodec=engineSelected` (the
+        // shipped default) therefore resolves to native fp16 KV for every
+        // model.
         //
-        // Step 3.7 mixes full-attention KV layers with rotating/SWA layers.
-        // Current no-sign Osaurus warm rows prove disk L2 restore on that
-        // topology, but not TurboQuant-KV decode stability after tool history,
-        // so engine-selected defaults must leave Step live KV native/fp16.
-        if ModelFamilyNames.isStepFamily(modelName) {
-            return false
-        }
-
-        if ModelFamilyNames.isDSV4Family(modelName)
-            || ModelFamilyNames.isZayaFamily(modelName)
-            || ModelFamilyNames.isZayaVLFamily(modelName)
-            || Self.isKnownHybridModel(name: modelName)
-        {
-            return false
-        }
-        if let cacheTopology {
-            // No Gemma special case: Gemma 4's SWA topology (5:1 sliding
-            // 1024-token rotating windows + MQA full layers) keeps native KV
-            // tiny (~70 MB at 4k ctx on 26B-A4B), so TurboQuant buys almost
-            // no RAM while costing real decode throughput — measured
-            // 2026-06-12 on M5 Max RunBench, greedy, kvMode none vs tq33:
-            // 26B-A4B MXFP4 92.3 -> 54.0 tok/s (-42%), 12B MXFP4 48.6 ->
-            // 34.5 (-29%). The earlier forced `return kvLayerCount > 0`
-            // here is what regressed Gemma app decode from the documented
-            // 100+ tok/s 26B rows. The generic rotating-layer rule below
-            // now applies; TurboQuant stays available for Gemma via the
-            // explicit cache.liveKVCodec=turboQuant setting.
-            if cacheTopology.mambaLayerCount > 0
-                || cacheTopology.arraysLayerCount > 0
-                || cacheTopology.hybridPoolLayerCount > 0
-                || cacheTopology.rotatingKVLayerCount > 0
-                || cacheTopology.rotatingWrapperLayerCount > 0
-            {
-                return false
-            }
-            return cacheTopology.kvLayerCount > 0
-        }
-        return ModelFamilyNames.isMiniMaxFamily(modelName)
+        // vMLX's settings resolve `.engineSelected -> .turboQuant()`, so this
+        // runtime gate is the single point that decides whether engine-
+        // selected actually turns TurboQuant on. Previously it returned true
+        // for full-KV families (MiniMax) and for any topology with KV layers
+        // and no rotating/hybrid layers — which silently force-enabled
+        // TurboQuant on multiple families. TurboQuant's per-step
+        // compress/decompress cost outweighs its RAM savings at the context
+        // lengths Osaurus serves and measurably regresses decode:
+        //   Gemma 4 26B-A4B MXFP4  92.3 -> 54.0 tok/s  (-42%)
+        //   Gemma 4 12B    MXFP4   48.6 -> 34.5 tok/s  (-29%)
+        // (M5 Max RunBench, greedy, kvMode none vs tq33, 2026-06-12). Every
+        // rotating/SWA/full-KV family pays the same tax. The Gemma SWA
+        // regression was the visible symptom of a blanket problem; the blanket
+        // fix is to never auto-select TurboQuant for anyone.
+        //
+        // TurboQuant remains fully available on demand via an explicit
+        // `cache.liveKVCodec=turboQuant` setting — that path bypasses this
+        // function entirely (see `defaultKVMode`), so opting in is unaffected.
+        // A kernel-level TurboQuant encode/decode optimization is a separate
+        // future lane; until it lands and a per-family proof row exists, the
+        // engine default stays native fp16.
+        //
+        // `modelName`/`cacheTopology` are retained for signature/test
+        // stability and future per-family opt-in proof rows; intentionally
+        // unused while the blanket-off policy holds.
+        _ = modelName
+        _ = cacheTopology
+        return false
     }
 
     nonisolated static func cacheCoordinatorModelKey(
