@@ -153,3 +153,16 @@ All proven through the running Debug app's OpenAI API (`/v1/chat/completions`):
 Each ships the model card (eos `[1,106,50]`, chat template, Gemma-4 tool /
 harmony reasoning parser notes, image capability, diffusion-settings docs)
 and the Osaurus banner.
+
+## Known limitation: bf16 full-precision bundle (not a shipping path)
+
+`diffusiongemma-26b-a4b-it` (bf16, ~52GB) currently fails to load with a clear
+HTTP 500: `Unhandled keys [down_proj, gate_up_proj] ... DiffusionGemmaExperts`.
+Root cause: the unquantized bundle ships **bare** stacked expert tensors
+(`...experts.gate_up_proj`, `...experts.down_proj` with no `.weight` suffix),
+while `DiffusionGemma.sanitize()` only remaps the quantized layout
+(`.experts.gate_up_proj.weight/.scales/.biases`). The **mxfp4 and mxfp8
+variants — the supported/shipping diffusion paths — load and run coherently**;
+bf16 is a reference precision not used on-device. Tracked for the diffusion
+engine lane (vmlx-swift `DiffusionGemma.swift`); fails loudly with no crash or
+garble, so it does not affect the quantized product paths.
