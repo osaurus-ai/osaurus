@@ -87,6 +87,11 @@ struct ServerRuntimeSettingsStoreTests {
             settings.network.host = "0.0.0.0"
             settings.network.corsOrigins = ["https://example.com"]
             settings.generation.temperature = 0.42
+            // Set an explicit non-default diffusion budget so the one-time
+            // diffusion-defaults seed migration is a no-op here; this asserts
+            // an explicit user value round-trips and is not clobbered on load.
+            // (The seed only fills a nil field once, on first launch.)
+            settings.generation.diffusionMaxDenoisingSteps = 24
             settings.concurrency.maxConcurrentSequences = 5
             settings.cache.defaultMaxKVSize = 16_384
             settings.memorySafety.mode = .strict
