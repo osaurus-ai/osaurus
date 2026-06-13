@@ -62,10 +62,25 @@ and locale are derived by Aptabase from its **anonymous** session model plus
 the events below. No persistent per-user identifier is added by Osaurus to
 make this work.
 
+## Common properties (every event)
+
+One coarse property is attached automatically to **every** event by
+`TelemetryService.track`:
+
+| Property | Type | Values / meaning |
+|----------|------|------------------|
+| `total_memory_gb` | string | Coarse physical-RAM bucket for this Mac, snapped to a fixed tier: `8`, `16`, `18`, `24`, `32`, `36`, `48`, `64`, `96`, or `128+`. Sourced from `ProcessInfo.physicalMemory`. |
+
+This lets any metric (bounce, funnel, adoption) be segmented by machine class —
+e.g. checking whether a 26B MoE bounces more on lower-RAM Macs — without
+shipping an exact, potentially-identifying memory size. It is anonymous and
+stays behind the same opt-out consent gate as every other event.
+
 ## Event catalog
 
-Every property listed is the complete set for that event. No other data is
-attached.
+Every property listed below is the complete event-specific set. In addition,
+the common `total_memory_gb` property above is attached to every event.
+No other data is attached.
 
 ### `message_sent` (primary metric)
 

@@ -33,6 +33,13 @@ struct FeatureTelemetryEventTests {
         var events: [Event] = []
     }
 
+    /// Drops the global `total_memory_gb` bucket (attached to every event by
+    /// `TelemetryService.track`) so per-event shape assertions stay focused on
+    /// the event-specific props.
+    private func business(_ props: [String: Any]) -> [String: Any] {
+        props.filter { $0.key != "total_memory_gb" }
+    }
+
     /// A granted + started service whose sends are captured.
     private func makeRecordingService() -> (TelemetryService, Recorder, () -> Void) {
         let suiteName = "feature-telemetry-\(UUID().uuidString)"
@@ -224,7 +231,7 @@ struct FeatureTelemetryEventTests {
 
         #expect(rec.events.count == 1)
         #expect(rec.events[0].name == "first_time_chat_shown")
-        #expect(rec.events[0].props.isEmpty)
+        #expect(business(rec.events[0].props).isEmpty)
     }
 
     /// Re-running onboarding (help button, version bump) must NOT fire the
@@ -254,7 +261,7 @@ struct FeatureTelemetryEventTests {
 
         #expect(rec.events.count == 1)
         #expect(rec.events[0].name == "first_time_chat_used")
-        #expect(rec.events[0].props.isEmpty)
+        #expect(business(rec.events[0].props).isEmpty)
     }
 
     // MARK: - Consent gating
@@ -318,13 +325,31 @@ struct FeatureTelemetryEventTests {
 
         #expect(rec.events[0].name == "remote_provider_added")
         #expect(rec.events[0].props["provider_type"] as? String == "anthropic")
-        #expect(rec.events[0].props.count == 1)
+        #expect(business(rec.events[0].props).count == 1)
 
         #expect(rec.events[1].name == "mcp_provider_added")
         #expect(rec.events[1].props["transport"] as? String == "stdio")
-        #expect(rec.events[1].props.count == 1)
+        #expect(business(rec.events[1].props).count == 1)
 
         #expect(rec.events[2].name == "agent_run")
         #expect(rec.events[2].props["source"] as? String == "dispatch")
+    }
+
+    // MARK: - Hardware RAM bucket (attached to every event)
+
+    /// Every emitted event must carry the coarse `total_memory_gb` bucket so
+    /// dashboards can segment any metric (bounce, funnel, adoption) by machine
+    /// class. The value is a known whole-GB tier label or the `"128+"` cap.
+    @Test func everyEvent_carries_total_memory_gb_bucket() {
+        let (service, rec, cleanup) = makeRecordingService()
+        defer { cleanup() }
+
+        FeatureTelemetry.serverStarted(service: service)
+
+        #expect(rec.events.count == 1)
+        let bucket = rec.events[0].props["total_memory_gb"] as? String
+        #expect(bucket != nil)
+        let allowed: Set<String> = ["8", "16", "18", "24", "32", "36", "48", "64", "96", "128", "128+"]
+        #expect(allowed.contains(bucket ?? ""))
     }
 }

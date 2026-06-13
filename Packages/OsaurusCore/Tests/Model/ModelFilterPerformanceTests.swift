@@ -15,7 +15,7 @@ import Testing
 @Suite("ModelFilterState Performance filter")
 struct ModelFilterPerformanceTests {
 
-    /// Mid-size dense model (~3 GB on disk, ~4.5 GB resident after
+    /// Mid-size dense model (~3 GB on disk, ~3.75 GB resident after
     /// overhead multiplier). The actual multiplier lives in
     /// `MLXModel.estimatedMemoryGB` — we use whole-GB round numbers here
     /// so the buckets below are interpretable at a glance.
@@ -39,12 +39,12 @@ struct ModelFilterPerformanceTests {
     /// catches it before any filter assertion fails mysteriously.
     @Test("Fixture buckets land in compatible / tight / tooLarge at 16 GB total")
     func fixtureBucketsCorrect() {
-        // MLXModel applies a 1.2× overhead multiplier to disk-bytes.
+        // MLXModel applies a 1.25× overhead multiplier to disk-bytes.
         // compatibility thresholds: <0.75 ratio → compatible,
         // <0.95 → tight, ≥0.95 → tooLarge. At total=16 GB:
-        //   gbOnDisk=2  → 2.4 GB resident (ratio 0.15) → compatible
-        //   gbOnDisk=11 → 13.2 GB resident (ratio 0.825) → tight
-        //   gbOnDisk=14 → 16.8 GB resident (ratio 1.05) → tooLarge
+        //   gbOnDisk=2  → 2.5 GB resident (ratio 0.156) → compatible
+        //   gbOnDisk=11 → 13.75 GB resident (ratio 0.859) → tight
+        //   gbOnDisk=14 → 17.5 GB resident (ratio 1.094) → tooLarge
         let total = 16.0
         let small = Self.model("small", gbOnDisk: 2.0)
         let mid = Self.model("mid", gbOnDisk: 11.0)

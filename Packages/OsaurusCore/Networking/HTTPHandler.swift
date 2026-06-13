@@ -969,28 +969,29 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 ),
             ]
             if let batchDiagnostics {
-                obj["batch_diagnostics"] = [
-                    "pending_count": batchDiagnostics.pendingCount,
-                    "active_count": batchDiagnostics.activeCount,
-                    "active_high_watermark": batchDiagnostics.activeHighWatermark,
-                    "decode_split_count": batchDiagnostics.decodeSplitCount,
-                    "turbo_quant_compressions": batchDiagnostics.turboQuantCompressions,
-                    "is_accepting_requests": batchDiagnostics.isAcceptingRequests,
-                    "loaded_model_count": batchDiagnostics.loadedModelCount,
-                    "native_mtp_model_count": batchDiagnostics.nativeMTPModelCount,
-                    "native_mtp_depth_summary": batchDiagnostics.nativeMTPDepthSummary ?? NSNull(),
-                    "cache_enabled_model_count": batchDiagnostics.cacheEnabledModelCount,
-                    "hybrid_model_count": batchDiagnostics.hybridModelCount,
-                    "paged_incompatible_model_count": batchDiagnostics.pagedIncompatibleModelCount,
-                    "prefix_hits": batchDiagnostics.prefixHits,
-                    "prefix_misses": batchDiagnostics.prefixMisses,
-                    "disk_l2_hits": batchDiagnostics.diskL2Hits,
-                    "disk_l2_misses": batchDiagnostics.diskL2Misses,
-                    "disk_l2_stores": batchDiagnostics.diskL2Stores,
-                    "ssm_companion_hits": batchDiagnostics.ssmCompanionHits,
-                    "ssm_companion_misses": batchDiagnostics.ssmCompanionMisses,
-                    "ssm_companion_rederives": batchDiagnostics.ssmCompanionReDerives,
-                ] as [String: Any]
+                obj["batch_diagnostics"] =
+                    [
+                        "pending_count": batchDiagnostics.pendingCount,
+                        "active_count": batchDiagnostics.activeCount,
+                        "active_high_watermark": batchDiagnostics.activeHighWatermark,
+                        "decode_split_count": batchDiagnostics.decodeSplitCount,
+                        "turbo_quant_compressions": batchDiagnostics.turboQuantCompressions,
+                        "is_accepting_requests": batchDiagnostics.isAcceptingRequests,
+                        "loaded_model_count": batchDiagnostics.loadedModelCount,
+                        "native_mtp_model_count": batchDiagnostics.nativeMTPModelCount,
+                        "native_mtp_depth_summary": batchDiagnostics.nativeMTPDepthSummary ?? NSNull(),
+                        "cache_enabled_model_count": batchDiagnostics.cacheEnabledModelCount,
+                        "hybrid_model_count": batchDiagnostics.hybridModelCount,
+                        "paged_incompatible_model_count": batchDiagnostics.pagedIncompatibleModelCount,
+                        "prefix_hits": batchDiagnostics.prefixHits,
+                        "prefix_misses": batchDiagnostics.prefixMisses,
+                        "disk_l2_hits": batchDiagnostics.diskL2Hits,
+                        "disk_l2_misses": batchDiagnostics.diskL2Misses,
+                        "disk_l2_stores": batchDiagnostics.diskL2Stores,
+                        "ssm_companion_hits": batchDiagnostics.ssmCompanionHits,
+                        "ssm_companion_misses": batchDiagnostics.ssmCompanionMisses,
+                        "ssm_companion_rederives": batchDiagnostics.ssmCompanionReDerives,
+                    ] as [String: Any]
             } else {
                 obj["batch_diagnostics"] = NSNull()
             }

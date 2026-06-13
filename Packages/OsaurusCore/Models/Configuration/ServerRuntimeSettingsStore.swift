@@ -179,7 +179,8 @@ public enum ServerRuntimeSettingsStore {
         // field is an explicit "use bundle default" choice.
         if normalized.generation.diffusionMaxDenoisingSteps == nil,
             !FileManager.default.fileExists(
-                atPath: diffusionDefaultsMigrationMarkerURL().path)
+                atPath: diffusionDefaultsMigrationMarkerURL().path
+            )
         {
             normalized.generation.diffusionMaxDenoisingSteps = 16
             writeDiffusionDefaultsMigrationMarker()
@@ -194,7 +195,8 @@ public enum ServerRuntimeSettingsStore {
         if (normalized.performance == nil
             || normalized.performance?.tiedHeadCodec == .fp16Passthrough),
             !FileManager.default.fileExists(
-                atPath: tiedHeadDefaultsMigrationMarkerURL().path)
+                atPath: tiedHeadDefaultsMigrationMarkerURL().path
+            )
         {
             var perf = normalized.effectivePerformance
             perf.tiedHeadCodec = .q6

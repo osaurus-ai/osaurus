@@ -96,7 +96,9 @@ struct ServerRuntimeSettingsStoreTests {
             // tied-head-default seed is a no-op here; this asserts an explicit
             // user codec round-trips and is not clobbered on load.
             settings.performance = VMLXServerPerformanceSettings(
-                tiedHeadCodec: .q8, compiledDecode: false)
+                tiedHeadCodec: .q8,
+                compiledDecode: false
+            )
             settings.concurrency.maxConcurrentSequences = 5
             settings.cache.defaultMaxKVSize = 16_384
             settings.memorySafety.mode = .strict

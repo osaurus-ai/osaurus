@@ -183,16 +183,44 @@ public final class TelemetryService {
     /// out immediately; once declined they're dropped.
     public func track(_ event: String, _ props: [String: Value] = [:]) {
         guard started else { return }
+
+        // Attach a coarse hardware-RAM bucket to every event so funnel /
+        // bounce metrics can be segmented by machine class (e.g. the 26B-A4B
+        // MoE that bounced 36% on lower-RAM Macs) without shipping an exact,
+        // potentially-identifying memory size. Never overwrites a value a
+        // caller set explicitly.
+        var enriched = props
+        if enriched["total_memory_gb"] == nil {
+            enriched["total_memory_gb"] = Self.totalMemoryBucketLabel
+        }
+
         switch consent {
         case .granted:
-            emit(event, props)
+            emit(event, enriched)
         case .undecided:
             guard pending.count < Self.maxPending else { return }
-            pending.append(PendingEvent(name: event, props: props))
+            pending.append(PendingEvent(name: event, props: enriched))
         case .declined:
             break
         }
     }
+
+    /// Coarse physical-RAM bucket label (whole GB) attached to every event.
+    /// Computed once — installed memory doesn't change within a process.
+    /// Sourced from `ProcessInfo.physicalMemory` (always populated,
+    /// synchronous) rather than the sampled `SystemMonitorService`, and
+    /// snapped to a small set of Apple Silicon tiers so it stays
+    /// non-identifying. `"128+"` caps the high end.
+    nonisolated static let totalMemoryBucketLabel: String = {
+        let gb = Double(ProcessInfo.processInfo.physicalMemory) / (1024 * 1024 * 1024)
+        let tiers: [Int] = [8, 16, 18, 24, 32, 36, 48, 64, 96, 128]
+        // Physical RAM reads slightly under the nominal spec on some Macs, so
+        // snap up to the nearest tier with a small tolerance.
+        if let tier = tiers.first(where: { gb <= Double($0) + 0.5 }) {
+            return String(tier)
+        }
+        return "128+"
+    }()
 
     // MARK: - Anonymization
 

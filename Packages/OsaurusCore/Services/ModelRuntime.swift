@@ -2220,7 +2220,9 @@ public actor ModelRuntime {
         let perf = settings.effectivePerformance
         if let quant = perf.tiedHeadCodec.quantization {
             TiedHeadQuantizationPolicy.current = .init(
-                bits: quant.bits, groupSize: quant.groupSize)
+                bits: quant.bits,
+                groupSize: quant.groupSize
+            )
         } else {
             TiedHeadQuantizationPolicy.current = nil
         }

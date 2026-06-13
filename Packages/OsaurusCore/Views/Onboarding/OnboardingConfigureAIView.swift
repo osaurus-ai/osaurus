@@ -262,20 +262,20 @@ final class ConfigureAIState: ObservableObject {
 
     /// Auto-selects the recommended local pick — the best model this Mac can
     /// run — so the picker lands on a sensible default the user can just
-    /// accept. The rule is deliberately simple and hardware-deterministic:
+    /// accept. The rule is hardware-deterministic:
     ///
     ///   1. If a curated top pick is already on disk, keep it. The user
     ///      downloaded (and presumably ran) it before, so the compat
     ///      heuristic shouldn't lock them out.
-    ///   2. Otherwise pick the *largest* top pick this Mac can comfortably
-    ///      run (`.compatible`), falling back to the largest that merely fits
-    ///      when nothing lands in the comfortable band. Bigger ≈ higher
-    ///      quality, so "the best the machine can handle" is the best
-    ///      first-run experience.
+    ///   2. Otherwise defer to `recommendedLocalPick`: the largest dense
+    ///      Gemma 4 QAT model that *comfortably* fits, with the E-series
+    ///      8-bit retention builds as the gated small-tier fallback. We no
+    ///      longer auto-default into the `.tight` band or onto the largest
+    ///      MoE/flagship — that pushed users onto models they couldn't really
+    ///      run (the 26B-A4B 36%-bounce case).
     ///
-    /// Falls back to the smallest curated top pick when every option is tight
-    /// or too large, so onboarding never dead-ends on RAM estimates alone.
-    /// `.unknown` (no param info / monitor not yet populated) fails open.
+    /// `.unknown` (no param info / monitor not yet populated) fails open via
+    /// the final `candidates.first` fallback so onboarding never dead-ends.
     func ensureLocalSelection(totalMemoryGB: Double) {
         guard selectedModel == nil else { return }
 
@@ -288,18 +288,54 @@ final class ConfigureAIState: ObservableObject {
             return
         }
 
-        // 2. The largest top pick the Mac can comfortably run.
+        // 2. The data-backed default for this Mac's RAM.
         let candidates = ModelManager.shared.suggestedModels.filter(\.isTopSuggestion)
+        selectedModel =
+            Self.recommendedLocalPick(from: candidates, totalMemoryGB: totalMemoryGB)
+            ?? candidates.first
+    }
+
+    /// Pure, testable core of the onboarding default pick. Given the curated
+    /// top-pick `candidates` and the machine RAM, returns the model onboarding
+    /// should pre-select (or `nil` when there are no candidates).
+    ///
+    /// Preference order, all restricted to the **comfortable** (`.compatible`)
+    /// band so we never auto-default into `.tight`:
+    ///   1. The largest dense Gemma 4 QAT build (12B/31B `qat-MXFP4`) — the
+    ///      auto-default spine.
+    ///   2. The largest Gemma 4 E-series 8-bit retention build — the gated
+    ///      small-tier fallback (until the QAT-4bit-vs-8bit A/B clears).
+    ///   3. The smallest comfortable top pick; or, if nothing is comfortable,
+    ///      the smallest candidate overall (never the largest).
+    ///
+    /// The 26B-A4B QAT MoE, DiffusionGemma, and the larger Qwen/Nemotron
+    /// flagships are intentionally excluded from (1)/(2): they stay selectable
+    /// Top Picks in the carousel but are never auto-selected.
+    static func recommendedLocalPick(
+        from candidates: [MLXModel],
+        totalMemoryGB: Double
+    ) -> MLXModel? {
         let comfortable = candidates.filter {
             $0.compatibility(totalMemoryGB: totalMemoryGB) == .compatible
         }
-        let tight = candidates.filter {
-            $0.compatibility(totalMemoryGB: totalMemoryGB) == .tight
-        }
-        let pool = !comfortable.isEmpty ? comfortable : (!tight.isEmpty ? tight : candidates)
-        selectedModel =
+
+        func largest(_ pool: [MLXModel]) -> MLXModel? {
             pool.max(by: { ($0.estimatedMemoryGB ?? 0) < ($1.estimatedMemoryGB ?? 0) })
-            ?? candidates.first
+        }
+        func smallest(_ pool: [MLXModel]) -> MLXModel? {
+            pool.min(by: {
+                ($0.estimatedMemoryGB ?? .greatestFiniteMagnitude)
+                    < ($1.estimatedMemoryGB ?? .greatestFiniteMagnitude)
+            })
+        }
+
+        if let denseQAT = largest(comfortable.filter(\.isDenseGemmaQATAutoDefault)) {
+            return denseQAT
+        }
+        if let eSeries8bit = largest(comfortable.filter(\.isGemmaESeries8bitAutoDefault)) {
+            return eSeries8bit
+        }
+        return smallest(comfortable) ?? smallest(candidates)
     }
 
     func startLocalDownloadOrContinue(onComplete: () -> Void) {

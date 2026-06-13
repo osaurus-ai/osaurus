@@ -139,7 +139,9 @@ struct HTTPHandlerEndpointTests {
             // Tied-head change alone: live via reload, no restart required.
             var headOnly = initial
             headOnly.performance = VMLXServerPerformanceSettings(
-                tiedHeadCodec: .q6, compiledDecode: false)
+                tiedHeadCodec: .q6,
+                compiledDecode: false
+            )
             let (headData, headResp) = try await putRuntimeSettings(headOnly, server: server)
             #expect((headResp as? HTTPURLResponse)?.statusCode == 200)
             let headDecoded = try JSONDecoder().decode(RuntimeSettingsResponse.self, from: headData)
@@ -151,7 +153,9 @@ struct HTTPHandlerEndpointTests {
             // must report restart_required (it cannot engage mid-session).
             var next = headOnly
             next.performance = VMLXServerPerformanceSettings(
-                tiedHeadCodec: .q6, compiledDecode: true)
+                tiedHeadCodec: .q6,
+                compiledDecode: true
+            )
             let (data, resp) = try await putRuntimeSettings(next, server: server)
 
             #expect((resp as? HTTPURLResponse)?.statusCode == 200)

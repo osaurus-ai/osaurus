@@ -231,7 +231,7 @@ struct ModelMediaCapabilitiesMCDCTests {
         #expect(ModelMediaCapabilities.from(modelId: "gemma-4-12b-it-mxfp8") == .imageOnly)
     }
 
-@Test("D6: DiffusionGemma is image-only, not video/audio")
+    @Test("D6: DiffusionGemma is image-only, not video/audio")
     func d6_diffusionGemmaImageOnly() {
         for modelId in [
             "google/diffusiongemma-26B-A4B-it",

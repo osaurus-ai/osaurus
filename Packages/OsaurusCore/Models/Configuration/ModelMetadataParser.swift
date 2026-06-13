@@ -186,6 +186,17 @@ enum ModelMetadataParser {
         ) {
             return String(text[match]).uppercased()
         }
+        // JANG mixed-precision labels (`JANG_4M`/`4K`/`2L`/`2S`): the leading
+        // digit encodes the dominant bit-class (4 ≈ 4-bit, 2 ≈ 2-bit). Surface
+        // the label (e.g. "JANG 4M") so the Quant column reflects precision
+        // instead of showing "—" for these rows. Checked after `jangtq` so the
+        // TurboQuant variants keep their own label.
+        if let match = text.range(
+            of: #"jang_?\d+[a-z]?"#,
+            options: .regularExpression
+        ) {
+            return String(text[match]).uppercased().replacingOccurrences(of: "_", with: " ")
+        }
         if text.contains("fp16") { return "FP16" }
         if text.contains("bf16") { return "BF16" }
         if text.contains("fp32") { return "FP32" }

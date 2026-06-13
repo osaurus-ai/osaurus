@@ -137,12 +137,15 @@ public actor VMLXModel2VecEmbedder: VecturaEmbedder {
             return nil
         }
 
-        return contents
+        return
+            contents
             .filter(Self.isUsableModelDirectory(_:))
             .sorted { lhs, rhs in
-                let leftDate = (try? lhs.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate)
+                let leftDate =
+                    (try? lhs.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate)
                     ?? .distantPast
-                let rightDate = (try? rhs.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate)
+                let rightDate =
+                    (try? rhs.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate)
                     ?? .distantPast
                 return leftDate > rightDate
             }
@@ -156,7 +159,8 @@ public enum VMLXModel2VecEmbedderError: LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .modelNotFound(let modelName):
-            return "Could not find local Model2Vec embedding model '\(modelName)'. Set OSAURUS_EMBEDDING_MODEL_DIR or install minishlab/\(modelName) in the Hugging Face cache."
+            return
+                "Could not find local Model2Vec embedding model '\(modelName)'. Set OSAURUS_EMBEDDING_MODEL_DIR or install minishlab/\(modelName) in the Hugging Face cache."
         }
     }
 }

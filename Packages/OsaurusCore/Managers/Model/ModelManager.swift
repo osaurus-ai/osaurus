@@ -679,31 +679,21 @@ extension ModelManager {
             useCase: .general
         ),
 
-        curated(
-            id: "OsaurusAI/gemma-4-E2B-it-4bit",
-            description: "Smallest multimodal Gemma 4 model. Runs on any Mac.",
-            modelType: "gemma4",
-            releasedAt: date("2026-04-06"),
-            useCase: .smallest
-        ),
-
-        curated(
-            id: "OsaurusAI/gemma-4-E4B-it-4bit",
-            description: "Multimodal edge model. Handles images, video, and audio. 128K context.",
-            isTopSuggestion: true,
-            modelType: "gemma4",
-            releasedAt: date("2026-04-06"),
-            useCase: .vision
-        ),
-
-        curated(
-            id: "OsaurusAI/gemma-4-26B-A4B-it-mxfp4",
-            description: "Best all-around vision model. MoE with only 4B active params. 128K context.",
-            isTopSuggestion: true,
-            modelType: "gemma4",
-            releasedAt: date("2026-04-07"),
-            useCase: .vision
-        ),
+        // MARK: Gemma 4 — multimodal (onboarding default spine)
+        //
+        // The dense Gemma 4 QAT line (E2B/E4B/12B/31B, `qat-MXFP4`) is the
+        // onboarding auto-default spine: quantization-aware training beats
+        // post-training quant at equal bit-width, and these are the newest
+        // Gemma builds. `ConfigureAIState.recommendedLocalPick` auto-selects
+        // the largest *dense* QAT model that comfortably fits. The 26B-A4B
+        // QAT MoE below stays a Top Pick but is intentionally excluded from
+        // the auto-default (its footprint is the 36%-bounce risk), and the
+        // E-series QAT entries are excluded from the auto-default until the
+        // 8-bit-vs-QAT-4bit retention A/B clears (small tiers stay on the
+        // 8-bit builds). Top-Pick promotion of the QAT line is gated on the
+        // required AgentLoop tool-use proof for the active Gemma 4 QAT
+        // checkpoint (load, executed tool, tool-result continuation, clean
+        // visible text, no marker leakage, cache telemetry).
 
         curated(
             id: "OsaurusAI/gemma-4-12B-it-MXFP8",
@@ -715,6 +705,95 @@ extension ModelManager {
             useCase: .vision
         ),
 
+        curated(
+            id: "OsaurusAI/gemma-4-E2B-it-qat-MXFP4",
+            description:
+                "Gemma 4 E2B QAT — quantization-aware 4-bit. Smallest multimodal floor; better quality-per-byte than post-training 4-bit. Runs on any Mac. 128K context.",
+            isTopSuggestion: true,
+            modelType: "gemma4",
+            releasedAt: date("2026-06-09"),
+            useCase: .smallest
+        ),
+
+        curated(
+            id: "OsaurusAI/gemma-4-E4B-it-qat-MXFP4",
+            description:
+                "Gemma 4 E4B QAT — quantization-aware 4-bit multimodal edge model. Images, video, and audio. 128K context.",
+            isTopSuggestion: true,
+            modelType: "gemma4",
+            releasedAt: date("2026-06-09"),
+            useCase: .vision
+        ),
+
+        curated(
+            id: "OsaurusAI/gemma-4-12B-it-qat-MXFP4",
+            description:
+                "Gemma 4 12B dense QAT — quantization-aware 4-bit. The mainstream multimodal default for 16–24 GB Macs. 128K context.",
+            isTopSuggestion: true,
+            modelType: "gemma4",
+            releasedAt: date("2026-06-09"),
+            useCase: .vision
+        ),
+
+        curated(
+            id: "OsaurusAI/gemma-4-31B-it-qat-MXFP4",
+            description:
+                "Gemma 4 31B dense QAT — quantization-aware 4-bit. Top-tier multimodal quality for 32 GB+ Macs. 128K context.",
+            isTopSuggestion: true,
+            modelType: "gemma4",
+            releasedAt: date("2026-06-09"),
+            useCase: .vision
+        ),
+
+        curated(
+            id: "OsaurusAI/gemma-4-26B-A4B-it-qat-MXFP4",
+            description:
+                "Gemma 4 26B-A4B QAT — quantization-aware 4-bit MoE (~4B active) vision model. Selectable Top Pick; excluded from the low-RAM auto-default. 128K context.",
+            isTopSuggestion: true,
+            modelType: "gemma4",
+            releasedAt: date("2026-06-09"),
+            useCase: .vision
+        ),
+
+        // DiffusionGemma — block-diffusion (not autoregressive) multimodal
+        // MoE. `model_type=diffusion_gemma` routes to the vmlx-swift
+        // block-diffusion engine. Shipping as a Top Pick is gated on a real
+        // Osaurus load + decode smoke test (visible coherent output, token/s,
+        // physical footprint within the MXFP8 gate); downgrade to a non-Top
+        // `preview` entry if that proof can't be produced.
+        curated(
+            id: "OsaurusAI/diffusiongemma-26B-A4B-it-MXFP8",
+            description:
+                "DiffusionGemma 26B-A4B — block-diffusion multimodal MoE (~4B active), MXFP8. Images + tools + reasoning, high-precision. 128K context.",
+            isTopSuggestion: true,
+            modelType: "diffusion_gemma",
+            releasedAt: date("2026-06-13"),
+            useCase: .vision
+        ),
+
+        // Lower-precision Gemma 4 edge fallbacks (NOT defaults). Within the
+        // E-series, 8-bit retains far better than 4-bit (E4B: 17% vs 33%
+        // bounce; E2B: median 19 vs 2 messages). The 4-bit builds stay listed
+        // only as the smallest-download option for the most RAM-constrained
+        // Macs; the 8-bit builds (below) are the recommended edge picks.
+        curated(
+            id: "OsaurusAI/gemma-4-E4B-it-4bit",
+            description:
+                "Smallest-download E4B build — lower-precision 4-bit fallback. Prefer the 8-bit or QAT E4B for better first-run quality.",
+            modelType: "gemma4",
+            releasedAt: date("2026-04-06"),
+            useCase: .vision
+        ),
+
+        curated(
+            id: "OsaurusAI/gemma-4-E2B-it-4bit",
+            description:
+                "Smallest-download Gemma 4 build — lowest-precision 4-bit fallback. Runs on any Mac.",
+            modelType: "gemma4",
+            releasedAt: date("2026-04-06"),
+            useCase: .smallest
+        ),
+
         // MARK: Qwen 3.6
         //
         // Qwen 3.6 keeps the `qwen3_5_moe` / `qwen3_5` model_type identifier,
@@ -724,19 +803,45 @@ extension ModelManager {
         // (`"mxtq"`) — no osaurus-side branching required.
 
         curated(
-            id: "OsaurusAI/Qwen3.6-35B-A3B-mxfp4",
-            description: "Qwen 3.6 35B MoE vision model. MXFP4 quantization — best quality per byte.",
+            id: "OsaurusAI/Qwen3.6-27B-MXFP4",
+            description:
+                "Qwen 3.6 27B dense vision model. MXFP4 — best quality per byte. The org's most-downloaded model. 256K context.",
             isTopSuggestion: true,
-            modelType: "qwen3_5_moe",
-            releasedAt: date("2026-04-16"),
+            modelType: "qwen3_5",
+            releasedAt: date("2026-05-20"),
             useCase: .vision
         ),
 
         curated(
-            id: "LiquidAI/LFM2-24B-A2B-MLX-8bit",
-            description: "Liquid AI's 24B MoE model. Only ~2B active params per token. 128K context.",
+            id: "OsaurusAI/Qwen3.6-27B-MXFP8-MTP",
+            description:
+                "Qwen 3.6 27B dense vision model. MXFP8 + multi-token-prediction speculative decode — high precision, fast. 256K context.",
             isTopSuggestion: true,
-            useCase: .general
+            modelType: "qwen3_5",
+            releasedAt: date("2026-05-20"),
+            useCase: .vision
+        ),
+
+        curated(
+            id: "OsaurusAI/Qwen3.6-35B-A3B-MXFP8-MTP",
+            description:
+                "Qwen 3.6 35B MoE (~3B active) vision model. MXFP8 + multi-token-prediction speculative decode — the precision-first sibling of the MXFP4 build. 256K context.",
+            isTopSuggestion: true,
+            modelType: "qwen3_5_moe",
+            releasedAt: date("2026-05-20"),
+            useCase: .vision
+        ),
+
+        // Lower-precision MoE sibling — kept in the catalog, demoted from Top
+        // Pick in favour of the MXFP8-MTP build above (precision-first; avoids
+        // two near-identical Qwen 3.6 35B top picks).
+        curated(
+            id: "OsaurusAI/Qwen3.6-35B-A3B-mxfp4",
+            description:
+                "Qwen 3.6 35B MoE vision model. MXFP4 quantization — best quality per byte. 256K context.",
+            modelType: "qwen3_5_moe",
+            releasedAt: date("2026-04-16"),
+            useCase: .vision
         ),
 
         // MARK: MiniMax M2.7 (JANGTQ MoE)
@@ -761,6 +866,15 @@ extension ModelManager {
                 "MiniMax M2.7 228B agentic MoE, 2-bit TurboQuant routed experts. Smallest footprint of the family. 192K context.",
             modelType: "minimax_m2",
             releasedAt: date("2026-04-17"),
+            useCase: .general
+        ),
+
+        curated(
+            id: "OsaurusAI/MiniMax-M2.7-Small-JANGTQ",
+            description:
+                "MiniMax M2.7 Small agentic MoE, TurboQuant routed experts — the most-liked OsaurusAI model. 192K context.",
+            modelType: "minimax_m2",
+            releasedAt: date("2026-06-05"),
             useCase: .general
         ),
 
@@ -789,6 +903,12 @@ extension ModelManager {
         // T=0.6 top_p=0.95 (DeepSeek-style). Bundles ship those defaults
         // in `generation_config.json`; `LocalGenerationDefaults` reads them.
 
+        // AUDIT FLAG (quality decision, not hard-changed): this MXFP4 build
+        // is the Top Pick ("fastest decode"), but its `JANGTQ4` sibling below
+        // is described as "near-bf16 quality." If near-bf16 holds, JANGTQ4 may
+        // be the better first-impression default. Decide MXFP4-speed vs
+        // JANGTQ4-quality (with real decode + quality proof) before swapping
+        // the Top-Pick flag.
         curated(
             id: "OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-MXFP4",
             description:
@@ -814,6 +934,31 @@ extension ModelManager {
                 "Nemotron-3 30B Reasoning hybrid, 2-bit TurboQuant routed experts. Smallest footprint (~21 GB). 262K context.",
             modelType: "nemotron_h",
             releasedAt: date("2026-04-28"),
+            useCase: .reasoning
+        ),
+
+        // MARK: ZAYA1 (CCA hybrid attention — reasoning + tool use)
+        //
+        // 8B reasoning + tool-use model with CCA hybrid attention. Kept as
+        // catalog (non-Top-Pick) pending the ZAYA CCA companion-cache +
+        // pooling proof required by the runtime non-negotiables; promote to a
+        // Top Pick (it's small) only after that proof lands. `modelType` is
+        // left to runtime auto-detection from config.json — no pre-download
+        // hint is hardcoded for a family whose `model_type` isn't confirmed.
+
+        curated(
+            id: "OsaurusAI/ZAYA1-8B-MXFP4",
+            description:
+                "ZAYA1 8B reasoning + tool-use model with CCA hybrid attention. MXFP4 quantization.",
+            releasedAt: date("2026-06-05"),
+            useCase: .reasoning
+        ),
+
+        curated(
+            id: "OsaurusAI/ZAYA1-8B-JANGTQ4",
+            description:
+                "ZAYA1 8B reasoning + tool-use, 4-bit TurboQuant routed experts. CCA hybrid attention.",
+            releasedAt: date("2026-06-05"),
             useCase: .reasoning
         ),
 
@@ -858,7 +1003,7 @@ extension ModelManager {
         ),
 
         curated(
-            id: "OsaurusAI/Laguna-XS.2-JANGTQ2",
+            id: "OsaurusAI/Laguna-XS.2-JANGTQ",
             description:
                 "Poolside Laguna-XS.2 33B/3B-active agentic-coding MoE, 2-bit TurboQuant routed experts. Smallest footprint (~10 GB). 131K context.",
             modelType: "laguna",
@@ -941,7 +1086,7 @@ extension ModelManager {
         ),
 
         curated(
-            id: "OsaurusAI/Mistral-Medium-3.5-128B-JANGTQ2",
+            id: "OsaurusAI/Mistral-Medium-3.5-128B-JANGTQ",
             description:
                 "Mistral Medium 3.5 128B + Pixtral vision, 2-bit TurboQuant text decoder. ~41 GB footprint. 256K context, 24-language coverage.",
             modelType: "mistral3",
@@ -949,101 +1094,122 @@ extension ModelManager {
             useCase: .vision
         ),
 
-        // MARK: Large Models
+        // MARK: gemma-4-12B (lower-precision companion)
 
         curated(
-            id: "lmstudio-community/gpt-oss-20b-MLX-8bit",
-            description: "OpenAI's open-source release. Strong all-around performance.",
+            id: "OsaurusAI/gemma-4-12B-it-MXFP4",
+            description:
+                "Gemma 4 12B multimodal at MXFP4 — smaller, lower-precision companion to the 12B MXFP8 Top Pick. 128K context.",
+            modelType: "gemma4",
+            releasedAt: date("2026-06-01"),
+            useCase: .vision
+        ),
+
+        // MARK: Large / specialist catalog
+        //
+        // Never onboarding auto-defaults. Each is gated on real Osaurus load +
+        // decode + architecture-correct cache proof before any Top-Pick
+        // promotion. `modelType` hints below are inferred from HF tags and are
+        // confirmed/overridden by runtime auto-detection from each repo's
+        // config.json at load time.
+
+        curated(
+            id: "OsaurusAI/DeepSeek-V4-Flash-JANGTQ2",
+            description:
+                "DeepSeek V4 Flash reasoning model, 2-bit TurboQuant. CSA/HSA/SWA hybrid attention. Large specialist footprint.",
+            modelType: "deepseek_v4",
+            releasedAt: date("2026-06-05"),
+            useCase: .reasoning
+        ),
+
+        curated(
+            id: "OsaurusAI/DeepSeek-V4-Flash-JANGTQ-K",
+            description:
+                "DeepSeek V4 Flash reasoning model, K-quant TurboQuant. CSA/HSA/SWA hybrid attention. Large specialist footprint.",
+            modelType: "deepseek_v4",
+            releasedAt: date("2026-06-05"),
+            useCase: .reasoning
+        ),
+
+        curated(
+            id: "OsaurusAI/Kimi-K2.6-JANGTQ_K",
+            description:
+                "Kimi K2.6 vision model, K-quant TurboQuant. Large specialist footprint.",
+            modelType: "kimi_k25",
+            releasedAt: date("2026-06-05"),
+            useCase: .vision
+        ),
+
+        curated(
+            id: "OsaurusAI/Hy3-preview-JANGTQ_K",
+            description:
+                "Hunyuan 3 (295B MoE) preview, K-quant TurboQuant. Very large specialist footprint.",
+            modelType: "hy_v3",
+            releasedAt: date("2026-06-05"),
             useCase: .general
         ),
 
         curated(
-            id: "lmstudio-community/gpt-oss-120b-MLX-8bit",
-            description: "OpenAI's largest open model. Premium quality, requires 64GB+ unified memory.",
-            useCase: .bestQuality
+            id: "OsaurusAI/NVIDIA-Nemotron-3-Ultra-550B-A55B-JANGTQ_1L",
+            description:
+                "NVIDIA Nemotron-3 Ultra 550B (~55B active) reasoning MoE, TurboQuant. Showcase — requires very high unified memory.",
+            modelType: "nemotron_h",
+            releasedAt: date("2026-06-05"),
+            useCase: .reasoning
         ),
 
         curated(
-            id: "OsaurusAI/Gemma-4-31B-it-JANG_4M",
-            description: "Gemma 4 31B dense vision model. Top-tier quality with optimized quantization.",
-            modelType: "gemma4",
-            releasedAt: date("2026-04-16"),
-            useCase: .vision
-        ),
-
-        // MARK: Vision Language Models (VLM)
-
-        curated(
-            id: "OsaurusAI/gemma-4-26B-A4B-it-4bit",
-            description: "MoE vision model with standard 4-bit quantization. 4B active params.",
-            modelType: "gemma4",
-            releasedAt: date("2026-04-07"),
+            id: "OsaurusAI/Step-3.7-Flash-JANG_K",
+            description:
+                "Step 3.7 Flash vision-language model, JANG K-quant. Specialist.",
+            modelType: "step3p7",
+            releasedAt: date("2026-06-05"),
             useCase: .vision
         ),
 
         curated(
-            id: "OsaurusAI/Gemma-4-26B-A4B-it-JANG_2L",
-            description: "Efficient MoE vision model. Only 4B active params. 256K context.",
-            modelType: "gemma4",
-            releasedAt: date("2026-04-16"),
-            useCase: .vision
+            id: "OsaurusAI/Holo3-35B-A3B-mxfp4",
+            description:
+                "Holo3 35B-A3B computer-use GUI agent. MXFP4 vision MoE. Specialist.",
+            modelType: "qwen3_5_moe",
+            releasedAt: date("2026-06-05"),
+            useCase: .coding
         ),
 
         curated(
-            id: "OsaurusAI/Gemma-4-26B-A4B-it-JANG_4M",
-            description: "Higher-quality MoE vision model. 4B active params with 256K context.",
-            modelType: "gemma4",
-            releasedAt: date("2026-04-16"),
-            useCase: .vision
+            id: "OsaurusAI/Holo3-35B-A3B-JANGTQ4",
+            description:
+                "Holo3 35B-A3B computer-use GUI agent, 4-bit TurboQuant. Vision MoE. Specialist.",
+            modelType: "qwen3_5_moe",
+            releasedAt: date("2026-06-05"),
+            useCase: .coding
         ),
+
+        // MARK: Gemma 4 E-series — 8-bit retention builds (Top Picks)
+        //
+        // Within the E-series, 8-bit retains far better than 4-bit, so these
+        // are the recommended high-precision edge picks (not the demoted
+        // 4-bit fallbacks above). `releasedAt` is bumped to mid-2026 so the
+        // newest-first Top Picks carousel surfaces these retention builds near
+        // the top instead of stranding them at the tail with the April dates.
 
         curated(
             id: "OsaurusAI/gemma-4-E4B-it-8bit",
-            description: "Multimodal edge model at 8-bit precision. Best quality for the E4B family.",
+            description:
+                "Recommended multimodal edge model — 8-bit precision, the best first-run quality for the E4B family (highest retention). Images, video, audio. 128K context.",
+            isTopSuggestion: true,
             modelType: "gemma4",
-            releasedAt: date("2026-04-06"),
+            releasedAt: date("2026-06-02"),
             useCase: .vision
         ),
-
-        curated(
-            id: "OsaurusAI/Qwen3.5-122B-A10B-JANG_4K",
-            description: "Largest Qwen3.5 MoE vision model. 10B active params with top-tier reasoning.",
-            modelType: "qwen3_5_moe",
-            releasedAt: date("2026-04-16"),
-            useCase: .vision
-        ),
-
-        curated(
-            id: "OsaurusAI/Qwen3.5-122B-A10B-JANG_2S",
-            description: "Qwen3.5 122B MoE vision model. Compact quantization, smaller download.",
-            modelType: "qwen3_5_moe",
-            releasedAt: date("2026-04-16"),
-            useCase: .vision
-        ),
-
-        curated(
-            id: "OsaurusAI/Qwen3.5-35B-A3B-JANG_4K",
-            description: "Efficient Qwen3.5 MoE vision model. Only 3B active params.",
-            modelType: "qwen3_5_moe",
-            releasedAt: date("2026-04-16"),
-            useCase: .vision
-        ),
-
-        curated(
-            id: "OsaurusAI/Qwen3.5-35B-A3B-JANG_2S",
-            description: "Compact Qwen3.5 MoE vision model. Fast and lightweight.",
-            modelType: "qwen3_5_moe",
-            releasedAt: date("2026-04-16"),
-            useCase: .vision
-        ),
-
-        // MARK: Compact Models
 
         curated(
             id: "OsaurusAI/gemma-4-E2B-it-8bit",
-            description: "Smallest Gemma 4 at 8-bit precision. Better quality, still runs on any Mac.",
+            description:
+                "Smallest high-precision multimodal model — 8-bit, the best quality that still runs on any Mac. 128K context.",
+            isTopSuggestion: true,
             modelType: "gemma4",
-            releasedAt: date("2026-04-06"),
+            releasedAt: date("2026-06-02"),
             useCase: .smallest
         ),
     ]
@@ -1053,6 +1219,23 @@ extension ModelManager {
     nonisolated static let curatedSuggestedIds: Set<String> = Set(
         curatedSuggestedModels.map { $0.id.lowercased() }
     )
+
+    /// OsaurusAI org repos intentionally retired from the catalog (superseded
+    /// / lower-precision dupes). The org auto-fetch would otherwise re-surface
+    /// them as plain non-curated rows, defeating the removal — so the merge in
+    /// `applyOsaurusOrgFetch` drops any auto-fetched entry whose id is in this
+    /// set. Lowercased for matching.
+    nonisolated static let retiredOsaurusOrgIds: Set<String> = [
+        "osaurusai/qwen3.5-122b-a10b-jang_4k",
+        "osaurusai/qwen3.5-122b-a10b-jang_2s",
+        "osaurusai/qwen3.5-35b-a3b-jang_4k",
+        "osaurusai/qwen3.5-35b-a3b-jang_2s",
+        "osaurusai/gemma-4-31b-it-jang_4m",
+        "osaurusai/gemma-4-26b-a4b-it-4bit",
+        "osaurusai/gemma-4-26b-a4b-it-jang_2l",
+        "osaurusai/gemma-4-26b-a4b-it-jang_4m",
+        "osaurusai/gemma-4-26b-a4b-it-mxfp4",
+    ]
 }
 
 // MARK: - Installed models helpers for services
@@ -1380,7 +1563,10 @@ extension ModelManager {
                 .withDownloadSize(sizesById[key])
         }
         let curated = Self.curatedSuggestedModels.map(enrich)
-        let enrichedAutoFetched = autoFetched.map(enrich)
+        let enrichedAutoFetched =
+            autoFetched
+            .filter { !Self.retiredOsaurusOrgIds.contains($0.id.lowercased()) }
+            .map(enrich)
 
         // Drop previous OsaurusAI auto-fetched entries, keeping curated and
         // any non-OsaurusAI entries other code may have injected.
@@ -1688,7 +1874,7 @@ extension ModelManager {
             if dotParts.count == 1 { return true }
             if dotParts.count == 2,
                 let suffix = dotParts.last,
-                (2...4).contains(suffix.count),
+                (2 ... 4).contains(suffix.count),
                 suffix.allSatisfy({ $0.isLetter })
             {
                 return true

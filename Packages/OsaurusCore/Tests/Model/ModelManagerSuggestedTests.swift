@@ -210,4 +210,119 @@ struct ModelManagerSuggestedTests {
         let after = manager.suggestedModels
         #expect(after.contains { $0.id == foreign.id })
     }
+
+    // MARK: - Top-pick reorg (precision-first)
+
+    @Test @MainActor func topPicks_includeGemmaQATSpineAndPrecisionFirstFlagships() {
+        let suggested = withIsolatedModelSizeCache { ModelManager().suggestedModels }
+        let topIds = Set(suggested.filter(\.isTopSuggestion).map { $0.id })
+        for id in [
+            "OsaurusAI/gemma-4-12B-it-qat-MXFP4",
+            "OsaurusAI/gemma-4-31B-it-qat-MXFP4",
+            "OsaurusAI/gemma-4-26B-A4B-it-qat-MXFP4",
+            "OsaurusAI/diffusiongemma-26B-A4B-it-MXFP8",
+            "OsaurusAI/gemma-4-E4B-it-8bit",
+            "OsaurusAI/gemma-4-E2B-it-8bit",
+            "OsaurusAI/Qwen3.6-27B-MXFP4",
+            "OsaurusAI/Qwen3.6-35B-A3B-MXFP8-MTP",
+        ] {
+            #expect(topIds.contains(id), "expected \(id) to be a Top Pick")
+        }
+    }
+
+    @Test @MainActor func lowerPrecisionSiblings_demotedFromTopPicks() {
+        let suggested = withIsolatedModelSizeCache { ModelManager().suggestedModels }
+        let e4b4 = suggested.first { $0.id == "OsaurusAI/gemma-4-E4B-it-4bit" }
+        #expect(e4b4 != nil)
+        #expect(e4b4?.isTopSuggestion == false)
+        // The MXFP4 35B MoE is kept in the catalog but demoted in favour of
+        // its MXFP8-MTP sibling.
+        let qwen35mxfp4 = suggested.first { $0.id == "OsaurusAI/Qwen3.6-35B-A3B-mxfp4" }
+        #expect(qwen35mxfp4 != nil)
+        #expect(qwen35mxfp4?.isTopSuggestion == false)
+    }
+
+    @Test func retiredModels_absentFromCuratedCatalog() {
+        let ids = ModelManager.curatedSuggestedIds
+        for retired in [
+            "liquidai/lfm2-24b-a2b-mlx-8bit",
+            "lmstudio-community/gpt-oss-20b-mlx-8bit",
+            "lmstudio-community/gpt-oss-120b-mlx-8bit",
+            "osaurusai/gemma-4-26b-a4b-it-mxfp4",
+            "osaurusai/gemma-4-26b-a4b-it-4bit",
+            "osaurusai/gemma-4-31b-it-jang_4m",
+            "osaurusai/qwen3.5-122b-a10b-jang_4k",
+            "osaurusai/qwen3.5-35b-a3b-jang_2s",
+        ] {
+            #expect(!ids.contains(retired), "expected \(retired) to be removed")
+        }
+    }
+
+    @Test func staleCuratedIds_fixedToJANGTQ() {
+        let ids = ModelManager.curatedSuggestedIds
+        #expect(ids.contains("osaurusai/laguna-xs.2-jangtq"))
+        #expect(!ids.contains("osaurusai/laguna-xs.2-jangtq2"))
+        #expect(ids.contains("osaurusai/mistral-medium-3.5-128b-jangtq"))
+        #expect(!ids.contains("osaurusai/mistral-medium-3.5-128b-jangtq2"))
+    }
+
+    @Test @MainActor func retiredOrgRepos_droppedFromAutoFetchMerge() {
+        let manager = withIsolatedModelSizeCache { ModelManager() }
+        // A retired repo reappearing via the org listing must not surface.
+        let retired = MLXModel(
+            id: "OsaurusAI/gemma-4-26B-A4B-it-4bit",
+            name: "x",
+            description: "from auto-fetch",
+            downloadURL: "https://huggingface.co/OsaurusAI/gemma-4-26B-A4B-it-4bit"
+        )
+        manager.applyOsaurusOrgFetch(autoFetched: [retired])
+        #expect(!manager.suggestedModels.contains { $0.id == retired.id })
+    }
+
+    // MARK: - Onboarding default scenario matrix (Phase 4c)
+
+    @Test @MainActor func onboardingDefault_landsOnGemmaQATSpinePerRAMTier() {
+        // Fetch candidates under the isolated (empty) size cache so estimates
+        // come from the deterministic param heuristic, not a machine's cached
+        // on-disk sizes.
+        let candidates = withIsolatedModelSizeCache {
+            ModelManager().suggestedModels.filter(\.isTopSuggestion)
+        }
+        func pick(_ gb: Double) -> String? {
+            ConfigureAIState.recommendedLocalPick(from: candidates, totalMemoryGB: gb)?.id
+        }
+        // Small tier stays on the 8-bit retention build (gated until the
+        // QAT-4bit-vs-8bit bounce A/B clears).
+        #expect(pick(8) == "OsaurusAI/gemma-4-E4B-it-8bit")
+        // Mainstream tiers: the dense 12B QAT default.
+        #expect(pick(16) == "OsaurusAI/gemma-4-12B-it-qat-MXFP4")
+        #expect(pick(18) == "OsaurusAI/gemma-4-12B-it-qat-MXFP4")
+        #expect(pick(24) == "OsaurusAI/gemma-4-12B-it-qat-MXFP4")
+        // Large tiers: the dense 31B QAT ceiling.
+        #expect(pick(32) == "OsaurusAI/gemma-4-31B-it-qat-MXFP4")
+        #expect(pick(36) == "OsaurusAI/gemma-4-31B-it-qat-MXFP4")
+        #expect(pick(48) == "OsaurusAI/gemma-4-31B-it-qat-MXFP4")
+        #expect(pick(64) == "OsaurusAI/gemma-4-31B-it-qat-MXFP4")
+    }
+
+    @Test @MainActor func onboardingDefault_neverAutoSelectsMoEorLargerFlagship() {
+        let candidates = withIsolatedModelSizeCache {
+            ModelManager().suggestedModels.filter(\.isTopSuggestion)
+        }
+        let excluded: Set<String> = [
+            "OsaurusAI/gemma-4-26B-A4B-it-qat-MXFP4",
+            "OsaurusAI/diffusiongemma-26B-A4B-it-MXFP8",
+            "OsaurusAI/Qwen3.6-35B-A3B-MXFP8-MTP",
+            "OsaurusAI/Qwen3.6-27B-MXFP8-MTP",
+        ]
+        for gb in stride(from: 8.0, through: 128.0, by: 2.0) {
+            let id = ConfigureAIState.recommendedLocalPick(
+                from: candidates,
+                totalMemoryGB: gb
+            )?.id
+            if let id {
+                #expect(!excluded.contains(id), "auto-default \(id) at \(gb)GB must not be a MoE/flagship")
+            }
+        }
+    }
 }

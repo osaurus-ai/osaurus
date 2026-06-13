@@ -33,6 +33,13 @@ struct OnboardingTelemetryEventTests {
         var events: [Event] = []
     }
 
+    /// Drops the global `total_memory_gb` bucket (attached to every event by
+    /// `TelemetryService.track`) so per-event shape assertions stay focused on
+    /// the event-specific props.
+    private func business(_ props: [String: Any]) -> [String: Any] {
+        props.filter { $0.key != "total_memory_gb" }
+    }
+
     /// A granted + started service whose sends are captured. Returns the
     /// service, the recorder, and a cleanup that wipes the defaults suite.
     private func makeRecordingService() -> (TelemetryService, Recorder, () -> Void) {
@@ -58,7 +65,7 @@ struct OnboardingTelemetryEventTests {
 
         #expect(rec.events.count == 1)
         #expect(rec.events[0].name == "onboarding_started")
-        #expect(rec.events[0].props.isEmpty)
+        #expect(business(rec.events[0].props).isEmpty)
     }
 
     @Test func stepViewed_emits_step_name_and_index() {
@@ -70,7 +77,7 @@ struct OnboardingTelemetryEventTests {
         #expect(rec.events.count == 1)
         let event = rec.events[0]
         #expect(event.name == "onboarding_step_viewed")
-        #expect(event.props.count == 2)
+        #expect(business(event.props).count == 2)
         #expect(event.props["step"] as? String == "configure_ai")
         #expect(event.props["step_index"] as? Int == OnboardingStep.configureAI.rawValue)
     }
@@ -84,7 +91,7 @@ struct OnboardingTelemetryEventTests {
         #expect(rec.events.count == 1)
         let event = rec.events[0]
         #expect(event.name == "onboarding_step_skipped")
-        #expect(event.props.count == 1)
+        #expect(business(event.props).count == 1)
         #expect(event.props["step"] as? String == "choose_plugins")
     }
 
@@ -97,7 +104,7 @@ struct OnboardingTelemetryEventTests {
         #expect(rec.events.count == 1)
         let event = rec.events[0]
         #expect(event.name == "onboarding_completed")
-        #expect(event.props.count == 2)
+        #expect(business(event.props).count == 2)
         #expect(event.props["last_step"] as? String == "walkthrough")
         #expect(event.props["via"] as? String == "finish_button")
     }

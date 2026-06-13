@@ -394,9 +394,10 @@ public enum ToolEnvelope {
         guard let start = result.firstIndex(where: { !$0.isWhitespace }) else {
             return ""
         }
-        let end = result.index(start, offsetBy: sniffWindow, limitedBy: result.endIndex)
+        let end =
+            result.index(start, offsetBy: sniffWindow, limitedBy: result.endIndex)
             ?? result.endIndex
-        return result[start..<end]
+        return result[start ..< end]
     }
 
     public static func isError(_ result: String) -> Bool {

@@ -4,36 +4,6 @@
     "" : {
       "shouldTranslate" : false
     },
-    "Allowed" : {
-      "shouldTranslate" : false
-    },
-    "Capture policy" : {
-      "shouldTranslate" : false
-    },
-    "Copy Probe Result" : {
-      "shouldTranslate" : false
-    },
-    "Last probe" : {
-      "shouldTranslate" : false
-    },
-    "Probe Failed" : {
-      "shouldTranslate" : false
-    },
-    "Probe Passed" : {
-      "shouldTranslate" : false
-    },
-    "Reason" : {
-      "shouldTranslate" : false
-    },
-    "Screen capture" : {
-      "shouldTranslate" : false
-    },
-    "Stage" : {
-      "shouldTranslate" : false
-    },
-    "Tools" : {
-      "shouldTranslate" : false
-    },
     " — %@" : {
       "localizations" : {
         "de" : {
@@ -1856,6 +1826,22 @@
         }
       }
     },
+    "%lld tool(s) discovered via %@." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%lld tool(s) discovered via %@."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%lld tool(s) discovered via %@."
+          }
+        }
+      }
+    },
     "%lld tool(s) discovered." : {
       "localizations" : {
         "de" : {
@@ -2885,21 +2871,21 @@
       }
     },
     "A local model is already running" : {
-    "localizations" : {
-      "de" : {
-        "stringUnit" : {
-          "state" : "translated",
-          "value" : "Ein lokales Modell wird bereits ausgeführt"
-        }
-      },
-      "zh-Hans" : {
-        "stringUnit" : {
-          "state" : "translated",
-          "value" : "本地模型已在运行"
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ein lokales Modell wird bereits ausgeführt"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "本地模型已在运行"
+          }
         }
       }
-    }
-  },
+    },
     "A microphone button will appear in the chat input when voice is ready" : {
       "localizations" : {
         "de" : {
@@ -4817,6 +4803,9 @@
           }
         }
       }
+    },
+    "Allowed" : {
+      "shouldTranslate" : false
     },
     "Allowed Origins (CORS)" : {
       "extractionState" : "manual",
@@ -7264,6 +7253,22 @@
         }
       }
     },
+    "Background capture is not allowed." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Background capture is not allowed."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Background capture is not allowed."
+          }
+        }
+      }
+    },
     "Background distillation is paused while a chat generation is streaming — they share GPU/unified memory." : {
       "localizations" : {
         "de" : {
@@ -9031,6 +9036,57 @@
         }
       }
     },
+    "Capture access is allowed for this interactive request." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Capture access is allowed for this interactive request."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Capture access is allowed for this interactive request."
+          }
+        }
+      }
+    },
+    "Capture access is off until explicitly enabled." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Capture access is off until explicitly enabled."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Capture access is off until explicitly enabled."
+          }
+        }
+      }
+    },
+    "Capture policy" : {
+      "shouldTranslate" : false
+    },
+    "Capture requests must be initiated from an interactive user action." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Capture requests must be initiated from an interactive user action."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Capture requests must be initiated from an interactive user action."
+          }
+        }
+      }
+    },
     "Card BG" : {
       "localizations" : {
         "de" : {
@@ -9617,6 +9673,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "检查更新"
+          }
+        }
+      }
+    },
+    "Check the command, working directory, and environment." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Check the command, working directory, and environment."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Check the command, working directory, and environment."
           }
         }
       }
@@ -12475,6 +12547,9 @@
         }
       }
     },
+    "Copy Probe Result" : {
+      "shouldTranslate" : false
+    },
     "Copy relay URL" : {
       "localizations" : {
         "de" : {
@@ -12551,6 +12626,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "复制回复"
+          }
+        }
+      }
+    },
+    "Copy the probe result and check the provider logs." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Copy the probe result and check the provider logs."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Copy the probe result and check the provider logs."
           }
         }
       }
@@ -14336,7 +14427,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "\u89e3\u7801\u6027\u80fd"
+            "value" : "解码性能"
           }
         }
       }
@@ -15064,6 +15155,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "增量"
+          }
+        }
+      }
+    },
+    "Denied" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Denied"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Denied"
           }
         }
       }
@@ -17267,6 +17374,22 @@
         }
       }
     },
+    "Edit the endpoint URL and test again." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Edit the endpoint URL and test again."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Edit the endpoint URL and test again."
+          }
+        }
+      }
+    },
     "Edit the provider and enter the executable." : {
       "localizations" : {
         "de" : {
@@ -17295,6 +17418,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "编辑该提供程序并保存 API 密钥或秘密的授权标头。"
+          }
+        }
+      }
+    },
+    "Edit the URL and include the scheme, host, and path." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Edit the URL and include the scheme, host, and path."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Edit the URL and include the scheme, host, and path."
           }
         }
       }
@@ -17717,6 +17856,22 @@
         }
       }
     },
+    "Enable the plugin before granting capture access." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Enable the plugin before granting capture access."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Enable the plugin before granting capture access."
+          }
+        }
+      }
+    },
     "Enable the provider before testing or selecting its models." : {
       "localizations" : {
         "de" : {
@@ -18073,6 +18228,22 @@
         }
       }
     },
+    "Enter a command before testing." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Enter a command before testing."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Enter a command before testing."
+          }
+        }
+      }
+    },
     "Enter a pattern to validate." : {
       "localizations" : {
         "de" : {
@@ -18085,6 +18256,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "输入要校验的模式。"
+          }
+        }
+      }
+    },
+    "Enter an executable path or command before testing." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Enter an executable path or command before testing."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Enter an executable path or command before testing."
           }
         }
       }
@@ -19543,7 +19730,12 @@
         }
       }
     },
+    "Failed - %@" : {
+      "comment" : "A label indicating that a test connection to a remote MCP provider failed, along with the error code. The argument is the error code from the failed test connection.",
+      "isCommentAutoGenerated" : true
+    },
     "Failed - Tap to retry" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -21441,6 +21633,22 @@
         }
       }
     },
+    "Grant capture permission after reviewing the plugin." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Grant capture permission after reviewing the plugin."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Grant capture permission after reviewing the plugin."
+          }
+        }
+      }
+    },
     "Grant the following permissions to use all features:" : {
       "localizations" : {
         "de" : {
@@ -22329,6 +22537,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "HTTP 发现探测"
+          }
+        }
+      }
+    },
+    "HTTP MCP probe" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "HTTP MCP probe"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "HTTP MCP probe"
           }
         }
       }
@@ -23236,6 +23460,38 @@
         }
       }
     },
+    "Increase discovery timeout or check that the MCP server responds to listTools." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Increase discovery timeout or check that the MCP server responds to listTools."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Increase discovery timeout or check that the MCP server responds to listTools."
+          }
+        }
+      }
+    },
+    "Increase discovery timeout or verify the server is reachable." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Increase discovery timeout or verify the server is reachable."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Increase discovery timeout or verify the server is reachable."
+          }
+        }
+      }
+    },
     "Indefinitely" : {
       "localizations" : {
         "de" : {
@@ -23848,6 +24104,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "安装插件"
+          }
+        }
+      }
+    },
+    "Install a trusted plugin before enabling capture access." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Install a trusted plugin before enabling capture access."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Install a trusted plugin before enabling capture access."
           }
         }
       }
@@ -24903,6 +25175,9 @@
           }
         }
       }
+    },
+    "Last probe" : {
+      "shouldTranslate" : false
     },
     "Last: %@" : {
       "comment" : "Auto-extracted format-string key (Apple String.LocalizationValue canonical form).",
@@ -29858,6 +30133,22 @@
         }
       }
     },
+    "No installed plugin owns this capture capability." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "No installed plugin owns this capture capability."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "No installed plugin owns this capture capability."
+          }
+        }
+      }
+    },
     "No installed skills yet" : {
       "localizations" : {
         "de" : {
@@ -31357,6 +31648,22 @@
         }
       }
     },
+    "Not run" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Not run"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Not run"
+          }
+        }
+      }
+    },
     "Not Running" : {
       "localizations" : {
         "de" : {
@@ -32089,22 +32396,38 @@
         }
       }
     },
-    "Only one local model can run at a time, and another chat window is using it right now. Wait for that reply to finish, or switch this chat to a remote model." : {
-    "localizations" : {
-      "de" : {
-        "stringUnit" : {
-          "state" : "translated",
-          "value" : "Es kann immer nur ein lokales Modell gleichzeitig ausgeführt werden, und ein anderes Chat-Fenster verwendet es gerade. Warte, bis diese Antwort abgeschlossen ist, oder wechsle in diesem Chat zu einem Remote-Modell."
-        }
-      },
-      "zh-Hans" : {
-        "stringUnit" : {
-          "state" : "translated",
-          "value" : "一次只能运行一个本地模型，目前另一个聊天窗口正在使用它。请等待该回复完成，或将此聊天切换为远程模型。"
+    "Only documented capture capabilities can be requested by plugins." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Only documented capture capabilities can be requested by plugins."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Only documented capture capabilities can be requested by plugins."
+          }
         }
       }
-    }
-  },
+    },
+    "Only one local model can run at a time, and another chat window is using it right now. Wait for that reply to finish, or switch this chat to a remote model." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Es kann immer nur ein lokales Modell gleichzeitig ausgeführt werden, und ein anderes Chat-Fenster verwendet es gerade. Warte, bis diese Antwort abgeschlossen ist, oder wechsle in diesem Chat zu einem Remote-Modell."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "一次只能运行一个本地模型，目前另一个聊天窗口正在使用它。请等待该回复完成，或将此聊天切换为远程模型。"
+          }
+        }
+      }
+    },
     "Only use this on trusted hardware for long-running work" : {
       "localizations" : {
         "de" : {
@@ -38176,6 +38499,28 @@
         }
       }
     },
+    "Probe completed initialize/listTools and found %lld tool(s)." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Probe completed initialize/listTools and found %lld tool(s)."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Probe completed initialize/listTools and found %lld tool(s)."
+          }
+        }
+      }
+    },
+    "Probe Failed" : {
+      "shouldTranslate" : false
+    },
+    "Probe Passed" : {
+      "shouldTranslate" : false
+    },
     "Probing..." : {
       "localizations" : {
         "de" : {
@@ -39448,6 +39793,9 @@
           }
         }
       }
+    },
+    "Reason" : {
+      "shouldTranslate" : false
     },
     "Reason (optional)" : {
       "localizations" : {
@@ -44177,6 +44525,9 @@
         }
       }
     },
+    "Screen capture" : {
+      "shouldTranslate" : false
+    },
     "Screen Recording" : {
       "localizations" : {
         "de" : {
@@ -46636,6 +46987,22 @@
         }
       }
     },
+    "Sign in or save a token, then test again." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sign in or save a token, then test again."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sign in or save a token, then test again."
+          }
+        }
+      }
+    },
     "Sign in required" : {
       "localizations" : {
         "de" : {
@@ -48035,6 +48402,9 @@
         }
       }
     },
+    "Stage" : {
+      "shouldTranslate" : false
+    },
     "Stale" : {
       "localizations" : {
         "de" : {
@@ -49281,6 +49651,22 @@
         }
       }
     },
+    "Switch to Host for trusted tools or start the sandbox runtime." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Switch to Host for trusted tools or start the sandbox runtime."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Switch to Host for trusted tools or start the sandbox runtime."
+          }
+        }
+      }
+    },
     "Sync" : {
       "localizations" : {
         "de" : {
@@ -50301,6 +50687,22 @@
         }
       }
     },
+    "The MCP endpoint URL could not be parsed." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "The MCP endpoint URL could not be parsed."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "The MCP endpoint URL could not be parsed."
+          }
+        }
+      }
+    },
     "The model is large; keep this window open while it downloads." : {
       "localizations" : {
         "de" : {
@@ -50345,6 +50747,38 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "模型从一个小集合开始，并根据需要从您已启用的功能中按需加载更多。"
+          }
+        }
+      }
+    },
+    "The owning plugin is disabled." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "The owning plugin is disabled."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "The owning plugin is disabled."
+          }
+        }
+      }
+    },
+    "The plugin does not have capture permission." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "The plugin does not have capture permission."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "The plugin does not have capture permission."
           }
         }
       }
@@ -50413,6 +50847,22 @@
         }
       }
     },
+    "The requested capture capability is not recognized." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "The requested capture capability is not recognized."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "The requested capture capability is not recognized."
+          }
+        }
+      }
+    },
     "The result was capped at 500 rows." : {
       "localizations" : {
         "de" : {
@@ -50447,6 +50897,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "保存的密钥使用特定于提供商的标头注入。"
+          }
+        }
+      }
+    },
+    "The stdio provider is missing a command." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "The stdio provider is missing a command."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "The stdio provider is missing a command."
           }
         }
       }
@@ -52131,20 +52597,7 @@
       }
     },
     "Tools" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Tools"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "工具"
-          }
-        }
-      }
+      "shouldTranslate" : false
     },
     "Tools (%lld)" : {
       "localizations" : {
@@ -52764,6 +53217,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "TurboQuant 值位数 (2–8)"
+          }
+        }
+      }
+    },
+    "Turn on capture access for this plugin in settings." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Turn on capture access for this plugin in settings."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Turn on capture access for this plugin in settings."
           }
         }
       }
@@ -53755,6 +54224,22 @@
         }
       }
     },
+    "Use a full executable path such as /opt/homebrew/bin/npx." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Use a full executable path such as /opt/homebrew/bin/npx."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Use a full executable path such as /opt/homebrew/bin/npx."
+          }
+        }
+      }
+    },
     "Use a full path such as /opt/homebrew/bin/npx or switch execution host." : {
       "localizations" : {
         "de" : {
@@ -53875,6 +54360,38 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "使用来自您 LM Studio 库的 safetensors 模型。"
+          }
+        }
+      }
+    },
+    "Use Test to launch initialize/listTools and record a health snapshot." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Use Test to launch initialize/listTools and record a health snapshot."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Use Test to launch initialize/listTools and record a health snapshot."
+          }
+        }
+      }
+    },
+    "Use Test to run HTTP/SSE initialize/listTools and record a health snapshot." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Use Test to run HTTP/SSE initialize/listTools and record a health snapshot."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Use Test to run HTTP/SSE initialize/listTools and record a health snapshot."
           }
         }
       }
@@ -54381,6 +54898,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "服务器端请求日志的详细程度。"
+          }
+        }
+      }
+    },
+    "Verify the process speaks MCP JSON-RPC on stdin/stdout." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Verify the process speaks MCP JSON-RPC on stdin/stdout."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Verify the process speaks MCP JSON-RPC on stdin/stdout."
           }
         }
       }
@@ -56792,550 +57325,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "你的签名（预览）"
-          }
-        }
-      }
-    },
-    "%lld tool(s) discovered via %@." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "%lld tool(s) discovered via %@."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "%lld tool(s) discovered via %@."
-          }
-        }
-      }
-    },
-    "Background capture is not allowed." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Background capture is not allowed."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Background capture is not allowed."
-          }
-        }
-      }
-    },
-    "Capture access is allowed for this interactive request." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Capture access is allowed for this interactive request."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Capture access is allowed for this interactive request."
-          }
-        }
-      }
-    },
-    "Capture access is off until explicitly enabled." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Capture access is off until explicitly enabled."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Capture access is off until explicitly enabled."
-          }
-        }
-      }
-    },
-    "Capture requests must be initiated from an interactive user action." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Capture requests must be initiated from an interactive user action."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Capture requests must be initiated from an interactive user action."
-          }
-        }
-      }
-    },
-    "Check the command, working directory, and environment." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Check the command, working directory, and environment."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Check the command, working directory, and environment."
-          }
-        }
-      }
-    },
-    "Copy the probe result and check the provider logs." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Copy the probe result and check the provider logs."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Copy the probe result and check the provider logs."
-          }
-        }
-      }
-    },
-    "Denied" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Denied"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Denied"
-          }
-        }
-      }
-    },
-    "Edit the URL and include the scheme, host, and path." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Edit the URL and include the scheme, host, and path."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Edit the URL and include the scheme, host, and path."
-          }
-        }
-      }
-    },
-    "Edit the endpoint URL and test again." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Edit the endpoint URL and test again."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Edit the endpoint URL and test again."
-          }
-        }
-      }
-    },
-    "Enable the plugin before granting capture access." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Enable the plugin before granting capture access."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Enable the plugin before granting capture access."
-          }
-        }
-      }
-    },
-    "Enter a command before testing." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Enter a command before testing."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Enter a command before testing."
-          }
-        }
-      }
-    },
-    "Enter an executable path or command before testing." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Enter an executable path or command before testing."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Enter an executable path or command before testing."
-          }
-        }
-      }
-    },
-    "Grant capture permission after reviewing the plugin." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Grant capture permission after reviewing the plugin."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Grant capture permission after reviewing the plugin."
-          }
-        }
-      }
-    },
-    "HTTP MCP probe" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "HTTP MCP probe"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "HTTP MCP probe"
-          }
-        }
-      }
-    },
-    "Increase discovery timeout or check that the MCP server responds to listTools." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Increase discovery timeout or check that the MCP server responds to listTools."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Increase discovery timeout or check that the MCP server responds to listTools."
-          }
-        }
-      }
-    },
-    "Increase discovery timeout or verify the server is reachable." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Increase discovery timeout or verify the server is reachable."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Increase discovery timeout or verify the server is reachable."
-          }
-        }
-      }
-    },
-    "Install a trusted plugin before enabling capture access." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Install a trusted plugin before enabling capture access."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Install a trusted plugin before enabling capture access."
-          }
-        }
-      }
-    },
-    "No installed plugin owns this capture capability." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "No installed plugin owns this capture capability."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "No installed plugin owns this capture capability."
-          }
-        }
-      }
-    },
-    "Not run" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Not run"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Not run"
-          }
-        }
-      }
-    },
-    "Only documented capture capabilities can be requested by plugins." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Only documented capture capabilities can be requested by plugins."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Only documented capture capabilities can be requested by plugins."
-          }
-        }
-      }
-    },
-    "Probe completed initialize/listTools and found %lld tool(s)." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Probe completed initialize/listTools and found %lld tool(s)."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Probe completed initialize/listTools and found %lld tool(s)."
-          }
-        }
-      }
-    },
-    "Sign in or save a token, then test again." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Sign in or save a token, then test again."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Sign in or save a token, then test again."
-          }
-        }
-      }
-    },
-    "Switch to Host for trusted tools or start the sandbox runtime." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Switch to Host for trusted tools or start the sandbox runtime."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Switch to Host for trusted tools or start the sandbox runtime."
-          }
-        }
-      }
-    },
-    "The MCP endpoint URL could not be parsed." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "The MCP endpoint URL could not be parsed."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "The MCP endpoint URL could not be parsed."
-          }
-        }
-      }
-    },
-    "The owning plugin is disabled." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "The owning plugin is disabled."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "The owning plugin is disabled."
-          }
-        }
-      }
-    },
-    "The plugin does not have capture permission." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "The plugin does not have capture permission."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "The plugin does not have capture permission."
-          }
-        }
-      }
-    },
-    "The requested capture capability is not recognized." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "The requested capture capability is not recognized."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "The requested capture capability is not recognized."
-          }
-        }
-      }
-    },
-    "The stdio provider is missing a command." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "The stdio provider is missing a command."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "The stdio provider is missing a command."
-          }
-        }
-      }
-    },
-    "Turn on capture access for this plugin in settings." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Turn on capture access for this plugin in settings."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Turn on capture access for this plugin in settings."
-          }
-        }
-      }
-    },
-    "Use Test to launch initialize/listTools and record a health snapshot." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Use Test to launch initialize/listTools and record a health snapshot."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Use Test to launch initialize/listTools and record a health snapshot."
-          }
-        }
-      }
-    },
-    "Use Test to run HTTP/SSE initialize/listTools and record a health snapshot." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Use Test to run HTTP/SSE initialize/listTools and record a health snapshot."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Use Test to run HTTP/SSE initialize/listTools and record a health snapshot."
-          }
-        }
-      }
-    },
-    "Use a full executable path such as /opt/homebrew/bin/npx." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Use a full executable path such as /opt/homebrew/bin/npx."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Use a full executable path such as /opt/homebrew/bin/npx."
-          }
-        }
-      }
-    },
-    "Verify the process speaks MCP JSON-RPC on stdin/stdout." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Verify the process speaks MCP JSON-RPC on stdin/stdout."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Verify the process speaks MCP JSON-RPC on stdin/stdout."
           }
         }
       }

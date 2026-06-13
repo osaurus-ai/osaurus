@@ -390,7 +390,11 @@ struct MLXModel: Identifiable, Codable {
     // MARK: - Memory Estimation & Hardware Compatibility
 
     private static let bytesPerGB: Double = 1024 * 1024 * 1024
-    private static let overheadMultiplier: Double = 1.2
+    /// Runtime headroom over raw weight size — covers KV cache, activations,
+    /// and Metal/runtime buffers. Bumped from 1.2 → 1.25 so the onboarding
+    /// default leaves more slack and stops landing users on a model that
+    /// "fits" the estimate but chokes once a long-context KV cache grows.
+    private static let overheadMultiplier: Double = 1.25
 
     /// Numeric parameter count in billions (e.g. "7B" -> 7.0, "270M" -> 0.27)
     var parameterCountBillions: Double? {
@@ -403,6 +407,13 @@ struct MLXModel: Identifiable, Codable {
     /// Bytes per parameter based on the quantization extracted from the model name.
     private var bytesPerParameter: Double {
         guard let quant = quantization?.lowercased() else { return 0.5 }
+
+        // MXFP / FP8 precision formats encode the bit-width in the suffix and
+        // don't carry an "N-bit" substring. MXFP8 is an 8-bit-class format
+        // (~1.0 byte/param); the old `8-bit` substring check missed `mxfp8`
+        // and under-estimated every MXFP8 model at ~half its real footprint.
+        if quant.contains("mxfp8") || quant.contains("fp8") { return 1.0 }
+        if quant.contains("mxfp4") { return 0.5 }
 
         let bitWidths: [(String, Double)] = [
             ("2-bit", 0.25), ("3-bit", 0.375), ("4-bit", 0.5),
@@ -421,14 +432,60 @@ struct MLXModel: Identifiable, Codable {
 
     /// Estimated memory required to run this model (in GB), including overhead
     /// for KV cache, activations, and runtime buffers.
+    ///
+    /// Prefers the **measured** on-disk size (folded in from `ModelSizeCache`
+    /// via `withDownloadSize`) when known — weights dominate the footprint, so
+    /// the real byte count plus the headroom multiplier is more honest than
+    /// the `params × bytesPerParameter` constant heuristic. The heuristic is
+    /// only the fallback for entries we haven't sized yet.
     var estimatedMemoryGB: Double? {
+        if let dlBytes = downloadSizeBytes, dlBytes > 0 {
+            return Double(dlBytes) * Self.overheadMultiplier / Self.bytesPerGB
+        }
         if let params = parameterCountBillions {
             return params * bytesPerParameter * 1e9 * Self.overheadMultiplier / Self.bytesPerGB
         }
-        if let dlBytes = downloadSizeBytes {
-            return Double(dlBytes) * Self.overheadMultiplier / Self.bytesPerGB
-        }
         return nil
+    }
+
+    // MARK: - Onboarding auto-default classification
+    //
+    // The onboarding default (`ConfigureAIState.recommendedLocalPick`) draws
+    // only from the dense Gemma 4 QAT line, with the E-series 8-bit builds as
+    // a gated small-tier fallback. These flags name those sets so the policy
+    // lives next to the metadata it reads, not buried in the view.
+
+    /// True when the id is a Gemma 4 E-series edge build (`E2B`/`E4B`/...).
+    private var isGemma4ESeries: Bool {
+        id.range(of: #"gemma-4-e\d"#, options: [.regularExpression, .caseInsensitive]) != nil
+    }
+
+    /// True when the id carries an MoE active-param token (e.g. `-A4B`),
+    /// marking a mixture-of-experts build rather than a dense one.
+    private var hasMoEActiveParamToken: Bool {
+        id.range(of: #"-a\d+(\.\d+)?b"#, options: [.regularExpression, .caseInsensitive]) != nil
+    }
+
+    /// True for the **dense** Gemma 4 QAT builds (12B/31B `qat-MXFP4`) that
+    /// form the onboarding auto-default spine. Excludes the E-series (gated on
+    /// the 8-bit-vs-QAT-4bit retention A/B) and the 26B-A4B QAT MoE (its
+    /// footprint is the 36%-bounce risk) — both stay selectable Top Picks but
+    /// are never auto-selected.
+    var isDenseGemmaQATAutoDefault: Bool {
+        let lower = id.lowercased()
+        guard lower.contains("gemma-4"), lower.contains("qat") else { return false }
+        if isGemma4ESeries { return false }
+        if hasMoEActiveParamToken { return false }
+        return true
+    }
+
+    /// True for the Gemma 4 E-series 8-bit retention builds
+    /// (`gemma-4-E2B/E4B-it-8bit`) — the gated small-tier auto-default until
+    /// the QAT-4bit-vs-8bit bounce A/B clears.
+    var isGemmaESeries8bitAutoDefault: Bool {
+        guard isGemma4ESeries else { return false }
+        let lower = id.lowercased()
+        return lower.contains("8bit") || lower.contains("8-bit")
     }
 
     /// Formatted estimated memory string (e.g. "~3.5 GB")
