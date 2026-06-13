@@ -333,7 +333,7 @@ public actor RemoteProviderService: ToolCapableService {
 
         try await refreshCodexOAuthIfNeeded()
         try await refreshXAIOAuthIfNeeded()
-        let (data, response) = try await session.data(for: try buildURLRequest(for: request))
+        let (data, response) = try await session.data(for: try await buildURLRequest(for: request))
         WireTransportProbe.current?.replaceResponseBody(data)
 
         guard let httpResponse = response as? HTTPURLResponse else {
@@ -377,7 +377,7 @@ public actor RemoteProviderService: ToolCapableService {
 
         // Gemini image models don't support streamGenerateContent; fall back to generateContent.
         if provider.providerType == .gemini && Self.isImageCapableModel(modelName) {
-            let inner = try geminiImageGenerateContent(
+            let inner = try await geminiImageGenerateContent(
                 messages: scrubbedMessages,
                 parameters: parameters,
                 model: modelName,
@@ -444,7 +444,7 @@ public actor RemoteProviderService: ToolCapableService {
 
         try await refreshCodexOAuthIfNeeded()
         try await refreshXAIOAuthIfNeeded()
-        let (data, response) = try await session.data(for: try buildURLRequest(for: request))
+        let (data, response) = try await session.data(for: try await buildURLRequest(for: request))
         WireTransportProbe.current?.replaceResponseBody(data)
 
         guard let httpResponse = response as? HTTPURLResponse else {
@@ -512,7 +512,7 @@ public actor RemoteProviderService: ToolCapableService {
 
         // Gemini image models don't support streamGenerateContent; fall back to generateContent.
         if provider.providerType == .gemini && Self.isImageCapableModel(modelName) {
-            let inner = try geminiImageGenerateContent(
+            let inner = try await geminiImageGenerateContent(
                 messages: scrubbedMessages,
                 parameters: parameters,
                 model: modelName,
@@ -928,6 +928,15 @@ public actor RemoteProviderService: ToolCapableService {
 
         guard let jsonData = dataContent.data(using: .utf8) else { return false }
 
+        if providerType == .osaurusRouter,
+            let summary = try? JSONDecoder().decode(OsaurusRouterSummaryEvent.self, from: jsonData)
+        {
+            Task { @MainActor in
+                OsaurusRouterAccountService.shared.noteRouterSummary(summary.osaurus)
+            }
+            return false
+        }
+
         let outcome = handleStreamEvent(
             jsonData: jsonData,
             providerType: providerType,
@@ -972,6 +981,8 @@ public actor RemoteProviderService: ToolCapableService {
                 return try handleAnthropicEvent(jsonData, state: &state, yield: yield)
             case .openResponses, .openAICodex:
                 return try handleOpenResponsesEvent(jsonData, state: &state, yield: yield)
+            case .osaurusRouter:
+                return try handleLenientOpenAIEvent(jsonData, state: &state, yield: yield)
             case .openaiLegacy, .azureOpenAI, .osaurus:
                 return try handleOpenAIEvent(jsonData, state: &state, yield: yield)
             }
@@ -1328,10 +1339,39 @@ public actor RemoteProviderService: ToolCapableService {
         yield: (String) -> Void
     ) throws -> StreamEventOutcome {
         let chunk = try JSONDecoder().decode(ChatCompletionChunk.self, from: jsonData)
+        let choice = chunk.choices.first
+        return processOpenAIChoice(
+            delta: choice?.delta,
+            finishReason: choice?.finish_reason,
+            state: &state,
+            yield: yield
+        )
+    }
 
+    static func handleLenientOpenAIEvent(
+        _ jsonData: Data,
+        state: inout StreamingState,
+        yield: (String) -> Void
+    ) throws -> StreamEventOutcome {
+        let chunk = try JSONDecoder().decode(LenientChatCompletionChunk.self, from: jsonData)
+        let choice = chunk.choices?.first
+        return processOpenAIChoice(
+            delta: choice?.delta,
+            finishReason: choice?.finish_reason,
+            state: &state,
+            yield: yield
+        )
+    }
+
+    private static func processOpenAIChoice(
+        delta: DeltaContent?,
+        finishReason: String?,
+        state: inout StreamingState,
+        yield: (String) -> Void
+    ) -> StreamEventOutcome {
         // Tool calls FIRST so we can suppress text yields once we know the
         // delta is structurally a function call.
-        if let toolCalls = chunk.choices.first?.delta.tool_calls {
+        if let toolCalls = delta?.tool_calls {
             for toolCall in toolCalls {
                 let idx = resolveToolCallSlot(
                     explicitIndex: toolCall.index,
@@ -1365,7 +1405,7 @@ public actor RemoteProviderService: ToolCapableService {
         // SSE layer routes it onto `reasoning_content` and ChatView places
         // it in the Think panel — without ever emitting `<think>` literals.
         if state.accumulatedToolCalls.isEmpty,
-            let reasoning = chunk.choices.first?.delta.reasoning_content,
+            let reasoning = delta?.reasoning_content,
             !reasoning.isEmpty
         {
             yield(StreamingReasoningHint.encode(reasoning))
@@ -1374,12 +1414,13 @@ public actor RemoteProviderService: ToolCapableService {
         // Only yield content if no tool calls have been detected, to avoid
         // function-call JSON leaking into the chat UI.
         if state.accumulatedToolCalls.isEmpty,
-            let delta = chunk.choices.first?.delta.content, !delta.isEmpty
+            let content = delta?.content,
+            !content.isEmpty
         {
             if var splitter = state.thinkSplitter {
                 // MiniMax-style inline `<think>`: route reasoning to the Think
                 // panel and only the visible remainder to the content rail.
-                let segments = splitter.process(delta)
+                let segments = splitter.process(content)
                 state.thinkSplitter = splitter
                 for segment in segments {
                     switch segment {
@@ -1397,15 +1438,14 @@ public actor RemoteProviderService: ToolCapableService {
                     }
                 }
             } else {
-                let (truncated, hitStop) = applyStopSequences(delta, stopSequences: state.stopSequences)
+                let (truncated, hitStop) = applyStopSequences(content, stopSequences: state.stopSequences)
                 state.recordYield(truncated)
                 yield(truncated)
                 if hitStop { return .finishNormal }
             }
         }
 
-        // Emit on finish_reason — applies whether or not there's a tool call.
-        if let finishReason = chunk.choices.first?.finish_reason, !finishReason.isEmpty {
+        if let finishReason, !finishReason.isEmpty {
             state.lastFinishReason = finishReason
             switch resolveAccumulatedToolCall(
                 from: state.accumulatedToolCalls,
@@ -1502,7 +1542,7 @@ public actor RemoteProviderService: ToolCapableService {
 
         try await refreshCodexOAuthIfNeeded()
         try await refreshXAIOAuthIfNeeded()
-        let urlRequest = try buildURLRequest(for: request)
+        let urlRequest = try await buildURLRequest(for: request)
         let currentSession = self.session
         let providerType = Self.effectiveRequestProviderType(
             configuredProviderType: self.provider.providerType,
@@ -2102,7 +2142,7 @@ public actor RemoteProviderService: ToolCapableService {
         stopSequences: [String],
         tools: [Tool]?,
         toolChoice: ToolChoiceOption?
-    ) throws -> AsyncThrowingStream<String, Error> {
+    ) async throws -> AsyncThrowingStream<String, Error> {
         var request = buildChatRequest(
             messages: messages,
             parameters: parameters,
@@ -2116,7 +2156,7 @@ public actor RemoteProviderService: ToolCapableService {
             request.stop = stopSequences
         }
 
-        let urlRequest = try buildURLRequest(for: request)
+        let urlRequest = try await buildURLRequest(for: request)
         let currentSession = self.session
 
         let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
@@ -2197,7 +2237,7 @@ public actor RemoteProviderService: ToolCapableService {
     }
 
     /// Build a URLRequest for the chat completions endpoint
-    private func buildURLRequest(for request: RemoteChatRequest) throws -> URLRequest {
+    private func buildURLRequest(for request: RemoteChatRequest) async throws -> URLRequest {
         let url: URL
         let requestProviderType = Self.effectiveRequestProviderType(
             configuredProviderType: provider.providerType,
@@ -2290,7 +2330,9 @@ public actor RemoteProviderService: ToolCapableService {
         }
 
         let headers: [String: String]
-        if provider.authType == .openAICodexOAuth {
+        if provider.providerType == .osaurusRouter {
+            headers = [:]
+        } else if provider.authType == .openAICodexOAuth {
             headers = try codexOAuthHeaders()
         } else if provider.authType == .xaiOAuth {
             // Merge the refreshed Bearer over the cached headers so any
@@ -2324,7 +2366,7 @@ public actor RemoteProviderService: ToolCapableService {
         case .gemini:
             let geminiRequest = request.toGeminiRequest()
             bodyData = try encoder.encode(geminiRequest)
-        case .openaiLegacy, .azureOpenAI, .osaurus:
+        case .openaiLegacy, .azureOpenAI, .osaurus, .osaurusRouter:
             // OpenAI-compat wire. RemoteReasoningPolicy decides how prior-turn
             // reasoning is re-sent: strip (default), keep `reasoning_content`
             // (DeepSeek), or fold it back into `<think>` content (MiniMax).
@@ -2337,6 +2379,9 @@ public actor RemoteProviderService: ToolCapableService {
             bodyData = try encoder.encode(outbound)
         }
         urlRequest.httpBody = bodyData
+        if provider.providerType == .osaurusRouter {
+            try await OsaurusRouterAuthSigner().sign(request: &urlRequest, body: bodyData)
+        }
         // Wire-verification capture: record the post-scrub bytes
         // BEFORE we hand them to URLSession. Idempotent inside the
         // probe (only the first write wins) so request retries
@@ -2461,7 +2506,7 @@ public actor RemoteProviderService: ToolCapableService {
 
             return (textContent.isEmpty ? nil : textContent, toolCalls.isEmpty ? nil : toolCalls)
 
-        case .osaurus:
+        case .osaurus, .osaurusRouter:
             // Native Osaurus agent returns OpenAI-compatible responses
             let response = try JSONDecoder().decode(ChatCompletionResponse.self, from: data)
             let content = response.choices.first?.message.content
@@ -2587,6 +2632,22 @@ struct AnthropicStreamErrorEvent: Decodable {
     struct ErrorDetail: Decodable {
         let type: String
         let message: String
+    }
+}
+
+/// Router/OpenAI-compatible providers do not always echo the full OpenAI
+/// metadata envelope on each SSE frame. The router integration contract only
+/// requires `choices[].delta`, so keep this decode shape permissive while the
+/// stricter `ChatCompletionChunk` remains in use for providers whose schema we
+/// control or have already pinned.
+private struct LenientChatCompletionChunk: Decodable {
+    let choices: [Choice]?
+    let usage: Usage?
+
+    struct Choice: Decodable {
+        let index: Int?
+        let delta: DeltaContent?
+        let finish_reason: String?
     }
 }
 
@@ -3453,6 +3514,10 @@ extension RemoteProviderService {
             return try await fetchOsaurusModels(from: provider)
         }
 
+        if provider.providerType == .osaurusRouter {
+            return try await fetchOsaurusRouterModels(from: provider)
+        }
+
         // OpenAI-compatible providers use /models endpoint
         guard let url = provider.url(for: "/models") else {
             throw RemoteProviderServiceError.invalidURL
@@ -3556,9 +3621,37 @@ extension RemoteProviderService {
         switch providerType {
         case .openaiLegacy, .openResponses, .azureOpenAI:
             return true
-        case .anthropic, .openAICodex, .gemini, .osaurus:
+        case .anthropic, .openAICodex, .gemini, .osaurus, .osaurusRouter:
             return false
         }
+    }
+
+    private static func fetchOsaurusRouterModels(from provider: RemoteProvider) async throws -> [String] {
+        guard let url = provider.url(for: "/models") else {
+            throw RemoteProviderServiceError.invalidURL
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.timeoutInterval = modelDiscoveryTimeout(provider.timeout)
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        try await OsaurusRouterAuthSigner().sign(request: &request, body: Data())
+
+        let (data, response) = try await GlobalProxySettings.sharedSession().data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw RemoteProviderServiceError.invalidResponse
+        }
+        if httpResponse.statusCode >= 400 {
+            throw RemoteProviderServiceError.requestFailed(
+                extractErrorMessage(from: data, statusCode: httpResponse.statusCode)
+            )
+        }
+
+        return try decodeOsaurusRouterModelsResponse(data: data)
+    }
+
+    static func decodeOsaurusRouterModelsResponse(data: Data) throws -> [String] {
+        let decoded = try JSONDecoder().decode(OsaurusRouterModelListResponse.self, from: data)
+        return decoded.data.map(\.id)
     }
 
     /// Fetch models for a native Osaurus agent.

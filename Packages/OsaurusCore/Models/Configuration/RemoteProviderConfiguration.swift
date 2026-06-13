@@ -108,6 +108,7 @@ public enum RemoteProviderType: String, Codable, Sendable, CaseIterable {
     case openAICodex = "openAICodex"  // ChatGPT/Codex OAuth backend
     case gemini = "gemini"  // Google Gemini API
     case osaurus = "osaurus"  // Native Osaurus agent — full server-side execution via /agents/{id}/run
+    case osaurusRouter = "osaurusRouter"  // Hosted Osaurus Router — identity-signed billed inference
 
     public var displayName: String {
         switch self {
@@ -118,6 +119,7 @@ public enum RemoteProviderType: String, Codable, Sendable, CaseIterable {
         case .openAICodex: return L("OpenAI Codex")
         case .gemini: return L("Google Gemini")
         case .osaurus: return L("Osaurus Agent")
+        case .osaurusRouter: return L("Osaurus")
         }
     }
 
@@ -129,6 +131,7 @@ public enum RemoteProviderType: String, Codable, Sendable, CaseIterable {
         case .openAICodex: return "/codex/responses"
         case .gemini: return "/models"  // Actual URL is built dynamically: /models/{model}:generateContent
         case .osaurus: return "/run"  // Unused — full URL built by RemoteProviderService.buildURLRequest
+        case .osaurusRouter: return "/v1/chat/completions"
         }
     }
 
@@ -353,7 +356,7 @@ public struct RemoteProvider: Codable, Identifiable, Sendable, Equatable {
                 if headers["api-key"] == nil {
                     headers["api-key"] = apiKey
                 }
-            case .openaiLegacy, .openResponses, .openAICodex, .osaurus:
+            case .openaiLegacy, .openResponses, .openAICodex, .osaurus, .osaurusRouter:
                 if headers["Authorization"] == nil {
                     headers["Authorization"] = "Bearer \(apiKey)"
                 }

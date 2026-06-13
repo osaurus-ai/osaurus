@@ -38,7 +38,7 @@ struct RemoteProvidersView: View {
             // Content
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    if manager.configuration.providers.isEmpty {
+                    if userConfiguredProviders.isEmpty {
                         emptyStateView
                     } else {
                         providerListView
@@ -82,7 +82,7 @@ struct RemoteProvidersView: View {
             title: L("Providers"),
             subtitle: subtitleText
         ) {
-            if manager.configuration.providers.count > 1 {
+            if userConfiguredProviders.count > 1 {
                 HeaderIconButton("list.bullet.indent", help: "Reorder providers") {
                     showReorderSheet = true
                 }
@@ -94,8 +94,13 @@ struct RemoteProvidersView: View {
     }
 
     private var subtitleText: String {
-        let connectedCount = manager.providerStates.values.filter { $0.isConnected }.count
-        let totalCount = manager.configuration.providers.count
+        let userProviders = userConfiguredProviders
+        let userProviderIds = Set(userProviders.map(\.id))
+        let connectedCount = manager.providerStates
+            .filter { userProviderIds.contains($0.key) }
+            .values
+            .filter { $0.isConnected }.count
+        let totalCount = userProviders.count
 
         if totalCount == 0 {
             return L("Connect to remote API providers")
@@ -111,6 +116,10 @@ struct RemoteProvidersView: View {
 
     private func presentAddSheet(for preset: ProviderPreset) {
         addSheetConfig = AddSheetConfig(preset: preset)
+    }
+
+    private var userConfiguredProviders: [RemoteProvider] {
+        manager.configuration.providers.filter { $0.providerType != .osaurusRouter }
     }
 
     private func presentAPIKeyPicker() {
@@ -178,7 +187,7 @@ struct RemoteProvidersView: View {
 
     private var providerListView: some View {
         VStack(spacing: 12) {
-            ForEach(manager.configuration.providers) { provider in
+            ForEach(userConfiguredProviders) { provider in
                 ProviderCardView(
                     provider: provider,
                     state: manager.providerStates[provider.id],

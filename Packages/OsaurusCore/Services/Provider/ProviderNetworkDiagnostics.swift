@@ -344,6 +344,14 @@ public enum ProviderNetworkDiagnostics {
                 severity: .info,
                 detail: L("Tries the remote /models endpoint, then falls back to the agent default model.")
             )
+        case .osaurusRouter:
+            return ProviderDiagnosticRow(
+                id: "models",
+                title: L("Model discovery"),
+                value: L("Osaurus Router"),
+                severity: .info,
+                detail: L("Fetches the signed router /models endpoint and hides stale prices.")
+            )
         }
     }
 

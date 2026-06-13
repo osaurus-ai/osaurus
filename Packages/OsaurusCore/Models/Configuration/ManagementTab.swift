@@ -10,6 +10,7 @@ import SwiftUI
 
 /// Defines all available tabs in the management sidebar.
 public enum ManagementTab: String, CaseIterable, Identifiable {
+    case dashboard
     case models
     case providers
     case agents
@@ -35,6 +36,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable {
 
     public var icon: String {
         switch self {
+        case .dashboard: "creditcard.fill"
         case .models: "cube.box.fill"
         case .providers: "cloud.fill"
         case .agents: "person.2.fill"
@@ -60,6 +62,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable {
 
     public var label: String {
         switch self {
+        case .dashboard: L("Dashboard")
         case .models: L("Models")
         case .providers: L("Providers")
         case .agents: L("Agents")

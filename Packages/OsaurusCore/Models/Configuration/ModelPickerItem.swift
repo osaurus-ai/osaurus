@@ -338,7 +338,11 @@ extension Array where Element == ModelPickerItem {
             )
         }
 
-        for entry in remoteOrder {
+        let osaurusTabs = remoteOrder.filter { $0.title == "Osaurus" }
+        let otherRemoteTabs = remoteOrder.filter { $0.title != "Osaurus" }
+        let orderedRemoteTabs = osaurusTabs + otherRemoteTabs
+
+        for entry in orderedRemoteTabs {
             guard let models = remoteModels[entry.key], !models.isEmpty else { continue }
             tabs.append(
                 ModelPickerTab(

@@ -69,6 +69,21 @@ struct ModelPickerTabTests {
         #expect(tabs[2].key == "remote-\(openAIId.uuidString)")
     }
 
+    @Test func providerTabs_pinOsaurusAfterLocal_preservingOtherProviderOrder() {
+        let openAIId = UUID()
+        let osaurusId = RemoteProviderManager.osaurusRouterProviderId
+        let anthropicId = UUID()
+        let items: [ModelPickerItem] = [
+            .fromRemoteModel(modelId: "openai/gpt-4o", providerName: "OpenAI", providerId: openAIId),
+            .fromRemoteModel(modelId: "anthropic/claude-opus-4", providerName: "Anthropic", providerId: anthropicId),
+            .foundation(),
+            .fromRemoteModel(modelId: "osaurus/llama-3.3", providerName: "Osaurus", providerId: osaurusId),
+        ]
+
+        let tabs = items.groupedByTab()
+        #expect(tabs.map(\.title) == ["Local", "Osaurus", "OpenAI", "Anthropic"])
+    }
+
     @Test func providerTab_modelsSortedByDisplayName() {
         let providerId = UUID()
         let items: [ModelPickerItem] = [

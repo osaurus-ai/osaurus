@@ -15,11 +15,7 @@ struct ModelPickerView: View {
     let onDismiss: () -> Void
 
     @State private var searchText = ""
-    @State private var searchDebounceTask: Task<Void, Never>?
     @State private var selectedTabKey: String?
-    @State private var cachedTabs: [ModelPickerTab] = []
-    @State private var cachedTabRows: [String: [ModelPickerRow]] = [:]
-    @State private var cachedFlattenedRows: [ModelPickerRow] = []
     @Environment(\.theme) private var theme
 
     // MARK: - Test Mode
@@ -43,57 +39,62 @@ struct ModelPickerView: View {
         !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    /// Rebuild tabs from options and keep the active tab valid. Called on
-    /// appear and whenever the options array changes.
-    private func rebuildTabs() {
-        cachedTabs = displayOptions.groupedByTab()
-        cachedTabRows = [:]
-
-        if let key = selectedTabKey, cachedTabs.contains(where: { $0.key == key }) {
-            return
-        }
-        selectedTabKey = tabKey(containing: selectedModel) ?? cachedTabs.first?.key
+    private var currentTabs: [ModelPickerTab] {
+        displayOptions.groupedByTab()
     }
 
-    private func tabKey(containing modelId: String?) -> String? {
+    private func tabKey(containing modelId: String?, in tabs: [ModelPickerTab]) -> String? {
         guard let modelId else { return nil }
-        return cachedTabs.first(where: { tab in tab.models.contains(where: { $0.id == modelId }) })?.key
+        return tabs.first(where: { tab in tab.models.contains(where: { $0.id == modelId }) })?.key
     }
 
-    /// Rows for a tab, built lazily on first visit and reused until the
-    /// options array changes.
-    private func rowsForTab(_ tab: ModelPickerTab) -> [ModelPickerRow] {
-        if let cached = cachedTabRows[tab.key] { return cached }
+    private func effectiveSelectedTabKey(in tabs: [ModelPickerTab]) -> String? {
+        if let key = selectedTabKey, tabs.contains(where: { $0.key == key }) {
+            return key
+        }
+        return tabKey(containing: selectedModel, in: tabs) ?? tabs.first?.key
+    }
 
+    private func ensureSelectedTabValid() {
+        let tabs = currentTabs
+        let nextKey = effectiveSelectedTabKey(in: tabs)
+        if selectedTabKey != nextKey { selectedTabKey = nextKey }
+    }
+
+    private func row(for model: ModelPickerItem, providerLabel: String? = nil) -> ModelPickerRow {
+        ModelPickerRow(
+            modelId: model.id,
+            sourceKey: model.source.uniqueKey,
+            displayName: model.displayName,
+            description: model.description,
+            parameterCount: model.parameterCount,
+            quantization: model.quantization,
+            isVLM: model.isVLM,
+            providerLabel: providerLabel
+        )
+    }
+
+    private func makeRows(for tab: ModelPickerTab, providerLabel: String? = nil) -> [ModelPickerRow] {
         var rows: [ModelPickerRow] = []
         rows.reserveCapacity(tab.models.count)
         for model in tab.models {
-            rows.append(
-                ModelPickerRow(
-                    modelId: model.id,
-                    sourceKey: model.source.uniqueKey,
-                    displayName: model.displayName,
-                    description: model.description,
-                    parameterCount: model.parameterCount,
-                    quantization: model.quantization,
-                    isVLM: model.isVLM
-                )
-            )
+            rows.append(row(for: model, providerLabel: providerLabel))
         }
-        cachedTabRows[tab.key] = rows
         return rows
     }
 
-    private func recomputeRows() {
+    private func visibleRows(in tabs: [ModelPickerTab]) -> [ModelPickerRow] {
         guard isSearching else {
-            if let key = selectedTabKey, let tab = cachedTabs.first(where: { $0.key == key }) {
-                cachedFlattenedRows = rowsForTab(tab)
-            } else {
-                cachedFlattenedRows = []
-            }
-            return
+            guard let key = effectiveSelectedTabKey(in: tabs),
+                let tab = tabs.first(where: { $0.key == key })
+            else { return [] }
+            return makeRows(for: tab)
         }
 
+        return searchRows(in: tabs)
+    }
+
+    private func searchRows(in tabs: [ModelPickerTab]) -> [ModelPickerRow] {
         // Unified search: one pass across every tab's models with the query
         // prepared once. Each row carries its provider title so identical
         // model IDs offered by different providers stay distinguishable.
@@ -101,35 +102,26 @@ struct ModelPickerView: View {
         var rows: [ModelPickerRow] = []
         rows.reserveCapacity(64)
 
-        for tab in cachedTabs {
+        for tab in tabs {
             for model in tab.models {
                 guard
                     SearchService.matches(prepared, in: model.displayName)
                         || SearchService.matches(prepared, in: model.id)
                 else { continue }
-                rows.append(
-                    ModelPickerRow(
-                        modelId: model.id,
-                        sourceKey: model.source.uniqueKey,
-                        displayName: model.displayName,
-                        description: model.description,
-                        parameterCount: model.parameterCount,
-                        quantization: model.quantization,
-                        isVLM: model.isVLM,
-                        providerLabel: tab.title
-                    )
-                )
+                rows.append(row(for: model, providerLabel: tab.title))
             }
         }
-        cachedFlattenedRows = rows
+        return rows
     }
 
     private func switchTab(by offset: Int) {
-        guard !cachedTabs.isEmpty else { return }
-        let currentIndex = cachedTabs.firstIndex(where: { $0.key == selectedTabKey }) ?? 0
-        let newIndex = max(0, min(cachedTabs.count - 1, currentIndex + offset))
-        guard cachedTabs[newIndex].key != selectedTabKey else { return }
-        selectedTabKey = cachedTabs[newIndex].key
+        let tabs = currentTabs
+        guard !tabs.isEmpty else { return }
+        let activeKey = effectiveSelectedTabKey(in: tabs)
+        let currentIndex = tabs.firstIndex(where: { $0.key == activeKey }) ?? 0
+        let newIndex = max(0, min(tabs.count - 1, currentIndex + offset))
+        guard tabs[newIndex].key != activeKey else { return }
+        selectedTabKey = tabs[newIndex].key
     }
 
     // MARK: - Body
@@ -140,14 +132,16 @@ struct ModelPickerView: View {
     }
 
     var body: some View {
+        let tabs = currentTabs
+        let rows = visibleRows(in: tabs)
         VStack(spacing: 0) {
             header
             Divider().background(theme.primaryBorder.opacity(0.3))
             searchField
             Divider().background(theme.primaryBorder.opacity(0.3))
 
-            if !isSearching, cachedTabs.count > 1 {
-                tabBar
+            if !isSearching, tabs.count > 1 {
+                tabBar(tabs: tabs)
                 Divider().background(theme.primaryBorder.opacity(0.3))
             }
 
@@ -155,10 +149,10 @@ struct ModelPickerView: View {
                 deprecationBanner(replacement: replacement)
             }
 
-            if cachedFlattenedRows.isEmpty {
+            if rows.isEmpty {
                 emptyState
             } else {
-                modelList
+                modelList(rows: rows)
             }
         }
         .frame(width: 380, height: min(CGFloat(displayOptions.count * 48 + 160), 480))
@@ -166,13 +160,14 @@ struct ModelPickerView: View {
         .overlay(popoverBorder)
         .shadow(color: theme.shadowColor.opacity(0.15), radius: 12, x: 0, y: 6)
         .onAppear {
-            rebuildTabs()
-            recomputeRows()
+            ensureSelectedTabValid()
         }
         .task {
             // refresh remote model lists on open so newly-added/removed
             // models surface
             await RemoteProviderManager.shared.refreshConnectedProviders()
+            await ModelPickerItemCache.shared.buildModelPickerItems()
+            ensureSelectedTabValid()
 
             // Drop external models (HF cache, LM Studio) the user deleted on
             // disk while the app stayed running — the picker cache is built
@@ -183,27 +178,8 @@ struct ModelPickerView: View {
                 ExternalModelLocator.pruneMissing()
             }.value
         }
-        .onDisappear {
-            searchDebounceTask?.cancel()
-        }
-        .onChange(of: displayOptions.count) { _, _ in
-            rebuildTabs()
-            recomputeRows()
-        }
-        .onChange(of: searchText) { _, newValue in
-            searchDebounceTask?.cancel()
-            if newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                recomputeRows()
-            } else {
-                searchDebounceTask = Task { @MainActor in
-                    try? await Task.sleep(for: .milliseconds(150))
-                    guard !Task.isCancelled else { return }
-                    recomputeRows()
-                }
-            }
-        }
-        .onChange(of: selectedTabKey) { _, _ in
-            recomputeRows()
+        .onChange(of: options) { _, _ in
+            ensureSelectedTabValid()
         }
     }
 
@@ -311,12 +287,14 @@ struct ModelPickerView: View {
 
     // MARK: - Tab Bar
 
-    private var tabBar: some View {
+    @ViewBuilder
+    private func tabBar(tabs: [ModelPickerTab]) -> some View {
+        let activeKey = effectiveSelectedTabKey(in: tabs)
         ScrollViewReader { proxy in
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
-                    ForEach(cachedTabs) { tab in
-                        tabChip(for: tab)
+                    ForEach(tabs) { tab in
+                        tabChip(for: tab, activeKey: activeKey)
                             .id(tab.key)
                     }
                 }
@@ -324,7 +302,7 @@ struct ModelPickerView: View {
                 .padding(.vertical, 8)
             }
             .onAppear {
-                if let key = selectedTabKey {
+                if let key = activeKey {
                     proxy.scrollTo(key, anchor: .center)
                 }
             }
@@ -337,8 +315,8 @@ struct ModelPickerView: View {
         }
     }
 
-    private func tabChip(for tab: ModelPickerTab) -> some View {
-        let isActive = tab.key == selectedTabKey
+    private func tabChip(for tab: ModelPickerTab, activeKey: String?) -> some View {
+        let isActive = tab.key == activeKey
         return Button(action: { selectedTabKey = tab.key }) {
             HStack(spacing: 5) {
                 Text(tab.title)
@@ -431,9 +409,9 @@ struct ModelPickerView: View {
 
     // MARK: - Model List
 
-    private var modelList: some View {
+    private func modelList(rows: [ModelPickerRow]) -> some View {
         ModelPickerTableRepresentable(
-            rows: cachedFlattenedRows,
+            rows: rows,
             theme: theme,
             selectedModelId: selectedModel,
             onSelectModel: { modelId in

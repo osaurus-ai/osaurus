@@ -86,7 +86,7 @@ struct RemoteReasoningPolicy {
                 return (.separateField, .echoField)
             }
             return (.separateField, .strip)
-        case .anthropic, .openResponses, .openAICodex, .gemini, .osaurus:
+        case .anthropic, .openResponses, .openAICodex, .gemini, .osaurus, .osaurusRouter:
             return (.separateField, .strip)
         }
     }
@@ -159,7 +159,7 @@ struct RemoteReasoningPolicy {
         switch providerType {
         case .openaiLegacy:
             return !host.lowercased().contains("openai.com")
-        case .azureOpenAI, .anthropic, .openResponses, .openAICodex, .gemini, .osaurus:
+        case .azureOpenAI, .anthropic, .openResponses, .openAICodex, .gemini, .osaurus, .osaurusRouter:
             return false
         }
     }
@@ -197,7 +197,7 @@ struct RemoteReasoningPolicy {
                 return acceptedDeepSeekEfforts.contains(effort) ? effort : nil
             }
             return effort
-        case .anthropic, .openResponses, .openAICodex, .gemini, .osaurus:
+        case .anthropic, .openResponses, .openAICodex, .gemini, .osaurus, .osaurusRouter:
             return effort
         }
     }

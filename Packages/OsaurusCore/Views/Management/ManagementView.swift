@@ -153,6 +153,8 @@ private extension ManagementView {
     func contentView(for tabId: String) -> some View {
         let tab = ManagementTab(rawValue: tabId)
         switch tab {
+        case .dashboard:
+            DashboardView()
         case .models:
             ModelDownloadView(
                 deeplinkModelId: deeplinkModelId,

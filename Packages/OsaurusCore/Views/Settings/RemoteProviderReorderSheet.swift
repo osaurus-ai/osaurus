@@ -133,7 +133,7 @@ struct RemoteProviderReorderSheet: View {
 
     /// Preserve working order on external change so an in-progress drag stays stable.
     private func syncFromManager() {
-        let incoming = manager.configuration.providers
+        let incoming = manager.configuration.providers.filter { $0.providerType != .osaurusRouter }
         let existingIds = Set(orderedProviders.map(\.id))
         let incomingIds = Set(incoming.map(\.id))
         let kept = orderedProviders.filter { incomingIds.contains($0.id) }

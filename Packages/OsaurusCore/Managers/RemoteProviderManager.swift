@@ -44,6 +44,7 @@ public enum RemoteProviderError: LocalizedError {
 @MainActor
 public final class RemoteProviderManager: ObservableObject {
     public static let shared = RemoteProviderManager()
+    public static let osaurusRouterProviderId = UUID(uuidString: "2CFBD528-62FD-4EF0-A143-3FE532F03840")!
 
     /// Current configuration
     @Published public private(set) var configuration: RemoteProviderConfiguration
@@ -59,11 +60,56 @@ public final class RemoteProviderManager: ObservableObject {
 
     private init() {
         self.configuration = RemoteProviderConfigurationStore.load()
+        ensureManagedOsaurusRouterProviderIfNeeded()
 
         // Initialize states for all providers
         for provider in configuration.providers {
             providerStates[provider.id] = RemoteProviderState(providerId: provider.id)
         }
+    }
+
+    private static func isManagedOsaurusRouterProvider(_ provider: RemoteProvider) -> Bool {
+        provider.id == osaurusRouterProviderId || provider.providerType == .osaurusRouter
+    }
+
+    private static func makeManagedOsaurusRouterProvider() -> RemoteProvider {
+        RemoteProvider(
+            id: osaurusRouterProviderId,
+            name: "Osaurus",
+            host: OsaurusRouter.defaultBaseURL.host ?? "router.osaurus.ai",
+            providerProtocol: OsaurusRouter.defaultBaseURL.scheme == "http" ? .http : .https,
+            port: OsaurusRouter.defaultBaseURL.port,
+            basePath: "",
+            authType: .none,
+            providerType: .osaurusRouter,
+            enabled: true,
+            autoConnect: true,
+            timeout: 120
+        )
+    }
+
+    private func ensureManagedOsaurusRouterProviderIfNeeded() {
+        guard OsaurusIdentity.exists() else {
+            configuration.providers.removeAll(where: Self.isManagedOsaurusRouterProvider)
+            providerStates.removeValue(forKey: Self.osaurusRouterProviderId)
+            if let service = services.removeValue(forKey: Self.osaurusRouterProviderId) {
+                Task { await service.invalidateSession() }
+            }
+            return
+        }
+
+        let provider = Self.makeManagedOsaurusRouterProvider()
+        configuration.providers.removeAll(where: Self.isManagedOsaurusRouterProvider)
+        configuration.add(provider)
+        if providerStates[provider.id] == nil {
+            providerStates[provider.id] = RemoteProviderState(providerId: provider.id)
+        }
+    }
+
+    private func saveUserProviderConfiguration() {
+        var persisted = configuration
+        persisted.providers.removeAll(where: Self.isManagedOsaurusRouterProvider)
+        RemoteProviderConfigurationStore.save(persisted)
     }
 
     // MARK: - Provider Management
@@ -85,7 +131,7 @@ public final class RemoteProviderManager: ObservableObject {
         if isEphemeral {
             ephemeralProviderIds.insert(provider.id)
         } else {
-            RemoteProviderConfigurationStore.save(configuration)
+            saveUserProviderConfiguration()
             // KPI: a user-configured remote provider. Only the closed-enum
             // type is captured. Ephemeral Bonjour-discovered providers are
             // excluded — they aren't a deliberate configuration action.
@@ -128,7 +174,7 @@ public final class RemoteProviderManager: ObservableObject {
         }
 
         configuration.update(provider)
-        RemoteProviderConfigurationStore.save(configuration)
+        saveUserProviderConfiguration()
 
         // Update API key if provided (nil means no change, empty string means clear)
         if let apiKey = apiKey {
@@ -161,7 +207,7 @@ public final class RemoteProviderManager: ObservableObject {
         // Remove from configuration (also cleans up Keychain)
         configuration.remove(id: id)
         ephemeralProviderIds.remove(id)
-        RemoteProviderConfigurationStore.save(configuration)
+        saveUserProviderConfiguration()
 
         // Clean up state
         providerStates.removeValue(forKey: id)
@@ -175,7 +221,7 @@ public final class RemoteProviderManager: ObservableObject {
     /// When enabled is false, disconnects from the provider
     public func setEnabled(_ enabled: Bool, for providerId: UUID) {
         configuration.setEnabled(enabled, for: providerId)
-        RemoteProviderConfigurationStore.save(configuration)
+        saveUserProviderConfiguration()
 
         if enabled {
             // Always auto-connect when toggled ON
@@ -194,7 +240,7 @@ public final class RemoteProviderManager: ObservableObject {
     /// drops providers. Connection state is untouched — only display order moves.
     public func reorder(orderedIds: [UUID]) {
         configuration.reorder(orderedIds: orderedIds)
-        RemoteProviderConfigurationStore.save(configuration)
+        saveUserProviderConfiguration()
         notifyStatusChanged()
     }
 
@@ -322,6 +368,7 @@ public final class RemoteProviderManager: ObservableObject {
 
     /// Connect to all enabled providers on app launch
     public func connectEnabledProviders() async {
+        ensureManagedOsaurusRouterProviderIfNeeded()
         for provider in configuration.enabledProviders {
             do {
                 try await connect(providerId: provider.id)
@@ -329,6 +376,15 @@ public final class RemoteProviderManager: ObservableObject {
                 print("[Osaurus] Failed to auto-connect to '\(provider.name)': \(error)")
             }
         }
+    }
+
+    public func connectOsaurusRouterIfPossible() async {
+        ensureManagedOsaurusRouterProviderIfNeeded()
+        guard configuration.provider(id: Self.osaurusRouterProviderId) != nil else { return }
+        guard providerStates[Self.osaurusRouterProviderId]?.isConnected != true,
+            providerStates[Self.osaurusRouterProviderId]?.isConnecting != true
+        else { return }
+        try? await connect(providerId: Self.osaurusRouterProviderId)
     }
 
     private var refreshConnectedTask: Task<Void, Never>?
@@ -376,6 +432,8 @@ public final class RemoteProviderManager: ObservableObject {
     /// Refresh every enabled provider's model list, coalesced and throttled.
     /// Called from the picker-open path.
     public func refreshConnectedProviders() async {
+        await connectOsaurusRouterIfPossible()
+
         if let existing = refreshConnectedTask {
             await existing.value
             return
@@ -436,6 +494,7 @@ public final class RemoteProviderManager: ObservableObject {
 
     /// Get all available models synchronously from cached state
     public func cachedAvailableModels() -> [(providerId: UUID, providerName: String, models: [String])] {
+        ensureManagedOsaurusRouterProviderIfNeeded()
         var result: [(providerId: UUID, providerName: String, models: [String])] = []
 
         for provider in configuration.providers {
@@ -523,7 +582,7 @@ public final class RemoteProviderManager: ObservableObject {
                 if testHeaders["api-key"] == nil {
                     testHeaders["api-key"] = apiKey
                 }
-            case .openaiLegacy, .openResponses, .openAICodex, .osaurus:
+            case .openaiLegacy, .openResponses, .openAICodex, .osaurus, .osaurusRouter:
                 if testHeaders["Authorization"] == nil {
                     testHeaders["Authorization"] = "Bearer \(apiKey)"
                 }

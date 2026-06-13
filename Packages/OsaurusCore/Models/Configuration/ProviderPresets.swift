@@ -426,7 +426,7 @@ public enum ProviderPreset: String, CaseIterable, Identifiable, Sendable {
         case .gemini: return .google
         case .azureOpenAI: return .azureOpenAI
         case .openAICodex: return .openai
-        case .openaiLegacy, .osaurus: return nil
+        case .openaiLegacy, .osaurus, .osaurusRouter: return nil
         }
     }
 
@@ -454,7 +454,7 @@ public enum ProviderPreset: String, CaseIterable, Identifiable, Sendable {
         case .anthropic: return .anthropic
         case .gemini: return .google
         case .openResponses, .openAICodex: return .openai
-        case .openaiLegacy, .azureOpenAI, .osaurus: return nil
+        case .openaiLegacy, .azureOpenAI, .osaurus, .osaurusRouter: return nil
         }
     }
 }
