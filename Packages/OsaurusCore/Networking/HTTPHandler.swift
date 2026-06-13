@@ -1276,9 +1276,29 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 previous.cache != next.cache
                 || previous.multimodal != next.multimodal
                 || previous.mtp != next.mtp
+                // The tied-head codec applies at model construction
+                // (TiedHeadQuantizationPolicy is read while loading the head),
+                // so a change takes effect on the next load — evicting the
+                // resident model makes the toggle live. Compare
+                // effectivePerformance so a nil<->explicit-default edit
+                // (semantically unchanged) does not force a spurious reload.
+                //
+                // NOTE: the *compiled-decode* lever is different — MLX caches
+                // its compile state at the first model load of the process, so
+                // it can only engage when VMLX_ENABLE_UNSAFE_COMPILE is set
+                // before that first load (i.e. at launch from a persisted
+                // setting). A mid-session reload cannot turn it on; that is
+                // surfaced separately via `compiled_decode_restart_required`.
+                || previous.effectivePerformance != next.effectivePerformance
             let runtimeConfigInvalidated =
                 previous.generation != next.generation
                 || previous.concurrency != next.concurrency
+            // Compiled decode is a process-startup lever (see above): a change
+            // to it only takes effect after restarting Osaurus, so report that
+            // explicitly rather than letting the toggle look live.
+            let compiledDecodeRestartRequired =
+                previous.effectivePerformance.compiledDecode
+                != next.effectivePerformance.compiledDecode
 
             ServerRuntimeSettingsStore.save(next)
             if loadedModelRefreshNeeded {
@@ -1291,6 +1311,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let effects: [String: Any] = [
                 "loaded_model_refresh_needed": loadedModelRefreshNeeded,
                 "runtime_config_invalidated": runtimeConfigInvalidated,
+                "compiled_decode_restart_required": compiledDecodeRestartRequired,
                 "network_restart_rejected": false,
                 "validation_warnings":
                     validationIssues

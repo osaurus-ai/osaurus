@@ -92,6 +92,11 @@ struct ServerRuntimeSettingsStoreTests {
             // an explicit user value round-trips and is not clobbered on load.
             // (The seed only fills a nil field once, on first launch.)
             settings.generation.diffusionMaxDenoisingSteps = 24
+            // Set an explicit (non-fp16) tied-head codec so the one-time q6
+            // tied-head-default seed is a no-op here; this asserts an explicit
+            // user codec round-trips and is not clobbered on load.
+            settings.performance = VMLXServerPerformanceSettings(
+                tiedHeadCodec: .q8, compiledDecode: false)
             settings.concurrency.maxConcurrentSequences = 5
             settings.cache.defaultMaxKVSize = 16_384
             settings.memorySafety.mode = .strict
@@ -103,6 +108,25 @@ struct ServerRuntimeSettingsStoreTests {
 
             #expect(loaded == settings)
             #expect(ServerRuntimeSettingsStore.snapshot() == settings)
+        }
+    }
+
+    @Test @MainActor func load_seedsQ6TiedHeadDefault() async throws {
+        // Fresh install (no codec ever chosen) should default the tied-head
+        // codec to q6 — the GGUF-parity head bandwidth point and the largest
+        // safe out-of-box Gemma 4 QAT speed lever.
+        let dir = try makeTempDirectory()
+        try await withOverriddenDirectory(dir) {
+            var settings = VMLXServerRuntimeSettings()
+            settings.network.port = 4242
+            // performance left nil (never configured)
+            ServerRuntimeSettingsStore.save(settings)
+            ServerRuntimeSettingsStore.invalidateSnapshot()
+
+            let loaded = try #require(ServerRuntimeSettingsStore.load())
+            #expect(loaded.effectivePerformance.tiedHeadCodec == .q6)
+            // compiled decode stays OFF by default (correctness gate #1173).
+            #expect(loaded.effectivePerformance.compiledDecode == false)
         }
     }
 

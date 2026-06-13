@@ -124,6 +124,45 @@ struct HTTPHandlerEndpointTests {
         }
     }
 
+    @Test func runtimeSettings_put_performanceChange_refreshesLoadedModel() async throws {
+        // Decode-performance levers (compiled decode + tied-head codec) are
+        // applied at model LOAD, so toggling them must evict the resident model
+        // — otherwise the UI toggle silently no-ops until a manual reload.
+        let dir = try makeTempDirectory()
+        try await withOverriddenRuntimeSettingsDirectory(dir) {
+            let initial = VMLXServerRuntimeSettings()
+            ServerRuntimeSettingsStore.save(initial)
+
+            let server = try await startServer()
+            defer { Task { await server.shutdown() } }
+
+            // Tied-head change alone: live via reload, no restart required.
+            var headOnly = initial
+            headOnly.performance = VMLXServerPerformanceSettings(
+                tiedHeadCodec: .q6, compiledDecode: false)
+            let (headData, headResp) = try await putRuntimeSettings(headOnly, server: server)
+            #expect((headResp as? HTTPURLResponse)?.statusCode == 200)
+            let headDecoded = try JSONDecoder().decode(RuntimeSettingsResponse.self, from: headData)
+            #expect(headDecoded.effects?.loadedModelRefreshNeeded == true)
+            #expect(headDecoded.effects?.compiledDecodeRestartRequired == false)
+            #expect(headDecoded.settings.effectivePerformance.tiedHeadCodec == .q6)
+
+            // Compiled-decode toggle: a process-startup lever, so the response
+            // must report restart_required (it cannot engage mid-session).
+            var next = headOnly
+            next.performance = VMLXServerPerformanceSettings(
+                tiedHeadCodec: .q6, compiledDecode: true)
+            let (data, resp) = try await putRuntimeSettings(next, server: server)
+
+            #expect((resp as? HTTPURLResponse)?.statusCode == 200)
+            let decoded = try JSONDecoder().decode(RuntimeSettingsResponse.self, from: data)
+            #expect(decoded.effects?.loadedModelRefreshNeeded == true)
+            #expect(decoded.effects?.compiledDecodeRestartRequired == true)
+            #expect(decoded.settings.effectivePerformance.compiledDecode == true)
+            #expect(decoded.settings.effectivePerformance.tiedHeadCodec == .q6)
+        }
+    }
+
     @Test func runtimeSettings_put_rejectsNetworkRebindChanges() async throws {
         let dir = try makeTempDirectory()
         try await withOverriddenRuntimeSettingsDirectory(dir) {
@@ -230,10 +269,12 @@ struct HTTPHandlerEndpointTests {
     private struct RuntimeSettingsEffects: Decodable {
         let loadedModelRefreshNeeded: Bool?
         let runtimeConfigInvalidated: Bool?
+        let compiledDecodeRestartRequired: Bool?
 
         private enum CodingKeys: String, CodingKey {
             case loadedModelRefreshNeeded = "loaded_model_refresh_needed"
             case runtimeConfigInvalidated = "runtime_config_invalidated"
+            case compiledDecodeRestartRequired = "compiled_decode_restart_required"
         }
     }
 
