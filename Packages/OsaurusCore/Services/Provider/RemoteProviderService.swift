@@ -2376,6 +2376,9 @@ public actor RemoteProviderService: ToolCapableService {
                 host: provider.host,
                 model: request.model
             ).transformOutbound(outbound.messages)
+            if requestProviderType == .osaurusRouter {
+                outbound.clamp_to_balance = false
+            }
             bodyData = try encoder.encode(outbound)
         }
         urlRequest.httpBody = bodyData
@@ -2712,6 +2715,9 @@ struct RemoteChatRequest: Encodable {
     let thinking: ThinkingConfig?
     let modelOptions: [String: ModelOptionValue]
     let veniceParameters: VeniceParameters?
+    /// Router-only billing behavior. `false` keeps insufficient-balance
+    /// requests explicit (402) instead of silently shrinking the token cap.
+    var clamp_to_balance: Bool? = nil
 
     enum CodingKeys: String, CodingKey {
         case model, messages, temperature, max_completion_tokens, max_tokens, stream
@@ -2719,6 +2725,7 @@ struct RemoteChatRequest: Encodable {
         case reasoning_effort
         case reasoning
         case thinking
+        case clamp_to_balance
         case veniceParameters = "venice_parameters"
     }
 
@@ -2758,6 +2765,7 @@ struct RemoteChatRequest: Encodable {
         try container.encodeIfPresent(reasoning_effort, forKey: .reasoning_effort)
         try container.encodeIfPresent(reasoning, forKey: .reasoning)
         try container.encodeIfPresent(thinking, forKey: .thinking)
+        try container.encodeIfPresent(clamp_to_balance, forKey: .clamp_to_balance)
         try container.encodeIfPresent(veniceParameters, forKey: .veniceParameters)
         // `modelOptions` is intentionally not in `CodingKeys` — it stays
         // in-process for model-specific feature flags.
@@ -3646,12 +3654,27 @@ extension RemoteProviderService {
             )
         }
 
-        return try decodeOsaurusRouterModelsResponse(data: data)
+        let discovery = try decodeOsaurusRouterModelsDiscovery(data: data)
+        if discovery.staleCount > 0 {
+            print(
+                "[Osaurus] Router model discovery: \(discovery.models.count) fresh models (\(discovery.staleCount) stale hidden of \(discovery.totalCount) total)"
+            )
+        }
+        return discovery.models
     }
 
     static func decodeOsaurusRouterModelsResponse(data: Data) throws -> [String] {
+        try decodeOsaurusRouterModelsDiscovery(data: data).models
+    }
+
+    static func decodeOsaurusRouterModelsDiscovery(data: Data) throws -> OsaurusRouterModelDiscovery {
         let decoded = try JSONDecoder().decode(OsaurusRouterModelListResponse.self, from: data)
-        return decoded.data.map(\.id)
+        let freshModels = decoded.data.filter { !$0.stale }.map(\.id)
+        return OsaurusRouterModelDiscovery(
+            models: freshModels,
+            totalCount: decoded.data.count,
+            staleCount: decoded.data.count - freshModels.count
+        )
     }
 
     /// Fetch models for a native Osaurus agent.

@@ -729,6 +729,24 @@ struct RemoteChatRequestEncodingTests {
         #expect(!body.contains("internal trace"))
     }
 
+    @Test func wireBody_routerExplicitlyRejectsClampToBalance() throws {
+        let routerBody = try Self.encodedWireBody(
+            providerType: .osaurusRouter,
+            host: "router.osaurus.ai",
+            model: "venice/minimax-m3",
+            assistantReasoning: "hidden trace"
+        )
+        let openAICompatBody = try Self.encodedWireBody(
+            providerType: .openaiLegacy,
+            host: "api.openai.com",
+            model: "gpt-5",
+            assistantReasoning: "hidden trace"
+        )
+
+        #expect(routerBody.contains("\"clamp_to_balance\":false"))
+        #expect(!openAICompatBody.contains("\"clamp_to_balance\""))
+    }
+
     /// Mirrors the strip-or-echo branch in `buildURLRequest`, then encodes
     /// with the canonical encoder. Returns the wire body as a string.
     private static func encodedWireBody(
@@ -772,6 +790,9 @@ struct RemoteChatRequestEncodingTests {
             model: model
         ) {
             outbound.messages = RemoteProviderService.strippingReasoningContent(from: outbound.messages)
+        }
+        if providerType == .osaurusRouter {
+            outbound.clamp_to_balance = false
         }
         let data = try JSONEncoder.osaurusCanonical().encode(outbound)
         return String(decoding: data, as: UTF8.self)

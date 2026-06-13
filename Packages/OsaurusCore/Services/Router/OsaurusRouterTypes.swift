@@ -118,6 +118,12 @@ struct OsaurusRouterModelListResponse: Decodable, Sendable {
     let data: [OsaurusRouterModel]
 }
 
+struct OsaurusRouterModelDiscovery: Equatable, Sendable {
+    let models: [String]
+    let totalCount: Int
+    let staleCount: Int
+}
+
 struct OsaurusRouterModel: Decodable, Identifiable, Equatable, Sendable {
     let id: String
     let provider: String
