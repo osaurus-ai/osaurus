@@ -3872,8 +3872,21 @@ extension RemoteProviderService {
             throw RemoteProviderServiceError.invalidResponse
         }
         if httpResponse.statusCode >= 400 {
-            throw RemoteProviderServiceError.requestFailed(
-                extractErrorMessage(from: data, statusCode: httpResponse.statusCode)
+            // Throw a typed router error that carries the HTTP status so the
+            // launch connect-retry can tell retryable 5xx from terminal 4xx.
+            // Mirrors `OsaurusRouterAPIClient.ensureOK`.
+            if let envelope = try? JSONDecoder().decode(OsaurusRouterErrorEnvelope.self, from: data) {
+                throw OsaurusRouterAPIError.from(
+                    code: envelope.error.code,
+                    message: envelope.error.message,
+                    status: httpResponse.statusCode,
+                    retryAfter: httpResponse.value(forHTTPHeaderField: "retry-after")
+                )
+            }
+            throw OsaurusRouterAPIError.server(
+                code: "HTTP_\(httpResponse.statusCode)",
+                message: extractErrorMessage(from: data, statusCode: httpResponse.statusCode),
+                status: httpResponse.statusCode
             )
         }
 

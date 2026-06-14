@@ -565,7 +565,10 @@ struct ProviderHelpLinks: View {
                     // thread on a LaunchServices XPC round-trip that can stall
                     // long enough to trip the hang watchdog.
                     NSWorkspace.shared.open(
-                        url, configuration: NSWorkspace.OpenConfiguration(), completionHandler: nil)
+                        url,
+                        configuration: NSWorkspace.OpenConfiguration(),
+                        completionHandler: nil
+                    )
                 }
             } label: {
                 HStack(spacing: 6) {
@@ -589,8 +592,10 @@ struct ProviderHelpLinks: View {
                         // Async open to avoid blocking the main thread on the
                         // synchronous LaunchServices XPC round-trip.
                         NSWorkspace.shared.open(
-                            url, configuration: NSWorkspace.OpenConfiguration(),
-                            completionHandler: nil)
+                            url,
+                            configuration: NSWorkspace.OpenConfiguration(),
+                            completionHandler: nil
+                        )
                     }
                 } label: {
                     HStack(spacing: 6) {

@@ -11,6 +11,14 @@ import CryptoKit
 import Foundation
 import LocalAuthentication
 
+extension Foundation.Notification.Name {
+    /// Posted after the Osaurus identity master key is created or wiped.
+    /// Identity-gated runtime services (e.g. `RemoteProviderManager`'s managed
+    /// Osaurus Router) observe this to (re)connect or drop the provider without
+    /// waiting for a user-driven refresh.
+    static let osaurusIdentityChanged = Foundation.Notification.Name("OsaurusIdentityChanged")
+}
+
 public struct OsaurusIdentity: Sendable {
 
     // MARK: - Setup
@@ -36,6 +44,13 @@ public struct OsaurusIdentity: Sendable {
 
         let deviceId = try await DeviceKey.attest()
         let recovery = RecoveryManager.configure(address: result.osaurusId)
+
+        // A brand-new master key just came into existence (this branch only runs
+        // when none existed). Signal identity-gated services — notably the
+        // managed Osaurus Router — so they connect now instead of waiting for
+        // the next manual refresh. The `loadExistingIdentity()` short-circuit
+        // above intentionally does not post: nothing changed.
+        NotificationCenter.default.post(name: .osaurusIdentityChanged, object: nil)
 
         return IdentityInfo(
             osaurusId: result.osaurusId,
@@ -83,6 +98,10 @@ public struct OsaurusIdentity: Sendable {
         }
 
         UserDefaults.standard.set(false, forKey: IdentityDefaultsKey.masterMnemonicAcknowledged)
+
+        // Identity is gone — let identity-gated services drop the managed
+        // Osaurus Router and refresh the model picker so its options disappear.
+        NotificationCenter.default.post(name: .osaurusIdentityChanged, object: nil)
     }
 
     // MARK: - Request Signing

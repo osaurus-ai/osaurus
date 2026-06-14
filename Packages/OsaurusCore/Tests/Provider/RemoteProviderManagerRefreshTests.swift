@@ -162,6 +162,11 @@ struct RemoteProviderManagerRefreshTests {
     @Test func refreshConnectedProviders_throttlesRepeatedCalls() async throws {
         await RemoteProviderTestLock.shared.run {
             let manager = RemoteProviderManager.shared
+            // Keep the managed Osaurus Router out of `enabledProviders` so the
+            // counter reflects only the installed user provider, independent of
+            // whether this machine has a real identity (which would otherwise
+            // let `refreshConnectedProviders` connect the router via the seam).
+            manager.testIdentityExistsOverride = false
             let provider = install(manager)
             defer { manager._testRemoveProviders(ids: [provider.id]) }
 
@@ -182,6 +187,9 @@ struct RemoteProviderManagerRefreshTests {
     @Test func refreshConnectedProviders_coalescesConcurrentCalls() async throws {
         await RemoteProviderTestLock.shared.run {
             let manager = RemoteProviderManager.shared
+            // See `refreshConnectedProviders_throttlesRepeatedCalls`: exclude the
+            // managed router so only the installed provider is counted.
+            manager.testIdentityExistsOverride = false
             let provider = install(manager)
             defer { manager._testRemoveProviders(ids: [provider.id]) }
 
@@ -204,6 +212,9 @@ struct RemoteProviderManagerRefreshTests {
     @Test func refreshConnectedProviders_skipsDisabledProviders() async throws {
         await RemoteProviderTestLock.shared.run {
             let manager = RemoteProviderManager.shared
+            // See `refreshConnectedProviders_throttlesRepeatedCalls`: exclude the
+            // managed router so the disabled-provider assertion isn't perturbed.
+            manager.testIdentityExistsOverride = false
             var provider = makeProvider(name: "Disabled")
             provider.enabled = false
             manager._testInstallConnectedProvider(provider, discoveredModels: ["x"])

@@ -1455,9 +1455,10 @@ public actor ModelRuntime {
         // uncapped) while the UI/displaySummary showed the resolved value, so
         // the two diverged and the slider never reached the coordinator.
         var resolvedSettings = settings
-        resolvedSettings.cache = settings.resolvedMemorySafetyPlan(
-            host: MemoryStatus.snapshot()
-        ).cache
+        resolvedSettings.cache =
+            settings.resolvedMemorySafetyPlan(
+                host: MemoryStatus.snapshot()
+            ).cache
         let diskCacheDir = Self.cacheDiskDirectoryOverride(for: resolvedSettings.cache)
         if let diskCacheDir {
             OsaurusPaths.ensureExistsSilent(diskCacheDir)
