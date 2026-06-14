@@ -1446,7 +1446,19 @@ public actor ModelRuntime {
         cacheTopology: ModelCacheTopologySnapshot? = nil
     ) -> CacheCoordinatorConfig {
         let settings = ServerRuntimeSettingsStore.snapshot()
-        let diskCacheDir = Self.cacheDiskDirectoryOverride(for: settings.cache)
+        // Build the live cache coordinator from the RESOLVED memory-safety
+        // plan's cache, not the raw snapshot, so the RAM-safety slider actually
+        // governs the live KV/context cap and prefix-memory limits. With a nil
+        // cap seed the slider profile resolves it (safe_auto 65536 / strict
+        // 16384 / performance 131072); an explicit user cap still wins. Without
+        // this, the coordinator used the raw cap (nil after the seed change =
+        // uncapped) while the UI/displaySummary showed the resolved value, so
+        // the two diverged and the slider never reached the coordinator.
+        var resolvedSettings = settings
+        resolvedSettings.cache = settings.resolvedMemorySafetyPlan(
+            host: MemoryStatus.snapshot()
+        ).cache
+        let diskCacheDir = Self.cacheDiskDirectoryOverride(for: resolvedSettings.cache)
         if let diskCacheDir {
             OsaurusPaths.ensureExistsSilent(diskCacheDir)
         }
@@ -1473,12 +1485,12 @@ public actor ModelRuntime {
         // ZAYA's CCA state: a content hash alone proves prompt identity, not
         // cache-layout compatibility.
         let effectiveDefaultKVMode = defaultKVMode(
-            for: settings.cache,
+            for: resolvedSettings.cache,
             modelName: modelName,
             cacheTopology: cacheTopology
         )
         let kvModeTag = cacheKVModeTag(
-            for: settings.cache,
+            for: resolvedSettings.cache,
             modelName: modelName,
             cacheTopology: cacheTopology
         )
@@ -1496,7 +1508,7 @@ public actor ModelRuntime {
         // user-configured disk directory or the writable Osaurus default;
         // when that path is unusable, disable disk cache instead of letting
         // vmlx fall back to a different implicit location.
-        var config = settings.cacheCoordinatorConfig(
+        var config = resolvedSettings.cacheCoordinatorConfig(
             modelKey: scopedKey,
             diskCacheDirectory: diskDirUsable ? diskCacheDir : nil,
             ssmMaxEntries: 50
@@ -1685,7 +1697,7 @@ public actor ModelRuntime {
         let topologyTags = cacheTopology.topologyTags.joined(separator: ",")
 
         genLog.info(
-            "installCacheCoordinator: enabled for \(holder.name, privacy: .public) disk=\(cacheConfig.enableDiskCache, privacy: .public) hybrid=\(cacheTopology.requiresSSMCompanionState, privacy: .public) topology=\(topologyTags, privacy: .public) (sizing left to vmlx defaults)"
+            "installCacheCoordinator: enabled for \(holder.name, privacy: .public) disk=\(cacheConfig.enableDiskCache, privacy: .public) hybrid=\(cacheTopology.requiresSSMCompanionState, privacy: .public) topology=\(topologyTags, privacy: .public) kv_cap=\(cacheConfig.defaultMaxKVSize ?? -1, privacy: .public) long_prompt_mult=\(cacheConfig.longPromptMultiplier, privacy: .public) (slider-resolved from memory-safety plan)"
         )
     }
 
