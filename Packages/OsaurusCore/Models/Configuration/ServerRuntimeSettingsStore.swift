@@ -369,7 +369,15 @@ public enum ServerRuntimeSettingsStore {
             liveKVCodec: .engineSelected,
             turboQuantKeyBits: nil,
             turboQuantValueBits: nil,
-            defaultMaxKVSize: 65536,
+            // nil so the RAM-safety slider governs the default KV/context cap:
+            // vmlx resolves `customDefaultMaxKVSize ?? cache.defaultMaxKVSize
+            // ?? profile.defaultMaxKVSize`, so a non-nil seed here would pin the
+            // cap and make the slider inert. The default slider position
+            // (safe_auto) resolves to 65536, so the out-of-box cap is unchanged;
+            // moving the slider (strict -> 16384, performance -> 131072,
+            // diagnostic -> uncapped) now actually takes effect. Users can still
+            // set an explicit cap in Cache settings, which overrides the slider.
+            defaultMaxKVSize: nil,
             longPromptMultiplier: 2.0,
             storedKVCodec: .auto,
             legacyDisk: VMLXDiskCacheSettings(

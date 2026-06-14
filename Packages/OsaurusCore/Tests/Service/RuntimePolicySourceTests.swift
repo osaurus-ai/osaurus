@@ -602,12 +602,18 @@ struct RuntimePolicySourceTests {
         // plus the DiffusionGemma MoE-router crash fix that dequantizes the
         // QuantizedEmbedding tied head before the soft self-conditioning
         // matmul so the 26B-A4B diffusion router no longer traps (SIGTRAP)
-        // on denoising step >= 2.
+        // on denoising step >= 2,
+        // plus the slider-aware KV/context cap with TurboQuant-inform
+        // over-budget warning, the Gemma tool-path prose de-scramble
+        // (ToolCallProcessor bare-call buffer + whitespace-leading fix), the
+        // SWA/rotating warm prefix-cache reuse that skips re-prefill on a full
+        // hit (narrowed to standalone rotating windows only), and the
+        // matching prefix-hit diagnostics that count disk-tier reuse.
         // That avoids Xcode PIF
         // duplicate-product collisions with the app graph while keeping yyjson
         // as one shared C dependency. Osaurus must not carry SwiftPM
         // moduleAliases for that collision.
-        let expectedRuntimeHardenedRevision = "357c81d4c786fb75f6b912bd09df009662655ac1"
+        let expectedRuntimeHardenedRevision = "839d9f5592012843402d77afd671c6e1633b99a4"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
         let appRevision = try Self.vmlxPinRevision(in: appResolved)
