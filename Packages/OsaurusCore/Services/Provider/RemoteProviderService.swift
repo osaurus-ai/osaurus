@@ -644,6 +644,40 @@ public actor RemoteProviderService: ToolCapableService {
         }
     }
 
+    @inline(__always)
+    static func processSSELine(_ line: Data, providerType: RemoteProviderType, into eventData: inout String) {
+        if shouldTreatLineAsRouterRawJSON(line, providerType: providerType, currentEventData: eventData) {
+            // Router normally streams SSE, but a proxy/server fallback can
+            // deliver a raw JSON ChatCompletion body. Treat that as one event
+            // instead of silently dropping it as an unknown SSE field.
+            eventData = String(decoding: line, as: UTF8.self)
+            return
+        }
+        processSSELine(line, into: &eventData)
+    }
+
+    @inline(__always)
+    private static func shouldTreatLineAsRouterRawJSON(
+        _ line: Data,
+        providerType: RemoteProviderType,
+        currentEventData: String
+    ) -> Bool {
+        guard providerType == .osaurusRouter, currentEventData.isEmpty,
+            let first = line.first(where: { !isASCIIWhitespace($0) })
+        else { return false }
+        return first == UInt8(ascii: "{") || first == UInt8(ascii: "[")
+    }
+
+    @inline(__always)
+    private static func isASCIIWhitespace(_ byte: UInt8) -> Bool {
+        switch byte {
+        case UInt8(ascii: " "), UInt8(ascii: "\t"), UInt8(ascii: "\n"), UInt8(ascii: "\r"):
+            return true
+        default:
+            return false
+        }
+    }
+
     /// Wraps `URLSession.AsyncBytes` in an `AsyncThrowingStream<Data, Error>`
     /// that batches per-byte arrivals into chunks at line boundaries (or 4 KB).
     /// The producer task pumps the upstream iterator without ever being
@@ -793,6 +827,12 @@ public actor RemoteProviderService: ToolCapableService {
         _ jsonData: Data,
         providerType: RemoteProviderType
     ) -> String? {
+        if providerType == .osaurusRouter,
+            let routerError = try? JSONDecoder().decode(OsaurusRouterErrorEnvelope.self, from: jsonData)
+        {
+            return "\(routerError.error.code): \(routerError.error.message)"
+        }
+
         // Generic OpenAI-compatible error envelope: {"error":{"message":"..."}}
         if let openAIError = try? JSONDecoder().decode(OpenAIError.self, from: jsonData) {
             return openAIError.error.message
@@ -812,6 +852,92 @@ public actor RemoteProviderService: ToolCapableService {
             break
         }
         return nil
+    }
+
+    private static var routerStreamDebugEnabled: Bool {
+        UserDefaults.standard.bool(forKey: "ai.osaurus.router.debugStream")
+    }
+
+    private static func routerStreamDebug(
+        providerType: RemoteProviderType,
+        _ message: @autoclosure () -> String
+    ) {
+        guard providerType == .osaurusRouter, routerStreamDebugEnabled else { return }
+        print("[Osaurus][Router][Stream] \(message())")
+    }
+
+    private static func routerStreamFinalDebug(
+        providerType: RemoteProviderType,
+        marker: String,
+        state: StreamingState
+    ) {
+        routerStreamDebug(
+            providerType: providerType,
+            "final marker=\(marker) yieldedTextDeltas=\(state.yieldedTextCount) yieldedTextBytes=\(state.yieldedTextBytes) finishReason=\(state.lastFinishReason ?? "nil")"
+        )
+    }
+
+    private static func routerEventDebugSummary(_ dataContent: String) -> String {
+        let trimmed = dataContent.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed == "[DONE]" { return "done-marker" }
+        guard let data = trimmed.data(using: .utf8) else { return "non-utf8 payload" }
+
+        if let summary = try? JSONDecoder().decode(OsaurusRouterSummaryEvent.self, from: data) {
+            return
+                "summary status=\(summary.osaurus.status) inputTokens=\(summary.osaurus.inputTokens) outputTokens=\(summary.osaurus.outputTokens) costMicro=\(summary.osaurus.costMicro)"
+        }
+
+        guard let object = try? JSONSerialization.jsonObject(with: data),
+            let root = object as? [String: Any]
+        else {
+            return "non-json bytes=\(data.count)"
+        }
+
+        if let error = root["error"] as? [String: Any] {
+            return "error code=\(error["code"] ?? "nil") messageBytes=\((error["message"] as? String)?.utf8.count ?? 0)"
+        }
+
+        if let choices = root["choices"] as? [[String: Any]], let first = choices.first {
+            let finish = first["finish_reason"] as? String ?? "nil"
+            if let delta = first["delta"] as? [String: Any] {
+                return "choice.delta finish=\(finish) \(openAIMessageDebugSummary(delta))"
+            }
+            if let message = first["message"] as? [String: Any] {
+                return "choice.message finish=\(finish) \(openAIMessageDebugSummary(message))"
+            }
+            return "choice finish=\(finish) keys=\(sortedKeys(first))"
+        }
+
+        if let usage = root["usage"] as? [String: Any] {
+            return "usage keys=\(sortedKeys(usage))"
+        }
+
+        return "object keys=\(sortedKeys(root)) bytes=\(data.count)"
+    }
+
+    private static func openAIMessageDebugSummary(_ message: [String: Any]) -> String {
+        let contentBytes = (message["content"] as? String)?.utf8.count ?? 0
+        let reasoningBytes = (message["reasoning_content"] as? String)?.utf8.count ?? 0
+        let toolCallCount = (message["tool_calls"] as? [Any])?.count ?? 0
+        return
+            "contentBytes=\(contentBytes) reasoningBytes=\(reasoningBytes) toolCalls=\(toolCallCount) keys=\(sortedKeys(message))"
+    }
+
+    private static func sortedKeys(_ object: [String: Any]) -> String {
+        "[" + object.keys.sorted().joined(separator: ",") + "]"
+    }
+
+    private static func streamOutcomeDebugDescription(_ outcome: StreamEventOutcome) -> String {
+        switch outcome {
+        case .continue:
+            return "continue"
+        case .finishNormal:
+            return "finishNormal"
+        case .finishWithToolCall(let invocation):
+            return "finishWithToolCall(\(invocation.toolName), argsBytes=\(invocation.jsonArguments.utf8.count))"
+        case .finishWithError(let error):
+            return "finishWithError(\(error.localizedDescription))"
+        }
     }
 
     // MARK: - Streaming Pipeline Shared Helpers
@@ -843,6 +969,8 @@ public actor RemoteProviderService: ToolCapableService {
         /// Yielded text content. Only used when `trackContent` is `true`
         /// (streamWithTools, for the inline tool-call detection fallback).
         var accumulatedContent: String = ""
+        var yieldedTextCount: Int = 0
+        var yieldedTextBytes: Int = 0
 
         /// Non-nil only for providers that inline reasoning as `<think>` in the
         /// content rail (MiniMax). When set, content deltas are split so the
@@ -856,6 +984,9 @@ public actor RemoteProviderService: ToolCapableService {
         /// about the inline-tool-detection fallback.
         @inline(__always)
         mutating func recordYield(_ text: String) {
+            guard !text.isEmpty else { return }
+            yieldedTextCount += 1
+            yieldedTextBytes += text.utf8.count
             if trackContent { accumulatedContent += text }
         }
     }
@@ -916,7 +1047,10 @@ public actor RemoteProviderService: ToolCapableService {
         tools: [Tool],
         continuation: AsyncThrowingStream<String, Error>.Continuation
     ) -> Bool {
+        routerStreamDebug(providerType: providerType, "event \(routerEventDebugSummary(dataContent))")
+
         if dataContent.trimmingCharacters(in: .whitespaces) == "[DONE]" {
+            routerStreamFinalDebug(providerType: providerType, marker: "[DONE]", state: state)
             dispatchFinal(
                 state: state,
                 tools: tools,
@@ -944,10 +1078,16 @@ public actor RemoteProviderService: ToolCapableService {
             yield: { continuation.yield($0) }
         )
 
+        routerStreamDebug(
+            providerType: providerType,
+            "event outcome=\(streamOutcomeDebugDescription(outcome)) yieldedTextDeltas=\(state.yieldedTextCount) yieldedTextBytes=\(state.yieldedTextBytes) finishReason=\(state.lastFinishReason ?? "nil")"
+        )
+
         switch outcome {
         case .continue:
             return false
         case .finishNormal:
+            routerStreamFinalDebug(providerType: providerType, marker: "finishNormal", state: state)
             dispatchFinal(
                 state: state,
                 tools: tools,
@@ -973,6 +1113,10 @@ public actor RemoteProviderService: ToolCapableService {
         state: inout StreamingState,
         yield: (String) -> Void
     ) -> StreamEventOutcome {
+        if let errorMessage = tryDecodeStreamError(jsonData, providerType: providerType) {
+            return .finishWithError(RemoteProviderServiceError.requestFailed(errorMessage))
+        }
+
         do {
             switch providerType {
             case .gemini:
@@ -987,12 +1131,6 @@ public actor RemoteProviderService: ToolCapableService {
                 return try handleOpenAIEvent(jsonData, state: &state, yield: yield)
             }
         } catch {
-            // Server-side error payload? Some providers stream a structured
-            // error event mid-stream rather than closing with a non-2xx; if
-            // we don't surface it the user sees an opaque "stream ended".
-            if let errorMessage = tryDecodeStreamError(jsonData, providerType: providerType) {
-                return .finishWithError(RemoteProviderServiceError.requestFailed(errorMessage))
-            }
             print("[Osaurus] Warning: Failed to parse SSE chunk: \(error.localizedDescription)")
             return .continue
         }
@@ -1355,12 +1493,38 @@ public actor RemoteProviderService: ToolCapableService {
     ) throws -> StreamEventOutcome {
         let chunk = try JSONDecoder().decode(LenientChatCompletionChunk.self, from: jsonData)
         let choice = chunk.choices?.first
+        if let message = choice?.message {
+            return processOpenAIMessageCompletion(
+                message,
+                finishReason: choice?.finish_reason,
+                state: &state,
+                yield: yield
+            )
+        }
         return processOpenAIChoice(
             delta: choice?.delta,
             finishReason: choice?.finish_reason,
             state: &state,
             yield: yield
         )
+    }
+
+    private static func processOpenAIMessageCompletion(
+        _ message: DeltaContent,
+        finishReason: String?,
+        state: inout StreamingState,
+        yield: (String) -> Void
+    ) -> StreamEventOutcome {
+        let outcome = processOpenAIChoice(
+            delta: message,
+            finishReason: finishReason ?? "stop",
+            state: &state,
+            yield: yield
+        )
+        if case .continue = outcome {
+            return .finishNormal
+        }
+        return outcome
     }
 
     private static func processOpenAIChoice(
@@ -1556,6 +1720,10 @@ public actor RemoteProviderService: ToolCapableService {
         let secureProvider = providerType == .osaurus ? self.provider : nil
         let inactivityTimeout = self.streamInactivityTimeout
         let toolList = tools ?? []
+        Self.routerStreamDebug(
+            providerType: providerType,
+            "request model=\(modelName) url=\(urlRequest.url?.absoluteString ?? "nil") stream=\(request.stream) tools=\(toolList.count) bodyBytes=\(urlRequest.httpBody?.count ?? 0)"
+        )
         // Only the with-tools path needs accumulated text for the inline
         // tool-call fallback; streamDeltas has no tools, so skip the
         // memory cost of growing a 100% unused buffer.
@@ -1616,6 +1784,10 @@ public actor RemoteProviderService: ToolCapableService {
                         continuation.finish(throwing: RemoteProviderServiceError.invalidResponse)
                         return
                     }
+                    Self.routerStreamDebug(
+                        providerType: providerType,
+                        "response status=\(httpResponse.statusCode) contentType=\(httpResponse.value(forHTTPHeaderField: "Content-Type") ?? "nil") attempt=\(attempt)"
+                    )
 
                     if httpResponse.statusCode >= 400 {
                         var errorData = Data()
@@ -1668,6 +1840,9 @@ public actor RemoteProviderService: ToolCapableService {
                 // chunk arrival — no intermediate AsyncStream layer.
                 var sseEventData = ""
                 var lineParser = SSELineParser()
+                var routerChunkCount = 0
+                var routerByteCount = 0
+                var routerEventCount = 0
                 let chunkStream = Self.makeChunkStream(from: bytes)
                 let chunkIter = ChunkIteratorRef(chunkStream.makeAsyncIterator())
 
@@ -1683,6 +1858,10 @@ public actor RemoteProviderService: ToolCapableService {
                     )
 
                     if let chunk = chunk {
+                        if providerType == .osaurusRouter {
+                            routerChunkCount += 1
+                            routerByteCount += chunk.count
+                        }
                         if let secureDecoder {
                             // Decrypt outer secure frames into the original
                             // SSE bytes before line parsing. The probe sees
@@ -1718,13 +1897,16 @@ public actor RemoteProviderService: ToolCapableService {
 
                     while let lineBytes = lineParser.nextLine() {
                         if !lineBytes.isEmpty {
-                            Self.processSSELine(lineBytes, into: &sseEventData)
+                            Self.processSSELine(lineBytes, providerType: providerType, into: &sseEventData)
                             continue
                         }
                         // Blank line — SSE event boundary, dispatch payload.
                         guard !sseEventData.isEmpty else { continue }
                         let dataContent = sseEventData
                         sseEventData = ""
+                        if providerType == .osaurusRouter {
+                            routerEventCount += 1
+                        }
                         if Self.processEventPayload(
                             dataContent,
                             state: &state,
@@ -1741,6 +1923,9 @@ public actor RemoteProviderService: ToolCapableService {
                         if !sseEventData.isEmpty {
                             let dataContent = sseEventData
                             sseEventData = ""
+                            if providerType == .osaurusRouter {
+                                routerEventCount += 1
+                            }
                             if Self.processEventPayload(
                                 dataContent,
                                 state: &state,
@@ -1756,6 +1941,10 @@ public actor RemoteProviderService: ToolCapableService {
                 }
 
                 // Stream ended naturally without a finish marker.
+                Self.routerStreamDebug(
+                    providerType: providerType,
+                    "stream-end chunks=\(routerChunkCount) bytes=\(routerByteCount) events=\(routerEventCount) yieldedTextDeltas=\(state.yieldedTextCount) yieldedTextBytes=\(state.yieldedTextBytes) finishReason=\(state.lastFinishReason ?? "nil") pendingEventBytes=\(sseEventData.utf8.count)"
+                )
                 Self.dispatchFinal(
                     state: state,
                     tools: toolList,
@@ -2026,8 +2215,8 @@ public actor RemoteProviderService: ToolCapableService {
             )
         let isReasoningModel = OpenAIReasoningProfile.matches(modelId: model)
 
-        // Providers that 400 on restricted top-level schema keys get
-        // sanitized tool parameters; everyone else receives the full schema.
+        // Strict wire targets get sanitized tool parameters; Osaurus still
+        // validates calls locally against the original full schema.
         let wireTools: [Tool]?
         if let tools,
             Self.enforcesTopLevelParameterSchemaRestrictions(
@@ -2377,6 +2566,7 @@ public actor RemoteProviderService: ToolCapableService {
                 model: request.model
             ).transformOutbound(outbound.messages)
             if requestProviderType == .osaurusRouter {
+                outbound.messages = Self.routerWireCompatibleMessages(outbound.messages)
                 outbound.clamp_to_balance = false
             }
             bodyData = try encoder.encode(outbound)
@@ -2400,6 +2590,34 @@ public actor RemoteProviderService: ToolCapableService {
         from messages: [ChatMessage]
     ) -> [ChatMessage] {
         RemoteReasoningPolicy.strippingReasoning(messages)
+    }
+
+    /// Router fan-out advertises one OpenAI-compatible request to many
+    /// upstreams, so it uses the strictest shared chat-completions history
+    /// shape. User media stays multimodal; assistant history leaves Osaurus as
+    /// string `content` because several upstreams reject assistant arrays or
+    /// omitted assistant content on tool-call turns.
+    static func routerWireCompatibleMessages(_ messages: [ChatMessage]) -> [ChatMessage] {
+        messages.map { message in
+            guard requiresRouterAssistantStringContent(message) else { return message }
+            return routerAssistantWireMessage(message)
+        }
+    }
+
+    private static func requiresRouterAssistantStringContent(_ message: ChatMessage) -> Bool {
+        message.role.lowercased() == "assistant" && (message.contentParts != nil || message.content == nil)
+    }
+
+    private static func routerAssistantWireMessage(_ message: ChatMessage) -> ChatMessage {
+        ChatMessage(
+            role: message.role,
+            content: message.content ?? "",
+            tool_calls: message.tool_calls,
+            tool_call_id: message.tool_call_id,
+            reasoning_content: message.reasoning_content,
+            reasoning_item_id: message.reasoning_item_id,
+            reasoning_encrypted: message.reasoning_encrypted
+        )
     }
 
     /// Parse response based on provider type
@@ -2650,6 +2868,7 @@ private struct LenientChatCompletionChunk: Decodable {
     struct Choice: Decodable {
         let index: Int?
         let delta: DeltaContent?
+        let message: DeltaContent?
         let finish_reason: String?
     }
 }
@@ -3431,21 +3650,25 @@ extension OpenResponsesRequest {
 // MARK: - Top-level parameter schema sanitization
 
 extension RemoteProviderService {
-    /// Whether the provider rejects restricted JSON Schema keys at the TOP
-    /// level of a function's `parameters`. OpenAI's official API 400s with
-    /// `invalid_function_parameters` on top-level
-    /// `oneOf`/`anyOf`/`allOf`/`enum`/`const`/`not` (nested uses are
+    /// Whether the provider route needs the tool schema narrowed for wire
+    /// compatibility. This is not local validation weakening: Osaurus still
+    /// validates tool calls against the original schema. The narrowed copy is
+    /// only what we advertise to remote providers that reject restricted
+    /// top-level JSON Schema keys.
+    ///
+    /// OpenAI's official API 400s with `invalid_function_parameters` on
+    /// top-level `oneOf`/`anyOf`/`allOf`/`enum`/`const`/`not` (nested uses are
     /// accepted); Azure OpenAI runs the same validator, and Anthropic's
     /// Messages API rejects top-level `oneOf`/`allOf`/`anyOf` on
-    /// `input_schema` the same way. Third-party OpenAI-compatible
-    /// providers (xAI, Groq, OpenRouter, …) accept the full schema, so
-    /// they keep it unmodified.
+    /// `input_schema`. Osaurus Router is a provider-agnostic fan-out boundary,
+    /// so it uses the strict wire subset regardless of the current model's
+    /// upstream.
     static func enforcesTopLevelParameterSchemaRestrictions(
         providerType: RemoteProviderType,
         host: String
     ) -> Bool {
         switch providerType {
-        case .azureOpenAI, .openAICodex, .anthropic: return true
+        case .azureOpenAI, .openAICodex, .anthropic, .osaurusRouter: return true
         default: break
         }
         let normalizedHost = host.lowercased()

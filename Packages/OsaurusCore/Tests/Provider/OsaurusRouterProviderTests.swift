@@ -77,6 +77,59 @@ struct OsaurusRouterProviderTests {
         #expect(yielded.isEmpty)
     }
 
+    @Test func routerErrorEvent_finishesWithErrorInsteadOfEmptySuccess() {
+        var state = RemoteProviderService.StreamingState(stopSequences: [], trackContent: false)
+        var yielded: [String] = []
+
+        let outcome = RemoteProviderService.handleStreamEvent(
+            jsonData: Data(#"{"error":{"code":"PROVIDER_ERROR","message":"provider failed upstream"}}"#.utf8),
+            providerType: .osaurusRouter,
+            state: &state,
+            yield: { yielded.append($0) }
+        )
+
+        guard case .finishWithError(let error) = outcome else {
+            Issue.record("Expected router error event to finish with error, got \(outcome)")
+            return
+        }
+        #expect(error.localizedDescription.contains("provider failed upstream"))
+        #expect(yielded.isEmpty)
+    }
+
+    @Test func routerFullChatCompletionBody_yieldsVisibleContentAndFinishes() {
+        var state = RemoteProviderService.StreamingState(stopSequences: [], trackContent: false)
+        var yielded: [String] = []
+
+        let outcome = RemoteProviderService.handleStreamEvent(
+            jsonData: Data(
+                """
+                {"id":"chatcmpl_1","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"hello from full body"},"finish_reason":"stop"}]}
+                """.utf8
+            ),
+            providerType: .osaurusRouter,
+            state: &state,
+            yield: { yielded.append($0) }
+        )
+
+        guard case .finishNormal = outcome else {
+            Issue.record("Expected full router body to finish normally, got \(outcome)")
+            return
+        }
+        #expect(yielded == ["hello from full body"])
+    }
+
+    @Test func routerRawJSONLine_isTreatedAsEventPayload() {
+        var eventData = ""
+
+        RemoteProviderService.processSSELine(
+            Data(#"{"choices":[{"message":{"role":"assistant","content":"raw"}}]}"#.utf8),
+            providerType: .osaurusRouter,
+            into: &eventData
+        )
+
+        #expect(eventData == #"{"choices":[{"message":{"role":"assistant","content":"raw"}}]}"#)
+    }
+
     @Test func routerToolCallDeltas_accumulateAndFinishWithInvocation() {
         var state = RemoteProviderService.StreamingState(stopSequences: [], trackContent: false)
         var yielded: [String] = []

@@ -606,6 +606,55 @@ struct RemoteChatRequestEncodingTests {
         #expect(message.content == "hi")
     }
 
+    @Test func routerWireCompatibleMessages_keepsUserMediaAndStringifiesAssistantContent() throws {
+        let assistant = ChatMessage(
+            role: "assistant",
+            content: "I looked at the image.",
+            contentParts: [
+                .text("I looked at the image."),
+                .imageUrl(url: "data:image/png;base64,AAAA", detail: nil),
+            ]
+        )
+        let user = ChatMessage(
+            role: "user",
+            content: "describe this",
+            contentParts: [
+                .text("describe this"),
+                .imageUrl(url: "data:image/png;base64,BBBB", detail: nil),
+            ]
+        )
+
+        let normalized = RemoteProviderService.routerWireCompatibleMessages([assistant, user])
+        let array = try Self.encodeAsArray(normalized)
+        let assistantJSON = try #require(array.first)
+        let userJSON = try #require(array.dropFirst().first)
+
+        #expect(assistantJSON["content"] as? String == "I looked at the image.")
+        #expect(userJSON["content"] is [[String: Any]])
+    }
+
+    @Test func routerWireCompatibleMessages_includesEmptyStringForAssistantToolHistory() throws {
+        let assistant = ChatMessage(
+            role: "assistant",
+            content: nil,
+            tool_calls: [
+                ToolCall(
+                    id: "call_1",
+                    type: "function",
+                    function: ToolCallFunction(name: "sandbox_exec", arguments: #"{"cmd":"pwd"}"#)
+                )
+            ],
+            tool_call_id: nil
+        )
+
+        let normalized = RemoteProviderService.routerWireCompatibleMessages([assistant])
+        let array = try Self.encodeAsArray(normalized)
+        let assistantJSON = try #require(array.first)
+
+        #expect(assistantJSON["content"] as? String == "")
+        #expect(assistantJSON["tool_calls"] != nil)
+    }
+
     @Test func echoesReasoningContent_trueForDeepSeekHost() throws {
         #expect(
             RemoteProviderService.echoesReasoningContent(
@@ -753,8 +802,21 @@ struct RemoteChatRequestEncodingTests {
         providerType: RemoteProviderType,
         host: String,
         model: String,
-        assistantReasoning: String
+        assistantReasoning: String,
+        tools: [Tool]? = nil
     ) throws -> String {
+        let wireTools: [Tool]?
+        if let tools,
+            RemoteProviderService.enforcesTopLevelParameterSchemaRestrictions(
+                providerType: providerType,
+                host: host
+            )
+        {
+            wireTools = tools.map(RemoteProviderService.strippingRestrictedTopLevelSchemaKeys)
+        } else {
+            wireTools = tools
+        }
+
         let request = RemoteChatRequest(
             model: model,
             messages: [
@@ -774,7 +836,7 @@ struct RemoteChatRequestEncodingTests {
             frequency_penalty: nil,
             presence_penalty: nil,
             stop: nil,
-            tools: nil,
+            tools: wireTools,
             tool_choice: nil,
             reasoning_effort: nil,
             reasoning: nil,
@@ -792,6 +854,7 @@ struct RemoteChatRequestEncodingTests {
             outbound.messages = RemoteProviderService.strippingReasoningContent(from: outbound.messages)
         }
         if providerType == .osaurusRouter {
+            outbound.messages = RemoteProviderService.routerWireCompatibleMessages(outbound.messages)
             outbound.clamp_to_balance = false
         }
         let data = try JSONEncoder.osaurusCanonical().encode(outbound)
@@ -1218,26 +1281,7 @@ struct RemoteChatRequestEncodingTests {
     /// whose schema carries a top-level `anyOf` for path-OR-content). The
     /// sanitizer must strip exactly the top-level offenders and nothing nested.
     @Test func openAISanitizer_stripsTopLevelAnyOfOnly() throws {
-        let tool = Self.makeTool(
-            name: "share_artifact",
-            parameters: .object([
-                "type": .string("object"),
-                "properties": .object([
-                    "path": .object(["type": .string("string")]),
-                    "mode": .object([
-                        "anyOf": .array([
-                            .object(["type": .string("string")]),
-                            .object(["type": .string("number")]),
-                        ])
-                    ]),
-                ]),
-                "anyOf": .array([
-                    .object(["required": .array([.string("path")])])
-                ]),
-            ])
-        )
-
-        let sanitized = RemoteProviderService.strippingRestrictedTopLevelSchemaKeys(tool)
+        let sanitized = RemoteProviderService.strippingRestrictedTopLevelSchemaKeys(Self.topLevelAnyOfTool)
         guard case .object(let params)? = sanitized.function.parameters else {
             Issue.record("parameters lost")
             return
@@ -1251,6 +1295,42 @@ struct RemoteChatRequestEncodingTests {
             return
         }
         #expect(mode["anyOf"] != nil, "nested anyOf must survive")
+    }
+
+    @Test func routerWireBody_stripsTopLevelToolCombinatorsOnly() throws {
+        let body = try Self.encodedWireBody(
+            providerType: .osaurusRouter,
+            host: "router.osaurus.ai",
+            model: "claude-opus-4-8",
+            assistantReasoning: "hidden trace",
+            tools: [Self.topLevelAnyOfTool]
+        )
+        let payload = try Self.decodeAsDictionary(Data(body.utf8))
+        let tools = try #require(payload["tools"] as? [[String: Any]])
+        let function = try #require(tools.first?["function"] as? [String: Any])
+        let params = try #require(function["parameters"] as? [String: Any])
+
+        #expect(params["anyOf"] == nil, "router wire schema must drop top-level anyOf")
+        #expect(params["type"] as? String == "object")
+        let properties = try #require(params["properties"] as? [String: Any])
+        let mode = try #require(properties["mode"] as? [String: Any])
+        #expect(mode["anyOf"] != nil, "nested anyOf must survive for provider-side guidance")
+    }
+
+    @Test func nonStrictOpenAICompatWireBody_keepsTopLevelToolCombinators() throws {
+        let body = try Self.encodedWireBody(
+            providerType: .openaiLegacy,
+            host: "api.x.ai",
+            model: "grok-4",
+            assistantReasoning: "hidden trace",
+            tools: [Self.topLevelAnyOfTool]
+        )
+        let payload = try Self.decodeAsDictionary(Data(body.utf8))
+        let tools = try #require(payload["tools"] as? [[String: Any]])
+        let function = try #require(tools.first?["function"] as? [String: Any])
+        let params = try #require(function["parameters"] as? [String: Any])
+
+        #expect(params["anyOf"] != nil)
     }
 
     @Test func openAISanitizer_passThroughWhenClean() throws {
@@ -1269,6 +1349,12 @@ struct RemoteChatRequestEncodingTests {
             RemoteProviderService.enforcesTopLevelParameterSchemaRestrictions(
                 providerType: .azureOpenAI,
                 host: "myorg.example.azure.com"
+            )
+        )
+        #expect(
+            RemoteProviderService.enforcesTopLevelParameterSchemaRestrictions(
+                providerType: .osaurusRouter,
+                host: "router.osaurus.ai"
             )
         )
         #expect(
@@ -1353,6 +1439,25 @@ struct RemoteChatRequestEncodingTests {
         )
     )
 
+    private static let topLevelAnyOfTool = makeTool(
+        name: "share_artifact",
+        parameters: .object([
+            "type": .string("object"),
+            "properties": .object([
+                "path": .object(["type": .string("string")]),
+                "mode": .object([
+                    "anyOf": .array([
+                        .object(["type": .string("string")]),
+                        .object(["type": .string("number")]),
+                    ])
+                ]),
+            ]),
+            "anyOf": .array([
+                .object(["required": .array([.string("path")])])
+            ]),
+        ])
+    )
+
     private static let strictNestedTool = Tool(
         type: "function",
         function: ToolFunction(
@@ -1409,6 +1514,14 @@ struct RemoteChatRequestEncodingTests {
     private static func encodeAsDictionary(_ request: OpenResponsesRequest) throws -> [String: Any] {
         let data = try JSONEncoder().encode(request)
         guard let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw DecodeAsDictionaryError.notAnObject
+        }
+        return obj
+    }
+
+    private static func encodeAsArray(_ messages: [ChatMessage]) throws -> [[String: Any]] {
+        let data = try JSONEncoder().encode(messages)
+        guard let obj = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
             throw DecodeAsDictionaryError.notAnObject
         }
         return obj
