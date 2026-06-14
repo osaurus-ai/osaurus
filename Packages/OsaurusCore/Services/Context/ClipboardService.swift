@@ -126,7 +126,15 @@ public final class ClipboardService: ObservableObject {
             return
         }
 
-        print("[ClipboardService] New content detected: \(content.redactedDiagnosticDescription)")
+        // Build the redacted diagnostic off the main actor: the `.text`
+        // variant calls `String.count`, which walks grapheme-cluster
+        // boundaries. For a large pasteboard string backed by a foreign
+        // `NSString` that walk is O(n) and runs synchronous foreign-scalar
+        // alignment, blocking the UI long enough to trip the hang watchdog.
+        let summary = await Task.detached(priority: .utility) {
+            content.redactedDiagnosticDescription
+        }.value
+        print("[ClipboardService] New content detected: \(summary)")
         currentContent = content
         hasNewContent = true
 
