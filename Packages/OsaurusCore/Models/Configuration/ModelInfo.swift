@@ -65,19 +65,49 @@ extension ModelInfo {
     // disk — synchronous I/O that hangs the UI when it runs on every body eval.
     // Only successful loads are cached (so a not-yet-downloaded model is re-probed),
     // and the cache is dropped on `.localModelsChanged` to stay in sync with disk.
+    //
+    // `.localModelsChanged` only fires when the discovered model *set* changes,
+    // NOT when a `config.json` is rewritten in place at the same id/path (e.g. a
+    // bundle re-quantized or its context window edited under the same name). To
+    // keep the resolved context window — and every other config-derived field —
+    // honest across in-place edits, each hit re-stats the cached `config.json`
+    // and only reuses the memo when its modification date is unchanged. The hit
+    // path stays cheap: it stats the already-resolved `configURL` (one syscall),
+    // never re-running the directory-enumerating `findModelDirectory`.
+    private struct CacheEntry {
+        let info: ModelInfo
+        let configPath: String
+        let configModDate: Date?
+    }
     private static let cacheLock = NSLock()
-    private nonisolated(unsafe) static var cache: [String: ModelInfo] = [:]
+    private nonisolated(unsafe) static var cache: [String: CacheEntry] = [:]
     private nonisolated(unsafe) static var didInstallObserver = false
+
+    /// Modification date of a file, or nil if it is missing/unreadable. Used to
+    /// detect in-place `config.json` edits that `.localModelsChanged` misses.
+    /// Goes through `FileManager.attributesOfItem` on a path string rather than
+    /// `URL.resourceValues`: `NSURL` caches resource values per instance, so
+    /// re-statting a stored `URL` would return the date from when it was first
+    /// read (never seeing the in-place edit) — exactly the staleness this guards.
+    private static func fileModificationDate(atPath path: String) -> Date? {
+        (try? FileManager.default.attributesOfItem(atPath: path))?[.modificationDate]
+            as? Date
+    }
 
     /// Load model info from a model identifier (e.g., "mlx-community/Qwen3-1.7B-4bit" or "qwen3-1.7b-4bit")
     static func load(modelId: String) -> ModelInfo? {
         ensureCacheObserverInstalled()
         cacheLock.lock()
-        if let cached = cache[modelId] {
-            cacheLock.unlock()
-            return cached
-        }
+        let cached = cache[modelId]
         cacheLock.unlock()
+        if let cached,
+            fileModificationDate(atPath: cached.configPath) == cached.configModDate
+        {
+            // Memo is still consistent with on-disk `config.json`.
+            return cached.info
+        }
+        // Cache miss, or the cached `config.json` changed on disk since it was
+        // memoized (stale window/metadata) — re-probe from disk.
 
         // Try to find the model directory
         guard let directory = findModelDirectory(for: modelId) else {
@@ -86,8 +116,14 @@ extension ModelInfo {
 
         let info = load(from: directory, modelId: modelId)
         if let info {
+            let configPath = directory.appendingPathComponent("config.json").path
+            let entry = CacheEntry(
+                info: info,
+                configPath: configPath,
+                configModDate: fileModificationDate(atPath: configPath)
+            )
             cacheLock.lock()
-            cache[modelId] = info
+            cache[modelId] = entry
             cacheLock.unlock()
         }
         return info
