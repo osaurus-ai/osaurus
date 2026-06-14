@@ -561,7 +561,11 @@ struct ProviderHelpLinks: View {
         HStack(spacing: 16) {
             Button {
                 if let url = URL(string: preset.consoleURL) {
-                    NSWorkspace.shared.open(url)
+                    // Async open: the synchronous `open(_:)` blocks the main
+                    // thread on a LaunchServices XPC round-trip that can stall
+                    // long enough to trip the hang watchdog.
+                    NSWorkspace.shared.open(
+                        url, configuration: NSWorkspace.OpenConfiguration(), completionHandler: nil)
                 }
             } label: {
                 HStack(spacing: 6) {
@@ -582,7 +586,11 @@ struct ProviderHelpLinks: View {
             if let docURL = preset.documentationURL {
                 Button {
                     if let url = URL(string: docURL) {
-                        NSWorkspace.shared.open(url)
+                        // Async open to avoid blocking the main thread on the
+                        // synchronous LaunchServices XPC round-trip.
+                        NSWorkspace.shared.open(
+                            url, configuration: NSWorkspace.OpenConfiguration(),
+                            completionHandler: nil)
                     }
                 } label: {
                     HStack(spacing: 6) {
