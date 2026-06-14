@@ -1246,6 +1246,14 @@ public actor ModelRuntime {
         // gets a clear error and the server stays up.
         try Self.validateUnsupportedPlainDSV4AffineJANG(at: localURL, name: name)
         try await Self.ensureJANGTQSidecar(at: localURL, modelId: id, name: name)
+        // One-time, idempotent: Gemma-4 JANG (affine) audio bundles shipped
+        // without the `quantization.multimodal` fp16-passthrough flag that the
+        // mxfp4/mxfp8 QAT bundles carry. Without it the audio embeddings fuse at
+        // the affine-quantized precision and the model degenerates on audio
+        // input (a spurious `thought` channel stub / dropped answer). Adding the
+        // flag — exactly the value the mxfp bundles use — restores clean audio
+        // and leaves vision unaffected (verified live on 12B JANG_4M).
+        Self.patchGemma4JangAudioMultimodalIfNeeded(at: localURL, name: name)
         // Compute the incoming bundle's on-disk weight size for *every* policy.
         // Previously only `manualMultiModel` did this (strict left it 0), which
         // meant the resident-RAM accounting — and the pre-load feasibility gate
@@ -3411,6 +3419,71 @@ public actor ModelRuntime {
                         + "Fix: set weight_format to \"mxtq\" in jang_config.json, "
                         + "or re-download from a corrected source."
                 ]
+            )
+        }
+    }
+
+    /// One-time, idempotent config repair for Gemma-4 JANG (affine) **audio**
+    /// bundles. The mxfp4/mxfp8 QAT bundles set
+    /// `quantization.multimodal = "fp16_passthrough_embedders_early_fusion"`,
+    /// which keeps the multimodal embedders at fp16 for early fusion; the JANG
+    /// bundles shipped without it and therefore fuse audio at the affine quant
+    /// precision, degenerating on audio input (spurious `thought` channel stub /
+    /// dropped answer) while text and vision stay fine. Add the flag once, in
+    /// place, exactly matching the mxfp value — verified live to restore clean
+    /// audio on 12B JANG_4M with no effect on vision.
+    ///
+    /// Only fires for: Gemma-4 family, a JANG/affine bundle, that actually ships
+    /// an audio embedder, and whose `quantization.multimodal` is still missing.
+    /// Once written, the missing-flag guard fails on every subsequent load, so
+    /// the file is patched exactly once.
+    static func patchGemma4JangAudioMultimodalIfNeeded(at directory: URL, name: String) {
+        let configURL = directory.appendingPathComponent("config.json")
+        guard let data = try? Data(contentsOf: configURL),
+            var json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return }
+
+        // 1. Gemma-4 family only.
+        let modelType = (json["model_type"] as? String)?.lowercased() ?? ""
+        guard modelType.hasPrefix("gemma4") else { return }
+
+        // 2. JANG / affine bundle only — the mxfp bundles already carry the flag.
+        let weightFormat = (json["weight_format"] as? String)?.lowercased() ?? ""
+        var quantization = json["quantization"] as? [String: Any] ?? [:]
+        let quantMode = (quantization["mode"] as? String)?.lowercased() ?? ""
+        let isJangAffine =
+            weightFormat.contains("jang") || weightFormat.contains("affine")
+            || quantMode == "affine"
+        guard isJangAffine else { return }
+
+        // 3. Idempotency: only when the flag is genuinely absent. After we write
+        //    it, this guard fails next load and the file is never rewritten.
+        if let existing = quantization["multimodal"], !(existing is NSNull) { return }
+
+        // 4. Audio bundles only — must actually ship the `embed_audio`
+        //    projection. Vision-only JANG rows (26B/31B carry no audio tensors)
+        //    are left untouched so their vision fusion is unaffected.
+        let indexURL = directory.appendingPathComponent("model.safetensors.index.json")
+        guard let indexData = try? Data(contentsOf: indexURL, options: .mappedIfSafe),
+            indexData.range(of: Data("embed_audio.embedding_projection".utf8)) != nil
+        else { return }
+
+        // Patch + persist exactly once, atomically, matching the mxfp QAT value.
+        quantization["multimodal"] = "fp16_passthrough_embedders_early_fusion"
+        json["quantization"] = quantization
+        guard
+            let out = try? JSONSerialization.data(
+                withJSONObject: json,
+                options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
+        else { return }
+        do {
+            try out.write(to: configURL, options: .atomic)
+            genLog.info(
+                "patched Gemma-4 JANG audio config: added quantization.multimodal fp16 passthrough model=\(name, privacy: .public)"
+            )
+        } catch {
+            genLog.error(
+                "failed to patch Gemma-4 JANG audio config model=\(name, privacy: .public): \(String(describing: error), privacy: .public)"
             )
         }
     }
