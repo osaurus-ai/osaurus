@@ -60,6 +60,28 @@ struct RemoteChatRequestEncodingTests {
         #expect(payload["max_completion_tokens"] == nil)
     }
 
+    // MARK: - Router idempotency key (double-billing guard)
+
+    /// The router idempotency token rides the request BODY (so it's covered by
+    /// the `sha256(body)` signature). A re-POST with the same key lets the
+    /// router dedupe the charge.
+    @Test func encode_includesIdempotencyKey_whenSet() throws {
+        var request = Self.makeRequest(model: "venice/minimax-m3", maxTokens: 256)
+        request.idempotencyKey = "run-abc:2"
+        let payload = try Self.encodeAsDictionary(request)
+
+        #expect(payload["idempotency_key"] as? String == "run-abc:2")
+    }
+
+    /// Non-router paths never set the key, so it must be omitted (some
+    /// OpenAI-compat upstreams 422 on unknown top-level fields).
+    @Test func encode_omitsIdempotencyKey_whenNil() throws {
+        let request = Self.makeRequest(model: "gpt-4o-mini", maxTokens: 256)
+        let payload = try Self.encodeAsDictionary(request)
+
+        #expect(payload["idempotency_key"] == nil)
+    }
+
     @Test func openResponsesRequest_defaultSingleUserMessage_usesTextShorthand() throws {
         let request = Self.makeRequest(model: "gpt-5.2", maxTokens: 1024)
         let responsesRequest = request.toOpenResponsesRequest()

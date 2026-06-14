@@ -156,7 +156,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             jsonMode: isJSONObject,
             modelOptions: modelOptions,
             sessionId: request.session_id,
-            ttftTrace: trace
+            ttftTrace: trace,
+            idempotencyKey: request.idempotencyKey
         )
 
         let services = self.services

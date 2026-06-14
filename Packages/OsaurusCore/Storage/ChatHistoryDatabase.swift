@@ -124,7 +124,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
 
     /// Highest schema version this build knows how to produce. Opening a DB
     /// stamped newer than this is refused (forward-version fail-fast).
-    private static let latestSchemaVersion = 7
+    private static let latestSchemaVersion = 8
 
     private func runMigrations() throws {
         let current = try getSchemaVersion()
@@ -147,6 +147,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         if current < 5 { try runMigrationStep(5, migrateToV5) }
         if current < 6 { try runMigrationStep(6, migrateToV6) }
         if current < 7 { try runMigrationStep(7, migrateToV7) }
+        if current < 8 { try runMigrationStep(8, migrateToV8) }
     }
 
     /// Run one migration body atomically. Called only from `runMigrations`,
@@ -277,6 +278,15 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
     private func migrateToV7() throws {
         try executeRaw("ALTER TABLE turns ADD COLUMN thinking_duration REAL")
         try setSchemaVersion(7)
+    }
+
+    /// v8: add `router_billing` — JSON `RouterBillingSummary` (cost, token
+    /// counts, status) for an Osaurus Router turn, so a reloaded chat still
+    /// shows a billed-but-empty turn and its "you were charged" notice rather
+    /// than a silent gap. Nullable; metadata only (no prompt/response text).
+    private func migrateToV8() throws {
+        try executeRaw("ALTER TABLE turns ADD COLUMN router_billing TEXT")
+        try setSchemaVersion(8)
     }
 
     // MARK: - Public API: sessions
@@ -739,6 +749,12 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         if let ttft = turn.timeToFirstToken {
             hasher.update(data: Data(String(ttft).utf8))
         }
+        // Billing can land after the initial empty-turn save (the summary frame
+        // often trails the content), so it must be part of the hash or the
+        // incremental upsert would skip writing the row.
+        if let billing = turn.routerBilling, let encoded = try? encoder.encode(billing) {
+            hasher.update(data: encoded)
+        }
         let digest = hasher.finalize()
         return digest.map { String(format: "%02x", $0) }.joined()
     }
@@ -837,8 +853,8 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             (id, session_id, seq, role, content, attachments,
              tool_calls, tool_call_id, tool_results, thinking, content_hash,
              created_at, completed_at, generation_token_count, time_to_first_token,
-             tool_call_durations, thinking_duration)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
+             tool_call_durations, thinking_duration, router_billing)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
         ON CONFLICT(id) DO UPDATE SET
             session_id             = excluded.session_id,
             seq                    = excluded.seq,
@@ -855,13 +871,14 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             generation_token_count = excluded.generation_token_count,
             time_to_first_token    = excluded.time_to_first_token,
             tool_call_durations    = excluded.tool_call_durations,
-            thinking_duration      = excluded.thinking_duration
+            thinking_duration      = excluded.thinking_duration,
+            router_billing         = excluded.router_billing
         """
 
     private static let selectTurnsSQL = """
         SELECT id, role, content, attachments, tool_calls, tool_call_id, tool_results, thinking,
                created_at, completed_at, generation_token_count, time_to_first_token,
-               tool_call_durations, thinking_duration
+               tool_call_durations, thinking_duration, router_billing
         FROM turns
         WHERE session_id = ?1
         ORDER BY seq ASC
@@ -927,6 +944,9 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             .map { String(cString: $0) }
             .flatMap(decodeJSON) ?? [:]
         let thinkingDuration = readNullableDouble(stmt, index: 13)
+        let routerBilling: RouterBillingSummary? = sqlite3_column_text(stmt, 14)
+            .map { String(cString: $0) }
+            .flatMap(decodeJSON)
         return ChatTurnData(
             id: UUID(uuidString: idStr) ?? UUID(),
             role: role,
@@ -941,7 +961,8 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             createdAt: createdAt,
             completedAt: completedAt,
             generationTokenCount: tokenCount,
-            timeToFirstToken: timeToFirstToken
+            timeToFirstToken: timeToFirstToken,
+            routerBilling: routerBilling
         )
     }
 
@@ -984,6 +1005,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         bindNullableDouble(stmt, index: 15, value: turn.timeToFirstToken)
         bindText(stmt, index: 16, value: turn.toolCallDurations.isEmpty ? nil : encodeJSON(turn.toolCallDurations))
         bindNullableDouble(stmt, index: 17, value: turn.thinkingDuration)
+        bindText(stmt, index: 18, value: turn.routerBilling.flatMap(encodeJSON))
     }
 
     static func bindNullableDouble(_ stmt: OpaquePointer, index: Int, value: Double?) {

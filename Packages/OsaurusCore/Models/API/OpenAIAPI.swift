@@ -701,6 +701,11 @@ struct ChatCompletionRequest: Codable, Sendable {
     /// telemetry can label the turn `is_agent`. Not decoded from OpenAI JSON
     /// and not forwarded to remote providers.
     var isAgentRequest: Bool = false
+    /// Stable per-logical-step idempotency token. Set by the chat surface and
+    /// reused across connect-phase and transient agent-loop retries so the
+    /// Osaurus Router can dedupe billing on a re-POST. Not decoded from inbound
+    /// OpenAI JSON; forwarded ONLY to the router (in the signed request body).
+    var idempotencyKey: String? = nil
 
     /// Resolved max tokens, preferring max_tokens then max_completion_tokens.
     var resolvedMaxTokens: Int? { max_tokens ?? max_completion_tokens }
@@ -741,6 +746,7 @@ struct ChatCompletionRequest: Codable, Sendable {
         copy.reasoning_effort = reasoning_effort
         copy.samplingParametersAreImplicit = samplingParametersAreImplicit
         copy.isAgentRequest = isAgentRequest
+        copy.idempotencyKey = idempotencyKey
         return copy
     }
 
@@ -776,6 +782,7 @@ struct ChatCompletionRequest: Codable, Sendable {
         copy.reasoning_effort = reasoning_effort
         copy.samplingParametersAreImplicit = samplingParametersAreImplicit
         copy.isAgentRequest = isAgentRequest
+        copy.idempotencyKey = idempotencyKey
         return copy
     }
 }

@@ -1068,6 +1068,11 @@ public actor RemoteProviderService: ToolCapableService {
             Task { @MainActor in
                 OsaurusRouterAccountService.shared.noteRouterSummary(summary.osaurus)
             }
+            // Surface the charge on the stream so the chat layer can keep +
+            // explain a billed-but-empty turn and record the on-device ledger
+            // row. The `\u{FFFE}` sentinel keeps it out of visible output and
+            // token counting; it carries no prompt/response text.
+            continuation.yield(StreamingBillingHint.encode(RouterBillingSummary(summary.osaurus)))
             return false
         }
 
@@ -2250,7 +2255,12 @@ public actor RemoteProviderService: ToolCapableService {
             reasoning: allowsReasoningObject ? effortValue.map { ReasoningConfig(effort: $0) } : nil,
             thinking: thinking,
             modelOptions: parameters.modelOptions,
-            veniceParameters: buildVeniceParameters(from: parameters.modelOptions)
+            veniceParameters: buildVeniceParameters(from: parameters.modelOptions),
+            // Router-only: the body is signed, so this rides the existing
+            // signature. Gated here so no other OpenAI-compat upstream receives
+            // an unexpected `idempotency_key` field (some 422 on unknown keys).
+            idempotencyKey: provider.providerType == .osaurusRouter
+                ? parameters.idempotencyKey : nil
         )
     }
 
@@ -2573,6 +2583,16 @@ public actor RemoteProviderService: ToolCapableService {
         }
         urlRequest.httpBody = bodyData
         if provider.providerType == .osaurusRouter {
+            // The signer hashes `bodyData`, so the `idempotency_key` embedded
+            // above is signature-covered (no separate header to protect).
+            //
+            // Server-side contract (out of this repo, required to fully close
+            // double-billing): the router must treat `idempotency_key` as a
+            // dedupe key — a repeat POST with the same key returns the original
+            // result/charge instead of billing again — and SHOULD echo a stable
+            // `request_id` in the summary frame so the on-device billing ledger
+            // can be correlated exactly with server-side usage (today the
+            // Dashboard reconciles approximately by time + cost + model).
             try await OsaurusRouterAuthSigner().sign(request: &urlRequest, body: bodyData)
         }
         // Wire-verification capture: record the post-scrub bytes
@@ -2937,6 +2957,12 @@ struct RemoteChatRequest: Encodable {
     /// Router-only billing behavior. `false` keeps insufficient-balance
     /// requests explicit (402) instead of silently shrinking the token cap.
     var clamp_to_balance: Bool? = nil
+    /// Router-only idempotency token. Stable across connect-phase and transient
+    /// agent-loop retries of the same logical step so the router can dedupe
+    /// billing on a re-POST. Lives in the body so it's covered by the request
+    /// signature. Only ever set for `.osaurusRouter` (see `buildChatRequest`),
+    /// so other OpenAI-compat upstreams never see an unknown field.
+    var idempotencyKey: String? = nil
 
     enum CodingKeys: String, CodingKey {
         case model, messages, temperature, max_completion_tokens, max_tokens, stream
@@ -2945,6 +2971,7 @@ struct RemoteChatRequest: Encodable {
         case reasoning
         case thinking
         case clamp_to_balance
+        case idempotencyKey = "idempotency_key"
         case veniceParameters = "venice_parameters"
     }
 
@@ -2985,6 +3012,7 @@ struct RemoteChatRequest: Encodable {
         try container.encodeIfPresent(reasoning, forKey: .reasoning)
         try container.encodeIfPresent(thinking, forKey: .thinking)
         try container.encodeIfPresent(clamp_to_balance, forKey: .clamp_to_balance)
+        try container.encodeIfPresent(idempotencyKey, forKey: .idempotencyKey)
         try container.encodeIfPresent(veniceParameters, forKey: .veniceParameters)
         // `modelOptions` is intentionally not in `CodingKeys` — it stays
         // in-process for model-specific feature flags.

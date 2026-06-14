@@ -1245,6 +1245,116 @@ final class NativeStatsView: NSView {
     }
 }
 
+// MARK: - NativeEmptyResponseNoticeView
+
+/// Footer shown when the Osaurus Router billed a turn that produced no visible
+/// text (and no reasoning/tools). Surfaces the charge honestly with a Retry
+/// affordance rather than letting the turn be silently dropped.
+final class NativeEmptyResponseNoticeView: NSView {
+    private let iconView = NSImageView()
+    private let titleLabel = NSTextField(labelWithString: "")
+    private let detailLabel = NSTextField(labelWithString: "")
+    private let retryButton = NSButton()
+
+    private var turnId: UUID = UUID()
+    private var onRetry: ((UUID) -> Void)?
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        translatesAutoresizingMaskIntoConstraints = false
+
+        iconView.translatesAutoresizingMaskIntoConstraints = false
+        iconView.imageScaling = .scaleProportionallyUpOrDown
+
+        for label in [titleLabel, detailLabel] {
+            label.translatesAutoresizingMaskIntoConstraints = false
+            label.maximumNumberOfLines = 1
+            label.lineBreakMode = .byTruncatingTail
+            label.isSelectable = false
+            label.isEditable = false
+        }
+
+        retryButton.translatesAutoresizingMaskIntoConstraints = false
+        retryButton.bezelStyle = .rounded
+        retryButton.controlSize = .small
+        retryButton.title = L("Retry")
+        retryButton.target = self
+        retryButton.action = #selector(retryTapped)
+        retryButton.setContentHuggingPriority(.required, for: .horizontal)
+        retryButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+
+        let textStack = NSStackView(views: [titleLabel, detailLabel])
+        textStack.orientation = .vertical
+        textStack.alignment = .leading
+        textStack.spacing = 1
+        textStack.translatesAutoresizingMaskIntoConstraints = false
+
+        addSubview(iconView)
+        addSubview(textStack)
+        addSubview(retryButton)
+
+        NSLayoutConstraint.activate([
+            iconView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            iconView.centerYAnchor.constraint(equalTo: centerYAnchor),
+            iconView.widthAnchor.constraint(equalToConstant: 16),
+            iconView.heightAnchor.constraint(equalToConstant: 16),
+
+            textStack.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 8),
+            textStack.centerYAnchor.constraint(equalTo: centerYAnchor),
+            textStack.trailingAnchor.constraint(lessThanOrEqualTo: retryButton.leadingAnchor, constant: -8),
+
+            retryButton.trailingAnchor.constraint(equalTo: trailingAnchor),
+            retryButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    @objc private func retryTapped() {
+        onRetry?(turnId)
+    }
+
+    func configure(
+        turnId: UUID,
+        outputTokens: Int,
+        costMicro: String,
+        theme: any ThemeProtocol,
+        onRetry: ((UUID) -> Void)?
+    ) {
+        self.turnId = turnId
+        self.onRetry = onRetry
+
+        let cfg = NSImage.SymbolConfiguration(pointSize: CGFloat(theme.captionSize), weight: .medium)
+        iconView.image = NSImage(
+            systemSymbolName: "exclamationmark.bubble",
+            accessibilityDescription: nil
+        )?.withSymbolConfiguration(cfg)
+        iconView.contentTintColor = NSColor(theme.warningColor)
+
+        titleLabel.stringValue = L("The model returned no visible text")
+        titleLabel.font = NSFont.systemFont(ofSize: CGFloat(theme.captionSize) + 1, weight: .medium)
+        titleLabel.textColor = NSColor(theme.primaryText)
+
+        let formattedCost = OsaurusRouter.formatMicroUSD(costMicro)
+        let detail: String
+        if outputTokens > 0 {
+            detail = String(
+                format: L("You were charged %@ for %d tokens."),
+                formattedCost,
+                outputTokens
+            )
+        } else {
+            detail = String(format: L("You were charged %@."), formattedCost)
+        }
+        detailLabel.stringValue = detail
+        detailLabel.font = NSFont.monospacedDigitSystemFont(
+            ofSize: CGFloat(theme.captionSize) - 1,
+            weight: .regular
+        )
+        detailLabel.textColor = NSColor(theme.tertiaryText)
+    }
+}
+
 // MARK: - NativeMessageCellView
 
 final class NativeMessageCellView: NSTableCellView {
@@ -1270,6 +1380,7 @@ final class NativeMessageCellView: NSTableCellView {
     private var nativeChartView: NativeChartView?
     private var nativeStatsView: NativeStatsView?
     private var nativeAssistantActionsView: NativeAssistantActionsView?
+    private var nativeEmptyNoticeView: NativeEmptyResponseNoticeView?
 
     private var userBubbleCornerRadius: CGFloat = 0
     private var userBubbleWidthConstraint: NSLayoutConstraint?
@@ -1434,6 +1545,15 @@ final class NativeMessageCellView: NSTableCellView {
 
         case let .assistantActions(turnId):
             configureAsAssistantActions(turnId: turnId, context: context, sameKind: sameKind)
+
+        case let .emptyResponseNotice(turnId, outputTokens, costMicro, _):
+            configureAsEmptyResponseNotice(
+                turnId: turnId,
+                outputTokens: outputTokens,
+                costMicro: costMicro,
+                context: context,
+                sameKind: sameKind
+            )
         }
     }
 
@@ -2138,6 +2258,38 @@ final class NativeMessageCellView: NSTableCellView {
         )
     }
 
+    // MARK: - EmptyResponseNotice
+
+    private func configureAsEmptyResponseNotice(
+        turnId: UUID,
+        outputTokens: Int,
+        costMicro: String,
+        context: CellRenderingContext,
+        sameKind: Bool
+    ) {
+        if !sameKind || nativeEmptyNoticeView == nil {
+            removeAllContentViews()
+            let nv = NativeEmptyResponseNoticeView()
+            nv.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(nv)
+            NSLayoutConstraint.activate([
+                nv.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+                nv.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -16),
+                nv.topAnchor.constraint(equalTo: topAnchor, constant: 4),
+                nv.heightAnchor.constraint(equalToConstant: 36),
+                nv.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -8),
+            ])
+            nativeEmptyNoticeView = nv
+        }
+        nativeEmptyNoticeView?.configure(
+            turnId: turnId,
+            outputTokens: outputTokens,
+            costMicro: costMicro,
+            theme: context.theme,
+            onRetry: context.onRegenerate
+        )
+    }
+
     // MARK: - SharedArtifact
 
     private func configureAsArtifact(
@@ -2298,6 +2450,7 @@ final class NativeMessageCellView: NSTableCellView {
         detachIfStillParented(nativeChartView); nativeChartView = nil
         nativeStatsView?.removeFromSuperview(); nativeStatsView = nil
         nativeAssistantActionsView?.removeFromSuperview(); nativeAssistantActionsView = nil
+        nativeEmptyNoticeView?.removeFromSuperview(); nativeEmptyNoticeView = nil
         userMessageContainer?.removeFromSuperview(); userMessageContainer = nil
         userTextView = nil
         userInlineEditView = nil
@@ -2494,7 +2647,7 @@ private func cgColorsEqual(_ lhs: CGColor?, _ rhs: CGColor?) -> Bool {
 enum ContentBlockKindTag: Equatable {
     case header, paragraph, toolCallGroup, thinking, userMessage, pendingToolCall
     case generationStats, typingIndicator, groupSpacer, sharedArtifact, chart
-    case assistantActions, other
+    case assistantActions, emptyResponseNotice, other
 }
 
 extension ContentBlockKind {
@@ -2512,6 +2665,7 @@ extension ContentBlockKind {
         case .sharedArtifact: return .sharedArtifact
         case .chart: return .chart
         case .assistantActions: return .assistantActions
+        case .emptyResponseNotice: return .emptyResponseNotice
         }
     }
 }
@@ -2554,6 +2708,10 @@ enum NativeCellHeightEstimator {
         case .assistantActions:
             // 4 top gap + 28 button + 8 bottom gap
             return 40
+
+        case .emptyResponseNotice:
+            // 4 top gap + 36 notice + 8 bottom gap
+            return 48
 
         case .typingIndicator:
             // 4 top + ~22 content + 6 bottom (tight to header / thinking row above)

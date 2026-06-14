@@ -55,6 +55,11 @@ enum ContentBlockKind: Equatable {
     /// Replaces the hover-revealed copy/regenerate buttons that used to live in the header,
     /// so moving the mouse over the assistant transcript no longer triggers per-row reconfigures.
     case assistantActions(turnId: UUID)
+    /// Shown when the Osaurus Router billed a turn that produced no visible
+    /// text (and no reasoning/tools). Surfaces the charge honestly with a Retry
+    /// affordance instead of silently dropping the turn. `costMicro` is the raw
+    /// micro-USD string; `status` is the router's terminal status.
+    case emptyResponseNotice(turnId: UUID, outputTokens: Int, costMicro: String, status: String)
 
     /// Custom Equatable optimized for performance during streaming.
     /// Uses text length comparison as a cheap proxy for content change detection.
@@ -109,6 +114,12 @@ enum ContentBlockKind: Equatable {
         case let (.assistantActions(lId), .assistantActions(rId)):
             return lId == rId
 
+        case let (
+            .emptyResponseNotice(lId, lTokens, lCost, lStatus),
+            .emptyResponseNotice(rId, rTokens, rCost, rStatus)
+        ):
+            return lId == rId && lTokens == rTokens && lCost == rCost && lStatus == rStatus
+
         default:
             return false
         }
@@ -129,7 +140,8 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
         case let .header(role, _, _): return role
         case let .paragraph(_, _, _, role): return role
         case .toolCallGroup, .thinking, .sharedArtifact, .pendingToolCall,
-            .generationStats, .typingIndicator, .groupSpacer, .chart, .assistantActions:
+            .generationStats, .typingIndicator, .groupSpacer, .chart, .assistantActions,
+            .emptyResponseNotice:
             return .assistant
         case .userMessage: return .user
         }
@@ -192,6 +204,12 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
         )
     }
 
+    /// Stable id for a turn's thinking block. Shared by the factory and the
+    /// reasoning-only auto-expand seeding so the two never drift apart.
+    static func thinkingBlockId(turnId: UUID, index: Int = 0) -> String {
+        "think-\(turnId.uuidString)-\(index)"
+    }
+
     static func thinking(
         turnId: UUID,
         index: Int,
@@ -201,7 +219,7 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
         position: BlockPosition
     ) -> ContentBlock {
         ContentBlock(
-            id: "think-\(turnId.uuidString)-\(index)",
+            id: thinkingBlockId(turnId: turnId, index: index),
             turnId: turnId,
             kind: .thinking(index: index, text: text, isStreaming: isStreaming, duration: duration),
             position: position
@@ -290,6 +308,24 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
             id: "chart-\(turnId.uuidString)",
             turnId: turnId,
             kind: .chart(spec: spec),
+            position: position
+        )
+    }
+
+    static func emptyResponseNotice(
+        turnId: UUID,
+        billing: RouterBillingSummary,
+        position: BlockPosition
+    ) -> ContentBlock {
+        ContentBlock(
+            id: "empty-notice-\(turnId.uuidString)",
+            turnId: turnId,
+            kind: .emptyResponseNotice(
+                turnId: turnId,
+                outputTokens: billing.outputTokens,
+                costMicro: billing.costMicro,
+                status: billing.status
+            ),
             position: position
         )
     }
@@ -409,6 +445,16 @@ extension ContentBlock {
             }
 
             if !isStreaming && !hasVisibleContent && !hasRenderableThinking
+                && (turn.toolCalls ?? []).isEmpty && turn.pendingToolName == nil,
+                let billing = turn.routerBilling
+            {
+                // The router billed this turn but it produced no visible text,
+                // reasoning, or tools. Surface the charge with a Retry instead
+                // of the generic "no text" line.
+                turnBlocks.append(
+                    .emptyResponseNotice(turnId: turn.id, billing: billing, position: .middle)
+                )
+            } else if !isStreaming && !hasVisibleContent && !hasRenderableThinking
                 && (turn.toolCalls ?? []).isEmpty && turn.pendingToolName == nil
                 && (turn.generationTokenCount != nil || turn.generationTokensPerSecond != nil)
             {

@@ -233,3 +233,39 @@ struct OsaurusRouterSummaryEvent: Decodable, Equatable, Sendable {
 
     let osaurus: Summary
 }
+
+/// Local, persistable snapshot of a single Osaurus Router billing event.
+///
+/// `OsaurusRouterSummaryEvent.Summary` is the wire shape (`Decodable`-only); this
+/// is the decoupled value the app actually carries around — encoded onto the chat
+/// stream as a `StreamingBillingHint`, stamped on the assistant `ChatTurn`, and
+/// written to the on-device billing ledger. Metadata only: no prompt/response text.
+public struct RouterBillingSummary: Codable, Equatable, Sendable {
+    public var costMicro: String
+    public var status: String
+    public var tokenSource: String
+    public var inputTokens: Int
+    public var outputTokens: Int
+
+    public init(
+        costMicro: String,
+        status: String,
+        tokenSource: String,
+        inputTokens: Int,
+        outputTokens: Int
+    ) {
+        self.costMicro = costMicro
+        self.status = status
+        self.tokenSource = tokenSource
+        self.inputTokens = inputTokens
+        self.outputTokens = outputTokens
+    }
+
+    init(_ summary: OsaurusRouterSummaryEvent.Summary) {
+        self.costMicro = summary.costMicro
+        self.status = summary.status
+        self.tokenSource = summary.tokenSource
+        self.inputTokens = summary.inputTokens
+        self.outputTokens = summary.outputTokens
+    }
+}

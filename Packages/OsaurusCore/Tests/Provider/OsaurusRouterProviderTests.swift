@@ -181,6 +181,37 @@ struct OsaurusRouterProviderTests {
         #expect(yielded.contains { StreamingToolHint.decode($0) == "get_weather" })
     }
 
+    @Test func routerSummaryFrame_yieldsBillingHintOnStream() async throws {
+        var state = RemoteProviderService.StreamingState(stopSequences: [], trackContent: false)
+        let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
+
+        let shouldFinish = RemoteProviderService.processEventPayload(
+            #"{"osaurus":{"cost_micro":"1234","status":"completed","token_source":"provider","input_tokens":11,"output_tokens":3}}"#,
+            state: &state,
+            providerType: .osaurusRouter,
+            tools: [],
+            continuation: continuation
+        )
+        continuation.finish()
+
+        // The summary is consumed (doesn't finish the stream) AND surfaced as a
+        // billing hint so the chat layer can record the charge + ledger row.
+        #expect(shouldFinish == false)
+
+        var decodedBilling: RouterBillingSummary?
+        for try await delta in stream {
+            if let billing = StreamingBillingHint.decode(delta) {
+                decodedBilling = billing
+            }
+        }
+        let billing = try #require(decodedBilling, "summary frame must yield a billing hint")
+        #expect(billing.costMicro == "1234")
+        #expect(billing.status == "completed")
+        #expect(billing.tokenSource == "provider")
+        #expect(billing.inputTokens == 11)
+        #expect(billing.outputTokens == 3)
+    }
+
     @Test func routerSummaryThenDone_finishesNormally() {
         var state = RemoteProviderService.StreamingState(stopSequences: [], trackContent: false)
         let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()

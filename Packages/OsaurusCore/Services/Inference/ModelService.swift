@@ -55,6 +55,12 @@ struct GenerationParameters: Sendable {
     let sessionId: String?
     /// Optional TTFT trace for diagnostic timing instrumentation.
     let ttftTrace: TTFTTrace?
+    /// Stable per-logical-step idempotency token. Forwarded only to the
+    /// Osaurus Router (in the request body, so it's covered by the request
+    /// signature) so connect-phase and transient agent-loop retries that re-POST
+    /// the same logical request can be deduped server-side and billed once.
+    /// Local services and other remotes ignore it.
+    let idempotencyKey: String?
 
     init(
         temperature: Float?,
@@ -71,7 +77,8 @@ struct GenerationParameters: Sendable {
         jsonMode: Bool = false,
         modelOptions: [String: ModelOptionValue] = [:],
         sessionId: String? = nil,
-        ttftTrace: TTFTTrace? = nil
+        ttftTrace: TTFTTrace? = nil,
+        idempotencyKey: String? = nil
     ) {
         self.temperature = temperature
         self.maxTokens = maxTokens
@@ -88,6 +95,7 @@ struct GenerationParameters: Sendable {
         self.modelOptions = modelOptions
         self.sessionId = sessionId
         self.ttftTrace = ttftTrace
+        self.idempotencyKey = idempotencyKey
     }
 }
 
@@ -322,6 +330,30 @@ enum StreamingStatsHint: Sendable {
             return value.isEmpty ? nil : value
         }.first
         return (count, tps, unclosed, stopReason)
+    }
+}
+
+/// In-band signaling for an Osaurus Router billing event (cost, token counts,
+/// status). Shares the `\u{FFFE}` sentinel so the generic filters in HTTP
+/// handlers and `ChatEngine` drop it from visible output and skip it for token
+/// counting; `ChatView` decodes it to keep + surface the billed turn and to
+/// write the on-device billing ledger row. Payload is JSON so fields can be
+/// added later without changing the sentinel prefix.
+enum StreamingBillingHint: Sendable {
+    private static let billingPrefix = "\u{FFFE}billing:"
+
+    static func encode(_ summary: RouterBillingSummary) -> String {
+        guard let data = try? JSONEncoder().encode(summary),
+            let json = String(data: data, encoding: .utf8)
+        else { return billingPrefix + "{}" }
+        return billingPrefix + json
+    }
+
+    static func decode(_ delta: String) -> RouterBillingSummary? {
+        guard delta.hasPrefix(billingPrefix) else { return nil }
+        let json = String(delta.dropFirst(billingPrefix.count))
+        guard let data = json.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(RouterBillingSummary.self, from: data)
     }
 }
 

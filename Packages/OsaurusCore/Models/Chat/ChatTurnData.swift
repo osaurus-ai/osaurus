@@ -40,6 +40,10 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
     /// non-Responses turn.
     public var reasoningItemId: String?
     public var reasoningEncrypted: String?
+    /// Osaurus Router billing snapshot (cost, token counts, status) for this
+    /// assistant turn. Metadata only - no prompt/response text. Nil for local
+    /// models and non-router providers.
+    public var routerBilling: RouterBillingSummary?
 
     public init(
         id: UUID = UUID(),
@@ -57,7 +61,8 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         generationTokenCount: Int? = nil,
         timeToFirstToken: TimeInterval? = nil,
         reasoningItemId: String? = nil,
-        reasoningEncrypted: String? = nil
+        reasoningEncrypted: String? = nil,
+        routerBilling: RouterBillingSummary? = nil
     ) {
         self.id = id
         self.role = role
@@ -75,6 +80,7 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         self.timeToFirstToken = timeToFirstToken
         self.reasoningItemId = reasoningItemId
         self.reasoningEncrypted = reasoningEncrypted
+        self.routerBilling = routerBilling
     }
 
     // Backward-compatible decoder: migrates old `attachedImages` into unified `attachments`
@@ -96,6 +102,7 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         timeToFirstToken = try container.decodeIfPresent(TimeInterval.self, forKey: .timeToFirstToken)
         reasoningItemId = try container.decodeIfPresent(String.self, forKey: .reasoningItemId)
         reasoningEncrypted = try container.decodeIfPresent(String.self, forKey: .reasoningEncrypted)
+        routerBilling = try container.decodeIfPresent(RouterBillingSummary.self, forKey: .routerBilling)
 
         if let unified = try container.decodeIfPresent([Attachment].self, forKey: .attachments) {
             attachments = unified
@@ -125,6 +132,7 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         try container.encodeIfPresent(timeToFirstToken, forKey: .timeToFirstToken)
         try container.encodeIfPresent(reasoningItemId, forKey: .reasoningItemId)
         try container.encodeIfPresent(reasoningEncrypted, forKey: .reasoningEncrypted)
+        try container.encodeIfPresent(routerBilling, forKey: .routerBilling)
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -134,6 +142,7 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         case thinkingDuration
         case createdAt, completedAt, generationTokenCount, timeToFirstToken
         case reasoningItemId, reasoningEncrypted
+        case routerBilling
     }
 }
 
@@ -159,6 +168,7 @@ extension ChatTurnData {
         self.timeToFirstToken = turn.timeToFirstToken
         self.reasoningItemId = turn.reasoningItemId
         self.reasoningEncrypted = turn.reasoningEncrypted
+        self.routerBilling = turn.routerBilling
     }
 }
 
@@ -183,5 +193,6 @@ extension ChatTurn {
         self.timeToFirstToken = data.timeToFirstToken
         self.reasoningItemId = data.reasoningItemId
         self.reasoningEncrypted = data.reasoningEncrypted
+        self.routerBilling = data.routerBilling
     }
 }

@@ -96,7 +96,9 @@ struct StorageDatabaseCatalogTests {
             // that drop "chat history" / "memory" / etc.
             let targets = StorageDatabaseCatalog.databaseTargets()
             let labels = Set(targets.map(\.label))
-            #expect(labels == ["chat history", "memory", "methods", "tool index", "scheduler"])
+            #expect(
+                labels == ["chat history", "memory", "methods", "tool index", "scheduler", "router billing"]
+            )
         }
     }
 }

@@ -129,6 +129,12 @@ final class ChatSession: ObservableObject {
     /// Tracks expand/collapse state for tool calls, thinking blocks, etc.
     /// Lives on the session so state survives NSTableView cell reuse.
     let expandedBlocksStore = ExpandedBlocksStore()
+
+    /// Thinking-block ids already auto-expanded once for a completed
+    /// reasoning-only turn. Seeding the shared `expandedBlocksStore` (rather
+    /// than force-expanding in the cell) lets the user collapse the block
+    /// afterward; this set stops us re-expanding it on the next rebuild.
+    private var autoExpandedReasoningBlockIds: Set<String> = []
     @Published var input: String = ""
     @Published var pendingAttachments: [Attachment] = []
     @Published var selectedModel: String? = nil
@@ -753,6 +759,8 @@ final class ChatSession: ObservableObject {
             return
         }
 
+        seedAutoExpandedReasoningBlocks(streamingTurnId: streamingTurnId)
+
         let newBlocks = blockMemoizer.blocks(
             from: turns,
             streamingTurnId: streamingTurnId,
@@ -766,6 +774,25 @@ final class ChatSession: ObservableObject {
         withAnimation(.none) {
             visibleBlocksStore.blocks = newBlocks
             visibleBlocksStore.groupHeaderMap = newHeaderMap
+        }
+    }
+
+    /// Auto-expand the thinking block of a completed reasoning-only turn so the
+    /// reasoning the user was (often) billed for is visible instead of a
+    /// collapsed "Thought for Xs" they have to click. Seeds the shared
+    /// expansion store once per block (covers freshly finished and reloaded
+    /// turns); the user can collapse it afterward.
+    private func seedAutoExpandedReasoningBlocks(streamingTurnId: UUID?) {
+        for turn in turns where turn.role == .assistant {
+            guard turn.id != streamingTurnId,
+                turn.hasRenderableThinking,
+                turn.contentIsBlank,
+                (turn.toolCalls ?? []).isEmpty
+            else { continue }
+            let blockId = ContentBlock.thinkingBlockId(turnId: turn.id)
+            guard !autoExpandedReasoningBlockIds.contains(blockId) else { continue }
+            autoExpandedReasoningBlockIds.insert(blockId)
+            expandedBlocksStore.expand(blockId)
         }
     }
 
@@ -1805,6 +1832,54 @@ final class ChatSession: ObservableObject {
         // last-resort fallback when the sentinel never fires.
     }
 
+    /// Stamp an Osaurus Router billing event onto an assistant turn. Adopts the
+    /// server-authoritative output-token count so the turn carries accurate
+    /// stats and is preserved through run cleanup, and writes a durable,
+    /// metadata-only ledger row the instant the charge lands (outcome is
+    /// finalized at `completeRunCleanup`). Two-phase write = correct on crash.
+    private func recordRouterBilling(_ billing: RouterBillingSummary, on turn: ChatTurn) {
+        turn.routerBilling = billing
+        if billing.outputTokens > 0 {
+            turn.generationTokenCount = billing.outputTokens
+        }
+        if turn.billingEntryId == nil {
+            turn.billingEntryId = RouterBillingLedger.shared.record(
+                summary: billing,
+                sessionId: sessionId,
+                turnId: turn.id,
+                model: selectedModel,
+                outcome: .pending
+            )
+        }
+    }
+
+    /// Classify how a completed assistant turn ultimately rendered. The same
+    /// classification drives both the chat UI (keep + notice vs. trim) and the
+    /// ledger's finalized outcome, so support sees exactly what the user saw.
+    private func classifyBillingOutcome(for turn: ChatTurn) -> RouterBillingOutcome {
+        RouterBillingOutcome.classify(
+            hasVisibleText: !turn.visibleContent
+                .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            hasToolCalls: !(turn.toolCalls?.isEmpty ?? true),
+            hasReasoning: turn.hasRenderableThinking,
+            wasCancelled: stopRequested,
+            hadError: lastStreamError != nil
+        )
+    }
+
+    /// Backfill the rendered outcome onto each billed turn's ledger row. Called
+    /// once per run at cleanup. Idempotent; reloaded turns (no transient
+    /// `billingEntryId`) are skipped since their row was finalized live.
+    private func finalizeRouterBillingOutcomes() {
+        for turn in turns where turn.role == .assistant {
+            guard let entryId = turn.billingEntryId else { continue }
+            RouterBillingLedger.shared.finalizeOutcome(
+                entryId: entryId,
+                outcome: classifyBillingOutcome(for: turn)
+            )
+        }
+    }
+
     private func trimTrailingEmptyAssistantTurn() {
         if let lastTurn = turns.last,
             lastTurn.role == .assistant,
@@ -1812,7 +1887,11 @@ final class ChatSession: ObservableObject {
             lastTurn.toolCalls == nil,
             !lastTurn.hasRenderableThinking,
             lastTurn.generationTokenCount == nil,
-            lastTurn.generationTokensPerSecond == nil
+            lastTurn.generationTokensPerSecond == nil,
+            // Never drop a turn the router billed — even a zero-output charge
+            // must stay so the user sees the "you were charged" notice instead
+            // of a silent gap.
+            lastTurn.routerBilling == nil
         {
             turns.removeLast()
         }
@@ -1865,6 +1944,9 @@ final class ChatSession: ObservableObject {
         savedDraftOnCancel = nil
         budgetTracker.clear()
         ServerController.signalGenerationEnd()
+        // Finalize ledger outcomes before trimming so the classification sees
+        // the run's turns intact (the trim guard already preserves billed ones).
+        finalizeRouterBillingOutcomes()
         trimTrailingEmptyAssistantTurn()
         consolidateAssistantTurns()
         markUnfinishedToolCallsInterrupted()
@@ -2176,6 +2258,13 @@ final class ChatSession: ObservableObject {
                     // renderer can surface a one-line banner suggesting
                     // the user toggle Disable Thinking for this prompt class.
                     currentTurn.unclosedReasoning = stats.unclosedReasoning
+                } else if let billing = StreamingBillingHint.decode(delta) {
+                    // Osaurus Router billed this turn. Stamp it so the run can't
+                    // silently drop a billed-but-empty turn (see
+                    // `trimTrailingEmptyAssistantTurn`) and so the bubble can
+                    // explain the charge. Adopt the server-authoritative output
+                    // token count over our rolling estimate.
+                    recordRouterBilling(billing, on: currentTurn)
                 } else if let progress = StreamingPrefillProgressHint.decode(delta) {
                     InferenceProgressManager.shared.prefillDidUpdateAsync(progress)
                 } else if let reasoning = StreamingReasoningHint.decode(delta) {
@@ -3312,6 +3401,15 @@ final class ChatSession: ObservableObject {
                             // assistant turn, so the per-message "Insights" button can
                             // open this exact response.
                             req.turnId = assistantTurn.id
+                            // Stable per-logical-step idempotency token. The
+                            // agent loop holds `attempt` constant across
+                            // transient retries (it decrements then re-increments
+                            // on retryWithoutCharge), so a re-POST reuses this key
+                            // and the router dedupes the charge; a genuinely new
+                            // step gets a fresh key and bills normally. A user
+                            // Retry starts a new run (new runId) and re-bills by
+                            // design.
+                            req.idempotencyKey = "\(runId.uuidString):\(attempt)"
                             debugLog(
                                 "send: attempt=\(attempt) model=\(req.model) tools=\(req.tools?.count ?? 0) sessionId=\(req.session_id ?? "nil")"
                             )
@@ -3526,6 +3624,11 @@ final class ChatSession: ObservableObject {
                             finalReq.samplingParametersAreImplicit = true
                             finalReq.modelOptions = activeModelOptions.isEmpty ? nil : activeModelOptions
                             finalReq.turnId = assistantTurn.id
+                            // Distinct logical step (the post-cap summarizing
+                            // call) so it bills once and dedupes on its own
+                            // connect-phase retry without colliding with the
+                            // loop's per-iteration keys.
+                            finalReq.idempotencyKey = "\(runId.uuidString):final"
 
                             let processor = StreamingDeltaProcessor(
                                 turn: assistantTurn
