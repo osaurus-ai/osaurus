@@ -118,6 +118,84 @@ struct OsaurusRouterProviderTests {
         #expect(yielded == ["hello from full body"])
     }
 
+    @Test func routerOneShotChatCompletion_preservesOpenAICompatibleToolCalls() throws {
+        let (content, toolCalls) = try RemoteProviderService.parseResponse(
+            Data(
+                """
+                {
+                  "id":"chatcmpl_1",
+                  "object":"chat.completion",
+                  "created":0,
+                  "model":"venice/minimax-m3",
+                  "choices":[{
+                    "index":0,
+                    "message":{
+                      "role":"assistant",
+                      "content":null,
+                      "tool_calls":[{
+                        "id":"call_1",
+                        "type":"function",
+                        "function":{"name":"sandbox_write_file","arguments":"{\\\"path\\\":\\\"tetris.html\\\",\\\"content\\\":\\\"<html></html>\\\"}"}
+                      }]
+                    },
+                    "finish_reason":"tool_calls"
+                  }],
+                  "usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}
+                }
+                """.utf8
+            ),
+            providerType: .osaurusRouter
+        )
+
+        #expect(content == nil)
+        let call = try #require(toolCalls?.first)
+        #expect(call.id == "call_1")
+        #expect(call.function.name == "sandbox_write_file")
+        #expect(call.function.arguments == #"{"path":"tetris.html","content":"<html></html>"}"#)
+    }
+
+    @Test func routerFullChatCompletionBodyWithToolCall_finishesWithInvocation() {
+        var state = RemoteProviderService.StreamingState(stopSequences: [], trackContent: false)
+        var yielded: [String] = []
+
+        let outcome = RemoteProviderService.handleStreamEvent(
+            jsonData: Data(
+                """
+                {
+                  "id":"chatcmpl_1",
+                  "object":"chat.completion",
+                  "choices":[{
+                    "index":0,
+                    "message":{
+                      "role":"assistant",
+                      "content":null,
+                      "tool_calls":[{
+                        "index":0,
+                        "id":"call_1",
+                        "type":"function",
+                        "function":{"name":"sandbox_write_file","arguments":"{\\\"path\\\":\\\"tetris.html\\\",\\\"content\\\":\\\"<html></html>\\\"}"}
+                      }]
+                    },
+                    "finish_reason":"tool_calls"
+                  }]
+                }
+                """.utf8
+            ),
+            providerType: .osaurusRouter,
+            state: &state,
+            yield: { yielded.append($0) }
+        )
+
+        guard case .finishWithToolCall(let invocation) = outcome else {
+            Issue.record("Expected full router body tool call, got \(outcome)")
+            return
+        }
+        #expect(invocation.toolName == "sandbox_write_file")
+        #expect(invocation.toolCallId == "call_1")
+        #expect(invocation.jsonArguments == #"{"path":"tetris.html","content":"<html></html>"}"#)
+        #expect(yielded.contains { StreamingToolHint.decode($0) == "sandbox_write_file" })
+    }
+
     @Test func routerRawJSONLine_isTreatedAsEventPayload() {
         var eventData = ""
 
@@ -234,5 +312,147 @@ struct OsaurusRouterProviderTests {
 
         #expect(summaryShouldFinish == false)
         #expect(doneShouldFinish == true)
+    }
+
+    @Test func routerDiagnostics_classifiesSummaryOnlyDone() {
+        let diagnostics = routerDiagnosticsAfterProcessing(
+            [
+                #"{"osaurus":{"cost_micro":"1234","status":"completed","token_source":"provider","input_tokens":11,"output_tokens":3}}"#,
+                "[DONE]",
+            ]
+        )
+
+        #expect(diagnostics.emptyClassification == "summary-only")
+        #expect(diagnostics.summaryCount == 1)
+        #expect(diagnostics.billingHintDeltas == 1)
+        #expect(diagnostics.doneMarkerCount == 1)
+        #expect(diagnostics.shouldLogEmptyTerminal)
+    }
+
+    @Test func routerDiagnostics_classifiesUsageOnlyDone() {
+        let diagnostics = routerDiagnosticsAfterProcessing(
+            [
+                #"{"usage":{"prompt_tokens":5,"completion_tokens":2,"total_tokens":7}}"#,
+                "[DONE]",
+            ]
+        )
+
+        #expect(diagnostics.emptyClassification == "usage-only")
+        #expect(diagnostics.usageOnlyCount == 1)
+        #expect(diagnostics.doneMarkerCount == 1)
+        #expect(diagnostics.modelOutputCount == 0)
+        #expect(diagnostics.shouldLogEmptyTerminal)
+    }
+
+    @Test func routerDiagnostics_classifiesRawEmptyStream() {
+        var state = routerDiagnosticsState()
+        state.routerDiagnostics?.recordTerminal(
+            marker: "stream-end",
+            yieldedTextCount: state.yieldedTextCount,
+            yieldedTextBytes: state.yieldedTextBytes,
+            pendingToolSlots: state.accumulatedToolCalls.count,
+            pendingEventBytes: 0
+        )
+
+        let diagnostics = state.routerDiagnostics!
+        #expect(diagnostics.emptyClassification == "raw-empty")
+        #expect(diagnostics.chunkCount == 0)
+        #expect(diagnostics.eventCount == 0)
+        #expect(diagnostics.shouldLogEmptyTerminal)
+    }
+
+    @Test func routerDiagnostics_classifiesContentEventAsNonEmpty() {
+        let diagnostics = routerDiagnosticsAfterProcessing(
+            [
+                #"{"choices":[{"delta":{"content":"hello"}}]}"#,
+                "[DONE]",
+            ]
+        )
+
+        #expect(diagnostics.emptyClassification == "non-empty")
+        #expect(diagnostics.visibleTextDeltas == 1)
+        #expect(diagnostics.visibleTextBytes == 5)
+        #expect(diagnostics.shouldLogEmptyTerminal == false)
+    }
+
+    @Test func routerDiagnostics_classifiesFullBodyToolCallAsNonEmpty() {
+        let diagnostics = routerDiagnosticsAfterProcessing(
+            [
+                """
+                {
+                  "id":"chatcmpl_1",
+                  "object":"chat.completion",
+                  "choices":[{
+                    "index":0,
+                    "message":{
+                      "role":"assistant",
+                      "content":null,
+                      "tool_calls":[{
+                        "index":0,
+                        "id":"call_1",
+                        "type":"function",
+                        "function":{"name":"sandbox_write_file","arguments":"{\\\"path\\\":\\\"tetris.html\\\"}"}
+                      }]
+                    },
+                    "finish_reason":"tool_calls"
+                  }]
+                }
+                """
+            ]
+        )
+
+        #expect(diagnostics.emptyClassification == "non-empty")
+        #expect(diagnostics.toolCallFinishes == 1)
+        #expect(diagnostics.toolHintDeltas > 0)
+        #expect(diagnostics.shouldLogEmptyTerminal == false)
+    }
+
+    @Test func routerDiagnostics_classifiesUnrecognizedEvent() {
+        let diagnostics = routerDiagnosticsAfterProcessing(
+            [
+                #"{"unexpected":true}"#,
+                "[DONE]",
+            ]
+        )
+
+        #expect(diagnostics.emptyClassification == "unrecognized-events")
+        #expect(diagnostics.unrecognizedEventCount == 1)
+        #expect(diagnostics.lastEventSummary == "done-marker")
+        #expect(diagnostics.recentEventSummaries.contains { $0.hasPrefix("object keys=") })
+        #expect(diagnostics.shouldLogEmptyTerminal)
+    }
+
+    private func routerDiagnosticsState() -> RemoteProviderService.StreamingState {
+        var state = RemoteProviderService.StreamingState(stopSequences: [], trackContent: false)
+        state.routerDiagnostics = RemoteProviderService.RouterStreamDiagnostics(
+            model: "osaurus/minimax-m3",
+            messageRoles: ["system", "user"],
+            toolNames: ["sandbox_write_file"],
+            toolChoice: "auto",
+            idempotencyKeySuffix: "attempt-1",
+            requestBodyBytes: 512
+        )
+        return state
+    }
+
+    private func routerDiagnosticsAfterProcessing(
+        _ payloads: [String]
+    ) -> RemoteProviderService.RouterStreamDiagnostics {
+        var state = routerDiagnosticsState()
+        let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
+        _ = stream
+
+        for payload in payloads {
+            let shouldFinish = RemoteProviderService.processEventPayload(
+                payload,
+                state: &state,
+                providerType: .osaurusRouter,
+                tools: [],
+                continuation: continuation
+            )
+            if shouldFinish { break }
+        }
+        continuation.finish()
+        return state.routerDiagnostics!
     }
 }

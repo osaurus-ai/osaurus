@@ -675,6 +675,11 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             // growing total without double-counting either source.
             var reportedOutputTokens = 0
             var deltaCount = 0
+            var statsHintCount = 0
+            var reasoningHintCount = 0
+            var toolHintCount = 0
+            var billingHintCount = 0
+            var prefillHintCount = 0
             var finishReason: InferenceLog.FinishReason = .stop
             var errorMsg: String? = nil
             var toolInvocation: (name: String, args: String)? = nil
@@ -694,6 +699,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             do {
                 for try await delta in inner {
                     if let stats = StreamingStatsHint.decode(delta) {
+                        statsHintCount += 1
                         outputTokenCount = stats.tokenCount
                         // Stats hint carries the authoritative cumulative
                         // output-token count from the model runtime. Push
@@ -728,6 +734,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
 
                     if let reasoning = StreamingReasoningHint.decode(delta) {
                         deltaCount += 1
+                        reasoningHintCount += 1
                         let estimated = TokenEstimator.estimate(reasoning)
                         outputTokenCount += estimated
                         if let bgId, estimated > 0 {
@@ -743,8 +750,21 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                         continue
                     }
 
+                    if StreamingBillingHint.decode(delta) != nil {
+                        billingHintCount += 1
+                        continuation.yield(delta)
+                        continue
+                    }
+
+                    if StreamingPrefillProgressHint.decode(delta) != nil {
+                        prefillHintCount += 1
+                        continuation.yield(delta)
+                        continue
+                    }
+
                     // Pass through tool-hint sentinels without counting as tokens
                     if StreamingToolHint.isSentinel(delta) {
+                        toolHintCount += 1
                         continuation.yield(delta)
                         continue
                     }
@@ -790,8 +810,14 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                 }
 
                 let totalTime = Date().timeIntervalSince(startTime)
+                let sentinelCount =
+                    statsHintCount + toolHintCount + billingHintCount + prefillHintCount
+                let zeroDeltaClassification =
+                    deltaCount == 0
+                    ? (sentinelCount > 0 ? "sentinel-only" : "empty")
+                    : "non-empty"
                 print(
-                    "[Osaurus][Stream] Stream completed: \(deltaCount) deltas in \(String(format: "%.2f", totalTime))s"
+                    "[Osaurus][Stream] Stream completed: \(deltaCount) content/reasoning deltas in \(String(format: "%.2f", totalTime))s classification=\(zeroDeltaClassification) reasoning=\(reasoningHintCount) stats=\(statsHintCount) toolHints=\(toolHintCount) billingHints=\(billingHintCount) prefillHints=\(prefillHintCount)"
                 )
 
                 // A blank stream that coincides with a fresh MLX C++ error is

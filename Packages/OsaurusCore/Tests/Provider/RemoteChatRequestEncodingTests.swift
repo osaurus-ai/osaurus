@@ -82,6 +82,36 @@ struct RemoteChatRequestEncodingTests {
         #expect(payload["idempotency_key"] == nil)
     }
 
+    @Test func routerImplicitMaxTokens_forwardsChatDefaultToAvoidUpstream1024Cap() {
+        let params = GenerationParameters(
+            temperature: nil,
+            maxTokens: 16_384,
+            maxTokensExplicit: false
+        )
+
+        #expect(
+            RemoteProviderService.remoteChatMaxTokens(
+                providerType: .osaurusRouter,
+                parameters: params
+            ) == 16_384
+        )
+    }
+
+    @Test func nonRouterImplicitMaxTokens_preservesProviderDefault() {
+        let params = GenerationParameters(
+            temperature: nil,
+            maxTokens: 16_384,
+            maxTokensExplicit: false
+        )
+
+        #expect(
+            RemoteProviderService.remoteChatMaxTokens(
+                providerType: .openaiLegacy,
+                parameters: params
+            ) == nil
+        )
+    }
+
     @Test func openResponsesRequest_defaultSingleUserMessage_usesTextShorthand() throws {
         let request = Self.makeRequest(model: "gpt-5.2", maxTokens: 1024)
         let responsesRequest = request.toOpenResponsesRequest()
@@ -677,6 +707,45 @@ struct RemoteChatRequestEncodingTests {
         #expect(assistantJSON["tool_calls"] != nil)
     }
 
+    @Test func routerWireCompatibleMessages_dropsTrailingPlainAssistantPrefill() throws {
+        let messages = [
+            ChatMessage(role: "system", content: "You are helpful."),
+            ChatMessage(role: "user", content: "Build tetris."),
+            ChatMessage(role: "assistant", content: "I'll build that now."),
+        ]
+
+        let normalized = RemoteProviderService.routerWireCompatibleMessages(messages)
+
+        #expect(normalized.map(\.role) == ["system", "user"])
+        #expect(normalized.last?.content == "Build tetris.")
+    }
+
+    @Test func routerWireCompatibleMessages_keepsTrailingAssistantToolCallTurn() throws {
+        let assistant = ChatMessage(
+            role: "assistant",
+            content: nil,
+            tool_calls: [
+                ToolCall(
+                    id: "call_1",
+                    type: "function",
+                    function: ToolCallFunction(name: "sandbox_write_file", arguments: #"{"path":"tetris.html"}"#)
+                )
+            ],
+            tool_call_id: nil
+        )
+
+        let normalized = RemoteProviderService.routerWireCompatibleMessages([
+            ChatMessage(role: "user", content: "Build tetris."),
+            assistant,
+        ])
+        let array = try Self.encodeAsArray(normalized)
+        let assistantJSON = try #require(array.last)
+
+        #expect(normalized.map { $0.role } == ["user", "assistant"])
+        #expect(assistantJSON["content"] as? String == "")
+        #expect(assistantJSON["tool_calls"] != nil)
+    }
+
     @Test func echoesReasoningContent_trueForDeepSeekHost() throws {
         #expect(
             RemoteProviderService.echoesReasoningContent(
@@ -818,6 +887,81 @@ struct RemoteChatRequestEncodingTests {
         #expect(!openAICompatBody.contains("\"clamp_to_balance\""))
     }
 
+    @Test func wireBody_routerMatchesVeniceToolRequest_exceptRouterOnlyFields() throws {
+        let priorCall = ToolCall(
+            id: "call_write_1",
+            type: "function",
+            function: ToolCallFunction(
+                name: "sandbox_write_file",
+                arguments: #"{"path":"tetris.html","content":"<html></html>"}"#
+            )
+        )
+        let messages = [
+            ChatMessage(role: "user", content: "build me a game of tetris"),
+            ChatMessage(
+                role: "assistant",
+                content: nil,
+                tool_calls: [priorCall],
+                tool_call_id: nil
+            ),
+            ChatMessage(
+                role: "tool",
+                content: #"{"ok":true,"path":"tetris.html"}"#,
+                tool_calls: nil,
+                tool_call_id: "call_write_1"
+            ),
+        ]
+
+        let veniceBody = try Self.encodedWireBody(
+            providerType: .openaiLegacy,
+            host: "api.venice.ai",
+            model: "minimax-m3",
+            assistantReasoning: "hidden trace",
+            tools: [Self.topLevelAnyOfTool],
+            messages: messages,
+            toolChoice: .auto
+        )
+        let routerBody = try Self.encodedWireBody(
+            providerType: .osaurusRouter,
+            host: "router.osaurus.ai",
+            model: "venice/minimax-m3",
+            assistantReasoning: "hidden trace",
+            tools: [Self.topLevelAnyOfTool],
+            messages: messages,
+            toolChoice: .auto,
+            idempotencyKey: "run-abc:1"
+        )
+
+        let venice = try Self.decodeAsDictionary(Data(veniceBody.utf8))
+        let router = try Self.decodeAsDictionary(Data(routerBody.utf8))
+
+        #expect(venice["tool_choice"] as? String == "auto")
+        #expect(router["tool_choice"] as? String == "auto")
+        #expect(venice["clamp_to_balance"] == nil)
+        #expect(router["clamp_to_balance"] as? Bool == false)
+        #expect(venice["idempotency_key"] == nil)
+        #expect(router["idempotency_key"] as? String == "run-abc:1")
+
+        let veniceMessages = try #require(venice["messages"] as? [[String: Any]])
+        let routerMessages = try #require(router["messages"] as? [[String: Any]])
+        #expect(veniceMessages[1]["content"] == nil)
+        #expect(routerMessages[1]["content"] as? String == "")
+        #expect(veniceMessages[1]["tool_calls"] != nil)
+        #expect(routerMessages[1]["tool_calls"] != nil)
+
+        let veniceTools = try #require(venice["tools"] as? [[String: Any]])
+        let routerTools = try #require(router["tools"] as? [[String: Any]])
+        let veniceFunction = try #require(veniceTools.first?["function"] as? [String: Any])
+        let routerFunction = try #require(routerTools.first?["function"] as? [String: Any])
+        #expect(veniceFunction["name"] as? String == "share_artifact")
+        #expect(routerFunction["name"] as? String == "share_artifact")
+
+        let veniceParams = try #require(veniceFunction["parameters"] as? [String: Any])
+        let routerParams = try #require(routerFunction["parameters"] as? [String: Any])
+        #expect(veniceParams["anyOf"] != nil)
+        #expect(routerParams["anyOf"] == nil)
+    }
+
     /// Mirrors the strip-or-echo branch in `buildURLRequest`, then encodes
     /// with the canonical encoder. Returns the wire body as a string.
     private static func encodedWireBody(
@@ -825,7 +969,10 @@ struct RemoteChatRequestEncodingTests {
         host: String,
         model: String,
         assistantReasoning: String,
-        tools: [Tool]? = nil
+        tools: [Tool]? = nil,
+        messages: [ChatMessage]? = nil,
+        toolChoice: ToolChoiceOption? = nil,
+        idempotencyKey: String? = nil
     ) throws -> String {
         let wireTools: [Tool]?
         if let tools,
@@ -841,7 +988,7 @@ struct RemoteChatRequestEncodingTests {
 
         let request = RemoteChatRequest(
             model: model,
-            messages: [
+            messages: messages ?? [
                 ChatMessage(role: "user", content: "hi"),
                 ChatMessage(
                     role: "assistant",
@@ -859,7 +1006,7 @@ struct RemoteChatRequestEncodingTests {
             presence_penalty: nil,
             stop: nil,
             tools: wireTools,
-            tool_choice: nil,
+            tool_choice: toolChoice,
             reasoning_effort: nil,
             reasoning: nil,
             thinking: nil,
@@ -868,6 +1015,7 @@ struct RemoteChatRequestEncodingTests {
         )
 
         var outbound = request
+        outbound.idempotencyKey = idempotencyKey
         if !RemoteProviderService.echoesReasoningContent(
             providerType: providerType,
             host: host,

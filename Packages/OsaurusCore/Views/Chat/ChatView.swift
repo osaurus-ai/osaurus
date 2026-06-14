@@ -2139,6 +2139,12 @@ final class ChatSession: ObservableObject {
     ) async throws -> (invocations: [ServiceToolInvocation], finalTurn: ChatTurn) {
         var currentTurn = assistantTurn
         var uiDeltaCount = 0
+        var uiReasoningDeltaCount = 0
+        var uiToolSentinelCount = 0
+        var uiReasoningItemCount = 0
+        var uiStatsHintCount = 0
+        var uiBillingHintCount = 0
+        var uiPrefillHintCount = 0
         var firstDeltaTime: Date?
         // Throttle key for streaming tool-call argument rebuilds.
         var lastToolArgRebuildAt: Date = .distantPast
@@ -2193,6 +2199,7 @@ final class ChatSession: ObservableObject {
                 }
                 // Server-side tool call complete: add the call card + result turn to the chat log
                 if let done = StreamingToolHint.decodeDone(delta) {
+                    uiToolSentinelCount += 1
                     await processor.finalize()
                     let call = ToolCall(
                         id: done.callId,
@@ -2219,6 +2226,7 @@ final class ChatSession: ObservableObject {
                     continue
                 }
                 if let toolName = StreamingToolHint.decode(delta) {
+                    uiToolSentinelCount += 1
                     currentTurn.pendingToolName = toolName.isEmpty ? nil : toolName
                     rebuildVisibleBlocks()
                     continue
@@ -2227,11 +2235,13 @@ final class ChatSession: ObservableObject {
                 // Not visible text — stash it on the turn so the next request
                 // re-emits it before this turn's function_call(s).
                 if let reasoningItem = StreamingReasoningItemHint.decode(delta) {
+                    uiReasoningItemCount += 1
                     currentTurn.reasoningItemId = reasoningItem.id
                     currentTurn.reasoningEncrypted = reasoningItem.encryptedContent
                     continue
                 }
                 if let argFragment = StreamingToolHint.decodeArgs(delta) {
+                    uiToolSentinelCount += 1
                     currentTurn.appendToolArgFragment(argFragment)
                     // Always rebuild for the first few fragments so the chip
                     // appears immediately; afterwards cap at ~12 rebuilds/sec
@@ -2244,6 +2254,7 @@ final class ChatSession: ObservableObject {
                         rebuildVisibleBlocks()
                     }
                 } else if let stats = StreamingStatsHint.decode(delta) {
+                    uiStatsHintCount += 1
                     // Final stats from vmlx — captured for the post-loop
                     // stamp. We DELIBERATELY do NOT overwrite the rolling
                     // rate here: vmlx's `tokensPerSecond` is the full-
@@ -2259,6 +2270,7 @@ final class ChatSession: ObservableObject {
                     // the user toggle Disable Thinking for this prompt class.
                     currentTurn.unclosedReasoning = stats.unclosedReasoning
                 } else if let billing = StreamingBillingHint.decode(delta) {
+                    uiBillingHintCount += 1
                     // Osaurus Router billed this turn. Stamp it so the run can't
                     // silently drop a billed-but-empty turn (see
                     // `trimTrailingEmptyAssistantTurn`) and so the bubble can
@@ -2266,8 +2278,10 @@ final class ChatSession: ObservableObject {
                     // token count over our rolling estimate.
                     recordRouterBilling(billing, on: currentTurn)
                 } else if let progress = StreamingPrefillProgressHint.decode(delta) {
+                    uiPrefillHintCount += 1
                     InferenceProgressManager.shared.prefillDidUpdateAsync(progress)
                 } else if let reasoning = StreamingReasoningHint.decode(delta) {
+                    uiReasoningDeltaCount += 1
                     let now = Date()
                     if firstDeltaTime == nil {
                         firstDeltaTime = now
@@ -2360,8 +2374,15 @@ final class ChatSession: ObservableObject {
         currentTurn.completedAt = Date()
 
         let totalTime = Date().timeIntervalSince(streamStartTime)
+        let uiSentinelOnlyCount =
+            uiToolSentinelCount + uiReasoningItemCount + uiStatsHintCount
+            + uiBillingHintCount + uiPrefillHintCount
+        let uiStreamClassification =
+            uiDeltaCount == 0 && uiReasoningDeltaCount == 0 && capturedInvocations.isEmpty
+            ? (uiSentinelOnlyCount > 0 ? "sentinel-only" : "empty")
+            : "non-empty"
         print(
-            "[Osaurus][UI] Stream consumption completed: \(uiDeltaCount) deltas in \(String(format: "%.2f", totalTime))s, final contentLen=\(currentTurn.contentLength)"
+            "[Osaurus][UI] Stream consumption completed: contentDeltas=\(uiDeltaCount) reasoningDeltas=\(uiReasoningDeltaCount) classification=\(uiStreamClassification) in \(String(format: "%.2f", totalTime))s, final contentLen=\(currentTurn.contentLength), toolSentinels=\(uiToolSentinelCount), reasoningItems=\(uiReasoningItemCount), stats=\(uiStatsHintCount), billing=\(uiBillingHintCount), prefill=\(uiPrefillHintCount), capturedTools=\(capturedInvocations.count)"
         )
 
         return (capturedInvocations, currentTurn)
@@ -3455,7 +3476,9 @@ final class ChatSession: ObservableObject {
                                 // surfacing to the user; the model can't see what it
                                 // actually streamed last time so it would just retry
                                 // with the same broken args.
-                                if transientRetries < maxTransientRetries {
+                                if error.isTransientStreamRetryable,
+                                    transientRetries < maxTransientRetries
+                                {
                                     transientRetries += 1
                                     print(
                                         "[Osaurus] Transient stream error (retry \(transientRetries)/\(maxTransientRetries)): \(error.localizedDescription)"
