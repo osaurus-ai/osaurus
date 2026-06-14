@@ -40,7 +40,10 @@ struct ServerRuntimeSettingsStoreTests {
             #expect(migrated.cache.blockDisk.enabled == true)
             #expect(migrated.cache.legacyDisk.enabled == false)
             #expect(migrated.cache.liveKVCodec == .engineSelected)
-            #expect(migrated.cache.defaultMaxKVSize == 65536)
+            // nil: the seed leaves the default KV cap to the RAM-safety slider
+            // (safe_auto resolves to 65536 in vmlx, so the effective out-of-box
+            // cap is unchanged, but the slider now governs it).
+            #expect(migrated.cache.defaultMaxKVSize == nil)
             #expect(migrated.cache.longPromptMultiplier == 2.0)
             #expect(migrated.cache.enableSSMReDerive == true)
             #expect(migrated.mtp.mode == .auto)
@@ -69,7 +72,8 @@ struct ServerRuntimeSettingsStoreTests {
             #expect(snapshot.cache.blockDisk.enabled == true)
             #expect(snapshot.cache.legacyDisk.enabled == false)
             #expect(snapshot.cache.liveKVCodec == .engineSelected)
-            #expect(snapshot.cache.defaultMaxKVSize == 65536)
+            // nil: slider governs the default KV cap (see migrate test above).
+            #expect(snapshot.cache.defaultMaxKVSize == nil)
             #expect(snapshot.cache.longPromptMultiplier == 2.0)
             #expect(snapshot.cache.enableSSMReDerive == true)
             #expect(snapshot.mtp.mode == .auto)
