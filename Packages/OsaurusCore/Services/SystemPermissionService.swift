@@ -310,6 +310,16 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
     /// Permissions that require manual System Settings changes (disk, accessibility,
     /// screen recording) return `false` immediately.
     func requestPermissionAndWait(_ permission: SystemPermission) async -> Bool {
+        // Under tests / headless CI there is no TCC UI and the backing
+        // daemons (contactsd, EventKit, AVFoundation) may be absent — the
+        // live request APIs below can then hang forever waiting on a service
+        // that never answers. This is the documented 45-minute CI stall (see
+        // `RuntimeEnvironment.isUnderTests`): the prior guard only covered the
+        // singleton's `authorizationStatus` path, not this active-request one,
+        // so a permissioned tool that reaches `ToolRegistry.runPermissionGate`
+        // during tests could still hang the whole suite on `contactsd`. Deny
+        // immediately without touching the system frameworks.
+        if RuntimeEnvironment.isUnderTests { return false }
         let granted: Bool
         switch permission {
         case .calendar:
