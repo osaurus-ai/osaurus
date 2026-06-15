@@ -16,6 +16,7 @@ struct ModelPickerView: View {
 
     @State private var searchText = ""
     @State private var selectedTabKey: String?
+    @State private var sortOrder: ModelPickerSortOrder = .default
     @Environment(\.theme) private var theme
 
     // MARK: - Test Mode
@@ -88,7 +89,11 @@ struct ModelPickerView: View {
             guard let key = effectiveSelectedTabKey(in: tabs),
                 let tab = tabs.first(where: { $0.key == key })
             else { return [] }
-            return makeRows(for: tab)
+            // Price sorting only applies to the Osaurus tab, whose models carry
+            // pricing; other tabs keep their existing alphabetical order.
+            guard tab.isOsaurus, sortOrder != .default else { return makeRows(for: tab) }
+            let sorted = ModelPickerTab(key: tab.key, title: tab.title, models: tab.models.sortedByPrice(sortOrder))
+            return makeRows(for: sorted)
         }
 
         return searchRows(in: tabs)
@@ -134,8 +139,12 @@ struct ModelPickerView: View {
     var body: some View {
         let tabs = currentTabs
         let rows = visibleRows(in: tabs)
+        // The sort control is offered only on the Osaurus tab (the only tab
+        // with pricing) and not while the cross-provider search is active.
+        let activeTab = tabs.first { $0.key == effectiveSelectedTabKey(in: tabs) }
+        let showSort = !isSearching && (activeTab?.isOsaurus ?? false)
         VStack(spacing: 0) {
-            header
+            header(showSort: showSort)
             Divider().background(theme.primaryBorder.opacity(0.3))
             searchField
             Divider().background(theme.primaryBorder.opacity(0.3))
@@ -204,7 +213,8 @@ struct ModelPickerView: View {
 
     // MARK: - Header
 
-    private var header: some View {
+    @ViewBuilder
+    private func header(showSort: Bool) -> some View {
         HStack(spacing: 8) {
             Text("Available Models", bundle: .module)
                 .font(.system(size: 13, weight: .semibold))
@@ -218,6 +228,10 @@ struct ModelPickerView: View {
                 .background(Capsule().fill(theme.secondaryBackground))
 
             Spacer()
+
+            if showSort {
+                sortMenu
+            }
 
             Button(action: {
                 onDismiss()
@@ -245,6 +259,41 @@ struct ModelPickerView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
+    }
+
+    // MARK: - Sort Menu
+
+    private var sortMenu: some View {
+        Menu {
+            Picker(
+                selection: $sortOrder,
+                content: {
+                    Text("Default", bundle: .module).tag(ModelPickerSortOrder.default)
+                    Text("Cheapest first", bundle: .module).tag(ModelPickerSortOrder.priceLowToHigh)
+                    Text("Highest first", bundle: .module).tag(ModelPickerSortOrder.priceHighToLow)
+                },
+                label: { Text("Sort by price", bundle: .module) }
+            )
+            .pickerStyle(.inline)
+        } label: {
+            Image(systemName: "arrow.up.arrow.down")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(theme.accentColor)
+                .frame(width: 22, height: 22)
+                .background(
+                    Circle()
+                        .strokeBorder(theme.accentColor.opacity(0.3), lineWidth: 1)
+                        .background(
+                            Circle().fill(theme.accentColor.opacity(sortOrder == .default ? 0.08 : 0.18))
+                        )
+                )
+                .contentShape(Circle())
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help(Text("Sort by price", bundle: .module))
     }
 
     // MARK: - Search Field

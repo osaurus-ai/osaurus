@@ -778,28 +778,23 @@ extension ModelPickerTableRepresentable {
 
         // MARK: Apply Rows
 
-        private var lastRowCount = 0
-        private var lastFirstRowId: String?
-        private var lastLastRowId: String?
-        private var lastRowIdsHash = 0
+        private var lastRowIdsHash: Int?
 
         func applyRows(_ rows: [ModelPickerRow]) {
-            let count = rows.count
-            let firstId = rows.first?.id
-            let lastId = rows.last?.id
-            guard count != lastRowCount || firstId != lastFirstRowId || lastId != lastLastRowId else { return }
-            lastRowCount = count
-            lastFirstRowId = firstId
-            lastLastRowId = lastId
-
             let newIds = rows.map(\.id)
             let newLookup = Dictionary(rows.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
 
-            // use hash for quick comparison instead of full array equality
-            let newHash = newIds.reduce(0) { $0 &+ $1.hashValue }
+            // Order-sensitive hash so a pure reorder (e.g. price sort) is
+            // detected. A commutative combine (summing hashValues) would treat
+            // a reordered list as unchanged and skip the snapshot apply.
+            var hasher = Hasher()
+            for id in newIds { hasher.combine(id) }
+            let newHash = hasher.finalize()
 
             if newHash == lastRowIdsHash && newIds.count == rowIds.count {
-                // only update lookup and reconfigure visible cells
+                // Same id sequence: only row contents (e.g. description) may
+                // have changed. Refresh the lookup and reconfigure visible
+                // cells without rebuilding the snapshot.
                 rowLookup = newLookup
                 reconfigureVisibleCells()
                 return

@@ -73,6 +73,15 @@ struct ModelPickerItem: Identifiable, Hashable {
     /// Description of the model (optional)
     let description: String?
 
+    /// Input price in micro-USD per million tokens, parsed from the Osaurus
+    /// router metadata. Used only to sort the Osaurus tab by price; `nil` for
+    /// items without router pricing (foundation, local, plain remote).
+    let inputPriceMicroPerMTok: Int64?
+
+    /// Output price in micro-USD per million tokens (sort tiebreak). `nil` when
+    /// unknown, matching `inputPriceMicroPerMTok`.
+    let outputPriceMicroPerMTok: Int64?
+
     init(
         id: String,
         displayName: String,
@@ -81,7 +90,9 @@ struct ModelPickerItem: Identifiable, Hashable {
         quantization: String? = nil,
         isVLM: Bool = false,
         isEmbedding: Bool = false,
-        description: String? = nil
+        description: String? = nil,
+        inputPriceMicroPerMTok: Int64? = nil,
+        outputPriceMicroPerMTok: Int64? = nil
     ) {
         self.id = id
         self.displayName = displayName
@@ -91,6 +102,8 @@ struct ModelPickerItem: Identifiable, Hashable {
         self.isVLM = isVLM
         self.isEmbedding = isEmbedding
         self.description = description
+        self.inputPriceMicroPerMTok = inputPriceMicroPerMTok
+        self.outputPriceMicroPerMTok = outputPriceMicroPerMTok
     }
 
     /// Check if model matches search query using fuzzy matching.
@@ -155,7 +168,13 @@ extension ModelPickerItem {
             displayName: displayName(fromModelId: prefixedId),
             source: .remote(providerName: providerName, providerId: providerId),
             isVLM: metadata.supportsVision,
-            description: metadata.pickerDescription
+            description: metadata.pickerDescription,
+            inputPriceMicroPerMTok: Int64(
+                metadata.inputMicroPerMTok.trimmingCharacters(in: .whitespacesAndNewlines)
+            ),
+            outputPriceMicroPerMTok: Int64(
+                metadata.outputMicroPerMTok.trimmingCharacters(in: .whitespacesAndNewlines)
+            )
         )
     }
 
@@ -319,6 +338,43 @@ extension ModelPickerItem {
     }
 }
 
+// MARK: - Sorting
+
+/// User-chosen ordering for the Osaurus tab. The default keeps the existing
+/// alphabetical order; the price options sort by per-million-token cost.
+enum ModelPickerSortOrder: Hashable {
+    case `default`
+    case priceLowToHigh
+    case priceHighToLow
+}
+
+extension Array where Element == ModelPickerItem {
+    /// Sort by Osaurus router price (input rate primary, output as tiebreak).
+    /// Items without pricing sort last in either direction so a missing rate
+    /// never jumps to the top of a "cheapest first" list. Falls back to the
+    /// receiver unchanged for `.default`.
+    func sortedByPrice(_ order: ModelPickerSortOrder) -> [ModelPickerItem] {
+        guard order != .default else { return self }
+        let ascending = order == .priceLowToHigh
+        return sorted { lhs, rhs in
+            switch (lhs.inputPriceMicroPerMTok, rhs.inputPriceMicroPerMTok) {
+            case let (l?, r?):
+                if l != r { return ascending ? l < r : l > r }
+                let lo = lhs.outputPriceMicroPerMTok ?? 0
+                let ro = rhs.outputPriceMicroPerMTok ?? 0
+                if lo != ro { return ascending ? lo < ro : lo > ro }
+                return lhs.displayName < rhs.displayName
+            case (nil, _?):
+                return false  // unknown price always sorts last
+            case (_?, nil):
+                return true
+            case (nil, nil):
+                return lhs.displayName < rhs.displayName
+            }
+        }
+    }
+}
+
 // MARK: - Tabs
 
 /// A horizontal tab in the model picker: "Local" (Foundation + on-device MLX
@@ -335,6 +391,11 @@ struct ModelPickerTab: Identifiable, Equatable {
     let models: [ModelPickerItem]
 
     var id: String { key }
+
+    /// The Osaurus Router tab, identified by provider title (matching how
+    /// `groupedByTab()` pins it). This is the only tab whose models carry
+    /// pricing, so it's the only one offering the price-sort control.
+    var isOsaurus: Bool { title == "Osaurus" }
 }
 
 // MARK: - Grouping

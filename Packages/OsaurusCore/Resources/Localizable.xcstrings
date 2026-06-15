@@ -9697,6 +9697,9 @@
         }
       }
     },
+    "Cheapest first" : {
+
+    },
     "Check for app updates" : {
       "localizations" : {
         "de" : {
@@ -22333,6 +22336,9 @@
           }
         }
       }
+    },
+    "Highest first" : {
+
     },
     "History" : {
       "localizations" : {
@@ -43180,6 +43186,9 @@
         }
       }
     },
+    "Router Balance" : {
+      "comment" : "Header of the chat composer router-balance popover."
+    },
     "Routes" : {
       "localizations" : {
         "de" : {
@@ -43211,9 +43220,6 @@
           }
         }
       }
-    },
-    "Router Balance" : {
-      "comment" : "Header of the chat composer router-balance popover."
     },
     "Rules" : {
       "comment" : "Title of one of the Privacy tab sections.",
@@ -48425,6 +48431,9 @@
           }
         }
       }
+    },
+    "Sort by price" : {
+
     },
     "Sort models" : {
       "localizations" : {
