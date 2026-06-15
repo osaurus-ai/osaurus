@@ -696,17 +696,17 @@ struct ModelDownloadView: View {
                                 .id(model.id)
                         }
                     }
-                    // First card aligns with the section title (24pt parent
-                    // padding + 2pt title padding); the trailing inset gives
+                    // First card lines up with the section title (2pt inset on
+                    // top of the parent's 24pt); the trailing inset gives
                     // breathing room at the end of the scroll.
-                    .padding(.leading, 26)
-                    .padding(.trailing, 26)
+                    .padding(.leading, 2)
+                    .padding(.trailing, 24)
                     .padding(.bottom, 4)
                 }
-                // Cancel the parent's 24pt horizontal padding so the strip runs
-                // edge to edge and cards bleed off the window edge naturally
-                // instead of stopping short.
-                .padding(.horizontal, -24)
+                // Cancel only the parent's trailing 24pt padding so cards bleed
+                // off the right window edge naturally, while the first card
+                // keeps its normal left margin instead of hugging the edge.
+                .padding(.trailing, -24)
                 .overlay(alignment: .leading) {
                     if topPicksIndex > 0 {
                         topPicksArrow("chevron.left") {
