@@ -82,6 +82,10 @@ struct ModelPickerItem: Identifiable, Hashable {
     /// unknown, matching `inputPriceMicroPerMTok`.
     let outputPriceMicroPerMTok: Int64?
 
+    /// Context window in tokens, from the Osaurus router metadata. Used only to
+    /// filter the Osaurus tab by context limit; `nil` when unknown.
+    let contextLength: Int?
+
     init(
         id: String,
         displayName: String,
@@ -92,7 +96,8 @@ struct ModelPickerItem: Identifiable, Hashable {
         isEmbedding: Bool = false,
         description: String? = nil,
         inputPriceMicroPerMTok: Int64? = nil,
-        outputPriceMicroPerMTok: Int64? = nil
+        outputPriceMicroPerMTok: Int64? = nil,
+        contextLength: Int? = nil
     ) {
         self.id = id
         self.displayName = displayName
@@ -104,6 +109,7 @@ struct ModelPickerItem: Identifiable, Hashable {
         self.description = description
         self.inputPriceMicroPerMTok = inputPriceMicroPerMTok
         self.outputPriceMicroPerMTok = outputPriceMicroPerMTok
+        self.contextLength = contextLength
     }
 
     /// Check if model matches search query using fuzzy matching.
@@ -174,7 +180,8 @@ extension ModelPickerItem {
             ),
             outputPriceMicroPerMTok: Int64(
                 metadata.outputMicroPerMTok.trimmingCharacters(in: .whitespacesAndNewlines)
-            )
+            ),
+            contextLength: metadata.contextLength > 0 ? metadata.contextLength : nil
         )
     }
 
@@ -348,7 +355,49 @@ enum ModelPickerSortOrder: Hashable {
     case priceHighToLow
 }
 
+/// Minimum-context filter for the Osaurus tab. Each case keeps models whose
+/// context window is at least `minTokens`; `.any` disables the filter.
+enum ModelPickerContextFilter: CaseIterable, Identifiable, Hashable {
+    case any
+    case min32K
+    case min128K
+    case min256K
+    case min1M
+
+    var id: Self { self }
+
+    /// Inclusive lower bound in tokens. `.any` has no bound.
+    var minTokens: Int? {
+        switch self {
+        case .any: return nil
+        case .min32K: return 32_000
+        case .min128K: return 128_000
+        case .min256K: return 256_000
+        case .min1M: return 1_000_000
+        }
+    }
+
+    /// Short chip label.
+    var label: String {
+        switch self {
+        case .any: return "Any"
+        case .min32K: return "32K+"
+        case .min128K: return "128K+"
+        case .min256K: return "256K+"
+        case .min1M: return "1M+"
+        }
+    }
+}
+
 extension Array where Element == ModelPickerItem {
+    /// Keep only models whose context window meets the filter's minimum. Items
+    /// with unknown context are dropped when a minimum is set; `.any` is a
+    /// no-op that returns the receiver unchanged.
+    func filteredByContext(_ filter: ModelPickerContextFilter) -> [ModelPickerItem] {
+        guard let minTokens = filter.minTokens else { return self }
+        return filter { ($0.contextLength ?? 0) >= minTokens }
+    }
+
     /// Sort by Osaurus router price (input rate primary, output as tiebreak).
     /// Items without pricing sort last in either direction so a missing rate
     /// never jumps to the top of a "cheapest first" list. Falls back to the

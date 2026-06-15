@@ -17,6 +17,7 @@ struct ModelPickerView: View {
     @State private var searchText = ""
     @State private var selectedTabKey: String?
     @State private var sortOrder: ModelPickerSortOrder = .default
+    @State private var contextFilter: ModelPickerContextFilter = .any
     @State private var showSortPopover = false
     @Environment(\.theme) private var theme
 
@@ -90,11 +91,16 @@ struct ModelPickerView: View {
             guard let key = effectiveSelectedTabKey(in: tabs),
                 let tab = tabs.first(where: { $0.key == key })
             else { return [] }
-            // Price sorting only applies to the Osaurus tab, whose models carry
-            // pricing; other tabs keep their existing alphabetical order.
-            guard tab.isOsaurus, sortOrder != .default else { return makeRows(for: tab) }
-            let sorted = ModelPickerTab(key: tab.key, title: tab.title, models: tab.models.sortedByPrice(sortOrder))
-            return makeRows(for: sorted)
+            // Context filtering and price sorting only apply to the Osaurus
+            // tab, whose models carry context/pricing metadata; other tabs keep
+            // their existing alphabetical order. Both steps are no-ops at their
+            // default (`.any` / `.default`), so the pipeline is safe to always
+            // run for Osaurus.
+            guard tab.isOsaurus else { return makeRows(for: tab) }
+            let processed = tab.models
+                .filteredByContext(contextFilter)
+                .sortedByPrice(sortOrder)
+            return makeRows(for: ModelPickerTab(key: tab.key, title: tab.title, models: processed))
         }
 
         return searchRows(in: tabs)
@@ -274,16 +280,22 @@ struct ModelPickerView: View {
                     Circle()
                         .strokeBorder(theme.accentColor.opacity(0.3), lineWidth: 1)
                         .background(
-                            Circle().fill(theme.accentColor.opacity(sortOrder == .default ? 0.08 : 0.18))
+                            Circle().fill(theme.accentColor.opacity(isSortOrFilterActive ? 0.18 : 0.08))
                         )
                 )
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
-        .help(Text("Sort by price", bundle: .module))
+        .help(Text("Sort and filter", bundle: .module))
         .popover(isPresented: $showSortPopover, arrowEdge: .bottom) {
             sortPopoverView
         }
+    }
+
+    /// Whether any non-default sort/filter is applied, used to highlight the
+    /// circular control so the user can tell at a glance the list is modified.
+    private var isSortOrFilterActive: Bool {
+        sortOrder != .default || contextFilter != .any
     }
 
     private var sortPopoverView: some View {
@@ -294,9 +306,19 @@ struct ModelPickerView: View {
             sortRow(.priceLowToHigh, Text("Cheapest first", bundle: .module), icon: "arrow.up")
             sortRow(.priceHighToLow, Text("Highest first", bundle: .module), icon: "arrow.down")
 
-            Spacer(minLength: 8)
+            sortSectionHeader(Text("Context limit", bundle: .module))
+
+            FlowLayout(spacing: 8) {
+                ForEach(ModelPickerContextFilter.allCases) { option in
+                    FilterChip(label: option.label, isSelected: contextFilter == option) {
+                        contextFilter = option
+                    }
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.bottom, 12)
         }
-        .frame(width: 220)
+        .frame(width: 240)
         .background(theme.primaryBackground)
         .environment(\.theme, theme)
     }
@@ -358,6 +380,55 @@ struct ModelPickerView: View {
                 )
                 .padding(.horizontal, 6)
                 .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .onHover { hovering in
+                withAnimation(.easeOut(duration: 0.12)) {
+                    isHovering = hovering
+                }
+            }
+        }
+    }
+
+    private struct FilterChip: View {
+        let label: String
+        let isSelected: Bool
+        let action: () -> Void
+        @Environment(\.theme) private var theme
+        @State private var isHovering = false
+
+        var body: some View {
+            Button(action: action) {
+                HStack(spacing: 4) {
+                    if isSelected {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 9, weight: .bold))
+                    }
+                    Text(label)
+                        .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(
+                    RoundedRectangle(cornerRadius: 16)
+                        .fill(
+                            isSelected
+                                ? theme.accentColor.opacity(0.15)
+                                : (isHovering
+                                    ? theme.tertiaryBackground.opacity(0.7)
+                                    : theme.tertiaryBackground.opacity(0.4))
+                        )
+                )
+                .foregroundColor(isSelected ? theme.accentColor : theme.secondaryText)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16)
+                        .stroke(
+                            isSelected
+                                ? theme.accentColor.opacity(0.45)
+                                : theme.primaryBorder.opacity(0.1),
+                            lineWidth: 1
+                        )
+                )
             }
             .buttonStyle(.plain)
             .onHover { hovering in
