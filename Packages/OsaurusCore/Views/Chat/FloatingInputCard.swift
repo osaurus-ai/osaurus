@@ -1611,7 +1611,7 @@ extension FloatingInputCard {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .localizedHelp("Your Osaurus balance. Click to add credits.")
+        .localizedHelp("Your balance. Click to add credits.")
         .task(id: showSessionSpend) {
             if showSessionSpend {
                 await accountService.refreshBalance()

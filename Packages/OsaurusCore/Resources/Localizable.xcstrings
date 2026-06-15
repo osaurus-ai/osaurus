@@ -57207,8 +57207,8 @@
         }
       }
     },
-    "You're out of Osaurus credits" : {
-      "comment" : "Title of the chat modal shown when a request fails for insufficient Osaurus credits."
+    "You're out of credits" : {
+      "comment" : "Title of the chat modal shown when a request fails for insufficient credits."
     },
     "Your API key is stored in your macOS Keychain and only sent to %@." : {
       "localizations" : {
@@ -57409,10 +57409,10 @@
         }
       }
     },
-    "Your Osaurus balance is %@. Add credits to keep chatting." : {
+    "Your balance is %@. Add credits to keep chatting." : {
       "comment" : "Message in the out-of-credits modal shown in chat; the placeholder is the current balance."
     },
-    "Your Osaurus balance. Click to add credits." : {
+    "Your balance. Click to add credits." : {
       "comment" : "Tooltip on the chat composer credits chip."
     },
     "Your Overrides" : {

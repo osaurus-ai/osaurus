@@ -40,7 +40,7 @@ struct ChatErrorMessagesTests {
 
         let message = ChatErrorMessages.assistantMessage(for: error)
 
-        #expect(message.contains("out of Osaurus credits"))
+        #expect(message.contains("out of credits"))
         #expect(message.contains("Add credits"))
     }
 

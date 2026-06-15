@@ -3930,7 +3930,7 @@ struct ChatView: View {
     private var insufficientFundsMessage: String {
         String(
             localized:
-                "Your Osaurus balance is \(accountService.formattedBalance). Add credits to keep chatting.",
+                "Your balance is \(accountService.formattedBalance). Add credits to keep chatting.",
             bundle: .module,
             comment:
                 "Message in the out-of-credits modal shown in chat; the placeholder is the current balance."
@@ -4047,7 +4047,7 @@ struct ChatView: View {
                 ]
             )
             .themedAlert(
-                L("You're out of Osaurus credits"),
+                L("You're out of credits"),
                 isPresented: $observedSession.insufficientFundsAlert,
                 message: insufficientFundsMessage,
                 primaryButton: .primary(L("Add credits")) { showTopUpSheet = true },

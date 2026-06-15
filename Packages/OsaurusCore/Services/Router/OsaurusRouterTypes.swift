@@ -96,7 +96,7 @@ enum OsaurusRouterAPIError: LocalizedError, Sendable {
         case .belowMinimumTopUp:
             return "Minimum top-up is $5.00."
         case .insufficientFunds:
-            return "Insufficient Osaurus credits. Add balance to continue."
+            return "Insufficient credits. Add balance to continue."
         case .accountFrozen:
             return "Your Osaurus billing account is on hold."
         case .unauthorized:

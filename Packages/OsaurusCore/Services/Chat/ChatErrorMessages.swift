@@ -4,7 +4,7 @@ enum ChatErrorMessages {
     static func assistantMessage(for error: Error) -> String {
         let description = error.localizedDescription
         if OsaurusRouter.isInsufficientFundsError(description) {
-            return "Error: You're out of Osaurus credits. Add credits to continue."
+            return "Error: You're out of credits. Add credits to continue."
         }
         if isSystemResourceExhaustion(description) {
             return
