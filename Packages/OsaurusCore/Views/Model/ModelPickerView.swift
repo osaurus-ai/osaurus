@@ -17,6 +17,7 @@ struct ModelPickerView: View {
     @State private var searchText = ""
     @State private var selectedTabKey: String?
     @State private var sortOrder: ModelPickerSortOrder = .default
+    @State private var showSortPopover = false
     @Environment(\.theme) private var theme
 
     // MARK: - Test Mode
@@ -230,7 +231,7 @@ struct ModelPickerView: View {
             Spacer()
 
             if showSort {
-                sortMenu
+                sortButton
             }
 
             Button(action: {
@@ -263,19 +264,8 @@ struct ModelPickerView: View {
 
     // MARK: - Sort Menu
 
-    private var sortMenu: some View {
-        Menu {
-            Picker(
-                selection: $sortOrder,
-                content: {
-                    Text("Default", bundle: .module).tag(ModelPickerSortOrder.default)
-                    Text("Cheapest first", bundle: .module).tag(ModelPickerSortOrder.priceLowToHigh)
-                    Text("Highest first", bundle: .module).tag(ModelPickerSortOrder.priceHighToLow)
-                },
-                label: { Text("Sort by price", bundle: .module) }
-            )
-            .pickerStyle(.inline)
-        } label: {
+    private var sortButton: some View {
+        Button(action: { showSortPopover.toggle() }) {
             Image(systemName: "arrow.up.arrow.down")
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundColor(theme.accentColor)
@@ -289,11 +279,93 @@ struct ModelPickerView: View {
                 )
                 .contentShape(Circle())
         }
-        .menuStyle(.button)
         .buttonStyle(.plain)
-        .menuIndicator(.hidden)
-        .fixedSize()
         .help(Text("Sort by price", bundle: .module))
+        .popover(isPresented: $showSortPopover, arrowEdge: .bottom) {
+            sortPopoverView
+        }
+    }
+
+    private var sortPopoverView: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            sortSectionHeader(Text("Sort by price", bundle: .module))
+
+            sortRow(.default, Text("Default", bundle: .module), icon: "list.bullet")
+            sortRow(.priceLowToHigh, Text("Cheapest first", bundle: .module), icon: "arrow.up")
+            sortRow(.priceHighToLow, Text("Highest first", bundle: .module), icon: "arrow.down")
+
+            Spacer(minLength: 8)
+        }
+        .frame(width: 220)
+        .background(theme.primaryBackground)
+        .environment(\.theme, theme)
+    }
+
+    private func sortSectionHeader(_ text: Text) -> some View {
+        text
+            .font(.system(size: 10, weight: .bold))
+            .tracking(0.6)
+            .foregroundColor(theme.tertiaryText)
+            .textCase(.uppercase)
+            .padding(.horizontal, 12)
+            .padding(.top, 12)
+            .padding(.bottom, 6)
+    }
+
+    private func sortRow(_ order: ModelPickerSortOrder, _ title: Text, icon: String) -> some View {
+        SortOptionRow(icon: icon, title: title, isSelected: sortOrder == order) {
+            sortOrder = order
+            showSortPopover = false
+        }
+    }
+
+    private struct SortOptionRow: View {
+        let icon: String
+        let title: Text
+        let isSelected: Bool
+        let action: () -> Void
+        @Environment(\.theme) private var theme
+        @State private var isHovering = false
+
+        var body: some View {
+            Button(action: action) {
+                HStack(spacing: 10) {
+                    Image(systemName: icon)
+                        .font(.system(size: 12, weight: .medium))
+                        .frame(width: 16)
+                        .foregroundColor(isSelected ? theme.accentColor : theme.secondaryText)
+                    title
+                        .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
+                        .foregroundColor(isSelected ? theme.accentColor : theme.primaryText)
+                    Spacer(minLength: 0)
+                    if isSelected {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundColor(theme.accentColor)
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(
+                            isSelected
+                                ? theme.accentColor.opacity(0.12)
+                                : (isHovering
+                                    ? theme.tertiaryBackground.opacity(0.7)
+                                    : Color.clear)
+                        )
+                )
+                .padding(.horizontal, 6)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .onHover { hovering in
+                withAnimation(.easeOut(duration: 0.12)) {
+                    isHovering = hovering
+                }
+            }
+        }
     }
 
     // MARK: - Search Field
