@@ -979,7 +979,17 @@ struct MLXBatchAdapter {
             throw CancellationError()
         }
 
+        // `prepareInput` can run a GPU eval on THIS submit thread before the
+        // generation gate is taken below — notably the Nemotron-Omni audio
+        // pre-encode (`MLX.eval` in `preencodedAudio`) and any media encoder
+        // that materializes during `UserInputProcessor.prepare`. Hold the Metal
+        // gate's shared lock across `prepareInput` too, so that eval can't race
+        // a concurrent Model2Vec embedder on the Metal command buffer (the same
+        // `addCompletedHandler:` crash class the gate exists to prevent). This
+        // is a separate, fully-balanced acquire/release from the generation
+        // gate below; the brief window between them is eval-free.
         let prepared: PreparedInput
+        await MetalGate.shared.enterGeneration()
         do {
             prepared = try await prepareInput(
                 modelName: modelName,
@@ -991,7 +1001,9 @@ struct MLXBatchAdapter {
                 toolChoice: toolChoice,
                 trace: trace
             )
+            await MetalGate.shared.exitGeneration()
         } catch {
+            await MetalGate.shared.exitGeneration()
             if let soloLease { await soloLease.release() }
             throw error
         }
@@ -1106,6 +1118,14 @@ struct MLXBatchAdapter {
             category: "inference.generate",
             message: "submit model=\(modelName) batch=\(maxBatchSize)"
         )
+        // Take the Metal gate's SHARED (generation) lock BEFORE submitting the
+        // slot, so an external MLX user — the Model2Vec embedder behind
+        // capability/memory search — cannot start a GPU eval while this
+        // generation is in flight. Concurrent generations share the lock and
+        // keep batching; only embedding is exclusive. Released by the producer
+        // task once the upstream stream has fully drained, which (per the note
+        // above) is AFTER vmlx's post-`.info` cache-store eval.
+        await MetalGate.shared.enterGeneration()
         let upstream = await engine.generate(
             input: prepared.input,
             parameters: mlxParams
@@ -1143,6 +1163,13 @@ struct MLXBatchAdapter {
             if let soloLease {
                 await soloLease.release()
             }
+            // Release the Metal gate's shared lock now that this generation's
+            // GPU work (including the post-`.info` cache store) is fully done,
+            // letting any waiting embedder run. Paired with the
+            // `enterGeneration()` taken before `engine.generate` above; the
+            // producer task always runs to completion, so the pair always
+            // balances.
+            await MetalGate.shared.exitGeneration()
         }
 
         continuation.onTermination = { @Sendable _ in

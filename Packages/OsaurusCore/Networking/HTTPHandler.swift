@@ -4698,6 +4698,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         return .toolCalls([inv])
                     }
 
+                    // Empty turn (0-token / EOS-first, no tool call): don't
+                    // record a blank assistant message or end the run on
+                    // silence — let the driver nudge-and-retry, then fall back.
+                    if responseContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        return .emptyResponse
+                    }
                     // Final text response — done
                     messages.append(ChatMessage(role: "assistant", content: responseContent))
                     return .finalResponse
@@ -4849,6 +4855,20 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                             ChatMessage(role: "tool", content: result, tool_calls: nil, tool_call_id: callId)
                         )
                     }
+                },
+                emitFallbackText: { text in
+                    // Empty-turn recovery exhausted: stream a visible fallback
+                    // so the client never receives an empty assistant message.
+                    hop {
+                        writerBound.value.writeContent(
+                            text,
+                            model: model,
+                            responseId: responseId,
+                            created: created,
+                            context: ctx.value
+                        )
+                    }
+                    messages.append(ChatMessage(role: "assistant", content: text))
                 }
             )
 

@@ -7,6 +7,13 @@
 
 import Foundation
 
+#if canImport(ImageIO)
+    import ImageIO
+#endif
+#if canImport(CoreGraphics)
+    import CoreGraphics
+#endif
+
 public struct Attachment: Codable, Sendable, Equatable, Identifiable {
     public let id: UUID
     public let kind: Kind
@@ -399,11 +406,18 @@ public struct Attachment: Codable, Sendable, Equatable, Identifiable {
     public var estimatedTokens: Int {
         switch kind {
         case .image(let data):
-            // Base64-encoded byte expansion (×4/3) then chars→tokens via
-            // the canonical heuristic.
-            return max(1, (data.count * 4) / 3 / TokenEstimator.charsPerToken)
-        case .imageRef(_, let byteCount):
-            return max(1, (byteCount * 4) / 3 / TokenEstimator.charsPerToken)
+            // Vision tokens scale with image RESOLUTION, not file size — the
+            // processor resizes then patchifies, so a model never sees the raw
+            // (or compressed) bytes. Estimating from byte length made a 1–2.5 MB
+            // photo read as hundreds of thousands of tokens and falsely tripped
+            // the send-budget gate (a 70 KB screenshot slipped under, a JPEG of
+            // the same picture did not). Derive from pixel dimensions instead.
+            return Attachment.estimatedImageTokens(forEncodedImage: data)
+        case .imageRef(_, _):
+            // Spilled to the blob store: pixel dimensions aren't available here
+            // (only the on-disk byte count), so fall back to a conservative
+            // per-image constant rather than the misleading byte-based figure.
+            return Attachment.defaultImageTokenEstimate
         case .document(_, let content, _):
             return TokenEstimator.estimate(content)
         case .documentRef(_, _, let fileSize):
@@ -417,6 +431,66 @@ public struct Attachment: Codable, Sendable, Equatable, Identifiable {
             // Bounded ~2K tokens regardless of file size (8 frames × 256 tokens)
             return 2048
         }
+    }
+
+    // MARK: - Image token estimation
+
+    /// Per-image vision-token estimate used when pixel dimensions can't be
+    /// read (e.g. a spilled `imageRef`). Mid-range across VL families — Gemma 3
+    /// emits a fixed 256 tokens/image, Qwen2.5-VL tiles dynamically up to a few
+    /// thousand — so this neither wildly over- nor under-counts a typical photo.
+    public static let defaultImageTokenEstimate = 1024
+
+    /// Longest-side pixel budget a VL processor resizes to before patchifying.
+    /// Representative of common defaults (Qwen2-VL / SmolVLM ≈ 1.5 k px). Larger
+    /// images are downscaled, so token cost saturates rather than growing with
+    /// resolution.
+    private static let imageResizeLongSide = 1536
+    /// Effective patch stride: a 14 px ViT patch after 2×2 spatial merge.
+    private static let imagePatchStride = 28.0
+    /// Floor (≈ one merged tile) and ceiling for a single image. The ceiling
+    /// keeps one attachment from ever falsely tripping the hard send-gate.
+    private static let imageTokenFloor = 256
+    private static let imageTokenCeiling = 4096
+
+    /// Estimate vision tokens for an encoded image by reading its pixel
+    /// dimensions (header-only, no full decode) rather than its byte size.
+    public static func estimatedImageTokens(forEncodedImage data: Data) -> Int {
+        guard let size = imagePixelSize(data) else { return defaultImageTokenEstimate }
+        return estimatedImageTokens(pixelWidth: size.width, pixelHeight: size.height)
+    }
+
+    /// Estimate vision tokens from pixel dimensions: resize the long side into
+    /// the processor's budget, then count merged patches, floored/capped to a
+    /// sane single-image range.
+    public static func estimatedImageTokens(pixelWidth: Int, pixelHeight: Int) -> Int {
+        guard pixelWidth > 0, pixelHeight > 0 else { return defaultImageTokenEstimate }
+        let longSide = max(pixelWidth, pixelHeight)
+        let scale = longSide > imageResizeLongSide
+            ? Double(imageResizeLongSide) / Double(longSide) : 1.0
+        let w = Double(pixelWidth) * scale
+        let h = Double(pixelHeight) * scale
+        let tokens =
+            Int((w / imagePatchStride).rounded(.up))
+            * Int((h / imagePatchStride).rounded(.up))
+        return min(max(tokens, imageTokenFloor), imageTokenCeiling)
+    }
+
+    /// Read an encoded image's pixel dimensions from its header without
+    /// decoding the bitmap. Returns nil when ImageIO can't parse the data.
+    private static func imagePixelSize(_ data: Data) -> (width: Int, height: Int)? {
+        #if canImport(ImageIO)
+            guard
+                let source = CGImageSourceCreateWithData(data as CFData, nil),
+                let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil)
+                    as? [CFString: Any],
+                let width = props[kCGImagePropertyPixelWidth] as? Int,
+                let height = props[kCGImagePropertyPixelHeight] as? Int
+            else { return nil }
+            return (width, height)
+        #else
+            return nil
+        #endif
     }
 
     // MARK: - Spillover hooks (memory + disk-cache integration)

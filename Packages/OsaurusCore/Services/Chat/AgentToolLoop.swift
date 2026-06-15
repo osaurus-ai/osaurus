@@ -100,6 +100,13 @@ enum AgentLoopModelStep {
     /// mid-tool-args) and wants the same iteration replayed without
     /// charging the iteration budget.
     case retryWithoutCharge
+    /// The model step produced NO visible text AND no tool calls — an empty
+    /// turn (an immediate EOS / 0-token generation). The driver attempts a
+    /// bounded recovery (a corrective nudge, then retry) instead of ending
+    /// the run silently; on exhaustion it emits a fallback message via
+    /// `AgentLoopHooks.emitFallbackText` so the user never sees nothing and
+    /// the loop can never spin on a deterministically-empty model.
+    case emptyResponse
 }
 
 /// Result of the surface executing a single tool call. The surface has
@@ -196,6 +203,14 @@ struct AgentLoopHooks {
     /// `todo` call while pending items remain. Chat-only today.
     var pendingTodoCount: (() async -> Int)?
 
+    /// Emit a final, user-visible assistant message when an empty turn could
+    /// not be recovered (the model produced nothing across the bounded
+    /// retries). The surface writes this into its stream/history so the run
+    /// never ends with silent emptiness. Surfaces that don't render text to a
+    /// user (plugin/eval harnesses) may leave this nil — they then keep their
+    /// prior empty-final behavior, which is harmless off the chat surface.
+    var emitFallbackText: ((_ text: String) async -> Void)?
+
     init(
         isCancelled: @escaping () async -> Bool = { false },
         buildMessages: @escaping (_ notices: [String]) async -> AgentLoopIterationInput,
@@ -212,7 +227,8 @@ struct AgentLoopHooks {
             (_ calls: [(invocation: ServiceToolInvocation, callId: String)]) async -> [AgentLoopToolExecution]
         )? = nil,
         onBatchComplete: @escaping (_ outcomes: [AgentLoopToolOutcome]) async -> Void = { _ in },
-        pendingTodoCount: (() async -> Int)? = nil
+        pendingTodoCount: (() async -> Int)? = nil,
+        emitFallbackText: ((_ text: String) async -> Void)? = nil
     ) {
         self.isCancelled = isCancelled
         self.buildMessages = buildMessages
@@ -223,6 +239,7 @@ struct AgentLoopHooks {
         self.executeBatch = executeBatch
         self.onBatchComplete = onBatchComplete
         self.pendingTodoCount = pendingTodoCount
+        self.emitFallbackText = emitFallbackText
     }
 }
 
@@ -499,6 +516,24 @@ enum AgentToolLoop {
     /// a repeated read (chat surface only, per policy).
     static let dedupeNotice =
         "[System Notice] You already retrieved this exact result this turn and it is unchanged. Use the result you already have instead of repeating the call."
+
+    /// Max consecutive empty (0-token / no-tool) turns to nudge-and-retry
+    /// before giving up and emitting the fallback. Small: the nudge changes
+    /// the prompt so even a temperature-0 model that just emitted EOS will
+    /// almost always produce text on the next attempt; the cap guarantees
+    /// the loop can never spin on a deterministically-empty model.
+    static let maxEmptyTurnRetries = 2
+
+    /// Staged before an empty-turn retry. Telling the model its last turn
+    /// produced nothing (and to answer or call a tool) perturbs the prompt
+    /// enough to break the immediate-EOS state that caused the empty turn.
+    static let emptyTurnNotice =
+        "[System Notice] Your previous turn produced no output. Respond to the user's request now, or call a tool to make progress. Do not reply with an empty message."
+
+    /// Emitted to the user when even the nudged retries produced nothing, so
+    /// an empty turn never surfaces as a silent "No visible text was produced".
+    static let emptyTurnFallback =
+        "I wasn't able to generate a response to that. Please try rephrasing your request."
 
     /// The iteration-budget warning staged when the remaining budget
     /// drops to the policy threshold.
@@ -781,6 +816,10 @@ enum AgentToolLoop {
         var pendingBudgetNotice: String?
         var pendingStateNotice: String?
         var pendingTodoNotice: String?
+        // Consecutive empty (0-token / no-tool) turns this run. Reset by any
+        // productive turn; bounds the nudge-and-retry recovery so the loop
+        // can never spin on a deterministically-empty model.
+        var consecutiveEmptyTurns = 0
         // Last iteration that carried a `todo` call (0 = run start), for
         // the staleness check below.
         var lastTodoIteration = 0
@@ -825,7 +864,28 @@ enum AgentToolLoop {
                 iteration -= 1
                 continue
 
+            case .emptyResponse:
+                // The model produced no visible text and no tool call. Never
+                // end the run on a silent empty turn: nudge-and-retry a
+                // bounded number of times (the notice perturbs the prompt so
+                // a temp-0 model that just emitted EOS produces text), then
+                // emit a fallback message so the user always sees something.
+                consecutiveEmptyTurns += 1
+                if consecutiveEmptyTurns <= Self.maxEmptyTurnRetries {
+                    pendingStateNotice = Self.emptyTurnNotice
+                    // Not charged against the tool-iteration budget.
+                    iteration -= 1
+                    continue
+                }
+                // Recovery exhausted: guarantee a visible message instead of
+                // a silent dead-end, then end the run.
+                await hooks.emitFallbackText?(Self.emptyTurnFallback)
+                return RunResult(exit: .finalResponse, iterations: iteration)
+
             case .toolCalls(let invocations):
+                // A productive turn — reset the empty-turn recovery budget so
+                // a later unrelated empty turn gets its own fresh allowance.
+                consecutiveEmptyTurns = 0
                 var outcomes: [AgentLoopToolOutcome] = []
                 outcomes.reserveCapacity(invocations.count)
 

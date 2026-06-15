@@ -53,6 +53,28 @@ public final class ClipboardService: ObservableObject {
     private var isChecking = false
     private let keyboardService = KeyboardSimulationService.shared
 
+    /// Serializes every `NSPasteboard` access. `NSPasteboard` is not thread-safe:
+    /// its internal type cache (`_updateTypeCacheIfNeeded`) is shared mutable state,
+    /// so concurrent reads — from independent `Task.detached` jobs on the cooperative
+    /// pool and from the main actor — can double-free it (Sentry: malloc "pointer
+    /// being freed was not allocated"). Routing all reads through a single serial queue
+    /// keeps them off the main thread (preserving the hang fix) while guaranteeing no
+    /// two pasteboard touches ever overlap.
+    nonisolated private static let pasteboardQueue = DispatchQueue(
+        label: "com.dinoki.osaurus.clipboard.pasteboard"
+    )
+
+    /// Runs `work` against the shared pasteboard on the serial pasteboard queue.
+    nonisolated private static func onPasteboardQueue<T: Sendable>(
+        _ work: @escaping @Sendable (NSPasteboard) -> T
+    ) async -> T {
+        await withCheckedContinuation { continuation in
+            pasteboardQueue.async {
+                continuation.resume(returning: work(NSPasteboard.general))
+            }
+        }
+    }
+
     private init() {
         // monitoring is started/stopped by AppDelegate based on window visibility
     }
@@ -104,17 +126,15 @@ public final class ClipboardService: ObservableObject {
         // server that can block for seconds when that server is slow, hanging the UI.
         // The reads only use the typed `string(forType:)`/`data(forType:)` accessors
         // (never `readObjects(forClasses:)`), which are safe to call off the main actor.
-        let changeCount = await Task.detached(priority: .utility) {
-            NSPasteboard.general.changeCount
-        }.value
+        // They run on the shared serial pasteboard queue so they never overlap another
+        // pasteboard access and corrupt its internal type cache.
+        let changeCount = await Self.onPasteboardQueue { $0.changeCount }
         guard changeCount != knownChangeCount else { return }
 
         print("[ClipboardService] Pasteboard change detected. Count: \(changeCount) (was \(knownChangeCount))")
         lastChangeCount = changeCount
 
-        let detected = await Task.detached(priority: .utility) {
-            Self.detectContent(in: NSPasteboard.general)
-        }.value
+        let detected = await Self.onPasteboardQueue { Self.detectContent(in: $0) }
         guard let content = detected else {
             print("[ClipboardService] Change detected but no meaningful content found on pasteboard.")
             return
@@ -186,8 +206,7 @@ public final class ClipboardService: ObservableObject {
     /// Attempt to grab the current selection from the active application
     /// by simulating Cmd+C and waiting for the pasteboard to update.
     public func grabSelection() async -> String? {
-        let pb = NSPasteboard.general
-        let startChangeCount = pb.changeCount
+        let startChangeCount = await Self.onPasteboardQueue { $0.changeCount }
         print("[ClipboardService] Starting grabSelection. Current changeCount: \(startChangeCount)")
 
         // 1. simulate Cmd+C
@@ -203,8 +222,9 @@ public final class ClipboardService: ObservableObject {
         print("[ClipboardService] Waiting for pasteboard update...")
         for i in 0 ..< 10 {
             try? await Task.sleep(nanoseconds: 50_000_000)  // 50ms
-            if pb.changeCount != startChangeCount {
-                print("[ClipboardService] Pasteboard update detected at iteration \(i+1). New count: \(pb.changeCount)")
+            let currentChangeCount = await Self.onPasteboardQueue { $0.changeCount }
+            if currentChangeCount != startChangeCount {
+                print("[ClipboardService] Pasteboard update detected at iteration \(i+1). New count: \(currentChangeCount)")
                 await performPasteboardRefresh()
 
                 if case .text(let text) = currentContent {
