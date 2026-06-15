@@ -979,7 +979,17 @@ struct MLXBatchAdapter {
             throw CancellationError()
         }
 
+        // `prepareInput` can run a GPU eval on THIS submit thread before the
+        // generation gate is taken below — notably the Nemotron-Omni audio
+        // pre-encode (`MLX.eval` in `preencodedAudio`) and any media encoder
+        // that materializes during `UserInputProcessor.prepare`. Hold the Metal
+        // gate's shared lock across `prepareInput` too, so that eval can't race
+        // a concurrent Model2Vec embedder on the Metal command buffer (the same
+        // `addCompletedHandler:` crash class the gate exists to prevent). This
+        // is a separate, fully-balanced acquire/release from the generation
+        // gate below; the brief window between them is eval-free.
         let prepared: PreparedInput
+        await MetalGate.shared.enterGeneration()
         do {
             prepared = try await prepareInput(
                 modelName: modelName,
@@ -991,7 +1001,9 @@ struct MLXBatchAdapter {
                 toolChoice: toolChoice,
                 trace: trace
             )
+            await MetalGate.shared.exitGeneration()
         } catch {
+            await MetalGate.shared.exitGeneration()
             if let soloLease { await soloLease.release() }
             throw error
         }

@@ -3349,7 +3349,13 @@ final class ChatSession: ObservableObject {
                                     // call) must not silently end the run as "No
                                     // visible text was produced": let the driver
                                     // nudge-and-retry, then fall back to a message.
-                                    return assistantTurn.contentIsBlank
+                                    // A reasoning-only turn (visible content blank
+                                    // but thinking present) is NOT empty — it's the
+                                    // model's intended answer in the reasoning
+                                    // channel — so require thinking blank too, matching
+                                    // the "No visible text was produced" condition.
+                                    return (assistantTurn.contentIsBlank
+                                        && assistantTurn.thinkingIsBlank)
                                         ? .emptyResponse : .finalResponse
                                 }
                                 return .toolCalls(invocations)
