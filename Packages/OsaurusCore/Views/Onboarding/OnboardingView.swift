@@ -147,8 +147,11 @@ public struct OnboardingView: View {
     private var stepFooterCaption: some View {
         switch currentStep {
         case .welcome:
-            WelcomeUsageOptIn(state: welcomeState)
-                .padding(.bottom, OnboardingMetrics.footerCaptionToCTA)
+            VStack(spacing: 8) {
+                WelcomeUsageOptIn(state: welcomeState)
+                WelcomeLegalNotice()
+            }
+            .padding(.bottom, OnboardingMetrics.footerCaptionToCTA)
         default:
             stepFooterCaptionText
         }

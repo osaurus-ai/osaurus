@@ -177,25 +177,44 @@ struct CreditsTopUpSheet: View {
     // MARK: - Footer
 
     private var footer: some View {
-        HStack(spacing: 12) {
-            footerButton(title: L("Cancel"), isPrimary: false) {
-                dismiss()
-            }
-            .keyboardShortcut(.cancelAction)
+        VStack(spacing: 12) {
+            legalNotice
 
-            footerButton(
-                title: L("Continue to checkout"),
-                isPrimary: true,
-                isEnabled: isValid && !accountService.isCreatingCheckout,
-                isLoading: accountService.isCreatingCheckout
-            ) {
-                Task { await performCheckout() }
+            HStack(spacing: 12) {
+                footerButton(title: L("Cancel"), isPrimary: false) {
+                    dismiss()
+                }
+                .keyboardShortcut(.cancelAction)
+
+                footerButton(
+                    title: L("Continue to checkout"),
+                    isPrimary: true,
+                    isEnabled: isValid && !accountService.isCreatingCheckout,
+                    isLoading: accountService.isCreatingCheckout
+                ) {
+                    Task { await performCheckout() }
+                }
+                .keyboardShortcut(.defaultAction)
             }
-            .keyboardShortcut(.defaultAction)
         }
         .padding(.horizontal, 20)
         .padding(.bottom, 18)
         .padding(.top, 2)
+    }
+
+    /// Purchasing credits forms a payment agreement, so the credit-specific
+    /// Terms (refunds, expiration, non-transferability) and the Privacy Policy
+    /// are linked right where the charge is initiated.
+    private var legalNotice: some View {
+        MarkdownLinkText(
+            markdown: OsaurusWebLinks.acceptanceMarkdown,
+            font: .system(size: 11),
+            textColor: theme.tertiaryText,
+            linkColor: theme.accentColor,
+            alignment: .center
+        )
+        .fixedSize(horizontal: false, vertical: true)
+        .frame(maxWidth: .infinity)
     }
 
     /// Footer button styled to match the themed dialog: primary is an accent

@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 // MARK: - Configuration View
@@ -76,6 +77,27 @@ struct ConfigurationView: View {
     private func matchesSearch(_ texts: String...) -> Bool {
         guard isSearching else { return true }
         return texts.contains { SearchService.matches(query: searchText, in: $0) }
+    }
+
+    /// A tappable legal link styled as a settings row. Opens the canonical
+    /// osaurus.ai page in the default browser, matching the app-wide
+    /// `NSWorkspace.shared.open` pattern.
+    private func legalLinkRow(title: String, url: URL) -> some View {
+        Button {
+            NSWorkspace.shared.open(url)
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "arrow.up.right.square")
+                    .font(.system(size: 13))
+                    .foregroundColor(theme.accentColor)
+                Text(title)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(theme.primaryText)
+                Spacer(minLength: 0)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     var body: some View {
@@ -570,6 +592,37 @@ struct ConfigurationView: View {
                                         }
                                         .buttonStyle(SettingsButtonStyle())
                                     }
+                                }
+                            }
+                        }
+
+                        // MARK: - Legal Section
+                        if matchesSearch(
+                            "Legal",
+                            "Terms",
+                            "Terms of Service",
+                            "Privacy",
+                            "Privacy Policy",
+                            "Policy",
+                            "About"
+                        ) {
+                            SettingsSection(title: "Legal", icon: "doc.text") {
+                                VStack(alignment: .leading, spacing: 12) {
+                                    Text(
+                                        "Review the agreements that govern your use of Osaurus.",
+                                        bundle: .module
+                                    )
+                                    .font(.system(size: 12))
+                                    .foregroundColor(theme.secondaryText)
+
+                                    legalLinkRow(
+                                        title: L("Terms of Service"),
+                                        url: OsaurusWebLinks.terms
+                                    )
+                                    legalLinkRow(
+                                        title: L("Privacy Policy"),
+                                        url: OsaurusWebLinks.privacy
+                                    )
                                 }
                             }
                         }

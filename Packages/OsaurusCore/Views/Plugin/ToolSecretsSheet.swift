@@ -473,61 +473,12 @@ private struct DescriptionText: View {
     let theme: ThemeProtocol
 
     var body: some View {
-        if let attributedString = parseMarkdownLinks(text) {
-            Text(attributedString)
-                .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText)
-                .environment(
-                    \.openURL,
-                    OpenURLAction { url in
-                        NSWorkspace.shared.open(url)
-                        return .handled
-                    }
-                )
-        } else {
-            Text(text)
-                .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText)
-        }
-    }
-
-    /// Parses markdown-style links [text](url) into AttributedString
-    private func parseMarkdownLinks(_ input: String) -> AttributedString? {
-        var result = AttributedString(input)
-
-        // Pattern to match [text](url)
-        let pattern = #"\[([^\]]+)\]\(([^)]+)\)"#
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else {
-            return nil
-        }
-
-        let nsRange = NSRange(input.startIndex..., in: input)
-        let matches = regex.matches(in: input, options: [], range: nsRange)
-
-        // Process matches in reverse order to preserve ranges
-        for match in matches.reversed() {
-            guard let fullRange = Range(match.range, in: input),
-                let textRange = Range(match.range(at: 1), in: input),
-                let urlRange = Range(match.range(at: 2), in: input),
-                let url = URL(string: String(input[urlRange]))
-            else {
-                continue
-            }
-
-            let linkText = String(input[textRange])
-
-            // Create attributed string for the link
-            var linkString = AttributedString(linkText)
-            linkString.foregroundColor = Color.accentColor
-            linkString.link = url
-
-            // Replace the markdown syntax with the linked text
-            if let attrRange = result.range(of: String(input[fullRange])) {
-                result.replaceSubrange(attrRange, with: linkString)
-            }
-        }
-
-        return result
+        // Shared renderer: parses `[label](url)` and opens taps in the browser.
+        MarkdownLinkText(
+            markdown: text,
+            font: .system(size: 12),
+            textColor: theme.secondaryText
+        )
     }
 }
 

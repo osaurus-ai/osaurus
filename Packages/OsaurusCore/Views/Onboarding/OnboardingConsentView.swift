@@ -50,9 +50,24 @@ struct ConsentBody: View {
                 ) {
                     state.shareCrashReports.toggle()
                 }
+                crashReportsLearnMore
                 privacyCard
             }
         }
+    }
+
+    // MARK: - Diagnostics disclosure
+
+    /// Ties the crash-report consent to the matching diagnostics disclosure.
+    private var crashReportsLearnMore: some View {
+        MarkdownLinkText(
+            markdown: OsaurusWebLinks.crashDiagnosticsMarkdown,
+            font: theme.font(size: 12),
+            textColor: theme.secondaryText,
+            linkColor: theme.accentColor
+        )
+        .fixedSize(horizontal: false, vertical: true)
+        .padding(.horizontal, 4)
     }
 
     // MARK: - Privacy reassurance

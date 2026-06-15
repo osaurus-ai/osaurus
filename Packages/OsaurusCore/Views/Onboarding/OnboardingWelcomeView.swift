@@ -112,19 +112,51 @@ struct WelcomeUsageOptIn: View {
     }
 
     private var infoPopover: some View {
-        Text(
-            "We collect anonymous, aggregated usage data to learn which features are used so we can improve Osaurus. It's completely anonymous and never includes your chats, prompts, files, or keys. You can turn this off anytime in Settings.",
-            bundle: .module
-        )
-        .font(theme.font(size: 12))
-        .foregroundColor(theme.primaryText)
-        .fixedSize(horizontal: false, vertical: true)
-        .multilineTextAlignment(.leading)
+        VStack(alignment: .leading, spacing: 8) {
+            Text(
+                "We collect anonymous, aggregated usage data to learn which features are used so we can improve Osaurus. It's completely anonymous and never includes your chats, prompts, files, or keys. You can turn this off anytime in Settings.",
+                bundle: .module
+            )
+            .font(theme.font(size: 12))
+            .foregroundColor(theme.primaryText)
+            .fixedSize(horizontal: false, vertical: true)
+            .multilineTextAlignment(.leading)
+
+            // Ties this specific consent to the matching diagnostics disclosure.
+            MarkdownLinkText(
+                markdown: OsaurusWebLinks.usageDiagnosticsMarkdown,
+                font: theme.font(size: 12),
+                textColor: theme.secondaryText,
+                linkColor: theme.accentColor
+            )
+            .fixedSize(horizontal: false, vertical: true)
+        }
         .padding(14)
         .frame(width: 280)
         // Fill an explicit themed surface so the text never renders dark-on-dark
         // against the system popover material.
         .background(theme.secondaryBackground)
+    }
+}
+
+// MARK: - Legal Acceptance
+
+/// First-run affirmative acceptance, surfaced in the footer caption slot
+/// directly above the "Get Started" CTA: proceeding is the action that accepts
+/// the Terms and Privacy Policy, which is more defensible than a passive footer
+/// link alone.
+struct WelcomeLegalNotice: View {
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        MarkdownLinkText(
+            markdown: OsaurusWebLinks.acceptanceMarkdown,
+            font: theme.font(size: 11),
+            textColor: theme.tertiaryText,
+            linkColor: theme.accentColor,
+            alignment: .center
+        )
+        .fixedSize(horizontal: false, vertical: true)
     }
 }
 
