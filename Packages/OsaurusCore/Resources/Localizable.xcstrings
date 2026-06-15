@@ -1367,7 +1367,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%1$lld 个模型%2$@"
+            "value" : "%1$lld 个模型"
           }
         }
       }
@@ -1411,7 +1411,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "找到 %1$lld 个模型%2$@"
+            "value" : "找到 %1$lld 个模型"
           }
         }
       }
@@ -1836,8 +1836,8 @@
         },
         "zh-Hans" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "%lld tool(s) discovered via %@."
+            "state" : "translated",
+            "value" : "发现 %lld 个工具通过 %@。"
           }
         }
       }
@@ -2414,7 +2414,7 @@
         },
         "zh-Hans" : {
           "stringUnit" : {
-            "state" : "needs_review",
+            "state" : "translated",
             "value" : "~%1$@ of %2$.0f GB"
           }
         }
@@ -4687,7 +4687,7 @@
         },
         "zh-Hans" : {
           "stringUnit" : {
-            "state" : "needs_review",
+            "state" : "translated",
             "value" : "允许实验性 MLXPress"
           }
         }
@@ -5829,6 +5829,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "您确定要清除所有请求日志吗？此操作无法撤销。"
+          }
+        }
+      }
+    },
+    "Are you sure you want to delete \"%@\"? This action cannot be undone." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sind Sie sicher, dass Sie \"%@\" löschen möchten? Diese Aktion kann nicht rückgängig gemacht werden."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "您确定要删除“%@”吗？此操作无法撤销。"
           }
         }
       }
@@ -7263,8 +7279,8 @@
         },
         "zh-Hans" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Background capture is not allowed."
+            "state" : "translated",
+            "value" : "不允许在后台进行捕获。"
           }
         }
       }
@@ -9046,8 +9062,8 @@
         },
         "zh-Hans" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Capture access is allowed for this interactive request."
+            "state" : "translated",
+            "value" : "此交互式请求允许捕获访问。"
           }
         }
       }
@@ -9062,8 +9078,8 @@
         },
         "zh-Hans" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Capture access is off until explicitly enabled."
+            "state" : "translated",
+            "value" : "在明确启用之前，捕获访问处于关闭状态。"
           }
         }
       }
@@ -9081,8 +9097,8 @@
         },
         "zh-Hans" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Capture requests must be initiated from an interactive user action."
+            "state" : "translated",
+            "value" : "捕获请求必须由交互式用户操作发起。"
           }
         }
       }
@@ -9687,8 +9703,8 @@
         },
         "zh-Hans" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Check the command, working directory, and environment."
+            "state" : "translated",
+            "value" : "检查命令、工作目录和环境。"
           }
         }
       }
@@ -12640,8 +12656,8 @@
         },
         "zh-Hans" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Copy the probe result and check the provider logs."
+            "state" : "translated",
+            "value" : "复制探测结果并检查提供者日志。"
           }
         }
       }
@@ -13173,6 +13189,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "CPU"
+          }
+        }
+      }
+    },
+    "CPU Load" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "CPU-Last"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "CPU负载"
           }
         }
       }
@@ -15009,6 +15041,22 @@
         }
       }
     },
+    "Delete Theme" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Thema Löschen"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "删除主题"
+          }
+        }
+      }
+    },
     "Delete this agent's database?" : {
       "localizations" : {
         "de" : {
@@ -15169,8 +15217,8 @@
         },
         "zh-Hans" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Denied"
+            "state" : "translated",
+            "value" : "拒绝"
           }
         }
       }
@@ -17384,8 +17432,8 @@
         },
         "zh-Hans" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Edit the endpoint URL and test again."
+            "state" : "translated",
+            "value" : "修改端点URL并重新测试。"
           }
         }
       }
@@ -17432,8 +17480,8 @@
         },
         "zh-Hans" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Edit the URL and include the scheme, host, and path."
+            "state" : "translated",
+            "value" : "编辑 URL，并包含协议、主机和路径。"
           }
         }
       }
@@ -17866,8 +17914,8 @@
         },
         "zh-Hans" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Enable the plugin before granting capture access."
+            "state" : "translated",
+            "value" : "在授予捕获权限之前，请启用插件。"
           }
         }
       }
@@ -18238,8 +18286,8 @@
         },
         "zh-Hans" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Enter a command before testing."
+            "state" : "translated",
+            "value" : "在测试前输入命令。"
           }
         }
       }
@@ -18270,8 +18318,8 @@
         },
         "zh-Hans" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Enter an executable path or command before testing."
+            "state" : "translated",
+            "value" : "在测试前输入可执行路径或命令。"
           }
         }
       }
@@ -18418,7 +18466,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "按 Enter 以保存 · 按Esc取消"
+            "value" : "按 Enter 保存 · 按Esc取消"
           }
         }
       }
@@ -19692,8 +19740,8 @@
         },
         "zh-Hans" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "估算未知时关闭式失败"
+            "state" : "translated",
+            "value" : "当评估结果未知时，按失败关闭处理"
           }
         }
       }
@@ -19732,7 +19780,21 @@
     },
     "Failed - %@" : {
       "comment" : "A label indicating that a test connection to a remote MCP provider failed, along with the error code. The argument is the error code from the failed test connection.",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Fehlgeschlagen - %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "失败 - %@"
+          }
+        }
+      }
     },
     "Failed - Tap to retry" : {
       "extractionState" : "stale",
@@ -21643,8 +21705,8 @@
         },
         "zh-Hans" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Grant capture permission after reviewing the plugin."
+            "state" : "translated",
+            "value" : "在审查插件后授予捕获权限。"
           }
         }
       }
@@ -22551,8 +22613,8 @@
         },
         "zh-Hans" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "HTTP MCP probe"
+            "state" : "translated",
+            "value" : "HTTP MCP 探测"
           }
         }
       }
@@ -22619,7 +22681,7 @@
         },
         "zh-Hans" : {
           "stringUnit" : {
-            "state" : "needs_review",
+            "state" : "translated",
             "value" : "Hugging Face 缓存"
           }
         }
@@ -23366,6 +23428,22 @@
         }
       }
     },
+    "Imported from input" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aus Eingabe importiert"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "从输入导入"
+          }
+        }
+      }
+    },
     "Imported stdio MCP servers run inside the Osaurus sandbox, which isn't available on this machine. These weren't installed:" : {
       "localizations" : {
         "de" : {
@@ -23470,8 +23548,8 @@
         },
         "zh-Hans" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Increase discovery timeout or check that the MCP server responds to listTools."
+            "state" : "translated",
+            "value" : "增加发现超时时间，或检查 MCP 服务器是否响应 listTools。"
           }
         }
       }
@@ -23486,8 +23564,8 @@
         },
         "zh-Hans" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Increase discovery timeout or verify the server is reachable."
+            "state" : "translated",
+            "value" : "增加发现超时时间，或验证服务器是否可访问。"
           }
         }
       }
@@ -24118,8 +24196,8 @@
         },
         "zh-Hans" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Install a trusted plugin before enabling capture access."
+            "state" : "translated",
+            "value" : "在启用捕获权限之前安装一个可信的插件。"
           }
         }
       }
@@ -26455,6 +26533,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "当地导游"
+          }
+        }
+      }
+    },
+    "Local model (detected)" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Lokales Modell (erkannt)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "本地模型（已检测到）"
           }
         }
       }
@@ -30143,8 +30237,8 @@
         },
         "zh-Hans" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "No installed plugin owns this capture capability."
+            "state" : "translated",
+            "value" : "没有安装的插件拥有此捕获功能。"
           }
         }
       }
@@ -31658,8 +31752,8 @@
         },
         "zh-Hans" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Not run"
+            "state" : "translated",
+            "value" : "未运行"
           }
         }
       }
@@ -32406,8 +32500,8 @@
         },
         "zh-Hans" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Only documented capture capabilities can be requested by plugins."
+            "state" : "translated",
+            "value" : "插件只能请求已记录的捕获功能。"
           }
         }
       }
@@ -38509,8 +38603,8 @@
         },
         "zh-Hans" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Probe completed initialize/listTools and found %lld tool(s)."
+            "state" : "translated",
+            "value" : "探测完成 初始化/工具列表，共找到 %lld 个工具。"
           }
         }
       }
@@ -38549,6 +38643,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "处理更改时的共享文件"
+          }
+        }
+      }
+    },
+    "Processes" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Prozesse"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "进程"
           }
         }
       }
@@ -46997,8 +47107,8 @@
         },
         "zh-Hans" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Sign in or save a token, then test again."
+            "state" : "translated",
+            "value" : "登录或保存令牌，然后再次测试。"
           }
         }
       }
@@ -49661,8 +49771,8 @@
         },
         "zh-Hans" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Switch to Host for trusted tools or start the sandbox runtime."
+            "state" : "translated",
+            "value" : "切换到主机以使用受信任的工具或启动沙箱运行时。"
           }
         }
       }
@@ -50697,8 +50807,8 @@
         },
         "zh-Hans" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "The MCP endpoint URL could not be parsed."
+            "state" : "translated",
+            "value" : "无法解析 MCP 端点 URL。"
           }
         }
       }
@@ -50761,8 +50871,8 @@
         },
         "zh-Hans" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "The owning plugin is disabled."
+            "state" : "translated",
+            "value" : "所属插件已禁用。"
           }
         }
       }
@@ -50777,8 +50887,8 @@
         },
         "zh-Hans" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "The plugin does not have capture permission."
+            "state" : "translated",
+            "value" : "插件没有捕获权限。"
           }
         }
       }
@@ -50857,8 +50967,8 @@
         },
         "zh-Hans" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "The requested capture capability is not recognized."
+            "state" : "translated",
+            "value" : "请求的捕获功能未识别。"
           }
         }
       }
@@ -50911,8 +51021,8 @@
         },
         "zh-Hans" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "The stdio provider is missing a command."
+            "state" : "translated",
+            "value" : "stdio 提供者缺少一个命令。"
           }
         }
       }
@@ -51890,6 +52000,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "这将永久删除您的身份、所有固定的事实、剧集和对话历史记录。此操作无法撤销。"
+          }
+        }
+      }
+    },
+    "This will remove '%@' and disconnect any active sessions." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dadurch werden '%@' entfernt und alle aktiven Sitzungen getrennt."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "这将删除“%@”并断开所有活动会话。"
           }
         }
       }
@@ -53231,8 +53357,8 @@
         },
         "zh-Hans" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Turn on capture access for this plugin in settings."
+            "state" : "translated",
+            "value" : "在设置中开启此插件的捕获访问权限。"
           }
         }
       }
@@ -54120,6 +54246,22 @@
         }
       }
     },
+    "Uptime" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Betriebszeit"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "运行时间"
+          }
+        }
+      }
+    },
     "URL" : {
       "comment" : "A label describing a URL.",
       "isCommentAutoGenerated" : true,
@@ -54234,8 +54376,8 @@
         },
         "zh-Hans" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Use a full executable path such as /opt/homebrew/bin/npx."
+            "state" : "translated",
+            "value" : "使用完整的可执行路径，例如 /opt/homebrew/bin/npx。"
           }
         }
       }
@@ -54374,8 +54516,8 @@
         },
         "zh-Hans" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Use Test to launch initialize/listTools and record a health snapshot."
+            "state" : "translated",
+            "value" : "使用“测试”来启动 初始化/工具列表，并记录健康快照。"
           }
         }
       }
@@ -54390,8 +54532,8 @@
         },
         "zh-Hans" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Use Test to run HTTP/SSE initialize/listTools and record a health snapshot."
+            "state" : "translated",
+            "value" : "使用测试运行 HTTP/SSE 初始化/工具列表 并记录健康快照。"
           }
         }
       }
@@ -54912,8 +55054,8 @@
         },
         "zh-Hans" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Verify the process speaks MCP JSON-RPC on stdin/stdout."
+            "state" : "translated",
+            "value" : "验证进程在 stdin/stdout 上使用 MCP JSON-RPC。"
           }
         }
       }

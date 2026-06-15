@@ -312,22 +312,22 @@ private extension SandboxView {
                         spacing: 10
                     ) {
                         if let uptime = info.uptime {
-                            metricTile(icon: "clock", label: "Uptime", value: formatUptime(uptime))
+                            metricTile(icon: "clock", label: L("Uptime"), value: formatUptime(uptime))
                         }
                         if let cpu = info.cpuLoad {
-                            metricTile(icon: "cpu", label: "CPU Load", value: cpu)
+                            metricTile(icon: "cpu", label: L("CPU Load"), value: cpu)
                         }
                         if let mem = info.memoryUsage {
-                            metricTile(icon: "memorychip", label: "Memory", value: mem)
+                            metricTile(icon: "memorychip", label: L("Memory"), value: mem)
                         }
                         if let disk = info.diskUsage {
-                            metricTile(icon: "internaldrive", label: "Disk", value: disk)
+                            metricTile(icon: "internaldrive", label: L("Disk"), value: disk)
                         }
                         if let procs = info.processCount {
-                            metricTile(icon: "list.number", label: "Processes", value: "\(procs)")
+                            metricTile(icon: "list.number", label: L("Processes"), value: "\(procs)")
                         }
                         if !info.agentUsers.isEmpty {
-                            metricTile(icon: "person.2", label: "Agents", value: "\(info.agentUsers.count)")
+                            metricTile(icon: "person.2", label: L("Agents"), value: "\(info.agentUsers.count)")
                         }
                     }
                 }

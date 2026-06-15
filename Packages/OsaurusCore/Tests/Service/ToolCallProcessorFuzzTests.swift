@@ -63,7 +63,7 @@ struct ToolCallProcessorFuzzTests {
 
     private func randomProse(_ rng: inout RNG, words: Int) -> String {
         var out = ""
-        for i in 0..<words {
+        for i in 0 ..< words {
             if i > 0 { out += " " }
             out += rng.pick(vocab)
         }
@@ -76,7 +76,7 @@ struct ToolCallProcessorFuzzTests {
         while i < s.endIndex {
             let size = 1 + rng.int(5)  // 1..5 char chunks, like SentencePiece tokens
             let j = s.index(i, offsetBy: size, limitedBy: s.endIndex) ?? s.endIndex
-            r.append(String(s[i..<j]))
+            r.append(String(s[i ..< j]))
             i = j
         }
         return r
@@ -109,7 +109,7 @@ struct ToolCallProcessorFuzzTests {
         var failures = 0
         var firstFailure = ""
         for f in formats {
-            for seed in UInt64(1)...600 {
+            for seed in UInt64(1) ... 600 {
                 var rng = RNG(seed &* 0x100_0000 &+ UInt64(f.rawValue.count))
                 let prose = randomProse(&rng, words: 8 + rng.int(60))
                 let proc = ToolCallProcessor(format: f, tools: nil)
@@ -140,7 +140,7 @@ struct ToolCallProcessorFuzzTests {
     func fuzzGemmaToolDetection() {
         var failures = 0
         var firstFailure = ""
-        for seed in UInt64(1)...800 {
+        for seed in UInt64(1) ... 800 {
             var rng = RNG(seed &* 0xABCD &+ 7)
             let lead = randomProse(&rng, words: 3 + rng.int(20))
             let sep = rng.pick([" ", "\n", "\n\n", ". ", ":\n"])

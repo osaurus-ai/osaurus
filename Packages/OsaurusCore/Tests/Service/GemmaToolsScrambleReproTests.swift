@@ -66,7 +66,7 @@ struct GemmaToolsScrambleReproTests {
         var i = s.startIndex
         while i < s.endIndex {
             let j = s.index(i, offsetBy: size, limitedBy: s.endIndex) ?? s.endIndex
-            r.append(String(s[i..<j]))
+            r.append(String(s[i ..< j]))
             i = j
         }
         return r
@@ -76,8 +76,8 @@ struct GemmaToolsScrambleReproTests {
         let x = Array(a), y = Array(b)
         var k = 0
         while k < min(x.count, y.count), x[k] == y[k] { k += 1 }
-        let ca = String(x[max(0, k - 18)..<min(x.count, k + 18)])
-        let cb = String(y[max(0, k - 18)..<min(y.count, k + 18)])
+        let ca = String(x[max(0, k - 18) ..< min(x.count, k + 18)])
+        let cb = String(y[max(0, k - 18) ..< min(y.count, k + 18)])
         return "len in=\(x.count) out=\(b.count); first diff @\(k)\n      IN : …\(ca)…\n      OUT: …\(cb)…"
     }
 
@@ -143,7 +143,8 @@ struct GemmaToolsScrambleReproTests {
             let got = reassembleVisible(chunked(stream, size: size), through: proc)
             #expect(
                 got.text.hasPrefix("The weather report follows next."),
-                "size=\(size) corrupted prose before tool call: \(got.text.debugDescription)")
+                "size=\(size) corrupted prose before tool call: \(got.text.debugDescription)"
+            )
         }
     }
 
@@ -156,7 +157,8 @@ struct GemmaToolsScrambleReproTests {
             let got = reassembleVisible(chunked(stream, size: size), through: proc)
             #expect(
                 got.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                "size=\(size) leaked envelope text: \(got.text.debugDescription)")
+                "size=\(size) leaked envelope text: \(got.text.debugDescription)"
+            )
             #expect(got.calls.count == 1, "size=\(size) expected 1 tool call, got \(got.calls.count)")
             #expect(got.calls.first?.function.name == "get_weather")
         }

@@ -352,7 +352,7 @@ final class ModelManager: NSObject, ObservableObject {
             let model = MLXModel(
                 id: directId,
                 name: ModelMetadataParser.friendlyName(from: directId),
-                description: probe.isDownloaded ? "Local model (detected)" : "Imported from input",
+                description: probe.isDownloaded ? L("Local model (detected)") : L("Imported from input"),
                 downloadURL: "https://huggingface.co/\(directId)"
             )
             availableModels.insert(model, at: 0)
@@ -428,7 +428,7 @@ final class ModelManager: NSObject, ObservableObject {
             let localModel = MLXModel(
                 id: trimmed,
                 name: ModelMetadataParser.friendlyName(from: trimmed),
-                description: "Local model (detected)",
+                description: L("Local model (detected)"),
                 downloadURL: "https://huggingface.co/\(trimmed)"
             )
             insertModel(localModel)
@@ -1922,7 +1922,7 @@ extension ModelManager {
                     let model = MLXModel(
                         id: id,
                         name: ModelMetadataParser.friendlyName(from: id),
-                        description: "Local model (detected)",
+                        description: L("Local model (detected)"),
                         downloadURL: "https://huggingface.co/\(id)"
                     )
                     models.append(model)

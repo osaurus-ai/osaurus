@@ -183,7 +183,7 @@ struct ThemesView: View {
             refreshPartitions(from: latest)
         }
         .themedAlert(
-            "Delete Theme",
+            L("Delete Theme"),
             isPresented: Binding(
                 get: { showDeleteConfirmation && themeToDelete != nil },
                 set: { newValue in
@@ -194,16 +194,16 @@ struct ThemesView: View {
                 }
             ),
             message: themeToDelete.map {
-                "Are you sure you want to delete \"\($0.metadata.name)\"? This action cannot be undone."
+                L("Are you sure you want to delete \"\($0.metadata.name)\"? This action cannot be undone.")
             },
-            primaryButton: .destructive("Delete") {
+            primaryButton: .destructive(L("Delete")) {
                 if let theme = themeToDelete {
                     performDelete(theme)
                 }
                 showDeleteConfirmation = false
                 themeToDelete = nil
             },
-            secondaryButton: .cancel("Cancel") {
+            secondaryButton: .cancel(L("Cancel")) {
                 showDeleteConfirmation = false
                 themeToDelete = nil
             }
