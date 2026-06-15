@@ -1213,10 +1213,20 @@ final class SelectableNSTextView: NSTextView {
             return
         }
 
-        let fullRange = NSRange(location: 0, length: textStorage.length)
+        // Only walk the characters that fall inside `dirtyRect`. Enumerating
+        // the whole document forced `boundingRect(forGlyphRange:)` — and thus
+        // full-document typesetting — on every draw pass, even a one-line
+        // partial redraw. Restricting to the visible glyph range keeps the
+        // per-draw layout cost proportional to what's actually being painted.
+        let visibleGlyphs = layoutManager.glyphRange(forBoundingRect: dirtyRect, in: textContainer)
+        let visibleRange = layoutManager.characterRange(forGlyphRange: visibleGlyphs, actualGlyphRange: nil)
+        guard visibleRange.length > 0 else {
+            super.draw(dirtyRect)
+            return
+        }
 
         // Draw blockquote accent bars
-        textStorage.enumerateAttribute(.blockquoteMarker, in: fullRange, options: []) { value, range, _ in
+        textStorage.enumerateAttribute(.blockquoteMarker, in: visibleRange, options: []) { value, range, _ in
             guard value != nil else { return }
             let gr = layoutManager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
             var rect = layoutManager.boundingRect(forGlyphRange: gr, in: textContainer)
@@ -1240,7 +1250,7 @@ final class SelectableNSTextView: NSTextView {
         }
 
         // Draw heading underlines (H1/H2)
-        textStorage.enumerateAttribute(.headingUnderline, in: fullRange, options: []) { value, range, _ in
+        textStorage.enumerateAttribute(.headingUnderline, in: visibleRange, options: []) { value, range, _ in
             guard value != nil else { return }
             let gr = layoutManager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
             let rect = layoutManager.boundingRect(forGlyphRange: gr, in: textContainer)
