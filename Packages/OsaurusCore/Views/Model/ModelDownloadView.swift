@@ -696,15 +696,23 @@ struct ModelDownloadView: View {
                                 .id(model.id)
                         }
                     }
-                    .padding(.horizontal, 2)
+                    // First card aligns with the section title (24pt parent
+                    // padding + 2pt title padding); the trailing inset gives
+                    // breathing room at the end of the scroll.
+                    .padding(.leading, 26)
+                    .padding(.trailing, 26)
                     .padding(.bottom, 4)
                 }
+                // Cancel the parent's 24pt horizontal padding so the strip runs
+                // edge to edge and cards bleed off the window edge naturally
+                // instead of stopping short.
+                .padding(.horizontal, -24)
                 .overlay(alignment: .leading) {
                     if topPicksIndex > 0 {
                         topPicksArrow("chevron.left") {
                             scrollTopPicks(to: topPicksIndex - step, ids: ids, proxy: proxy)
                         }
-                        .padding(.leading, 4)
+                        .padding(.leading, 8)
                         .transition(.opacity)
                     }
                 }
@@ -713,7 +721,7 @@ struct ModelDownloadView: View {
                         topPicksArrow("chevron.right") {
                             scrollTopPicks(to: topPicksIndex + step, ids: ids, proxy: proxy)
                         }
-                        .padding(.trailing, 4)
+                        .padding(.trailing, 8)
                         .transition(.opacity)
                     }
                 }
@@ -726,18 +734,17 @@ struct ModelDownloadView: View {
         }
     }
 
-    /// Circular edge button for the Top Picks carousel.
+    /// Circular accent-filled edge button for the Top Picks carousel.
     private func topPicksArrow(_ systemName: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: systemName)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(theme.primaryText)
+                .font(.system(size: 12, weight: .bold))
+                .foregroundColor(.white)
                 .frame(width: 30, height: 30)
                 .background(
                     Circle()
-                        .fill(theme.secondaryBackground)
-                        .overlay(Circle().stroke(theme.primaryBorder.opacity(0.2), lineWidth: 1))
-                        .shadow(color: theme.shadowColor.opacity(0.25), radius: 5, x: 0, y: 2)
+                        .fill(theme.accentColor)
+                        .shadow(color: theme.shadowColor.opacity(0.3), radius: 5, x: 0, y: 2)
                 )
                 .contentShape(Circle())
         }
