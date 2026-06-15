@@ -1693,10 +1693,14 @@ extension FloatingInputCard {
                     Text(verbatim: accountService.formattedBalance)
                         .font(.system(size: caption - 1, weight: style.weight, design: .monospaced))
                         .foregroundColor(style.textColor)
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
                 } else {
                     Text("Add credits", bundle: .module)
                         .font(theme.font(size: caption - 1, weight: style.weight))
                         .foregroundColor(style.textColor)
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
                 }
             }
             // Chrome only appears in the low/empty attention states; the healthy
@@ -1780,11 +1784,15 @@ extension FloatingInputCard {
                 .foregroundColor(
                     warningColor ?? (isStreaming ? theme.secondaryText : theme.tertiaryText)
                 )
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
 
             if !isCompact {
                 Text("tokens", bundle: .module)
                     .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .regular))
                     .foregroundColor(theme.tertiaryText.opacity(0.7))
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
             }
         }
         .pointingHandCursor()
