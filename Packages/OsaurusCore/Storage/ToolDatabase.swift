@@ -171,7 +171,13 @@ public final class ToolDatabase: @unchecked Sendable {
         let path = OsaurusPaths.toolIndexDatabaseFile().path
         let key = try StorageKeyManager.shared.currentKey()
         do {
-            db = try EncryptedSQLiteOpener.open(path: path, key: key)
+            let (connection, recovered) = try EncryptedSQLiteOpener.openRecoveringUndecryptable(
+                path: path, key: key
+            )
+            db = connection
+            if recovered {
+                PersistenceHealth.shared.recordDatabaseRecovered(subsystem: "tool")
+            }
         } catch let error as EncryptedSQLiteError {
             throw ToolDatabaseError.failedToOpen(error.localizedDescription)
         }

@@ -26,6 +26,11 @@ public final class PersistenceHealth: @unchecked Sendable {
         /// Subsystem name → number of times its database failed to open at
         /// launch (so search/index for that subsystem is degraded/disabled).
         var databaseOpenFailures: [String: Int] = [:]
+        /// Subsystem name → number of times an undecryptable database was
+        /// quarantined and recreated (self-heal after a key rotation /
+        /// reinstall). The subsystem is back in service but its prior
+        /// (unrecoverable) data was reset.
+        var databaseRecoveries: [String: Int] = [:]
         var lastMessage: String?
         var lastEventAt: Date?
     }
@@ -68,6 +73,20 @@ public final class PersistenceHealth: @unchecked Sendable {
         )
     }
 
+    /// Record that `subsystem`'s database was undecryptable with the
+    /// current key and was quarantined + recreated. The subsystem is
+    /// functional again; this is informational, not a degraded state.
+    public func recordDatabaseRecovered(subsystem: String) {
+        state.withLock {
+            $0.databaseRecoveries[subsystem, default: 0] += 1
+            $0.lastMessage = "\(subsystem)-db-recovered: undecryptable file quarantined, recreated empty"
+            $0.lastEventAt = Date()
+        }
+        Self.logger.error(
+            "\(subsystem, privacy: .public) database was undecryptable (key rotation/reinstall) — quarantined and recreated; prior data reset"
+        )
+    }
+
     // MARK: - Observe
 
     /// True when any persistence failure has been recorded this session.
@@ -89,6 +108,7 @@ public final class PersistenceHealth: @unchecked Sendable {
             "chat_encode_failures": c.chatEncodeFailures,
             "chat_decode_failures": c.chatDecodeFailures,
             "database_open_failures": c.databaseOpenFailures,
+            "database_recoveries": c.databaseRecoveries,
         ]
         obj["last_message"] = c.lastMessage as Any? ?? NSNull()
         obj["last_event_at"] = c.lastEventAt?.ISO8601Format() as Any? ?? NSNull()

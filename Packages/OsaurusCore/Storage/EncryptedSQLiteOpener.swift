@@ -88,6 +88,71 @@ public enum EncryptedSQLiteOpener {
         return connection
     }
 
+    /// Open an encrypted DB, self-healing a file that cannot be decrypted
+    /// with `key`. When the file exists but SQLCipher reports a
+    /// key-verification failure (wrong/rotated key or first-page
+    /// corruption — `SQLITE_NOTADB` / "file is not a database"), the dead
+    /// file and its `-wal`/`-shm` sidecars are renamed aside to
+    /// `<name>.orphaned-<epoch><suffix>` and a fresh encrypted DB is
+    /// created with `key`. The caller's schema migrations then run against
+    /// the new empty file, so the subsystem returns to service instead of
+    /// staying permanently disabled.
+    ///
+    /// Recovery fires ONLY on `.keyVerificationFailed`. Transient failures
+    /// (`.openFailed` — couldn't even open the handle) and PRAGMA failures
+    /// are rethrown untouched, so a locked Keychain or busy file never
+    /// triggers a destructive quarantine. Callers must therefore confirm
+    /// the key is actually available (e.g. a sibling DB opened) before
+    /// trusting recovery to mean "the old data was unrecoverable anyway".
+    ///
+    /// - Returns: the connection plus `recovered = true` when a quarantine
+    ///   happened, so the caller can record it for `/health`.
+    public static func openRecoveringUndecryptable(
+        path: String,
+        key: SymmetricKey,
+        applyPerfPragmas: Bool = true,
+        applyForeignKeys: Bool = true
+    ) throws -> (connection: OpaquePointer, recovered: Bool) {
+        do {
+            let connection = try open(
+                path: path, key: key,
+                applyPerfPragmas: applyPerfPragmas, applyForeignKeys: applyForeignKeys
+            )
+            return (connection, false)
+        } catch let error as EncryptedSQLiteError {
+            guard case .keyVerificationFailed = error else { throw error }
+            // The file exists but cannot be decrypted with the current key.
+            // Quarantine it (preserving the bytes) and create a fresh DB.
+            try quarantineUndecryptable(path: path)
+            let connection = try open(
+                path: path, key: key,
+                applyPerfPragmas: applyPerfPragmas, applyForeignKeys: applyForeignKeys
+            )
+            return (connection, true)
+        }
+    }
+
+    /// Rename an undecryptable database file and its WAL/SHM sidecars aside
+    /// so a fresh DB can be created in its place. The main file MUST move
+    /// (else we'd recreate on top of an unreadable file); sidecars are
+    /// worthless without it, so if one can't be moved it is deleted.
+    private static func quarantineUndecryptable(path: String) throws {
+        let fm = FileManager.default
+        let stamp = String(Int(Date().timeIntervalSince1970))
+        for suffix in ["", "-wal", "-shm"] {
+            let source = path + suffix
+            guard fm.fileExists(atPath: source) else { continue }
+            let dest = path + ".orphaned-" + stamp + suffix
+            try? fm.removeItem(atPath: dest)
+            do {
+                try fm.moveItem(atPath: source, toPath: dest)
+            } catch {
+                if suffix.isEmpty { throw error }
+                try? fm.removeItem(atPath: source)
+            }
+        }
+    }
+
     /// Re-key an already-open SQLCipher database. Used by `rotate()`
     /// in `StorageKeyManager` and by tests. Wrong source key throws.
     public static func rekey(connection: OpaquePointer, newKey: SymmetricKey) throws {
