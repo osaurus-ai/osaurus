@@ -110,6 +110,10 @@ struct ModelDownloadView: View {
     /// buttons; the index is clamped to the model count on every step.
     @State private var topPicksIndex = 0
 
+    /// Measured width of the (bled) Top Picks scroll view. The arrow row is
+    /// sized to this minus the bleed so its insets stay symmetric.
+    @State private var topPicksWidth: CGFloat = 0
+
     /// Cached output of `gridLists`. We used to recompute four filter +
     /// sort passes from a body computed property, which would re-run on
     /// every `modelManager.objectWillChange` publish (one per download
@@ -707,28 +711,39 @@ struct ModelDownloadView: View {
                 // off the right window edge naturally, while the first card
                 // keeps its normal left margin instead of hugging the edge.
                 .padding(.trailing, -24)
+                .background(
+                    GeometryReader { geo in
+                        Color.clear.preference(
+                            key: TopPicksWidthKey.self,
+                            value: geo.size.width
+                        )
+                    }
+                )
+                // Both arrows live in one row constrained to the true content
+                // width (the bled scroll view's width minus the 24pt extension),
+                // anchored to the leading edge. This keeps their insets
+                // symmetric regardless of how far the cards bleed off-screen.
                 .overlay(alignment: .leading) {
-                    if topPicksIndex > 0 {
-                        topPicksArrow("chevron.left") {
-                            scrollTopPicks(to: topPicksIndex - step, ids: ids, proxy: proxy)
+                    HStack(spacing: 0) {
+                        if topPicksIndex > 0 {
+                            topPicksArrow("chevron.left") {
+                                scrollTopPicks(to: topPicksIndex - step, ids: ids, proxy: proxy)
+                            }
+                            .transition(.opacity)
                         }
-                        .padding(.leading, 8)
-                        .transition(.opacity)
-                    }
-                }
-                .overlay(alignment: .trailing) {
-                    if topPicksIndex < models.count - 1 {
-                        topPicksArrow("chevron.right") {
-                            scrollTopPicks(to: topPicksIndex + step, ids: ids, proxy: proxy)
+                        Spacer(minLength: 0)
+                        if topPicksIndex < models.count - 1 {
+                            topPicksArrow("chevron.right") {
+                                scrollTopPicks(to: topPicksIndex + step, ids: ids, proxy: proxy)
+                            }
+                            .transition(.opacity)
                         }
-                        // The trailing edge sits ~24pt past the window edge from
-                        // the full-bleed extension; offset past that plus the
-                        // left arrow's effective inset so both read symmetric.
-                        .padding(.trailing, 56)
-                        .transition(.opacity)
                     }
+                    .padding(.horizontal, 8)
+                    .frame(width: max(0, topPicksWidth - 24))
                 }
             }
+            .onPreferenceChange(TopPicksWidthKey.self) { topPicksWidth = $0 }
             .onChange(of: models.map(\.id)) { _, _ in
                 // Reset when the curated set changes so the arrows match the
                 // freshly-rendered, left-aligned carousel.
@@ -760,6 +775,13 @@ struct ModelDownloadView: View {
         withAnimation(.easeOut(duration: 0.25)) {
             topPicksIndex = clamped
             proxy.scrollTo(ids[clamped], anchor: .leading)
+        }
+    }
+
+    private struct TopPicksWidthKey: PreferenceKey {
+        static var defaultValue: CGFloat = 0
+        static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+            value = nextValue()
         }
     }
 
