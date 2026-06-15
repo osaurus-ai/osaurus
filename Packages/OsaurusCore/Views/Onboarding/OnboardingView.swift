@@ -536,7 +536,7 @@ public struct OnboardingView: View {
         Task { @MainActor in
             // `configureImplicitDefaults` kicks identity setup off detached;
             // wait (bounded) for it so the managed router can connect.
-            for _ in 0..<20 {
+            for _ in 0 ..< 20 {
                 if OsaurusIdentity.exists() { break }
                 try? await Task.sleep(nanoseconds: 300_000_000)
             }
@@ -546,7 +546,7 @@ public struct OnboardingView: View {
 
             // The router's model catalog populates asynchronously after the
             // connect resolves; poll briefly for the first Venice model.
-            for _ in 0..<12 {
+            for _ in 0 ..< 12 {
                 if let model = RemoteProviderManager.shared.firstHostedVeniceModelId() {
                     AgentManager.shared.updateDefaultModel(for: agentId, model: model)
                     return

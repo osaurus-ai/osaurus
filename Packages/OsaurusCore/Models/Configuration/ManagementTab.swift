@@ -10,7 +10,7 @@ import SwiftUI
 
 /// Defines all available tabs in the management sidebar.
 public enum ManagementTab: String, CaseIterable, Identifiable {
-    case dashboard
+    case credits
     case models
     case providers
     case agents
@@ -34,9 +34,17 @@ public enum ManagementTab: String, CaseIterable, Identifiable {
 
     public var id: String { rawValue }
 
+    /// Resolves a sidebar tab id, including the legacy `"dashboard"` raw value.
+    public static func resolved(from rawValue: String) -> ManagementTab? {
+        switch rawValue {
+        case "dashboard": .credits
+        default: ManagementTab(rawValue: rawValue)
+        }
+    }
+
     public var icon: String {
         switch self {
-        case .dashboard: "creditcard.fill"
+        case .credits: "creditcard.fill"
         case .models: "cube.box.fill"
         case .providers: "cloud.fill"
         case .agents: "person.2.fill"
@@ -62,7 +70,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable {
 
     public var label: String {
         switch self {
-        case .dashboard: L("Credits")
+        case .credits: L("Credits")
         case .models: L("Models")
         case .providers: L("Providers")
         case .agents: L("Agents")

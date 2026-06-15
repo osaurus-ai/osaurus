@@ -463,7 +463,7 @@ public final class RemoteProviderManager: ObservableObject {
                 // Stop on terminal errors or once attempts are exhausted.
                 guard Self.isTransientConnectError(error), attempt < attempts else { return }
                 await routerRetryBackoff(forAttempt: attempt)
-                // Another path (picker/dashboard/activation/identity event) may
+                // Another path (picker/credits/activation/identity event) may
                 // have connected while we waited — don't pile on a duplicate.
                 if providerStates[Self.osaurusRouterProviderId]?.isConnected == true { return }
             }

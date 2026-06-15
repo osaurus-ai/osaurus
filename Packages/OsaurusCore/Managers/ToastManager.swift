@@ -400,7 +400,7 @@ public final class ToastManager {
 
         case .openSettings(let tab):
             // Open settings window to specific tab
-            if let tabName = tab, let managementTab = ManagementTab(rawValue: tabName) {
+            if let tabName = tab, let managementTab = ManagementTab.resolved(from: tabName) {
                 AppDelegate.shared?.showManagementWindow(initialTab: managementTab)
             } else {
                 AppDelegate.shared?.showManagementWindow()
