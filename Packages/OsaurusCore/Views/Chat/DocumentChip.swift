@@ -50,6 +50,7 @@ struct DocumentChip: View {
             if let onTap {
                 Button(action: onTap) { labelStack }
                     .buttonStyle(.plain)
+                    .pointingHandCursor()
             } else {
                 labelStack
             }
@@ -115,5 +116,6 @@ struct DocumentChip: View {
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
+        .pointingHandCursor()
     }
 }

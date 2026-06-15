@@ -1320,6 +1320,7 @@ extension FloatingInputCard {
                         .background(Circle().fill(theme.tertiaryBackground))
                 }
                 .buttonStyle(.plain)
+                .pointingHandCursor()
                 .localizedHelp("Cancel queued message")
             }
             .padding(.horizontal, 10)
@@ -1363,6 +1364,7 @@ extension FloatingInputCard {
                         .background(Circle().fill(theme.tertiaryBackground))
                 }
                 .buttonStyle(.plain)
+                .pointingHandCursor()
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
@@ -1565,19 +1567,16 @@ extension FloatingInputCard {
     /// the balance best-effort refreshes on appear so it isn't blank.
     @ViewBuilder
     private var creditsChip: some View {
-        // TODO: restore low-balance tinting (`creditsChipTint`) — placeholder
-        // account has no balance so the tint would always read as error-red.
-        // For UI refinement, use neutral theme colors.
+        let tint = creditsChipTint
         Button {
             onAddCredits?()
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: "creditcard")
                     .font(.system(size: CGFloat(theme.captionSize) - 2))
-                    .foregroundColor(theme.secondaryText)
+                    .foregroundColor(tint ?? theme.tertiaryText)
 
-                // TODO: restore `accountService.formattedBalance` — placeholder for UI refinement.
-                Text(verbatim: "$12.34")
+                Text(verbatim: accountService.formattedBalance)
                     .font(
                         .system(
                             size: CGFloat(theme.captionSize) - 1,
@@ -1585,7 +1584,7 @@ extension FloatingInputCard {
                             design: .monospaced
                         )
                     )
-                    .foregroundColor(theme.primaryText)
+                    .foregroundColor(tint ?? theme.secondaryText)
 
                 if !isCompact && sessionSpendMicro > 0 {
                     Text(
@@ -1629,6 +1628,7 @@ extension FloatingInputCard {
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
+        .pointingHandCursor()
         .localizedHelp("Your balance. Click to add credits.")
         .task(id: showSessionSpend) {
             if showSessionSpend {
@@ -1678,6 +1678,7 @@ extension FloatingInputCard {
                     .foregroundColor(theme.tertiaryText.opacity(0.7))
             }
         }
+        .pointingHandCursor()
         .onHover { hovering in
             contextHoverTask?.cancel()
             if hovering {
@@ -2201,6 +2202,7 @@ extension FloatingInputCard {
             )
         }
         .buttonStyle(.plain)
+        .pointingHandCursor()
         // Intentionally NOT `.disabled(isSandboxLoading)` — the chip
         // stays tappable during provisioning so the user can click
         // through to the Sandbox settings tab and watch the journey
@@ -2404,6 +2406,7 @@ extension FloatingInputCard {
                 )
         }
         .buttonStyle(.plain)
+        .pointingHandCursor()
         .onHover { hovering in
             withAnimation(.easeOut(duration: 0.15)) {
                 isClipboardHovered = hovering
@@ -2571,6 +2574,7 @@ extension FloatingInputCard {
                 folderChipContent(hasFolder: hasFolder, canEdit: true)
             }
             .buttonStyle(.plain)
+            .pointingHandCursor()
             .help(folderChipHelp(hasFolder: hasFolder))
             .contextMenu {
                 if hasFolder {
@@ -2617,6 +2621,7 @@ extension FloatingInputCard {
                         .overlay(Circle().strokeBorder(theme.primaryBorder.opacity(0.5), lineWidth: 1))
                 }
                 .buttonStyle(.plain)
+                .pointingHandCursor()
                 .localizedHelp("Clear folder selection")
                 .transition(.opacity.combined(with: .scale(scale: 0.8)))
             }
@@ -3168,11 +3173,9 @@ extension FloatingInputCard {
 
                 // Osaurus Router credits — moved here from the selector row so
                 // the balance no longer crowds the token-usage indicator.
-                // TODO: restore the `showSessionSpend` gate — temporarily
-                // always-on with a placeholder value for UI refinement.
-                // if showSessionSpend {
-                creditsChip
-                // }
+                if showSessionSpend {
+                    creditsChip
+                }
             }
 
             Spacer()
@@ -3407,6 +3410,7 @@ struct CachedImageThumbnail: View {
                     )
             }
             .buttonStyle(.plain)
+            .pointingHandCursor()
             .offset(x: 4, y: -4)
         }
         .padding(.top, 4)
@@ -3860,6 +3864,7 @@ private struct SelectorChip<Content: View>: View {
                 )
         }
         .buttonStyle(.plain)
+        .pointingHandCursor()
         .onHover { hovering in
             withAnimation(.easeOut(duration: 0.15)) {
                 isHovered = hovering
@@ -3970,6 +3975,7 @@ private struct ModelOptionsSelectorView: View {
                     )
                 }
                 .buttonStyle(.plain)
+                .pointingHandCursor()
             }
         }
         .padding(.horizontal, 14)
@@ -4050,6 +4056,7 @@ private struct ModelOptionsSelectorView: View {
                         )
                 }
                 .buttonStyle(.plain)
+                .pointingHandCursor()
             }
         }
     }
@@ -4172,6 +4179,7 @@ private struct SlashCommandTriggerButton: View {
             )
         }
         .buttonStyle(.plain)
+        .pointingHandCursor()
         .localizedHelp("Browse slash commands")
         .onHover { isHovered = $0 }
     }
@@ -4232,6 +4240,7 @@ private struct InputActionButton: View {
             )
         }
         .buttonStyle(.plain)
+        .pointingHandCursor()
         .help(help)
         .onHover { hovering in
             withAnimation(.easeOut(duration: 0.15)) {
@@ -4300,6 +4309,7 @@ private struct SendButton: View {
             )
         }
         .buttonStyle(.plain)
+        .pointingHandCursor()
         .disabled(!canSend)
         .opacity(canSend ? 1 : 0.5)
         .onHover { hovering in
@@ -4355,6 +4365,7 @@ private struct StopButton: View {
             )
         }
         .buttonStyle(.plain)
+        .pointingHandCursor()
         .onHover { hovering in
             withAnimation(.easeOut(duration: 0.15)) {
                 isHovered = hovering
@@ -4402,6 +4413,7 @@ private struct SendQueueButton: View {
             )
         }
         .buttonStyle(.plain)
+        .pointingHandCursor()
         .disabled(!canSend)
         .opacity(canSend ? 1 : 0.5)
         .localizedHelp("Queue message · sent when current run finishes")
@@ -4474,6 +4486,7 @@ private struct SendNowButton: View {
             )
         }
         .buttonStyle(.plain)
+        .pointingHandCursor()
         .localizedHelp("Send now · interrupts current run")
         .onHover { hovering in
             withAnimation(.easeOut(duration: 0.15)) {
