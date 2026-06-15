@@ -256,6 +256,17 @@ public final class WindowManager: NSObject, ObservableObject {
     ) -> NSWindow {
         let hostingController = NSHostingController(rootView: content())
 
+        // AppKit owns these windows' size via `defaultSize` + frame autosave,
+        // so the SwiftUI content should fill the window rather than drive it.
+        // Leaving the default sizingOptions on lets the hosting controller push
+        // the content's measured size back onto the window every layout pass;
+        // with fill-style (`maxWidth/maxHeight: .infinity`) roots that negotiation
+        // has no fixed point and can oscillate after a resize or state change,
+        // pinning the main thread in a non-converging layout loop.
+        if #available(macOS 13.0, *) {
+            hostingController.sizingOptions = []
+        }
+
         // Calculate centered position on active screen
         let initialRect: NSRect
         if let s = activeScreen {
