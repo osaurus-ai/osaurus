@@ -22,6 +22,26 @@ enum ChatHistoryTestStorage {
             )
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
 
+            // Neutralize the "sandbox enabled by default" behavior for these
+            // chat/engine/persistence tests. With the sandbox available (macOS
+            // 26+), the Default agent resolves to autonomous-ON, so every
+            // `ChatSession.send()` would run `prepareChatExecutionMode` ->
+            // `SandboxToolRegistrar.registerTools`. Depending on the global
+            // `SandboxManager.State.shared.status` left by other (serialized)
+            // sandbox suites, that can enter real container provisioning
+            // (NSXPCConnection), which stalls headlessly in CI and delays
+            // `engine.streamChat` past these tests' timeouts. Forcing the
+            // availability seam OFF (and resetting status) keeps `send()` on
+            // the no-sandbox path, matching what these tests assume. Held under
+            // `SandboxTestLock` above, so no concurrent sandbox suite observes
+            // these values; both are restored on exit.
+            let previousAvailability = SandboxManager.State.shared.availability
+            let previousStatus = SandboxManager.State.shared.status
+            SandboxManager.State.shared.availability = .unavailable(
+                reason: "sandbox neutralized for chat-history tests"
+            )
+            SandboxManager.State.shared.status = .notProvisioned
+
             let previousRoot = OsaurusPaths.overrideRoot
             OsaurusPaths.overrideRoot = root
             StorageKeyManager.shared._setKeyForTesting(
@@ -34,6 +54,8 @@ enum ChatHistoryTestStorage {
                 StorageKeyManager.shared.wipeCache()
                 OsaurusPaths.overrideRoot = previousRoot
                 AgentManager.shared.refresh()
+                SandboxManager.State.shared.availability = previousAvailability
+                SandboxManager.State.shared.status = previousStatus
                 try? FileManager.default.removeItem(at: root)
             }
 
