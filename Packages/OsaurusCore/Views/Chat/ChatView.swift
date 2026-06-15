@@ -1842,14 +1842,14 @@ final class ChatSession: ObservableObject {
         if billing.outputTokens > 0 {
             turn.generationTokenCount = billing.outputTokens
         }
-        if turn.billingEntryId == nil {
-            turn.billingEntryId = RouterBillingLedger.shared.record(
-                summary: billing,
-                sessionId: sessionId,
-                turnId: turn.id,
-                model: selectedModel,
-                outcome: .pending
-            )
+        if let entryId = RouterBillingLedger.shared.record(
+            summary: billing,
+            sessionId: sessionId,
+            turnId: turn.id,
+            model: selectedModel,
+            outcome: .pending
+        ) {
+            turn.billingEntryIds.insert(entryId)
         }
     }
 
@@ -1867,16 +1867,17 @@ final class ChatSession: ObservableObject {
         )
     }
 
-    /// Backfill the rendered outcome onto each billed turn's ledger row. Called
-    /// once per run at cleanup. Idempotent; reloaded turns (no transient
-    /// `billingEntryId`) are skipped since their row was finalized live.
+    /// Backfill the rendered outcome onto each billed turn's ledger rows. Called
+    /// once per run at cleanup. Idempotent; reloaded turns have no transient
+    /// entry ids and are skipped since their rows were finalized live.
     private func finalizeRouterBillingOutcomes() {
         for turn in turns where turn.role == .assistant {
-            guard let entryId = turn.billingEntryId else { continue }
-            RouterBillingLedger.shared.finalizeOutcome(
-                entryId: entryId,
-                outcome: classifyBillingOutcome(for: turn)
-            )
+            for entryId in turn.billingEntryIds {
+                RouterBillingLedger.shared.finalizeOutcome(
+                    entryId: entryId,
+                    outcome: classifyBillingOutcome(for: turn)
+                )
+            }
         }
     }
 

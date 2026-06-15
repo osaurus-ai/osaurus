@@ -1076,6 +1076,9 @@ public actor RemoteProviderService: ToolCapableService {
         /// Router-only low-volume diagnostics. Nil for all other providers so
         /// the shared parser path stays cheap.
         var routerDiagnostics: RouterStreamDiagnostics?
+        /// Stable router request id for local correlation. This is the signed
+        /// idempotency key unless the router summary frame provides request_id.
+        var routerRequestId: String?
 
         /// Non-nil only for providers that inline reasoning as `<think>` in the
         /// content rail (MiniMax). When set, content deltas are split so the
@@ -1178,7 +1181,11 @@ public actor RemoteProviderService: ToolCapableService {
             // explain a billed-but-empty turn and record the on-device ledger
             // row. The `\u{FFFE}` sentinel keeps it out of visible output and
             // token counting; it carries no prompt/response text.
-            let hint = StreamingBillingHint.encode(RouterBillingSummary(summary.osaurus))
+            var billingSummary = RouterBillingSummary(summary.osaurus)
+            if billingSummary.requestId == nil {
+                billingSummary.requestId = state.routerRequestId
+            }
+            let hint = StreamingBillingHint.encode(billingSummary)
             state.routerDiagnostics?.recordYield(hint)
             continuation.yield(hint)
             return false
@@ -1778,6 +1785,7 @@ public actor RemoteProviderService: ToolCapableService {
             do {
                 var state = StreamingState(stopSequences: stopSequences, trackContent: trackContent)
                 state.routerDiagnostics = initialRouterDiagnostics
+                state.routerRequestId = request.idempotencyKey
 
                 // Idempotent connect-phase retry: only retries the
                 // `bytes(for:)` call (no stream data has been delivered
@@ -2434,9 +2442,8 @@ public actor RemoteProviderService: ToolCapableService {
             // double-billing): the router must treat `idempotency_key` as a
             // dedupe key — a repeat POST with the same key returns the original
             // result/charge instead of billing again — and SHOULD echo a stable
-            // `request_id` in the summary frame so the on-device billing ledger
-            // can be correlated exactly with server-side usage (today the
-            // Dashboard reconciles approximately by time + cost + model).
+            // `request_id` in the summary frame. Until then, the local ledger
+            // uses this signed key as its request id for usage correlation.
             try await OsaurusRouterAuthSigner().sign(request: &urlRequest, body: bodyData)
         }
         // Wire-verification capture: record the post-scrub bytes

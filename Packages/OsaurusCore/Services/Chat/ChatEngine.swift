@@ -438,6 +438,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         inferenceSource: InferenceSource,
         temperature: Float?,
         maxTokens: Int,
+        turnId: UUID? = nil,
+        requestId: String? = nil,
         requestBodyJSON: String? = nil,
         tools: [Tool]? = nil
     ) -> ChatCompletionResponse {
@@ -483,6 +485,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             let durationMs = Date().timeIntervalSince(startTime) * 1000
             InsightsService.logInference(
                 source: inferenceSource,
+                turnId: turnId,
+                requestId: requestId,
                 model: effectiveModel,
                 inputTokens: inputTokens,
                 outputTokens: 0,
@@ -586,11 +590,13 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             // is safe for the detached producer — correlates the log back to
             // the chat assistant turn for the per-message Insights button.
             let turnId = request.turnId
+            let requestId = request.idempotencyKey
 
             return wrapStreamWithLogging(
                 innerStream,
                 source: source,
                 turnId: turnId,
+                requestId: requestId,
                 model: model,
                 inputTokens: inputTokens,
                 temperature: temp,
@@ -610,6 +616,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         _ inner: AsyncThrowingStream<String, Error>,
         source: InferenceSource,
         turnId: UUID? = nil,
+        requestId: String? = nil,
         model: String,
         inputTokens: Int,
         temperature: Float?,
@@ -865,6 +872,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                 InsightsService.logInference(
                     source: source,
                     turnId: turnId,
+                    requestId: requestId,
                     model: model,
                     inputTokens: inputTokens,
                     outputTokens: outputTokenCount,
@@ -911,6 +919,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         // (text-only, text-with-tools, tool-calls batch, tool-calls single)
         // surface the same prompt + tools in the Insights detail pane.
         let requestBodyJSON = inferenceSource == .chatUI ? Self.serializeRequestForLog(request) : nil
+        let requestId = request.idempotencyKey
         // Carry the caller's `ttftTrace` through to non-streaming requests
         // for parity with `streamChat` — useful when an HTTP route runs the
         // same `request.ttftTrace` across both code paths.
@@ -1034,6 +1043,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                         InsightsService.logInference(
                             source: inferenceSource,
                             turnId: request.turnId,
+                            requestId: requestId,
                             model: effectiveModel,
                             inputTokens: inputTokens,
                             outputTokens: outputTokens,
@@ -1058,6 +1068,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                         inferenceSource: inferenceSource,
                         temperature: temperature,
                         maxTokens: maxTokens,
+                        turnId: request.turnId,
+                        requestId: requestId,
                         requestBodyJSON: requestBodyJSON,
                         tools: tools
                     )
@@ -1072,6 +1084,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                         inferenceSource: inferenceSource,
                         temperature: temperature,
                         maxTokens: maxTokens,
+                        turnId: request.turnId,
+                        requestId: requestId,
                         requestBodyJSON: requestBodyJSON,
                         tools: tools
                     )
@@ -1150,6 +1164,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                 InsightsService.logInference(
                     source: inferenceSource,
                     turnId: request.turnId,
+                    requestId: requestId,
                     model: effectiveModel,
                     inputTokens: inputTokens,
                     outputTokens: outputTokens,

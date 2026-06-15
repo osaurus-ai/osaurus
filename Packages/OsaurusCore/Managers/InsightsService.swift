@@ -203,11 +203,44 @@ final class InsightsService: ObservableObject {
         guard let match = logs.first(where: { $0.turnId == turnId }) else {
             return false
         }
+        focus(log: match)
+        return true
+    }
+
+    /// Ask the Insights tab to reveal the most recent log for a request-level
+    /// router id. Prefer this over turn focus for Credits rows because agent
+    /// loops can produce multiple request logs for the same assistant turn.
+    @discardableResult
+    func focus(requestId: String) -> Bool {
+        let normalized = requestId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty,
+            let match = logs.first(where: { $0.requestId == normalized })
+        else {
+            return false
+        }
+        focus(log: match)
+        return true
+    }
+
+    /// True when an in-memory request log still exists for this assistant turn.
+    /// Logs are intentionally ephemeral, so callers use this to decide whether
+    /// to surface an Insights affordance without mutating focus state.
+    func hasLog(turnId: UUID) -> Bool {
+        logs.contains { $0.turnId == turnId }
+    }
+
+    /// True when an in-memory request log still exists for this request id.
+    func hasLog(requestId: String) -> Bool {
+        let normalized = requestId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return false }
+        return logs.contains { $0.requestId == normalized }
+    }
+
+    private func focus(log: RequestLog) {
         // Reassign even if it already equals the target id so a second tap
         // re-pushes the detail pane after the user backed out of it.
         pendingFocusLogId = nil
-        pendingFocusLogId = match.id
-        return true
+        pendingFocusLogId = log.id
     }
 
     /// Clear filters
@@ -367,6 +400,7 @@ extension InsightsService {
     nonisolated static func logRequest(
         source: RequestSource,
         turnId: UUID? = nil,
+        requestId: String? = nil,
         method: String,
         path: String,
         statusCode: Int,
@@ -404,6 +438,7 @@ extension InsightsService {
             let log = RequestLog(
                 source: source,
                 turnId: turnId,
+                requestId: requestId,
                 method: method,
                 path: path,
                 statusCode: statusCode,
@@ -435,6 +470,7 @@ extension InsightsService {
     nonisolated static func logInference(
         source: RequestSource,
         turnId: UUID? = nil,
+        requestId: String? = nil,
         model: String,
         inputTokens: Int,
         outputTokens: Int,
@@ -452,6 +488,7 @@ extension InsightsService {
         logRequest(
             source: source,
             turnId: turnId,
+            requestId: requestId,
             method: "POST",
             path: "/chat/completions",
             statusCode: errorMessage != nil ? 500 : 200,

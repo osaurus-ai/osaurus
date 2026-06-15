@@ -30,6 +30,7 @@ struct RouterBillingDatabaseTests {
 
     private func makeEntry(
         id: String = UUID().uuidString,
+        requestId: String? = "router-request-1",
         createdAt: Date = RouterBillingDatabaseTests.now,
         outcome: RouterBillingOutcome = .pending,
         cost: String = "1234",
@@ -37,6 +38,7 @@ struct RouterBillingDatabaseTests {
     ) -> RouterBillingEntry {
         RouterBillingEntry(
             id: id,
+            requestId: requestId,
             createdAt: createdAt,
             sessionId: UUID().uuidString,
             turnId: UUID().uuidString,
@@ -76,6 +78,19 @@ struct RouterBillingDatabaseTests {
 
         let rows = try db.recent(limit: 10)
         #expect(rows.map(\.id) == [newer.id, older.id])
+    }
+
+    @Test func recent_supportsOffsetPagination() throws {
+        let db = try makeDB()
+        let oldest = makeEntry(createdAt: Date(timeIntervalSince1970: 1_000))
+        let middle = makeEntry(createdAt: Date(timeIntervalSince1970: 2_000))
+        let newest = makeEntry(createdAt: Date(timeIntervalSince1970: 3_000))
+        try db.insert(oldest)
+        try db.insert(middle)
+        try db.insert(newest)
+
+        let rows = try db.recent(limit: 1, offset: 1)
+        #expect(rows.map(\.id) == [middle.id])
     }
 
     @Test func updateOutcome_finalizesPendingRow() throws {

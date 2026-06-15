@@ -17,6 +17,7 @@ struct StreamingBillingHintTests {
 
     @Test func roundtrip_preservesAllFields() {
         let summary = RouterBillingSummary(
+            requestId: "run-abc:1",
             costMicro: "1234",
             status: "completed",
             tokenSource: "provider",

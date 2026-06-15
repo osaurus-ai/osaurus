@@ -62,7 +62,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable {
 
     public var label: String {
         switch self {
-        case .dashboard: L("Dashboard")
+        case .dashboard: L("Credits")
         case .models: L("Models")
         case .providers: L("Providers")
         case .agents: L("Agents")

@@ -261,6 +261,7 @@ struct OsaurusRouterProviderTests {
 
     @Test func routerSummaryFrame_yieldsBillingHintOnStream() async throws {
         var state = RemoteProviderService.StreamingState(stopSequences: [], trackContent: false)
+        state.routerRequestId = "run-abc:1"
         let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
 
         let shouldFinish = RemoteProviderService.processEventPayload(
@@ -288,6 +289,29 @@ struct OsaurusRouterProviderTests {
         #expect(billing.tokenSource == "provider")
         #expect(billing.inputTokens == 11)
         #expect(billing.outputTokens == 3)
+        #expect(billing.requestId == "run-abc:1")
+    }
+
+    @Test func routerSummaryFrame_prefersServerRequestIdOverLocalFallback() async throws {
+        var state = RemoteProviderService.StreamingState(stopSequences: [], trackContent: false)
+        state.routerRequestId = "run-abc:1"
+        let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
+
+        let shouldFinish = RemoteProviderService.processEventPayload(
+            #"{"osaurus":{"request_id":"router-request-9","cost_micro":"1234","status":"completed","token_source":"provider","input_tokens":11,"output_tokens":3}}"#,
+            state: &state,
+            providerType: .osaurusRouter,
+            tools: [],
+            continuation: continuation
+        )
+        continuation.finish()
+
+        #expect(shouldFinish == false)
+        var decodedBilling: RouterBillingSummary?
+        for try await delta in stream {
+            decodedBilling = StreamingBillingHint.decode(delta) ?? decodedBilling
+        }
+        #expect(decodedBilling?.requestId == "router-request-9")
     }
 
     @Test func routerSummaryThenDone_finishesNormally() {

@@ -27,8 +27,13 @@ struct RouterBillingLedgerTests {
         return (RouterBillingLedger(database: db), db)
     }
 
-    private func summary(cost: String = "1234", outputTokens: Int = 3) -> RouterBillingSummary {
+    private func summary(
+        requestId: String? = "run-abc:1",
+        cost: String = "1234",
+        outputTokens: Int = 3
+    ) -> RouterBillingSummary {
         RouterBillingSummary(
+            requestId: requestId,
             costMicro: cost,
             status: "completed",
             tokenSource: "provider",
@@ -57,8 +62,94 @@ struct RouterBillingLedgerTests {
         #expect(row.turnId == turnId.uuidString)
         #expect(row.sessionId == sessionId.uuidString)
         #expect(row.model == "venice/minimax-m3")
+        #expect(row.requestId == "run-abc:1")
         #expect(row.costMicro == "1234")
         #expect(row.outcome == .pending)
+    }
+
+    @Test func recentAndCount_supportPagination() throws {
+        let (ledger, _) = try makeLedger()
+        let first = try #require(
+            ledger.record(
+                summary: summary(requestId: "run-abc:100", cost: "100"),
+                sessionId: nil,
+                turnId: UUID(),
+                model: "first"
+            )
+        )
+        let second = try #require(
+            ledger.record(
+                summary: summary(requestId: "run-abc:200", cost: "200"),
+                sessionId: nil,
+                turnId: UUID(),
+                model: "second"
+            )
+        )
+
+        #expect(ledger.count() == 2)
+        let rows = ledger.recent(limit: 1, offset: 1)
+        #expect(rows.count == 1)
+        #expect([first, second].contains(rows[0].id))
+    }
+
+    @Test func record_sameRequestId_isIdempotentAndPreservesFinalOutcome() throws {
+        let (ledger, _) = try makeLedger()
+        let requestId = "run-abc:duplicate"
+        let firstId = try #require(
+            ledger.record(
+                summary: summary(requestId: requestId, cost: "100"),
+                sessionId: nil,
+                turnId: UUID(),
+                model: "first",
+                outcome: .pending
+            )
+        )
+        ledger.finalizeOutcome(entryId: firstId, outcome: .rendered)
+
+        let secondId = try #require(
+            ledger.record(
+                summary: summary(requestId: requestId, cost: "200", outputTokens: 9),
+                sessionId: nil,
+                turnId: UUID(),
+                model: "second",
+                outcome: .pending
+            )
+        )
+
+        #expect(secondId == firstId)
+        #expect(ledger.count() == 1)
+        let row = try #require(ledger.findByRequestId(requestId))
+        #expect(row.id == firstId)
+        #expect(row.costMicro == "200")
+        #expect(row.outputTokens == 9)
+        #expect(row.outcome == .rendered)
+    }
+
+    @Test func findByRequestIds_returnsOnlyRequestedRows() throws {
+        let (ledger, _) = try makeLedger()
+        _ = ledger.record(summary: summary(requestId: "run-abc:1"), sessionId: nil, turnId: UUID(), model: "one")
+        _ = ledger.record(summary: summary(requestId: "run-abc:2"), sessionId: nil, turnId: UUID(), model: "two")
+        _ = ledger.record(summary: summary(requestId: "run-abc:3"), sessionId: nil, turnId: UUID(), model: "three")
+
+        let rows = ledger.findByRequestIds(["run-abc:1", "run-abc:3", "missing"])
+        #expect(Set(rows.compactMap(\.requestId)) == ["run-abc:1", "run-abc:3"])
+    }
+
+    @Test func record_multipleRequestIdsForSameTurn_keepsSeparateRows() throws {
+        let (ledger, _) = try makeLedger()
+        let turnId = UUID()
+
+        let first = try #require(
+            ledger.record(summary: summary(requestId: "run-loop:1"), sessionId: nil, turnId: turnId, model: "loop")
+        )
+        let second = try #require(
+            ledger.record(summary: summary(requestId: "run-loop:2"), sessionId: nil, turnId: turnId, model: "loop")
+        )
+
+        #expect(first != second)
+        let rows = ledger.findByRequestIds(["run-loop:1", "run-loop:2"])
+        #expect(rows.count == 2)
+        #expect(Set(rows.map(\.id)) == [first, second])
     }
 
     @Test func finalizeOutcome_backfillsRenderedResult() throws {

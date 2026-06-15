@@ -70,6 +70,7 @@ public final class RouterBillingLedger: @unchecked Sendable {
         guard ensureOpen() else { return nil }
         let entry = RouterBillingEntry(
             id: UUID().uuidString,
+            requestId: summary.requestId,
             createdAt: Date(),
             sessionId: sessionId?.uuidString,
             turnId: turnId.uuidString,
@@ -83,8 +84,8 @@ public final class RouterBillingLedger: @unchecked Sendable {
             appVersion: Self.appVersion
         )
         do {
-            try database.insert(entry)
-            return entry.id
+            let stored = try database.upsertByRequestId(entry)
+            return stored.id
         } catch {
             return nil
         }
@@ -98,9 +99,24 @@ public final class RouterBillingLedger: @unchecked Sendable {
 
     // MARK: - Read
 
-    public func recent(limit: Int = 200) -> [RouterBillingEntry] {
+    public func recent(limit: Int = 200, offset: Int = 0) -> [RouterBillingEntry] {
         guard ensureOpen() else { return [] }
-        return (try? database.recent(limit: limit)) ?? []
+        return (try? database.recent(limit: limit, offset: offset)) ?? []
+    }
+
+    public func findByRequestId(_ requestId: String) -> RouterBillingEntry? {
+        guard ensureOpen() else { return nil }
+        return try? database.findByRequestId(requestId)
+    }
+
+    public func findByRequestIds(_ requestIds: [String]) -> [RouterBillingEntry] {
+        guard ensureOpen() else { return [] }
+        return (try? database.findByRequestIds(requestIds)) ?? []
+    }
+
+    public func count() -> Int {
+        guard ensureOpen() else { return 0 }
+        return (try? database.count()) ?? 0
     }
 
     // MARK: - Diagnostics export

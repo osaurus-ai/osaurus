@@ -59,6 +59,11 @@ struct RequestLog: Identifiable, Sendable {
     /// open this exact entry. Nil for HTTP/plugin requests.
     let turnId: UUID?
 
+    /// Request-level correlation for router-backed chat calls. For Osaurus
+    /// Router this is the signed idempotency key / request_id used by billing,
+    /// so account usage rows can focus the exact Insights log for an iteration.
+    let requestId: String?
+
     // HTTP request/response fields
     let method: String
     let path: String
@@ -103,6 +108,7 @@ struct RequestLog: Identifiable, Sendable {
         timestamp: Date = Date(),
         source: RequestSource,
         turnId: UUID? = nil,
+        requestId: String? = nil,
         method: String,
         path: String,
         statusCode: Int,
@@ -126,6 +132,7 @@ struct RequestLog: Identifiable, Sendable {
         self.timestamp = timestamp
         self.source = source
         self.turnId = turnId
+        self.requestId = requestId
         self.method = method
         self.path = path
         self.statusCode = statusCode

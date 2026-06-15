@@ -55,6 +55,63 @@ struct InsightsWireBodyRoundTripTests {
         InsightsService.shared.logs.first { $0.model == model }
     }
 
+    @Test func hasLog_tracksTurnAvailability() {
+        let turnId = UUID()
+        #expect(InsightsService.shared.hasLog(turnId: turnId) == false)
+
+        InsightsService.shared.log(
+            RequestLog(
+                source: .chatUI,
+                turnId: turnId,
+                method: "POST",
+                path: "/chat/completions",
+                statusCode: 200,
+                durationMs: 10,
+                model: uniqueModel("turn-availability"),
+                inputTokens: 1,
+                outputTokens: 1
+            )
+        )
+
+        #expect(InsightsService.shared.hasLog(turnId: turnId) == true)
+    }
+
+    @Test func requestIdFocusTargetsExactLog_whenTurnHasMultipleLogs() {
+        let turnId = UUID()
+        let first = RequestLog(
+            source: .chatUI,
+            turnId: turnId,
+            requestId: "run-abc:1",
+            method: "POST",
+            path: "/chat/completions",
+            statusCode: 200,
+            durationMs: 10,
+            model: uniqueModel("request-focus-first"),
+            inputTokens: 1,
+            outputTokens: 1
+        )
+        let second = RequestLog(
+            source: .chatUI,
+            turnId: turnId,
+            requestId: "run-abc:2",
+            method: "POST",
+            path: "/chat/completions",
+            statusCode: 200,
+            durationMs: 10,
+            model: uniqueModel("request-focus-second"),
+            inputTokens: 1,
+            outputTokens: 1
+        )
+
+        InsightsService.shared.log(first)
+        InsightsService.shared.log(second)
+
+        #expect(InsightsService.shared.hasLog(requestId: "run-abc:1") == true)
+        #expect(InsightsService.shared.focus(requestId: "run-abc:1") == true)
+        #expect(InsightsService.shared.pendingFocusLogId == first.id)
+        #expect(InsightsService.shared.focus(requestId: "missing") == false)
+    }
+
     @Test func logInference_propagatesWireBodies() async {
         let model = uniqueModel("wirebody-propagate")
         let reqJSON = #"{"model":"gpt-4o","messages":[]}"#

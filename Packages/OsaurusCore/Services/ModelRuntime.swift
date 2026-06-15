@@ -3475,7 +3475,8 @@ public actor ModelRuntime {
         guard
             let out = try? JSONSerialization.data(
                 withJSONObject: json,
-                options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
+                options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+            )
         else { return }
         do {
             try out.write(to: configURL, options: .atomic)

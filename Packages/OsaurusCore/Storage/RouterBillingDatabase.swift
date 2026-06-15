@@ -73,6 +73,7 @@ public enum RouterBillingOutcome: String, Codable, Sendable, CaseIterable {
 /// One metadata-only billing record. No prompt/response text by construction.
 public struct RouterBillingEntry: Codable, Sendable, Identifiable, Equatable {
     public let id: String
+    public let requestId: String?
     public let createdAt: Date
     public let sessionId: String?
     public let turnId: String?
@@ -87,6 +88,7 @@ public struct RouterBillingEntry: Codable, Sendable, Identifiable, Equatable {
 
     public init(
         id: String,
+        requestId: String?,
         createdAt: Date,
         sessionId: String?,
         turnId: String?,
@@ -100,6 +102,7 @@ public struct RouterBillingEntry: Codable, Sendable, Identifiable, Equatable {
         appVersion: String?
     ) {
         self.id = id
+        self.requestId = requestId
         self.createdAt = createdAt
         self.sessionId = sessionId
         self.turnId = turnId
@@ -121,7 +124,7 @@ public final class RouterBillingDatabase: @unchecked Sendable {
 
     /// Highest schema version this build knows how to produce. Opening a DB
     /// stamped newer than this is refused (forward-version fail-fast).
-    private static let latestSchemaVersion = 1
+    private static let latestSchemaVersion = 2
 
     /// Retention cap: keep at most this many rows, and drop anything older than
     /// `maxRetentionDays`. A billing ledger is metadata-only and tiny, but it's
@@ -213,8 +216,9 @@ public final class RouterBillingDatabase: @unchecked Sendable {
         }
         do {
             if currentVersion < 1 { try migrateToV1() }
+            if currentVersion < 2 { try migrateToV2() }
         } catch {
-            throw RouterBillingDatabaseError.migrationFailed("v1: \(error.localizedDescription)")
+            throw RouterBillingDatabaseError.migrationFailed("v\(currentVersion + 1): \(error.localizedDescription)")
         }
     }
 
@@ -261,6 +265,14 @@ public final class RouterBillingDatabase: @unchecked Sendable {
             "CREATE INDEX IF NOT EXISTS idx_router_billing_turn ON router_billing(turn_id)"
         )
         try setSchemaVersion(1)
+    }
+
+    private func migrateToV2() throws {
+        try executeRaw("ALTER TABLE router_billing ADD COLUMN request_id TEXT")
+        try executeRaw(
+            "CREATE INDEX IF NOT EXISTS idx_router_billing_request ON router_billing(request_id)"
+        )
+        try setSchemaVersion(2)
     }
 
     // MARK: - Raw execution
@@ -316,14 +328,15 @@ public final class RouterBillingDatabase: @unchecked Sendable {
     // MARK: - CRUD
 
     private static let columns =
-        "entry_id, created_at, session_id, turn_id, model, token_source, input_tokens, output_tokens, cost_micro, status, outcome, app_version"
+        "entry_id, request_id, created_at, session_id, turn_id, model, token_source, input_tokens, output_tokens, cost_micro, status, outcome, app_version"
 
     public func insert(_ entry: RouterBillingEntry) throws {
         try executeUpdate(
             """
             INSERT INTO router_billing (\(Self.columns))
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
             ON CONFLICT(entry_id) DO UPDATE SET
+                request_id    = excluded.request_id,
                 created_at    = excluded.created_at,
                 session_id    = excluded.session_id,
                 turn_id       = excluded.turn_id,
@@ -338,18 +351,52 @@ public final class RouterBillingDatabase: @unchecked Sendable {
             """
         ) { stmt in
             Self.bindText(stmt, index: 1, value: entry.id)
-            sqlite3_bind_double(stmt, 2, entry.createdAt.timeIntervalSince1970)
-            Self.bindText(stmt, index: 3, value: entry.sessionId)
-            Self.bindText(stmt, index: 4, value: entry.turnId)
-            Self.bindText(stmt, index: 5, value: entry.model)
-            Self.bindText(stmt, index: 6, value: entry.tokenSource)
-            sqlite3_bind_int(stmt, 7, Int32(entry.inputTokens))
-            sqlite3_bind_int(stmt, 8, Int32(entry.outputTokens))
-            Self.bindText(stmt, index: 9, value: entry.costMicro)
-            Self.bindText(stmt, index: 10, value: entry.status)
-            Self.bindText(stmt, index: 11, value: entry.outcome.rawValue)
-            Self.bindText(stmt, index: 12, value: entry.appVersion)
+            Self.bindText(stmt, index: 2, value: entry.requestId)
+            sqlite3_bind_double(stmt, 3, entry.createdAt.timeIntervalSince1970)
+            Self.bindText(stmt, index: 4, value: entry.sessionId)
+            Self.bindText(stmt, index: 5, value: entry.turnId)
+            Self.bindText(stmt, index: 6, value: entry.model)
+            Self.bindText(stmt, index: 7, value: entry.tokenSource)
+            sqlite3_bind_int(stmt, 8, Int32(entry.inputTokens))
+            sqlite3_bind_int(stmt, 9, Int32(entry.outputTokens))
+            Self.bindText(stmt, index: 10, value: entry.costMicro)
+            Self.bindText(stmt, index: 11, value: entry.status)
+            Self.bindText(stmt, index: 12, value: entry.outcome.rawValue)
+            Self.bindText(stmt, index: 13, value: entry.appVersion)
         }
+    }
+
+    /// Insert a billing entry, or update the existing row for the same router
+    /// request id. This makes repeated summary frames / request replays
+    /// idempotent at the local ledger layer while preserving finalized outcomes.
+    public func upsertByRequestId(_ entry: RouterBillingEntry) throws -> RouterBillingEntry {
+        guard let requestId = Self.normalizedRequestId(entry.requestId) else {
+            try insert(entry)
+            return entry
+        }
+
+        if let existing = try findByRequestId(requestId) {
+            let merged = RouterBillingEntry(
+                id: existing.id,
+                requestId: requestId,
+                createdAt: existing.createdAt,
+                sessionId: entry.sessionId ?? existing.sessionId,
+                turnId: entry.turnId ?? existing.turnId,
+                model: entry.model ?? existing.model,
+                tokenSource: entry.tokenSource,
+                inputTokens: entry.inputTokens,
+                outputTokens: entry.outputTokens,
+                costMicro: entry.costMicro,
+                status: entry.status,
+                outcome: existing.outcome == .pending ? entry.outcome : existing.outcome,
+                appVersion: entry.appVersion ?? existing.appVersion
+            )
+            try insert(merged)
+            return merged
+        }
+
+        try insert(entry)
+        return entry
     }
 
     public func updateOutcome(entryId: String, outcome: RouterBillingOutcome) throws {
@@ -359,11 +406,53 @@ public final class RouterBillingDatabase: @unchecked Sendable {
         }
     }
 
-    public func recent(limit: Int) throws -> [RouterBillingEntry] {
+    public func findByRequestId(_ requestId: String) throws -> RouterBillingEntry? {
+        guard let normalized = Self.normalizedRequestId(requestId) else { return nil }
+        var entry: RouterBillingEntry?
+        try prepareAndExecute(
+            "SELECT \(Self.columns) FROM router_billing WHERE request_id = ?1 ORDER BY created_at DESC LIMIT 1",
+            bind: { stmt in
+                Self.bindText(stmt, index: 1, value: normalized)
+            },
+            process: { stmt in
+                if sqlite3_step(stmt) == SQLITE_ROW {
+                    entry = Self.readEntry(from: stmt)
+                }
+            }
+        )
+        return entry
+    }
+
+    public func findByRequestIds(_ requestIds: [String]) throws -> [RouterBillingEntry] {
+        let normalized = Array(Set(requestIds.compactMap(Self.normalizedRequestId))).sorted()
+        guard !normalized.isEmpty else { return [] }
+
+        var entries: [RouterBillingEntry] = []
+        let placeholders = normalized.indices.map { "?\($0 + 1)" }.joined(separator: ", ")
+        try prepareAndExecute(
+            "SELECT \(Self.columns) FROM router_billing WHERE request_id IN (\(placeholders)) ORDER BY created_at DESC",
+            bind: { stmt in
+                for (index, requestId) in normalized.enumerated() {
+                    Self.bindText(stmt, index: Int32(index + 1), value: requestId)
+                }
+            },
+            process: { stmt in
+                while sqlite3_step(stmt) == SQLITE_ROW {
+                    entries.append(Self.readEntry(from: stmt))
+                }
+            }
+        )
+        return entries
+    }
+
+    public func recent(limit: Int, offset: Int = 0) throws -> [RouterBillingEntry] {
         var entries: [RouterBillingEntry] = []
         try prepareAndExecute(
-            "SELECT \(Self.columns) FROM router_billing ORDER BY created_at DESC LIMIT ?1",
-            bind: { stmt in sqlite3_bind_int(stmt, 1, Int32(max(0, limit))) },
+            "SELECT \(Self.columns) FROM router_billing ORDER BY created_at DESC LIMIT ?1 OFFSET ?2",
+            bind: { stmt in
+                sqlite3_bind_int(stmt, 1, Int32(max(0, limit)))
+                sqlite3_bind_int(stmt, 2, Int32(max(0, offset)))
+            },
             process: { stmt in
                 while sqlite3_step(stmt) == SQLITE_ROW {
                     entries.append(Self.readEntry(from: stmt))
@@ -412,20 +501,27 @@ public final class RouterBillingDatabase: @unchecked Sendable {
     private static func readEntry(from stmt: OpaquePointer) -> RouterBillingEntry {
         RouterBillingEntry(
             id: String(cString: sqlite3_column_text(stmt, 0)),
-            createdAt: Date(timeIntervalSince1970: sqlite3_column_double(stmt, 1)),
-            sessionId: sqlite3_column_text(stmt, 2).map { String(cString: $0) },
-            turnId: sqlite3_column_text(stmt, 3).map { String(cString: $0) },
-            model: sqlite3_column_text(stmt, 4).map { String(cString: $0) },
-            tokenSource: sqlite3_column_text(stmt, 5).map { String(cString: $0) } ?? "",
-            inputTokens: Int(sqlite3_column_int(stmt, 6)),
-            outputTokens: Int(sqlite3_column_int(stmt, 7)),
-            costMicro: sqlite3_column_text(stmt, 8).map { String(cString: $0) } ?? "0",
-            status: sqlite3_column_text(stmt, 9).map { String(cString: $0) } ?? "",
-            outcome: sqlite3_column_text(stmt, 10)
+            requestId: sqlite3_column_text(stmt, 1).map { String(cString: $0) },
+            createdAt: Date(timeIntervalSince1970: sqlite3_column_double(stmt, 2)),
+            sessionId: sqlite3_column_text(stmt, 3).map { String(cString: $0) },
+            turnId: sqlite3_column_text(stmt, 4).map { String(cString: $0) },
+            model: sqlite3_column_text(stmt, 5).map { String(cString: $0) },
+            tokenSource: sqlite3_column_text(stmt, 6).map { String(cString: $0) } ?? "",
+            inputTokens: Int(sqlite3_column_int(stmt, 7)),
+            outputTokens: Int(sqlite3_column_int(stmt, 8)),
+            costMicro: sqlite3_column_text(stmt, 9).map { String(cString: $0) } ?? "0",
+            status: sqlite3_column_text(stmt, 10).map { String(cString: $0) } ?? "",
+            outcome: sqlite3_column_text(stmt, 11)
                 .map { String(cString: $0) }
                 .flatMap(RouterBillingOutcome.init(rawValue:)) ?? .pending,
-            appVersion: sqlite3_column_text(stmt, 11).map { String(cString: $0) }
+            appVersion: sqlite3_column_text(stmt, 12).map { String(cString: $0) }
         )
+    }
+
+    private static func normalizedRequestId(_ requestId: String?) -> String? {
+        guard let requestId else { return nil }
+        let normalized = requestId.trimmingCharacters(in: .whitespacesAndNewlines)
+        return normalized.isEmpty ? nil : normalized
     }
 }
 

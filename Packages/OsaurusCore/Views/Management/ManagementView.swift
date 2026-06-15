@@ -154,7 +154,7 @@ private extension ManagementView {
         let tab = ManagementTab(rawValue: tabId)
         switch tab {
         case .dashboard:
-            DashboardView()
+            CreditsView()
         case .models:
             ModelDownloadView(
                 deeplinkModelId: deeplinkModelId,

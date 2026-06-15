@@ -157,6 +157,7 @@ struct OsaurusRouterUsageResponse: Decodable, Sendable {
 
 struct OsaurusRouterUsageItem: Decodable, Identifiable, Equatable, Sendable {
     let id: String
+    let requestId: String?
     let model: String
     let provider: String
     let inputTokens: Int
@@ -168,6 +169,7 @@ struct OsaurusRouterUsageItem: Decodable, Identifiable, Equatable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case id, model, provider, status
+        case requestId = "request_id"
         case inputTokens = "input_tokens"
         case outputTokens = "output_tokens"
         case costMicro = "cost_micro"
@@ -216,6 +218,7 @@ struct OsaurusRouterEstimateResponse: Decodable, Equatable, Sendable {
 
 struct OsaurusRouterSummaryEvent: Decodable, Equatable, Sendable {
     struct Summary: Decodable, Equatable, Sendable {
+        let requestId: String?
         let costMicro: String
         let status: String
         let tokenSource: String
@@ -223,6 +226,7 @@ struct OsaurusRouterSummaryEvent: Decodable, Equatable, Sendable {
         let outputTokens: Int
 
         enum CodingKeys: String, CodingKey {
+            case requestId = "request_id"
             case costMicro = "cost_micro"
             case status
             case tokenSource = "token_source"
@@ -241,6 +245,7 @@ struct OsaurusRouterSummaryEvent: Decodable, Equatable, Sendable {
 /// stream as a `StreamingBillingHint`, stamped on the assistant `ChatTurn`, and
 /// written to the on-device billing ledger. Metadata only: no prompt/response text.
 public struct RouterBillingSummary: Codable, Equatable, Sendable {
+    public var requestId: String?
     public var costMicro: String
     public var status: String
     public var tokenSource: String
@@ -248,12 +253,14 @@ public struct RouterBillingSummary: Codable, Equatable, Sendable {
     public var outputTokens: Int
 
     public init(
+        requestId: String? = nil,
         costMicro: String,
         status: String,
         tokenSource: String,
         inputTokens: Int,
         outputTokens: Int
     ) {
+        self.requestId = requestId
         self.costMicro = costMicro
         self.status = status
         self.tokenSource = tokenSource
@@ -262,6 +269,7 @@ public struct RouterBillingSummary: Codable, Equatable, Sendable {
     }
 
     init(_ summary: OsaurusRouterSummaryEvent.Summary) {
+        self.requestId = summary.requestId
         self.costMicro = summary.costMicro
         self.status = summary.status
         self.tokenSource = summary.tokenSource
