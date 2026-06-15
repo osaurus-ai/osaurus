@@ -23,6 +23,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
     let serverController = ServerController()
     private var statusItem: NSStatusItem?
     private var popover: NSPopover?
+    /// Global mouse-down monitor that dismisses the status popover when the
+    /// user clicks in another app or on the desktop. `.transient` only covers
+    /// clicks inside our own windows, so this fills the gap for outside clicks.
+    private var popoverDismissMonitor: Any?
     private var cancellables: Set<AnyCancellable> = []
     let updater = UpdaterViewModel()
 
@@ -1460,6 +1464,16 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             popoverWindow.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         }
 
+        // Close the popover when the user clicks in another app or on the
+        // desktop. Global monitors only fire for events delivered to other
+        // applications, so clicks on the status item and our own windows are
+        // left to the status item action and the popover's transient behavior.
+        popoverDismissMonitor = NSEvent.addGlobalMonitorForEvents(
+            matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]
+        ) { [weak self] _ in
+            self?.popover?.performClose(nil)
+        }
+
         NSApp.activate(ignoringOtherApps: true)
     }
 
@@ -1467,6 +1481,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
 
     public func popoverDidClose(_ notification: Notification) {
         log.debug("Popover closed, posting chatViewClosed notification")
+
+        // Tear down the outside-click monitor regardless of how the popover
+        // was closed (status item, transient click, or this monitor itself).
+        if let monitor = popoverDismissMonitor {
+            NSEvent.removeMonitor(monitor)
+            popoverDismissMonitor = nil
+        }
+
         // Post notification so VAD can resume
         NotificationCenter.default.post(name: .chatViewClosed, object: nil)
 

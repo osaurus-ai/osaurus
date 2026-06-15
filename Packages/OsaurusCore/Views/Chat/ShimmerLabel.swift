@@ -102,6 +102,11 @@ final class ShimmerLabel: NSView {
     }
 
     private func addSweepAnimation() {
+        // `layout()` and `viewDidMoveToWindow()` both call this while running.
+        // Re-adding under the same key replaces the in-flight animation and
+        // snaps the sweep back to its start, which reads as a stutter during
+        // token streaming (frequent re-layouts). Only add when none is live.
+        guard gradientLayer.animation(forKey: "shimmer") == nil else { return }
         let anim = CABasicAnimation(keyPath: "locations")
         anim.fromValue = [-1.0, -0.5, 0.0]
         anim.toValue = [1.0, 1.5, 2.0]

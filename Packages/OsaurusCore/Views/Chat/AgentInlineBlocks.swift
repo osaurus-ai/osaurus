@@ -59,7 +59,6 @@ private enum Layout {
     static let stepRowSpacing: CGFloat = 6
     static let stepRowsPaddingV: CGFloat = 10
     static let stepIconWidth: CGFloat = 16
-    static let stepIconTopOffset: CGFloat = 2
     static let bannerIconTopOffset: CGFloat = 2
     static let dismissButtonTopOffset: CGFloat = 1
     static let smallIconSizeDelta: CGFloat = -2  // delta from caption size; used by chevron + xmark
@@ -180,8 +179,9 @@ struct InlineTodoBlock: View {
     }
 
     private var pillRow: some View {
-        HStack(spacing: Layout.interItemSpacing) {
+        HStack(alignment: .firstTextBaseline, spacing: Layout.interItemSpacing) {
             Image(systemName: "checklist")
+                .font(theme.font(size: CGFloat(theme.bodySize)))
                 .foregroundColor(theme.accentColor)
 
             Text(localized: "Todo")
@@ -232,11 +232,11 @@ struct InlineTodoBlock: View {
     }
 
     private func todoItemRow(_ item: AgentTodoItem) -> some View {
-        HStack(alignment: .top, spacing: Layout.interItemSpacing) {
+        HStack(alignment: .firstTextBaseline, spacing: Layout.interItemSpacing) {
             Image(systemName: item.isDone ? "checkmark.circle.fill" : "circle")
+                .font(theme.font(size: CGFloat(theme.bodySize)))
                 .foregroundColor(item.isDone ? theme.successColor : theme.tertiaryText)
                 .frame(width: Layout.stepIconWidth, alignment: .center)
-                .padding(.top, Layout.stepIconTopOffset)
 
             Text(item.text)
                 .font(theme.font(size: CGFloat(theme.bodySize)))

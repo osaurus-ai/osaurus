@@ -158,13 +158,15 @@ private struct TopStatusHeader: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 8) {
-                    Text(appName)
-                        .font(.system(size: 18, weight: .bold, design: .rounded))
-                        .foregroundColor(theme.primaryText)
+                    HStack(spacing: 6) {
+                        Text(appName)
+                            .font(.system(size: 18, weight: .bold))
+                            .foregroundColor(theme.primaryText)
 
-                    Text("v\(appVersion)", bundle: .module)
-                        .font(.system(size: 12, weight: .regular))
-                        .foregroundColor(theme.tertiaryText)
+                        Text(verbatim: appVersion)
+                            .font(.system(size: 12, weight: .regular))
+                            .foregroundColor(theme.tertiaryText)
+                    }
 
                     Spacer()
 

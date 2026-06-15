@@ -674,7 +674,7 @@ public struct CustomTheme: Codable, Equatable, Sendable {
             colors: ThemeColors(
                 primaryText: "#ffffea",
                 secondaryText: "#b8c4e8",
-                tertiaryText: "#8090c0",
+                tertiaryText: "#98a4d0",
                 primaryBackground: "#0e1120",
                 secondaryBackground: "#161a2c",
                 tertiaryBackground: "#1e2238",
@@ -691,8 +691,8 @@ public struct CustomTheme: Codable, Equatable, Sendable {
                 infoColor: "#4a6de0",
                 cardBackground: "#161a2c",
                 cardBorder: "#2a3050",
-                buttonBackground: "#ffffea",
-                buttonBorder: "#ffffea",
+                buttonBackground: "#1e2238",
+                buttonBorder: "#3a4260",
                 inputBackground: "#0e1120",
                 inputBorder: "#3a4260",
                 glassTintOverlay: "#0e112060",
@@ -700,7 +700,7 @@ public struct CustomTheme: Codable, Equatable, Sendable {
                 shadowColor: "#000000",
                 selectionColor: "#4a6de040",
                 cursorColor: "#ffffea",
-                placeholderText: "#6070a0"
+                placeholderText: "#7888b8"
             ),
             background: .default,
             glass: ThemeGlass(
