@@ -35,6 +35,9 @@ private final class ScriptedLoopSurface {
     var dedupedCalls: [(name: String, callId: String, held: String)] = []
     var willProcessCallIds: [String] = []
     var batchOutcomes: [[AgentLoopToolOutcome]] = []
+    /// Fallback messages the driver asked the surface to surface after an
+    /// unrecoverable empty turn.
+    var fallbackTexts: [String] = []
 
     init(steps: [AgentLoopModelStep]) {
         self.steps = steps
@@ -68,7 +71,10 @@ private final class ScriptedLoopSurface {
             onBatchComplete: { outcomes in
                 self.batchOutcomes.append(outcomes)
             },
-            pendingTodoCount: pendingTodos.map { count in { count } }
+            pendingTodoCount: pendingTodos.map { count in { count } },
+            emitFallbackText: { text in
+                self.fallbackTexts.append(text)
+            }
         )
     }
 }
@@ -108,6 +114,65 @@ struct AgentToolLoopTests {
         #expect(result == AgentToolLoop.RunResult(exit: .finalResponse, iterations: 1))
         #expect(surface.executedCalls.isEmpty)
         #expect(surface.builtNotices == [[]])
+    }
+
+    // MARK: - Empty-turn recovery ("No visible text was produced" guard)
+
+    @Test func emptyTurnRecoversWithNudgeThenSucceeds() async throws {
+        // First model step is empty (0-token / EOS-first); the driver must
+        // NOT end the run — it stages a corrective nudge and retries, and the
+        // retry succeeds. No fallback message is emitted.
+        let surface = ScriptedLoopSurface(steps: [.emptyResponse, .finalResponse])
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(),
+            state: AgentTaskState(),
+            hooks: surface.makeHooks()
+        )
+        #expect(result.exit == .finalResponse)
+        // The empty turn was retried, not charged: the retry's buildMessages
+        // carried the corrective nudge.
+        #expect(surface.builtNotices.contains([AgentToolLoop.emptyTurnNotice]))
+        #expect(surface.fallbackTexts.isEmpty)
+        // Empty retries are not charged against the iteration budget.
+        #expect(result.iterations == 1)
+    }
+
+    @Test func persistentEmptyTurnExhaustsToVisibleFallback() async throws {
+        // A model that is deterministically empty (every step) must never spin
+        // forever or end silently: after the bounded nudge-retries the driver
+        // emits a single visible fallback message and ends the run.
+        let surface = ScriptedLoopSurface(steps: [
+            .emptyResponse, .emptyResponse, .emptyResponse, .emptyResponse, .emptyResponse,
+        ])
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(maxIterations: 15),
+            state: AgentTaskState(),
+            hooks: surface.makeHooks()
+        )
+        #expect(result.exit == .finalResponse)
+        #expect(surface.fallbackTexts == [AgentToolLoop.emptyTurnFallback])
+        // Exactly maxEmptyTurnRetries nudges were staged before giving up.
+        let nudges = surface.builtNotices.filter { $0 == [AgentToolLoop.emptyTurnNotice] }
+        #expect(nudges.count == AgentToolLoop.maxEmptyTurnRetries)
+    }
+
+    @Test func toolCallResetsEmptyTurnBudget() async throws {
+        // An empty turn, then a productive tool call, then more empty turns:
+        // the productive turn resets the empty-turn allowance so the second
+        // empty streak gets its own full set of nudges before the fallback.
+        let surface = ScriptedLoopSurface(steps: [
+            .emptyResponse,
+            .toolCalls([inv("file_search", #"{"q":"x"}"#)]),
+            .emptyResponse, .emptyResponse, .emptyResponse, .emptyResponse,
+        ])
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(maxIterations: 20),
+            state: AgentTaskState(),
+            hooks: surface.makeHooks()
+        )
+        #expect(result.exit == .finalResponse)
+        #expect(surface.fallbackTexts == [AgentToolLoop.emptyTurnFallback])
+        #expect(surface.executedCalls.map(\.name) == ["file_search"])
     }
 
     @Test func toolCallsExecuteThenFinish() async throws {
