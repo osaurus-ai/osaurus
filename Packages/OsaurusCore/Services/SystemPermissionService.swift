@@ -170,6 +170,16 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
     /// Returns `nil` for permissions whose state lives on the main actor (the location manager and
     /// the cached automation states); callers resolve those on the `MainActor`.
     nonisolated private static func isGrantedOffMain(_ permission: SystemPermission) -> Bool? {
+        // In tests/CI, avoid touching TCC-backed status APIs that can block on
+        // unavailable daemons (contactsd/EventKit/AVFoundation) and stall the suite.
+        if RuntimeEnvironment.isUnderTests {
+            switch permission {
+            case .calendar, .reminders, .contacts, .microphone:
+                return false
+            default:
+                break
+            }
+        }
         switch permission {
         case .calendar:
             return EKEventStore.authorizationStatus(for: .event) == .fullAccess
@@ -366,6 +376,7 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
     // MARK: - Contacts Permission
 
     private func checkContactsPermission() -> Bool {
+        if RuntimeEnvironment.isUnderTests { return false }
         let status = CNContactStore.authorizationStatus(for: .contacts)
         return status == .authorized
     }
@@ -390,6 +401,7 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
     // MARK: - Calendar Permission (EventKit)
 
     private func checkCalendarPermission() -> Bool {
+        if RuntimeEnvironment.isUnderTests { return false }
         let status = EKEventStore.authorizationStatus(for: .event)
         return status == .fullAccess
     }
@@ -414,6 +426,7 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
     // MARK: - Reminders Permission (EventKit)
 
     private func checkRemindersPermission() -> Bool {
+        if RuntimeEnvironment.isUnderTests { return false }
         let status = EKEventStore.authorizationStatus(for: .reminder)
         return status == .fullAccess
     }
@@ -698,6 +711,7 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
     // MARK: - Microphone Permission
 
     private func checkMicrophonePermission() -> Bool {
+        if RuntimeEnvironment.isUnderTests { return false }
         switch AVCaptureDevice.authorizationStatus(for: .audio) {
         case .authorized:
             return true
