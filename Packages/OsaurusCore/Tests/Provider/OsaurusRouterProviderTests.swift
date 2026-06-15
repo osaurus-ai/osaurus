@@ -23,6 +23,74 @@ struct OsaurusRouterProviderTests {
         #expect(discovery.models == ["venice/model-b"])
         #expect(discovery.totalCount == 2)
         #expect(discovery.staleCount == 1)
+
+        // The catalog keeps full metadata for fresh models only, keyed by id.
+        #expect(discovery.catalog.count == 1)
+        #expect(discovery.catalog["venice/model-a"] == nil)
+        let fresh = try #require(discovery.catalog["venice/model-b"])
+        #expect(fresh.provider == "venice")
+        #expect(fresh.inputDisplay == "$1.00/M")
+        #expect(fresh.outputDisplay == "$3.00/M")
+        #expect(fresh.contextLength == 131072)
+    }
+
+    @Test func routerModelPickerDescription_summarizesProviderPricingContext() throws {
+        let data = Data(
+            """
+            {"data":[
+              {"id":"venice/model-b","provider":"venice","context_length":131072,"capabilities":{"tools":true,"vision":true},"input_micro_per_mtok":"1000000","output_micro_per_mtok":"3000000","input_display":"$1.00/M","output_display":"$3.00/M","stale":false}
+            ]}
+            """.utf8
+        )
+        let discovery = try RemoteProviderService.decodeOsaurusRouterModelsDiscovery(data: data)
+        let model = try #require(discovery.catalog["venice/model-b"])
+
+        #expect(model.pickerDescription == "venice · $1.00/M in · $3.00/M out · 131K ctx")
+        #expect(model.supportsVision == true)
+
+        // The factory mirrors `fromRemoteModel` for the display name (last path
+        // component of the prefixed id) and surfaces the summary as `description`.
+        let providerId = UUID()
+        let item = ModelPickerItem.fromOsaurusRouterModel(
+            prefixedId: "osaurus/venice/model-b",
+            providerName: "Osaurus",
+            providerId: providerId,
+            metadata: model
+        )
+        #expect(item.id == "osaurus/venice/model-b")
+        #expect(item.displayName == "model-b")
+        #expect(item.description == "venice · $1.00/M in · $3.00/M out · 131K ctx")
+        #expect(item.isVLM == true)
+        guard case .remote(let name, let pid) = item.source else {
+            Issue.record("Expected a remote source, got \(item.source)")
+            return
+        }
+        #expect(name == "Osaurus")
+        #expect(pid == providerId)
+    }
+
+    @Test func routerModelContextLength_formatsCompactly() {
+        #expect(OsaurusRouterModel.formatContextLength(131072) == "131K")
+        #expect(OsaurusRouterModel.formatContextLength(8000) == "8K")
+        #expect(OsaurusRouterModel.formatContextLength(1_000_000) == "1M")
+        #expect(OsaurusRouterModel.formatContextLength(512) == "512")
+        #expect(OsaurusRouterModel.formatContextLength(0) == nil)
+    }
+
+    @Test func routerModelPickerDescription_omitsMissingPieces() throws {
+        // A model with no provider, blank pricing, and zero context should not
+        // emit empty separators or a dangling "ctx".
+        let data = Data(
+            """
+            {"data":[
+              {"id":"bare/model","provider":"","context_length":0,"capabilities":null,"input_micro_per_mtok":"0","output_micro_per_mtok":"0","input_display":"","output_display":"","stale":false}
+            ]}
+            """.utf8
+        )
+        let discovery = try RemoteProviderService.decodeOsaurusRouterModelsDiscovery(data: data)
+        let model = try #require(discovery.catalog["bare/model"])
+        #expect(model.pickerDescription == nil)
+        #expect(model.supportsVision == false)
     }
 
     @Test func routerSummaryFrame_isConsumedWithoutFinishingStream() {

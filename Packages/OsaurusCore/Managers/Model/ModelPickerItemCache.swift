@@ -147,19 +147,45 @@ final class ModelPickerItemCache: ObservableObject {
             options.append(.fromMLXModel(model))
         }
 
-        let remoteModels = RemoteProviderManager.shared.cachedAvailableModels()
+        let manager = RemoteProviderManager.shared
+        let remoteModels = manager.cachedAvailableModels()
         for providerInfo in remoteModels {
+            let isOsaurusRouter = providerInfo.providerId == RemoteProviderManager.osaurusRouterProviderId
             for modelId in providerInfo.models {
-                options.append(
-                    .fromRemoteModel(
-                        modelId: modelId,
-                        providerName: providerInfo.providerName,
-                        providerId: providerInfo.providerId
+                // Osaurus Router models carry pricing/provider/context metadata;
+                // enrich the picker row when we have it, otherwise fall back to a
+                // plain remote item (e.g. before the catalog has loaded).
+                if isOsaurusRouter,
+                    let metadata = manager.osaurusRouterMetadata(for: unprefixedRouterModelId(modelId))
+                {
+                    options.append(
+                        .fromOsaurusRouterModel(
+                            prefixedId: modelId,
+                            providerName: providerInfo.providerName,
+                            providerId: providerInfo.providerId,
+                            metadata: metadata
+                        )
                     )
-                )
+                } else {
+                    options.append(
+                        .fromRemoteModel(
+                            modelId: modelId,
+                            providerName: providerInfo.providerName,
+                            providerId: providerInfo.providerId
+                        )
+                    )
+                }
             }
         }
 
         return options
+    }
+
+    /// Strip the provider-name prefix that `cachedAvailableModels()` prepends
+    /// (e.g. "osaurus/venice/model-b" -> "venice/model-b") so it matches the
+    /// catalog key, which is the model's unprefixed id.
+    private static func unprefixedRouterModelId(_ prefixedId: String) -> String {
+        guard let slashIndex = prefixedId.firstIndex(of: "/") else { return prefixedId }
+        return String(prefixedId[prefixedId.index(after: slashIndex)...])
     }
 }

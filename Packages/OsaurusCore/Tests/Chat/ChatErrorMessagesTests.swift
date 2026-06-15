@@ -28,6 +28,22 @@ struct ChatErrorMessagesTests {
         )
     }
 
+    @Test func insufficientFundsGetsAddCreditsMessage() {
+        let error = NSError(
+            domain: "RemoteProviderService",
+            code: 402,
+            userInfo: [
+                NSLocalizedDescriptionKey:
+                    "Request failed: HTTP 402: {\"error\":{\"code\":\"INSUFFICIENT_FUNDS\",\"message\":\"balance below estimated max cost\"}}"
+            ]
+        )
+
+        let message = ChatErrorMessages.assistantMessage(for: error)
+
+        #expect(message.contains("out of Osaurus credits"))
+        #expect(message.contains("Add credits"))
+    }
+
     @Test func ordinaryRuntimeErrorsKeepOriginalText() {
         let error = NSError(
             domain: "ModelRuntime",

@@ -78,9 +78,36 @@ struct CreditsActivityProjectorTests {
         )
 
         #expect(row.matchQuality == .exactRequestId)
-        #expect(row.stateLabel == "Rendered")
+        #expect(row.stateLabel == "Completed")
+        #expect(row.stateDetail == nil)
         #expect(row.localReference?.turnUUID == turnId)
         #expect(row.insightsReference?.requestId == "run-abc:1")
+    }
+
+    @Test func toolOnlyOutcomeKeepsCompletedLabelWithSecondaryDetail() throws {
+        let row = try #require(
+            CreditsActivityProjector()
+                .rows(usageItems: [usage()], ledgerEntries: [ledger(outcome: .toolOnly)])
+                .first
+        )
+
+        #expect(row.stateLabel == "Completed")
+        #expect(row.stateDetail == "Tools only")
+    }
+
+    @Test func serverOnlyRowUsesUnifiedVocabularyWithoutDetail() throws {
+        let row = try #require(
+            CreditsActivityProjector()
+                .rows(
+                    usageItems: [usage(requestId: nil, status: "aborted")],
+                    ledgerEntries: []
+                )
+                .first
+        )
+
+        #expect(row.matchQuality == .none)
+        #expect(row.stateLabel == "Stopped")
+        #expect(row.stateDetail == nil)
     }
 
     @Test func missingInsightsLogHidesInsightsReferenceOnly() throws {

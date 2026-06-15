@@ -35,6 +35,11 @@ final class OsaurusRouterAccountService: ObservableObject {
         OsaurusRouter.formatMicroUSD(balance?.balanceMicro ?? "0")
     }
 
+    /// Current balance in micro-USD (0 when unknown or unparseable).
+    var balanceMicroValue: Int64 {
+        Int64(balance?.balanceMicro ?? "") ?? 0
+    }
+
     var isFrozen: Bool {
         balance?.frozen == true
     }

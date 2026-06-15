@@ -28,6 +28,36 @@ enum OsaurusRouter {
         let sign = isNegative ? "-" : ""
         return "\(sign)$\(dollars).\(String(format: "%02d", cents))"
     }
+
+    /// Like `formatMicroUSD` but keeps sub-cent precision so tiny per-request
+    /// charges don't all collapse to "$0.00". Two decimals at or above one cent,
+    /// four decimals below it, and "<$0.0001" for a non-zero amount smaller than
+    /// that. Intended for per-row cost display, not the headline balance.
+    static func formatMicroUSDPrecise(_ rawValue: String) -> String {
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let isNegative = trimmed.hasPrefix("-")
+        let unsigned = String(trimmed.drop { $0 == "-" || $0 == "+" })
+        guard let micro = Int64(unsigned), micro != 0 else { return "$0.00" }
+
+        let sign = isNegative ? "-" : ""
+        let dollars = Double(micro) / 1_000_000.0
+        if micro >= 10_000 {
+            return "\(sign)$\(String(format: "%.2f", dollars))"
+        }
+        if micro < 100 {
+            return "\(sign)<$0.0001"
+        }
+        return "\(sign)$\(String(format: "%.4f", dollars))"
+    }
+
+    /// True when a chat/stream error string indicates the router rejected the
+    /// request for lack of credits (HTTP 402 `INSUFFICIENT_FUNDS`). The
+    /// streaming path surfaces the raw server body inside a
+    /// `RemoteProviderServiceError.requestFailed("HTTP 402: {json}")` string,
+    /// so match the stable server error code rather than a localized message.
+    static func isInsufficientFundsError(_ message: String) -> Bool {
+        message.range(of: "INSUFFICIENT_FUNDS", options: .caseInsensitive) != nil
+    }
 }
 
 struct OsaurusRouterErrorEnvelope: Decodable {
@@ -122,6 +152,22 @@ struct OsaurusRouterModelDiscovery: Equatable, Sendable {
     let models: [String]
     let totalCount: Int
     let staleCount: Int
+    /// Full per-model metadata for the fresh (non-stale) models, keyed by the
+    /// unprefixed model id (matching `models`). Lets the picker show provider,
+    /// pricing, and context without re-fetching `/models`.
+    let catalog: [String: OsaurusRouterModel]
+
+    init(
+        models: [String],
+        totalCount: Int,
+        staleCount: Int,
+        catalog: [String: OsaurusRouterModel] = [:]
+    ) {
+        self.models = models
+        self.totalCount = totalCount
+        self.staleCount = staleCount
+        self.catalog = catalog
+    }
 }
 
 struct OsaurusRouterModel: Decodable, Identifiable, Equatable, Sendable {

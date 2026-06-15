@@ -19,6 +19,7 @@ struct CreditsView: View {
     @State private var isLoadingLedger = false
     @State private var isExportingDiagnostics = false
     @State private var diagnosticsMessage: String?
+    @State private var showTopUpSheet = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -55,12 +56,16 @@ struct CreditsView: View {
                 hasAppeared = true
             }
         }
+        .sheet(isPresented: $showTopUpSheet) {
+            CreditsTopUpSheet()
+                .environment(\.theme, themeManager.currentTheme)
+        }
     }
 
     private var headerView: some View {
         ManagerHeaderWithActions(
             title: L("Credits"),
-            subtitle: L("Load balance for Osaurus Router usage")
+            subtitle: L("Add credits and see what each Osaurus Router request costs.")
         ) {
             HeaderIconButton(
                 "arrow.clockwise",
@@ -69,11 +74,11 @@ struct CreditsView: View {
             ) {
                 Task { await refreshCredits(resetPages: true) }
             }
-            HeaderPrimaryButton("Load credits", icon: "creditcard.fill") {
-                Task { await openCheckout() }
+            HeaderPrimaryButton("Add credits", icon: "creditcard.fill") {
+                showTopUpSheet = true
             }
-            .disabled(!OsaurusIdentity.exists() || accountService.isCreatingCheckout)
-            .opacity((!OsaurusIdentity.exists() || accountService.isCreatingCheckout) ? 0.55 : 1)
+            .disabled(!OsaurusIdentity.exists())
+            .opacity(!OsaurusIdentity.exists() ? 0.55 : 1)
         }
     }
 
@@ -133,14 +138,14 @@ struct CreditsView: View {
                     Spacer()
 
                     if accountService.isFrozen {
-                        statusPill("Frozen", icon: "pause.circle.fill", color: theme.warningColor)
+                        statusPill("On hold", icon: "pause.circle.fill", color: theme.warningColor)
                     } else {
                         statusPill("Active", icon: "checkmark.circle.fill", color: theme.successColor)
                     }
                 }
 
                 Text(
-                    "Load credits to route requests through Osaurus when you want cloud models or provider load balancing.",
+                    "Credits pay for cloud models and provider load-balancing routed through Osaurus.",
                     bundle: .module
                 )
                 .font(.system(size: 12))
@@ -161,9 +166,9 @@ struct CreditsView: View {
                             .scaleEffect(0.7)
                     }
                     Button {
-                        Task { await openCheckout() }
+                        showTopUpSheet = true
                     } label: {
-                        Label("Load $5.00", systemImage: "creditcard.fill")
+                        Label("Add credits", systemImage: "creditcard.fill")
                     }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.small)
@@ -187,11 +192,11 @@ struct CreditsView: View {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(alignment: .top, spacing: 12) {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Credits activity", bundle: .module)
+                        Text("Recent activity", bundle: .module)
                             .font(.system(size: 15, weight: .semibold))
                             .foregroundColor(theme.primaryText)
                         Text(
-                            "Account-wide router usage, with a chat reference when this device has the matching local record.",
+                            "Requests routed through Osaurus, newest first. Open the chat or Insights when this Mac has the matching copy.",
                             bundle: .module
                         )
                         .font(.system(size: 12))
@@ -200,8 +205,6 @@ struct CreditsView: View {
                     }
 
                     Spacer()
-
-                    activityCountPill
 
                     Button {
                         exportDiagnostics()
@@ -220,7 +223,7 @@ struct CreditsView: View {
                 if currentActivityRows.isEmpty {
                     emptyActivityState
                 } else {
-                    activityTable
+                    activityList
                     activityPaginationControls
                 }
 
@@ -234,24 +237,9 @@ struct CreditsView: View {
         }
     }
 
-    private var activityCountPill: some View {
-        Text(verbatim: activityCountLabel)
-            .font(.system(size: 12, weight: .semibold))
-            .foregroundColor(theme.secondaryText)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(Capsule().fill(theme.tertiaryBackground))
-    }
-
-    private var activityCountLabel: String {
-        let suffix = accountService.nextUsageCursor == nil ? "" : "+"
-        return "\(accountService.usage.count)\(suffix)"
-    }
-
-    private var activityTable: some View {
+    private var activityList: some View {
         let rows = currentActivityRows
         return VStack(spacing: 0) {
-            activityHeader
             ForEach(rows) { row in
                 activityRow(row)
                 if row.id != rows.last?.id {
@@ -266,20 +254,6 @@ struct CreditsView: View {
         )
     }
 
-    private var activityHeader: some View {
-        HStack(spacing: 12) {
-            tableHeader("Model", width: nil)
-            tableHeader("Tokens", width: 90)
-            tableHeader("Cost", width: 80)
-            tableHeader("Result", width: 110)
-            tableHeader("Time", width: 120)
-            tableHeader("References", width: 150)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(theme.tertiaryBackground)
-    }
-
     private var emptyActivityState: some View {
         VStack(spacing: 10) {
             if isLoadingCurrentActivity {
@@ -290,11 +264,11 @@ struct CreditsView: View {
                     .font(.system(size: 24))
                     .foregroundColor(theme.tertiaryText)
             }
-            Text("No usage yet", bundle: .module)
+            Text("No requests yet", bundle: .module)
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundColor(theme.primaryText)
             Text(
-                "Calls made through the Osaurus provider will appear here with cost, token details, and a local chat link when this device recorded one.",
+                "When you use an Osaurus Router model, each request shows up here with its cost and tokens. If this Mac made the request, you can jump to the chat or Insights.",
                 bundle: .module
             )
             .font(.system(size: 12))
@@ -328,6 +302,8 @@ struct CreditsView: View {
             } label: {
                 if isLoadingCurrentActivity {
                     ProgressView().scaleEffect(0.7)
+                } else if canLoadMoreFromServer {
+                    Label("Load more", systemImage: "arrow.down.circle")
                 } else {
                     Label("Next", systemImage: "chevron.right")
                 }
@@ -366,60 +342,102 @@ struct CreditsView: View {
         return nextStart < accountService.usage.count || accountService.nextUsageCursor != nil
     }
 
+    /// True only when the next page isn't already loaded but the server says more
+    /// rows exist — i.e. the advance button should fetch instead of just paging.
+    private var canLoadMoreFromServer: Bool {
+        let nextStart = (usagePageIndex + 1) * Self.activityPageSize
+        return nextStart >= accountService.usage.count && accountService.nextUsageCursor != nil
+    }
+
+    /// Honest range over what we've actually loaded. The router never returns a
+    /// true total, so "loaded" makes clear more may exist behind "Load more"
+    /// rather than implying a misleading grand total.
     private var usageRangeLabel: String {
         let loaded = accountService.usage.count
-        guard loaded > 0 else { return L("No rows") }
+        guard loaded > 0 else { return "" }
         let start = usagePageIndex * Self.activityPageSize
         let end = min(start + currentActivityRows.count, loaded)
-        let suffix = accountService.nextUsageCursor == nil ? "" : "+"
-        return "\(start + 1)-\(end) of \(loaded)\(suffix)"
+        if accountService.nextUsageCursor != nil {
+            return L("Showing \(start + 1)-\(end) of \(loaded) loaded")
+        }
+        return L("Showing \(start + 1)-\(end) of \(loaded)")
     }
 
     private func activityRow(_ row: CreditsActivityRow) -> some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(verbatim: row.model)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-                    .lineLimit(1)
-                if let detail = row.detail, !detail.isEmpty {
-                    Text(verbatim: detail)
+        HStack(alignment: .top, spacing: 12) {
+            Circle()
+                .fill(stateColor(row.stateKind))
+                .frame(width: 8, height: 8)
+                .padding(.top, 5)
+
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 8) {
+                    modelName(for: row)
+                    outcomeBadge(for: row)
+                }
+
+                if !row.metadataLine.isEmpty {
+                    Text(verbatim: row.metadataLine)
                         .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
+                        .foregroundColor(theme.secondaryText)
                         .lineLimit(1)
                 }
+
+                HStack(spacing: 14) {
+                    Text(verbatim: row.tokensLine)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundColor(theme.tertiaryText)
+                    referenceLinks(for: row)
+                }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
 
-            Text(verbatim: "\(row.inputTokens) / \(row.outputTokens)")
-                .font(.system(size: 12, design: .monospaced))
-                .foregroundColor(theme.secondaryText)
-                .frame(width: 90, alignment: .leading)
+            Spacer(minLength: 12)
 
-            Text(verbatim: OsaurusRouter.formatMicroUSD(row.costMicro))
-                .font(.system(size: 12, weight: .medium))
+            Text(verbatim: OsaurusRouter.formatMicroUSDPrecise(row.costMicro))
+                .font(.system(size: 14, weight: .semibold, design: .rounded))
                 .foregroundColor(theme.primaryText)
-                .frame(width: 80, alignment: .leading)
-
-            stateBadge(row.stateLabel, kind: row.stateKind)
-                .frame(width: 110, alignment: .leading)
-
-            Text(verbatim: row.createdAtLabel)
-                .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText)
-                .frame(width: 120, alignment: .leading)
-
-            referenceCell(for: row)
-                .frame(width: 150, alignment: .leading)
+                .monospacedDigit()
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
         .background(theme.cardBackground)
     }
 
     @ViewBuilder
-    private func referenceCell(for row: CreditsActivityRow) -> some View {
-        HStack(spacing: 10) {
+    private func modelName(for row: CreditsActivityRow) -> some View {
+        if let name = row.modelDisplay {
+            Text(verbatim: name)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(theme.primaryText)
+                .lineLimit(1)
+                .truncationMode(.middle)
+        } else {
+            Text("Unknown model", bundle: .module)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(theme.secondaryText)
+                .lineLimit(1)
+        }
+    }
+
+    private func outcomeBadge(for row: CreditsActivityRow) -> some View {
+        HStack(spacing: 4) {
+            Text(LocalizedStringKey(row.stateLabel), bundle: .module)
+            if let detail = row.stateDetail, !detail.isEmpty {
+                Text(verbatim: "·")
+                Text(LocalizedStringKey(detail), bundle: .module)
+            }
+        }
+        .font(.system(size: 10, weight: .medium))
+        .foregroundColor(stateColor(row.stateKind))
+        .padding(.horizontal, 7)
+        .padding(.vertical, 2)
+        .background(Capsule().fill(stateColor(row.stateKind).opacity(0.12)))
+        .fixedSize()
+    }
+
+    @ViewBuilder
+    private func referenceLinks(for row: CreditsActivityRow) -> some View {
+        HStack(spacing: 14) {
             if let reference = row.localReference {
                 Button {
                     openLocalReference(reference)
@@ -446,15 +464,6 @@ struct CreditsView: View {
                 .help(reference.insightsHelpText)
             }
         }
-    }
-
-    private func stateBadge(_ title: String, kind: CreditsActivityStateKind) -> some View {
-        Text(LocalizedStringKey(title), bundle: .module)
-            .font(.system(size: 11, weight: .medium))
-            .foregroundColor(stateColor(kind))
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
-            .background(Capsule().fill(stateColor(kind).opacity(0.12)))
     }
 
     private func stateColor(_ kind: CreditsActivityStateKind) -> Color {
@@ -529,18 +538,6 @@ struct CreditsView: View {
 
     // MARK: - Shared view helpers
 
-    @ViewBuilder
-    private func tableHeader(_ title: String, width: CGFloat?) -> some View {
-        let label = Text(LocalizedStringKey(title), bundle: .module)
-            .font(.system(size: 11, weight: .semibold))
-            .foregroundColor(theme.tertiaryText)
-        if let width {
-            label.frame(width: width, alignment: .leading)
-        } else {
-            label.frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-
     private func statusPill(_ title: String, icon: String, color: Color) -> some View {
         Label(title, systemImage: icon)
             .font(.system(size: 12, weight: .semibold))
@@ -596,11 +593,6 @@ struct CreditsView: View {
 
         ledgerEntries = result.rows
         ledgerTotalCount = result.total
-    }
-
-    private func openCheckout() async {
-        guard let url = await accountService.createCheckout() else { return }
-        NSWorkspace.shared.open(url)
     }
 
     /// Write a metadata-only diagnostics file via a save panel. Reads the public

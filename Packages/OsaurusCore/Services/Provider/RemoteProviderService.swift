@@ -3743,6 +3743,15 @@ extension RemoteProviderService {
     }
 
     private static func fetchOsaurusRouterModels(from provider: RemoteProvider) async throws -> [String] {
+        try await fetchOsaurusRouterModelsDiscovery(from: provider).models
+    }
+
+    /// Like `fetchOsaurusRouterModels` but returns the full discovery, including
+    /// the per-model metadata catalog, so callers (connect/refetch) can cache
+    /// pricing/provider/context for the picker without a second request.
+    static func fetchOsaurusRouterModelsDiscovery(
+        from provider: RemoteProvider
+    ) async throws -> OsaurusRouterModelDiscovery {
         guard let url = provider.url(for: "/models") else {
             throw RemoteProviderServiceError.invalidURL
         }
@@ -3781,7 +3790,7 @@ extension RemoteProviderService {
                 "[Osaurus] Router model discovery: \(discovery.models.count) fresh models (\(discovery.staleCount) stale hidden of \(discovery.totalCount) total)"
             )
         }
-        return discovery.models
+        return discovery
     }
 
     static func decodeOsaurusRouterModelsResponse(data: Data) throws -> [String] {
@@ -3790,11 +3799,14 @@ extension RemoteProviderService {
 
     static func decodeOsaurusRouterModelsDiscovery(data: Data) throws -> OsaurusRouterModelDiscovery {
         let decoded = try JSONDecoder().decode(OsaurusRouterModelListResponse.self, from: data)
-        let freshModels = decoded.data.filter { !$0.stale }.map(\.id)
+        let freshModels = decoded.data.filter { !$0.stale }
+        let freshIds = freshModels.map(\.id)
+        let catalog = Dictionary(freshModels.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         return OsaurusRouterModelDiscovery(
-            models: freshModels,
+            models: freshIds,
             totalCount: decoded.data.count,
-            staleCount: decoded.data.count - freshModels.count
+            staleCount: decoded.data.count - freshIds.count,
+            catalog: catalog
         )
     }
 

@@ -126,6 +126,9 @@ struct CreditsActivityRow: Identifiable, Equatable {
     let outputTokens: Int
     let costMicro: String
     let stateLabel: String
+    /// Secondary nuance shown only for locally-matched rows (e.g. "Tools only").
+    /// `nil` keeps server-only rows on the single shared vocabulary.
+    let stateDetail: String?
     let stateKind: CreditsActivityStateKind
     let createdAtLabel: String
     let localReference: CreditsActivityReference?
@@ -147,15 +150,19 @@ extension CreditsActivityRow {
         self.costMicro = item.costMicro
         if let match {
             let ledgerEntry = match.entry
-            self.stateLabel = Self.outcomeLabel(ledgerEntry.outcome)
-            self.stateKind = Self.outcomeKind(ledgerEntry.outcome)
+            let state = Self.state(for: ledgerEntry.outcome)
+            self.stateLabel = state.label
+            self.stateDetail = state.detail
+            self.stateKind = state.kind
             let reference = CreditsActivityReference(ledgerEntry)
             self.localReference = reference?.sessionUUID == nil ? nil : reference
             self.insightsReference = insightsReference
             self.matchQuality = match.quality
         } else {
-            self.stateLabel = item.status.capitalized
-            self.stateKind = Self.statusKind(item.status)
+            let state = Self.state(forStatus: item.status)
+            self.stateLabel = state.label
+            self.stateDetail = nil
+            self.stateKind = state.kind
             self.localReference = nil
             self.insightsReference = insightsReference
             self.matchQuality = .none
@@ -168,40 +175,66 @@ extension CreditsActivityRow {
         return date.formatted(date: .abbreviated, time: .shortened)
     }
 
-    private static func outcomeLabel(_ outcome: RouterBillingOutcome) -> String {
+    /// Map a finalized local outcome onto the shared display vocabulary. The
+    /// nuance the ledger captured (reasoning-only, tools-only) rides along as an
+    /// optional secondary tag so the primary word matches server-only rows.
+    private static func state(
+        for outcome: RouterBillingOutcome
+    ) -> (label: String, detail: String?, kind: CreditsActivityStateKind) {
         switch outcome {
-        case .pending: return "Pending"
-        case .rendered: return "Rendered"
-        case .reasoningOnly: return "Reasoning only"
-        case .toolOnly: return "Tools only"
-        case .empty: return "No reply"
-        case .error: return "Error"
-        case .cancelled: return "Stopped"
+        case .pending: return ("Pending", nil, .secondary)
+        case .rendered: return ("Completed", nil, .success)
+        case .reasoningOnly: return ("Completed", "Reasoning only", .success)
+        case .toolOnly: return ("Completed", "Tools only", .success)
+        case .empty: return ("No reply", nil, .error)
+        case .error: return ("Error", nil, .error)
+        case .cancelled: return ("Stopped", nil, .warning)
         }
     }
 
-    private static func outcomeKind(_ outcome: RouterBillingOutcome) -> CreditsActivityStateKind {
-        switch outcome {
-        case .rendered, .reasoningOnly, .toolOnly:
-            return .success
-        case .pending:
-            return .secondary
-        case .empty, .error:
-            return .error
-        case .cancelled:
-            return .warning
-        }
-    }
-
-    private static func statusKind(_ status: String) -> CreditsActivityStateKind {
+    /// Map a raw server status onto the same vocabulary used for local outcomes,
+    /// so a row reads the same whether or not this device has the local record.
+    private static func state(
+        forStatus status: String
+    ) -> (label: String, kind: CreditsActivityStateKind) {
         switch status.lowercased() {
-        case "completed":
-            return .success
-        case "aborted", "cancelled", "canceled":
-            return .warning
+        case "completed", "complete", "succeeded", "success", "ok":
+            return ("Completed", .success)
+        case "pending", "processing", "in_progress", "running", "queued":
+            return ("Pending", .secondary)
+        case "aborted", "cancelled", "canceled", "stopped":
+            return ("Stopped", .warning)
+        case "empty", "no_reply", "no-reply":
+            return ("No reply", .error)
         default:
-            return .error
+            return ("Error", .error)
         }
+    }
+}
+
+extension CreditsActivityRow {
+    /// Best available human label for the request. Prefers the model id, falls
+    /// back to the provider, and is `nil` only when both are empty so the view
+    /// can show a localized placeholder.
+    var modelDisplay: String? {
+        if !model.isEmpty { return model }
+        if let detail, !detail.isEmpty { return detail }
+        return nil
+    }
+
+    /// Provider and time for the row's secondary line. Provider is included only
+    /// when the model is the primary label, to avoid repeating it as both.
+    var metadataLine: String {
+        var parts: [String] = []
+        if !model.isEmpty, let detail, !detail.isEmpty {
+            parts.append(detail)
+        }
+        parts.append(createdAtLabel)
+        return parts.joined(separator: " · ")
+    }
+
+    var tokensLine: String {
+        "\(inputTokens.formatted()) in / \(outputTokens.formatted()) out"
     }
 }
 

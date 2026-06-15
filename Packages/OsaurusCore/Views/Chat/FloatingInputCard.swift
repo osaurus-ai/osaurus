@@ -36,6 +36,10 @@ struct FloatingInputCard: View {
     let estimatedContextTokens: Int
     /// Per-category breakdown of context token usage
     var contextBreakdown: ContextBreakdown = .zero
+    /// Total micro-USD spent on the Osaurus Router this session.
+    var sessionSpendMicro: Int = 0
+    /// Whether to show the session spend chip (true only for Osaurus Router sessions).
+    var showSessionSpend: Bool = false
     let onSend: (String?) -> Void
     let onStop: () -> Void
     /// Trigger to focus the input field (increment to focus)
@@ -65,6 +69,8 @@ struct FloatingInputCard: View {
     var onSendNow: (() -> Void)?
     /// Discard the queued send without sending it. Called by the chip's ×.
     var onCancelQueued: (() -> Void)?
+    /// Invoked when the user taps the credits chip (opens the top-up sheet).
+    var onAddCredits: (() -> Void)?
 
     init(
         text: Binding<String>,
@@ -80,6 +86,8 @@ struct FloatingInputCard: View {
         supportsImages: Bool,
         estimatedContextTokens: Int,
         contextBreakdown: ContextBreakdown = .zero,
+        sessionSpendMicro: Int = 0,
+        showSessionSpend: Bool = false,
         onSend: @escaping (String?) -> Void,
         onStop: @escaping () -> Void,
         focusTrigger: Int = 0,
@@ -92,7 +100,8 @@ struct FloatingInputCard: View {
         autoSpeakAssistant: Binding<Bool> = .constant(false),
         queuedSend: Binding<QueuedSend?> = .constant(nil),
         onSendNow: (() -> Void)? = nil,
-        onCancelQueued: (() -> Void)? = nil
+        onCancelQueued: (() -> Void)? = nil,
+        onAddCredits: (() -> Void)? = nil
     ) {
         self._text = text
         self._selectedModel = selectedModel
@@ -107,6 +116,8 @@ struct FloatingInputCard: View {
         self.supportsImages = supportsImages
         self.estimatedContextTokens = estimatedContextTokens
         self.contextBreakdown = contextBreakdown
+        self.sessionSpendMicro = sessionSpendMicro
+        self.showSessionSpend = showSessionSpend
         self.onSend = onSend
         self.onStop = onStop
         self.focusTrigger = focusTrigger
@@ -120,6 +131,7 @@ struct FloatingInputCard: View {
         self._queuedSend = queuedSend
         self.onSendNow = onSendNow
         self.onCancelQueued = onCancelQueued
+        self.onAddCredits = onAddCredits
     }
 
     // Observe managers for reactive updates
@@ -128,6 +140,9 @@ struct FloatingInputCard: View {
     @ObservedObject private var sandboxState = SandboxManager.State.shared
     @ObservedObject private var clipboardService = ClipboardService.shared
     @ObservedObject private var appConfig = AppConfiguration.shared
+    /// Drives the composer credits chip (balance + low-balance tinting) for
+    /// Osaurus Router sessions.
+    @ObservedObject private var accountService = OsaurusRouterAccountService.shared
 
     // MARK: - Slash Command State
 
@@ -1520,9 +1535,86 @@ extension FloatingInputCard {
 
             Spacer()
 
+            // Osaurus Router credits (right-aligned, before context). Shown for
+            // every router session so the balance is always visible; the
+            // per-session spend appears as a suffix once the first charge lands.
+            if showSessionSpend {
+                creditsChip
+            }
+
             // Context size indicator (right-aligned)
             if displayContextTokens > 0 {
                 contextIndicatorChip
+            }
+        }
+    }
+
+    // MARK: - Credits Indicator
+
+    /// Tint for the credits chip: red when out of credits or the account is
+    /// frozen, amber when low (< $1.00), nil (default text colors) otherwise.
+    private var creditsChipTint: Color? {
+        let micro = accountService.balanceMicroValue
+        if micro <= 0 || accountService.isFrozen {
+            return theme.errorColor
+        }
+        if micro < 1_000_000 {  // < $1.00
+            return theme.warningColor
+        }
+        return nil
+    }
+
+    /// Combined "balance + this-session spend" chip for Osaurus Router sessions.
+    /// Balance is primary (with low-balance tinting); the per-session spend is a
+    /// secondary suffix once a charge lands. Tapping opens the top-up sheet, and
+    /// the balance best-effort refreshes on appear so it isn't blank.
+    @ViewBuilder
+    private var creditsChip: some View {
+        let tint = creditsChipTint
+        Button {
+            onAddCredits?()
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "creditcard")
+                    .font(.system(size: CGFloat(theme.captionSize) - 2))
+                    .foregroundColor(tint ?? theme.tertiaryText)
+
+                Text(verbatim: accountService.formattedBalance)
+                    .font(
+                        .system(
+                            size: CGFloat(theme.captionSize) - 1,
+                            weight: .medium,
+                            design: .monospaced
+                        )
+                    )
+                    .foregroundColor(tint ?? theme.secondaryText)
+
+                if !isCompact && sessionSpendMicro > 0 {
+                    Text(
+                        verbatim:
+                            "· \(OsaurusRouter.formatMicroUSDPrecise(String(sessionSpendMicro)))"
+                    )
+                    .font(
+                        .system(
+                            size: CGFloat(theme.captionSize) - 1,
+                            weight: .regular,
+                            design: .monospaced
+                        )
+                    )
+                    .foregroundColor(theme.tertiaryText.opacity(0.85))
+
+                    Text("this session", bundle: .module)
+                        .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .regular))
+                        .foregroundColor(theme.tertiaryText.opacity(0.7))
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .localizedHelp("Your Osaurus balance. Click to add credits.")
+        .task(id: showSessionSpend) {
+            if showSessionSpend {
+                await accountService.refreshBalance()
             }
         }
     }

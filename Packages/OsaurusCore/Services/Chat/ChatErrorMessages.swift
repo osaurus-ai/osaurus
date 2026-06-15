@@ -3,6 +3,9 @@ import Foundation
 enum ChatErrorMessages {
     static func assistantMessage(for error: Error) -> String {
         let description = error.localizedDescription
+        if OsaurusRouter.isInsufficientFundsError(description) {
+            return "Error: You're out of Osaurus credits. Add credits to continue."
+        }
         if isSystemResourceExhaustion(description) {
             return
                 "Error: Ran out of system resources while running this model. Free memory, unload other models, or choose a smaller/more-quantized model, then try again."

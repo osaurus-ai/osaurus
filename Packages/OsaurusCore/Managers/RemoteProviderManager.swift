@@ -59,6 +59,12 @@ public final class RemoteProviderManager: ObservableObject {
     /// Provider IDs created from Bonjour discovery — not persisted to disk
     private var ephemeralProviderIds: Set<UUID> = []
 
+    /// Per-model metadata for the managed Osaurus Router, keyed by unprefixed
+    /// model id (e.g. "venice/model-b"). Captured from `/models` on
+    /// connect/refetch so the picker can show provider, pricing, and context
+    /// without a second request. Empty until the router connects.
+    private var osaurusRouterModelCatalog: [String: OsaurusRouterModel] = [:]
+
     private init() {
         self.configuration = RemoteProviderConfigurationStore.load()
         ensureManagedOsaurusRouterProviderIfNeeded()
@@ -292,6 +298,14 @@ public final class RemoteProviderManager: ObservableObject {
             do {
                 if let override = testFetchModelsOverride {
                     discoveredModels = try await override(provider)
+                } else if provider.providerType == .osaurusRouter {
+                    // The discovery variant also captures pricing/provider/context
+                    // metadata for the picker, in the same request.
+                    let discovery = try await RemoteProviderService.fetchOsaurusRouterModelsDiscovery(
+                        from: provider
+                    )
+                    discoveredModels = discovery.models
+                    osaurusRouterModelCatalog = discovery.catalog
                 } else {
                     discoveredModels = try await RemoteProviderService.fetchModels(from: provider)
                 }
@@ -369,6 +383,9 @@ public final class RemoteProviderManager: ObservableObject {
         }
 
         if let provider = configuration.provider(id: providerId) {
+            if provider.providerType == .osaurusRouter {
+                osaurusRouterModelCatalog = [:]
+            }
             print("[Osaurus] Remote Provider '\(provider.name)': Disconnected")
         }
 
@@ -571,6 +588,14 @@ public final class RemoteProviderManager: ObservableObject {
         do {
             if let override = testFetchModelsOverride {
                 discovered = try await override(provider)
+            } else if provider.providerType == .osaurusRouter {
+                let discovery = try await RemoteProviderService.fetchOsaurusRouterModelsDiscovery(
+                    from: provider
+                )
+                discovered = discovery.models
+                // Refresh metadata even when the id set is unchanged: pricing or
+                // capabilities may have moved without a new/removed model.
+                osaurusRouterModelCatalog = discovery.catalog
             } else {
                 discovered = try await RemoteProviderService.fetchModels(from: provider)
             }
@@ -671,6 +696,16 @@ public final class RemoteProviderManager: ObservableObject {
         }
 
         return result
+    }
+
+    /// Metadata for an Osaurus Router model by its unprefixed id (the id as it
+    /// appears in `discoveredModels`, e.g. "venice/model-b"). Returns nil for
+    /// non-router models or before the router has connected.
+    ///
+    /// Intentionally `internal`: `OsaurusRouterModel` is an internal type, and
+    /// the only caller (`ModelPickerItemCache`) lives in this module.
+    func osaurusRouterMetadata(for unprefixedModelId: String) -> OsaurusRouterModel? {
+        osaurusRouterModelCatalog[unprefixedModelId]
     }
 
     /// Find the service that handles a given model
@@ -942,6 +977,7 @@ public final class RemoteProviderManager: ObservableObject {
             }
         }
         refreshConnectedTask = nil
+        osaurusRouterModelCatalog = [:]
         testFetchModelsOverride = nil
         testIdentityExistsOverride = nil
         testRetrySleepOverride = nil

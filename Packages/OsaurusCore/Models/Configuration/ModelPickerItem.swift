@@ -133,19 +133,93 @@ extension ModelPickerItem {
         providerName: String,
         providerId: UUID
     ) -> ModelPickerItem {
-        // Remote model IDs are prefixed like "provider-name/model-id"
-        let displayName: String
-        if let slashIndex = modelId.lastIndex(of: "/") {
-            displayName = String(modelId[modelId.index(after: slashIndex)...])
-        } else {
-            displayName = modelId
-        }
-
-        return ModelPickerItem(
+        ModelPickerItem(
             id: modelId,
-            displayName: displayName,
+            displayName: displayName(fromModelId: modelId),
             source: .remote(providerName: providerName, providerId: providerId)
         )
+    }
+
+    /// Create an Osaurus Router model picker item enriched with the router's
+    /// per-model metadata (underlying provider, pricing, context, capabilities).
+    /// The metadata is rendered in the picker row's existing second line via
+    /// `description`, so no table-layout changes are needed.
+    static func fromOsaurusRouterModel(
+        prefixedId: String,
+        providerName: String,
+        providerId: UUID,
+        metadata: OsaurusRouterModel
+    ) -> ModelPickerItem {
+        ModelPickerItem(
+            id: prefixedId,
+            displayName: displayName(fromModelId: prefixedId),
+            source: .remote(providerName: providerName, providerId: providerId),
+            isVLM: metadata.supportsVision,
+            description: metadata.pickerDescription
+        )
+    }
+
+    /// Short display name from a (possibly provider-prefixed) model id: the
+    /// segment after the last "/", e.g. "osaurus/venice/model-b" -> "model-b".
+    private static func displayName(fromModelId id: String) -> String {
+        guard let slashIndex = id.lastIndex(of: "/") else { return id }
+        return String(id[id.index(after: slashIndex)...])
+    }
+}
+
+// MARK: - Osaurus Router metadata presentation
+
+extension OsaurusRouterModel {
+    /// Compact one-line summary for the model picker: underlying provider,
+    /// input/output price, and context window. e.g.
+    /// "venice · $2.00/M in · $4.00/M out · 131K ctx".
+    var pickerDescription: String? {
+        var parts: [String] = []
+
+        let trimmedProvider = provider.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedProvider.isEmpty {
+            parts.append(trimmedProvider)
+        }
+
+        let input = inputDisplay.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !input.isEmpty {
+            parts.append("\(input) in")
+        }
+
+        let output = outputDisplay.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !output.isEmpty {
+            parts.append("\(output) out")
+        }
+
+        if let context = Self.formatContextLength(contextLength) {
+            parts.append("\(context) ctx")
+        }
+
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    /// True when the model advertises a vision/image capability, so the picker
+    /// can show its "Vision" badge. Capability keys vary, so match common ones.
+    var supportsVision: Bool {
+        guard let capabilities else { return false }
+        let visionKeys: Set<String> = ["vision", "image", "images", "multimodal"]
+        return capabilities.contains { key, value in
+            value && visionKeys.contains(key.lowercased())
+        }
+    }
+
+    /// Human-friendly context window (e.g. 131072 -> "131K", 1048576 -> "1M").
+    static func formatContextLength(_ context: Int) -> String? {
+        guard context > 0 else { return nil }
+        if context >= 1_000_000 {
+            let millions = Double(context) / 1_000_000
+            let format = millions == millions.rounded() ? "%.0fM" : "%.1fM"
+            return String(format: format, millions)
+        }
+        if context >= 1000 {
+            return "\(context / 1000)K"
+        }
+        return "\(context)"
     }
 }
 
