@@ -33,9 +33,16 @@ import Testing
         let medium = Attachment.estimatedImageTokens(pixelWidth: 768, pixelHeight: 768)
         #expect(small >= 256)
         #expect(medium > small)
-        // A huge image is downscaled by the processor, so token cost saturates
-        // at the ceiling rather than growing unbounded.
-        #expect(Attachment.estimatedImageTokens(pixelWidth: 8000, pixelHeight: 6000) == 4096)
+        // A huge image is downscaled to the processor's long-side budget before
+        // patchifying, so token cost saturates (driven by the resize, not raw
+        // resolution) and stays bounded — it does NOT grow with pixel count.
+        let huge = Attachment.estimatedImageTokens(pixelWidth: 8000, pixelHeight: 6000)
+        #expect(huge <= 4096)
+        // Same 4:3 image gives the same estimate whether passed at 8000×6000 or
+        // already at the 1536-px-long-side it resizes to.
+        #expect(huge == Attachment.estimatedImageTokens(pixelWidth: 1536, pixelHeight: 1152))
+        // And a larger image never costs more than a smaller one past the budget.
+        #expect(huge >= medium)
     }
 
     @Test func invalidDimensionsFallBackToDefault() {
