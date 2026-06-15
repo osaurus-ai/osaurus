@@ -1531,7 +1531,7 @@ extension FloatingInputCard {
 
     @ViewBuilder
     private var contextIndicatorChip: some View {
-        HStack(spacing: 4) {
+        HStack(alignment: .firstTextBaseline, spacing: 4) {
             // Budget-state tinting: amber at ≥85% of the window (soft
             // warning — compaction will engage), red when the
             // non-compactable prefix alone can't fit (send is gated).
