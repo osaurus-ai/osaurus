@@ -179,8 +179,9 @@ struct InlineTodoBlock: View {
     }
 
     private var pillRow: some View {
-        HStack(spacing: Layout.interItemSpacing) {
+        HStack(alignment: .firstTextBaseline, spacing: Layout.interItemSpacing) {
             Image(systemName: "checklist")
+                .font(theme.font(size: CGFloat(theme.bodySize)))
                 .foregroundColor(theme.accentColor)
 
             Text(localized: "Todo")
