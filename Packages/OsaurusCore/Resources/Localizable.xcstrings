@@ -9697,6 +9697,9 @@
         }
       }
     },
+    "Cheapest first" : {
+
+    },
     "Check for app updates" : {
       "localizations" : {
         "de" : {
@@ -12203,6 +12206,9 @@
           }
         }
       }
+    },
+    "Context limit" : {
+
     },
     "Context window for remote models" : {
       "extractionState" : "manual",
@@ -22333,6 +22339,9 @@
           }
         }
       }
+    },
+    "Highest first" : {
+
     },
     "History" : {
       "localizations" : {
@@ -43180,6 +43189,9 @@
         }
       }
     },
+    "Router Balance" : {
+      "comment" : "Header of the chat composer router-balance popover."
+    },
     "Routes" : {
       "localizations" : {
         "de" : {
@@ -43211,9 +43223,6 @@
           }
         }
       }
-    },
-    "Router Balance" : {
-      "comment" : "Header of the chat composer router-balance popover."
     },
     "Rules" : {
       "comment" : "Title of one of the Privacy tab sections.",
@@ -48410,6 +48419,9 @@
         }
       }
     },
+    "Sort and filter" : {
+
+    },
     "Sort by" : {
       "localizations" : {
         "de" : {
@@ -48425,6 +48437,9 @@
           }
         }
       }
+    },
+    "Sort by price" : {
+
     },
     "Sort models" : {
       "localizations" : {

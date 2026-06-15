@@ -16,6 +16,10 @@ struct ModelPickerView: View {
 
     @State private var searchText = ""
     @State private var selectedTabKey: String?
+    @State private var sortOrder: ModelPickerSortOrder = .default
+    @State private var contextFilter: ModelPickerContextFilter = .any
+    @State private var visionFilter: ModelPickerVisionFilter = .any
+    @State private var showSortPopover = false
     @Environment(\.theme) private var theme
 
     // MARK: - Test Mode
@@ -88,7 +92,17 @@ struct ModelPickerView: View {
             guard let key = effectiveSelectedTabKey(in: tabs),
                 let tab = tabs.first(where: { $0.key == key })
             else { return [] }
-            return makeRows(for: tab)
+            // Context filtering and price sorting only apply to the Osaurus
+            // tab, whose models carry context/pricing metadata; other tabs keep
+            // their existing alphabetical order. Both steps are no-ops at their
+            // default (`.any` / `.default`), so the pipeline is safe to always
+            // run for Osaurus.
+            guard tab.isOsaurus else { return makeRows(for: tab) }
+            let processed = tab.models
+                .filteredByContext(contextFilter)
+                .filteredByVision(visionFilter)
+                .sortedByPrice(sortOrder)
+            return makeRows(for: ModelPickerTab(key: tab.key, title: tab.title, models: processed))
         }
 
         return searchRows(in: tabs)
@@ -134,8 +148,12 @@ struct ModelPickerView: View {
     var body: some View {
         let tabs = currentTabs
         let rows = visibleRows(in: tabs)
+        // The sort control is offered only on the Osaurus tab (the only tab
+        // with pricing) and not while the cross-provider search is active.
+        let activeTab = tabs.first { $0.key == effectiveSelectedTabKey(in: tabs) }
+        let showSort = !isSearching && (activeTab?.isOsaurus ?? false)
         VStack(spacing: 0) {
-            header
+            header(showSort: showSort)
             Divider().background(theme.primaryBorder.opacity(0.3))
             searchField
             Divider().background(theme.primaryBorder.opacity(0.3))
@@ -204,7 +222,8 @@ struct ModelPickerView: View {
 
     // MARK: - Header
 
-    private var header: some View {
+    @ViewBuilder
+    private func header(showSort: Bool) -> some View {
         HStack(spacing: 8) {
             Text("Available Models", bundle: .module)
                 .font(.system(size: 13, weight: .semibold))
@@ -218,6 +237,10 @@ struct ModelPickerView: View {
                 .background(Capsule().fill(theme.secondaryBackground))
 
             Spacer()
+
+            if showSort {
+                sortButton
+            }
 
             Button(action: {
                 onDismiss()
@@ -245,6 +268,188 @@ struct ModelPickerView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
+    }
+
+    // MARK: - Sort Menu
+
+    private var sortButton: some View {
+        Button(action: { showSortPopover.toggle() }) {
+            Image(systemName: "arrow.up.arrow.down")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(theme.accentColor)
+                .frame(width: 22, height: 22)
+                .background(
+                    Circle()
+                        .strokeBorder(theme.accentColor.opacity(0.3), lineWidth: 1)
+                        .background(
+                            Circle().fill(theme.accentColor.opacity(isSortOrFilterActive ? 0.18 : 0.08))
+                        )
+                )
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .help(Text("Sort and filter", bundle: .module))
+        .popover(isPresented: $showSortPopover, arrowEdge: .bottom) {
+            sortPopoverView
+        }
+    }
+
+    /// Whether any non-default sort/filter is applied, used to highlight the
+    /// circular control so the user can tell at a glance the list is modified.
+    private var isSortOrFilterActive: Bool {
+        sortOrder != .default || contextFilter != .any || visionFilter != .any
+    }
+
+    private var sortPopoverView: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            sortSectionHeader(Text("Sort by price", bundle: .module))
+
+            sortRow(.default, Text("Default", bundle: .module), icon: "list.bullet")
+            sortRow(.priceLowToHigh, Text("Cheapest first", bundle: .module), icon: "arrow.up")
+            sortRow(.priceHighToLow, Text("Highest first", bundle: .module), icon: "arrow.down")
+
+            sortSectionHeader(Text("Context limit", bundle: .module))
+
+            FlowLayout(spacing: 8) {
+                ForEach(ModelPickerContextFilter.allCases) { option in
+                    FilterChip(label: option.label, isSelected: contextFilter == option) {
+                        contextFilter = option
+                    }
+                }
+            }
+            .padding(.horizontal, 12)
+
+            sortSectionHeader(Text("Vision", bundle: .module))
+
+            FlowLayout(spacing: 8) {
+                ForEach(ModelPickerVisionFilter.allCases) { option in
+                    FilterChip(label: option.label, isSelected: visionFilter == option) {
+                        visionFilter = option
+                    }
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.bottom, 12)
+        }
+        .frame(width: 240)
+        .background(theme.primaryBackground)
+        .environment(\.theme, theme)
+    }
+
+    private func sortSectionHeader(_ text: Text) -> some View {
+        text
+            .font(.system(size: 10, weight: .bold))
+            .tracking(0.6)
+            .foregroundColor(theme.tertiaryText)
+            .textCase(.uppercase)
+            .padding(.horizontal, 12)
+            .padding(.top, 12)
+            .padding(.bottom, 6)
+    }
+
+    private func sortRow(_ order: ModelPickerSortOrder, _ title: Text, icon: String) -> some View {
+        SortOptionRow(icon: icon, title: title, isSelected: sortOrder == order) {
+            sortOrder = order
+            showSortPopover = false
+        }
+    }
+
+    private struct SortOptionRow: View {
+        let icon: String
+        let title: Text
+        let isSelected: Bool
+        let action: () -> Void
+        @Environment(\.theme) private var theme
+        @State private var isHovering = false
+
+        var body: some View {
+            Button(action: action) {
+                HStack(spacing: 10) {
+                    Image(systemName: icon)
+                        .font(.system(size: 12, weight: .medium))
+                        .frame(width: 16)
+                        .foregroundColor(isSelected ? theme.accentColor : theme.secondaryText)
+                    title
+                        .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
+                        .foregroundColor(isSelected ? theme.accentColor : theme.primaryText)
+                    Spacer(minLength: 0)
+                    if isSelected {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundColor(theme.accentColor)
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(
+                            isSelected
+                                ? theme.accentColor.opacity(0.12)
+                                : (isHovering
+                                    ? theme.tertiaryBackground.opacity(0.7)
+                                    : Color.clear)
+                        )
+                )
+                .padding(.horizontal, 6)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .onHover { hovering in
+                withAnimation(.easeOut(duration: 0.12)) {
+                    isHovering = hovering
+                }
+            }
+        }
+    }
+
+    private struct FilterChip: View {
+        let label: String
+        let isSelected: Bool
+        let action: () -> Void
+        @Environment(\.theme) private var theme
+        @State private var isHovering = false
+
+        var body: some View {
+            Button(action: action) {
+                HStack(spacing: 4) {
+                    if isSelected {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 9, weight: .bold))
+                    }
+                    Text(label)
+                        .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(
+                    RoundedRectangle(cornerRadius: 16)
+                        .fill(
+                            isSelected
+                                ? theme.accentColor.opacity(0.15)
+                                : (isHovering
+                                    ? theme.tertiaryBackground.opacity(0.7)
+                                    : theme.tertiaryBackground.opacity(0.4))
+                        )
+                )
+                .foregroundColor(isSelected ? theme.accentColor : theme.secondaryText)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16)
+                        .stroke(
+                            isSelected
+                                ? theme.accentColor.opacity(0.45)
+                                : theme.primaryBorder.opacity(0.1),
+                            lineWidth: 1
+                        )
+                )
+            }
+            .buttonStyle(.plain)
+            .onHover { hovering in
+                withAnimation(.easeOut(duration: 0.12)) {
+                    isHovering = hovering
+                }
+            }
+        }
     }
 
     // MARK: - Search Field

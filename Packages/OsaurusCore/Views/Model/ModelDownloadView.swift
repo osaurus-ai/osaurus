@@ -105,6 +105,11 @@ struct ModelDownloadView: View {
     /// Import-from-Hugging-Face sheet state
     @State private var showImportSheet = false
 
+    /// Index of the leading Top Picks card the edge arrows scroll to. Desktop
+    /// mice can't scroll horizontally, so the carousel is driven by these
+    /// buttons; the index is clamped to the model count on every step.
+    @State private var topPicksIndex = 0
+
     /// Cached output of `gridLists`. We used to recompute four filter +
     /// sort passes from a body computed property, which would re-run on
     /// every `modelManager.objectWillChange` publish (one per download
@@ -671,23 +676,79 @@ struct ModelDownloadView: View {
     /// Single-row, horizontally scrolling strip of curated top picks shown
     /// at the top of the Catalog when the user isn't searching or filtering.
     private func topPicksCarousel(_ models: [MLXModel]) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+        let ids = models.map(\.id)
+        // One card width plus the LazyHStack spacing — each arrow press advances
+        // by roughly one viewport, anchoring the target card to the leading edge.
+        let step = 2
+        return VStack(alignment: .leading, spacing: 12) {
             Text("Top Picks", bundle: .module)
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundColor(theme.tertiaryText)
                 .textCase(.uppercase)
                 .padding(.horizontal, 2)
 
-            ScrollView(.horizontal, showsIndicators: false) {
-                LazyHStack(spacing: 12) {
-                    ForEach(models, id: \.id) { model in
-                        modelCard(for: model)
-                            .frame(width: 280)
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    LazyHStack(spacing: 12) {
+                        ForEach(models, id: \.id) { model in
+                            modelCard(for: model)
+                                .frame(width: 280)
+                                .id(model.id)
+                        }
+                    }
+                    .padding(.horizontal, 2)
+                    .padding(.bottom, 4)
+                }
+                .overlay(alignment: .leading) {
+                    if topPicksIndex > 0 {
+                        topPicksArrow("chevron.left") {
+                            scrollTopPicks(to: topPicksIndex - step, ids: ids, proxy: proxy)
+                        }
+                        .padding(.leading, 6)
+                        .transition(.opacity)
                     }
                 }
-                .padding(.horizontal, 2)
-                .padding(.bottom, 4)
+                .overlay(alignment: .trailing) {
+                    if topPicksIndex < models.count - 1 {
+                        topPicksArrow("chevron.right") {
+                            scrollTopPicks(to: topPicksIndex + step, ids: ids, proxy: proxy)
+                        }
+                        .padding(.trailing, 6)
+                        .transition(.opacity)
+                    }
+                }
             }
+            .onChange(of: models.map(\.id)) { _, _ in
+                // Reset when the curated set changes so the arrows match the
+                // freshly-rendered, left-aligned carousel.
+                topPicksIndex = 0
+            }
+        }
+    }
+
+    /// Circular accent-filled edge button for the Top Picks carousel.
+    private func topPicksArrow(_ systemName: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 12, weight: .bold))
+                .foregroundColor(.white)
+                .frame(width: 30, height: 30)
+                .background(
+                    Circle()
+                        .fill(theme.accentColor)
+                        .shadow(color: theme.shadowColor.opacity(0.3), radius: 5, x: 0, y: 2)
+                )
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func scrollTopPicks(to index: Int, ids: [String], proxy: ScrollViewProxy) {
+        guard !ids.isEmpty else { return }
+        let clamped = max(0, min(ids.count - 1, index))
+        withAnimation(.easeOut(duration: 0.25)) {
+            topPicksIndex = clamped
+            proxy.scrollTo(ids[clamped], anchor: .leading)
         }
     }
 

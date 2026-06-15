@@ -157,8 +157,8 @@ struct ExternalModelLocatorTests {
 
     // MARK: - HF cache scan + resolution (via test override)
 
-    @Test func rescan_resolvesHFCacheSnapshotAndPath() {
-        OsaurusTestGlobals.withPathsLock {
+    @Test func rescan_resolvesHFCacheSnapshotAndPath() async {
+        await OsaurusTestGlobals.withPathsLock {
             rescan_resolvesHFCacheSnapshotAndPath_body()
         }
     }
@@ -211,8 +211,8 @@ struct ExternalModelLocatorTests {
         #expect(report?.skipped.isEmpty == true)
     }
 
-    @Test func rescan_reportsHFCacheSnapshotSkipReason() {
-        OsaurusTestGlobals.withPathsLock {
+    @Test func rescan_reportsHFCacheSnapshotSkipReason() async {
+        await OsaurusTestGlobals.withPathsLock {
             rescan_reportsHFCacheSnapshotSkipReason_body()
         }
     }
