@@ -14,7 +14,7 @@ public enum ThemeConfigurationStore {
     private static let builtInThemeSchemaKey = "builtInThemeSchemaVersion"
     /// Increment this whenever the built-in Dark/Light palette changes so existing
     /// installations receive the updated colors on next launch.
-    private static let currentBuiltInThemeSchema = 3
+    private static let currentBuiltInThemeSchema = 5
     private static var builtInThemesInstalled = false
 
     // MARK: - Active Theme

@@ -720,8 +720,11 @@ struct MinimalProgressViewStyle: ProgressViewStyle {
     func makeBody(configuration: Configuration) -> some View {
         GeometryReader { geometry in
             ZStack(alignment: .leading) {
+                // Tint the track with the fill color so it stays visible on
+                // any background. `tertiaryBackground` sits too close to
+                // `primaryBackground` in the dark themes to read as a track.
                 RoundedRectangle(cornerRadius: 2)
-                    .fill(theme.tertiaryBackground)
+                    .fill(color.opacity(0.18))
                     .frame(height: 4)
 
                 RoundedRectangle(cornerRadius: 2)

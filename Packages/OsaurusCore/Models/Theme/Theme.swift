@@ -318,7 +318,7 @@ struct DarkTheme: ThemeProtocol {
     // Primary colors - Warm off-white (WCAG AA compliant)
     let primaryText = Color(hex: "f5f5f2")  // ~17:1 contrast ✓
     let secondaryText = Color(hex: "a8a8a3")  // ~8.5:1 contrast ✓
-    let tertiaryText = Color(hex: "8a8a85")  // ~5.5:1 contrast ✓ (was #6e6e6a, ~3.9:1)
+    let tertiaryText = Color(hex: "9c9c97")  // ~7:1 contrast ✓ (was #8a8a85, ~5.5:1)
     let placeholderText = Color(hex: "a1a1aa")  // Matches secondaryText for better visibility
 
     // Background colors - Rich, warm blacks with depth
