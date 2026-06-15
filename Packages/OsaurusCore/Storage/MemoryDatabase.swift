@@ -189,13 +189,7 @@ public final class MemoryDatabase: @unchecked Sendable {
         let path = OsaurusPaths.memoryDatabaseFile().path
         let key = try StorageKeyManager.shared.currentKey()
         do {
-            let (connection, recovered) = try EncryptedSQLiteOpener.openRecoveringUndecryptable(
-                path: path, key: key
-            )
-            db = connection
-            if recovered {
-                PersistenceHealth.shared.recordDatabaseRecovered(subsystem: "memory")
-            }
+            db = try EncryptedSQLiteOpener.open(path: path, key: key)
         } catch let error as EncryptedSQLiteError {
             throw MemoryDatabaseError.failedToOpen(error.localizedDescription)
         }

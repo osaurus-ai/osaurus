@@ -148,64 +148,6 @@ struct SQLCipherIntegrationTests {
         #expect(String(cString: sqlite3_column_text(stmt, 0)) == "raw-key-wrote-this")
     }
 
-    /// A database encrypted under a now-gone key (rotation / reinstall)
-    /// must self-heal: `openRecoveringUndecryptable` quarantines the
-    /// undecryptable file aside and returns a fresh, writable DB under the
-    /// current key, reporting `recovered == true`.
-    @Test
-    func undecryptableFileIsQuarantinedAndRecreated() throws {
-        let path = tempDBPath()
-        let oldKey = key(seed: 0x11)
-        let newKey = key(seed: 0x22)
-
-        // Seed a DB with real data under the OLD key.
-        let seeded = try EncryptedSQLiteOpener.open(path: path, key: oldKey)
-        try execute(seeded, "CREATE TABLE secret (v TEXT)")
-        try execute(seeded, "INSERT INTO secret (v) VALUES ('cannot-read-without-old-key')")
-        sqlite3_close(seeded)
-
-        // Open with the NEW key — the old data is undecryptable, so recovery fires.
-        let (conn, recovered) = try EncryptedSQLiteOpener.openRecoveringUndecryptable(path: path, key: newKey)
-        defer { sqlite3_close(conn) }
-        #expect(recovered == true)
-
-        // The recreated DB is empty (the old `secret` table is gone) and writable.
-        var stmt: OpaquePointer?
-        #expect(
-            sqlite3_prepare_v2(conn, "SELECT name FROM sqlite_master WHERE type='table'", -1, &stmt, nil) == SQLITE_OK
-        )
-        #expect(sqlite3_step(stmt) == SQLITE_DONE)  // no tables
-        sqlite3_finalize(stmt)
-        try execute(conn, "CREATE TABLE fresh (v TEXT)")  // proves it's writable under newKey
-
-        // The undecryptable bytes were preserved aside, not deleted.
-        let dir = (path as NSString).deletingLastPathComponent
-        let siblings = try FileManager.default.contentsOfDirectory(atPath: dir)
-        #expect(siblings.contains { $0.contains(".orphaned-") })
-    }
-
-    /// A healthy DB opened under its real key must NOT trigger recovery —
-    /// recovery is reserved for genuinely undecryptable files.
-    @Test
-    func healthyFileIsNotRecovered() throws {
-        let path = tempDBPath()
-        let k = key(seed: 0x33)
-        let seeded = try EncryptedSQLiteOpener.open(path: path, key: k)
-        try execute(seeded, "CREATE TABLE keep (v TEXT)")
-        try execute(seeded, "INSERT INTO keep (v) VALUES ('survives')")
-        sqlite3_close(seeded)
-
-        let (conn, recovered) = try EncryptedSQLiteOpener.openRecoveringUndecryptable(path: path, key: k)
-        defer { sqlite3_close(conn) }
-        #expect(recovered == false)
-
-        var stmt: OpaquePointer?
-        #expect(sqlite3_prepare_v2(conn, "SELECT v FROM keep", -1, &stmt, nil) == SQLITE_OK)
-        defer { sqlite3_finalize(stmt) }
-        #expect(sqlite3_step(stmt) == SQLITE_ROW)
-        #expect(String(cString: sqlite3_column_text(stmt, 0)) == "survives")
-    }
-
     // MARK: - Helpers
 
     private func execute(_ conn: OpaquePointer, _ sql: String) throws {

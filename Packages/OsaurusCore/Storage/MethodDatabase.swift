@@ -116,13 +116,7 @@ public final class MethodDatabase: @unchecked Sendable {
         let path = OsaurusPaths.methodsDatabaseFile().path
         let key = try StorageKeyManager.shared.currentKey()
         do {
-            let (connection, recovered) = try EncryptedSQLiteOpener.openRecoveringUndecryptable(
-                path: path, key: key
-            )
-            db = connection
-            if recovered {
-                PersistenceHealth.shared.recordDatabaseRecovered(subsystem: "method")
-            }
+            db = try EncryptedSQLiteOpener.open(path: path, key: key)
         } catch let error as EncryptedSQLiteError {
             throw MethodDatabaseError.failedToOpen(error.localizedDescription)
         }
