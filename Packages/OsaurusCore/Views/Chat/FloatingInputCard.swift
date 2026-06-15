@@ -1535,14 +1535,9 @@ extension FloatingInputCard {
 
             Spacer()
 
-            // Osaurus Router credits (right-aligned, before context). Shown for
-            // every router session so the balance is always visible; the
-            // per-session spend appears as a suffix once the first charge lands.
-            if showSessionSpend {
-                creditsChip
-            }
-
-            // Context size indicator (right-aligned)
+            // Context size indicator (right-aligned). The Osaurus Router
+            // credits chip used to sit here too, but it crowded the token
+            // usage — it now lives in the button bar next to the voice button.
             if displayContextTokens > 0 {
                 contextIndicatorChip
             }
@@ -1570,16 +1565,19 @@ extension FloatingInputCard {
     /// the balance best-effort refreshes on appear so it isn't blank.
     @ViewBuilder
     private var creditsChip: some View {
-        let tint = creditsChipTint
+        // TODO: restore low-balance tinting (`creditsChipTint`) — placeholder
+        // account has no balance so the tint would always read as error-red.
+        // For UI refinement, use neutral theme colors.
         Button {
             onAddCredits?()
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: "creditcard")
                     .font(.system(size: CGFloat(theme.captionSize) - 2))
-                    .foregroundColor(tint ?? theme.tertiaryText)
+                    .foregroundColor(theme.secondaryText)
 
-                Text(verbatim: accountService.formattedBalance)
+                // TODO: restore `accountService.formattedBalance` — placeholder for UI refinement.
+                Text(verbatim: "$12.34")
                     .font(
                         .system(
                             size: CGFloat(theme.captionSize) - 1,
@@ -1587,7 +1585,7 @@ extension FloatingInputCard {
                             design: .monospaced
                         )
                     )
-                    .foregroundColor(tint ?? theme.secondaryText)
+                    .foregroundColor(theme.primaryText)
 
                 if !isCompact && sessionSpendMicro > 0 {
                     Text(
@@ -1608,7 +1606,27 @@ extension FloatingInputCard {
                         .foregroundColor(theme.tertiaryText.opacity(0.7))
                 }
             }
-            .contentShape(Rectangle())
+            .padding(.horizontal, 12)
+            .frame(height: 32)
+            .background(
+                Capsule()
+                    .fill(theme.tertiaryBackground.opacity(0.8))
+            )
+            .overlay(
+                Capsule()
+                    .strokeBorder(
+                        LinearGradient(
+                            colors: [
+                                theme.glassEdgeLight.opacity(0.15),
+                                theme.primaryBorder.opacity(0.1),
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 1
+                    )
+            )
+            .contentShape(Capsule())
         }
         .buttonStyle(.plain)
         .localizedHelp("Your balance. Click to add credits.")
@@ -3147,6 +3165,14 @@ extension FloatingInputCard {
                         .disabled(isStreaming)
                         .opacity(isStreaming ? 0.4 : 1.0)
                 }
+
+                // Osaurus Router credits — moved here from the selector row so
+                // the balance no longer crowds the token-usage indicator.
+                // TODO: restore the `showSessionSpend` gate — temporarily
+                // always-on with a placeholder value for UI refinement.
+                // if showSessionSpend {
+                creditsChip
+                // }
             }
 
             Spacer()
