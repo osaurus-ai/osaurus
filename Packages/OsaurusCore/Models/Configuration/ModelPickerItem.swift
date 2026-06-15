@@ -389,13 +389,41 @@ enum ModelPickerContextFilter: CaseIterable, Identifiable, Hashable {
     }
 }
 
+/// Vision-capability filter for the Osaurus tab.
+enum ModelPickerVisionFilter: CaseIterable, Identifiable, Hashable {
+    case any
+    case visionOnly
+    case nonVision
+
+    var id: Self { self }
+
+    /// Short chip label.
+    var label: String {
+        switch self {
+        case .any: return "Any"
+        case .visionOnly: return "Vision"
+        case .nonVision: return "Non-vision"
+        }
+    }
+}
+
 extension Array where Element == ModelPickerItem {
     /// Keep only models whose context window meets the filter's minimum. Items
     /// with unknown context are dropped when a minimum is set; `.any` is a
     /// no-op that returns the receiver unchanged.
-    func filteredByContext(_ filter: ModelPickerContextFilter) -> [ModelPickerItem] {
-        guard let minTokens = filter.minTokens else { return self }
+    func filteredByContext(_ context: ModelPickerContextFilter) -> [ModelPickerItem] {
+        guard let minTokens = context.minTokens else { return self }
         return filter { ($0.contextLength ?? 0) >= minTokens }
+    }
+
+    /// Keep only models matching the vision filter; `.any` returns the receiver
+    /// unchanged.
+    func filteredByVision(_ vision: ModelPickerVisionFilter) -> [ModelPickerItem] {
+        switch vision {
+        case .any: return self
+        case .visionOnly: return filter { $0.isVLM }
+        case .nonVision: return filter { !$0.isVLM }
+        }
     }
 
     /// Sort by Osaurus router price (input rate primary, output as tiebreak).

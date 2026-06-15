@@ -18,6 +18,7 @@ struct ModelPickerView: View {
     @State private var selectedTabKey: String?
     @State private var sortOrder: ModelPickerSortOrder = .default
     @State private var contextFilter: ModelPickerContextFilter = .any
+    @State private var visionFilter: ModelPickerVisionFilter = .any
     @State private var showSortPopover = false
     @Environment(\.theme) private var theme
 
@@ -99,6 +100,7 @@ struct ModelPickerView: View {
             guard tab.isOsaurus else { return makeRows(for: tab) }
             let processed = tab.models
                 .filteredByContext(contextFilter)
+                .filteredByVision(visionFilter)
                 .sortedByPrice(sortOrder)
             return makeRows(for: ModelPickerTab(key: tab.key, title: tab.title, models: processed))
         }
@@ -295,7 +297,7 @@ struct ModelPickerView: View {
     /// Whether any non-default sort/filter is applied, used to highlight the
     /// circular control so the user can tell at a glance the list is modified.
     private var isSortOrFilterActive: Bool {
-        sortOrder != .default || contextFilter != .any
+        sortOrder != .default || contextFilter != .any || visionFilter != .any
     }
 
     private var sortPopoverView: some View {
@@ -312,6 +314,17 @@ struct ModelPickerView: View {
                 ForEach(ModelPickerContextFilter.allCases) { option in
                     FilterChip(label: option.label, isSelected: contextFilter == option) {
                         contextFilter = option
+                    }
+                }
+            }
+            .padding(.horizontal, 12)
+
+            sortSectionHeader(Text("Vision", bundle: .module))
+
+            FlowLayout(spacing: 8) {
+                ForEach(ModelPickerVisionFilter.allCases) { option in
+                    FilterChip(label: option.label, isSelected: visionFilter == option) {
+                        visionFilter = option
                     }
                 }
             }
