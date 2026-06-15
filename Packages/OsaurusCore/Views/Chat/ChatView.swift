@@ -3345,7 +3345,18 @@ final class ChatSession: ObservableObject {
                                 // allowance.
                                 if invocations.isEmpty {
                                     transientRetries = 0
-                                    return .finalResponse
+                                    // An empty turn (0-token / EOS-first, no tool
+                                    // call) must not silently end the run as "No
+                                    // visible text was produced": let the driver
+                                    // nudge-and-retry, then fall back to a message.
+                                    // A reasoning-only turn (visible content blank
+                                    // but thinking present) is NOT empty — it's the
+                                    // model's intended answer in the reasoning
+                                    // channel — so require thinking blank too, matching
+                                    // the "No visible text was produced" condition.
+                                    return (assistantTurn.contentIsBlank
+                                        && assistantTurn.thinkingIsBlank)
+                                        ? .emptyResponse : .finalResponse
                                 }
                                 return .toolCalls(invocations)
                             } catch let error as RemoteProviderServiceError {
@@ -3475,6 +3486,13 @@ final class ChatSession: ObservableObject {
                             guard let todo = await AgentTodoStore.shared.todo(for: key)
                             else { return 0 }
                             return todo.totalCount - todo.doneCount
+                        },
+                        emitFallbackText: { text in
+                            // Empty-turn recovery exhausted: render a visible
+                            // message into the assistant turn so the user never
+                            // sees a silent "No visible text was produced".
+                            assistantTurn.appendContentAndNotify(text)
+                            self.rebuildVisibleBlocks()
                         }
                     )
 
