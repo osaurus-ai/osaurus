@@ -530,12 +530,9 @@ public enum AgentLoopEvaluator {
                             if StreamingToolHint.isSentinel(delta) { continue }
                             content += delta
                         }
-                        if content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                            // Empty turn (0-token / EOS-first, no tool call) —
-                            // let the driver nudge-and-retry, then fall back.
-                            return .emptyResponse
+                        if !content.isEmpty {
+                            finalText = content
                         }
-                        finalText = content
                         return .finalResponse
                     } catch let invs as ServiceToolInvocations {
                         // Interim prose preceding tool calls is NOT the
@@ -567,11 +564,9 @@ public enum AgentLoopEvaluator {
                     return .finalResponse
                 }
                 guard let calls = choice.message.tool_calls, !calls.isEmpty else {
-                    let text = choice.message.content ?? ""
-                    if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        return .emptyResponse
+                    if let content = choice.message.content, !content.isEmpty {
+                        finalText = content
                     }
-                    finalText = text
                     return .finalResponse
                 }
                 // Tool calls present: any prose on this turn is interim
@@ -657,11 +652,6 @@ public enum AgentLoopEvaluator {
                     )
                 }
                 return executions
-            },
-            emitFallbackText: { text in
-                // Empty-turn recovery exhausted: surface a visible answer so a
-                // run never resolves to silent empty text.
-                finalText = text
             }
         )
 
