@@ -162,6 +162,8 @@ Sandbox-only by design — folder-mode agents are short-lived and project-bound.
 
 When the container is running, sandbox tools are automatically registered for the active agent. Read-only tools are always available. Write and execution tools require `autonomous_exec` to be enabled on the agent.
 
+> **Default ON (where supported):** On macOS 26+ the sandbox chip defaults **on** for the built-in Default agent and for newly created agents. To avoid a surprise multi-GB download for users who never touch it, the container is **not** booted eagerly — a never-set-up sandbox stays un-provisioned until first use. The first time the model reaches for a sandbox tool (the transient `sandbox_init_pending` placeholder), the container boots and provisions on demand; once `setupComplete` is recorded, later launches auto-start as normal. Provisioning the container from the Sandbox tab, or toggling the chip off→on, also boots it immediately. Existing agents that were left unconfigured keep their previous (off) state, and unsupported machines (pre-macOS 26) stay off.
+
 ### Anti-confusion cheat sheet (always prefer the dedicated tool)
 
 | Don't                                | Do                                                                                                              |

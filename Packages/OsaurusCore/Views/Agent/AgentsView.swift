@@ -6112,6 +6112,7 @@ private struct AgentEditorSheet: View {
             isBuiltIn: false,
             createdAt: Date(),
             updatedAt: Date(),
+            autonomousExec: AgentManager.sandboxDefaultAutonomousExec,
             toolSelectionMode: draftMode,
             manualToolNames: Array(draftToolNames),
             manualSkillNames: Array(draftSkillNames),

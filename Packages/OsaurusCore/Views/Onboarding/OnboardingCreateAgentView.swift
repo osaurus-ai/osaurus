@@ -105,6 +105,7 @@ final class CreateAgentState: ObservableObject {
             systemPrompt: selectedTemplate.systemPrompt,
             createdAt: Date(),
             updatedAt: Date(),
+            autonomousExec: AgentManager.sandboxDefaultAutonomousExec,
             toolSelectionMode: .auto,
             avatar: selectedAvatar
         )

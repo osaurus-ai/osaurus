@@ -67,6 +67,11 @@ public final class SandboxToolRegistrar {
     /// hitting "Retry" on the chip) to avoid silent loops.
     private var provisioningRetryScheduled: Set<UUID> = []
 
+    /// Coalesces explicit first-use provisioning kicks (`provisionOnDemand`)
+    /// so the model hammering the `sandbox_init_pending` placeholder while the
+    /// cold download runs doesn't queue a fresh `registerTools` per call.
+    private var onDemandProvisionTask: Task<Void, Never>?
+
     /// Delay before the single auto-retry on `provisioningFailed`. Kept
     /// short because most provisioning failures are transient (container
     /// settling state, brief lock during user creation) and fail fast on
@@ -208,7 +213,7 @@ public final class SandboxToolRegistrar {
     /// provisioning. Failures are recorded in `unavailability[agentId]` so the
     /// system prompt can surface a clear message to the model instead of the
     /// model silently losing access to its sandbox tools.
-    public func registerTools(for agentId: UUID) async {
+    public func registerTools(for agentId: UUID, forceStart: Bool = false) async {
         ToolRegistry.shared.unregisterAllBuiltinSandboxTools()
 
         let agent = AgentManager.shared.agent(for: agentId) ?? Agent.default
@@ -228,7 +233,7 @@ public final class SandboxToolRegistrar {
         var realToolsRegistered = false
         defer {
             if autonomousEnabled && !realToolsRegistered {
-                BuiltinSandboxTools.registerInitPending()
+                BuiltinSandboxTools.registerInitPending(agentId: agent.id)
             }
         }
 
@@ -237,6 +242,22 @@ public final class SandboxToolRegistrar {
             // Without autonomous execution there's no expectation of sandbox
             // tools — clear any prior unavailability and bail.
             guard autonomousEnabled else {
+                unavailability.removeValue(forKey: agent.id)
+                publishActiveAgentUnavailability(for: agent.id, reason: nil)
+                return
+            }
+
+            // The chip defaults ON for the Default agent and new agents, but a
+            // default-ON sandbox that was never set up must NOT cold-provision
+            // (multi-GB download) just because `registerTools` runs at launch,
+            // on agent switch, or on a status change. Defer until explicit
+            // first use: the `sandbox_init_pending` placeholder (registered by
+            // the `defer` above) calls `provisionOnDemand`, or the user starts
+            // it from the Sandbox tab. `forceStart` is that explicit opt-in;
+            // `setupComplete` allows warm restarts of an already-provisioned
+            // sandbox (no download).
+            let mayColdStart = forceStart || SandboxConfigurationStore.load().setupComplete
+            guard mayColdStart else {
                 unavailability.removeValue(forKey: agent.id)
                 publishActiveAgentUnavailability(for: agent.id, reason: nil)
                 return
@@ -489,5 +510,26 @@ public final class SandboxToolRegistrar {
     public func resetStartupFailures() {
         startupFailureCount = 0
         nextStartupRetryAfter = nil
+    }
+
+    /// Boot the sandbox for an agent on explicit first use, bypassing the
+    /// `setupComplete` cold-start gate in `registerTools`.
+    ///
+    /// This is the "boots on first sandboxed run" path: the chip defaults ON
+    /// (where supported), but a fresh, never-set-up sandbox stays un-booted at
+    /// launch so there's no surprise multi-GB download. When the model first
+    /// reaches for a sandbox tool it hits the `sandbox_init_pending`
+    /// placeholder, which calls this to start (and cold-provision) the
+    /// container. `AgentManager.updateAutonomousExec` also calls it on an
+    /// explicit OFF→ON toggle. Coalesced via `onDemandProvisionTask` so
+    /// repeated placeholder calls during the download don't pile up.
+    public func provisionOnDemand(for agentId: UUID) {
+        guard onDemandProvisionTask == nil else { return }
+        resetStartupFailures()
+        onDemandProvisionTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.onDemandProvisionTask = nil }
+            await self.registerTools(for: agentId, forceStart: true)
+        }
     }
 }

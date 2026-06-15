@@ -350,6 +350,15 @@ extension Agent {
 // MARK: - Autonomous Exec Configuration
 
 public struct AutonomousExecConfig: Codable, Sendable, Equatable {
+    /// Whether the agent's sandbox (autonomous code execution) is on. Note the
+    /// *effective* default is resolved in
+    /// `AgentManager.effectiveAutonomousExec`, not by this struct: the chip
+    /// defaults ON for the Default agent and newly created agents on supported
+    /// machines (`AgentManager.sandboxEnabledByDefault`). This field's own
+    /// default below stays `false` so it remains a neutral base for
+    /// `current ?? .default` mutations in the settings UI (which only flips
+    /// individual sub-toggles) and never silently turns the sandbox on for an
+    /// existing custom agent that was left unconfigured.
     public var enabled: Bool
     public var maxCommandsPerTurn: Int
     public var pluginCreate: Bool

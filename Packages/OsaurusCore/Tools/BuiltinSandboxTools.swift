@@ -130,9 +130,9 @@ enum BuiltinSandboxTools {
     /// `unregisterAllBuiltinSandboxTools()` the moment real sandbox tools
     /// come online.
     @MainActor
-    static func registerInitPending() {
+    static func registerInitPending(agentId: UUID) {
         ToolRegistry.shared.registerSandboxTool(
-            SandboxInitPendingTool(),
+            SandboxInitPendingTool(agentId: agentId),
             runtimeManaged: true
         )
     }
@@ -153,27 +153,40 @@ extension BuiltinSandboxTools {
 }
 
 /// Placeholder tool registered when sandbox is enabled but the container
-/// isn't running yet. Always returns the same "still initialising" envelope.
-/// Designed to keep the model's schema non-empty (so it has *something*
-/// to call) while the container provisions in the background.
+/// isn't running yet. Calling it kicks the on-demand boot (the sandbox chip
+/// defaults ON but a never-set-up sandbox stays un-provisioned until first
+/// use) and returns a "still initialising" envelope. Designed to keep the
+/// model's schema non-empty (so it has *something* to call) while the
+/// container provisions; the real sandbox tools register automatically once
+/// it's running.
 private struct SandboxInitPendingTool: OsaurusTool, @unchecked Sendable {
+    let agentId: UUID
     let name = BuiltinSandboxTools.initPendingToolName
     let description =
-        "Sandbox is starting in the background. Call this tool to confirm it isn't ready, "
-        + "then either reply without sandbox tools or tell the user to wait. The real "
-        + "sandbox tools (file ops, shell) appear in your schema once the container boots — "
-        + "do NOT invent or guess sandbox tool names in the meantime."
+        "Sandbox isn't running yet. Calling this tool starts it (first use can take a "
+        + "moment to provision) and confirms it isn't ready — then either reply without "
+        + "sandbox tools or tell the user to wait. The real sandbox tools (file ops, "
+        + "shell) appear in your schema once the container boots — do NOT invent or guess "
+        + "sandbox tool names in the meantime."
 
     var parameters: JSONValue? {
         .object(["type": .string("object"), "properties": .object([:])])
     }
 
     func execute(argumentsJSON: String) async throws -> String {
-        ToolErrorEnvelope(
+        // First reach for a sandbox tool is the explicit signal to boot the
+        // (default-ON, not-yet-provisioned) sandbox. Kick the on-demand
+        // provision; the status publisher re-registers the real tools once the
+        // container is running, so the model's next turn uses them.
+        await MainActor.run { [agentId] in
+            SandboxToolRegistrar.shared.provisionOnDemand(for: agentId)
+        }
+        return ToolErrorEnvelope(
             kind: .unavailable,
             reason:
-                "Sandbox is still initializing. Real sandbox tools will register on "
-                + "the next turn. Reply without sandbox tools, or wait and try again.",
+                "Sandbox is starting up (first use) — this can take a moment while it "
+                + "provisions. Real sandbox tools register automatically once it's "
+                + "running. Reply without sandbox tools, or wait and try again.",
             toolName: name,
             retryable: true
         ).toJSONString()

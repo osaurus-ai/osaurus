@@ -272,7 +272,8 @@ public final class AgentManager: ObservableObject {
             maxTokens: maxTokens,
             isBuiltIn: false,
             createdAt: Date(),
-            updatedAt: Date()
+            updatedAt: Date(),
+            autonomousExec: Self.sandboxDefaultAutonomousExec
         )
         add(agent)
         return agent
@@ -552,7 +553,41 @@ public final class AgentManager: ObservableObject {
 // MARK: - Agent Configuration Helpers
 
 extension AgentManager {
+    /// Whether the sandbox (autonomous exec) toggle should default ON for the
+    /// built-in Default agent and newly created custom agents.
+    ///
+    /// Gated on sandbox availability: the chat chip is hidden and the Linux VM
+    /// cannot run on unsupported machines (pre-macOS 26), so defaulting on
+    /// there would only inject an unusable placeholder into the model's
+    /// schema. Reading the published availability (seeded synchronously from
+    /// the OS version in `SandboxManager.State`) keeps this stable from the
+    /// first frame and lets tests force a value via
+    /// `SandboxManager.State.shared.availability`.
+    @MainActor
+    public static var sandboxEnabledByDefault: Bool {
+        SandboxManager.State.shared.availability.isAvailable
+    }
+
+    /// The `autonomousExec` to apply when an agent has made no explicit choice
+    /// and the sandbox defaults ON: enabled where supported, else `nil` (off).
+    /// Used both as the Default agent's computed default (when nothing is
+    /// stored) and to seed newly created custom agents. Never applied on
+    /// edit/import/duplicate, which must preserve the source agent's value.
+    @MainActor
+    public static var sandboxDefaultAutonomousExec: AutonomousExecConfig? {
+        sandboxEnabledByDefault ? AutonomousExecConfig(enabled: true) : nil
+    }
+
     /// Get the effective sandbox execution config for an agent.
+    ///
+    /// The sandbox toggle defaults ON for the built-in Default agent on
+    /// machines where the sandbox is supported: when the Default agent has no
+    /// explicitly stored `autonomousExec` (the user has never touched the
+    /// chip), we synthesize an enabled config. An explicit choice — turning
+    /// the chip off — persists `enabled: false`, which then wins over this
+    /// computed default. Custom agents carry their own persisted value (seeded
+    /// ON at creation for new agents, left untouched for existing ones), so
+    /// they are returned as-is.
     public func effectiveAutonomousExec(for agentId: UUID) -> AutonomousExecConfig? {
         guard let agent = agent(for: agentId) else {
             return nil
@@ -560,6 +595,7 @@ extension AgentManager {
 
         if agent.id == Agent.defaultId {
             return DefaultAgentConfigurationStore.load().autonomousExec
+                ?? Self.sandboxDefaultAutonomousExec
         }
 
         return agent.autonomousExec
@@ -594,10 +630,12 @@ extension AgentManager {
         }
 
         if willBeEnabled && !wasEnabled {
-            // Toggling autonomous on is an explicit user action — clear any
-            // prior failure cool-down so the registrar's next provisioning
-            // attempt isn't suppressed.
-            SandboxToolRegistrar.shared.resetStartupFailures()
+            // Toggling the sandbox on is an explicit user opt-in: clear any
+            // prior failure cool-down and boot the container now (cold-
+            // provisioning if needed), bypassing the `setupComplete` gate that
+            // keeps the default-ON chip from auto-downloading at launch.
+            // `provisionOnDemand` resets the startup-failure tracking for us.
+            SandboxToolRegistrar.shared.provisionOnDemand(for: agentId)
         }
 
         // Mirror the per-agent egress choice onto the shared sandbox config
