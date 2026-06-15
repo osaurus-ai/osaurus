@@ -60,7 +60,7 @@ public final class ClipboardService: ObservableObject {
     /// being freed was not allocated"). Routing all reads through a single serial queue
     /// keeps them off the main thread (preserving the hang fix) while guaranteeing no
     /// two pasteboard touches ever overlap.
-    private static let pasteboardQueue = DispatchQueue(
+    nonisolated private static let pasteboardQueue = DispatchQueue(
         label: "com.dinoki.osaurus.clipboard.pasteboard"
     )
 
