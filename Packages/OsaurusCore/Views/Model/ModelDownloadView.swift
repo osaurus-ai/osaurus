@@ -721,9 +721,10 @@ struct ModelDownloadView: View {
                         topPicksArrow("chevron.right") {
                             scrollTopPicks(to: topPicksIndex + step, ids: ids, proxy: proxy)
                         }
-                        // +24 cancels the trailing full-bleed extension so the
-                        // inset visually matches the left arrow's 8pt.
-                        .padding(.trailing, 32)
+                        // The trailing edge sits ~24pt past the window edge from
+                        // the full-bleed extension; offset past that plus the
+                        // left arrow's effective inset so both read symmetric.
+                        .padding(.trailing, 56)
                         .transition(.opacity)
                     }
                 }
