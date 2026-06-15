@@ -32,14 +32,17 @@ enum ConfigurePath: String, CaseIterable {
     var title: LocalizedStringKey {
         switch self {
         case .local: return "Local"
-        case .apiProvider: return "Cloud"
+        // Renamed from "Cloud" once the managed cloud option (Osaurus Cloud) was
+        // promoted to its own always-visible lead card above the tabs: this tab
+        // is now strictly the bring-your-own-key path, so "Cloud" would collide.
+        case .apiProvider: return "Your own key"
         }
     }
 
     var icon: String {
         switch self {
         case .local: return "internaldrive"
-        case .apiProvider: return "network"
+        case .apiProvider: return "key"
         }
     }
 }
@@ -126,6 +129,21 @@ final class ConfigureAIState: ObservableObject {
     @Published var localSubstate: LocalSubstate = .picker
     @Published var apiSubstate: APISubstate = .picker
 
+    /// Whether the always-visible Osaurus Cloud lead card is the active brain
+    /// selection. It sits above the Local / Your-own-key tabs and is selected by
+    /// default, so the lowest-friction path is the landing state. The flag is
+    /// "sticky": switching tabs never changes it; it only clears when the user
+    /// actively commits to an alternative (taps a local model, drills into a
+    /// bring-your-own-key provider), and is re-asserted by tapping the card.
+    /// Drives the Continue CTA at the top-level pickers.
+    @Published var isHostedSelected: Bool = true
+
+    /// The brain the user committed to on this step. Recorded at the proceed
+    /// moment for each path (with no payment side effect) and read by
+    /// `finishOnboarding` to pin hosted routing and persist the analytics
+    /// dimension for the first `message_sent`.
+    @Published var selectedBrainSource: BrainSource? = nil
+
     /// Guards `applyDefaultPathIfNeeded(totalMemoryGB:)` so the RAM-based
     /// default path is only ever applied once. Without it a user who manually
     /// switched back to Local would be bounced to Cloud again on the next
@@ -192,6 +210,9 @@ final class ConfigureAIState: ObservableObject {
         selectedPath = path
         if path != .local { localSubstate = .picker }
         if path != .apiProvider { resetAPIState(direction: .forward) }
+        // The hosted lead card lives above the tabs, so switching tabs is pure
+        // navigation — it must not change the hosted selection. The flag only
+        // clears when the user commits to a model / provider below.
         testResult = nil
     }
 
@@ -338,7 +359,19 @@ final class ConfigureAIState: ObservableObject {
         return smallest(comfortable) ?? smallest(candidates)
     }
 
+    /// Tapping a local model row makes it the active brain, superseding the
+    /// hosted lead card above. Kept side-effect-light (no `withAnimation`) so the
+    /// footer CTA doesn't morph through the shared transaction.
+    func selectLocalModel(_ model: MLXModel) {
+        isHostedSelected = false
+        selectedModel = model
+    }
+
     func startLocalDownloadOrContinue(onComplete: () -> Void) {
+        // Committing to a local model — record the brain source for the funnel
+        // (no payment, no network).
+        selectedBrainSource = .local
+        OnboardingTelemetry.brainSourceSelected(.local)
         if selectedModel?.isDownloaded == true {
             onComplete()
             return
@@ -445,6 +478,9 @@ final class ConfigureAIState: ObservableObject {
     /// API-key sub-list).
     func showAPIKeyPicker() {
         substateDirection = .forward
+        // Drilling into a bring-your-own-key flow drops the hosted lead
+        // selection so Continue doesn't advance the hosted path by mistake.
+        isHostedSelected = false
         apiSubstate = .apiKeyPicker
     }
 
@@ -452,6 +488,10 @@ final class ConfigureAIState: ObservableObject {
     func popAPIKeyPickerToTop() {
         substateDirection = .backward
         apiSubstate = .picker
+        // Selection is sticky: backing out of a bring-your-own-key flow leaves
+        // the hosted card deselected (the lead card shows its unselected state),
+        // so the user can re-tap it to reassert hosted rather than having it
+        // silently re-selected under them.
     }
 
     /// Back out of a provider form. A form entered via the OAuth-first top level
@@ -468,6 +508,8 @@ final class ConfigureAIState: ObservableObject {
         let returnToTop = selectedAuthMethod.isOAuth
         clearAPICredentials()
         apiSubstate = returnToTop ? .picker : .apiKeyPicker
+        // Selection stays sticky on back (see `popAPIKeyPickerToTop`): the hosted
+        // card keeps its deselected state until the user taps it again.
     }
 
     /// Picker → form drill-in. Tapping a provider card immediately advances
@@ -480,6 +522,8 @@ final class ConfigureAIState: ObservableObject {
     /// is no in-form fork, so we pin the auth mode here at selection time.
     func selectAPIPreset(_ preset: ProviderPreset, preferAPIKey: Bool = false) {
         substateDirection = .forward
+        // Choosing a bring-your-own-key provider supersedes the hosted lead.
+        isHostedSelected = false
         if let entry = ProviderCatalog.entry(for: preset) {
             selectedAuthMethod = preferAPIKey ? .apiKey : (entry.authMethods.first ?? .apiKey)
         }
@@ -488,6 +532,35 @@ final class ConfigureAIState: ObservableObject {
         } else {
             apiSubstate = .keyForm(preset)
         }
+    }
+
+    // MARK: Hosted (Osaurus, Venice-backed)
+
+    /// Tapping the always-visible hosted lead card re-asserts the recommended
+    /// selection, superseding any local model / provider the user had picked.
+    /// Because the card lives above the tabs and stays selectable even after a
+    /// drill-in, selecting it also collapses any in-progress provider form /
+    /// API-key sub-list / local-download view back to the top-level pickers.
+    /// Otherwise hosted could read as "selected" while a provider's own form and
+    /// footer action were still on screen.
+    func selectHostedOsaurus() {
+        isHostedSelected = true
+        resetAPIState(direction: .backward)
+        localSubstate = .picker
+    }
+
+    /// Commit the hosted brain and advance. Selection is intentionally NOT a
+    /// payment event: no balance check, no checkout sheet. Funding is gated
+    /// later at or before first send (handled by the existing router
+    /// insufficient-funds flow once the routed model is in use).
+    func selectHostedAndContinue(onComplete: () -> Void) {
+        isHostedSelected = true
+        selectedBrainSource = .hostedOsaurus
+        OnboardingTelemetry.brainSourceSelected(
+            .hostedOsaurus,
+            privacyTier: HostedOption.default.privacyTier
+        )
+        onComplete()
     }
 
     /// Local downloading → picker (backward).
@@ -567,6 +640,13 @@ final class ConfigureAIState: ObservableObject {
         hasFinalizedAPI = true
         isSaving = true
 
+        // Record the bring-your-own-key brain source for the funnel. The
+        // provider type (closed enum) is the only identifying bit sent.
+        if let preset = currentAPIProvider {
+            selectedBrainSource = .providerKey(preset)
+            OnboardingTelemetry.brainSourceSelected(.providerKey(preset))
+        }
+
         // OpenAI Codex and xAI persist OAuth tokens via a service-provided
         // provider config; OpenRouter's OAuth mints a plain key handled by the
         // standard apiKey path below.
@@ -633,7 +713,19 @@ struct ConfigureAIBody: View {
             useScrollView: false
         ) {
             VStack(alignment: .leading, spacing: 14) {
+                // Osaurus Cloud is a top-level choice that lives outside the tab
+                // system: always visible and selectable, even after the user
+                // drills into a provider form / API-key sub-list / local
+                // download. Tab navigation happens entirely below it and never
+                // hides it — it just deselects while an alternative is active.
+                hostedLeadCard
+
                 if showsModeToggle {
+                    // The Local / Your-own-key tabs (and their "or" divider) are
+                    // the run-it-yourself alternatives. They show only at the
+                    // top-level pickers; once the user drills in, the in-section
+                    // Back row owns navigation within the tab.
+                    orRunYourOwnDivider
                     pathSegmentedControl
                 }
 
@@ -661,12 +753,12 @@ struct ConfigureAIBody: View {
 
     // MARK: - Path subtitle
 
+    /// Single neutral line for the whole step. The hosted lead card is now the
+    /// first element, so a per-tab subtitle above it (e.g. "runs on your Mac")
+    /// would contradict the card. The card copy and tab labels carry the
+    /// per-path nuance instead.
     private var pathSubtitle: LocalizedStringKey {
-        switch state.selectedPath {
-        case .local: return "Runs right on your Mac. Private, and works offline."
-        case .apiProvider:
-            return "Already have a favorite AI? Connect it in a tap."
-        }
+        "Pick the brain that powers your dino — switch any time."
     }
 
     // MARK: - Path Segmented Control
@@ -708,6 +800,28 @@ struct ConfigureAIBody: View {
                 OnboardingSegmentItem(tag: $0, title: $0.title, icon: $0.icon)
             }
         )
+    }
+
+    /// Thin "or" rule separating the recommended hosted lead card from the
+    /// run-it-yourself tabs beneath it, so the hierarchy reads as
+    /// "recommended default ··· alternatives".
+    private var orRunYourOwnDivider: some View {
+        HStack(spacing: 10) {
+            dividerRule
+            Text("Or run your own brain", bundle: .module)
+                .font(theme.font(size: 11, weight: .medium))
+                .foregroundColor(theme.tertiaryText)
+                .fixedSize()
+            dividerRule
+        }
+        .padding(.vertical, 2)
+    }
+
+    private var dividerRule: some View {
+        Rectangle()
+            .fill(theme.primaryBorder.opacity(0.6))
+            .frame(height: 1)
+            .frame(maxWidth: .infinity)
     }
 
     // MARK: - Substate dispatch
@@ -890,15 +1004,18 @@ struct ConfigureAIBody: View {
             // model name to "Gemm…". Bump them to their own
             // row so the full name is always readable.
             badgesBelowTitle: true,
-            accessory: .radio(isSelected: state.selectedModel?.id == model.id),
-            isSelected: state.selectedModel?.id == model.id,
+            accessory: .radio(
+                isSelected: !state.isHostedSelected && state.selectedModel?.id == model.id
+            ),
+            isSelected: !state.isHostedSelected && state.selectedModel?.id == model.id,
             isDisabled: false
         ) {
             // No `withAnimation` — selecting a model otherwise
             // morphs the CTA between "Continue" and
             // "Download & Install" as a side-effect of the
-            // shared transaction.
-            state.selectedModel = model
+            // shared transaction. Tapping a model also supersedes
+            // the Osaurus Cloud lead card pinned above the tabs.
+            state.selectLocalModel(model)
         }
     }
 
@@ -1213,15 +1330,123 @@ struct ConfigureAIBody: View {
 
     // MARK: - API picker
 
-    /// OAuth-first top level: one-click sign-in providers as first-class rows,
-    /// then a single "Use an API key" drill-in that holds every paste-a-key
-    /// vendor, the local Ollama option, and the custom escape hatch.
+    /// The bring-your-own-key tab body: OAuth-first sign-in rows plus the "Use
+    /// an API key" drill-in. The managed Osaurus Cloud option is no longer here —
+    /// it leads the step as a pinned card above the tabs — and the tab itself is
+    /// now labeled "Your own key", so an in-list group header would be redundant.
     private var apiPickerView: some View {
-        VStack(spacing: OnboardingMetrics.cardSpacing) {
+        VStack(alignment: .leading, spacing: OnboardingMetrics.cardSpacing) {
             ForEach(ProviderPreset.oauthProviders, id: \.id) { preset in
                 apiPresetCard(preset)
             }
             useAPIKeyCard
+        }
+    }
+
+    // MARK: - Hosted lead card
+
+    /// The recommended managed-cloud option, pinned above the tabs and selected
+    /// by default. Always rendered at full size — selection only changes the
+    /// visual treatment (radio, accent icon, card border), never the layout — so
+    /// the card never resizes as the user selects/deselects it while browsing the
+    /// run-it-yourself alternatives. Routes through Venice via the managed
+    /// Osaurus Router; selecting it is payment-free (the Continue CTA advances).
+    private var hostedLeadCard: some View {
+        Button {
+            state.selectHostedOsaurus()
+        } label: {
+            OnboardingGlassCard(isSelected: state.isHostedSelected) {
+                hostedLeadCardBody
+                    .padding(.horizontal, OnboardingMetrics.cardPaddingH)
+                    .padding(.vertical, OnboardingMetrics.cardPaddingV)
+            }
+        }
+        .buttonStyle(.plain)
+        .animation(.spring(response: 0.35, dampingFraction: 0.9), value: state.isHostedSelected)
+    }
+
+    /// The hosted card's full body. Rendered in every selection state so the card
+    /// keeps a constant size; only `hostedIcon` / `hostedRadio` / the glass border
+    /// reflect whether it's currently the active selection.
+    private var hostedLeadCardBody: some View {
+        let option = HostedOption.default
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 14) {
+                hostedIcon
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 8) {
+                        Text("Osaurus Cloud", bundle: .module)
+                            .font(theme.font(size: 14, weight: .semibold))
+                            .foregroundColor(theme.primaryText)
+                            .lineLimit(1)
+                            .layoutPriority(2)
+                        recommendedBadge
+                        Spacer(minLength: 8)
+                    }
+                    Text(option.valueLine, bundle: .module)
+                        .font(theme.font(size: 12))
+                        .foregroundColor(theme.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(option.privacyTier.privacyLine, bundle: .module)
+                        .font(theme.font(size: 11))
+                        .foregroundColor(theme.tertiaryText)
+                        .lineSpacing(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                hostedRadio
+            }
+            poweredByVenice
+                .padding(.leading, OnboardingMetrics.cardIcon + 14)
+        }
+    }
+
+    /// Leading accent badge for the hosted card, mirroring `OnboardingRowCard`'s
+    /// selected-icon treatment.
+    private var hostedIcon: some View {
+        ZStack {
+            Circle()
+                .fill(state.isHostedSelected ? theme.accentColor : theme.cardBackground)
+                .frame(width: OnboardingMetrics.cardIcon, height: OnboardingMetrics.cardIcon)
+            Image(systemName: "sparkles")
+                .font(.system(size: 18, weight: .medium))
+                .foregroundColor(state.isHostedSelected ? .white : theme.secondaryText)
+        }
+    }
+
+    /// "Recommended" pill shown beside the hosted title.
+    private var recommendedBadge: some View {
+        Text("Recommended", bundle: .module)
+            .font(theme.font(size: 10, weight: .bold))
+            .foregroundColor(.white)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Capsule().fill(theme.accentColor))
+    }
+
+    /// Pick-one radio, matching the `OnboardingRowCard` radio accessory.
+    private var hostedRadio: some View {
+        ZStack {
+            Circle()
+                .strokeBorder(
+                    state.isHostedSelected ? theme.accentColor : theme.primaryBorder,
+                    lineWidth: state.isHostedSelected ? 6 : 1.5
+                )
+                .frame(width: 20, height: 20)
+            if state.isHostedSelected {
+                Circle().fill(Color.white).frame(width: 7, height: 7)
+            }
+        }
+    }
+
+    /// "Powered by Venice" attribution. Uses the shared `venice-keys` asset via
+    /// `ProviderIcon`, sized smaller than the Osaurus title so the hosted brand
+    /// leads and Venice reads as the upstream.
+    private var poweredByVenice: some View {
+        HStack(spacing: 6) {
+            ProviderIcon(preset: .venice, size: 13, color: theme.tertiaryText)
+            Text("Powered by Venice", bundle: .module)
+                .font(theme.font(size: 11, weight: .medium))
+                .foregroundColor(theme.tertiaryText)
         }
     }
 
@@ -1276,7 +1501,17 @@ struct ConfigureAIBody: View {
     }
 
     private func presetTitle(for preset: ProviderPreset) -> String {
-        preset == .custom ? L("Custom / OpenAI-compatible") : preset.name
+        switch preset {
+        case .custom:
+            return L("Custom / OpenAI-compatible")
+        case .venice:
+            // Disambiguate the bring-your-own-key Venice row from the hosted
+            // lead card (which also routes through Venice). Onboarding-local —
+            // Settings keeps the plain `Venice AI` name.
+            return L("Venice (your key)")
+        default:
+            return preset.name
+        }
     }
 
     /// Onboarding-specific subtitle. Diverges from the generic
@@ -1291,11 +1526,11 @@ struct ConfigureAIBody: View {
             ?? preset.description
     }
 
-    /// Lift selected provider badges to a richer style so the cloud
+    /// Lift selected provider badges to a richer style so the provider
     /// picker stays scannable. Ollama's "Local" label specifically gets
-    /// the success-green chip — it lives in the Cloud tab for routing
-    /// reasons (same HTTP code path), but the row needs to read as "this
-    /// is the local-server option" at a glance.
+    /// the success-green chip — it lives in the bring-your-own-key tab for
+    /// routing reasons (same HTTP code path), but the row needs to read as
+    /// "this is the local-server option" at a glance.
     private func presetBadges(for preset: ProviderPreset) -> [OnboardingRowBadge] {
         guard let label = preset.badge else { return [] }
         let style: OnboardingRowBadge.Style = (preset == .ollama) ? .success : .neutral
@@ -1592,30 +1827,52 @@ struct ConfigureAICTA: View {
 
     @ViewBuilder
     private var primaryButton: some View {
-        switch state.selectedPath {
-        case .local:
-            switch state.localSubstate {
-            case .picker:
-                OnboardingBrandButton(
-                    title: state.selectedModel?.isDownloaded == true ? "Continue" : "Download & Install",
-                    action: { state.startLocalDownloadOrContinue(onComplete: onComplete) },
-                    isEnabled: state.selectedModel != nil
-                )
-                .fixedSize(horizontal: true, vertical: false)
-            case .downloading:
-                localDownloadingCTA
-            }
+        // Osaurus Cloud is selectable from above either tab, so its Continue CTA
+        // takes precedence at the top-level pickers. The flag only clears when
+        // the user commits to a local model / provider (a drilled-in substate),
+        // so this never shadows a form's own action.
+        if state.isHostedSelected && isTopLevelPicker {
+            OnboardingBrandButton(
+                title: "Continue",
+                action: { state.selectHostedAndContinue(onComplete: onComplete) }
+            )
+            .fixedSize(horizontal: true, vertical: false)
+        } else {
+            switch state.selectedPath {
+            case .local:
+                switch state.localSubstate {
+                case .picker:
+                    OnboardingBrandButton(
+                        title: state.selectedModel?.isDownloaded == true ? "Continue" : "Download & Install",
+                        action: { state.startLocalDownloadOrContinue(onComplete: onComplete) },
+                        isEnabled: state.selectedModel != nil
+                    )
+                    .fixedSize(horizontal: true, vertical: false)
+                case .downloading:
+                    localDownloadingCTA
+                }
 
-        case .apiProvider:
-            switch state.apiSubstate {
-            case .picker, .apiKeyPicker:
-                // Provider cards drill in on tap — no Continue press
-                // required. A subtle hint replaces the dead disabled button so
-                // the footer reads as guidance, not a broken control.
-                providerPickerHint
-            case .keyForm, .customForm:
-                apiActionButton
+            case .apiProvider:
+                switch state.apiSubstate {
+                case .picker, .apiKeyPicker:
+                    // Provider cards drill in on tap — no Continue press
+                    // required. A subtle hint replaces the dead disabled button
+                    // so the footer reads as guidance, not a broken control.
+                    providerPickerHint
+                case .keyForm, .customForm:
+                    apiActionButton
+                }
             }
+        }
+    }
+
+    /// True at either top-level picker (Local model list / Your-own-key list),
+    /// where the pinned Osaurus Cloud card is visible and owns the footer CTA
+    /// while selected. False once drilled into a form / sub-list / download.
+    private var isTopLevelPicker: Bool {
+        switch state.selectedPath {
+        case .local: return state.localSubstate == .picker
+        case .apiProvider: return state.apiSubstate == .picker
         }
     }
 

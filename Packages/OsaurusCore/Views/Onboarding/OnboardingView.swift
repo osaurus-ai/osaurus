@@ -507,8 +507,53 @@ public struct OnboardingView: View {
             AgentManager.shared.setActiveAgent(createdId)
         }
         configureImplicitDefaults()
+
+        // Persist the brain choice so the first chat-UI `message_sent` can carry
+        // the `brain_source` dimension that joins the path choice to activation.
+        FeatureTelemetry.recordOnboardingBrainSource(
+            configureAIState.selectedBrainSource?.telemetryValue
+        )
+
+        // Hosted brain: once the implicit identity lands and the managed router
+        // connects, pin the (new/active) agent's default model to a Venice
+        // router model so the first message routes through Osaurus hosted.
+        // Selecting hosted triggered no payment; funding is gated later at first
+        // send via the existing router insufficient-funds flow.
+        if case .hostedOsaurus = configureAIState.selectedBrainSource {
+            pinHostedRouterModel(forAgent: createAgentState.createdAgentId ?? Agent.defaultId)
+        }
+
         OnboardingService.shared.completeOnboarding()
         onComplete()
+    }
+
+    /// After onboarding finishes with the hosted brain selected, wait for the
+    /// implicitly-created identity to land, connect the managed Osaurus Router,
+    /// then set the agent's default model to a Venice router model. Bounded
+    /// polling keeps this from ever hanging; it gives up quietly if the router
+    /// can't be reached (the user can still pick a model in chat).
+    private func pinHostedRouterModel(forAgent agentId: UUID) {
+        Task { @MainActor in
+            // `configureImplicitDefaults` kicks identity setup off detached;
+            // wait (bounded) for it so the managed router can connect.
+            for _ in 0..<20 {
+                if OsaurusIdentity.exists() { break }
+                try? await Task.sleep(nanoseconds: 300_000_000)
+            }
+            guard OsaurusIdentity.exists() else { return }
+
+            await RemoteProviderManager.shared.connectOsaurusRouterIfPossible()
+
+            // The router's model catalog populates asynchronously after the
+            // connect resolves; poll briefly for the first Venice model.
+            for _ in 0..<12 {
+                if let model = RemoteProviderManager.shared.firstHostedVeniceModelId() {
+                    AgentManager.shared.updateDefaultModel(for: agentId, model: model)
+                    return
+                }
+                try? await Task.sleep(nanoseconds: 500_000_000)
+            }
+        }
     }
 
     /// Identity and sandbox no longer have their own onboarding steps — the

@@ -168,7 +168,7 @@ struct CreditsTopUpSheet: View {
                     .foregroundColor(theme.successColor)
             }
         } else {
-            Label("Minimum top-up is $5.00", systemImage: "info.circle")
+            Label(localized: "Minimum top-up is $5.00", systemImage: "info.circle")
                 .font(.system(size: 12))
                 .foregroundColor(theme.secondaryText)
         }

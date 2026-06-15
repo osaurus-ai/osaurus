@@ -17,6 +17,10 @@ final class OsaurusRouterAccountService: ObservableObject {
     // Retained for the lifetime of the singleton so balance refreshes when the
     // user returns from Stripe Checkout or another app.
     private var activationObserver: NSObjectProtocol?
+    /// Set when a Checkout session is created; cleared once an observed balance
+    /// increase confirms it. Gates `balance_topup_succeeded` so it fires for a
+    /// real top-up rather than any incidental balance refresh.
+    private var awaitingTopUpConfirmation = false
 
     init(client: OsaurusRouterAPIClient = .shared) {
         self.client = client
@@ -60,8 +64,20 @@ final class OsaurusRouterAccountService: ObservableObject {
         isLoadingBalance = true
         defer { isLoadingBalance = false }
         do {
-            balance = try await client.balance()
+            let previousMicro = balanceMicroValue
+            let newBalance = try await client.balance()
+            balance = newBalance
             lastError = nil
+            // Best-effort top-up confirmation: a balance increase after we
+            // initiated a Checkout (and returned to the app) means the funds
+            // landed. Server-side webhook confirmation isn't available client-
+            // side, so this stands in — and it never fires on mere sheet
+            // dismissal because the balance wouldn't have moved.
+            let newMicro = Int64(newBalance.balanceMicro) ?? 0
+            if awaitingTopUpConfirmation, newMicro > previousMicro {
+                awaitingTopUpConfirmation = false
+                FeatureTelemetry.balanceTopUpSucceeded()
+            }
         } catch {
             lastError = error.localizedDescription
         }
@@ -113,6 +129,11 @@ final class OsaurusRouterAccountService: ObservableObject {
                 throw OsaurusRouterAPIError.invalidResponse
             }
             lastError = nil
+            // A Checkout session exists and is about to open. Arm the
+            // confirmation watcher so the next balance increase counts as a
+            // completed top-up.
+            awaitingTopUpConfirmation = true
+            FeatureTelemetry.balanceTopUpInitiated()
             return url
         } catch {
             lastError = error.localizedDescription

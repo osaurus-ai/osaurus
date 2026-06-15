@@ -157,6 +157,77 @@ struct FeatureTelemetryEventTests {
         #expect(hash != remoteModel)
     }
 
+    // MARK: - brain_source dimension + persistence
+
+    @Test func messageSent_includes_brain_source_when_present() {
+        let (service, rec, cleanup) = makeRecordingService()
+        defer { cleanup() }
+
+        let info = MessageTelemetryInfo(
+            source: "chat_ui",
+            modelSource: "remote",
+            model: nil,
+            providerType: "osaurusRouter",
+            modelHash: nil,
+            isAgent: false,
+            stream: true,
+            brainSource: "hosted"
+        )
+        FeatureTelemetry.messageSent(info, service: service)
+
+        #expect(rec.events[0].props["brain_source"] as? String == "hosted")
+    }
+
+    @Test func messageSent_omits_brain_source_when_absent() {
+        let (service, rec, cleanup) = makeRecordingService()
+        defer { cleanup() }
+
+        // Default init leaves `brainSource` nil (e.g. non-chat sources, or an
+        // install that predates the onboarding choice).
+        let info = MessageTelemetryInfo(
+            source: "http_api",
+            modelSource: "local",
+            model: "mlx-community/Qwen2.5-7B-4bit",
+            providerType: "mlx",
+            modelHash: nil,
+            isAgent: false,
+            stream: false
+        )
+        FeatureTelemetry.messageSent(info, service: service)
+
+        #expect(rec.events[0].props["brain_source"] == nil)
+    }
+
+    @Test func recordOnboardingBrainSource_persists_and_does_not_clobber() {
+        let suiteName = "feature-telemetry-brain-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        #expect(FeatureTelemetry.persistedBrainSource(defaults: defaults) == nil)
+
+        FeatureTelemetry.recordOnboardingBrainSource("hosted", defaults: defaults)
+        #expect(FeatureTelemetry.persistedBrainSource(defaults: defaults) == "hosted")
+
+        // A nil or empty write must not wipe a prior choice.
+        FeatureTelemetry.recordOnboardingBrainSource(nil, defaults: defaults)
+        FeatureTelemetry.recordOnboardingBrainSource("", defaults: defaults)
+        #expect(FeatureTelemetry.persistedBrainSource(defaults: defaults) == "hosted")
+    }
+
+    // MARK: - Prepaid balance / top-up
+
+    @Test func balanceTopUp_events_emit_with_no_props() {
+        let (service, rec, cleanup) = makeRecordingService()
+        defer { cleanup() }
+
+        FeatureTelemetry.balanceTopUpInitiated(service: service)
+        FeatureTelemetry.balanceTopUpSucceeded(service: service)
+
+        #expect(rec.events.map(\.name) == ["balance_topup_initiated", "balance_topup_succeeded"])
+        #expect(business(rec.events[0].props).isEmpty)
+        #expect(business(rec.events[1].props).isEmpty)
+    }
+
     // MARK: - Remote-id hashing
 
     @Test func anonymizedRemoteId_is_deterministic_truncated_and_not_raw() {

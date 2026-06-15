@@ -698,6 +698,25 @@ public final class RemoteProviderManager: ObservableObject {
         return result
     }
 
+    /// The first hosted (Osaurus Router) Venice model id, prefixed exactly as
+    /// the model picker lists it (e.g. "osaurus/venice/model-b"). `nil` until
+    /// the managed router connects and its catalog is discovered.
+    ///
+    /// Used to pin the new agent's default model when the user picked the
+    /// hosted brain in onboarding. Prefers a Venice-backed model so the hosted
+    /// privacy copy holds, but falls back to the first router model so the
+    /// hosted path still routes if the catalog ever exposes a different
+    /// upstream.
+    public func firstHostedVeniceModelId() -> String? {
+        guard
+            let entry = cachedAvailableModels().first(where: {
+                $0.providerId == Self.osaurusRouterProviderId
+            })
+        else { return nil }
+        return entry.models.first { $0.lowercased().contains("/venice/") }
+            ?? entry.models.first
+    }
+
     /// Metadata for an Osaurus Router model by its unprefixed id (the id as it
     /// appears in `discoveredModels`, e.g. "venice/model-b"). Returns nil for
     /// non-router models or before the router has connected.

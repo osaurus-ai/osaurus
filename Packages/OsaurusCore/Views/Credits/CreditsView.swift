@@ -155,7 +155,7 @@ struct CreditsView: View {
                 Divider()
 
                 HStack(spacing: 12) {
-                    Label("Minimum top-up is $5.00", systemImage: "info.circle")
+                    Label(localized: "Minimum top-up is $5.00", systemImage: "info.circle")
                         .font(.system(size: 12))
                         .foregroundColor(theme.secondaryText)
 
@@ -168,7 +168,7 @@ struct CreditsView: View {
                     Button {
                         showTopUpSheet = true
                     } label: {
-                        Label("Add credits", systemImage: "creditcard.fill")
+                        Label(localized: "Add credits", systemImage: "creditcard.fill")
                     }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.small)
@@ -212,7 +212,7 @@ struct CreditsView: View {
                         if isExportingDiagnostics {
                             ProgressView().scaleEffect(0.7)
                         } else {
-                            Label("Export diagnostics", systemImage: "square.and.arrow.up")
+                            Label(localized: "Export diagnostics", systemImage: "square.and.arrow.up")
                         }
                     }
                     .buttonStyle(.bordered)
@@ -291,7 +291,7 @@ struct CreditsView: View {
             Button {
                 goToPreviousActivityPage()
             } label: {
-                Label("Previous", systemImage: "chevron.left")
+                Label(localized: "Previous", systemImage: "chevron.left")
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
@@ -303,9 +303,9 @@ struct CreditsView: View {
                 if isLoadingCurrentActivity {
                     ProgressView().scaleEffect(0.7)
                 } else if canLoadMoreFromServer {
-                    Label("Load more", systemImage: "arrow.down.circle")
+                    Label(localized: "Load more", systemImage: "arrow.down.circle")
                 } else {
-                    Label("Next", systemImage: "chevron.right")
+                    Label(localized: "Next", systemImage: "chevron.right")
                 }
             }
             .buttonStyle(.bordered)
@@ -442,7 +442,7 @@ struct CreditsView: View {
                 Button {
                     openLocalReference(reference)
                 } label: {
-                    Label("Chat", systemImage: "arrow.up.right.square")
+                    Label(localized: "Chat", systemImage: "arrow.up.right.square")
                         .labelStyle(.titleAndIcon)
                 }
                 .buttonStyle(.plain)
@@ -455,7 +455,7 @@ struct CreditsView: View {
                 Button {
                     openInsightsReference(reference)
                 } label: {
-                    Label("Insights", systemImage: "waveform.path.ecg.magnifyingglass")
+                    Label(localized: "Insights", systemImage: "waveform.path.ecg.magnifyingglass")
                         .labelStyle(.titleAndIcon)
                 }
                 .buttonStyle(.plain)

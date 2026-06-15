@@ -47,6 +47,31 @@ struct MessageTelemetryInfo: Sendable {
     let isAgent: Bool
     /// Whether the caller requested a streaming response.
     let stream: Bool
+    /// The brain source the user picked during onboarding (`local` | `hosted`
+    /// | `provider_key`), attached only to chat-UI sends so the funnel can
+    /// join the path choice to the first message. `nil` for non-chat sources
+    /// and for installs that predate the choice. Low-cardinality enum.
+    let brainSource: String?
+
+    init(
+        source: String,
+        modelSource: String,
+        model: String?,
+        providerType: String,
+        modelHash: String?,
+        isAgent: Bool,
+        stream: Bool,
+        brainSource: String? = nil
+    ) {
+        self.source = source
+        self.modelSource = modelSource
+        self.model = model
+        self.providerType = providerType
+        self.modelHash = modelHash
+        self.isAgent = isAgent
+        self.stream = stream
+        self.brainSource = brainSource
+    }
 }
 
 @MainActor
@@ -70,6 +95,7 @@ enum FeatureTelemetry {
         ]
         if let model = info.model { props["model"] = model }
         if let modelHash = info.modelHash { props["model_hash"] = modelHash }
+        if let brainSource = info.brainSource { props["brain_source"] = brainSource }
         service.track("message_sent", props)
     }
 
@@ -77,6 +103,43 @@ enum FeatureTelemetry {
     /// signal; carries no titles or ids.
     static func chatSessionStarted(service: TelemetryService = .shared) {
         service.track("chat_session_started")
+    }
+
+    // MARK: - Brain source (onboarding → first message join)
+
+    /// Persisted key holding the onboarding brain choice (`local` | `hosted` |
+    /// `provider_key`). Read nonisolated by `messageInfo`; written on
+    /// onboarding finish. `nonisolated` so the `ChatEngine` actor can read it
+    /// without a main-actor hop.
+    nonisolated static let brainSourceDefaultsKey = "ai.osaurus.onboarding.brain_source"
+
+    /// The brain source recorded at onboarding finish, or `nil` for installs
+    /// that completed onboarding before this choice existed.
+    nonisolated static func persistedBrainSource(defaults: UserDefaults = .standard) -> String? {
+        defaults.string(forKey: brainSourceDefaultsKey)
+    }
+
+    /// Persist the onboarding brain choice so the next `message_sent` from the
+    /// chat UI can carry the `brain_source` dimension. No-op for an empty/`nil`
+    /// value so a half-finished run can't clobber a prior choice with "".
+    static func recordOnboardingBrainSource(_ value: String?, defaults: UserDefaults = .standard) {
+        guard let value, !value.isEmpty else { return }
+        defaults.set(value, forKey: brainSourceDefaultsKey)
+    }
+
+    // MARK: - Prepaid balance / top-up
+
+    /// The user kicked off a credits top-up (a Checkout session was created and
+    /// is about to open). Count only — no amount or identifiers.
+    static func balanceTopUpInitiated(service: TelemetryService = .shared) {
+        service.track("balance_topup_initiated")
+    }
+
+    /// A previously initiated top-up was confirmed by an observed balance
+    /// increase after returning from Checkout (best-effort; not fired on mere
+    /// sheet dismissal). Count only.
+    static func balanceTopUpSucceeded(service: TelemetryService = .shared) {
+        service.track("balance_topup_succeeded")
     }
 
     // MARK: - First-run activation
@@ -251,6 +314,15 @@ enum FeatureTelemetry {
             modelHash = nil
         }
 
+        // Attach the onboarding brain choice only to chat-UI sends — it's a
+        // funnel join for "did the user who picked path X send a message", and
+        // it would be misleading on HTTP-API / plugin traffic.
+        let isChatUI: Bool = {
+            if case .chatUI = source { return true }
+            return false
+        }()
+        let brainSource = isChatUI ? persistedBrainSource() : nil
+
         return MessageTelemetryInfo(
             source: sourceToken(source),
             modelSource: modelSource,
@@ -258,7 +330,8 @@ enum FeatureTelemetry {
             providerType: providerType,
             modelHash: modelHash,
             isAgent: isAgent,
-            stream: stream
+            stream: stream,
+            brainSource: brainSource
         )
     }
 }
