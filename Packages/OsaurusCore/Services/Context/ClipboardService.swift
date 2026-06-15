@@ -224,7 +224,9 @@ public final class ClipboardService: ObservableObject {
             try? await Task.sleep(nanoseconds: 50_000_000)  // 50ms
             let currentChangeCount = await Self.onPasteboardQueue { $0.changeCount }
             if currentChangeCount != startChangeCount {
-                print("[ClipboardService] Pasteboard update detected at iteration \(i+1). New count: \(currentChangeCount)")
+                print(
+                    "[ClipboardService] Pasteboard update detected at iteration \(i+1). New count: \(currentChangeCount)"
+                )
                 await performPasteboardRefresh()
 
                 if case .text(let text) = currentContent {

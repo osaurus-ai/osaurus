@@ -48,14 +48,16 @@ import Testing
     @Test func invalidDimensionsFallBackToDefault() {
         #expect(
             Attachment.estimatedImageTokens(pixelWidth: 0, pixelHeight: 0)
-                == Attachment.defaultImageTokenEstimate)
+                == Attachment.defaultImageTokenEstimate
+        )
     }
 
     @Test func undecodableDataFallsBackToDefault() {
         let junk = Data(repeating: 0xAB, count: 8192)
         #expect(
             Attachment.estimatedImageTokens(forEncodedImage: junk)
-                == Attachment.defaultImageTokenEstimate)
+                == Attachment.defaultImageTokenEstimate
+        )
     }
 
     // The core regression: a real encoded image's estimate is bounded by its
@@ -80,9 +82,14 @@ import Testing
             let space = CGColorSpaceCreateDeviceRGB()
             guard
                 let ctx = CGContext(
-                    data: nil, width: width, height: height, bitsPerComponent: 8,
-                    bytesPerRow: 0, space: space,
-                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+                    data: nil,
+                    width: width,
+                    height: height,
+                    bitsPerComponent: 8,
+                    bytesPerRow: 0,
+                    space: space,
+                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+                )
             else { throw TestError.failed }
             ctx.setFillColor(CGColor(red: 0.2, green: 0.5, blue: 0.8, alpha: 1))
             ctx.fill(CGRect(x: 0, y: 0, width: width, height: height))
@@ -90,7 +97,11 @@ import Testing
             let out = NSMutableData()
             guard
                 let dest = CGImageDestinationCreateWithData(
-                    out, UTType.png.identifier as CFString, 1, nil)
+                    out,
+                    UTType.png.identifier as CFString,
+                    1,
+                    nil
+                )
             else { throw TestError.failed }
             CGImageDestinationAddImage(dest, image, nil)
             guard CGImageDestinationFinalize(dest) else { throw TestError.failed }

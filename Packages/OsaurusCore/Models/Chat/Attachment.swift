@@ -466,7 +466,8 @@ public struct Attachment: Codable, Sendable, Equatable, Identifiable {
     public static func estimatedImageTokens(pixelWidth: Int, pixelHeight: Int) -> Int {
         guard pixelWidth > 0, pixelHeight > 0 else { return defaultImageTokenEstimate }
         let longSide = max(pixelWidth, pixelHeight)
-        let scale = longSide > imageResizeLongSide
+        let scale =
+            longSide > imageResizeLongSide
             ? Double(imageResizeLongSide) / Double(longSide) : 1.0
         let w = Double(pixelWidth) * scale
         let h = Double(pixelHeight) * scale

@@ -3584,7 +3584,8 @@ final class ChatSession: ObservableObject {
                                     // model's intended answer in the reasoning
                                     // channel — so require thinking blank too, matching
                                     // the "No visible text was produced" condition.
-                                    return (assistantTurn.contentIsBlank
+                                    return
+                                        (assistantTurn.contentIsBlank
                                         && assistantTurn.thinkingIsBlank)
                                         ? .emptyResponse : .finalResponse
                                 }

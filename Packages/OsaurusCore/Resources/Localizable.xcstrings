@@ -4,118 +4,6 @@
     "" : {
       "shouldTranslate" : false
     },
-    "By continuing, you agree to the [Terms](%1$@) and [Privacy Policy](%2$@)." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Indem du fortfährst, stimmst du den [Nutzungsbedingungen](%1$@) und der [Datenschutzrichtlinie](%2$@) zu."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "继续即表示你同意[服务条款](%1$@)和[隐私政策](%2$@)。"
-          }
-        }
-      }
-    },
-    "Learn how in our [Privacy Policy](%1$@)." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Mehr dazu in unserer [Datenschutzrichtlinie](%1$@)."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "详见我们的[隐私政策](%1$@)。"
-          }
-        }
-      }
-    },
-    "Learn more in our [Privacy Policy](%1$@)." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Erfahre mehr in unserer [Datenschutzrichtlinie](%1$@)."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "在我们的[隐私政策](%1$@)中了解更多。"
-          }
-        }
-      }
-    },
-    "Legal" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Rechtliches"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "法律"
-          }
-        }
-      }
-    },
-    "Privacy Policy" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Datenschutzrichtlinie"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "隐私政策"
-          }
-        }
-      }
-    },
-    "Review the agreements that govern your use of Osaurus." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Lies die Vereinbarungen, die deine Nutzung von Osaurus regeln."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "查看约束你使用 Osaurus 的协议。"
-          }
-        }
-      }
-    },
-    "Terms of Service" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Nutzungsbedingungen"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "服务条款"
-          }
-        }
-      }
-    },
     " — %@" : {
       "localizations" : {
         "de" : {
@@ -3495,6 +3383,9 @@
           }
         }
       }
+    },
+    "Account paused - add credits to resume." : {
+      "comment" : "Tooltip on the chat composer credits chip when the Osaurus Router account is frozen."
     },
     "Account: data-encryption-key" : {
       "localizations" : {
@@ -8763,6 +8654,22 @@
         }
       }
     },
+    "By continuing, you agree to the [Terms](%1$@) and [Privacy Policy](%2$@)." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Indem du fortfährst, stimmst du den [Nutzungsbedingungen](%1$@) und der [Datenschutzrichtlinie](%2$@) zu."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "继续即表示你同意[服务条款](%1$@)和[隐私政策](%2$@)。"
+          }
+        }
+      }
+    },
     "Cache" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -10566,6 +10473,9 @@
           }
         }
       }
+    },
+    "Click to add credits" : {
+      "comment" : "Footer hint in the chat composer router-balance popover."
     },
     "Click to keep open" : {
       "localizations" : {
@@ -25483,6 +25393,22 @@
         }
       }
     },
+    "Learn how in our [Privacy Policy](%1$@)." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mehr dazu in unserer [Datenschutzrichtlinie](%1$@)."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "详见我们的[隐私政策](%1$@)。"
+          }
+        }
+      }
+    },
     "Learn how to integrate Osaurus into your applications." : {
       "localizations" : {
         "de" : {
@@ -25511,6 +25437,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "了解更多"
+          }
+        }
+      }
+    },
+    "Learn more in our [Privacy Policy](%1$@)." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Erfahre mehr in unserer [Datenschutzrichtlinie](%1$@)."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在我们的[隐私政策](%1$@)中了解更多。"
           }
         }
       }
@@ -25657,6 +25599,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "发现旧版 WhisperKit 模型"
+          }
+        }
+      }
+    },
+    "Legal" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rechtliches"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "法律"
           }
         }
       }
@@ -36808,6 +36766,22 @@
         }
       }
     },
+    "Privacy Policy" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Datenschutzrichtlinie"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "隐私政策"
+          }
+        }
+      }
+    },
     "Privacy-first AI" : {
       "localizations" : {
         "de" : {
@@ -42977,6 +42951,22 @@
         }
       }
     },
+    "Review the agreements that govern your use of Osaurus." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lies die Vereinbarungen, die deine Nutzung von Osaurus regeln."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "查看约束你使用 Osaurus 的协议。"
+          }
+        }
+      }
+    },
     "Review this code for bugs and improvements:" : {
       "localizations" : {
         "de" : {
@@ -43221,6 +43211,9 @@
           }
         }
       }
+    },
+    "Router Balance" : {
+      "comment" : "Header of the chat composer router-balance popover."
     },
     "Rules" : {
       "comment" : "Title of one of the Privacy tab sections.",
@@ -48719,6 +48712,9 @@
         }
       }
     },
+    "Spent this session" : {
+      "comment" : "Row label in the chat composer router-balance popover; the value is the amount spent this session."
+    },
     "Spill paged blocks to disk so cache survives restarts and shares across processes." : {
       "localizations" : {
         "de" : {
@@ -50458,6 +50454,22 @@
         }
       }
     },
+    "Terms of Service" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nutzungsbedingungen"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "服务条款"
+          }
+        }
+      }
+    },
     "Tertiary BG" : {
       "localizations" : {
         "de" : {
@@ -52116,9 +52128,6 @@
           }
         }
       }
-    },
-    "this session" : {
-      "comment" : "Suffix on the chat composer chip showing how much was spent in the current session."
     },
     "This text is inserted into the chat input when you select the command. You continue typing after it." : {
       "localizations" : {
@@ -57538,6 +57547,9 @@
     },
     "Your balance is now %@. Retry your last message to continue." : {
       "comment" : "Message in the credits-added retry modal shown in chat after a top-up; the placeholder is the new balance."
+    },
+    "Your balance. %@ spent this session. Click to add credits." : {
+      "comment" : "Tooltip on the chat composer credits chip; the placeholder is the amount spent in the current session."
     },
     "Your balance. Click to add credits." : {
       "comment" : "Tooltip on the chat composer credits chip."
