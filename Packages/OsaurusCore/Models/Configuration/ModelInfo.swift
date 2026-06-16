@@ -123,20 +123,30 @@ extension ModelInfo {
         cacheLock.unlock()
 
         Task.detached(priority: .utility) {
-            defer {
-                cacheLock.lock()
-                revalidatingModelIds.remove(modelId)
-                cacheLock.unlock()
-            }
+            defer { finishRevalidation(modelId: modelId) }
             // Memo still matches disk — nothing to do.
             if fileModificationDate(atPath: entry.configPath) == entry.configModDate {
                 return
             }
-            cacheLock.lock()
-            cache.removeValue(forKey: modelId)
-            cacheLock.unlock()
+            dropCachedEntry(modelId: modelId)
             NotificationCenter.default.post(name: .localModelsChanged, object: nil)
         }
+    }
+
+    /// Drop a single memoized entry. Synchronous so the lock is taken outside
+    /// any async context (`NSLock.lock()` is unavailable from async code).
+    private static func dropCachedEntry(modelId: String) {
+        cacheLock.lock()
+        cache.removeValue(forKey: modelId)
+        cacheLock.unlock()
+    }
+
+    /// Clear a model's in-flight revalidation marker. Synchronous for the same
+    /// async-context locking reason as `dropCachedEntry`.
+    private static func finishRevalidation(modelId: String) {
+        cacheLock.lock()
+        revalidatingModelIds.remove(modelId)
+        cacheLock.unlock()
     }
 
     /// Load model info from a model identifier (e.g., "mlx-community/Qwen3-1.7B-4bit" or "qwen3-1.7b-4bit")
