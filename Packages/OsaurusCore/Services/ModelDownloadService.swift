@@ -242,28 +242,36 @@ final class ModelDownloadService: ObservableObject {
         )
         progressSamples[model.id] = []
 
-        do {
-            try FileManager.default.createDirectory(
-                at: model.localDirectory,
-                withIntermediateDirectories: true
-            )
-        } catch {
-            let message = "Failed to create directory: \(error.localizedDescription)"
-            downloadStates[model.id] = .failed(error: message)
-            downloadAlert = Self.makeAlert(
-                modelId: model.id,
-                rawError: message,
-                stage: "create-directory"
-            )
-            clearDownloadTracking(for: model.id)
-            return
-        }
-
         let downloader = DirectDownloader()
         activeDownloaders[model.id] = downloader
 
         let task = Task { [weak self, resuming] in
             guard let self = self else { return }
+
+            // Create the model directory off the main thread before any other
+            // work. `mkdir` on a slow or contended volume otherwise blocks the
+            // main thread on the synchronous download-button path.
+            do {
+                let directory = model.localDirectory
+                try await Task.detached(priority: .userInitiated) {
+                    try FileManager.default.createDirectory(
+                        at: directory,
+                        withIntermediateDirectories: true
+                    )
+                }.value
+            } catch {
+                await MainActor.run {
+                    let message = "Failed to create directory: \(error.localizedDescription)"
+                    self.downloadStates[model.id] = .failed(error: message)
+                    self.downloadAlert = Self.makeAlert(
+                        modelId: model.id,
+                        rawError: message,
+                        stage: "create-directory"
+                    )
+                    self.clearDownloadTracking(for: model.id)
+                }
+                return
+            }
 
             // Mutable window into the orchestration loop so the catch
             // handlers (pause / cancel / failure) know which file was
