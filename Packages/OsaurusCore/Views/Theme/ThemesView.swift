@@ -95,8 +95,12 @@ struct ThemesView: View {
 
                             // Custom themes
                             if !customThemes.isEmpty {
-                                themesSection(title: "Custom Themes", count: customThemes.count, themes: customThemes)
-                                    .transition(.opacity)
+                                themesSection(
+                                    title: L("Custom Themes"),
+                                    count: customThemes.count,
+                                    themes: customThemes
+                                )
+                                .transition(.opacity)
                             }
 
                             // Empty state for custom themes

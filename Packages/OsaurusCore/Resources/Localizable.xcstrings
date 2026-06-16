@@ -3014,6 +3014,38 @@
         }
       }
     },
+    "A skill named \"%@\" already exists" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ein Skill namens \"%@\" existiert bereits"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "名为“%@”的技能已存在"
+          }
+        }
+      }
+    },
+    "A skill named \"%@\" already exists. Replacing it overwrites its SKILL.md, references, and assets." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Eine Fähigkeit namens \"%@\" existiert bereits. Das Ersetzen überschreibt seine SKILL.md, Referenzen und Assets."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "一个名为“%@”的技能已存在。替换它将覆盖其SKILL.md、引用和资源。"
+          }
+        }
+      }
+    },
     "A stalled provider or dropped connection can hang a request indefinitely. You'll have to stop it manually" : {
       "localizations" : {
         "de" : {
@@ -3385,7 +3417,21 @@
       }
     },
     "Account paused - add credits to resume." : {
-      "comment" : "Tooltip on the chat composer credits chip when the Osaurus Router account is frozen."
+      "comment" : "Tooltip on the chat composer credits chip when the Osaurus Router account is frozen.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Konto pausiert – Credits zur Wiederaufnahme hinzufügen."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "账户已暂停 — 添加积分以恢复。"
+          }
+        }
+      }
     },
     "Account: data-encryption-key" : {
       "localizations" : {
@@ -3733,10 +3779,38 @@
       }
     },
     "Add credits" : {
-      "comment" : "Primary button label to add Osaurus credits."
+      "comment" : "Primary button label to add Osaurus credits.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Credits hinzufügen"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "添加积分"
+          }
+        }
+      }
     },
     "Add credits and see what each Osaurus Router request costs." : {
-      "comment" : "Subtitle of the Credits view."
+      "comment" : "Subtitle of the Credits view.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Fügen Sie Credits hinzu und sehen Sie, was jede Osaurus-Router-Anfrage kostet."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "添加积分并查看每个Osaurus路由器请求的成本。"
+          }
+        }
+      }
     },
     "Add deployment names if they do not appear automatically" : {
       "localizations" : {
@@ -5902,7 +5976,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "论点"
+            "value" : "参数"
           }
         }
       }
@@ -5918,7 +5992,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "论点"
+            "value" : "参数"
           }
         }
       }
@@ -8638,6 +8712,40 @@
         }
       }
     },
+    "Button BG" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Button BG"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "按钮背景"
+          }
+        }
+      }
+    },
+    "Button Border" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Button Border"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "按钮边框"
+          }
+        }
+      }
+    },
     "by %@" : {
       "localizations" : {
         "de" : {
@@ -9698,7 +9806,20 @@
       }
     },
     "Cheapest first" : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Günstigste zuerst"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "最便宜的优先"
+          }
+        }
+      }
     },
     "Check for app updates" : {
       "localizations" : {
@@ -10003,7 +10124,21 @@
       }
     },
     "Choose how much to add. You'll finish payment in your browser." : {
-      "comment" : "Subtitle of the add-credits amount picker sheet."
+      "comment" : "Subtitle of the add-credits amount picker sheet.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Choose how much to add. You'll finish payment in your browser."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "选择添加多少。您将在浏览器中完成支付。"
+          }
+        }
+      }
     },
     "Choose how the app knows when you've finished speaking." : {
       "localizations" : {
@@ -10478,7 +10613,21 @@
       }
     },
     "Click to add credits" : {
-      "comment" : "Footer hint in the chat composer router-balance popover."
+      "comment" : "Footer hint in the chat composer router-balance popover.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Click to add credits"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "点击添加积分"
+          }
+        }
+      }
     },
     "Click to keep open" : {
       "localizations" : {
@@ -12208,7 +12357,20 @@
       }
     },
     "Context limit" : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Context limit"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "上下文限制"
+          }
+        }
+      }
     },
     "Context window for remote models" : {
       "extractionState" : "manual",
@@ -12290,7 +12452,21 @@
       }
     },
     "Continue to checkout" : {
-      "comment" : "Primary button on the add-credits sheet that opens Stripe Checkout."
+      "comment" : "Primary button on the add-credits sheet that opens Stripe Checkout.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Continue to checkout"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "继续结账"
+          }
+        }
+      }
     },
     "Continuous Batching" : {
       "comment" : "Toggle that allows new requests to join an in-flight batch for shared decode.",
@@ -12971,6 +13147,54 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "无法从登录令牌中识别ChatGPT账户。请使用具有Codex访问权限的ChatGPT账户登录，然后重试。"
+          }
+        }
+      }
+    },
+    "Could not import skill file \"%@\": %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Skill-Datei \"%@\" konnte nicht importiert werden: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "无法导入技能文件“%@”：%@"
+          }
+        }
+      }
+    },
+    "Could not inspect directory" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Verzeichnis konnte nicht geprüft werden"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "无法检查目录"
+          }
+        }
+      }
+    },
+    "Could not inspect skill archive%@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Skill-Archiv%@ konnte nicht geprüft werden"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "无法检查技能归档%@"
           }
         }
       }
@@ -13839,17 +14063,73 @@
     },
     "Credit balance" : {
       "comment" : "The label for the credit balance in the Credits view.",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Credit balance"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "积分余额"
+          }
+        }
+      }
     },
     "Credits" : {
       "comment" : "Label for the Credits tab in the management sidebar.",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Credits"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "信用"
+          }
+        }
+      }
     },
     "Credits added" : {
-      "comment" : "Title of the chat modal shown after a balance-restoring top-up, offering to retry the blocked message."
+      "comment" : "Title of the chat modal shown after a balance-restoring top-up, offering to retry the blocked message.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Credits added"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "积分已添加"
+          }
+        }
+      }
     },
     "Credits pay for cloud models and provider load-balancing routed through Osaurus." : {
-      "comment" : "Explanation of what Osaurus credits are used for."
+      "comment" : "Explanation of what Osaurus credits are used for.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Credits pay for cloud models and provider load-balancing routed through Osaurus."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "积分用于支付通过Osaurs路由的云模型和提供商负载均衡。"
+          }
+        }
+      }
     },
     "Cron Expression" : {
       "localizations" : {
@@ -14156,6 +14436,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "自定义服务器"
+          }
+        }
+      }
+    },
+    "Custom Themes" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Benutzerdefinierte Themen"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "自定义主题"
           }
         }
       }
@@ -15411,6 +15707,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "使用自定义颜色、字体和效果为您的聊天界面设计独特的外观"
+          }
+        }
+      }
+    },
+    "Destination exists and is not a directory" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ziel existiert und ist kein Verzeichnis"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "目标已存在且不是目录"
           }
         }
       }
@@ -18365,7 +18677,21 @@
       }
     },
     "Enter a dollar amount, like 25." : {
-      "comment" : "Validation hint when the custom top-up amount is not a valid number."
+      "comment" : "Validation hint when the custom top-up amount is not a valid number.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Enter a dollar amount, like 25."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "输入美元金额，比如25。"
+          }
+        }
+      }
     },
     "Enter a pattern to validate." : {
       "localizations" : {
@@ -18990,6 +19316,22 @@
         }
       }
     },
+    "Expected directory" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Verzeichnis erwartet"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "预期为目录"
+          }
+        }
+      }
+    },
     "Expiration" : {
       "localizations" : {
         "de" : {
@@ -19148,7 +19490,21 @@
     },
     "Export Billing Diagnostics" : {
       "comment" : "Title of a button that exports billing diagnostics data.",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Export Billing Diagnostics"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "导出账单诊断"
+          }
+        }
+      }
     },
     "Export Bundle" : {
       "localizations" : {
@@ -19264,7 +19620,21 @@
     },
     "Export diagnostics" : {
       "comment" : "A button label that prompts the user to export diagnostics.",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Export diagnostics"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "导出诊断"
+          }
+        }
+      }
     },
     "Export failed" : {
       "localizations" : {
@@ -19497,10 +19867,22 @@
       "comment" : "A success message indicating that billing diagnostics have been successfully exported. The first argument is the count of ledger entries that were included in the export. The second argument is the name of the exported file.",
       "isCommentAutoGenerated" : true,
       "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Exported %1$lld row(s) to %2$@."
+          }
+        },
         "en" : {
           "stringUnit" : {
             "state" : "new",
             "value" : "Exported %1$lld row(s) to %2$@."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "导出 %1$lld 行到 %2$@。"
           }
         }
       }
@@ -20164,7 +20546,21 @@
     },
     "Fetches the signed router /models endpoint and hides stale prices." : {
       "comment" : "Description of a provider diagnostic row for the",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Fetches the signed router /models endpoint and hides stale prices."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "获取已签名的路由器 /models 端点并隐藏过时的价格。"
+          }
+        }
+      }
     },
     "Fetching repository information" : {
       "localizations" : {
@@ -22341,7 +22737,20 @@
       }
     },
     "Highest first" : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Highest first"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "最高优先级"
+          }
+        }
+      }
     },
     "History" : {
       "localizations" : {
@@ -23085,6 +23494,23 @@
         }
       }
     },
+    "Image Opacity" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Image Opacity"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "图像不透明度"
+          }
+        }
+      }
+    },
     "Immediately" : {
       "localizations" : {
         "de" : {
@@ -23486,6 +23912,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "已导入“%@”（含 %lld 个文件）"
+          }
+        }
+      }
+    },
+    "Imported %@; ignored additional SKILL.md files: %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importiert %@; zusätzliche SKILL.md-Dateien ignoriert: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "已导入 %@；已忽略其他 SKILL.md 文件：%@"
           }
         }
       }
@@ -25384,7 +25826,21 @@
       }
     },
     "Later" : {
-      "comment" : "Secondary button on the credits-added retry modal; dismisses without retrying."
+      "comment" : "Secondary button on the credits-added retry modal; dismisses without retrying.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Later"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "稍后"
+          }
+        }
+      }
     },
     "Launch Osaurus when you sign in" : {
       "localizations" : {
@@ -26247,7 +26703,21 @@
       "isCommentAutoGenerated" : true
     },
     "Load more" : {
-      "comment" : "Button label that fetches the next page of router usage from the server."
+      "comment" : "Button label that fetches the next page of router usage from the server.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Load more"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "加载更多"
+          }
+        }
+      }
     },
     "Loadable" : {
       "localizations" : {
@@ -28271,7 +28741,21 @@
     },
     "Metadata only - no prompts or replies are included." : {
       "comment" : "Message in the export diagnostics dialog, explaining that the exported file contains only metadata and no user interactions or replies.",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Metadata only - no prompts or replies are included."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "仅包含元数据 - 不包含提示或回复。"
+          }
+        }
+      }
     },
     "Method" : {
       "localizations" : {
@@ -28444,7 +28928,21 @@
     },
     "Minimum top-up is $5.00" : {
       "comment" : "A tooltip explaining that the minimum amount to top up their credit is $5.00.",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Minimum top-up is $5.00"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "最低充值金额为5.00美元"
+          }
+        }
+      }
     },
     "Mint a fresh key in your browser without leaving this sheet." : {
       "localizations" : {
@@ -31058,7 +31556,21 @@
       }
     },
     "No reply" : {
-      "comment" : "Activity outcome: the request produced no visible reply."
+      "comment" : "Activity outcome: the request produced no visible reply.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "No reply"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "没有回复"
+          }
+        }
+      }
     },
     "No request body captured" : {
       "localizations" : {
@@ -31093,7 +31605,21 @@
       }
     },
     "No requests yet" : {
-      "comment" : "Empty-state title for the Credits activity list."
+      "comment" : "Empty-state title for the Credits activity list.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "No requests yet"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "暂无请求"
+          }
+        }
+      }
     },
     "No Requests Yet" : {
       "localizations" : {
@@ -31106,7 +31632,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "还没有请求"
+            "value" : "暂无请求"
           }
         }
       }
@@ -31827,7 +32353,21 @@
       }
     },
     "Not now" : {
-      "comment" : "Secondary button on the out-of-credits chat modal; dismisses without adding credits."
+      "comment" : "Secondary button on the out-of-credits chat modal; dismisses without adding credits.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Not now"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "暂不"
+          }
+        }
+      }
     },
     "Not Now" : {
       "localizations" : {
@@ -32497,7 +33037,21 @@
       }
     },
     "On hold" : {
-      "comment" : "Status pill shown when the billing account is frozen / on hold."
+      "comment" : "Status pill shown when the billing account is frozen / on hold.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "On hold"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "冻结"
+          }
+        }
+      }
     },
     "On This Network" : {
       "localizations" : {
@@ -32894,7 +33448,21 @@
     },
     "Open Identity" : {
       "comment" : "A button label that opens the user's identity settings.",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Open Identity"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "开放身份"
+          }
+        }
+      }
     },
     "Open in Finder" : {
       "localizations" : {
@@ -33563,7 +34131,20 @@
       }
     },
     "Or run your own brain" : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Or run your own brain"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "或者运行你自己的大脑"
+          }
+        }
+      }
     },
     "Or type a custom answer…" : {
       "localizations" : {
@@ -33647,7 +34228,20 @@
       }
     },
     "Osaurus Cloud" : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Osaurus Cloud"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus云"
+          }
+        }
+      }
     },
     "Osaurus Help" : {
       "extractionState" : "stale",
@@ -33807,7 +34401,21 @@
     },
     "Osaurus Router" : {
       "comment" : "Title for a provider diagnostics row indicating that the provider is an Osaurus Router.",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Osaurus Router"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 路由"
+          }
+        }
+      }
     },
     "Osaurus Server" : {
       "localizations" : {
@@ -35016,7 +35624,20 @@
       }
     },
     "Pay as you go. No API key, no separate signup." : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pay as you go. No API key, no separate signup."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "按需付费。无需API密钥，无需单独注册。"
+          }
+        }
+      }
     },
     "PDF" : {
       "localizations" : {
@@ -35057,7 +35678,21 @@
       }
     },
     "Pending" : {
-      "comment" : "Activity outcome: the request is still being finalized."
+      "comment" : "Activity outcome: the request is still being finalized.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pending"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "待处理"
+          }
+        }
+      }
     },
     "Pending distillation complete" : {
       "localizations" : {
@@ -35679,7 +36314,20 @@
       }
     },
     "Pick the brain that powers your dino — switch any time." : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pick the brain that powers your dino — switch any time."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "挑选能为你的恐龙提供动力的大脑——随时可以切换。"
+          }
+        }
+      }
     },
     "Pick what your dino can do" : {
       "localizations" : {
@@ -36447,7 +37095,20 @@
       }
     },
     "Powered by Venice" : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Powered by Venice"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "由 Venice 提供"
+          }
+        }
+      }
     },
     "Pre-flight picks the most relevant per turn." : {
       "extractionState" : "stale",
@@ -36691,7 +37352,37 @@
     },
     "Previous" : {
       "comment" : "A button label that says \"Previous\".",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Previous"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "上一页"
+          }
+        }
+      }
+    },
+    "Primary" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Primär"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "主要"
+          }
+        }
+      }
     },
     "Primary BG" : {
       "localizations" : {
@@ -40164,7 +40855,21 @@
       }
     },
     "Reasoning only" : {
-      "comment" : "Secondary activity detail: the turn produced only reasoning, no visible answer."
+      "comment" : "Secondary activity detail: the turn produced only reasoning, no visible answer.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Reasoning only"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "仅推理"
+          }
+        }
+      }
     },
     "Reasoning Parser Override" : {
       "localizations" : {
@@ -40199,7 +40904,21 @@
       }
     },
     "Recent activity" : {
-      "comment" : "Title of the section listing recent router requests."
+      "comment" : "Title of the section listing recent router requests.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Recent activity"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "近期活动"
+          }
+        }
+      }
     },
     "RECENT CHATS" : {
       "localizations" : {
@@ -41495,6 +42214,38 @@
         }
       }
     },
+    "Replace" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ersetzen"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "替换"
+          }
+        }
+      }
+    },
+    "Replace Existing Skill?" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bestehenden Skill ersetzen?"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "替换现有技能？"
+          }
+        }
+      }
+    },
     "Replace Image" : {
       "localizations" : {
         "de" : {
@@ -41727,7 +42478,21 @@
       }
     },
     "Requests routed through Osaurus, newest first. Open the chat or Insights when this Mac has the matching copy." : {
-      "comment" : "Subtitle for the recent activity list."
+      "comment" : "Subtitle for the recent activity list.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Requests routed through Osaurus, newest first. Open the chat or Insights when this Mac has the matching copy."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "通过Osaurus路由的请求，按最新排序。当此Mac有匹配的副本时，打开聊天或洞察。"
+          }
+        }
+      }
     },
     "Requests will run with no time limit. Before enabling:" : {
       "localizations" : {
@@ -43190,7 +43955,21 @@
       }
     },
     "Router Balance" : {
-      "comment" : "Header of the chat composer router-balance popover."
+      "comment" : "Header of the chat composer router-balance popover.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Router Balance"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "路由器均衡"
+          }
+        }
+      }
     },
     "Routes" : {
       "localizations" : {
@@ -47253,10 +48032,38 @@
       }
     },
     "Showing %lld-%lld of %lld" : {
-      "comment" : "Pagination range when every loaded row is shown and no more exist."
+      "comment" : "Pagination range when every loaded row is shown and no more exist.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Showing %lld-%lld of %lld"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "显示 %lld-%lld 共 %lld"
+          }
+        }
+      }
     },
     "Showing %lld-%lld of %lld loaded" : {
-      "comment" : "Pagination range when more rows can still be loaded from the server."
+      "comment" : "Pagination range when more rows can still be loaded from the server.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Showing %lld-%lld of %lld loaded"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "显示 %lld-%lld 共 %lld 已加载"
+          }
+        }
+      }
     },
     "Showing full ring buffer. Click to tail the most recent %lld lines." : {
       "localizations" : {
@@ -47897,6 +48704,102 @@
         }
       }
     },
+    "Skill archive contains more than %lld entries" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Skill-Archiv enthält mehr als %lld Einträge"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "技能归档包含超过 %lld 个条目"
+          }
+        }
+      }
+    },
+    "Skill archive entry \"%@\" escapes the archive root" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Skill-Archiveintrag \"%@\" verlässt den Archivstamm"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "技能归档条目“%@”会逃逸归档根目录"
+          }
+        }
+      }
+    },
+    "Skill archive entry \"%@\" is deeper than the %lld-level limit" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Skill-Archiveintrag \"%@\" ist tiefer als die Grenze von %lld Ebenen"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "技能归档条目“%@”超过 %lld 级深度限制"
+          }
+        }
+      }
+    },
+    "Skill archive entry \"%@\" is larger than the %@ limit" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Skill-Archiveintrag \"%@\" ist größer als die Grenze von %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "技能归档条目“%@”超过 %@ 限制"
+          }
+        }
+      }
+    },
+    "Skill archive entry \"%@\" is not a regular file or directory" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Skill-Archiveintrag \"%@\" ist keine reguläre Datei und kein Verzeichnis"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "技能归档条目“%@”不是常规文件或目录"
+          }
+        }
+      }
+    },
+    "Skill archive is larger than the %@ limit" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Skill-Archiv ist größer als die Grenze von %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "技能归档超过 %@ 限制"
+          }
+        }
+      }
+    },
     "Skill is available for use" : {
       "localizations" : {
         "de" : {
@@ -48420,7 +49323,20 @@
       }
     },
     "Sort and filter" : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sort and filter"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "排序和筛选"
+          }
+        }
+      }
     },
     "Sort by" : {
       "localizations" : {
@@ -48439,7 +49355,20 @@
       }
     },
     "Sort by price" : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sort by price"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "按价格排序"
+          }
+        }
+      }
     },
     "Sort models" : {
       "localizations" : {
@@ -48728,7 +49657,21 @@
       }
     },
     "Spent this session" : {
-      "comment" : "Row label in the chat composer router-balance popover; the value is the amount spent this session."
+      "comment" : "Row label in the chat composer router-balance popover; the value is the amount spent this session.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Spent this session"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "本次会话已用时"
+          }
+        }
+      }
     },
     "Spill paged blocks to disk so cache survives restarts and shares across processes." : {
       "localizations" : {
@@ -49722,6 +50665,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "成功"
+          }
+        }
+      }
+    },
+    "Success action preview" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Vorschau der Erfolgsaktion"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "成功操作预览"
           }
         }
       }
@@ -51016,7 +51975,20 @@
       }
     },
     "The detailed Insights log for this usage row is no longer available." : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "The detailed Insights log for this usage row is no longer available."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此用量行的详细洞察日志已不可用。"
+          }
+        }
+      }
     },
     "The files look loadable, but this specific cache-backed bundle still needs a real generation proof before it should be called validated." : {
       "localizations" : {
@@ -51132,7 +52104,21 @@
     },
     "The model returned no visible text" : {
       "comment" : "Label for a footer view that appears when the Osaurus Router billed a turn that produced no visible text.",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "The model returned no visible text"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "模型未返回可见文本"
+          }
+        }
+      }
     },
     "The model starts with a small set and loads more from your enabled capabilities on demand." : {
       "localizations" : {
@@ -51247,7 +52233,20 @@
       }
     },
     "The referenced chat session is no longer available." : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "The referenced chat session is no longer available."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "引用的聊天会话已不可用。"
+          }
+        }
+      }
     },
     "The requested capture capability is not recognized." : {
       "localizations" : {
@@ -51289,7 +52288,21 @@
     },
     "The router uses your identity master key as your billing account. Create or restore an identity before adding credits or calling Osaurus models." : {
       "comment" : "A description under the \"Set up your Osaurus Identity\" label, explaining the purpose of the identity master key.",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "The router uses your identity master key as your billing account. Create or restore an identity before adding credits or calling Osaurus models."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "路由器将您的身份主密钥用作您的计费账户。在添加积分或调用Osaurus模型之前，请创建或恢复身份。"
+          }
+        }
+      }
     },
     "The saved key is injected using the provider-specific header." : {
       "localizations" : {
@@ -53019,7 +54032,20 @@
       }
     },
     "Tools" : {
-      "shouldTranslate" : false
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tools"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "工具"
+          }
+        }
+      }
     },
     "Tools (%lld)" : {
       "localizations" : {
@@ -53088,7 +54114,21 @@
       }
     },
     "Tools only" : {
-      "comment" : "Secondary activity detail: the turn only made tool calls."
+      "comment" : "Secondary activity detail: the turn only made tool calls.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tools only"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "仅工具"
+          }
+        }
+      }
     },
     "Top P Override" : {
       "localizations" : {
@@ -53905,7 +54945,21 @@
       }
     },
     "Unknown model" : {
-      "comment" : "Placeholder shown when a usage row has no model name."
+      "comment" : "Placeholder shown when a usage row has no model name.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Unknown model"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未知模型"
+          }
+        }
+      }
     },
     "Unknown tab" : {
       "localizations" : {
@@ -55311,7 +56365,20 @@
       }
     },
     "Venice (your key)" : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Venice (your key)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Venice （你的钥匙）"
+          }
+        }
+      }
     },
     "Venice AI" : {
       "comment" : "Name of the provider \"Venice AI\".",
@@ -56698,7 +57765,21 @@
       }
     },
     "When you use an Osaurus Router model, each request shows up here with its cost and tokens. If this Mac made the request, you can jump to the chat or Insights." : {
-      "comment" : "Empty-state body for the Credits activity list."
+      "comment" : "Empty-state body for the Credits activity list.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "When you use an Osaurus Router model, each request shows up here with its cost and tokens. If this Mac made the request, you can jump to the chat or Insights."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "当您使用Osaurus路由器模型时，每个请求都会显示在其成本和令牌上。如果这台 Mac 提出了请求，您可以跳转到聊天或 Insights。"
+          }
+        }
+      }
     },
     "When your dino installs packages, runs scripts, or fiddles with files, it does that in a tiny, walled-off workspace — separate from your Mac." : {
       "localizations" : {
@@ -57330,7 +58411,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Xcode 构建需要单独的资助。如果卡住了，请尝试“tccutil Reset AppleEvents”。"
+            "value" : "Xcode 构建需要单独的授权。如果卡住了，请尝试“tccutil Reset AppleEvents”。"
           }
         }
       }
@@ -57451,17 +58532,43 @@
       "comment" : "A string describing a turn that produced no visible text, with the cost and number of tokens included. The argument is the formatted cost, the second argument is the number of tokens.",
       "isCommentAutoGenerated" : true,
       "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "You were charged %1$@ for %2$d tokens."
+          }
+        },
         "en" : {
           "stringUnit" : {
             "state" : "new",
             "value" : "You were charged %1$@ for %2$d tokens."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "您被收取了%1$@个%2$d词元的费用。"
           }
         }
       }
     },
     "You were charged %@." : {
       "comment" : "A description of the cost of a turn that produced no visible text. The argument is the formatted cost, formatted in U.S. Dollars.",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "You were charged %@."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "您被收取了%@。"
+          }
+        }
+      }
     },
     "You were renaming a conversation titled \"%@\" to \"%@\" but haven't saved it yet." : {
       "comment" : "Message in an alert that appears when a user attempts to rename a chat session but hasn't saved the new title yet.",
@@ -57488,7 +58595,21 @@
       }
     },
     "You'll add %@" : {
-      "comment" : "Preview of the resolved top-up amount on the add-credits sheet."
+      "comment" : "Preview of the resolved top-up amount on the add-credits sheet.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "You'll add %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "您将添加%@"
+          }
+        }
+      }
     },
     "You're already set up" : {
       "localizations" : {
@@ -57507,7 +58628,21 @@
       }
     },
     "You're out of credits" : {
-      "comment" : "Title of the chat modal shown when a request fails for insufficient credits."
+      "comment" : "Title of the chat modal shown when a request fails for insufficient credits.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "You're out of credits"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "你的积分已用完"
+          }
+        }
+      }
     },
     "Your API key is stored in your macOS Keychain and only sent to %@." : {
       "localizations" : {
@@ -57558,28 +58693,136 @@
       }
     },
     "Your balance is %@. Add credits to keep chatting." : {
-      "comment" : "Message in the out-of-credits modal shown in chat; the placeholder is the current balance."
+      "comment" : "Message in the out-of-credits modal shown in chat; the placeholder is the current balance.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Your balance is %@. Add credits to keep chatting."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "您的余额是%@。添加积分以继续聊天。"
+          }
+        }
+      }
     },
     "Your balance is now %@. Retry your last message to continue." : {
-      "comment" : "Message in the credits-added retry modal shown in chat after a top-up; the placeholder is the new balance."
+      "comment" : "Message in the credits-added retry modal shown in chat after a top-up; the placeholder is the new balance.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Your balance is now %@. Retry your last message to continue."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "您的余额现在是%@。重试您最后一条消息以继续。"
+          }
+        }
+      }
     },
     "Your balance. %@ spent this session. Click to add credits." : {
-      "comment" : "Tooltip on the chat composer credits chip; the placeholder is the amount spent in the current session."
+      "comment" : "Tooltip on the chat composer credits chip; the placeholder is the amount spent in the current session.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Your balance. %@ spent this session. Click to add credits."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "您的余额。本会话已花费%@。点击添加积分。"
+          }
+        }
+      }
     },
     "Your balance. Click to add credits." : {
-      "comment" : "Tooltip on the chat composer credits chip."
+      "comment" : "Tooltip on the chat composer credits chip.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Your balance. Click to add credits."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "您的余额。点击添加积分。"
+          }
+        }
+      }
     },
     "Your chats stay on your Mac. Inference is end-to-end encrypted through Venice." : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Your chats stay on your Mac. Inference is end-to-end encrypted through Venice."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "你的聊天记录保留在你的Mac上。推理过程通过Venice进行端到端加密。"
+          }
+        }
+      }
     },
     "Your chats stay on your Mac. Inference is routed through Venice, a privacy-first provider whose policy is not to store prompts or responses." : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ihre Chats bleiben auf Ihrem Mac. Inferenz wird über Venice geleitet, einen datenschutzorientierten Anbieter, dessen Richtlinie darin besteht, keine Aufforderungen oder Antworten zu speichern."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "你的聊天记录保留在你的Mac上。推理过程通过Venice进行路由，这是一个以隐私为先的服务提供商，其政策是不存储提示或响应。"
+          }
+        }
+      }
     },
     "Your chats stay on your Mac. Inference is routed through Venice; for this model the underlying provider may retain content." : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ihre Chats bleiben auf Ihrem Mac. Die Inferenz wird durch Venedig geleitet; für dieses Modell kann der zugrunde liegende Anbieter Inhalte behalten."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "你的聊天记录保留在你的Mac上。推理过程通过 Venice 路由；对于此模型，底层服务提供商可能会保留内容。"
+          }
+        }
+      }
     },
     "Your chats stay on your Mac. Inference runs in Venice's hardware-isolated secure enclave." : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ihre Chats bleiben auf Ihrem Mac. Die Inferenz findet in Venedigs hardwareisolierter sicherer Enklave statt."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "你的聊天记录保存在你的Mac上。推理运算在 Venice 的硬件隔离安全沙箱中进行。"
+          }
+        }
+      }
     },
     "Your chats, prompts, files, and keys never leave your Mac." : {
       "localizations" : {
@@ -57746,7 +58989,20 @@
       }
     },
     "Your own key" : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dein eigener Schlüssel"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "您的密钥"
+          }
+        }
+      }
     },
     "YOUR RECOVERY CODE" : {
       "localizations" : {
@@ -57824,246 +59080,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "你的签名（预览）"
-          }
-        }
-      }
-    },
-    "A skill named \"%@\" already exists" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Ein Skill namens \"%@\" existiert bereits"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "名为“%@”的技能已存在"
-          }
-        }
-      }
-    },
-    "Could not import skill file \"%@\": %@" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Skill-Datei \"%@\" konnte nicht importiert werden: %@"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "无法导入技能文件“%@”：%@"
-          }
-        }
-      }
-    },
-    "Could not inspect directory" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Verzeichnis konnte nicht geprüft werden"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "无法检查目录"
-          }
-        }
-      }
-    },
-    "Could not inspect skill archive%@" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Skill-Archiv%@ konnte nicht geprüft werden"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "无法检查技能归档%@"
-          }
-        }
-      }
-    },
-    "Destination exists and is not a directory" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Ziel existiert und ist kein Verzeichnis"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "目标已存在且不是目录"
-          }
-        }
-      }
-    },
-    "Expected directory" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Verzeichnis erwartet"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "预期为目录"
-          }
-        }
-      }
-    },
-    "Imported %@; ignored additional SKILL.md files: %@" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Importiert %@; zusätzliche SKILL.md-Dateien ignoriert: %@"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "已导入 %@；已忽略其他 SKILL.md 文件：%@"
-          }
-        }
-      }
-    },
-    "Replace" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Ersetzen"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "替换"
-          }
-        }
-      }
-    },
-    "Replace Existing Skill?" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Bestehenden Skill ersetzen?"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "替换现有技能？"
-          }
-        }
-      }
-    },
-    "Skill archive contains more than %lld entries" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Skill-Archiv enthält mehr als %lld Einträge"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "技能归档包含超过 %lld 个条目"
-          }
-        }
-      }
-    },
-    "Skill archive entry \"%@\" escapes the archive root" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Skill-Archiveintrag \"%@\" verlässt den Archivstamm"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "技能归档条目“%@”会逃逸归档根目录"
-          }
-        }
-      }
-    },
-    "Skill archive entry \"%@\" is deeper than the %lld-level limit" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Skill-Archiveintrag \"%@\" ist tiefer als die Grenze von %lld Ebenen"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "技能归档条目“%@”超过 %lld 级深度限制"
-          }
-        }
-      }
-    },
-    "Skill archive entry \"%@\" is larger than the %@ limit" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Skill-Archiveintrag \"%@\" ist größer als die Grenze von %@"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "技能归档条目“%@”超过 %@ 限制"
-          }
-        }
-      }
-    },
-    "Skill archive entry \"%@\" is not a regular file or directory" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Skill-Archiveintrag \"%@\" ist keine reguläre Datei und kein Verzeichnis"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "技能归档条目“%@”不是常规文件或目录"
-          }
-        }
-      }
-    },
-    "Skill archive is larger than the %@ limit" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Skill-Archiv ist größer als die Grenze von %@"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "技能归档超过 %@ 限制"
           }
         }
       }
