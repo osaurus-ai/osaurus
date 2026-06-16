@@ -46,6 +46,7 @@ If you want to back up your data in plaintext (for example, before reinstalling 
 | Artifact | Mechanism | On-disk location |
 |---|---|---|
 | Chat history | SQLCipher | `~/.osaurus/chat-history/history.sqlite` |
+| Router billing ledger | SQLCipher | `~/.osaurus/billing/ledger.sqlite` |
 | Memory (identity, pinned facts, episodes, transcript, FTS5 mirrors) | SQLCipher | `~/.osaurus/memory/memory.sqlite` |
 | Methods catalog | SQLCipher | `~/.osaurus/methods/methods.sqlite` |
 | Tool index | SQLCipher | `~/.osaurus/tool-index/tool_index.sqlite` |
@@ -55,6 +56,12 @@ If you want to back up your data in plaintext (for example, before reinstalling 
 | Large chat attachments | AES-GCM (`.osec`) | `~/.osaurus/chat-history/blobs/<sha256>.osec` |
 
 **Attachment spillover.** Every `Attachment.image` or `Attachment.document` payload greater than or equal to **16 KB** is hashed, encrypted, and written to its own `.osec` file via [`AttachmentBlobStore`](../Packages/OsaurusCore/Storage/AttachmentBlobStore.swift). The chat row stores only `{ "ref": "<sha256>", ... }`, so resaving a session no longer rewrites every attachment byte. Smaller payloads (icons, short text snippets) stay inline in the row to avoid filesystem chatter.
+
+**Router billing ledger.** Osaurus Router charge diagnostics are metadata-only:
+request id, session id, assistant turn id, model, token counts, cost, status,
+app version, and rendered outcome. The ledger never stores prompt text,
+response text, tool arguments, or tool results. See
+[`OSAURUS_ROUTER.md`](OSAURUS_ROUTER.md).
 
 **Plaintext, by design.** A few artifacts deliberately stay plaintext:
 
@@ -162,6 +169,7 @@ The ticker is started from [`AppDelegate`](../Packages/OsaurusCore/AppDelegate.s
 |---|---|
 | `~/.osaurus/.storage-maintenance.json` | Last `optimize` / `checkpoint` / `vacuum` timestamps |
 | `~/.osaurus/.storage-key.salt` | HKDF salt sidecar (only present when DEK is master-derived) |
+| `~/.osaurus/billing/ledger.sqlite` | SQLCipher Router billing ledger |
 | `~/.osaurus/chat-history/history.sqlite` | SQLCipher chat database |
 | `~/.osaurus/chat-history/blobs/<sha256>.osec` | AES-GCM-encrypted spilled attachments |
 | `~/.osaurus/memory/memory.sqlite` | SQLCipher memory database |

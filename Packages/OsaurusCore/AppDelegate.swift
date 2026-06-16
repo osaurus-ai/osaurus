@@ -932,6 +932,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             menu.addItem(
                 NSMenuItem(title: "Reset Onboarding", action: #selector(dockResetOnboarding), keyEquivalent: "")
             )
+            menu.addItem(
+                NSMenuItem(title: "Preview What's New", action: #selector(dockPreviewWhatsNew), keyEquivalent: "")
+            )
         #endif
         return menu
     }
@@ -952,6 +955,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         @objc private func dockResetOnboarding() {
             OnboardingService.shared.resetOnboarding()
             showOnboardingWindow(forceShowIdentity: true)
+        }
+
+        @objc private func dockPreviewWhatsNew() {
+            WhatsNewGate.preview()
+            // A fresh chat window re-runs the `onAppear` gate check, which
+            // now force-returns every release's notes and presents the modal
+            // regardless of the dev build's bundle version.
+            ChatWindowManager.shared.createWindow()
         }
     #endif
 

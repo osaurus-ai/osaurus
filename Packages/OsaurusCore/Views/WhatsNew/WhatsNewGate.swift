@@ -17,6 +17,12 @@ public enum WhatsNewGate {
     /// chat windows don't each try to present the modal.
     @MainActor private static var didCheckThisLaunch = false
 
+    #if DEBUG
+        /// Set by `preview()`; consumed once by the next `pendingAutoShowRelease`
+        /// call to force-present the notes regardless of version/seen state.
+        @MainActor private static var forcePreview = false
+    #endif
+
     /// Current app version from Info.plist.
     public static var currentVersion: String {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0"
@@ -31,10 +37,9 @@ public enum WhatsNewGate {
     /// the current version as its `version` so the header reads naturally.
     ///
     /// `hasSandbox` and `hasLegacyPairedKeys` toggle conditional pages in
-    /// the security release: users who never used the sandbox should not see
-    /// the "restart sandbox" page, and users with no legacy keys should not
-    /// see the "review paired devices" page. Defaults are `true` so callers
-    /// that don't yet know skip nothing.
+    /// releases can tag pages with runtime gates so users do not see actions
+    /// that do not apply to their install. Defaults are `true` so callers that
+    /// don't yet know skip nothing.
     ///
     /// Rules:
     /// - Fresh install (no stored version): record current, return nil.
@@ -48,6 +53,23 @@ public enum WhatsNewGate {
     ) -> WhatsNewRelease? {
         guard !didCheckThisLaunch else { return nil }
         didCheckThisLaunch = true
+
+        #if DEBUG
+            // Debug preview: ignore version + seen gating and surface every
+            // release's notes at once. Dev builds carry a placeholder bundle
+            // version that won't match shipped release versions, so the normal
+            // gate can't reach them.
+            if forcePreview {
+                forcePreview = false
+                let previewPages =
+                    WhatsNewContent.releases
+                    .map { Self.filterPages($0, hasSandbox: hasSandbox, hasLegacyPairedKeys: hasLegacyPairedKeys) }
+                    .flatMap { $0.pages }
+                guard !previewPages.isEmpty else { return nil }
+                let version = WhatsNewContent.latest?.version ?? currentVersion
+                return WhatsNewRelease(version: version, pages: previewPages)
+            }
+        #endif
 
         let defaults = UserDefaults.standard
         let current = currentVersion
@@ -117,4 +139,18 @@ public enum WhatsNewGate {
     public static func markShown(version: String) {
         UserDefaults.standard.set(version, forKey: defaultsKey)
     }
+
+    #if DEBUG
+        /// Force the next chat window to present every release's notes
+        /// aggregated into one carousel, bypassing the version + seen gate.
+        /// Dev builds carry a placeholder bundle version (e.g. `1.0`) that
+        /// won't match shipped release-note versions, so the normal gate
+        /// can't surface them — this lets the DEBUG dock action preview the
+        /// modal regardless. One-shot: consumed by the next gate check.
+        @MainActor
+        public static func preview() {
+            forcePreview = true
+            didCheckThisLaunch = false
+        }
+    #endif
 }

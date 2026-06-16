@@ -24,6 +24,8 @@ public enum WhatsNewAction: Hashable, Sendable {
     case exportPlaintextBackup
     /// Open Settings → Privacy (Privacy Filter master switch + custom rules).
     case openPrivacySettings
+    /// Open Management → Credits.
+    case openCredits
 }
 
 public struct WhatsNewPage: Identifiable, Hashable, Sendable {
@@ -32,6 +34,10 @@ public struct WhatsNewPage: Identifiable, Hashable, Sendable {
     public let description: String
     /// If nil, the page shows a sparkling stars background instead of an image.
     public let imageURL: URL?
+    /// SF Symbol rendered over the accent gradient when `imageURL` is nil.
+    /// Gives each page its own glyph instead of a single shared sparkle.
+    /// Falls back to a generic sparkle in the view when nil.
+    public let systemImage: String?
     /// When set, the modal renders a prominent button labelled `actionLabel`
     /// in the footer that invokes `action`. Use sparingly — most pages should
     /// be informational only.
@@ -43,6 +49,7 @@ public struct WhatsNewPage: Identifiable, Hashable, Sendable {
         title: String,
         description: String,
         imageURL: URL? = nil,
+        systemImage: String? = nil,
         actionLabel: String? = nil,
         action: WhatsNewAction? = nil
     ) {
@@ -50,6 +57,7 @@ public struct WhatsNewPage: Identifiable, Hashable, Sendable {
         self.title = title
         self.description = description
         self.imageURL = imageURL
+        self.systemImage = systemImage
         self.actionLabel = actionLabel
         self.action = action
     }
@@ -72,48 +80,9 @@ public enum WhatsNewContent {
     /// here whose `version` matches `CFBundleShortVersionString` for each
     /// release that should announce changes on first launch after update.
     public static let releases: [WhatsNewRelease] = [
-        securityHardening_0_17_7,
         privacyFilter_0_19_0,
+        osaurusCloud_0_20_1,
     ]
-
-    /// First-launch announcement for the #950 security audit fixes
-    /// **plus** the at-rest encryption migration that ships alongside.
-    /// Pages whose id ends in `:sandbox` or `:legacy-keys` are
-    /// conditional — see
-    /// `WhatsNewGate.filterPages(_:hasSandbox:hasLegacyPairedKeys:)`.
-    private static let securityHardening_0_17_7 = WhatsNewRelease(
-        version: "0.17.7",
-        pages: [
-            WhatsNewPage(
-                id: "security-0.17.7:summary",
-                title: "Security update",
-                description:
-                    "Chats and memory are now encrypted on disk. Sandbox plugins authenticate with per-agent tokens. Pairings are agent-scoped."
-            ),
-            WhatsNewPage(
-                id: "security-0.17.7:storage",
-                title: "Encrypted at rest",
-                description:
-                    "Chat history, memory, and configuration are encrypted with a key kept in your Keychain. Export a plaintext backup any time before reinstalling macOS.",
-                actionLabel: "Backup & key options",
-                action: .openStorageSettings
-            ),
-            WhatsNewPage(
-                id: "security-0.17.7:sandbox",
-                title: "Sandbox isolation",
-                description: "Plugins now authenticate with per-agent tokens instead of self-reported headers.",
-                actionLabel: "Open sandbox",
-                action: .openSandboxSettings
-            ),
-            WhatsNewPage(
-                id: "security-0.17.7:legacy-keys",
-                title: "Paired devices",
-                description: "New pairings are agent-scoped and expire in 90 days. Older keys are marked Legacy.",
-                actionLabel: "Review",
-                action: .openAPIKeysSettings
-            ),
-        ]
-    )
 
     /// First-launch announcement for the Privacy Filter feature.
     /// Three pages: what it does, how the review flow keeps you in
@@ -126,21 +95,56 @@ public enum WhatsNewContent {
                 id: "privacy-filter-0.19.0:summary",
                 title: "Privacy Filter",
                 description:
-                    "Before anything leaves your Mac for a cloud model, Osaurus can scan for phone numbers, emails, names, addresses, and other sensitive data and swap them for placeholders. Responses are restored on the way back."
+                    "Before anything leaves your Mac for a cloud model, Osaurus can scan for phone numbers, emails, names, addresses, and other sensitive data and swap them for placeholders. Responses are restored on the way back.",
+                systemImage: "hand.raised.fill"
             ),
             WhatsNewPage(
                 id: "privacy-filter-0.19.0:review",
                 title: "You stay in control",
                 description:
-                    "Every redaction is shown to you before the request leaves — approve, edit, or send anyway. Replacements are highlighted inline in chat so you always know what shipped."
+                    "Every redaction is shown to you before the request leaves — approve, edit, or send anyway. Replacements are highlighted inline in chat so you always know what shipped.",
+                systemImage: "checkmark.shield.fill"
             ),
             WhatsNewPage(
                 id: "privacy-filter-0.19.0:customize",
                 title: "Tune what's scrubbed",
                 description:
                     "Toggle built-in categories, add your own regex rules, and choose whether to auto-approve familiar redactions. Cloud-only — local models never round-trip through the filter.",
+                systemImage: "slider.horizontal.3",
                 actionLabel: "Open Privacy settings",
                 action: .openPrivacySettings
+            ),
+        ]
+    )
+
+    /// First-launch announcement for Osaurus Cloud.
+    /// The final CTA deep-links to Management → Credits so users can fund
+    /// Router usage and try hosted models immediately.
+    private static let osaurusCloud_0_20_1 = WhatsNewRelease(
+        version: "0.20.1",
+        pages: [
+            WhatsNewPage(
+                id: "osaurus-cloud-0.20.1:summary",
+                title: "Osaurus Cloud is here",
+                description:
+                    "Use hosted models from Osaurus without bringing your own API key. Add credits once, pick an Osaurus model, and keep your agents, tools, memory, and local workflow exactly where they are.",
+                systemImage: "cloud.fill"
+            ),
+            WhatsNewPage(
+                id: "osaurus-cloud-0.20.1:venice",
+                title: "Private inferencing through Venice AI",
+                description:
+                    "Osaurus Cloud routes inference through Venice AI, a privacy-first provider. Your chats stay on your Mac, while hosted requests use Router credits instead of separate provider accounts.",
+                systemImage: "lock.shield.fill"
+            ),
+            WhatsNewPage(
+                id: "osaurus-cloud-0.20.1:feedback",
+                title: "We want your feedback",
+                description:
+                    "This is the first Osaurus Cloud launch. Please tell us what feels fast, what feels confusing, and which models or credit controls you want next.",
+                systemImage: "bubble.left.and.bubble.right.fill",
+                actionLabel: "Open Credits",
+                action: .openCredits
             ),
         ]
     )

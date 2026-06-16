@@ -4416,12 +4416,10 @@ struct ChatView: View {
             let hasLegacyPairedKeys = !APIKeyManager.shared
                 .legacyMasterScopedKeys(knownAgentAddresses: knownAgentAddrs)
                 .isEmpty
-            // What's New modal disabled.
-            // pendingWhatsNew = WhatsNewGate.pendingAutoShowRelease(
-            //     hasSandbox: hasSandbox,
-            //     hasLegacyPairedKeys: hasLegacyPairedKeys
-            // )
-            _ = (hasSandbox, hasLegacyPairedKeys)
+            pendingWhatsNew = WhatsNewGate.pendingAutoShowRelease(
+                hasSandbox: hasSandbox,
+                hasLegacyPairedKeys: hasLegacyPairedKeys
+            )
         }
         .onDisappear {
             cleanupKeyMonitor()
@@ -4462,10 +4460,11 @@ struct ChatView: View {
                     pendingWhatsNew = nil
                 },
                 onAction: { action in
-                    // Mark the release seen first so the user can't loop
-                    // back into it if they reopen the chat window quickly.
-                    WhatsNewGate.markShown(version: release.version)
-                    pendingWhatsNew = nil
+                    // Only perform the deep link here. The modal owns
+                    // dismissal — it stays open on non-final pages and calls
+                    // `onClose` (which marks the release seen) when the CTA is
+                    // on the last page, so a mid-carousel CTA doesn't skip the
+                    // remaining notes.
                     switch action {
                     case .openSandboxSettings:
                         AppDelegate.shared?.showManagementWindow(initialTab: .sandbox)
@@ -4483,6 +4482,8 @@ struct ChatView: View {
                         AppDelegate.shared?.showManagementWindow(initialTab: .storage)
                     case .openPrivacySettings:
                         AppDelegate.shared?.showManagementWindow(initialTab: .privacy)
+                    case .openCredits:
+                        AppDelegate.shared?.showManagementWindow(initialTab: .credits)
                     }
                 }
             )

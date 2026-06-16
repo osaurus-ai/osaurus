@@ -132,7 +132,7 @@ On macOS 26+, use Apple's on-device model as a first-class provider. Pass `model
 
 ### Cloud
 
-Connect to OpenAI, Anthropic, Gemini, xAI/Grok, [Venice AI](https://venice.ai), OpenRouter, Ollama, or LM Studio. Venice provides uncensored, privacy-focused inference with no data retention. Context and memory persist across all providers.
+Connect to OpenAI, Anthropic, Gemini, xAI/Grok, [Venice AI](https://venice.ai), OpenRouter, Ollama, LM Studio, or Osaurus Router. Venice provides uncensored, privacy-focused inference with no data retention. Context and memory persist across all providers. See [Remote Providers](docs/REMOTE_PROVIDERS.md) and [Osaurus Router](docs/OSAURUS_ROUTER.md).
 
 ## MCP
 
