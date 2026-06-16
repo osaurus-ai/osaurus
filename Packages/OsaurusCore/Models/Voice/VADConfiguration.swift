@@ -87,7 +87,24 @@ public struct VADConfiguration: Codable, Equatable, Sendable {
 /// Handles persistence of `VADConfiguration`
 @MainActor
 public enum VADConfigurationStore {
+    /// In-memory snapshot so hot SwiftUI body getters don't decode JSON from
+    /// disk on every render. `VADToggleButton` reads the config twice per
+    /// render (`isVADConfigured` + `isVADEnabledGlobally` via `iconColor`),
+    /// and that synchronous `Data(contentsOf:)` + decode has hung the UI.
+    /// `save()` is the only writer of the backing file, so updating this memo
+    /// there keeps it authoritative without re-reading disk.
+    private static var cached: VADConfiguration?
+
     public static func load() -> VADConfiguration {
+        if let cached {
+            return cached
+        }
+        let config = loadFromDisk()
+        cached = config
+        return config
+    }
+
+    private static func loadFromDisk() -> VADConfiguration {
         let url = configurationFileURL()
         guard FileManager.default.fileExists(atPath: url.path) else {
             return VADConfiguration.default
@@ -107,6 +124,7 @@ public enum VADConfigurationStore {
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
             try encoder.encode(configuration).write(to: url, options: [.atomic])
+            cached = configuration
             DispatchQueue.main.async {
                 NotificationCenter.default.post(name: .voiceConfigurationChanged, object: nil)
             }
