@@ -2463,13 +2463,80 @@ public actor RemoteProviderService: ToolCapableService {
         RemoteReasoningPolicy.strippingReasoning(messages)
     }
 
+    /// Collapse consecutive `tool` messages that share a `tool_call_id` into a
+    /// single message. Anthropic — and the Osaurus Router fan-out to Claude —
+    /// reject more than one `tool_result` per `tool_use_id` ("each tool_use
+    /// must have a single result"). Osaurus intentionally emits extra same-id
+    /// `tool` turns to carry transient `[System Notice]` feedback (KV-cache
+    /// stable; see `AgentToolLoop.appendingTransientNotices`), so the duplicates
+    /// are merged here at the remote wire boundary — concatenating their text so
+    /// the model still reads the notice — and never in local history.
+    ///
+    /// Only adjacent same-id results within one run of consecutive `tool`
+    /// messages merge; distinct ids in a parallel batch stay separate and the
+    /// order is preserved, so Anthropic's "result immediately follows the
+    /// tool_use" ordering is never disturbed.
+    static func mergingDuplicateToolResults(_ messages: [ChatMessage]) -> [ChatMessage] {
+        var result: [ChatMessage] = []
+        result.reserveCapacity(messages.count)
+        // Output index of each tool result seen in the CURRENT consecutive run,
+        // keyed by tool_call_id. Cleared whenever a non-tool message (or a tool
+        // message with no id) breaks the run.
+        var indexByCallId: [String: Int] = [:]
+
+        for message in messages {
+            guard message.role.lowercased() == "tool",
+                let callId = message.tool_call_id
+            else {
+                indexByCallId.removeAll(keepingCapacity: true)
+                result.append(message)
+                continue
+            }
+
+            if let existingIndex = indexByCallId[callId] {
+                let base = result[existingIndex]
+                result[existingIndex] = ChatMessage(
+                    role: base.role,
+                    content: concatenatedToolContent(base.content, message.content),
+                    tool_calls: base.tool_calls,
+                    tool_call_id: base.tool_call_id,
+                    reasoning_content: base.reasoning_content,
+                    reasoning_item_id: base.reasoning_item_id,
+                    reasoning_encrypted: base.reasoning_encrypted
+                )
+            } else {
+                indexByCallId[callId] = result.count
+                result.append(message)
+            }
+        }
+        return result
+    }
+
+    private static func concatenatedToolContent(_ first: String?, _ second: String?) -> String? {
+        switch (first, second) {
+        case let (first?, second?):
+            if first.isEmpty { return second }
+            if second.isEmpty { return first }
+            return first + "\n\n" + second
+        case let (first?, nil):
+            return first
+        case let (nil, second?):
+            return second
+        case (nil, nil):
+            return nil
+        }
+    }
+
     /// Router fan-out advertises one OpenAI-compatible request to many
     /// upstreams, so it uses the strictest shared chat-completions history
     /// shape. User media stays multimodal; assistant history leaves Osaurus as
     /// string `content` because several upstreams reject assistant arrays or
     /// omitted assistant content on tool-call turns.
     static func routerWireCompatibleMessages(_ messages: [ChatMessage]) -> [ChatMessage] {
-        let wireMessages = routerMessagesDroppingUnsupportedAssistantPrefill(messages)
+        // Collapse same-id tool results FIRST: the router fans out to Claude,
+        // which rejects more than one tool_result per tool_use_id.
+        let deduped = mergingDuplicateToolResults(messages)
+        let wireMessages = routerMessagesDroppingUnsupportedAssistantPrefill(deduped)
         return wireMessages.map { message in
             guard requiresRouterAssistantStringContent(message) else { return message }
             return routerAssistantWireMessage(message)
@@ -2897,7 +2964,9 @@ struct RemoteChatRequest: Encodable {
             }
         }
 
-        for msg in messages {
+        // Collapse same-id tool results so each tool_use_id yields exactly one
+        // tool_result block (Anthropic rejects duplicates).
+        for msg in RemoteProviderService.mergingDuplicateToolResults(messages) {
             switch msg.role {
             case "system":
                 // Flush any pending tool results before system message
@@ -3054,7 +3123,9 @@ struct RemoteChatRequest: Encodable {
             }
         }
 
-        for msg in messages {
+        // Collapse same-id tool results so a repeated tool_call_id maps to a
+        // single functionResponse instead of duplicates.
+        for msg in RemoteProviderService.mergingDuplicateToolResults(messages) {
             switch msg.role {
             case "system":
                 // System messages become systemInstruction
