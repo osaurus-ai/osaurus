@@ -747,6 +747,13 @@ final class ChatSession: ObservableObject {
     /// this store directly.
     let visibleBlocksStore = VisibleBlocksStore()
 
+    /// Suppresses `rebuildVisibleBlocks()` while a session switch is in flight.
+    /// `load(from:)` calls `stop()` first, whose `completeRunCleanup` would
+    /// rebuild blocks for the OUTGOING session — a full re-render cascade that
+    /// is immediately discarded when `load` swaps in the new session and
+    /// rebuilds. Skipping it removes one of two rebuilds per switch.
+    private var suppressVisibleBlockRebuild = false
+
     /// Flattened content blocks for NSTableView rendering.
     /// Read-through to `visibleBlocksStore.blocks` so existing call sites
     /// (helpers, checks that don't need to drive re-renders) keep working.
@@ -774,6 +781,9 @@ final class ChatSession: ObservableObject {
     /// Rebuild `visibleBlocks` and `visibleBlocksGroupHeaderMap` from current turns.
     /// Cheap to call repeatedly — BlockMemoizer fast-paths when nothing changed.
     func rebuildVisibleBlocks() {
+        // Skipped mid-session-switch; `load(from:)` rebuilds once for the
+        // incoming session. See `suppressVisibleBlockRebuild`.
+        if suppressVisibleBlockRebuild { return }
         ChatPerfTrace.shared.count("rebuildVisibleBlocks")
         ChatPerfTrace.shared.time("rebuildVisibleBlocks.total") {
             rebuildVisibleBlocksImpl()
@@ -1508,6 +1518,10 @@ final class ChatSession: ObservableObject {
 
     /// Load session from persisted data
     func load(from data: ChatSessionData) {
+        // Switching sessions discards the current thread's UI, so suppress the
+        // outgoing-session block rebuild that `stop()` would trigger. Cleared
+        // before the single rebuild for the incoming session below.
+        suppressVisibleBlockRebuild = true
         stop()
         sessionId = data.id
         title = data.title
@@ -1545,6 +1559,7 @@ final class ChatSession: ObservableObject {
         blockMemoizer.clear()
         cachedContext = nil
         cachedPreviewContext = nil
+        suppressVisibleBlockRebuild = false
         rebuildVisibleBlocks()
 
         Task { [weak self] in await self?.refreshContextEstimates() }
