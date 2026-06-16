@@ -721,6 +721,25 @@ public final class RemoteProviderManager: ObservableObject {
             ?? entry.models.first
     }
 
+    /// The first chat-capable model id for `providerId`, prefixed exactly as the
+    /// model picker lists it (e.g. "openai-chatgpt/gpt-5.5"). Skips embedding /
+    /// reranker ids via the same heuristic the picker uses. `nil` until the
+    /// provider connects and its catalog is discovered.
+    ///
+    /// Used to pin the new agent's default model when the user connected a
+    /// bring-your-own-key / OAuth provider in onboarding. Falls back to the
+    /// first model when none pass the heuristic, so the agent is never left
+    /// without a default while the provider exposes any model at all.
+    public func firstChatCapableModelId(forProviderId providerId: UUID) -> String? {
+        guard
+            let entry = cachedAvailableModels().first(where: {
+                $0.providerId == providerId
+            })
+        else { return nil }
+        return entry.models.first { !ModelPickerItem.isLikelyEmbeddingOrRerankerID($0) }
+            ?? entry.models.first
+    }
+
     /// Metadata for an Osaurus Router model by its unprefixed id (the id as it
     /// appears in `discoveredModels`, e.g. "venice/model-b"). Returns nil for
     /// non-router models or before the router has connected.

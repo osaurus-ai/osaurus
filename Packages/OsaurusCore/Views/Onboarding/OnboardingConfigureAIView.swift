@@ -144,6 +144,28 @@ final class ConfigureAIState: ObservableObject {
     /// dimension for the first `message_sent`.
     @Published var selectedBrainSource: BrainSource? = nil
 
+    /// The local model id to record as the active agent's default when the user
+    /// finishes onboarding on the Local path. `nil` for hosted / provider-key
+    /// sources, so `finishOnboarding` only pins the model the user actually
+    /// committed to locally. The bundle may still be downloading; the id is
+    /// durable and `ChatView.refreshPickerItems` re-resolves it once the
+    /// download lands.
+    var localDefaultModelIdToPin: String? {
+        guard case .local = selectedBrainSource else { return nil }
+        return selectedModel?.id
+    }
+
+    /// The remote provider whose first chat-capable model should become the
+    /// active agent's default when the user finished onboarding on the
+    /// bring-your-own-key / OAuth path. `nil` for non-provider brain sources.
+    /// The provider's catalog populates asynchronously after connect, so
+    /// `finishOnboarding` polls `RemoteProviderManager.firstChatCapableModelId`
+    /// before pinning.
+    var providerModelPinTarget: UUID? {
+        guard case .providerKey = selectedBrainSource else { return nil }
+        return addedProviderId
+    }
+
     /// Guards `applyDefaultPathIfNeeded(totalMemoryGB:)` so the RAM-based
     /// default path is only ever applied once. Without it a user who manually
     /// switched back to Local would be bounced to Cloud again on the next
@@ -170,6 +192,11 @@ final class ConfigureAIState: ObservableObject {
     /// CTA, key field, save/test branches, and back-routing.
     @Published var selectedAuthMethod: ProviderPickerAuthMethod = .apiKey
     @Published var oauthTokens: RemoteProviderOAuthTokens? = nil
+    /// The id of the provider added by `saveProviderAndContinue`. Read by
+    /// `finishOnboarding` (via `providerModelPinTarget`) to pin the new agent's
+    /// default model to the just-connected provider's first chat-capable model.
+    /// Cleared by `clearAPICredentials()` so an abandoned selection never pins.
+    @Published var addedProviderId: UUID? = nil
 
     /// The OAuth flavor of the current selection, if any.
     var selectedOAuthKind: ProviderOAuthKind? {
@@ -469,6 +496,7 @@ final class ConfigureAIState: ObservableObject {
         apiKey = ""
         selectedAuthMethod = .apiKey
         oauthTokens = nil
+        addedProviderId = nil
         customForm.reset()
         testResult = nil
         hasFinalizedAPI = false
@@ -652,6 +680,7 @@ final class ConfigureAIState: ObservableObject {
         // standard apiKey path below.
         if selectedOAuthKind == .openAICodex {
             let provider = OpenAICodexOAuthService.makeProvider()
+            addedProviderId = provider.id
             RemoteProviderManager.shared.addProvider(provider, apiKey: nil, oauthTokens: oauthTokens)
             isSaving = false
             onComplete()
@@ -660,6 +689,7 @@ final class ConfigureAIState: ObservableObject {
 
         if selectedOAuthKind == .xai {
             let provider = XAIOAuthService.makeProvider()
+            addedProviderId = provider.id
             RemoteProviderManager.shared.addProvider(provider, apiKey: nil, oauthTokens: oauthTokens)
             isSaving = false
             onComplete()
@@ -679,6 +709,7 @@ final class ConfigureAIState: ObservableObject {
             autoConnect: true,
             timeout: 60
         )
+        addedProviderId = provider.id
         RemoteProviderManager.shared.addProvider(
             provider,
             apiKey: config.authType == .apiKey ? apiKey : nil

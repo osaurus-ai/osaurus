@@ -92,11 +92,13 @@ struct WhatsNewGateFilterTests {
     func osaurusCloudReleaseLinksToCredits() throws {
         let release = try #require(WhatsNewContent.release(for: "0.20.1"))
 
-        #expect(release.pages.map(\.id) == [
-            "osaurus-cloud-0.20.1:summary",
-            "osaurus-cloud-0.20.1:venice",
-            "osaurus-cloud-0.20.1:feedback",
-        ])
+        #expect(
+            release.pages.map(\.id) == [
+                "osaurus-cloud-0.20.1:summary",
+                "osaurus-cloud-0.20.1:venice",
+                "osaurus-cloud-0.20.1:feedback",
+            ]
+        )
         #expect(release.pages.last?.actionLabel == "Open Credits")
         #expect(release.pages.last?.action == .openCredits)
     }

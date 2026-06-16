@@ -33,7 +33,8 @@ struct ToolExposureDiagnostic: Equatable, Sendable {
 
         var compactSummary: String {
             let searchCodes = searchReasonCodes.map(\.rawValue).joined(separator: ",")
-            return "availability=\(availability.compactSummary); indexed=\(indexedForSearch); searchable=\(searchableByCapabilitiesDiscover); search=\(searchCodes)"
+            return
+                "availability=\(availability.compactSummary); indexed=\(indexedForSearch); searchable=\(searchableByCapabilitiesDiscover); search=\(searchCodes)"
         }
     }
 

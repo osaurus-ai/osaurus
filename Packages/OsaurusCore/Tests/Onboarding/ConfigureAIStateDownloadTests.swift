@@ -148,4 +148,45 @@ struct ConfigureAIStateDownloadTests {
         #expect(state.selectedModel != nil)
         #expect(state.selectedModel?.isTopSuggestion == true)
     }
+
+    /// `finishOnboarding` reads `localDefaultModelIdToPin` to pin the agent's
+    /// default model. It must only surface the selected id when the user
+    /// actually committed to the Local path — a sticky `selectedModel` left
+    /// over after switching to hosted must not be pinned.
+    @Test func localDefaultModelIdToPin_returnsSelectedIdOnlyForLocalBrainSource() {
+        let (state, model) = makeStateWithModel()
+        defer { clear(model) }
+
+        // No brain source committed yet -> nothing to pin.
+        #expect(state.localDefaultModelIdToPin == nil)
+
+        // Committed local -> the selected model's id.
+        state.selectedBrainSource = .local
+        #expect(state.localDefaultModelIdToPin == model.id)
+
+        // Switched to hosted (selection stays sticky) -> nil, so the local
+        // model isn't mis-pinned when the user proceeds via Cloud.
+        state.selectedBrainSource = .hostedOsaurus
+        #expect(state.localDefaultModelIdToPin == nil)
+    }
+
+    /// `finishOnboarding` reads `providerModelPinTarget` to poll for the
+    /// just-connected provider's first chat-capable model. It must only return
+    /// the captured provider id for the bring-your-own-key / OAuth brain source.
+    @Test func providerModelPinTarget_returnsAddedProviderIdOnlyForProviderKeySource() {
+        let state = ConfigureAIState()
+        let providerId = UUID()
+        state.addedProviderId = providerId
+
+        // No / non-provider brain source -> nil even with a captured provider.
+        #expect(state.providerModelPinTarget == nil)
+        state.selectedBrainSource = .hostedOsaurus
+        #expect(state.providerModelPinTarget == nil)
+        state.selectedBrainSource = .local
+        #expect(state.providerModelPinTarget == nil)
+
+        // Provider-key brain source -> the captured provider id.
+        state.selectedBrainSource = .providerKey(.openai)
+        #expect(state.providerModelPinTarget == providerId)
+    }
 }
