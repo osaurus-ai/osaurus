@@ -1325,28 +1325,40 @@ struct RuntimePolicySourceTests {
         #expect(agentRun.contains("ChatMessage(role: \"tool\""))
     }
 
-    @Test("Gemma QAT agent final answer disables auto tools after tool results")
-    func gemmaQATAgentFinalAnswerDisablesAutoToolsAfterToolResults() throws {
+    @Test("Agent finalization keeps tool_choice stable post-tool (no prefix-busting downgrade)")
+    func agentFinalizationKeepsToolChoiceStablePostTool() throws {
         let handler = try Self.source("Networking/HTTPHandler.swift")
         let chatPolicy = try Self.source("Services/Chat/ChatToolChoicePolicy.swift")
-        let helper = try Self.functionBody("static func finalizingPostToolChoice(", in: chatPolicy)
         let agentRun = try Self.functionBody("private func handleAgentRunEndpoint(", in: handler)
         let chatView = try Self.source("Views/Chat/ChatView.swift")
 
-        #expect(helper.contains("messages.last?.role == \"tool\""))
-        #expect(helper.contains("modelId.contains(\"gemma-4\")"))
-        #expect(helper.contains("modelId.contains(\"qat\")"))
-        #expect(helper.contains("modelId.contains(\"jang_4m\") || modelId.contains(\"mxfp4\")"))
-        #expect(helper.contains("return ToolChoiceOption.none"))
+        // The obsolete Gemma-QAT post-tool downgrade (flip auto->none) is gone.
+        // It stripped the rendered `<tools>` block from the system prefix on the
+        // finalization step, shrinking the prompt below the calling step's
+        // prefix and forcing a full KV re-prefill. The upstream prose corruption
+        // that motivated it is fixed, so tools stay visible and the prefix stays
+        // byte-stable across iterations.
         #expect(
-            helper.contains("case .some(.required), .some(.function):"),
-            "Required/named tool-choice requests must stay fail-closed instead of being silently downgraded."
+            !chatPolicy.contains("finalizingPostToolChoice"),
+            "Post-tool tool_choice downgrade must not be reintroduced; it busts the KV prefix."
         )
-        #expect(agentRun.contains("ChatToolChoicePolicy.finalizingPostToolChoice("))
-        #expect(agentRun.contains("tool_choice: iterationToolChoice"))
+        #expect(
+            !chatPolicy.contains("gemma-4"),
+            "ChatToolChoicePolicy must not special-case Gemma post-tool tool_choice."
+        )
+        #expect(
+            !chatPolicy.contains("ToolChoiceOption.none"),
+            "Post-tool finalization must not downgrade tool_choice to .none."
+        )
+
+        // Both agent loops reuse the resolved/requested tool_choice every
+        // iteration (no post-tool downgrade), so the post-tool prompt extends the
+        // calling prompt's KV prefix instead of re-prefilling.
+        #expect(!agentRun.contains("finalizingPostToolChoice"))
+        #expect(agentRun.contains("tool_choice: resolvedToolChoice"))
+        #expect(!chatView.contains("finalizingPostToolChoice"))
         #expect(chatView.contains("let requestedToolChoice = ChatToolChoicePolicy.resolve("))
-        #expect(chatView.contains("let finalToolChoice = ChatToolChoicePolicy.finalizingPostToolChoice("))
-        #expect(chatView.contains("tool_choice: finalToolChoice"))
+        #expect(chatView.contains("tool_choice: requestedToolChoice"))
     }
 
     @Test("OpenAI chat completions endpoint does not inject agent context")
@@ -2328,7 +2340,7 @@ struct RuntimePolicySourceTests {
         )
         #expect(
             chatView.contains("let requestedToolChoice = ChatToolChoicePolicy.resolve(")
-                && chatView.contains("tool_choice: finalToolChoice"),
+                && chatView.contains("tool_choice: requestedToolChoice"),
             "Chat UI should route explicit tool-use prompts through the shared policy instead of hard-coding auto for every tool-enabled turn."
         )
         #expect(

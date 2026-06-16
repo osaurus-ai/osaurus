@@ -936,7 +936,7 @@ struct HTTPHandlerChatStreamingTests {
         }
     }
 
-    @Test func agentRun_gemmaQATPostToolFinalizationDisablesAutoToolChoice() async throws {
+    @Test func agentRun_gemmaQATPostToolFinalizationKeepsToolsVisibleForCacheStability() async throws {
         actor GemmaQATToolChoiceEngine: ChatEngineProtocol {
             private var calls = 0
             private(set) var requests: [ChatCompletionRequest] = []
@@ -1025,11 +1025,16 @@ struct HTTPHandlerChatStreamingTests {
             } else {
                 Issue.record("Expected first Gemma QAT agent request to use tool_choice auto.")
             }
-            if case .some(.none) = requests[1].tool_choice {
-                // Expected: Gemma QAT post-tool final text must not run in
-                // auto-tool mode because live JANG/MXFP rows corrupted prose.
+            // The post-tool finalization step must keep the SAME tool_choice
+            // (and therefore the rendered `<tools>` block) so the prompt stays a
+            // strict extension of the calling step. Downgrading to `.none` used
+            // to strip the tools block, shrinking the prompt below the prefix and
+            // forcing a full KV re-prefill; the prose corruption that motivated
+            // that workaround is fixed upstream.
+            if case .some(.auto) = requests[1].tool_choice {
+                // Expected: tools stay visible on the finalization step.
             } else {
-                Issue.record("Expected Gemma QAT post-tool request to use tool_choice none.")
+                Issue.record("Expected Gemma QAT post-tool request to keep tool_choice auto for KV prefix stability.")
             }
             #expect(requests[1].messages.last?.role == "tool")
             #expect(requests[1].tools?.isEmpty == false)

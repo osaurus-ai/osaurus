@@ -2,6 +2,40 @@
 
 This is the active Osaurus integration checklist for the paired vMLX work.
 
+## Resolution Update (2026-06-15): post-tool tool_choice flip removed
+
+**Summary:** the Gemma-QAT post-tool `tool_choice` downgrade (`auto` -> `none`
+after a tool result, formerly `ChatToolChoicePolicy.finalizingPostToolChoice`)
+is **removed**. Both agent loops now reuse the resolved `tool_choice` on every
+iteration, so the `<tools>` block — and the KV prefix — stays byte-stable.
+
+- **Why it was wrong:** `.none` makes `makeTokenizerTools` strip the rendered
+  `<tools>` block, which Gemma renders inside the system prefix. Live repro on
+  `gemma-4-12b-it-qat-mxfp4`: the post-tool prompt shrank 2829 -> 2197 tokens
+  (16 -> 0 tool markers), so it was no longer a prefix of the calling step and
+  forced a full re-prefill (only 1 disk-L2 hit/run). It also broke multi-step
+  harness behavior (see the rejected eval-loop mitigation note below).
+- **Real root cause of the corruption it mitigated:** the `ToolCallProcessor`
+  bare-call fallback held trailing `c`/`ca`/`cal`/`call` fragments (possible
+  `call:` markers) and, when they did not continue into a tool call, neither
+  flushed them in order nor cleared them — garbling prose
+  (`cobblestone` -> `obblestone`). This is a model-free parser bug, not a
+  quant/KV/detokenizer artifact. It is already fixed and guarded by
+  `GemmaToolsScrambleReproTests` and `ToolCallProcessorFuzzTests` (prose
+  byte-exact across chunk sizes for `.gemma`/`.gemma4`/all formats).
+- **Proof:** flip-OFF live repro on both QAT variants (MXFP4, JANG_4M),
+  including exact-echo tasks, gave clean prose with tools visible and a
+  prefix-extending post-tool step (2829 -> 3004 tokens, 2 disk-L2 hits/run).
+- **Regression guards:**
+  `HTTPHandlerChatStreamingTests.agentRun_gemmaQATPostToolFinalizationKeepsToolsVisibleForCacheStability`
+  (post-tool keeps `tool_choice: .auto` with tools advertised) and
+  `RuntimePolicySourceTests.agentFinalizationKeepsToolChoiceStablePostTool`
+  (the downgrade cannot be reintroduced).
+
+The historical sections below predate this change and are kept verbatim as the
+original investigation record; their references to `finalizingPostToolChoice`
+and the old `…DisablesAutoTool…` tests are superseded by this update.
+
 ## Scope
 
 - Default paged RAM KV cache is off. Prefix reuse must still use disk/L2 cache

@@ -3504,11 +3504,6 @@ final class ChatSession: ObservableObject {
                                 userText: trimmed,
                                 attempt: attempt
                             )
-                            let finalToolChoice = ChatToolChoicePolicy.finalizingPostToolChoice(
-                                model: self.selectedModel ?? "default",
-                                messages: msgs,
-                                requested: requestedToolChoice
-                            )
                             var req = ChatCompletionRequest(
                                 model: self.selectedModel ?? "default",
                                 messages: msgs,
@@ -3521,7 +3516,7 @@ final class ChatSession: ObservableObject {
                                 stop: nil,
                                 n: nil,
                                 tools: toolSpecs.isEmpty ? nil : toolSpecs,
-                                tool_choice: finalToolChoice,
+                                tool_choice: requestedToolChoice,
                                 session_id: self.sessionId?.uuidString
                             )
                             req.samplingParametersAreImplicit = true

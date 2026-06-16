@@ -4599,11 +4599,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     )
                 },
                 modelStep: { msgs, _ in
-                    let iterationToolChoice = ChatToolChoicePolicy.finalizingPostToolChoice(
-                        model: model,
-                        messages: msgs,
-                        requested: resolvedToolChoice
-                    )
+                    // Keep the requested tool_choice (and therefore the rendered
+                    // `<tools>` block) byte-stable across every iteration so the
+                    // post-tool finalization step extends the calling step's KV
+                    // prefix instead of re-prefilling from scratch.
                     var iterationReq = ChatCompletionRequest(
                         model: model,
                         messages: msgs,
@@ -4616,7 +4615,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         stop: req.stop,
                         n: nil,
                         tools: tools.isEmpty ? nil : tools,
-                        tool_choice: iterationToolChoice,
+                        tool_choice: resolvedToolChoice,
                         session_id: req.session_id,
                         seed: req.seed,
                         response_format: req.response_format,
