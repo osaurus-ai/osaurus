@@ -417,9 +417,12 @@ enum AgentLoopBudget {
     /// Canonical per-iteration message assembly for every loop surface:
     /// trim FIRST against the history budget (so compaction decisions are
     /// notice-independent and KV-stable), then append the driver-staged
-    /// `[System Notice]` lines as TRANSIENT user messages — never persisted
-    /// into the surface's history store, so a notice rides exactly one
-    /// iteration. The trim budget's safety margin
+    /// `[System Notice]` lines as TRANSIENT messages (see
+    /// ``appendingTransientNotices(_:to:)`` — tool-role feedback after a tool
+    /// result so the chat-template last-query anchor and the KV prefix stay
+    /// stable, else a trailing user turn) — never persisted into the
+    /// surface's history store, so a notice rides exactly one iteration. The
+    /// trim budget's safety margin
     /// (`ContextBudgetManager.safetyMargin`, 15% of the window) is the
     /// refit headroom that absorbs the notices' small token cost.
     ///
@@ -447,10 +450,52 @@ enum AgentLoopBudget {
             msgs = result.messages
             overBudget = result.overBudget
         }
-        for notice in notices {
-            msgs.append(ChatMessage(role: "user", content: notice))
-        }
+        msgs = appendingTransientNotices(notices, to: msgs)
         return AgentLoopIterationInput(messages: msgs, overBudget: overBudget)
+    }
+
+    /// Append transient per-iteration `[System Notice]` lines to a prompt
+    /// WITHOUT destabilizing the KV-cache prefix.
+    ///
+    /// A notice appended as a trailing *user* turn re-anchors chat templates
+    /// that gate the assistant reasoning rail on "the last user query"
+    /// (e.g. Qwen3.x's `last_query_index`): the most recent assistant
+    /// tool-call turn then re-renders WITHOUT the `<think>…</think>` scaffold
+    /// it generated under, so its cached token prefix no longer matches and
+    /// the next iteration re-prefills the entire prompt (the "kv cache set to
+    /// 0" symptom after a tool call). When the iteration already ends in tool
+    /// output, deliver the notices as additional tool-role environment
+    /// feedback instead: the template's last-query anchor — and therefore the
+    /// reused KV prefix — stays put, while the model still reads the notice.
+    /// With no trailing tool result (e.g. the empty-turn nudge), fall back to
+    /// the original trailing-user turn, which has no cached tool-call rail to
+    /// preserve.
+    static func appendingTransientNotices(
+        _ notices: [String],
+        to messages: [ChatMessage]
+    ) -> [ChatMessage] {
+        guard !notices.isEmpty else { return messages }
+        var msgs = messages
+        // If the iteration ends in a tool result, notices ride alongside it as
+        // tool-role environment feedback (captured before we append, so every
+        // notice keeps that result's `tool_call_id`); otherwise they fall back
+        // to a trailing user turn.
+        let trailingTool = (msgs.last?.role == "tool") ? msgs.last : nil
+        for notice in notices {
+            if let trailingTool {
+                msgs.append(
+                    ChatMessage(
+                        role: "tool",
+                        content: notice,
+                        tool_calls: nil,
+                        tool_call_id: trailingTool.tool_call_id
+                    )
+                )
+            } else {
+                msgs.append(ChatMessage(role: "user", content: notice))
+            }
+        }
+        return msgs
     }
 
     /// Like `trimPreservingSystemPrefix`, but also reports whether the

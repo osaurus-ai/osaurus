@@ -157,6 +157,94 @@ struct AgentLoopBudgetTests {
         #expect(!composed.overBudget)
     }
 
+    /// Regression (KV/prefix re-prefill after a tool call): a transient notice
+    /// that rides the iteration AFTER a tool call must NOT be appended as a
+    /// trailing *user* turn. Chat templates that gate the assistant reasoning
+    /// rail on "the last user query" (Qwen3.x `last_query_index`) would then
+    /// re-render the cached assistant tool-call turn WITHOUT its `<think>`
+    /// scaffold, diverging from the stored KV prefix and forcing a full
+    /// re-prefill ("kv cache set to 0"). The notice instead rides as tool-role
+    /// environment feedback, so the genuine user query stays the last-query
+    /// anchor and the KV prefix is reused.
+    @Test func transientNoticeAfterToolResultRidesAsToolFeedback() {
+        let history: [ChatMessage] = [
+            ChatMessage(role: "system", content: "sys"),
+            ChatMessage(role: "user", content: "list my models"),
+            ChatMessage(
+                role: "assistant",
+                content: nil,
+                tool_calls: [
+                    ToolCall(
+                        id: "call_1",
+                        type: "function",
+                        function: ToolCallFunction(name: "osaurus_list", arguments: "{}")
+                    )
+                ],
+                tool_call_id: nil
+            ),
+            ChatMessage(
+                role: "tool",
+                content: "{\"ok\":true}",
+                tool_calls: nil,
+                tool_call_id: "call_1"
+            ),
+        ]
+        let composed = AgentLoopBudget.composeIterationMessages(
+            history,
+            notices: ["[System Notice] Tool call budget: 1 of 2 remaining."],
+            manager: nil
+        )
+        // Delivered as tool feedback (joined to the tool result), not a
+        // trailing user turn.
+        #expect(composed.messages.last?.role == "tool")
+        #expect(
+            composed.messages.last?.content == "[System Notice] Tool call budget: 1 of 2 remaining."
+        )
+        #expect(composed.messages.last?.tool_call_id == "call_1")
+        // The only trailing non-tool-response user turn is still the genuine
+        // query at index 1 — the template's last-query anchor is unmoved, so
+        // the assistant tool-call turn keeps its cached reasoning rail.
+        let userIndices = composed.messages.enumerated()
+            .filter { $0.element.role == "user" }
+            .map { $0.offset }
+        #expect(userIndices == [1])
+    }
+
+    /// Multiple notices after a tool result all ride as tool feedback (none
+    /// re-anchors the template's last user query).
+    @Test func multipleTransientNoticesAfterToolResultAllRideAsToolFeedback() {
+        let composed = AgentLoopBudget.appendingTransientNotices(
+            ["[System Notice] a", "[System Notice] b"],
+            to: [
+                ChatMessage(role: "user", content: "q"),
+                ChatMessage(
+                    role: "tool",
+                    content: "result",
+                    tool_calls: nil,
+                    tool_call_id: "call_9"
+                ),
+            ]
+        )
+        #expect(composed.count == 4)
+        #expect(composed.suffix(2).allSatisfy { $0.role == "tool" })
+        #expect(composed.suffix(2).allSatisfy { $0.tool_call_id == "call_9" })
+        #expect(!composed.contains { $0.role == "user" && ($0.content ?? "").hasPrefix("[System Notice]") })
+    }
+
+    /// The empty-turn nudge (no preceding tool result) keeps the original
+    /// trailing-user delivery — there is no cached tool-call rail to preserve.
+    @Test func transientNoticeWithoutTrailingToolRidesAsUser() {
+        let composed = AgentLoopBudget.appendingTransientNotices(
+            ["[System Notice] previous turn produced no output"],
+            to: [
+                ChatMessage(role: "user", content: "hi"),
+                ChatMessage(role: "assistant", content: ""),
+            ]
+        )
+        #expect(composed.last?.role == "user")
+        #expect(composed.last?.content == "[System Notice] previous turn produced no output")
+    }
+
     @Test func foundationIdsResolveToFixedWindow() async {
         // The runtime resolver and the UI's sync twin must agree on the
         // Foundation ids — the historical bug had "default" resolving to

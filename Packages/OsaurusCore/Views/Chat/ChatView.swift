@@ -3423,11 +3423,11 @@ final class ChatSession: ObservableObject {
 
                             // Driver-staged `[System Notice]` lines (budget
                             // warning first, then dedupe/bias nudge) ride as
-                            // transient user messages — never persisted into
-                            // `turns`, so they don't pollute later prompts.
-                            for notice in notices {
-                                msgs.append(ChatMessage(role: "user", content: notice))
-                            }
+                            // transient messages — never persisted into
+                            // `turns`, so they don't pollute later prompts. The
+                            // shared helper keeps them KV-stable (see
+                            // `AgentLoopBudget.appendingTransientNotices`).
+                            msgs = AgentLoopBudget.appendingTransientNotices(notices, to: msgs)
 
                             // Mid-run near-limit notice: once the (post-trim)
                             // conversation estimate crosses 90% of the history
@@ -3446,12 +3446,11 @@ final class ChatSession: ObservableObject {
                                 historyTokens >= Int(Double(historyBudget) * 0.9)
                             {
                                 tokenBudgetNoticeFired = true
-                                msgs.append(
-                                    ChatMessage(
-                                        role: "user",
-                                        content:
-                                            "[System Notice] Context is nearly full — older messages are being compacted. Wrap up the current work and provide a summary."
-                                    )
+                                msgs = AgentLoopBudget.appendingTransientNotices(
+                                    [
+                                        "[System Notice] Context is nearly full — older messages are being compacted. Wrap up the current work and provide a summary."
+                                    ],
+                                    to: msgs
                                 )
                             }
 
