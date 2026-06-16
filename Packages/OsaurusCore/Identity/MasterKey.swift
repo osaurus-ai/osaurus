@@ -150,6 +150,17 @@ public struct MasterKey: Sendable {
         existsCacheLock.unlock()
     }
 
+    /// Seed `existsCached()` off the main thread (and off the Swift cooperative
+    /// pool, which a synchronous keychain read would otherwise pin) so the first
+    /// hot-path caller — e.g. the managed-router gate reached from the periodic
+    /// badge recompute — never triggers a `SecItemCopyMatching` on a
+    /// latency-sensitive thread. Call once at launch; idempotent.
+    public static func warmExistsCacheInBackground() {
+        DispatchQueue.global(qos: .utility).async {
+            _ = existsCached()
+        }
+    }
+
     private static func refreshExistsInBackground() {
         let now = Date()
         existsCacheLock.lock()

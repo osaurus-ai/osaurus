@@ -310,6 +310,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             try? await StorageKeyManager.shared.prewarmCurrentKeyOffCooperativeExecutor()
         }
 
+        // Seed the identity-existence memo off the main thread so the first
+        // `existsCached()` caller (RemoteProviderManager's managed-router gate,
+        // reached from the periodic badge recompute) doesn't pay a synchronous
+        // keychain probe on the main thread during a cold singleton init.
+        if !keychainDisabledTestMode {
+            MasterKey.warmExistsCacheInBackground()
+        }
+
         Task { @MainActor in
             if !keychainDisabledTestMode {
                 await MCPProviderManager.shared.connectEnabledProviders()
