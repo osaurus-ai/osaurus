@@ -83,7 +83,11 @@ public final class RemoteProviderManager: ObservableObject {
     var testIdentityExistsOverride: Bool?
 
     private func identityExists() -> Bool {
-        testIdentityExistsOverride ?? OsaurusIdentity.exists()
+        // `existsCached()` (not `exists()`): this gate runs inside
+        // `ensureManagedOsaurusRouterProviderIfNeeded`, which fires on every
+        // model-picker recompute. A synchronous keychain probe here hangs the
+        // UI; the cached value is updated in-process on identity create/wipe.
+        testIdentityExistsOverride ?? OsaurusIdentity.existsCached()
     }
 
     private static func isManagedOsaurusRouterProvider(_ provider: RemoteProvider) -> Bool {

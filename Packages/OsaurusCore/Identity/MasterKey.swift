@@ -72,6 +72,7 @@ public struct MasterKey: Sendable {
             }
         }
 
+        setCachedExists(true)
         return osaurusId
     }
 
@@ -106,6 +107,64 @@ public struct MasterKey: Sendable {
             kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
         ]
         return SecItemCopyMatching(query as CFDictionary, nil) == errSecSuccess
+    }
+
+    // MARK: - Cached Existence (hot UI paths)
+
+    // `exists()` issues a synchronous `SecItemCopyMatching`, which blocks on the
+    // Security daemon's keychain mutex. Calling it on every model-picker
+    // recompute (the managed-router gate in `RemoteProviderManager`) has hung
+    // the UI for seconds. This memo serves those hot, eventually-consistent
+    // callers without a per-call keychain hit: it is updated in-process on
+    // install/delete, seeded once lazily, and refreshed off the main thread to
+    // pick up out-of-process iCloud Keychain syncs.
+    private static let existsCacheLock = NSLock()
+    private nonisolated(unsafe) static var cachedExists: Bool?
+    private nonisolated(unsafe) static var lastExistsRefresh: Date?
+    private static let existsRefreshInterval: TimeInterval = 10.0
+
+    /// Non-blocking, eventually-consistent variant of `exists()` for hot UI
+    /// paths (e.g. the managed-router gate hit on every model-picker recompute).
+    /// Once seeded it never issues a keychain query on the calling thread.
+    /// Correctness-critical callers — identity creation/recovery guards and
+    /// anything about to read or sign with the key — must keep using `exists()`.
+    public static func existsCached() -> Bool {
+        existsCacheLock.lock()
+        let known = cachedExists
+        existsCacheLock.unlock()
+
+        if let known {
+            refreshExistsInBackground()
+            return known
+        }
+        // Cold: seed once from the keychain, then serve the memo thereafter.
+        let probed = exists()
+        setCachedExists(probed)
+        return probed
+    }
+
+    private static func setCachedExists(_ value: Bool) {
+        existsCacheLock.lock()
+        cachedExists = value
+        lastExistsRefresh = Date()
+        existsCacheLock.unlock()
+    }
+
+    private static func refreshExistsInBackground() {
+        let now = Date()
+        existsCacheLock.lock()
+        let recent = lastExistsRefresh.map { now.timeIntervalSince($0) < existsRefreshInterval } ?? false
+        if recent {
+            existsCacheLock.unlock()
+            return
+        }
+        // Stamp now (under the lock) so concurrent callers don't each spawn a probe.
+        lastExistsRefresh = now
+        existsCacheLock.unlock()
+
+        Task.detached(priority: .utility) {
+            setCachedExists(exists())
+        }
     }
 
     // MARK: - Read
@@ -160,7 +219,11 @@ public struct MasterKey: Sendable {
             kSecAttrSynchronizable as String: kSecAttrSynchronizableAny,
         ]
         let status = SecItemDelete(query as CFDictionary)
-        return status == errSecSuccess || status == errSecItemNotFound
+        let gone = status == errSecSuccess || status == errSecItemNotFound
+        if gone {
+            setCachedExists(false)
+        }
+        return gone
     }
 
     // MARK: - Memory Safety
