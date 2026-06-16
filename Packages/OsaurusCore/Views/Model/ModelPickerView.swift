@@ -47,22 +47,51 @@ struct ModelPickerView: View {
         displayOptions.groupedByTab()
     }
 
-    private func tabKey(containing modelId: String?, in tabs: [ModelPickerTab]) -> String? {
-        guard let modelId else { return nil }
-        return tabs.first(where: { tab in tab.models.contains(where: { $0.id == modelId }) })?.key
+    /// The tab to fall back to when there is no valid explicit selection: the
+    /// one holding `selectedModel`, otherwise the first tab.
+    private static func defaultTabKey(in tabs: [ModelPickerTab], selectedModel: String?) -> String? {
+        let modelTab = tabs.first { tab in tab.models.contains { $0.id == selectedModel } }
+        return modelTab?.key ?? tabs.first?.key
     }
 
+    /// The tab to render as active: the explicit selection while its tab still
+    /// exists, otherwise the derived default. A selection whose tab is
+    /// transiently absent mid-refresh falls back here for rendering only.
     private func effectiveSelectedTabKey(in tabs: [ModelPickerTab]) -> String? {
         if let key = selectedTabKey, tabs.contains(where: { $0.key == key }) {
             return key
         }
-        return tabKey(containing: selectedModel, in: tabs) ?? tabs.first?.key
+        return Self.defaultTabKey(in: tabs, selectedModel: selectedModel)
+    }
+
+    /// Resolve which tab key should be *committed to `selectedTabKey`*, given the
+    /// currently committed key and the available tabs.
+    ///
+    /// Once a key is committed it is returned untouched — even if that tab is
+    /// momentarily absent. The picker refreshes its model lists asynchronously
+    /// while open (`refreshConnectedProviders` / `buildModelPickerItems`), so a
+    /// tab can briefly disappear mid-refresh; clobbering the user's explicit
+    /// choice on that transient absence is what made the picker snap from
+    /// "Local" back to the first tab ("Osaurus"). Rendering still falls back
+    /// gracefully via `effectiveSelectedTabKey` while a tab is missing, and the
+    /// committed key re-resolves the moment it returns.
+    ///
+    /// With no committed key it derives the initial default via `defaultTabKey`.
+    static func resolveCommittedTabKey(
+        current: String?,
+        tabs: [ModelPickerTab],
+        selectedModel: String?
+    ) -> String? {
+        current ?? defaultTabKey(in: tabs, selectedModel: selectedModel)
     }
 
     private func ensureSelectedTabValid() {
-        let tabs = currentTabs
-        let nextKey = effectiveSelectedTabKey(in: tabs)
-        if selectedTabKey != nextKey { selectedTabKey = nextKey }
+        let resolved = Self.resolveCommittedTabKey(
+            current: selectedTabKey,
+            tabs: currentTabs,
+            selectedModel: selectedModel
+        )
+        if selectedTabKey != resolved { selectedTabKey = resolved }
     }
 
     private func row(for model: ModelPickerItem, providerLabel: String? = nil) -> ModelPickerRow {
