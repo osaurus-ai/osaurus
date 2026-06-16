@@ -70,10 +70,11 @@ extension ModelInfo {
     // NOT when a `config.json` is rewritten in place at the same id/path (e.g. a
     // bundle re-quantized or its context window edited under the same name). To
     // keep the resolved context window — and every other config-derived field —
-    // honest across in-place edits, each hit re-stats the cached `config.json`
-    // and only reuses the memo when its modification date is unchanged. The hit
-    // path stays cheap: it stats the already-resolved `configURL` (one syscall),
-    // never re-running the directory-enumerating `findModelDirectory`.
+    // honest across in-place edits, a hit kicks off a throttled background
+    // re-stat (`revalidateInBackground`) of the cached `config.json`; when its
+    // modification date changed, the memo is dropped and `.localModelsChanged`
+    // is posted so dependent UI re-probes. The synchronous hit path itself never
+    // touches disk, so it can't hang the UI that reads it on every body eval.
     private struct CacheEntry {
         let info: ModelInfo
         let configPath: String
@@ -82,6 +83,15 @@ extension ModelInfo {
     private static let cacheLock = NSLock()
     private nonisolated(unsafe) static var cache: [String: CacheEntry] = [:]
     private nonisolated(unsafe) static var didInstallObserver = false
+
+    // Throttle state for the off-main `config.json` re-stat. The synchronous
+    // hit path serves the memo without touching disk (it runs on every view
+    // body eval), so in-place edits are detected by a background probe spaced
+    // at least `revalidateInterval` apart per model id, never more than one
+    // in flight at a time.
+    private static let revalidateInterval: TimeInterval = 3.0
+    private nonisolated(unsafe) static var lastRevalidated: [String: Date] = [:]
+    private nonisolated(unsafe) static var revalidatingModelIds: Set<String> = []
 
     /// Modification date of a file, or nil if it is missing/unreadable. Used to
     /// detect in-place `config.json` edits that `.localModelsChanged` misses.
@@ -94,20 +104,57 @@ extension ModelInfo {
             as? Date
     }
 
+    /// Re-stat a cached model's `config.json` off the main thread to detect
+    /// in-place edits, throttled per model id so the hot synchronous path
+    /// (called from view bodies) never blocks on disk. If the file changed,
+    /// drop the stale memo and post `.localModelsChanged` so dependent UI
+    /// re-probes from disk — the same signal the rest of the app uses.
+    private static func revalidateInBackground(modelId: String, entry: CacheEntry) {
+        let now = Date()
+        cacheLock.lock()
+        let recentlyChecked =
+            lastRevalidated[modelId].map { now.timeIntervalSince($0) < revalidateInterval } ?? false
+        if revalidatingModelIds.contains(modelId) || recentlyChecked {
+            cacheLock.unlock()
+            return
+        }
+        revalidatingModelIds.insert(modelId)
+        lastRevalidated[modelId] = now
+        cacheLock.unlock()
+
+        Task.detached(priority: .utility) {
+            defer {
+                cacheLock.lock()
+                revalidatingModelIds.remove(modelId)
+                cacheLock.unlock()
+            }
+            // Memo still matches disk — nothing to do.
+            if fileModificationDate(atPath: entry.configPath) == entry.configModDate {
+                return
+            }
+            cacheLock.lock()
+            cache.removeValue(forKey: modelId)
+            cacheLock.unlock()
+            NotificationCenter.default.post(name: .localModelsChanged, object: nil)
+        }
+    }
+
     /// Load model info from a model identifier (e.g., "mlx-community/Qwen3-1.7B-4bit" or "qwen3-1.7b-4bit")
     static func load(modelId: String) -> ModelInfo? {
         ensureCacheObserverInstalled()
         cacheLock.lock()
         let cached = cache[modelId]
         cacheLock.unlock()
-        if let cached,
-            fileModificationDate(atPath: cached.configPath) == cached.configModDate
-        {
-            // Memo is still consistent with on-disk `config.json`.
+        if let cached {
+            // Serve the memo without touching the filesystem — this runs on
+            // every view body eval (e.g. `FloatingInputCard.maxContextTokens`),
+            // and a synchronous `lstat` here hangs the UI. In-place `config.json`
+            // edits (which `.localModelsChanged` misses) are caught by a
+            // throttled background re-stat that drops the memo and re-probes.
+            revalidateInBackground(modelId: modelId, entry: cached)
             return cached.info
         }
-        // Cache miss, or the cached `config.json` changed on disk since it was
-        // memoized (stale window/metadata) — re-probe from disk.
+        // Cache miss — re-probe from disk.
 
         // Try to find the model directory
         guard let directory = findModelDirectory(for: modelId) else {
