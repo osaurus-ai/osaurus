@@ -691,7 +691,9 @@ private extension SandboxView {
     func diagnosticResultsList(_ results: [SandboxManager.DiagnosticResult]) -> some View {
         VStack(spacing: 0) {
             ForEach(Array(results.enumerated()), id: \.offset) { _, result in
-                HStack(spacing: 8) {
+                // Top-align so the status icon and check name stay anchored to
+                // the first line when a failed row's detail wraps to several.
+                HStack(alignment: .top, spacing: 8) {
                     Image(systemName: result.passed ? "checkmark.circle.fill" : "xmark.circle.fill")
                         .font(.system(size: 12))
                         .foregroundColor(result.passed ? theme.successColor : theme.warningColor)
@@ -699,12 +701,18 @@ private extension SandboxView {
                         .font(.system(size: 11, weight: .medium, design: .monospaced))
                         .foregroundColor(theme.primaryText)
                         .frame(width: 100, alignment: .leading)
+                    // Passing rows stay on a single truncated line; failures
+                    // show the full, selectable detail (with a hover tooltip)
+                    // so the actionable hint is never clipped.
                     Text(result.detail)
                         .font(.system(size: 11))
-                        .foregroundColor(theme.secondaryText)
-                        .lineLimit(1)
+                        .foregroundColor(result.passed ? theme.secondaryText : theme.primaryText)
+                        .lineLimit(result.passed ? 1 : nil)
                         .truncationMode(.tail)
-                    Spacer()
+                        .fixedSize(horizontal: false, vertical: !result.passed)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
+                        .help(result.detail)
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)

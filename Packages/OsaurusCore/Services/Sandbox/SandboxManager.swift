@@ -1256,14 +1256,25 @@
             public let detail: String
         }
 
-        /// Run a suite of checks to verify exec, NAT networking, agent users, and the vsock bridge.
+        /// Stable synthetic agent identity used only by the `vsock-bridge`
+        /// diagnostic round-trip below. The bridge derives the log source from
+        /// the token-bound Linux user name, so any fixed UUID works here;
+        /// keeping it constant avoids accumulating distinct token-store entries
+        /// across repeated diagnostic runs.
+        private static let diagAgentId = UUID(uuidString: "00000000-0000-0000-0000-0000000D1A60")!
+
+        /// Run a suite of checks to verify exec, NAT networking, agent users,
+        /// apk install, and the vsock host-API bridge.
         ///
-        /// All five checks are independent (the agent-user check creates its
-        /// own `agent-diag` user but doesn't conflict with the others), so
-        /// they run concurrently. Each `exec` suspends the actor while the
-        /// guest works, which lets the other tasks make progress at the same
-        /// time. Wall time drops from sum-of-checks to max-of-checks; the
-        /// returned array preserves the original UI ordering.
+        /// `exec`, `nat-networking`, and `apk-install` are mutually independent
+        /// and run concurrently. `agent-user` and `vsock-bridge` both rely on
+        /// the `agent-diag` Linux user, so they run as an ordered pair: the
+        /// bridge check provisions a per-user bridge token and then exercises
+        /// the real `osaurus-host` shim path the way a plugin would, which means
+        /// it must not race `ensureAgentUser`'s non-atomic check-then-create.
+        /// Each `exec` suspends the actor while the guest works, so the three
+        /// concurrent checks still overlap with the sequential pair. The
+        /// returned array preserves the UI ordering.
         public func runDiagnostics() async -> [DiagnosticResult] {
             async let execD = diagnose("exec") {
                 let r = try await self.exec(command: "echo hello from sandbox")
@@ -1281,12 +1292,36 @@
                 )
                 let out = r.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !out.isEmpty else {
-                    throw SandboxError.execFailed("empty response (stderr: \(r.stderr))")
+                    throw SandboxError.execFailed(
+                        Self.sandboxDiagnosticHint(
+                            check: "nat-networking",
+                            exitCode: r.exitCode,
+                            stderr: r.stderr
+                        )
+                    )
                 }
                 return String(out.prefix(80))
             }
 
-            async let userD = diagnose("agent-user") {
+            async let apkD = diagnose("apk-install") {
+                _ = await self.awaitNetworkReady()
+                let r = try await self.execAsRoot(command: "apk add --no-cache jq 2>&1", timeout: 60)
+                guard r.succeeded else {
+                    throw SandboxError.execFailed(
+                        Self.sandboxDiagnosticHint(
+                            check: "apk-install",
+                            exitCode: r.exitCode,
+                            stderr: r.stderr
+                        )
+                    )
+                }
+                return "exit \(r.exitCode)"
+            }
+
+            // `agent-user` and `vsock-bridge` share the `agent-diag` user, so
+            // run them sequentially — after kicking off the concurrent checks
+            // above — to avoid two tasks racing inside `ensureAgentUser`.
+            let userResult = await diagnose("agent-user") {
                 try await self.ensureAgentUser("diag")
                 let r = try await self.exec(user: "agent-diag", command: "whoami")
                 let out = r.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1296,27 +1331,51 @@
                 return out
             }
 
-            async let apkD = diagnose("apk-install") {
-                _ = await self.awaitNetworkReady()
-                let r = try await self.execAsRoot(command: "apk add --no-cache jq 2>&1", timeout: 60)
-                guard r.succeeded else {
-                    throw SandboxError.execFailed(r.stderr)
-                }
-                return "exit \(r.exitCode)"
-            }
-
-            async let vsockD = diagnose("vsock-bridge") {
-                let r = try await self.exec(
-                    command: "curl -sf --unix-socket /tmp/osaurus-bridge.sock http://localhost/api/log "
-                        + "-X POST -d '{\"level\":\"info\",\"message\":\"diag ping\"}'"
+            let vsockResult = await diagnose("vsock-bridge") {
+                // Exercise the real plugin path end to end: provision a
+                // per-user bridge token, then invoke the in-guest `osaurus-host`
+                // shim as `agent-diag` so the bearer token is attached exactly
+                // the way a plugin would. The bridge fails closed with HTTP 401
+                // when no token is presented, so a token-less request can never
+                // pass — authenticating here is what makes the check meaningful.
+                try await self.ensureAgentUser("diag")
+                try await self.provisionBridgeToken(
+                    linuxName: "agent-diag",
+                    agentId: Self.diagAgentId
                 )
+                let r: ContainerExecResult
+                do {
+                    r = try await self.execAsAgent(
+                        "diag",
+                        command: "osaurus-host log info diag-ping"
+                    )
+                } catch {
+                    // Best-effort cleanup so a failed exec doesn't leave a
+                    // standing diag credential in the token store / token file.
+                    await self.revokeBridgeToken(linuxName: "agent-diag")
+                    throw error
+                }
+                await self.revokeBridgeToken(linuxName: "agent-diag")
                 guard r.succeeded else {
-                    throw SandboxError.execFailed("exit \(r.exitCode): \(r.stderr)")
+                    throw SandboxError.execFailed(
+                        Self.sandboxDiagnosticHint(
+                            check: "vsock-bridge",
+                            exitCode: r.exitCode,
+                            stderr: r.stderr
+                        )
+                    )
                 }
                 return "bridge responded OK"
             }
 
-            let results: [DiagnosticResult] = await [execD, natD, userD, apkD, vsockD]
+            let (execResult, natResult, apkResult) = await (execD, natD, apkD)
+            let results: [DiagnosticResult] = [
+                execResult,
+                natResult,
+                userResult,
+                apkResult,
+                vsockResult,
+            ]
 
             return results
         }
@@ -1329,6 +1388,61 @@
             } catch {
                 NSLog("[SandboxDiag] FAIL  %@: %@", name, error.localizedDescription)
                 return DiagnosticResult(name: name, passed: false, detail: error.localizedDescription)
+            }
+        }
+
+        /// Translate a terse failed exec result into an actionable, human
+        /// readable diagnostic detail. Pure and side-effect free (a `static`
+        /// member is outside the actor's isolation domain) so it can be
+        /// unit-tested without a running guest. `stderr` is the raw guest
+        /// output (shim / curl / wget / apk); when present it is appended after
+        /// the explanation so a power user still sees the underlying message.
+        static func sandboxDiagnosticHint(check: String, exitCode: Int32, stderr: String) -> String {
+            let trimmed = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+            let lower = trimmed.lowercased()
+
+            // Lead with the plain-language explanation, then attach the raw
+            // exit code (when non-zero) and stderr (when present) in parens.
+            func decorate(_ hint: String) -> String {
+                var suffix = exitCode != 0 ? "exit \(exitCode)" : ""
+                if !trimmed.isEmpty {
+                    suffix = suffix.isEmpty ? trimmed : "\(suffix): \(trimmed)"
+                }
+                return suffix.isEmpty ? hint : "\(hint) (\(suffix))"
+            }
+
+            switch check {
+            case "vsock-bridge":
+                // Order matters: a 401 from the bridge can also mention
+                // "token", so classify the authenticated rejection first and
+                // fall back to the shim's local "token missing" message.
+                if lower.contains("401") || lower.contains("unauthor") || lower.contains("unrecogni") {
+                    return decorate("host bridge rejected the request: authentication failed")
+                }
+                if lower.contains("token") {
+                    return decorate("host bridge token not provisioned for this agent")
+                }
+                if exitCode == 7 || lower.contains("couldn't connect") || lower.contains("could not connect")
+                    || lower.contains("connection refused")
+                {
+                    return decorate(
+                        "host bridge socket unreachable; the host API bridge may not be running"
+                    )
+                }
+                if exitCode == 127 || lower.contains("not found") || lower.contains("no such file") {
+                    return decorate("osaurus-host shim missing in the guest")
+                }
+                return decorate("host bridge round-trip failed")
+            case "nat-networking":
+                return decorate(
+                    "no outbound network response; check the Network Access setting and your connection"
+                )
+            case "apk-install":
+                return decorate(
+                    "package install failed; check the Network Access setting and your connection"
+                )
+            default:
+                return decorate("check failed")
             }
         }
 
