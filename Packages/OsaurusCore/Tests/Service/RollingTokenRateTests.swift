@@ -191,6 +191,37 @@ struct RollingTokenRateTests {
         #expect(final >= 40 && final <= 60, "got \(final) tok/s")
     }
 
+    // MARK: - Bursty delivery (regression)
+
+    @Test("Bursty flush after a long stream reads as a physical rate, not thousands of tok/s")
+    func burstyDelivery_doesNotExplode() {
+        var r = RollingTokenRate()
+        let t0 = Date()
+        // Steady decode for 10s clears warm-up and advances the stream
+        // clock well past the 1.5s window.
+        for i in 0 ..< 300 {
+            r.observe(tokens: 1, at: t0.addingTimeInterval(Double(i) * (10.0 / 300.0)))
+        }
+        // Then a provider/stream flushes 70 buffered tokens within ~1ms —
+        // the deltas all land at essentially the same instant. Previously
+        // the denominator was `now - oldestInWindow`, which collapsed toward
+        // zero here and reported ~70000 tok/s. The denominator is now the
+        // window length, so the burst can't extrapolate to an impossible
+        // number.
+        let burstStart = t0.addingTimeInterval(11.5)  // > 1.5s after last steady token → window holds only the burst
+        for i in 0 ..< 70 {
+            r.observe(tokens: 1, at: burstStart.addingTimeInterval(Double(i) * 0.00001))
+        }
+        let endT = burstStart.addingTimeInterval(0.001)
+        guard let rate = r.currentRate(at: endT) else {
+            Issue.record("Rate should be defined after warm-up")
+            return
+        }
+        // 70 tokens over the 1.5s window ≈ 47 tok/s — physically plausible.
+        // The hard contract: never an impossible rate from a burst.
+        #expect(rate < 200, "bursty flush produced impossible rate=\(rate) tok/s")
+    }
+
     // MARK: - Edge cases
 
     @Test("Zero observations: rates are nil")

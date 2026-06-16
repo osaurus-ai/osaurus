@@ -92,10 +92,10 @@ struct RollingTokenRate: Sendable {
     /// until `(now - firstAt) >= warmupSeconds && totalTokens >= warmupTokens`.
     private var firstAt: Date?
 
-    /// Last-observation timestamp. Used by `currentRate(now:)` to floor
-    /// the window denominator at the actual span of observed data — without
-    /// this, a stream that pauses for 5 seconds would produce a falsely
-    /// low rate just from the empty window slot.
+    /// Last-observation timestamp. Used by `finalRate()` as the `now`
+    /// reference for the end-of-stream read so the final stamp reflects the
+    /// rate at the moment the last token arrived rather than whenever the
+    /// caller happens to stamp it.
     private var lastAt: Date?
 
     /// Ring buffer of recent observations. Each entry is `(timestamp, count)`
@@ -149,10 +149,18 @@ struct RollingTokenRate: Sendable {
         guard elapsedFromFirst >= Self.warmupSeconds, totalTokens >= Self.warmupTokens
         else { return nil }
         let windowSum = window.reduce(0) { $0 + $1.tokens }
-        // Window span: from oldest in-window observation to now (or
-        // `windowSeconds` whichever is shorter — caps for paused streams).
-        let oldestAt = window.first?.at ?? now
-        let span = min(Self.windowSeconds, now.timeIntervalSince(oldestAt))
+        // Denominator: the decode wall-clock the window covers, capped at
+        // `windowSeconds`. We floor it at `now - firstAt` (decode elapsed),
+        // NOT at `now - oldestInWindow`. Bursty delivery — a provider that
+        // buffers then flushes many tokens at the same instant, or a
+        // local-MLX chunk that lands after a prefill stall — clusters every
+        // in-window observation at ~one timestamp, which would collapse an
+        // oldest-to-now span toward zero and report a physically impossible
+        // rate (windowSum / ~0). `now - firstAt` can never be smaller than
+        // the warm-up gate (≥ warmupSeconds), so once the stream has run
+        // past `windowSeconds` the denominator is simply `windowSeconds`,
+        // and before that it equals the cumulative average — both bounded.
+        let span = min(Self.windowSeconds, elapsedFromFirst)
         guard span > 0, windowSum > 0 else { return nil }
         return Double(windowSum) / span
     }
