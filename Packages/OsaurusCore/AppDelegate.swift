@@ -1169,6 +1169,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // away the latest seeds and the next launch is cold again.
         flushGreetingPoolSync()
 
+        // Tool enable/policy changes persist via a background serial writer to
+        // keep the UI snappy; drain it here so a toggle made right before quit
+        // isn't lost when `_exit` skips the pending write.
+        ToolConfigurationStore.flushPendingWrites()
+
         // Aptabase batches analytics in an in-memory queue and normally drains
         // it from its own `willTerminate` observer — but that flush is async and
         // the `_exit(0)` below skips it. Kick a final bounded, best-effort send
