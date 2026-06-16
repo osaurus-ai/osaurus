@@ -398,10 +398,7 @@ struct MLXModel: Identifiable, Codable {
 
     /// Numeric parameter count in billions (e.g. "7B" -> 7.0, "270M" -> 0.27)
     var parameterCountBillions: Double? {
-        guard let params = parameterCount else { return nil }
-        let text = params.uppercased()
-        guard let num = Double(text.dropLast()) else { return nil }
-        return text.hasSuffix("M") ? num / 1000.0 : num
+        ModelMetadataParser.parameterCountBillions(from: id)
     }
 
     /// Bytes per parameter based on the quantization extracted from the model name.
