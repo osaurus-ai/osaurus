@@ -2119,6 +2119,15 @@ final class ChatSession: ObservableObject {
         send(pending.text, attachments: pending.attachments)
     }
 
+    /// Reused across runs so we don't pay the ICU date-symbol allocation that a
+    /// fresh `ISO8601DateFormatter` (or the `ISO8601DateFormatter.string` static)
+    /// triggers on every finalize. The time zone is reapplied per use.
+    private static let sessionDateFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withFullDate, .withDashSeparatorInDate]
+        return formatter
+    }()
+
     private func finalizeRun(runId: UUID?, persistConversationArtifacts: Bool) {
         guard let runId, activeRunId == runId else {
             if activeRunId == nil, isStreaming {
@@ -2217,11 +2226,9 @@ final class ChatSession: ObservableObject {
         }
 
         if !memoryOff, context.hasContent {
-            let today = ISO8601DateFormatter.string(
-                from: Date(),
-                timeZone: .current,
-                formatOptions: [.withFullDate, .withDashSeparatorInDate]
-            )
+            let formatter = Self.sessionDateFormatter
+            formatter.timeZone = .current
+            let today = formatter.string(from: Date())
             Task.detached {
                 await MemoryService.shared.bufferTurn(
                     userMessage: context.userContent,
