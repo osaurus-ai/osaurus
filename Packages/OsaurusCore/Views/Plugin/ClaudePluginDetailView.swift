@@ -95,17 +95,17 @@ struct ClaudePluginDetailView: View {
             loadChangelogIfNeeded()
         }
         .themedAlert(
-            "Error",
+            L("Error"),
             isPresented: $showError,
-            message: errorMessage ?? "Unknown error",
+            message: errorMessage ?? L("Unknown error"),
             primaryButton: .primary("OK") {}
         )
         .themedAlert(
-            "Uninstall Plugin",
+            L("Uninstall Plugin"),
             isPresented: $showDeleteConfirm,
             message:
-                "Are you sure you want to uninstall \"\(plugin.displayName)\"? This action cannot be undone.",
-            primaryButton: .destructive("Uninstall") {
+                L("Are you sure you want to uninstall \"\(plugin.displayName)\"? This action cannot be undone."),
+            primaryButton: .destructive(L("Uninstall")) {
                 guard let onUninstall else { return }
                 Task {
                     do {
@@ -117,7 +117,7 @@ struct ClaudePluginDetailView: View {
                     }
                 }
             },
-            secondaryButton: .cancel("Cancel")
+            secondaryButton: .cancel(L("Cancel"))
         )
     }
 

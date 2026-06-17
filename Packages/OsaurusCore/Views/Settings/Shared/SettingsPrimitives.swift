@@ -507,11 +507,11 @@ struct ServerSettingsStatusBadge: View {
 
         var label: String {
             switch self {
-            case .engineReady: return "Live"
-            case .partial: return "Partial"
-            case .needsBridge: return "Planned"
-            case .future: return "Future"
-            case .hostOwned: return "Host"
+            case .engineReady: return L("Live")
+            case .partial: return L("Partial")
+            case .needsBridge: return L("Planned")
+            case .future: return L("Future")
+            case .hostOwned: return L("Host")
             }
         }
 

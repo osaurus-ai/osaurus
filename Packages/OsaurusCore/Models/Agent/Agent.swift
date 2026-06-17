@@ -267,7 +267,7 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         Agent(
             id: defaultId,
             name: "Osaurus",
-            description: "Configuration helper",
+            description: L("Configuration helper"),
             systemPrompt: "",
             themeId: nil,
             defaultModel: nil,

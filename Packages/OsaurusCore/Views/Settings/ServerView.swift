@@ -302,10 +302,13 @@ private struct AccessKeysSection: View {
                             .font(.system(size: 12, weight: .semibold))
                             .foregroundColor(theme.warningColor)
                     }
-                    Text(verbatim:
-                        didLoadAccessKeys
+                    Text(
+                        verbatim:
+                            didLoadAccessKeys
                             ? emptyAccessKeyMessage
-                            : "Access key metadata is loaded on demand so startup never reads Keychain. Refresh to inspect existing keys."
+                            : L(
+                                "Access key metadata is loaded on demand so startup never reads Keychain. Refresh to inspect existing keys."
+                            )
                     )
                     .font(.system(size: 12))
                     .foregroundColor(theme.secondaryText)
@@ -428,16 +431,20 @@ private struct AccessKeysSection: View {
 
     private var accessKeySummaryText: String {
         if server.configuration.exposeToNetwork {
-            return "Network and relay callers must present an access key. Local loopback bypass is disabled while network exposure is on."
+            return L(
+                "Network and relay callers must present an access key. Local loopback bypass is disabled while network exposure is on."
+            )
         }
-        return "Localhost clients can call the API without a real key. Create access keys for LAN, relay, or clients that require a Bearer value."
+        return L(
+            "Localhost clients can call the API without a real key. Create access keys for LAN, relay, or clients that require a Bearer value."
+        )
     }
 
     private var emptyAccessKeyMessage: String {
         if server.configuration.exposeToNetwork {
-            return "Network and relay callers are restricted until you create an access key."
+            return L("Network and relay callers are restricted until you create an access key.")
         }
-        return "No keys are stored. Localhost still works without a real token while network exposure is off."
+        return L("No keys are stored. Localhost still works without a real token while network exposure is off.")
     }
 
     private func accessKeyRow(_ key: AccessKeyInfo) -> some View {

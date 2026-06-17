@@ -1255,7 +1255,7 @@ private struct PluginCard: View {
                         showSecretsSheet = true
                     } label: {
                         Label(
-                            hasMissingSecrets ? "Configure Secrets" : "Edit Secrets",
+                            hasMissingSecrets ? L("Configure Secrets") : L("Edit Secrets"),
                             systemImage: "key.fill"
                         )
                     }
@@ -1472,17 +1472,19 @@ private struct PluginDetailView: View {
             withAnimation { hasAppeared = true }
         }
         .themedAlert(
-            "Error",
+            L("Error"),
             isPresented: $showError,
-            message: errorMessage ?? "Unknown error",
-            primaryButton: .primary("OK") {}
+            message: errorMessage ?? L("Unknown error"),
+            primaryButton: .primary(L("OK")) {}
         )
         .themedAlert(
-            "Signing Key Changed",
+            L("Signing Key Changed"),
             isPresented: $showKeyMismatch,
             message:
-                "The signing key for \"\(plugin.displayName)\" has changed. Uninstall the plugin and reinstall it to accept the new key.",
-            primaryButton: .destructive("Uninstall") {
+                L(
+                    "The signing key for \"\(plugin.displayName)\" has changed. Uninstall the plugin and reinstall it to accept the new key."
+                ),
+            primaryButton: .destructive(L("Uninstall")) {
                 Task {
                     do {
                         try await onUninstall()
@@ -1493,13 +1495,13 @@ private struct PluginDetailView: View {
                     }
                 }
             },
-            secondaryButton: .cancel("Cancel")
+            secondaryButton: .cancel(L("Cancel"))
         )
         .themedAlert(
-            "Uninstall Plugin",
+            L("Uninstall Plugin"),
             isPresented: $showDeleteConfirm,
-            message: "Are you sure you want to uninstall \"\(plugin.displayName)\"? This action cannot be undone.",
-            primaryButton: .destructive("Uninstall") {
+            message: L("Are you sure you want to uninstall \"\(plugin.displayName)\"? This action cannot be undone."),
+            primaryButton: .destructive(L("Uninstall")) {
                 Task {
                     do {
                         try await onUninstall()
@@ -1509,21 +1511,23 @@ private struct PluginDetailView: View {
                     }
                 }
             },
-            secondaryButton: .cancel("Cancel")
+            secondaryButton: .cancel(L("Cancel"))
         )
         .themedAlert(
-            "Retry plugin load?",
+            L("Retry plugin load?"),
             isPresented: $showRetryConfirm,
             message:
-                "The host quarantined this plugin after it caused a crash during load. Retrying re-runs the same dylib against the same host build, so if the underlying bug (most often a misaligned `osr_host_api` mirror in the plugin) is unfixed it will crash again. Use this only after the plugin has been rebuilt or re-installed. Otherwise, use Uninstall to remove it.",
-            primaryButton: .destructive("Retry Anyway") {
+                L(
+                    "The host quarantined this plugin after it caused a crash during load. Retrying re-runs the same dylib against the same host build, so if the underlying bug (most often a misaligned `osr_host_api` mirror in the plugin) is unfixed it will crash again. Use this only after the plugin has been rebuilt or re-installed. Otherwise, use Uninstall to remove it."
+                ),
+            primaryButton: .destructive(L("Retry Anyway")) {
                 PluginManager.removeFromQuarantine(plugin.pluginId)
                 Task {
                     await PluginManager.shared.loadAll(forceReload: true)
                     onChange()
                 }
             },
-            secondaryButton: .cancel("Cancel")
+            secondaryButton: .cancel(L("Cancel"))
         )
         .sheet(isPresented: $showSecretsSheet) {
             ToolSecretsSheet(

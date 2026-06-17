@@ -138,9 +138,9 @@ struct CreditsView: View {
                     Spacer()
 
                     if accountService.isFrozen {
-                        statusPill("On hold", icon: "pause.circle.fill", color: theme.warningColor)
+                        statusPill(L("On hold"), icon: "pause.circle.fill", color: theme.warningColor)
                     } else {
-                        statusPill("Active", icon: "checkmark.circle.fill", color: theme.successColor)
+                        statusPill(L("Active"), icon: "checkmark.circle.fill", color: theme.successColor)
                     }
                 }
 

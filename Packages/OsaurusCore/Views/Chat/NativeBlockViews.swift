@@ -161,11 +161,11 @@ final class NativeTypingIndicatorView: NSView {
         var replacementText: String? {
             switch self {
             case .sandbox:
-                return "Sandbox is still loading..."
+                return L("Sandbox is still loading...")
             case .prefill:
                 return nil
             case .modelLoad:
-                return "Loading Model..."
+                return L("Loading Model...")
             }
         }
     }

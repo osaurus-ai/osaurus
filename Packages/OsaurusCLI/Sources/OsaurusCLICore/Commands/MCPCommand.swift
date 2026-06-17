@@ -61,7 +61,8 @@ public struct MCPCommand: Command {
                 fputs("[MCP] Tools fetched successfully\n", stderr)
                 let tools: [MCP.Tool]
                 if let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                    let arr = obj["tools"] as? [[String: Any]] {
+                    let arr = obj["tools"] as? [[String: Any]]
+                {
                     tools = arr.map { item in
                         let name = (item["name"] as? String) ?? ""
                         let description = (item["description"] as? String) ?? ""
@@ -112,7 +113,8 @@ public struct MCPCommand: Command {
                     return .init(
                         content: [
                             .text(
-                                text: "HTTP \(String(describing: (response as? HTTPURLResponse)?.statusCode)): \(message)",
+                                text:
+                                    "HTTP \(String(describing: (response as? HTTPURLResponse)?.statusCode)): \(message)",
                                 annotations: nil,
                                 _meta: nil
                             )

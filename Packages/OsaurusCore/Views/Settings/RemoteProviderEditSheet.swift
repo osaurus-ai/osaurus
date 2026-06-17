@@ -82,7 +82,8 @@ func parsePastedEndpoint(_ text: String) -> PastedEndpointComponents? {
     var port: Int?
     if let colon = remainder.lastIndex(of: ":"),
         // Don't treat colons inside an IPv6 literal ("[::1]") as a port separator.
-        remainder.lastIndex(of: "]").map({ colon > $0 }) ?? true {
+        remainder.lastIndex(of: "]").map({ colon > $0 }) ?? true
+    {
         port = Int(remainder[remainder.index(after: colon)...])
         remainder = String(remainder[..<colon])
     }
@@ -498,7 +499,8 @@ private struct AddProviderFlow: View {
 
                     // Help section
                     if let preset = selectedPreset, preset.isKnown, !preset.consoleURL.isEmpty,
-                        shouldShowKnownAPIKeyField {
+                        shouldShowKnownAPIKeyField
+                    {
                         helpSection(for: preset)
                     }
 
