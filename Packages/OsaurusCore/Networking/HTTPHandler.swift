@@ -5923,12 +5923,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logSelf = self
 
         if streaming {
-            let writer = SSEResponseWriter()
-            hop { writer.writeHeaders(ctx.value, extraHeaders: cors) }
+            // The writer is confined to the event loop; wrap it in a
+            // NIOLoopBound so it can cross into the `@Sendable` hop closures
+            // (same pattern as the chat SSE path).
+            let writer = NIOLoopBound(SSEResponseWriter(), eventLoop: loop)
+            hop { writer.value.writeHeaders(ctx.value, extraHeaders: cors) }
             func emit(_ event: ImageStreamEventDTO) {
                 let json = (try? JSONEncoder.osaurusCanonical().encode(event))
                     .map { String(decoding: $0, as: UTF8.self) } ?? "{}"
-                hop { writer.writeRawJSONData(json, context: ctx.value) }
+                hop { writer.value.writeRawJSONData(json, context: ctx.value) }
             }
             runRequestTask(priority: .userInitiated) {
                 emit(ImageStreamEventDTO(type: "queued", job_id: jobID))
@@ -5958,7 +5961,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 } catch {
                     emit(ImageStreamEventDTO(type: "error", job_id: jobID, message: String(describing: error), hf_auth: false))
                 }
-                hop { writer.writeEnd(ctx.value) }
+                hop { writer.value.writeEnd(ctx.value) }
                 logSelf.logRequest(
                     method: "POST", path: path, userAgent: userAgent,
                     requestBody: requestBody, responseBody: "[stream]", responseStatus: 200, startTime: startTime)
