@@ -94,7 +94,7 @@ final class NativeChartView: NSView {
         for type in Self.chartTypes {
             let item = NSMenuItem()
             item.title = type.capitalized
-            item.image = NSImage(systemSymbolName: Self.symbol(for: type), accessibilityDescription: nil)
+            item.image = SymbolImageCache.image(Self.symbol(for: type), accessibilityDescription: nil)
             typePicker.menu?.addItem(item)
         }
         typePicker.font = .systemFont(ofSize: 11)
