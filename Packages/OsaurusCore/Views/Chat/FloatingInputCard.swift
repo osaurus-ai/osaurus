@@ -241,10 +241,26 @@ struct FloatingInputCard: View {
     private let maxVisibleLines: CGFloat = 6
     private var maxHeight: CGFloat {
         // Approximate line height from font metrics (ascender/descender/leading)
-        let font = NSFont.systemFont(ofSize: inputFontSize)
-        let lineHeight = font.ascender - font.descender + font.leading
+        let lineHeight = Self.lineHeight(forFontSize: inputFontSize)
         // Small extra padding so the last line isn't cramped
         return lineHeight * maxVisibleLines + 8
+    }
+
+    // `NSFont.systemFont(ofSize:)` plus the ascender/descender/leading reads run
+    // on the main thread inside `body`/`sizeThatFits` on every layout pass, and
+    // the underlying font-descriptor/dynamic-type lookups have shown up as app
+    // hangs during layout. Line height is a pure function of the point size, so
+    // memoize it and serve the memo thereafter.
+    private static let lineHeightCacheLock = NSLock()
+    private nonisolated(unsafe) static var lineHeightCache: [CGFloat: CGFloat] = [:]
+    private static func lineHeight(forFontSize size: CGFloat) -> CGFloat {
+        lineHeightCacheLock.lock()
+        defer { lineHeightCacheLock.unlock() }
+        if let cached = lineHeightCache[size] { return cached }
+        let font = NSFont.systemFont(ofSize: size)
+        let lineHeight = font.ascender - font.descender + font.leading
+        lineHeightCache[size] = lineHeight
+        return lineHeight
     }
     private let maxImageSize: Int = 10 * 1024 * 1024  // 10MB limit
 
