@@ -24,11 +24,15 @@ enum ModelListTab: String, CaseIterable, AnimatedTabItem {
     /// Full catalog rendered as a Recommended carousel + a newest-first grid.
     case all = "Catalog"
 
+    /// On-device image-generation models (vMLXFlux / mflux bundles).
+    case images = "Images"
+
     /// Display name for the tab (required by AnimatedTabItem)
     var title: String {
         switch self {
         case .downloaded: return L("On Device")
         case .all: return L("Catalog")
+        case .images: return L("Images")
         }
     }
 }

@@ -159,8 +159,13 @@ struct ModelDownloadView: View {
             )
             .opacity(hasAppeared ? 1 : 0)
 
-            modelListView(lists: lists)
-                .opacity(hasAppeared ? 1 : 0)
+            if selectedTab == .images {
+                ImageModelsDownloadView()
+                    .opacity(hasAppeared ? 1 : 0)
+            } else {
+                modelListView(lists: lists)
+                    .opacity(hasAppeared ? 1 : 0)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(theme.primaryBackground)
@@ -804,6 +809,9 @@ struct ModelDownloadView: View {
                                     catalogContent(lists: lists)
                                 case .downloaded:
                                     modelGrid(models: lists.downloaded)
+                                case .images:
+                                    // Rendered by the body's `.images` branch.
+                                    EmptyView()
                                 }
                             }
                         }
@@ -1154,6 +1162,8 @@ struct ModelDownloadView: View {
             return "cube.box"
         case .downloaded:
             return "internaldrive"
+        case .images:
+            return "photo"
         }
     }
 
@@ -1166,6 +1176,8 @@ struct ModelDownloadView: View {
             return L("No models available")
         case .downloaded:
             return L("No models on device yet")
+        case .images:
+            return L("No image models")
         }
     }
 
@@ -1430,6 +1442,7 @@ struct ModelDownloadView: View {
         switch input.selectedTab {
         case .all: displayed = topPicks + others
         case .downloaded: displayed = downloaded
+        case .images: displayed = []  // image tab renders its own view
         }
 
         return GridLists(suggested: topPicks, others: others, downloaded: downloaded, displayed: displayed)
