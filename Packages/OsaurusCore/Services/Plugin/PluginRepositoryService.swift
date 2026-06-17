@@ -170,9 +170,14 @@ final class PluginRepositoryService: ObservableObject {
     /// Uninstall a plugin by ID
     func uninstall(pluginId: String) async throws {
         let pluginDir = PluginInstallManager.toolsPluginDirectory(pluginId: pluginId)
-        if FileManager.default.fileExists(atPath: pluginDir.path) {
-            try FileManager.default.removeItem(at: pluginDir)
-        }
+        // Recursive directory deletion is synchronous file I/O that can block for
+        // seconds on a large plugin or a busy filesystem. Run it off the main
+        // actor so the uninstall doesn't hang the UI.
+        try await Task.detached(priority: .userInitiated) {
+            if FileManager.default.fileExists(atPath: pluginDir.path) {
+                try FileManager.default.removeItem(at: pluginDir)
+            }
+        }.value
 
         ToolSecretsKeychain.deleteAllSecretsAllAgents(for: pluginId)
         ToolSecretsKeychain.deleteAllSecrets(for: pluginId)
