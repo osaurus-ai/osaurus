@@ -720,6 +720,16 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     userAgent: userAgent,
                     ollamaFormat: path == "/embed"
                 )
+            } else if head.method == .GET, path == "/images/models" {
+                handleImageModels(head: head, context: context, startTime: startTime, userAgent: userAgent)
+            } else if head.method == .POST, path == "/images/generations" {
+                handleImageGenerations(head: head, context: context, startTime: startTime, userAgent: userAgent)
+            } else if head.method == .POST, path == "/images/edits" {
+                handleImageEdits(head: head, context: context, startTime: startTime, userAgent: userAgent)
+            } else if head.method == .POST, path == "/images/upscale" {
+                handleImageUpscale(head: head, context: context, startTime: startTime, userAgent: userAgent)
+            } else if head.method == .POST, path == "/images/cancel" {
+                handleImageCancel(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if path.hasPrefix("/plugins/") {
                 handlePluginRoute(
                     head: head,
@@ -5579,6 +5589,445 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     errorMessage: error.localizedDescription
                 )
             }
+        }
+    }
+
+    // MARK: - Image generation (/v1/images/*)
+
+    private func requestBodyData() -> (data: Data, string: String?) {
+        if let body = stateRef.value.requestBodyBuffer {
+            var copy = body
+            let bytes = copy.readBytes(length: copy.readableBytes) ?? []
+            let data = Data(bytes)
+            return (data, String(decoding: data, as: UTF8.self))
+        }
+        return (Data(), nil)
+    }
+
+    private func sendImageError(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        status: HTTPResponseStatus,
+        message: String,
+        path: String,
+        startTime: Date,
+        userAgent: String?,
+        requestBody: String?
+    ) {
+        let body = #"{"error":{"message":"\#(Self.jsonEscape(message))","type":"invalid_request_error"}}"#
+        var headers = [("Content-Type", "application/json; charset=utf-8")]
+        headers.append(contentsOf: stateRef.value.corsHeaders)
+        sendResponse(context: context, version: head.version, status: status, headers: headers, body: body)
+        logRequest(
+            method: "POST", path: path, userAgent: userAgent, requestBody: requestBody,
+            responseStatus: Int(status.code), startTime: startTime, errorMessage: message)
+    }
+
+    private static func jsonEscape(_ s: String) -> String {
+        s.replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+            .replacingOccurrences(of: "\n", with: " ")
+    }
+
+    /// Decode an image input field — a `data:` URI, a `file://` URL, or raw
+    /// base64 — into bytes the service can stage for the engine.
+    static func decodeImageInput(_ value: String) -> Data? {
+        if value.hasPrefix("data:") {
+            guard let comma = value.firstIndex(of: ",") else { return nil }
+            return Data(base64Encoded: String(value[value.index(after: comma)...]))
+        }
+        if value.hasPrefix("file://"), let url = URL(string: value) {
+            return try? Data(contentsOf: url)
+        }
+        if value.hasPrefix("http://") || value.hasPrefix("https://") {
+            return nil  // remote fetch unsupported for the local image engine
+        }
+        return Data(base64Encoded: value)
+    }
+
+    /// Resolve width/height from explicit fields or an OpenAI-style `WxH` size.
+    static func resolveImageSize(size: String?, width: Int?, height: Int?) -> (Int?, Int?) {
+        if let width, let height { return (width, height) }
+        if let size {
+            let parts = size.lowercased().split(separator: "x")
+            if parts.count == 2, let w = Int(parts[0]), let h = Int(parts[1]) {
+                return (w, h)
+            }
+        }
+        return (width, height)
+    }
+
+    private static func imageOutputFormat(_ raw: String?) -> ImageOutputFormat {
+        switch raw?.lowercased() {
+        case "jpeg", "jpg": return .jpeg
+        case "webp": return .webp
+        default: return .png
+        }
+    }
+
+    /// Build the per-image result object honoring `response_format`.
+    private static func imageResult(for image: GeneratedImage, responseFormat: String) -> ImageResultDTO {
+        if responseFormat == "b64_json", let data = try? Data(contentsOf: image.url) {
+            return ImageResultDTO(url: nil, b64_json: data.base64EncodedString(), seed: image.seed)
+        }
+        return ImageResultDTO(url: image.url.absoluteString, b64_json: nil, seed: image.seed)
+    }
+
+    private static func imageErrorStatus(message: String, hfAuth: Bool) -> HTTPResponseStatus {
+        if hfAuth { return HTTPResponseStatus(statusCode: 402) }
+        let m = message.lowercased()
+        if m.contains("not found") { return .notFound }
+        if m.contains("incomplete") { return .conflict }
+        if m.contains("not implemented") { return .notImplemented }
+        if m.contains("invalid request") || m.contains("wrong model kind") { return .badRequest }
+        return .internalServerError
+    }
+
+    func handleImageModels(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        let cors = stateRef.value.corsHeaders
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        let logSelf = self
+        runRequestTask(priority: .userInitiated) {
+            let models: [ImageModelInfo]
+            do {
+                models = try await ImageGenerationService.shared.availableModels()
+            } catch {
+                models = []
+            }
+            let dtos = models.map { m in
+                ImageModelDTO(
+                    id: m.id,
+                    object: "model",
+                    display_name: m.displayName,
+                    kind: m.kind,
+                    ready: m.ready,
+                    quantization_bits: m.quantizationBits,
+                    capabilities: ImageCapabilitiesDTO(
+                        text_to_image: m.capabilities.textToImage,
+                        image_edit: m.capabilities.imageEdit,
+                        upscale: m.capabilities.upscale,
+                        negative_prompt: m.capabilities.negativePrompt,
+                        mask: m.capabilities.mask,
+                        multiple_source_images: m.capabilities.multipleSourceImages,
+                        lora: m.capabilities.lora
+                    ),
+                    defaults: ImageDefaultsDTO(
+                        steps: m.defaultSteps,
+                        guidance: m.defaultGuidance.map { Double($0) }
+                    ),
+                    limits: ImageLimitsDTO(
+                        min_steps: 1, max_steps: 50, size_multiple: 16,
+                        max_pixels: 1024 * 1024,
+                        supported_sizes: ["512x512", "768x768", "1024x1024"]
+                    ),
+                    blocked_reasons: m.blockedReasons
+                )
+            }
+            let response = ImageModelsResponseDTO(object: "list", data: dtos)
+            let json = (try? JSONEncoder.osaurusCanonical().encode(response))
+                .map { String(decoding: $0, as: UTF8.self) } ?? #"{"object":"list","data":[]}"#
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(context: ctx.value, version: head.version, status: .ok, headers: headers, body: json)
+            }
+            logSelf.logRequest(
+                method: "GET", path: "/images/models", userAgent: userAgent,
+                requestBody: nil, responseBody: json, responseStatus: 200, startTime: startTime)
+        }
+    }
+
+    func handleImageGenerations(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        let (data, bodyString) = requestBodyData()
+        guard let req = try? JSONDecoder().decode(ImageGenerationRequestDTO.self, from: data) else {
+            sendImageError(
+                head: head, context: context, status: .badRequest,
+                message: "Invalid request body", path: "/images/generations",
+                startTime: startTime, userAgent: userAgent, requestBody: bodyString)
+            return
+        }
+        let (w, h) = Self.resolveImageSize(size: req.size, width: req.width, height: req.height)
+        let params = ImageGenerationParameters(
+            model: req.model,
+            prompt: req.prompt,
+            negativePrompt: req.negative_prompt,
+            width: w,
+            height: h,
+            steps: req.steps,
+            guidance: req.guidance.map { Float($0) },
+            seed: req.seed,
+            numImages: max(1, req.n ?? 1),
+            outputFormat: Self.imageOutputFormat(req.output_format)
+        )
+        let jobID = Self.shortId(prefix: "img")
+        runImageJob(
+            head: head, context: context, startTime: startTime, userAgent: userAgent,
+            path: "/images/generations", requestBody: bodyString,
+            streaming: req.stream ?? false, responseFormat: req.response_format ?? "url",
+            jobID: jobID
+        ) { await ImageGenerationService.shared.generate(params, jobID: jobID) }
+    }
+
+    func handleImageEdits(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        let (data, bodyString) = requestBodyData()
+        guard let req = try? JSONDecoder().decode(ImageEditRequestDTO.self, from: data) else {
+            sendImageError(
+                head: head, context: context, status: .badRequest,
+                message: "Invalid request body", path: "/images/edits",
+                startTime: startTime, userAgent: userAgent, requestBody: bodyString)
+            return
+        }
+        // Prefer the ordered `images` list; fall back to the single `image`.
+        let rawSources = req.images ?? [req.image].compactMap { $0 }
+        let sources = rawSources.compactMap { Self.decodeImageInput($0) }
+        guard !sources.isEmpty else {
+            sendImageError(
+                head: head, context: context, status: .badRequest,
+                message: "edit requires a source image", path: "/images/edits",
+                startTime: startTime, userAgent: userAgent, requestBody: bodyString)
+            return
+        }
+        // No model exposes a real mask path today — reject masks up front.
+        if req.mask != nil {
+            sendImageError(
+                head: head, context: context, status: .notImplemented,
+                message: "mask editing is not supported by this model", path: "/images/edits",
+                startTime: startTime, userAgent: userAgent, requestBody: bodyString)
+            return
+        }
+        let (w, h) = Self.resolveImageSize(size: req.size, width: req.width, height: req.height)
+        let params = ImageEditParameters(
+            model: req.model,
+            prompt: req.prompt,
+            sourceImages: sources,
+            maskImage: nil,
+            negativePrompt: req.negative_prompt,
+            strength: req.strength.map { Float($0) } ?? 0.75,
+            width: w,
+            height: h,
+            steps: req.steps,
+            guidance: req.guidance.map { Float($0) },
+            seed: req.seed,
+            outputFormat: Self.imageOutputFormat(req.output_format)
+        )
+        let jobID = Self.shortId(prefix: "img")
+        runImageJob(
+            head: head, context: context, startTime: startTime, userAgent: userAgent,
+            path: "/images/edits", requestBody: bodyString,
+            streaming: req.stream ?? false, responseFormat: req.response_format ?? "url",
+            jobID: jobID
+        ) { await ImageGenerationService.shared.edit(params, jobID: jobID) }
+    }
+
+    func handleImageUpscale(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        let (data, bodyString) = requestBodyData()
+        guard let req = try? JSONDecoder().decode(ImageUpscaleRequestDTO.self, from: data),
+            let source = Self.decodeImageInput(req.image)
+        else {
+            sendImageError(
+                head: head, context: context, status: .badRequest,
+                message: "Invalid request body", path: "/images/upscale",
+                startTime: startTime, userAgent: userAgent, requestBody: bodyString)
+            return
+        }
+        let params = ImageUpscaleParameters(
+            model: req.model,
+            sourceImage: source,
+            scale: req.scale ?? 4,
+            steps: req.steps,
+            seed: req.seed,
+            outputFormat: Self.imageOutputFormat(req.output_format)
+        )
+        let jobID = Self.shortId(prefix: "img")
+        runImageJob(
+            head: head, context: context, startTime: startTime, userAgent: userAgent,
+            path: "/images/upscale", requestBody: bodyString,
+            streaming: req.stream ?? false, responseFormat: req.response_format ?? "url",
+            jobID: jobID
+        ) { await ImageGenerationService.shared.upscale(params, jobID: jobID) }
+    }
+
+    func handleImageCancel(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        let (data, bodyString) = requestBodyData()
+        guard let req = try? JSONDecoder().decode(ImageCancelRequestDTO.self, from: data) else {
+            sendImageError(
+                head: head, context: context, status: .badRequest,
+                message: "Invalid request body", path: "/images/cancel",
+                startTime: startTime, userAgent: userAgent, requestBody: bodyString)
+            return
+        }
+        let cors = stateRef.value.corsHeaders
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        let logSelf = self
+        runRequestTask(priority: .userInitiated) {
+            await ImageGenerationService.shared.cancel(jobID: req.job_id)
+            let json = #"{"type":"cancelled","job_id":"\#(Self.jsonEscape(req.job_id))"}"#
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(context: ctx.value, version: head.version, status: .ok, headers: headers, body: json)
+            }
+            logSelf.logRequest(
+                method: "POST", path: "/images/cancel", userAgent: userAgent,
+                requestBody: bodyString, responseBody: json, responseStatus: 200, startTime: startTime)
+        }
+    }
+
+    /// Shared driver for the three image endpoints: streams SSE progress when
+    /// `streaming`, otherwise buffers to a single OpenAI-shaped JSON response.
+    private func runImageJob(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?,
+        path: String,
+        requestBody: String?,
+        streaming: Bool,
+        responseFormat: String,
+        jobID: String,
+        build: @escaping @Sendable () async -> AsyncThrowingStream<ImageGenerationEvent, Error>
+    ) {
+        let cors = stateRef.value.corsHeaders
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        let logSelf = self
+
+        if streaming {
+            let writer = SSEResponseWriter()
+            hop { writer.writeHeaders(ctx.value, extraHeaders: cors) }
+            func emit(_ event: ImageStreamEventDTO) {
+                let json = (try? JSONEncoder.osaurusCanonical().encode(event))
+                    .map { String(decoding: $0, as: UTF8.self) } ?? "{}"
+                hop { writer.writeRawJSONData(json, context: ctx.value) }
+            }
+            runRequestTask(priority: .userInitiated) {
+                emit(ImageStreamEventDTO(type: "queued", job_id: jobID))
+                let stream = await build()
+                do {
+                    for try await event in stream {
+                        switch event {
+                        case .loadingModel(let model):
+                            emit(ImageStreamEventDTO(type: "loading_model", job_id: jobID, model: model))
+                        case .step(let step, let total, let eta):
+                            emit(ImageStreamEventDTO(
+                                type: "step", job_id: jobID, step: step, total: total,
+                                progress: total > 0 ? Double(step) / Double(total) : nil,
+                                eta_seconds: eta))
+                        case .preview(let pngData, let step):
+                            let uri = "data:image/png;base64," + pngData.base64EncodedString()
+                            emit(ImageStreamEventDTO(type: "preview", job_id: jobID, step: step, image: uri))
+                        case .completed(let images):
+                            let results = images.map { Self.imageResult(for: $0, responseFormat: responseFormat) }
+                            emit(ImageStreamEventDTO(type: "completed", job_id: jobID, images: results))
+                        case .failed(let message, let hfAuth):
+                            emit(ImageStreamEventDTO(type: "error", job_id: jobID, message: message, hf_auth: hfAuth))
+                        case .cancelled:
+                            emit(ImageStreamEventDTO(type: "cancelled", job_id: jobID))
+                        }
+                    }
+                } catch {
+                    emit(ImageStreamEventDTO(type: "error", job_id: jobID, message: String(describing: error), hf_auth: false))
+                }
+                hop { writer.writeEnd(ctx.value) }
+                logSelf.logRequest(
+                    method: "POST", path: path, userAgent: userAgent,
+                    requestBody: requestBody, responseBody: "[stream]", responseStatus: 200, startTime: startTime)
+            }
+            return
+        }
+
+        // Non-streaming: collect to a single response.
+        runImageNonStreaming(
+            head: head, ctx: ctx, hop: hop, cors: cors, logSelf: logSelf,
+            startTime: startTime, userAgent: userAgent, path: path, requestBody: requestBody,
+            responseFormat: responseFormat, build: build)
+    }
+
+    private func runImageNonStreaming(
+        head: HTTPRequestHead,
+        ctx: NIOLoopBound<ChannelHandlerContext>,
+        hop: @escaping (@escaping @Sendable () -> Void) -> Void,
+        cors: [(String, String)],
+        logSelf: HTTPHandler,
+        startTime: Date,
+        userAgent: String?,
+        path: String,
+        requestBody: String?,
+        responseFormat: String,
+        build: @escaping @Sendable () async -> AsyncThrowingStream<ImageGenerationEvent, Error>
+    ) {
+        runRequestTask(priority: .userInitiated) {
+            var produced: [GeneratedImage] = []
+            var failure: (message: String, hfAuth: Bool)?
+            let stream = await build()
+            do {
+                for try await event in stream {
+                    switch event {
+                    case .completed(let images): produced = images
+                    case .failed(let message, let hfAuth): failure = (message, hfAuth)
+                    default: break
+                    }
+                }
+            } catch {
+                failure = (String(describing: error), false)
+            }
+
+            if let failure {
+                let status = Self.imageErrorStatus(message: failure.message, hfAuth: failure.hfAuth)
+                let body = #"{"error":{"message":"\#(Self.jsonEscape(failure.message))","type":"invalid_request_error"}}"#
+                hop {
+                    var headers = [("Content-Type", "application/json; charset=utf-8")]
+                    headers.append(contentsOf: cors)
+                    self.sendResponse(context: ctx.value, version: head.version, status: status, headers: headers, body: body)
+                }
+                logSelf.logRequest(
+                    method: "POST", path: path, userAgent: userAgent, requestBody: requestBody,
+                    responseStatus: Int(status.code), startTime: startTime, errorMessage: failure.message)
+                return
+            }
+
+            let results = produced.map { Self.imageResult(for: $0, responseFormat: responseFormat) }
+            let response = ImagesResponseDTO(created: Int(Date().timeIntervalSince1970), data: results)
+            let json = (try? JSONEncoder.osaurusCanonical().encode(response))
+                .map { String(decoding: $0, as: UTF8.self) } ?? #"{"created":0,"data":[]}"#
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(context: ctx.value, version: head.version, status: .ok, headers: headers, body: json)
+            }
+            logSelf.logRequest(
+                method: "POST", path: path, userAgent: userAgent, requestBody: requestBody,
+                responseBody: json, responseStatus: 200, startTime: startTime)
         }
     }
 

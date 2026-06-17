@@ -36,8 +36,19 @@ public actor ImageGenerationService {
     private var loadedDirectoryName: String?
     /// One-time registry population (decentralized self-registration).
     private var registered = false
+    /// Job ids that have been asked to cancel. Checked per event in the drain
+    /// loop; the loop keeps consuming the engine stream to completion so the
+    /// gate is never released mid-eval (soft cancel).
+    private var cancelledJobIDs: Set<String> = []
 
     public init() {}
+
+    /// Request cancellation of an in-flight job by id. Safe to call from any
+    /// connection/actor; the matching drain loop stops yielding at the next
+    /// event boundary and finishes with `.cancelled`.
+    public func cancel(jobID: String) {
+        cancelledJobIDs.insert(jobID)
+    }
 
     // MARK: - Model store root
 
@@ -135,9 +146,10 @@ public actor ImageGenerationService {
     // MARK: - Generate / edit / upscale
 
     public func generate(
-        _ params: ImageGenerationParameters
+        _ params: ImageGenerationParameters,
+        jobID: String? = nil
     ) -> AsyncThrowingStream<ImageGenerationEvent, Error> {
-        drive(model: params.model, expected: .imageGen) { engine, outputDir in
+        drive(model: params.model, expected: .imageGen, jobID: jobID) { engine, outputDir in
             let count = max(1, params.numImages)
             var streams: [AsyncThrowingStream<ImageGenEvent, Error>] = []
             streams.reserveCapacity(count)
@@ -164,9 +176,10 @@ public actor ImageGenerationService {
     }
 
     public func edit(
-        _ params: ImageEditParameters
+        _ params: ImageEditParameters,
+        jobID: String? = nil
     ) -> AsyncThrowingStream<ImageGenerationEvent, Error> {
-        drive(model: params.model, expected: .imageEdit) { engine, outputDir in
+        drive(model: params.model, expected: .imageEdit, jobID: jobID) { engine, outputDir in
             let sources = try Self.stageInputs(params.sourceImages)
             guard !sources.isEmpty else {
                 throw ImageGenerationError.invalidRequest("edit requires at least one source image")
@@ -190,9 +203,10 @@ public actor ImageGenerationService {
     }
 
     public func upscale(
-        _ params: ImageUpscaleParameters
+        _ params: ImageUpscaleParameters,
+        jobID: String? = nil
     ) -> AsyncThrowingStream<ImageGenerationEvent, Error> {
-        drive(model: params.model, expected: .imageUpscale) { engine, outputDir in
+        drive(model: params.model, expected: .imageUpscale, jobID: jobID) { engine, outputDir in
             let source = try Self.stageInput(params.sourceImage)
             let request = UpscaleRequest(
                 sourceImage: source,
@@ -214,6 +228,7 @@ public actor ImageGenerationService {
     private func drive(
         model requestedModel: String,
         expected kind: ModelKind,
+        jobID: String?,
         _ build: @escaping @Sendable (FluxEngine, URL) async throws -> [AsyncThrowingStream<ImageGenEvent, Error>]
     ) -> AsyncThrowingStream<ImageGenerationEvent, Error> {
         AsyncThrowingStream { continuation in
@@ -221,8 +236,13 @@ public actor ImageGenerationService {
                 await MetalGate.shared.enterImageGeneration()
                 var cancelled = false
                 var produced: [GeneratedImage] = []
+                func cancelRequested() -> Bool {
+                    if Task.isCancelled { return true }
+                    if let jobID, self.cancelledJobIDs.contains(jobID) { return true }
+                    return false
+                }
                 do {
-                    if Task.isCancelled { cancelled = true }
+                    if cancelRequested() { cancelled = true }
                     // Load (or switch) the model under the gate — quantized
                     // bundles decode their weights with MLX eval at load time.
                     if !cancelled {
@@ -236,7 +256,7 @@ public actor ImageGenerationService {
 
                     for stream in streams {
                         for try await event in stream {
-                            if Task.isCancelled { cancelled = true }
+                            if cancelRequested() { cancelled = true }
                             switch event {
                             case .step(let step, let total, let eta):
                                 if !cancelled {
@@ -274,6 +294,7 @@ public actor ImageGenerationService {
                     continuation.yield(.failed(message: Self.message(for: error), hfAuth: Self.isAuthError(error)))
                     continuation.finish()
                 }
+                if let jobID { self.cancelledJobIDs.remove(jobID) }
                 await MetalGate.shared.exitImageGeneration()
             }
             continuation.onTermination = { _ in task.cancel() }
