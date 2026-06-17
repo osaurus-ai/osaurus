@@ -1,0 +1,180 @@
+//
+//  ImageModelDownloadService.swift
+//  osaurus
+//
+//  Stages full mflux image-model bundles (HuggingFace diffusers repos with
+//  nested transformer/ text_encoder/ vae/ tokenizer/ subdirs) into the image
+//  models root so the engine — which never downloads silently — can load them.
+//
+//  Reuses the existing download machinery (`HuggingFaceService` for the file
+//  manifest, `DirectDownloader` for per-file fetch with subdir-preserving
+//  destinations) but keeps image concerns separate from the LLM `MLXModel`
+//  catalog (whose `isDownloaded`/manifest logic assumes a flat LLM layout).
+//
+
+import Foundation
+
+/// A downloadable image model. `id` is the local bundle directory name (and the
+/// request id used everywhere else); it's derived from the repo's last path
+/// component so the store's fuzzy resolver maps it to a canonical family.
+public struct ImageModelDownload: Identifiable, Sendable, Hashable {
+    public let id: String
+    public let repoId: String
+    public let displayName: String
+    public let note: String?
+
+    public init(repoId: String, displayName: String, note: String? = nil) {
+        self.id = ImageModelDownload.directoryName(forRepoId: repoId)
+        self.repoId = repoId
+        self.displayName = displayName
+        self.note = note
+    }
+
+    /// Local directory name for a repo id: its last path component.
+    public static func directoryName(forRepoId repoId: String) -> String {
+        repoId.split(separator: "/").last.map(String.init) ?? repoId
+    }
+}
+
+@MainActor
+final class ImageModelDownloadService: ObservableObject {
+    static let shared = ImageModelDownloadService()
+
+    @Published private(set) var states: [String: DownloadState] = [:]
+    @Published private(set) var metrics: [String: ModelDownloadService.DownloadMetrics] = [:]
+
+    /// Curated, known-public mirrors. Most users will paste a repo id via the
+    /// UI's custom field instead — any mflux bundle works as long as its repo
+    /// name carries a recognizable family token (z-image, flux1-schnell,
+    /// qwen-image, ideogram, …). Seeded with the Ideogram mirrors named in the
+    /// vMLX integration spec; extend as more public mflux repos are verified.
+    static let catalog: [ImageModelDownload] = [
+        ImageModelDownload(
+            repoId: "cocktailpeanut/ideogram-4-fp8",
+            displayName: "Ideogram 4 (fp8)",
+            note: "Strong typography renderer."
+        ),
+        ImageModelDownload(
+            repoId: "cocktailpeanut/ideogram-4-nf4",
+            displayName: "Ideogram 4 (NF4)",
+            note: "4-bit; smaller footprint."
+        ),
+    ]
+
+    /// File patterns to stage. Matched against each file's name across all
+    /// subdirectories, so nested `transformer/*.safetensors` etc. are included.
+    private static let patterns = [
+        "*.safetensors", "*.json", "*.txt", "*.model", "*.jinja", "*.bin", "*.merges",
+    ]
+    private static let excluded: Set<String> = ["README.md", ".gitattributes"]
+
+    private var tasks: [String: Task<Void, Never>] = [:]
+    private var downloaders: [String: DirectDownloader] = [:]
+
+    /// True when a bundle directory for `id` already exists on disk.
+    func isInstalled(_ id: String) -> Bool {
+        let dir = ImageGenerationService.imageModelsRoot().appendingPathComponent(id, isDirectory: true)
+        var isDir: ObjCBool = false
+        return FileManager.default.fileExists(atPath: dir.path, isDirectory: &isDir) && isDir.boolValue
+    }
+
+    func download(_ entry: ImageModelDownload) {
+        download(repoId: entry.repoId, displayName: entry.displayName)
+    }
+
+    /// Start downloading any HuggingFace mflux repo into the image models root.
+    func download(repoId: String, displayName: String) {
+        let trimmed = repoId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let dirName = ImageModelDownload.directoryName(forRepoId: trimmed)
+        if case .downloading = states[dirName, default: .notStarted] { return }
+        states[dirName] = .downloading(progress: 0)
+        metrics[dirName] = nil
+        let task = Task { [weak self] in
+            guard let self else { return }
+            await self.run(repoId: trimmed, dirName: dirName)
+        }
+        tasks[dirName] = task
+    }
+
+    func cancel(_ id: String) {
+        tasks[id]?.cancel()
+        tasks[id] = nil
+        downloaders[id]?.pause()
+        downloaders[id] = nil
+        states[id] = .notStarted
+        metrics[id] = nil
+    }
+
+    private func run(repoId: String, dirName: String) async {
+        let root = ImageGenerationService.imageModelsRoot()
+            .appendingPathComponent(dirName, isDirectory: true)
+
+        guard
+            let files = await HuggingFaceService.shared.fetchMatchingFiles(
+                repoId: repoId, patterns: Self.patterns, excludedFiles: Self.excluded),
+            !files.isEmpty
+        else {
+            states[dirName] = .failed(error: "Could not list files for \(repoId)")
+            tasks[dirName] = nil
+            return
+        }
+
+        let totalBytes = files.reduce(Int64(0)) { $0 + $1.size }
+        var completedBytes: Int64 = 0
+        let downloader = DirectDownloader()
+        downloaders[dirName] = downloader
+
+        do {
+            for file in files {
+                try Task.checkCancellation()
+                guard
+                    let destination = HuggingFaceService.destinationURL(
+                        forRemotePath: file.path, under: root),
+                    let url = ModelDownloadService.resolveURL(repoId: repoId, path: file.path)
+                else { continue }
+
+                // Skip files already present at the expected size (resume).
+                if let existing = try? FileManager.default.attributesOfItem(atPath: destination.path)[.size]
+                    as? Int64, existing == file.size
+                {
+                    completedBytes += file.size
+                    updateProgress(dirName, received: completedBytes, total: totalBytes)
+                    continue
+                }
+
+                let base = completedBytes
+                try await downloader.download(
+                    from: url, to: destination, expectedSize: file.size
+                ) { [weak self] received, _ in
+                    Task { @MainActor [weak self] in
+                        self?.updateProgress(dirName, received: base + received, total: totalBytes)
+                    }
+                }
+                completedBytes += file.size
+                updateProgress(dirName, received: completedBytes, total: totalBytes)
+            }
+            states[dirName] = .completed
+            metrics[dirName] = nil
+            // Refresh the picker catalog + any listeners so the freshly staged
+            // bundle becomes selectable without a relaunch.
+            NotificationCenter.default.post(name: .localModelsChanged, object: nil)
+            await ModelPickerItemCache.shared.buildModelPickerItems()
+        } catch is CancellationError {
+            states[dirName] = .notStarted
+            metrics[dirName] = nil
+        } catch {
+            states[dirName] = .failed(error: String(describing: error))
+            metrics[dirName] = nil
+        }
+        downloaders[dirName] = nil
+        tasks[dirName] = nil
+    }
+
+    private func updateProgress(_ id: String, received: Int64, total: Int64) {
+        let fraction = total > 0 ? min(1.0, Double(received) / Double(total)) : 0
+        states[id] = .downloading(progress: fraction)
+        metrics[id] = ModelDownloadService.DownloadMetrics(
+            bytesReceived: received, totalBytes: total, bytesPerSecond: nil, etaSeconds: nil)
+    }
+}
