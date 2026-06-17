@@ -284,9 +284,27 @@ final class BackgroundDriver: @unchecked Sendable {
 
     // MARK: - Public API: keyboard
 
+    /// Make `pid` ready to receive synthesized keystrokes without raising it.
+    ///
+    /// Posting a key event to a pid isn't enough on its own: a Cocoa app has to
+    /// be AppKit-active for the keystroke to reach its key window / menu
+    /// shortcuts, and a Chromium renderer drops keys that didn't follow a
+    /// trusted user gesture. So we route input focus to the target (no raise,
+    /// same as `click`) and, for Electron/Chromium, tick the user-activation
+    /// gate with the same off-screen decoy click `click` uses. Without this,
+    /// app shortcuts like Cmd+K posted to Slack "succeed" but never land.
+    private func prepareForKeyboard(pid: pid_t) {
+        SkyLightBridge.focusWithoutRaise(pid: pid)
+        if BundleClass.isChromium(pid: pid) {
+            _ = postClickPair(pid: pid, point: CGPoint(x: -1, y: -1), button: .left, clickCount: 1)
+            Thread.sleep(forTimeInterval: 0.01)
+        }
+    }
+
     /// Type a string of text. Per-pid routing means the user can keep typing
     /// in their own focused app while we type into `pid`.
     func type(pid: pid_t, text: String) -> InputResult {
+        prepareForKeyboard(pid: pid)
         for char in text {
             if let result = typeCharacter(pid: pid, char: char), !result.success {
                 return result
@@ -313,6 +331,7 @@ final class BackgroundDriver: @unchecked Sendable {
 
     /// Press a single key with optional modifiers, routed to `pid`.
     func pressKey(pid: pid_t, keyCode: CGKeyCode, modifiers: CGEventFlags = []) -> InputResult {
+        prepareForKeyboard(pid: pid)
         guard let down = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: true),
             let up = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: false)
         else {

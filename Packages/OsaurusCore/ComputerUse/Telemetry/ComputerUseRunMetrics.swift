@@ -31,6 +31,10 @@ public struct ComputerUseRunMetrics: Sendable, Equatable {
     /// Actions executed and how many the verify step saw land (view changed).
     public var actsAttempted = 0
     public var verifyChanged = 0
+    /// Clicks that failed at the live AX layer (stale/removed element) and were
+    /// retried as a coordinate click at the element's last-known center. High on
+    /// Electron, whose element refs die between capture and click.
+    public var coordinateFallbacks = 0
     /// Highest capture tier reached during the run.
     public var maxTier: CaptureTier = .ax
     /// Whether the cloud-vision route was ever taken (consented + scrubbed).

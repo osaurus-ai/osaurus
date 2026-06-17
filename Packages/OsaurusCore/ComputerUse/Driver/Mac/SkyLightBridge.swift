@@ -38,7 +38,11 @@ struct PSN {
 // they're not Objective-C-representable. We use opaque raw pointers in the
 // function-pointer typealiases and rebind to `PSN` at the call site instead.
 
-private typealias SLEventPostToPidFn = @convention(c) (CGEvent, pid_t) -> Int32
+// Real signature is `CGError SLEventPostToPid(pid_t pid, CGEventRef event)`
+// — pid FIRST, event second, same as the public `CGEvent.postToPid`. Passing
+// them in the other order makes SkyLight dereference the pid value as the
+// event pointer and crashes with EXC_BAD_ACCESS at a tiny address.
+private typealias SLEventPostToPidFn = @convention(c) (pid_t, CGEvent) -> Int32
 
 private typealias SLPSPostEventRecordToFn =
     @convention(c) (
@@ -87,7 +91,7 @@ enum SkyLightBridge {
         // Same WindowServer-knowability guard as processSerialNumber. Avoids
         // segfaults inside the private function when targeting a CLI process.
         guard isWindowServerVisible(pid: pid) else { return false }
-        return fn(event, pid) == 0
+        return fn(pid, event) == 0
     }
 
     /// True when the pid corresponds to a GUI app the WindowServer can

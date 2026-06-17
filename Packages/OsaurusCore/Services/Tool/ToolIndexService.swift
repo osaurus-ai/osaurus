@@ -26,9 +26,14 @@ public actor ToolIndexService {
                 let builtIn = ToolRegistry.shared.builtInToolNames
                 // Exclude capability infrastructure tools and runtime-managed tools from the
                 // search index, but allow user-facing built-in tools (e.g. search_*) to be
-                // indexed so capabilities_discover can discover them.
+                // indexed so capabilities_discover can discover them. Authoritatively-gated
+                // built-ins (computer_use) are also excluded: they are auto-injected by the
+                // prompt composer when the owning agent flag is on and have no
+                // capabilities_load carve-out, so discovery would only surface a capability
+                // the model can never load.
                 let excluded = ToolRegistry.capabilityToolNames
                     .union(ToolRegistry.shared.runtimeManagedToolNames)
+                    .union(ToolRegistry.nonDiscoverableBuiltInToolNames)
                 return (all, sandbox, mcp, builtIn, excluded)
             }
 

@@ -181,7 +181,14 @@ final class AccessibilityManager: @unchecked Sendable {
     private var snapshotPids: [Int: Int32] = [:]
     private var snapshotOrder: [Int] = []
     private var currentSnapshotId: Int = 0
-    private static let maxSnapshotsToRetain: Int = 2
+    /// The loop captures several times per agent turn (perceive, every act's
+    /// verify, and the reobserve re-perceive), so a 2-deep cache rotates a mark
+    /// out from under the model within the same turn it was shown. Retaining a
+    /// few more generations keeps a just-shown mark resolvable across those
+    /// intra-turn captures without holding meaningfully more memory.
+    private static let maxSnapshotsToRetain: Int = 6
+    /// Pids we've already nudged into exposing their full AX tree (Electron).
+    private var preparedPids: Set<Int32> = []
     private let lock = NSLock()
 
     private init() {
@@ -190,6 +197,32 @@ final class AccessibilityManager: @unchecked Sendable {
             AXUIElementCreateSystemWide(),
             Self.axMessagingTimeout
         )
+    }
+
+    // MARK: Electron / Chromium accessibility
+
+    /// Nudge a Chromium/Electron app into building its full accessibility tree.
+    ///
+    /// Chromium only materializes its AX tree when an assistive client sets
+    /// `AXManualAccessibility` on the app element; until then apps like Slack,
+    /// VS Code, and Discord expose almost nothing (a window with no children),
+    /// which is why a plain traverse of Slack returns only the menu bar plus a
+    /// stray field. Cocoa apps ignore the attribute harmlessly, so this is safe
+    /// to apply to every pid. Idempotent per pid — the first call sets the flag,
+    /// the tree then builds asynchronously (see `waitForAccessibilityTree`).
+    @discardableResult
+    func prepareForAccessibility(pid: Int32) -> Bool {
+        lock.lock()
+        if preparedPids.contains(pid) {
+            lock.unlock()
+            return false
+        }
+        preparedPids.insert(pid)
+        lock.unlock()
+
+        let app = AXUIElementCreateApplication(pid)
+        AXUIElementSetAttributeValue(app, "AXManualAccessibility" as CFString, true as CFTypeRef)
+        return true
     }
 
     // MARK: Snapshot lifecycle
@@ -322,6 +355,13 @@ final class AccessibilityManager: @unchecked Sendable {
     /// Begins a new snapshot. Element IDs in the result are valid until the cache
     /// rotates them out (after the next snapshot beyond the retention limit).
     func traverse(filter: ElementFilter, search: SearchOptions? = nil) -> TraversalResult {
+        // Ensure Chromium/Electron targets have been asked to expose their tree.
+        // Idempotent and cheap after the first call; covers apps reached via a
+        // bare capture (not just `open`). The tree may still be settling on the
+        // very first traverse after this flips — the loop's next perceive picks
+        // up the populated tree.
+        prepareForAccessibility(pid: filter.pid)
+
         let snapshotId = beginNewSnapshot(pid: filter.pid)
 
         let app = AXUIElementCreateApplication(filter.pid)
@@ -817,6 +857,9 @@ func openApplication(
         if !background {
             app.activate()
         }
+        // Flip Chromium/Electron into exposing its full tree BEFORE we wait, so
+        // the readiness poll can block until that tree actually populates.
+        AccessibilityManager.shared.prepareForAccessibility(pid: app.processIdentifier)
         await waitUntilReady(app: app, requireFrontmost: !background)
         return .success(
             MacAppInfo(
@@ -833,6 +876,7 @@ func openApplication(
             workspace: workspace,
             background: background
         )
+        AccessibilityManager.shared.prepareForAccessibility(pid: app.processIdentifier)
         await waitUntilReady(app: app, isNewLaunch: true, requireFrontmost: !background)
         return .success(
             MacAppInfo(
@@ -872,16 +916,36 @@ private func waitUntilReady(
             kAXWindowsAttribute as CFString,
             &windowValue
         )
-        let hasWindow =
-            windowResult == .success && (windowValue as? [AXUIElement])?.isEmpty == false
+        let windows = (windowValue as? [AXUIElement]) ?? []
+        let hasWindow = windowResult == .success && !windows.isEmpty
+        // Chromium/Electron builds its subtree asynchronously once
+        // `AXManualAccessibility` is set, so a window can exist while its
+        // children are still empty. Wait until at least one window actually has
+        // children, otherwise the first capture is just the menu bar. Cocoa apps
+        // populate immediately, so this only adds latency for Electron's build.
+        let treePopulated = windows.contains { axElementHasChildren($0) }
 
-        if frontmostOK && hasWindow {
+        if frontmostOK && hasWindow && treePopulated {
             try? await Task.sleep(nanoseconds: 200_000_000)
             return
         }
 
         try? await Task.sleep(nanoseconds: pollInterval)
     }
+}
+
+/// Whether an AX element reports at least one child. Used to detect that an
+/// Electron window's tree has finished building after `AXManualAccessibility`.
+private func axElementHasChildren(_ element: AXUIElement) -> Bool {
+    var childrenValue: CFTypeRef?
+    guard
+        AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &childrenValue)
+            == .success,
+        let children = childrenValue as? [AXUIElement]
+    else {
+        return false
+    }
+    return !children.isEmpty
 }
 
 private func launchApplication(

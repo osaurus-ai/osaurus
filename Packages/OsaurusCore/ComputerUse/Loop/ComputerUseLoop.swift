@@ -476,6 +476,9 @@ public enum ComputerUseLoop {
                         element: resolvedElement,
                         pid: pid,
                         driver: driver,
+                        availability: availability,
+                        currentTier: &currentTier,
+                        pendingFrameImage: &pendingFrameImage,
                         lastView: &lastView,
                         lastSnapshot: &lastSnapshot,
                         metrics: &metrics,
@@ -691,11 +694,17 @@ public enum ComputerUseLoop {
 
     // MARK: - Act + verify
 
-    private static func act(
+    /// Internal (not private) so `ComputerUseLoopActTests` can drive the
+    /// coordinate-fallback / tier-escalation paths with `MockMacDriver` without
+    /// standing up a live model for the whole `run` loop.
+    static func act(
         action: AgentAction,
         element: CUElement?,
         pid: Int32,
         driver: MacDriver,
+        availability: MacDriverAvailability,
+        currentTier: inout CaptureTier,
+        pendingFrameImage: inout CUImage?,
         lastView: inout AgentView?,
         lastSnapshot: inout CUSnapshot?,
         metrics: inout ComputerUseRunMetrics,
@@ -703,7 +712,7 @@ public enum ComputerUseLoop {
         step: Int
     ) async -> String {
         metrics.actsAttempted += 1
-        let result: CUActionResult
+        var result: CUActionResult
         switch action.verb {
         case .click:
             guard let element else { return "Click needs a resolved target." }
@@ -731,6 +740,30 @@ public enum ComputerUseLoop {
             return "Unsupported action."
         }
 
+        // Coordinate fallback. A click resolved against the immutable snapshot
+        // value copy (so `TargetResolver` was happy) but failed at the LIVE AX
+        // layer because the element ref died between capture and click — the
+        // signature Electron failure in the Slack trace. The element's
+        // last-known frame is still good, so retry once as a per-pid coordinate
+        // click at its center, which needs no live ref.
+        if result.removed || result.stale, action.verb == .click, let element {
+            metrics.coordinateFallbacks += 1
+            let center = element.center
+            let retry = await driver.coordinate(
+                .click(x: Double(center.x), y: Double(center.y), pid: pid)
+            )
+            feed.emit(
+                FeedEvent(
+                    step: step,
+                    kind: .act,
+                    title: "Retry click at element center",
+                    detail: retry.error,
+                    success: retry.success
+                )
+            )
+            if retry.success { result = retry }
+        }
+
         feed.emit(
             FeedEvent(
                 step: step,
@@ -741,11 +774,29 @@ public enum ComputerUseLoop {
             )
         )
 
-        // Verify: re-perceive and report the delta.
-        let snapshot = await driver.capture(pid: pid, tier: .ax)
+        // Verify: re-perceive and report the delta. If the action still failed
+        // stale/removed even after the coordinate fallback, escalate the capture
+        // tier (ax->som->vision) so the re-perception carries pixels the model
+        // can use to relocate the target, instead of handing back the same AX
+        // view that just failed to resolve.
+        var verifyTier: CaptureTier = .ax
+        if result.removed || result.stale,
+            CaptureRouter.canEscalate(from: currentTier, availability: availability)
+        {
+            currentTier = CaptureRouter.nextTier(
+                current: currentTier,
+                reason: .targetUnresolved,
+                availability: availability
+            )
+            metrics.raiseTier(to: currentTier)
+            verifyTier = currentTier
+        }
+        let snapshot = await driver.capture(pid: pid, tier: verifyTier)
         let view = AgentView.build(from: snapshot, previous: lastView)
         lastView = view
         lastSnapshot = snapshot
+        // Stage any escalated frame for attachment after this step's tool result.
+        if verifyTier != .ax { pendingFrameImage = snapshot.image }
         if view.hasChanges { metrics.verifyChanged += 1 }
         feed.emit(
             FeedEvent(
