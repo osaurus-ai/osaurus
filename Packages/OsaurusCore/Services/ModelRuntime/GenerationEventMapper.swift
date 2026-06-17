@@ -55,10 +55,21 @@ enum GenerationEventMapper {
             var sawReasoning = false
             var estimatedTextTokens = 0
             var markedFirstModelOutput = false
+            // Prefill diagnostics: log only on stage CHANGE so we see the
+            // cacheRestore→prefill split (how many tokens were restored from
+            // cache vs freshly processed) without a line per progress tick.
+            var lastPrefillStage: String?
+            // Decode diagnostics: first-output wall-clock + whether this step
+            // ended in a tool call. Tool-call steps tear down the stream before
+            // vmlx emits `.info`, so STEP-STATS never fires for them — the
+            // STEP-DECODE line at stream end covers those steps instead.
+            var firstOutputAt: CFAbsoluteTime?
+            var sawToolCall = false
 
             func markFirstModelOutput() {
                 guard !markedFirstModelOutput else { return }
                 markedFirstModelOutput = true
+                firstOutputAt = CFAbsoluteTimeGetCurrent()
                 let ms = Int((CFAbsoluteTimeGetCurrent() - startedAt) * 1000)
                 trace?.set("first_token_ms", ms)
                 trace?.mark("first_model_output")
@@ -119,9 +130,18 @@ enum GenerationEventMapper {
                         detail: progress.detail
                     )
                     InferenceProgressManager.shared.prefillDidUpdateAsync(state)
+                    if state.stage.rawValue != lastPrefillStage {
+                        lastPrefillStage = state.stage.rawValue
+                        PrefillDebugLog.shared.log(
+                            "     STEP-PREFILL stage=\(state.stage.rawValue) "
+                                + "completed=\(state.completedUnitCount)/\(state.totalUnitCount)"
+                                + (state.detail.map { " detail=\($0)" } ?? "")
+                        )
+                    }
                     continuation.yield(.prefillProgress(state))
 
                 case .toolCall(let call):
+                    sawToolCall = true
                     markFirstModelOutput()
                     let argsJSON = serializeArguments(
                         call.function.arguments,
@@ -165,6 +185,27 @@ enum GenerationEventMapper {
             mapperLog.info(
                 "[perf] generation durationMs=\(durationMs, privacy: .public) tokenCount=\(finalTokenCount, privacy: .public)"
             )
+
+            // Decode diagnostics: per-step decode timing for EVERY step,
+            // including tool-call steps that never reach `.info`. ttftMs is
+            // prefill+queue time to first output; decodeMs/decodeTps cover the
+            // generation itself. genTokens is exact when vmlx info arrived,
+            // otherwise an estimate (text/reasoning only — tool-call arg tokens
+            // are not counted).
+            let nowEnd = CFAbsoluteTimeGetCurrent()
+            let ttftMs = firstOutputAt.map { Int(($0 - startedAt) * 1000) }
+            let decodeMs = firstOutputAt.map { Int((nowEnd - $0) * 1000) }
+            let decodeTps =
+                (firstOutputAt != nil && decodeMs! > 0)
+                ? Double(finalTokenCount) / (Double(decodeMs!) / 1000.0)
+                : 0
+            PrefillDebugLog.shared.log(
+                "     STEP-DECODE endedInToolCall=\(sawToolCall) "
+                    + "ttftMs=\(ttftMs.map(String.init) ?? "?") decodeMs=\(decodeMs.map(String.init) ?? "?") "
+                    + "genTokens=\(finalTokenCount)\(sawCompletionInfo ? "" : "(est)") "
+                    + "decodeTps=\(String(format: "%.1f", decodeTps)) totalMs=\(durationMs)"
+            )
+
             InferenceProgressManager.shared.prefillDidFinishAsync()
             continuation.finish()
         }
@@ -183,6 +224,31 @@ enum GenerationEventMapper {
         mapperLog.info(
             "[perf] mlxStats promptTokens=\(info.promptTokenCount, privacy: .public) promptTps=\(info.promptTokensPerSecond, privacy: .public) promptMs=\(Int(info.promptTime * 1000), privacy: .public) genTokens=\(info.generationTokenCount, privacy: .public) genTps=\(info.tokensPerSecond, privacy: .public) genMs=\(Int(info.generateTime * 1000), privacy: .public) stop=\(String(describing: info.stopReason), privacy: .public) unclosedReasoning=\(info.unclosedReasoning, privacy: .public)"
         )
+
+        // Prefill diagnostics: vmlx's actual processed-prompt count + prefill
+        // timing for this step, then the cumulative cache counters AFTER it.
+        // Compare promptTokens here against the STEP-BEGIN tokenizedPrompt: a
+        // smaller value means the KV prefix was reused rather than re-prefilled.
+        let promptTokens = info.promptTokenCount
+        let promptTps = info.promptTokensPerSecond
+        let promptMs = Int(info.promptTime * 1000)
+        let genTokens = info.generationTokenCount
+        let genTps = info.tokensPerSecond
+        PrefillDebugLog.shared.log(
+            "     STEP-STATS promptTokens=\(promptTokens) promptMs=\(promptMs) "
+                + "promptTps=\(String(format: "%.1f", promptTps)) genTokens=\(genTokens) "
+                + "genTps=\(String(format: "%.1f", genTps)) stop=\(String(describing: info.stopReason))"
+        )
+        if PrefillDebugLog.shared.isEnabled {
+            Task.detached {
+                guard let after = await MLXBatchAdapter.snapshotDiagnostics() else { return }
+                PrefillDebugLog.shared.log(
+                    "     STEP-END   cacheAfter{prefixHits=\(after.prefixHits) "
+                        + "prefixMisses=\(after.prefixMisses) diskL2Hits=\(after.diskL2Hits) "
+                        + "diskL2Misses=\(after.diskL2Misses) diskL2Stores=\(after.diskL2Stores)}"
+                )
+            }
+        }
         mapperSignposter.emitEvent(
             "mlxStats",
             id: .exclusive,

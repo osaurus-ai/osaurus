@@ -1,82 +1,134 @@
-# vMLX spec: incremental tokenization + L2 prefix-cache carryover
+# vMLX spec: tokenization (root cause found) + prefill/decode follow-ups
 
-Target repo: `osaurus-ai/vmlx-swift` (`MLXLMCommon`). These two levers cannot
-live in the Osaurus app: tokenization runs in `context.processor.prepare(...)`
-/ `context.tokenizer.encode(...)` and the disk cache lives in
-`MLXLMCommon/Cache/{CacheCoordinator,DiskCache}.swift`.
+Target repo: `osaurus-ai/vmlx-swift`. This spec was rewritten after direct,
+in-process instrumentation (`TokenizeDebugLog` in `VMLXTokenizers`,
+`PrefillDebugLog` in osaurus) measured the real bottleneck on the user's model.
+The earlier hypotheses (near-quadratic-in-prompt-length tokenization;
+incremental tokenization as the main lever) were **wrong** and have been
+replaced with the measured cause below.
 
-## Evidence (measured on Osaurus, M2 24 GB, gemma-4-12B-it-qat-JANG_4M, sandbox + tools)
+## TL;DR
 
-Per-step timeline captured via `PrefillDebugLog` (`GENERATE-ENTER` →
-`STEP-BEGIN` is `prepareInput`; `STEP-PREFILL` stages are GPU prefill):
+Per agent-loop step on M2 24 GB, gemma-4-12B-it-qat-JANG_4M, sandbox + 17 tools:
 
-| Prompt tokens | `prepareInput` (tokenize+template) |
-|---|---|
-| 17,762 | ~89 s |
-| 5,865 | ~10.5 s |
+| Phase | Cost | Nature |
+|---|---|---|
+| **Tokenize (BPE encode)** | **~6.4 s every step** | recurring — **root cause below** |
+| Jinja render | ~3 ms | negligible |
+| GPU prefill, step 1 (cold) | ~70 s (incl. Metal kernel JIT) | one-time per process/prefix |
+| GPU prefill, steps 2…N | fast (~965 tok/s, KV-reused) | not a recurring problem |
+| Decode | ~10–19 tok/s | recurring; dominates file-writing turns |
 
-3.03× fewer tokens → 8.5× faster ⇒ **≈ O(n^1.9), near-quadratic.** Tokenization
-is pure CPU work done *before* the GPU runs, and it is **redone in full every
-agent-loop step** even though `lcpVsPrev` shows the entire previous prompt is a
-byte-identical prefix (only ~90–120 new suffix tokens change per step).
+The dominant **recurring** cost is tokenization, and it is **not** about prompt
+length — it is one pathological pre-token. Fixing it is the highest-leverage win.
 
-Separately, the cold first-step GPU prefill of a *new* static-prefix hash was
-~92 s for 5,865 tokens (~64 tok/s); a repeat run with the **same** prefix hash
-restored from disk L2 in ~1–2 s, so cross-run carryover works when the prefix is
-byte-identical.
+## Root cause: BPE merge loop is O(word_len²), fed an 11,035-char pre-token
 
-## Lever 1 — fix the near-quadratic tokenization, then make it incremental
+Measured (`/tmp/vmlx-tokenize-debug.log`, gemma-4-12B-it-qat, sandbox + 17 tools):
 
-### 1a. Profile and remove the O(n²) hotspot (do this first)
-The super-linear curve implies an accidental quadratic in the chat-template
-render or the BPE/SentencePiece pre-tokenization (e.g. repeated full-string
-scans, `String.Index` re-walks, or per-merge rescans). A purely *linear*
-tokenize would already take the 5.9k-token case from ~10 s toward ~2–3 s and
-help every large-context local model, independent of incrementality. Candidate
-sites: the Jinja template apply over `tools` + system text, and the
-pre-tokenization regex loop in the tokenizer.
+```
+RENDER agp=true renderMs=3.5 encodeMs=6332.7 chars=18991 tokens=4484 bpeMs=6324.8 bpeWords=298 bpeMaxWordLen=11035
+RENDER agp=true renderMs=3.2 encodeMs=6493.5 chars=20557 tokens=4882 bpeMs=6485.5 bpeWords=304 bpeMaxWordLen=11035
+RENDER agp=true renderMs=3.9 encodeMs=6480.7 chars=20894 tokens=5009 bpeMs=6471.3 bpeWords=310 bpeMaxWordLen=11035
+```
 
-### 1b. Prefix-cached / incremental tokenization
-Add an opt-in cache on the processor keyed per model container:
-- Cache `(lastRenderedString, lastTokenIds)` from the previous `prepare(...)`.
-- On the next call, render the new prompt string, compute the longest common
-  string prefix with `lastRenderedString`, then snap the reuse boundary **back
-  to the last guaranteed-atomic split point** at/under that common prefix — i.e.
-  the last special/control token (`<end_of_turn>`, `<start_of_turn>`, BOS) or a
-  separator the pre-tokenizer always breaks on. Reuse the cached token ids up to
-  that boundary; tokenize only the remainder; concatenate.
-- **Correctness gate:** behind a feature flag, periodically (and in tests)
-  assert `incremental(prefix+suffix) == full(prefix+suffix)` exactly; on any
-  mismatch, fall back to full tokenization and disable the fast path for that
-  model. This is the safety the app layer cannot provide — it requires the
-  tokenizer's own merge/atomicity rules. The existing tokenizer test suites
-  (`Tests/MLXLMTests/TestTokenizer.swift`, the Gemma scramble repros on the
-  Osaurus side) are the regression backstop.
+- **`bpeMs` ≈ `encodeMs` (99.9 %)** — the entire ~6.4 s is the BPE merge loop
+  `BPETokenizer.bpe(token:)` (`Vendors/swift-transformers/Sources/Tokenizers/BPETokenizer.swift:179-223`).
+  Not normalize, not pre-tokenize, not id-lookup, not Jinja.
+- **`bpeMaxWordLen=11035`** — one pre-token is 11,035 chars (~58 % of the whole
+  18,991-char prompt). `bpe()` is O(word_len²) per merge (inner `firstIndex`
+  scan + full pair rebuild), so an 11 k-char "word" is ~10⁸ ops × merge depth.
+  That single word is essentially the whole 6.4 s; the other ~297 pre-tokens are
+  normal-length and cheap.
 
-Expected: steps 2…N of an agent loop drop from ~10 s to ~tokenize-only-the-
-suffix (~tens of ms), i.e. ~30 s saved on a 4-step turn at current prompt sizes,
-and the win grows with prompt size because of the quadratic.
+### Why an 11 k-char pre-token exists
+The chat template renders the tool schemas with **no whitespace** between
+structural elements or between tools (osaurus's `Gemma4WithTools` fallback —
+embedded in `MLXLMCommon/ChatTemplates/ChatTemplateFallbacks.swift`,
+source-of-truth `Gemma4WithTools.jinja`). Description-less params and tools
+chain together space-free
+(`path:{type:<|"|>string<|"|>},mode:{type:<|"|>string<|"|>}…}<tool|><|tool>declaration:next…`),
+and the pre-tokenizer splits on whitespace — so the run between two spaces grows
+to 11 k chars. This is exactly why **tools + sandbox** specifically was
+catastrophic, and why a tool-free / different-content run looked fast
+(no giant word).
 
-## Lever 2 — disk-L2 prefix-cache carryover reliability
+## Lever 1 — kill the giant pre-token / fix the quadratic (do both)
 
-Carryover already works for a byte-identical prefix; harden it so users pay the
-cold prefill once-ever per prefix, not per app launch / per prompt edit:
-- Confirm the L2 key is a hash of the static prefix **token ids** (not the raw
-  string) and is stable across process launches; verify the store completes
-  before eviction (the Osaurus side holds the solo lease until the producer
-  drains, so the store has time — confirm the cache write isn't being dropped
-  under the RAM-safety KV cap).
-- Consider defaulting a small **paged RAM KV** budget on when headroom allows
-  (post prompt-shrink, a ~6k-token KV is cheap on 24 GB), so within-session
-  step-to-step reuse never round-trips to disk at all. Today paged RAM KV is off
-  by default and reuse leans entirely on disk L2.
-- Surface `restore`/`store` byte sizes + durations in the cache-stats payload so
-  the Osaurus `/admin/cache-stats` endpoint can show carryover health.
+### 1a. Template whitespace (NOT cleanly viable — abandoned)
+Adding newlines to the tool-schema rendering so no pre-token spans more than
+~one param would bound `bpeMaxWordLen` and make even the O(n²) `bpe()` fast. But
+the offending template **ships inside the model bundle**, and for JANG
+weights-only bundles (`gemma-4-12B-it-qat-JANG_4M`, `source_model:
+gemma-4-12B-it-qat-q4_0-unquantized`) the tokenizer + its `chat_template` resolve
+through `JangLoader.resolveTokenizerDirectory` /
+`resolveChatTemplateSidecarSubstitution` to the *source* model's cache — not any
+file osaurus controls. Editing the bundle's `chat_template.jinja`, the bundle's
+`tokenizer_config.json` `chat_template`, and the repo `gemma4WithTools` fallback
+all produced **byte-identical output** (`bpeMaxWordLen=11035` unchanged) — none
+is the active render path. So there is no clean, durable osaurus-side template
+lever; do 1b instead. (A `VMLX_CHAT_TEMPLATE_OVERRIDE` override exists but is
+per-model and fragile.)
 
-## Validation harness (already in Osaurus)
-`PrefillDebugLog` (`/tmp/osaurus-prefill-debug.log`, env `OSAURUS_PREFILL_DEBUG`)
-emits `GENERATE-ENTER` / `LEASE-ACQUIRED` / `STEP-BEGIN` (with `lcpVsPrev`,
-`tokenizedPrompt`) / `STEP-PREFILL` / `STEP-DECODE` / `STREAM-DRAINED`. After 1a/1b,
-the `GENERATE-ENTER → STEP-BEGIN` delta on steps 2…N should collapse to near-zero;
-after lever 2, a second fresh chat with an unchanged prefix should show the cold
-step-1 prefill restore from L2 instead of recomputing.
+### 1b. Linearize `BPETokenizer.bpe()` (vmlx-side, IMPLEMENTED)
+The root defect is the O(word_len²) merge loop: the per-merge
+`word[i..<].firstIndex(of:)` scan + full `getPairs` rebuild every round.
+Replaced with `bpeFast` — a doubly-linked list of symbols plus a min-heap of
+candidate merges keyed by `(rank, leftIndex)`; each merge is O(log n) and there
+are O(n) merges → O(n log n). The original is kept as `bpeReference` (oracle +
+fallback). Output is provably identical: a pair formed by a merge always outranks
+the merge that created its components, so popping the globally-lowest
+`(rank, leftIndex)` reproduces the reference's "merge all occurrences of the
+min-rank pair per round, left-to-right"; stale heap entries are skipped on pop.
+
+**Correctness gate:** `VMLX_BPE_VERIFY=1` runs both paths on every token and
+falls back to the reference (logging `BPE-MISMATCH` to the tokenize log) on any
+disagreement. Off by default (zero overhead). Validation protocol:
+1. Run with `VMLX_BPE_VERIFY=1` → confirm **no** `BPE-MISMATCH` lines (fast ==
+   reference on the real prompt). Encode stays ~6.4 s here because both paths run.
+2. Run with the flag unset → `bpeMs`/`encodeMs` drop from ~6.4 s to ~tens of ms,
+   while `bpeMaxWordLen` stays ~11,035 (the giant word is unchanged — it just
+   tokenizes fast now). This is the win, on any model/template.
+
+> Incremental / prefix-cached tokenization (the previous draft's main idea) is
+> **deprioritized**: with 1a or 1b, a full encode is ~tens of ms, so caching the
+> prefix saves little and adds correctness risk. Revisit only if encode is still
+> material after 1a/1b.
+
+## Lever 2 — GPU prefill: hide the one-time cold cost
+
+The ~70 s step-1 prefill is **not** a per-step cost: it includes first-run Metal
+kernel JIT, and steps 2…N run at ~965 tok/s with KV-prefix reuse (measured:
+`STEP-PREFILL completed=4484/4879`, `STEP-STATS promptTps=965`). So this is a
+once-per-process / once-per-new-prefix cost, not recurring.
+- **Pre-warm (app-side):** prefill the static system+tools prefix in the
+  background when a sandbox chat opens, so the cold ~70 s overlaps with the user
+  reading/typing instead of landing on their first send. Must yield the solo
+  GPU lease immediately when a real request arrives (the log shows
+  `LEASE-ACQUIRED solo=true`), or have the real send adopt the partial progress.
+- **Disk-L2 carryover (already built):** key is a stable SHA-256 over prefix
+  token ids; store is synchronous before eviction; restore is content-addressed.
+  Nothing to harden — see the cache findings. Pre-warming populates it so a
+  second chat with the same prefix restores instead of recomputing.
+
+## Lever 3 — decode throughput
+
+Decode runs ~10–19 tok/s (`STEP-DECODE decodeTps`), which dominates turns that
+generate large output (e.g. writing a file as tool-call arguments — ~150 s in an
+earlier run). The only lever here is faster decode: speculative decoding
+(`Libraries/MLXLMCommon/SpecDec/` exists) could ~1.5–2× it. Out of scope for the
+tokenization work; tracked separately.
+
+## Validation harness (in place)
+- vmlx `/tmp/vmlx-tokenize-debug.log` (`VMLX_TOKENIZE_DEBUG=1`): per
+  `applyChatTemplate`, `renderMs` / `encodeMs` / `bpeMs` / `bpeWords` /
+  `bpeMaxWordLen` / `lcpBytesVsPrev`.
+- osaurus `/tmp/osaurus-prefill-debug.log` (`OSAURUS_PREFILL_DEBUG=1`, also lights
+  up the vmlx log): `COMPOSE` (token breakdown + static-prefix hash),
+  `GENERATE-ENTER` / `LEASE-ACQUIRED` / `STEP-BEGIN` (tokenizedPrompt, lcp,
+  cache deltas) / `STEP-PREFILL` (per stage) / `STEP-STATS` / `STEP-DECODE` /
+  `STREAM-DRAINED` / `TOOL-EXEC`.
+
+After 1a: `bpeMaxWordLen` should drop to a few hundred and `encodeMs` to ~tens of
+ms, with the osaurus `LEASE-ACQUIRED → STEP-BEGIN` gap collapsing from ~6.4 s
+accordingly. After 1b: the same holds even if a giant pre-token reappears.

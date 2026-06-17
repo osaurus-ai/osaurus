@@ -262,6 +262,27 @@ public struct SystemPromptComposer: Sendable {
         )
         let manifest = comp.manifest()
         debugLog("[Context] \(manifest.debugDescription)")
+
+        // Prefill diagnostics: record the full composition breakdown so the
+        // /tmp log shows where every system-prompt token comes from, plus the
+        // tool-schema token cost and the static-prefix hash (identical hashes
+        // across two fresh chats mean disk-L2 carryover SHOULD hit).
+        if PrefillDebugLog.shared.isEnabled {
+            let window = ContextSizeResolver.resolve(modelId: snapshot.model)
+            let toolTokens = ToolRegistry.shared.totalEstimatedTokens(for: toolset.tools)
+            PrefillDebugLog.shared.log(
+                "==== COMPOSE model=\(snapshot.model) sizeClass=\(window.sizeClass) "
+                    + "ctxLen=\(window.contextLength.map(String.init) ?? "?") "
+                    + "executionMode=\(executionMode) toolCount=\(toolset.tools.count) "
+                    + "toolTokens≈\(toolTokens) "
+                    + "systemPromptTokens≈\(manifest.totalEstimatedTokens) "
+                    + "promptPlusTools≈\(manifest.totalEstimatedTokens + toolTokens) "
+                    + "staticPrefixTokens≈\(manifest.staticPrefixTokens) "
+                    + "staticPrefixHash=\(manifest.staticPrefixHash(tools: toolset.tools).prefix(16))\n"
+                    + manifest.debugDescription
+            )
+        }
+
         emitToolDiagnostics(
             snapshot: snapshot,
             toolset: toolset,

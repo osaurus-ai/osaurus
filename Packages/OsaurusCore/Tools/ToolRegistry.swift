@@ -532,6 +532,17 @@ final class ToolRegistry: ObservableObject {
         case .rejected(let envelopeJSON):
             return envelopeJSON
         case .ready(let effectiveArgumentsJSON):
+            // Prefill diagnostics: time the actual tool body (sandbox boot,
+            // embedding search, shell, network) so the /tmp log can separate
+            // tool-execution latency from model decode between agent-loop steps.
+            let toolExecStart = CFAbsoluteTimeGetCurrent()
+            PrefillDebugLog.shared.log("       TOOL-EXEC-BEGIN name=\(name)")
+            defer {
+                PrefillDebugLog.shared.log(
+                    "       TOOL-EXEC-END   name=\(name) "
+                        + "ms=\(Int((CFAbsoluteTimeGetCurrent() - toolExecStart) * 1000))"
+                )
+            }
             // Run the tool body off MainActor so long-running tools (file
             // I/O, network, shell) don't contend with SwiftUI layout on the
             // main thread.
