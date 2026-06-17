@@ -4534,6 +4534,7 @@
       }
     },
     "All API endpoints are restricted until you create an access key. Click \"Generate Key\" above to get started." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -18840,6 +18841,9 @@
         }
       }
     },
+    "Enter a prompt to generate an image." : {
+
+    },
     "Enter an executable path or command before testing." : {
       "localizations" : {
         "de" : {
@@ -21693,6 +21697,9 @@
         }
       }
     },
+    "Generating image…" : {
+
+    },
     "Generation" : {
       "localizations" : {
         "de" : {
@@ -23656,6 +23663,18 @@
           }
         }
       }
+    },
+    "Image generation cancelled." : {
+
+    },
+    "Image generation failed:" : {
+
+    },
+    "Image generation failed: no model selected" : {
+
+    },
+    "Image generation produced no image." : {
+
     },
     "Image Opacity" : {
       "extractionState" : "manual",
@@ -27085,6 +27104,9 @@
           }
         }
       }
+    },
+    "Loading image model…" : {
+
     },
     "Loading image..." : {
       "localizations" : {
