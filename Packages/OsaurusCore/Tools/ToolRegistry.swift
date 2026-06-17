@@ -223,6 +223,14 @@ final class ToolRegistry: ObservableObject {
             OsaurusStatusTool(),
             OsaurusListTool(),
             OsaurusDescribeTool(),
+            // Computer Use (macOS automation harness). Registered as a
+            // built-in so the runtime can execute it and ChatView can
+            // intercept its live activity feed, but the system prompt
+            // composer strips it authoritatively unless the agent opts in
+            // via `computerUseEnabled` (custom agents only). Conforms to
+            // PermissionedTool: execution preflights Accessibility +
+            // Screen Recording before the loop runs.
+            ComputerUseTool(),
         ]
         var configChanged = false
         for tool in builtIns {

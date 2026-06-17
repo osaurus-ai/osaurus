@@ -1,0 +1,19 @@
+{
+  "id": "computer_use.command-return-submits",
+  "domain": "computer_use",
+  "label": "computer use • Cmd+Return is a submit chord",
+  "query": "Press Command-Return to send.",
+  "notes": "Cmd+Return / Cmd+Enter is the conventional submit/send chord, so it escalates the press_key edit baseline to consequential and balanced confirms.",
+  "fixtures": {},
+  "expect": {
+    "computerUse": {
+      "verb": "press_key",
+      "key": "return",
+      "modifiers": ["cmd"],
+      "appName": "Mail",
+      "preset": "balanced",
+      "expectEffect": "consequential",
+      "expectDisposition": "confirm"
+    }
+  }
+}

@@ -426,6 +426,9 @@ public enum OsaurusPaths {
     public static func chatConfigFile() -> URL { config().appendingPathComponent("chat.json") }
     public static func serverConfigFile() -> URL { config().appendingPathComponent("server.json") }
     public static func toolConfigFile() -> URL { config().appendingPathComponent("tools.json") }
+    public static func computerUseConfigFile() -> URL {
+        config().appendingPathComponent("computer-use.json")
+    }
     public static func toastConfigFile() -> URL { config().appendingPathComponent("toast.json") }
     public static func sandboxConfigFile() -> URL { config().appendingPathComponent("sandbox.json") }
     public static func speechConfigFile() -> URL { voiceConfig().appendingPathComponent("speech.json") }

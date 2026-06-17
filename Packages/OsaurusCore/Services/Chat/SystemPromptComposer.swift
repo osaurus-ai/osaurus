@@ -1828,6 +1828,18 @@ public struct SystemPromptComposer: Sendable {
             }
         }
 
+        // Computer Use is an AUTHORITATIVE per-agent gate. Unlike the
+        // lean-by-default built-ins above (which are auto-mode-only and
+        // honour a `capabilities_load` carve-out), `computer_use` is
+        // stripped whenever the flag is off — in BOTH auto and manual mode,
+        // with no `additionalToolNames` bypass. The model can never see the
+        // tool unless the agent explicitly opted in. The Default agent is
+        // additionally excluded by the allowlist filter below, so Computer
+        // Use is a custom-agent-only capability.
+        if !snapshot.computerUseEnabled {
+            byName.removeValue(forKey: ComputerUseTool.toolName)
+        }
+
         // Phase C default-agent surface:
         //   * For the Default agent, hard-restrict to the 8-tool baseline
         //     (3 reads + 2 discovery + 3 agent-loop). Writes are NOT in

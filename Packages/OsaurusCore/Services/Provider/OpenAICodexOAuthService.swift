@@ -307,7 +307,8 @@ public enum OpenAICodexOAuthService {
     }
 
     public static func exchangeAuthorizationCode(_ code: String, verifier: String) async throws
-        -> RemoteProviderOAuthTokens {
+        -> RemoteProviderOAuthTokens
+    {
         try await requestTokens(
             form: [
                 "grant_type": "authorization_code",

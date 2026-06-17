@@ -1,0 +1,20 @@
+{
+  "id": "computer_use.ceiling-caps-autonomous",
+  "domain": "computer_use",
+  "label": "computer use • agent ceiling caps an autonomous policy",
+  "query": "Click Send under an autonomous policy with a balanced ceiling.",
+  "notes": "The per-agent ceiling merges strictest-wins on top of the user policy: an autonomous policy that would auto-run everything is still forced to confirm a consequential action when the agent is capped at balanced.",
+  "fixtures": {},
+  "expect": {
+    "computerUse": {
+      "verb": "click",
+      "resolvedRole": "AXButton",
+      "resolvedLabel": "Send",
+      "appName": "Mail",
+      "preset": "autonomous",
+      "ceiling": "balanced",
+      "expectEffect": "consequential",
+      "expectDisposition": "confirm"
+    }
+  }
+}

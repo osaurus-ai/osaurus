@@ -90,6 +90,12 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
     /// stripped from the model-visible schema.
     public let selfSchedulingEnabled: Bool
 
+    /// Per-agent opt-in for the Computer Use feature. Unlike the lean-by-
+    /// default built-in gates above, this is enforced authoritatively in
+    /// `resolveTools` — `computer_use` is stripped in BOTH auto and manual
+    /// mode unless the agent has opted in.
+    public let computerUseEnabled: Bool
+
     public init(
         agentId: UUID,
         toolsDisabled: Bool,
@@ -103,7 +109,8 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
         renderChartEnabled: Bool = false,
         speakEnabled: Bool = false,
         searchMemoryEnabled: Bool = false,
-        selfSchedulingEnabled: Bool = false
+        selfSchedulingEnabled: Bool = false,
+        computerUseEnabled: Bool = false
     ) {
         self.agentId = agentId
         self.toolsDisabled = toolsDisabled
@@ -118,6 +125,7 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
         self.speakEnabled = speakEnabled
         self.searchMemoryEnabled = searchMemoryEnabled
         self.selfSchedulingEnabled = selfSchedulingEnabled
+        self.computerUseEnabled = computerUseEnabled
     }
 
     /// Read every `effective*` field in one MainActor batch.
@@ -153,7 +161,8 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
             renderChartEnabled: caps.renderChartEnabled,
             speakEnabled: caps.speakEnabled,
             searchMemoryEnabled: caps.searchMemoryEnabled,
-            selfSchedulingEnabled: caps.selfSchedulingEnabled
+            selfSchedulingEnabled: caps.selfSchedulingEnabled,
+            computerUseEnabled: caps.computerUseEnabled
         )
     }
 }

@@ -1,0 +1,19 @@
+{
+  "id": "computer_use.navigate-autoruns-balanced",
+  "domain": "computer_use",
+  "label": "computer use • navigate auto-runs under balanced",
+  "query": "Click the Pricing link.",
+  "notes": "A plain link click moves the viewport without committing a change, so balanced lets it run without a prompt.",
+  "fixtures": {},
+  "expect": {
+    "computerUse": {
+      "verb": "click",
+      "resolvedRole": "AXLink",
+      "resolvedLabel": "Pricing",
+      "appName": "Safari",
+      "preset": "balanced",
+      "expectEffect": "navigate",
+      "expectDisposition": "allow"
+    }
+  }
+}

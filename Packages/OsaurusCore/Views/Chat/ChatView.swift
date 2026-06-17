@@ -4091,6 +4091,11 @@ struct ChatView: View {
             .themedAlertScope(.chat(windowState.windowId))
             .overlay(ThemedAlertHost(scope: .chat(windowState.windowId)))
             .overlay { promptOverlayLayer }
+            // Computer Use gated-action confirmations. Process-wide queue so
+            // the in-tool loop (which has no ChatSession handle) can park a
+            // request the user resolves; rendered above the input bar like the
+            // other prompt cards.
+            .overlay { ComputerUseConfirmOverlay() }
             .sheet(isPresented: $showTopUpSheet) {
                 CreditsTopUpSheet()
                     .environment(\.theme, theme)

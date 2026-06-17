@@ -302,8 +302,9 @@ private struct AccessKeysSection: View {
                             .font(.system(size: 12, weight: .semibold))
                             .foregroundColor(theme.warningColor)
                     }
-                    Text(verbatim:
-                        didLoadAccessKeys
+                    Text(
+                        verbatim:
+                            didLoadAccessKeys
                             ? emptyAccessKeyMessage
                             : "Access key metadata is loaded on demand so startup never reads Keychain. Refresh to inspect existing keys."
                     )
@@ -428,9 +429,11 @@ private struct AccessKeysSection: View {
 
     private var accessKeySummaryText: String {
         if server.configuration.exposeToNetwork {
-            return "Network and relay callers must present an access key. Local loopback bypass is disabled while network exposure is on."
+            return
+                "Network and relay callers must present an access key. Local loopback bypass is disabled while network exposure is on."
         }
-        return "Localhost clients can call the API without a real key. Create access keys for LAN, relay, or clients that require a Bearer value."
+        return
+            "Localhost clients can call the API without a real key. Create access keys for LAN, relay, or clients that require a Bearer value."
     }
 
     private var emptyAccessKeyMessage: String {

@@ -353,6 +353,12 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// outcomes (file contents, command exit codes) plus an
         /// optional LLM-judge rubric.
         public let agentLoop: AgentLoopExpectations?
+        /// Decision expectation for `domain == "computer_use"` cases.
+        /// Pure-data: feeds a scripted action + resolution context through
+        /// the harness's `EffectClassifier` and `AutonomyPolicy` and pins
+        /// the resulting effect class + gate disposition. No driver, no
+        /// permissions, no LLM — CI-safe like `schema` / `request_validation`.
+        public let computerUse: ComputerUseExpectations?
 
         public init(
             schema: SchemaExpectations? = nil,
@@ -364,7 +370,8 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             capabilitySearch: CapabilitySearchExpectations? = nil,
             sandboxDiagnostics: SandboxDiagnosticsExpectations? = nil,
             capabilityClaims: CapabilityClaimsExpectations? = nil,
-            agentLoop: AgentLoopExpectations? = nil
+            agentLoop: AgentLoopExpectations? = nil,
+            computerUse: ComputerUseExpectations? = nil
         ) {
             self.schema = schema
             self.toolEnvelope = toolEnvelope
@@ -376,6 +383,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.sandboxDiagnostics = sandboxDiagnostics
             self.capabilityClaims = capabilityClaims
             self.agentLoop = agentLoop
+            self.computerUse = computerUse
         }
     }
 
@@ -966,6 +974,108 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.responseFormatType = responseFormatType
             self.expectAccept = expectAccept
             self.expectReasonContains = expectReasonContains
+        }
+    }
+
+    /// Expectation for `domain == "computer_use"` cases. Pins the
+    /// Computer Use harness's two deterministic gate inputs end-to-end:
+    ///   1. `EffectClassifier.classify(...)` — how a scripted action +
+    ///      resolution context (resolved role/label, app, optional per-app
+    ///      recipe) is ranked (`read`/`navigate`/`edit`/`consequential`).
+    ///   2. `AutonomyPolicy.disposition(...)` — what the resolved policy
+    ///      (global preset + per-app overrides + optional agent ceiling)
+    ///      does with that effect (`allow`/`confirm`/`deny`), plus the
+    ///      allowlist gate (`isAppAllowed`).
+    /// All inputs are plain data, so the case runs with no driver, no
+    /// permissions, and no model — exactly the lane CI can run on every PR
+    /// to lock the safe-by-default gate against regressions.
+    public struct ComputerUseExpectations: Sendable, Codable {
+        // --- Action under test (mirrors `AgentAction`) ---
+        /// `AgentVerb` raw value: observe, find, click, type, set_value,
+        /// clear, press_key, scroll, open, done, give_up.
+        public let verb: String
+        /// `target.describe` natural-language phrase (optional).
+        public let describe: String?
+        /// `target.mark` (optional; presence makes the target non-empty).
+        public let mark: Int?
+        /// Payload for type / set_value (optional).
+        public let text: String?
+        /// Key name for press_key (optional).
+        public let key: String?
+        /// Modifier names for press_key (optional).
+        public let modifiers: [String]?
+        /// Rationale/narration — scanned for recipient signals (optional).
+        public let note: String?
+
+        // --- Resolution context (what `TargetResolver` would surface) ---
+        /// The resolved element role, e.g. `AXButton` (optional).
+        public let resolvedRole: String?
+        /// The resolved element label, e.g. `Send` (optional).
+        public let resolvedLabel: String?
+        /// The focused app name, e.g. `Safari` (optional).
+        public let appName: String?
+        /// When true, merge `AppRecipes.signals(for: appName)` into the
+        /// classifier (per-app refinements). Default false.
+        public let useRecipes: Bool?
+
+        // --- Policy under test (mirrors `AutonomyPolicy` + ceiling) ---
+        /// `AutonomyPreset` raw value for the global stance. Default
+        /// `balanced` when omitted.
+        public let preset: String?
+        /// Per-app overrides: app name → `AutonomyPreset` raw value.
+        public let perApp: [String: String]?
+        /// App allowlist (normalized-compared). Empty/omitted = allow all.
+        public let allowlist: [String]?
+        /// `AutonomyPreset` raw value to cap the agent at (via
+        /// `AutonomyCeiling.cappedAt`). Omitted = no ceiling.
+        public let ceiling: String?
+
+        // --- Expectations (any subset; an empty set just records) ---
+        /// Expected `EffectClass` raw value from the classifier.
+        public let expectEffect: String?
+        /// Expected `AutonomyDisposition` raw value from the policy.
+        public let expectDisposition: String?
+        /// Expected `isAppAllowed` result for the allowlist gate.
+        public let expectAllowed: Bool?
+
+        public init(
+            verb: String,
+            describe: String? = nil,
+            mark: Int? = nil,
+            text: String? = nil,
+            key: String? = nil,
+            modifiers: [String]? = nil,
+            note: String? = nil,
+            resolvedRole: String? = nil,
+            resolvedLabel: String? = nil,
+            appName: String? = nil,
+            useRecipes: Bool? = nil,
+            preset: String? = nil,
+            perApp: [String: String]? = nil,
+            allowlist: [String]? = nil,
+            ceiling: String? = nil,
+            expectEffect: String? = nil,
+            expectDisposition: String? = nil,
+            expectAllowed: Bool? = nil
+        ) {
+            self.verb = verb
+            self.describe = describe
+            self.mark = mark
+            self.text = text
+            self.key = key
+            self.modifiers = modifiers
+            self.note = note
+            self.resolvedRole = resolvedRole
+            self.resolvedLabel = resolvedLabel
+            self.appName = appName
+            self.useRecipes = useRecipes
+            self.preset = preset
+            self.perApp = perApp
+            self.allowlist = allowlist
+            self.ceiling = ceiling
+            self.expectEffect = expectEffect
+            self.expectDisposition = expectDisposition
+            self.expectAllowed = expectAllowed
         }
     }
 

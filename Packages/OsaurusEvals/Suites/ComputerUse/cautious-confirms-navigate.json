@@ -1,0 +1,19 @@
+{
+  "id": "computer_use.cautious-confirms-navigate",
+  "domain": "computer_use",
+  "label": "computer use • cautious confirms even navigation",
+  "query": "Open the Docs tab.",
+  "notes": "Cautious asks before everything except reading, so even a plain navigate confirms.",
+  "fixtures": {},
+  "expect": {
+    "computerUse": {
+      "verb": "click",
+      "resolvedRole": "AXLink",
+      "resolvedLabel": "Docs",
+      "appName": "Safari",
+      "preset": "cautious",
+      "expectEffect": "navigate",
+      "expectDisposition": "confirm"
+    }
+  }
+}

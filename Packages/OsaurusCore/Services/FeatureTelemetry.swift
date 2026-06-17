@@ -204,6 +204,31 @@ enum FeatureTelemetry {
         service.track("agent_run", ["source": source])
     }
 
+    /// A Computer Use run finished. Every dimension is a coarse, non-identifying
+    /// bucket or enum — never the goal text, app name, on-screen content, or
+    /// raw counts. Full-fidelity per-app/per-tier analysis happens locally in
+    /// the OsaurusEvals suite, not here. `outcome` is the `RunOutcome` token
+    /// (`done` | `gave_up` | `dead_end` | `step_cap` | `interrupted` |
+    /// `failed`).
+    static func computerUseRun(
+        _ metrics: ComputerUseRunMetrics,
+        outcome: String,
+        service: TelemetryService = .shared
+    ) {
+        let props: [String: Value] = [
+            "outcome": outcome,
+            "max_tier": metrics.maxTier.rawValue,
+            "steps_bucket": ComputerUseRunMetrics.countBucket(metrics.steps),
+            "confirms_bucket": ComputerUseRunMetrics.countBucket(metrics.confirmsRequested),
+            "ax_resolvable": ComputerUseRunMetrics.rateBucket(metrics.axResolvableRate),
+            "verify_pass": ComputerUseRunMetrics.rateBucket(metrics.verifyPassRate),
+            "had_dead_end": metrics.deadEnds > 0,
+            "had_block": metrics.blocked > 0,
+            "cloud_vision_used": metrics.cloudVisionUsed,
+        ]
+        service.track("computer_use_run", props)
+    }
+
     // MARK: - Lifecycle / retention
 
     /// The local server transitioned to running — an activation/retention
