@@ -2619,6 +2619,95 @@ final class ChatSession: ObservableObject {
         }
     #endif
 
+    /// True when `id` names an on-device image-generation model in the picker
+    /// catalog. Drives the image-vs-LLM branch in `send`.
+    func isImageGenerationModel(_ id: String?) -> Bool {
+        guard let id, !id.isEmpty else { return false }
+        return ModelPickerItemCache.shared.items.contains {
+            $0.id == id && $0.source.isImageGeneration
+        }
+    }
+
+    /// Run a text→image generation for the active image model, streaming
+    /// progress into `turn` and rendering the final PNG as a markdown image
+    /// (the existing assistant markdown renderer displays `file://` images).
+    /// Honors the run lifecycle: cancelling `currentTask` cancels the consume
+    /// loop, which soft-cancels the underlying job.
+    func runImageGeneration(
+        prompt: String,
+        attachments: [Attachment],
+        into turn: ChatTurn,
+        runId: UUID
+    ) async {
+        guard let model = selectedModel, !model.isEmpty else {
+            turn.content = L("Image generation failed: no model selected")
+            rebuildVisibleBlocks()
+            return
+        }
+        guard !prompt.isEmpty else {
+            turn.content = L("Enter a prompt to generate an image.")
+            rebuildVisibleBlocks()
+            return
+        }
+
+        turn.content = L("Generating image…")
+        rebuildVisibleBlocks()
+
+        var lastRebuild = Date.distantPast
+        func refresh(force: Bool = false) {
+            let now = Date()
+            if force || now.timeIntervalSince(lastRebuild) >= 0.1 {
+                lastRebuild = now
+                rebuildVisibleBlocks()
+            }
+        }
+
+        var reachedTerminal = false
+        let params = ImageGenerationParameters(model: model, prompt: prompt)
+        let stream = await ImageGenerationService.shared.generate(params, jobID: runId.uuidString)
+        do {
+            for try await event in stream {
+                guard isRunActive(runId) else { break }
+                switch event {
+                case .loadingModel:
+                    turn.content = L("Loading image model…")
+                    refresh()
+                case .step(let step, let total, _):
+                    turn.content = "\(L("Generating image…")) \(step)/\(total)"
+                    refresh()
+                case .preview:
+                    break
+                case .completed(let images):
+                    reachedTerminal = true
+                    if images.isEmpty {
+                        turn.content = L("Image generation produced no image.")
+                    } else {
+                        turn.content = images
+                            .map { "![\(prompt)](\($0.url.absoluteString))" }
+                            .joined(separator: "\n\n")
+                    }
+                    refresh(force: true)
+                case .failed(let message, _):
+                    reachedTerminal = true
+                    turn.content = "\(L("Image generation failed:")) \(message)"
+                    refresh(force: true)
+                case .cancelled:
+                    if !reachedTerminal {
+                        reachedTerminal = true
+                        turn.content = L("Image generation cancelled.")
+                    }
+                    refresh(force: true)
+                }
+            }
+        } catch {
+            if !reachedTerminal {
+                turn.content = "\(L("Image generation failed:")) \(error)"
+                refresh(force: true)
+            }
+        }
+        isDirty = true
+    }
+
     func send(_ text: String, attachments: [Attachment] = []) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let hasContent = !trimmed.isEmpty || !attachments.isEmpty
@@ -2731,6 +2820,20 @@ final class ChatSession: ObservableObject {
                 // Must refresh block memoizer before first delta — otherwise visibleBlocks stays
                 // user-only while isStreaming is true and the table early-returns without assistant rows.
                 rebuildVisibleBlocks()
+
+                // Image-generation models route through ImageGenerationService
+                // (a second MLX graph, gated exclusive to LLM eval) instead of
+                // the chat engine. The same run lifecycle (defer finalizeRun,
+                // currentTask cancellation) applies.
+                if self.isImageGenerationModel(self.selectedModel) {
+                    await self.runImageGeneration(
+                        prompt: trimmed,
+                        attachments: attachments,
+                        into: assistantTurn,
+                        runId: runId
+                    )
+                    return
+                }
 
                 #if DEBUG
                     // Dev aid: stream a canned tool-call timeline instead of the real
