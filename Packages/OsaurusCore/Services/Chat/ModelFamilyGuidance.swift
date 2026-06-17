@@ -321,14 +321,21 @@ enum ModelFamilyGuidance {
     /// LFM2 / Liquid: small-active MoE that hedges and refuses when it sees
     /// the prohibition sections (codeStyle / riskAware) without an obedience
     /// counterweight. This block restores the "you have tools, act when you
-    /// can" framing. The live-data/anti-fabrication push lives once in
-    /// `SystemPromptTemplates.groundingDirective` (which always co-fires when
-    /// this block does), so it is intentionally not repeated here.
+    /// can" framing. The anti-fabrication push lives once in
+    /// `SystemPromptTemplates.groundingDirective`, but the no-direct-tool →
+    /// fetch case IS reinforced here: this family reliably reads the directive's
+    /// caution half and skips its action half (observed: declining a weather
+    /// query with sandbox + network tools available), so the imperative belongs
+    /// where the family actually acts on it.
     static let lfm2Guidance = """
         ## Reminders
 
         - You have tools. When a listed tool can satisfy the request, call it — \
         do not decline, and do not just describe what you would do.
+        - When NO listed tool directly fits a live-data request (weather, prices, \
+        web pages, current state), don't decline — fetch it yourself with \
+        sandbox_exec (e.g. curl) or run capabilities_discover first. Treating a \
+        missing purpose-built tool as a dead end is an error.
         - \(toolGroundingLine)
         - For local, reversible work (reading, editing a file, running a test), \
         just proceed. Ask a clarifying question only when guessing wrong would \
