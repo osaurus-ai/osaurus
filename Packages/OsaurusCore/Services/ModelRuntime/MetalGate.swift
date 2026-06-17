@@ -3,24 +3,25 @@
 //  osaurus
 //
 //  Process-wide mutual-exclusion gate between MLX *generation* (the LLM,
-//  driven by vmlx-swift's `BatchEngine`) and MLX *embedding* (the Model2Vec
-//  static-embedding pipeline behind capability/memory search). Both submit
-//  work to the same Metal device on different threads. vmlx deliberately
-//  does NOT lock the `eval` hot path (the C++ scheduler serializes the
-//  BatchEngine's own evals and dropping the Swift lock lets asyncEval/item
-//  overlap for token throughput). But an EXTERNAL caller — the embedder —
-//  evaluating concurrently with the BatchEngine races on the Metal command
-//  buffer and aborts with
+//  driven by vmlx-swift's `BatchEngine`) and the EXCLUSIVE external GPU users:
+//  MLX *embedding* (the Model2Vec static-embedding pipeline behind
+//  capability/memory search) and MLX *image generation* (the vMLXFlux engine).
+//  All submit work to the same Metal device on different threads. vmlx
+//  deliberately does NOT lock the `eval` hot path (the C++ scheduler serializes
+//  the BatchEngine's own evals and dropping the Swift lock lets asyncEval/item
+//  overlap for token throughput). But an EXTERNAL caller — the embedder, and
+//  likewise the image engine, each a second MLX graph — evaluating concurrently
+//  with the BatchEngine races on the Metal command buffer and aborts with
 //      -[…] addCompletedHandler:]: unrecognized selector
 //  (observed live: capabilities_discover embedding during an LLM prefill).
 //
-//  This gate makes generation and embedding mutually exclusive so their GPU
-//  work never overlaps. The embedder is the only external GPU user and its
-//  work is brief, so it simply waits for any in-flight generation to finish;
-//  the LLM hot path is untouched. Generation holds the gate for the FULL
-//  stream consumption — vmlx does not `finish()` the stream until after its
-//  end-of-turn cache-store eval, so releasing on stream end (not on the
-//  `.info` event) covers the BatchEngine's async tail too.
+//  This gate makes generation, embedding, and image generation mutually
+//  exclusive so their GPU work never overlaps. Generation holds the gate for
+//  the FULL stream consumption — vmlx does not `finish()` the stream until
+//  after its end-of-turn cache-store eval, so releasing on stream end (not on
+//  the `.info` event) covers the BatchEngine's async tail too. Image
+//  generation likewise holds the gate across the entire vMLXFlux event-stream
+//  drain, including the terminal VAE decode eval (see ImageGenerationService).
 //
 
 import Foundation
@@ -29,20 +30,21 @@ import Foundation
 //    - Generation = SHARED (reader). Multiple LLM requests may hold it at
 //      once — the BatchEngine evaluates all of its slots on one loop thread,
 //      so they are mutually safe and must keep batching for throughput.
-//    - Embedding  = EXCLUSIVE (writer). It runs on a different thread, so it
-//      waits for every in-flight generation to drain and blocks new ones
-//      from starting until it finishes. Writer preference keeps a steady
-//      stream of generations from starving the embedder.
+//    - Embedding / image generation = EXCLUSIVE (writer). Each runs on a
+//      different thread, so it waits for every in-flight generation to drain
+//      and blocks new ones from starting until it finishes. The two writers
+//      also exclude each other (one exclusive holder at a time). Writer
+//      preference keeps a steady stream of generations from starving a writer.
 public actor MetalGate {
     public static let shared = MetalGate()
 
     /// Number of in-flight generations holding the shared lock.
     private var activeGenerations = 0
-    /// An embedding currently holds the exclusive lock.
-    private var embeddingActive = false
-    /// Embedders waiting to acquire — new generations block while > 0 so the
-    /// writer can't starve.
-    private var embeddersWaiting = 0
+    /// An exclusive user (embedding or image generation) holds the lock.
+    private var exclusiveActive = false
+    /// Exclusive users waiting to acquire — new generations block while > 0 so
+    /// a writer can't starve.
+    private var exclusiveWaiting = 0
     /// Condition-variable waiters; woken on every state change, each re-checks
     /// its own predicate (standard actor condition pattern).
     private var waiters: [CheckedContinuation<Void, Never>] = []
@@ -63,8 +65,8 @@ public actor MetalGate {
     // MARK: - Generation (LLM via BatchEngine) — shared
 
     public func enterGeneration() async {
-        // Yield to any active or waiting embedder (writer preference).
-        while embeddingActive || embeddersWaiting > 0 {
+        // Yield to any active or waiting exclusive user (writer preference).
+        while exclusiveActive || exclusiveWaiting > 0 {
             await suspend()
         }
         activeGenerations += 1
@@ -75,19 +77,31 @@ public actor MetalGate {
         if activeGenerations == 0 { wakeAll() }
     }
 
-    // MARK: - Embedding (Model2Vec / capability + memory search) — exclusive
+    // MARK: - Exclusive users (embedding, image generation)
 
-    public func enterEmbedding() async {
-        embeddersWaiting += 1
-        while embeddingActive || activeGenerations > 0 {
+    /// Acquire the exclusive lock: drain every in-flight generation, exclude
+    /// the other writer, and block new generations until released.
+    private func enterExclusive() async {
+        exclusiveWaiting += 1
+        while exclusiveActive || activeGenerations > 0 {
             await suspend()
         }
-        embeddersWaiting -= 1
-        embeddingActive = true
+        exclusiveWaiting -= 1
+        exclusiveActive = true
     }
 
-    public func exitEmbedding() {
-        embeddingActive = false
+    private func exitExclusive() {
+        exclusiveActive = false
         wakeAll()
     }
+
+    // MARK: - Embedding (Model2Vec / capability + memory search) — exclusive
+
+    public func enterEmbedding() async { await enterExclusive() }
+    public func exitEmbedding() { exitExclusive() }
+
+    // MARK: - Image generation (vMLXFlux) — exclusive
+
+    public func enterImageGeneration() async { await enterExclusive() }
+    public func exitImageGeneration() { exitExclusive() }
 }

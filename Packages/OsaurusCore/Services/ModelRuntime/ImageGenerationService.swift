@@ -1,0 +1,357 @@
+//
+//  ImageGenerationService.swift
+//  osaurus
+//
+//  Bridge between osaurus and the vendored native mFLUX image engine
+//  (`vMLXFlux.FluxEngine`). This is the ONLY file that imports vMLXFlux —
+//  the rest of the app talks to images through the osaurus-native types in
+//  `ImageGenerationTypes.swift`.
+//
+//  Concurrency: image generation is a second MLX graph and races LLM token
+//  generation on the shared Metal command buffer (the same hazard the
+//  Model2Vec embedder hit — see MetalGate). Every GPU-touching call here is
+//  wrapped in MetalGate's EXCLUSIVE image-generation lane, held across the
+//  FULL engine event-stream drain (model load + every denoise step + the
+//  terminal VAE decode) and released only once the engine stream finishes.
+//
+//  Cancellation is soft: the engine and its concrete models run their denoise
+//  loops in unstructured `Task`s, so a cancel from our consuming task does not
+//  propagate into the engine's GPU loop. We therefore keep draining the engine
+//  stream to completion after a cancel (so the gate is never released while MLX
+//  eval is still in flight) but suppress further client events and finish with
+//  `.cancelled`.
+//
+
+import Foundation
+import vMLXFlux
+
+public actor ImageGenerationService {
+    public static let shared = ImageGenerationService()
+
+    /// Lazily-created single engine for the whole process (MLX ops are not
+    /// thread-safe across one allocator; the engine is actor-isolated).
+    private var engine: FluxEngine?
+    /// Exact bundle directory name currently resident in the engine, for
+    /// load-if-different.
+    private var loadedDirectoryName: String?
+    /// One-time registry population (decentralized self-registration).
+    private var registered = false
+
+    public init() {}
+
+    // MARK: - Model store root
+
+    /// Root directory scanned for local image bundles. Resolution order:
+    ///   1. `OSAURUS_IMAGE_MODELS_DIR` (explicit override / tests)
+    ///   2. `<effective models dir>/image` — keeps image weights on the same
+    ///      user-chosen, SSD-resident volume as LLM weights (required: USB
+    ///      weights trip the GPU watchdog on the first forward pass).
+    ///   3. `~/.mlxstudio/models/image` — the engine default, used only when
+    ///      the osaurus image dir does not exist yet but a legacy store does.
+    public static func imageModelsRoot() -> URL {
+        let env = ProcessInfo.processInfo.environment
+        if let override = env["OSAURUS_IMAGE_MODELS_DIR"], !override.isEmpty {
+            return URL(fileURLWithPath: override, isDirectory: true)
+        }
+        let osaurusImageDir = DirectoryPickerService.effectiveModelsDirectory()
+            .appendingPathComponent("image", isDirectory: true)
+        let fm = FileManager.default
+        if !fm.fileExists(atPath: osaurusImageDir.path) {
+            let legacy = MLXStudioModelStore.defaultImageRoot
+            if fm.fileExists(atPath: legacy.path) {
+                return legacy
+            }
+        }
+        return osaurusImageDir
+    }
+
+    private func store() -> MLXStudioModelStore {
+        MLXStudioModelStore(root: Self.imageModelsRoot())
+    }
+
+    private func ensureRegistered() {
+        guard !registered else { return }
+        VMLXFluxModels.registerAll()
+        VMLXFluxVideo.registerAll()
+        registered = true
+    }
+
+    private func ensureEngine() -> FluxEngine {
+        if let engine { return engine }
+        let created = FluxEngine()
+        engine = created
+        return created
+    }
+
+    // MARK: - Catalog
+
+    /// Scan the image models root and return catalog entries. Reflects raw
+    /// on-disk facts; manifest-driven exposure (hiding unproven variants) is
+    /// applied by the catalog layer on top of this.
+    public func availableModels() throws -> [ImageModelInfo] {
+        ensureRegistered()
+        let locals = try store().scan()
+        return locals.map { Self.info(for: $0) }
+    }
+
+    static func info(for local: LocalFluxModel) -> ImageModelInfo {
+        let kind = local.kind ?? .imageGen
+        let entry = local.canonicalName.flatMap { ModelRegistry.lookup(name: $0) }
+        return ImageModelInfo(
+            id: local.directoryName,
+            canonicalName: local.canonicalName,
+            displayName: local.displayName,
+            kind: kind.rawValue,
+            ready: local.canEnterNativeLoadPath,
+            quantizationBits: local.quantizationBits,
+            defaultSteps: entry?.defaultSteps,
+            defaultGuidance: entry?.defaultGuidance,
+            capabilities: capabilities(kind: kind, canonical: local.canonicalName, entry: entry),
+            blockedReasons: local.blockedReasons,
+            totalBytes: local.totalBytes
+        )
+    }
+
+    static func capabilities(
+        kind: ModelKind,
+        canonical: String?,
+        entry: ModelEntry?
+    ) -> ImageModelCapabilities {
+        ImageModelCapabilities(
+            textToImage: kind == .imageGen,
+            imageEdit: kind == .imageEdit,
+            upscale: kind == .imageUpscale,
+            // negative_prompt is honored whenever guidance > 0 (gen + edit).
+            negativePrompt: kind == .imageGen || kind == .imageEdit,
+            // No current model has a real mask/inpaint path; qwen-edit masks
+            // are rejected by the engine. Hide the control everywhere.
+            mask: false,
+            // Ordered multi-reference is qwen-image-edit only.
+            multipleSourceImages: canonical == "qwen-image-edit",
+            lora: entry?.supportsLoRA ?? false
+        )
+    }
+
+    // MARK: - Generate / edit / upscale
+
+    public func generate(
+        _ params: ImageGenerationParameters
+    ) -> AsyncThrowingStream<ImageGenerationEvent, Error> {
+        drive(model: params.model, expected: .imageGen) { engine, outputDir in
+            let count = max(1, params.numImages)
+            var streams: [AsyncThrowingStream<ImageGenEvent, Error>] = []
+            streams.reserveCapacity(count)
+            for index in 0..<count {
+                // n > 1 is not engine-batched; run sequentially with distinct
+                // seeds so each image differs while staying reproducible.
+                let seed = params.seed.map { $0 &+ UInt64(index) }
+                let request = ImageGenRequest(
+                    prompt: params.prompt,
+                    negativePrompt: params.negativePrompt,
+                    width: params.width ?? 1024,
+                    height: params.height ?? 1024,
+                    steps: params.steps ?? Self.defaultSteps(for: params.model),
+                    guidance: params.guidance ?? Self.defaultGuidance(for: params.model),
+                    seed: seed,
+                    numImages: 1,
+                    outputDir: outputDir,
+                    outputFormat: Self.engineFormat(params.outputFormat)
+                )
+                streams.append(await engine.generate(request))
+            }
+            return streams
+        }
+    }
+
+    public func edit(
+        _ params: ImageEditParameters
+    ) -> AsyncThrowingStream<ImageGenerationEvent, Error> {
+        drive(model: params.model, expected: .imageEdit) { engine, outputDir in
+            let sources = try Self.stageInputs(params.sourceImages)
+            guard !sources.isEmpty else {
+                throw ImageGenerationError.invalidRequest("edit requires at least one source image")
+            }
+            let mask = try params.maskImage.map { try Self.stageInput($0) }
+            let request = try ImageEditRequest(
+                prompt: params.prompt,
+                sourceImages: sources,
+                mask: mask,
+                strength: params.strength,
+                width: params.width,
+                height: params.height,
+                steps: params.steps ?? Self.defaultSteps(for: params.model),
+                guidance: params.guidance ?? Self.defaultGuidance(for: params.model),
+                seed: params.seed,
+                outputDir: outputDir,
+                outputFormat: Self.engineFormat(params.outputFormat)
+            )
+            return [await engine.edit(request)]
+        }
+    }
+
+    public func upscale(
+        _ params: ImageUpscaleParameters
+    ) -> AsyncThrowingStream<ImageGenerationEvent, Error> {
+        drive(model: params.model, expected: .imageUpscale) { engine, outputDir in
+            let source = try Self.stageInput(params.sourceImage)
+            let request = UpscaleRequest(
+                sourceImage: source,
+                scale: params.scale,
+                steps: params.steps ?? 10,
+                seed: params.seed,
+                outputDir: outputDir,
+                outputFormat: Self.engineFormat(params.outputFormat)
+            )
+            return [await engine.upscale(request)]
+        }
+    }
+
+    // MARK: - Core gated drive loop
+
+    /// Acquire the exclusive image lane, ensure the model is loaded, then drain
+    /// one or more engine streams in order, translating events. The gate is
+    /// released only after every engine stream has fully drained.
+    private func drive(
+        model requestedModel: String,
+        expected kind: ModelKind,
+        _ build: @escaping @Sendable (FluxEngine, URL) async throws -> [AsyncThrowingStream<ImageGenEvent, Error>]
+    ) -> AsyncThrowingStream<ImageGenerationEvent, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                await MetalGate.shared.enterImageGeneration()
+                var cancelled = false
+                var produced: [GeneratedImage] = []
+                do {
+                    if Task.isCancelled { cancelled = true }
+                    // Load (or switch) the model under the gate — quantized
+                    // bundles decode their weights with MLX eval at load time.
+                    if !cancelled {
+                        continuation.yield(.loadingModel(model: requestedModel))
+                        try await self.ensureLoaded(requestedModel, expected: kind)
+                    }
+                    let engine = self.ensureEngine()
+                    let outputDir = OsaurusPaths.generatedImages()
+                    OsaurusPaths.ensureExistsSilent(outputDir)
+                    let streams = cancelled ? [] : try await build(engine, outputDir)
+
+                    for stream in streams {
+                        for try await event in stream {
+                            if Task.isCancelled { cancelled = true }
+                            switch event {
+                            case .step(let step, let total, let eta):
+                                if !cancelled {
+                                    continuation.yield(.step(step: step, total: total, etaSeconds: eta))
+                                }
+                            case .preview(let data, let step):
+                                if !cancelled {
+                                    continuation.yield(.preview(pngData: data, step: step))
+                                }
+                            case .completed(let url, let seed):
+                                produced.append(GeneratedImage(url: url, seed: seed))
+                            case .failed(let message, let hfAuth):
+                                // Drain remaining work for gate safety, but the
+                                // job has failed — propagate and stop yielding.
+                                if !cancelled {
+                                    continuation.yield(.failed(message: message, hfAuth: hfAuth))
+                                }
+                                cancelled = true
+                            case .cancelled:
+                                cancelled = true
+                            }
+                        }
+                    }
+
+                    if cancelled {
+                        continuation.yield(.cancelled)
+                    } else {
+                        continuation.yield(.completed(images: produced))
+                    }
+                    continuation.finish()
+                } catch is CancellationError {
+                    continuation.yield(.cancelled)
+                    continuation.finish()
+                } catch {
+                    continuation.yield(.failed(message: Self.message(for: error), hfAuth: Self.isAuthError(error)))
+                    continuation.finish()
+                }
+                await MetalGate.shared.exitImageGeneration()
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
+    private func ensureLoaded(_ requestedModel: String, expected kind: ModelKind) async throws {
+        ensureRegistered()
+        let store = store()
+        guard let local = try store.resolve(name: requestedModel) else {
+            throw ImageGenerationError.modelNotFound(requestedModel)
+        }
+        guard local.canEnterNativeLoadPath else {
+            throw ImageGenerationError.modelIncomplete(model: requestedModel, reasons: local.blockedReasons)
+        }
+        guard let canonical = local.canonicalName else {
+            throw ImageGenerationError.unknownModel(local.directoryName)
+        }
+        if let modelKind = local.kind, modelKind != kind {
+            throw ImageGenerationError.wrongModelKind(expected: kind.rawValue, actual: modelKind.rawValue)
+        }
+        guard loadedDirectoryName != local.directoryName else { return }
+        let engine = ensureEngine()
+        // Free the previous model before loading a new one (bundles are large;
+        // unload between switches per the integration spec).
+        await engine.unload()
+        loadedDirectoryName = nil
+        try await engine.load(
+            name: canonical,
+            modelPath: local.directory,
+            quantize: local.quantizationBits
+        )
+        loadedDirectoryName = local.directoryName
+    }
+
+    // MARK: - Defaults + helpers
+
+    private static func registryEntry(for model: String) -> ModelEntry? {
+        ModelRegistry.lookupFuzzy(name: model)
+    }
+
+    private static func defaultSteps(for model: String) -> Int {
+        registryEntry(for: model)?.defaultSteps ?? 20
+    }
+
+    private static func defaultGuidance(for model: String) -> Float {
+        registryEntry(for: model)?.defaultGuidance ?? 3.5
+    }
+
+    private static func engineFormat(_ format: ImageOutputFormat) -> ImageFormat {
+        switch format {
+        case .png: return .png
+        case .jpeg: return .jpeg
+        case .webp: return .webp
+        }
+    }
+
+    /// Write raw image bytes to a unique temp file the engine can read by URL.
+    private static func stageInput(_ data: Data) throws -> URL {
+        let dir = OsaurusPaths.cache().appendingPathComponent("image-edit-inputs", isDirectory: true)
+        OsaurusPaths.ensureExistsSilent(dir)
+        let url = dir.appendingPathComponent("\(UUID().uuidString).png")
+        try data.write(to: url)
+        return url
+    }
+
+    private static func stageInputs(_ datas: [Data]) throws -> [URL] {
+        try datas.map { try stageInput($0) }
+    }
+
+    private static func message(for error: Error) -> String {
+        if let flux = error as? FluxError { return flux.description }
+        if let img = error as? ImageGenerationError { return img.description }
+        return String(describing: error)
+    }
+
+    private static func isAuthError(_ error: Error) -> Bool {
+        let text = String(describing: error)
+        return text.contains("401") || text.contains("403")
+    }
+}
