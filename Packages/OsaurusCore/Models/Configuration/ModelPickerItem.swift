@@ -13,6 +13,7 @@ struct ModelPickerItem: Identifiable, Hashable {
     enum Source: Hashable {
         case foundation
         case local  // MLX models
+        case imageGeneration  // on-device image models (vMLXFlux)
         case remote(providerName: String, providerId: UUID)
 
         var displayName: String {
@@ -21,6 +22,8 @@ struct ModelPickerItem: Identifiable, Hashable {
                 return "Foundation"
             case .local:
                 return "Local Models"
+            case .imageGeneration:
+                return "Image Models"
             case .remote(let providerName, _):
                 return providerName
             }
@@ -31,6 +34,7 @@ struct ModelPickerItem: Identifiable, Hashable {
             switch self {
             case .foundation: return "foundation"
             case .local: return "local"
+            case .imageGeneration: return "image"
             case .remote(_, let providerId): return "remote-\(providerId.uuidString)"
             }
         }
@@ -41,9 +45,18 @@ struct ModelPickerItem: Identifiable, Hashable {
                 return 0
             case .local:
                 return 1
-            case .remote:
+            case .imageGeneration:
                 return 2
+            case .remote:
+                return 3
             }
+        }
+
+        /// True for the on-device image-generation source. Chat routes these
+        /// through `ImageGenerationService` instead of the LLM engine.
+        var isImageGeneration: Bool {
+            if case .imageGeneration = self { return true }
+            return false
         }
     }
 
@@ -143,6 +156,17 @@ extension ModelPickerItem {
             isVLM: model.isVLM,
             isEmbedding: model.isEmbedding,
             description: model.description
+        )
+    }
+
+    /// Create an on-device image-generation model picker item.
+    static func fromImageModel(_ model: ImageModelInfo) -> ModelPickerItem {
+        ModelPickerItem(
+            id: model.id,
+            displayName: model.displayName,
+            source: .imageGeneration,
+            quantization: model.quantizationBits.map { "\($0)-bit" },
+            description: model.ready ? nil : model.blockedReasons.first
         )
     }
 
@@ -275,6 +299,10 @@ extension ModelPickerItem {
             // catalog, so an embedding repo can appear here. The flag is
             // detected from the bundle's config.json at item construction.
             return !isEmbedding
+        case .imageGeneration:
+            // Image models produce images, not chat completions — never a
+            // default chat pick (but still selectable to enter image mode).
+            return false
         case .remote:
             return !Self.isLikelyEmbeddingOrRerankerID(id)
         }
@@ -289,6 +317,8 @@ extension ModelPickerItem {
     var defaultChatSelectionRank: Int {
         let lower = id.lowercased()
         switch source {
+        case .imageGeneration:
+            return 40
         case .local:
             if lower.contains("gemma-4"), lower.contains("qat"),
                 lower.contains("osaurusai--"),
@@ -526,7 +556,8 @@ extension Array where Element == ModelPickerItem {
             switch model.source {
             case .foundation:
                 foundationModels.append(model)
-            case .local:
+            case .local, .imageGeneration:
+                // On-device image models live in the Local tab alongside LLMs.
                 localModels.append(model)
             case .remote(let providerName, _):
                 let key = model.source.uniqueKey

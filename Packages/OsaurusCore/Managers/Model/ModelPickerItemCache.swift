@@ -147,6 +147,14 @@ final class ModelPickerItemCache: ObservableObject {
             options.append(.fromMLXModel(model))
         }
 
+        // On-device image-generation models (vMLXFlux). Only surface bundles
+        // that are fully staged/loadable; incomplete ones stay hidden until
+        // their weights are present.
+        let imageModels = (try? await ImageGenerationService.shared.availableModels()) ?? []
+        for model in imageModels where model.ready {
+            options.append(.fromImageModel(model))
+        }
+
         let manager = RemoteProviderManager.shared
         let remoteModels = manager.cachedAvailableModels()
         for providerInfo in remoteModels {
