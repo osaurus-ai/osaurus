@@ -172,7 +172,7 @@ public actor ImageGenerationService {
                     negativePrompt: params.negativePrompt,
                     width: params.width ?? 1024,
                     height: params.height ?? 1024,
-                    steps: params.steps ?? Self.defaultSteps(for: params.model),
+                    steps: Self.safeDenoiseSteps(for: params.model, requested: params.steps),
                     guidance: params.guidance ?? Self.defaultGuidance(for: params.model),
                     seed: seed,
                     numImages: 1,
@@ -202,7 +202,7 @@ public actor ImageGenerationService {
                 strength: params.strength,
                 width: params.width,
                 height: params.height,
-                steps: params.steps ?? Self.defaultSteps(for: params.model),
+                steps: Self.safeDenoiseSteps(for: params.model, requested: params.steps),
                 guidance: params.guidance ?? Self.defaultGuidance(for: params.model),
                 seed: params.seed,
                 outputDir: outputDir,
@@ -348,6 +348,14 @@ public actor ImageGenerationService {
 
     private static func defaultSteps(for model: String) -> Int {
         registryEntry(for: model)?.defaultSteps ?? 20
+    }
+
+    static func safeDenoiseSteps(for model: String, requested: Int?) -> Int {
+        let steps = requested ?? defaultSteps(for: model)
+        if model.lowercased().contains("qwen-image") {
+            return max(2, steps)
+        }
+        return steps
     }
 
     private static func defaultGuidance(for model: String) -> Float {

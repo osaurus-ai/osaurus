@@ -40,7 +40,7 @@ let package = Package(
         // MLX runtime so image-gen and LLM eval link a single MLX binary.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "d725c63f035650f9182648580e98d7776544648a"
+            revision: "b5df48a1948ec05611cd82da7a6a38b43e1f851f"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the

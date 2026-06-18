@@ -125,6 +125,21 @@ struct NativeImageJobCoordinatorTests {
         #expect(progress["tool_call_id"] as? String == "tool-call-1")
     }
 
+    @Test func qwenImageRequestsUseAtLeastTwoDenoiseSteps() {
+        #expect(ImageGenerationService.safeDenoiseSteps(
+            for: "qwen-image-mflux-4bit",
+            requested: 1
+        ) == 2)
+        #expect(ImageGenerationService.safeDenoiseSteps(
+            for: "Qwen-Image-Edit-mflux-q4",
+            requested: 1
+        ) == 2)
+        #expect(ImageGenerationService.safeDenoiseSteps(
+            for: "FLUX.1-schnell-mflux-4bit",
+            requested: 1
+        ) == 1)
+    }
+
     private func imageModel(
         id: String,
         ready: Bool,
