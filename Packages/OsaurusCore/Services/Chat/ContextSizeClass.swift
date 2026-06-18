@@ -186,7 +186,9 @@ public enum ContextSizeResolver {
         {
             // Tiny window already implies compact.
             return ContextWindowInfo(
-                sizeClass: .tiny, contextLength: tinyCeiling, prefersCompactPrompt: true
+                sizeClass: .tiny,
+                contextLength: tinyCeiling,
+                prefersCompactPrompt: true
             )
         }
 
@@ -211,7 +213,9 @@ public enum ContextSizeResolver {
         let billions = ModelMetadataParser.parameterCountBillions(from: trimmed)
         let prefersCompact = billions.map { $0 <= compactParamCeilingBillions } ?? true
         return ContextWindowInfo(
-            sizeClass: .normal, contextLength: ctx, prefersCompactPrompt: prefersCompact
+            sizeClass: .normal,
+            contextLength: ctx,
+            prefersCompactPrompt: prefersCompact
         )
     }
 }

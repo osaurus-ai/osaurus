@@ -714,7 +714,7 @@ final class ContextBudgetTracker {
             currentTurnOutput = ContextBudgetManager.estimateOutputTokens(for: turn)
         }
         let totalOutput = cumulativeOutputTokens + currentTurnOutput
-        bd.setTokens(for: "output", in: \.messages, tokens: totalOutput, label: "Output", tint: .green)
+        bd.setTokens(for: "output", in: \.messages, tokens: totalOutput, label: L("Output"), tint: .green)
         return bd
     }
 
