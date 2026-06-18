@@ -124,7 +124,43 @@ The same app instance then passed the cancel/reload stress row:
 contain valid SQLCipher databases, but image generation, cancellation, unload,
 reload, and model switching all completed through the live HTTP service.
 
-These rows do not yet prove the foreground SwiftUI chat workflow.
+Foreground SwiftUI wiring was added after the API proof. The chat composer now
+keeps image request settings in session state, model selection carries native
+image capabilities/default steps/default guidance into the picker item, and the
+floating input card exposes size, steps, CFG, seed, edit strength, and negative
+prompt controls for local image models. The send path snapshots those controls
+and dispatches generation-only models through `ImageGenerationParameters`; edit
+models require attached source images and dispatch through `ImageEditParameters`.
+Source images are no longer cleared when selecting an image-edit model.
+
+The UI wiring source contract passed locally and on `erics-m5-max.local`:
+
+```text
+scripts/live-proof/assert-image-ui-wiring.sh
+image UI wiring source contract passed
+```
+
+The same synced checkout then passed a no-sign Release app build on
+`erics-m5-max.local`:
+
+```text
+/tmp/osaurus-image-ui-wiring-20260618
+scripts/live-proof/build-keychain-free-osaurus.sh /tmp/osaurus-image-ui-wiring-20260618/build/DerivedData-image-ui-wiring
+** BUILD SUCCEEDED **
+app=/tmp/osaurus-image-ui-wiring-20260618/build/DerivedData-image-ui-wiring/Build/Products/Release/osaurus.app
+```
+
+That built app was launched keychain-free with an isolated test root and
+`OSU_MODELS_DIR=/Users/eric/.mlxstudio/models`. `/health` reported
+`status="healthy"`, `http_inflight=0`, `loaded=[]`,
+`local_model_scan.status="finished"`, and `local_model_scan.model_count=12`.
+`/images/models` returned 14 ready image entries with capability/default
+metadata, including Z-Image Turbo, FLUX.1 Schnell, Qwen-Image, Qwen-Image-Edit,
+and Ideogram 4.
+
+These rows prove the foreground SwiftUI image controls are source-wired and
+compile in the app target. They do not yet prove a manual foreground click
+through the built app window.
 
 ## Osaurus wiring
 
@@ -159,7 +195,7 @@ exact bundle must pass all of these:
 6. The app and HTTP API agree on model capabilities, error wording, and output
    artifact paths.
 
-Until the remaining foreground SwiftUI workflow proof is complete, Osaurus
-documentation must describe native Swift image generation as wired,
-source-proven, and HTTP API live-proven on this branch, but not fully
-release-cleared for production use.
+Until the remaining foreground click-through workflow proof is complete,
+Osaurus documentation must describe native Swift image generation as wired,
+source-proven, app-build-proven, and HTTP API live-proven on this branch, but
+not fully release-cleared for production use.

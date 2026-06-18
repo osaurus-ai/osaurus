@@ -101,4 +101,10 @@ edit, reject, cancellation, and reload/switch rows.
 
 Remaining gates:
 
-- Foreground SwiftUI chat workflow.
+- Foreground SwiftUI chat workflow: source wiring and no-sign Release app build
+  are now proven by `scripts/live-proof/assert-image-ui-wiring.sh` and
+  `/tmp/osaurus-image-ui-wiring-20260618/build/DerivedData-image-ui-wiring/Build/Products/Release/osaurus.app`.
+  A keychain-free smoke launch of that app on port 1337 returned healthy
+  `/health` and 14 ready `/images/models` entries with capability/default
+  metadata for Z-Image Turbo, FLUX.1 Schnell, Qwen-Image, Qwen-Image-Edit, and
+  Ideogram 4. Manual foreground click-through is still pending.
