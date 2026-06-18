@@ -584,10 +584,15 @@ Do not mark this feature working until all of these pass:
   arguments to the coordinator, and returns generated image paths plus progress
   metadata.
 - Local source verification on 2026-06-18: `swift build --package-path
-  Packages/OsaurusCore` passed after these changes. `swift test --package-path
-  Packages/OsaurusCore --filter NativeImageJobCoordinatorTests` remained
-  blocked by the existing package-wide `no such module 'Testing'` failure before
-  test execution.
+  Packages/OsaurusCore` passed after these changes. Local `swift test
+  --package-path Packages/OsaurusCore --filter NativeImageJobCoordinatorTests`
+  remained blocked by the existing package-wide `no such module 'Testing'`
+  failure before test execution.
+- Remote proof on `erics-m5-max.local` from fresh clone
+  `/tmp/osaurus-agent-image-proof-a47b88d4` at commit `a47b88d4`: `swift build
+  --package-path Packages/OsaurusCore` passed, and `swift test --package-path
+  Packages/OsaurusCore --filter NativeImageJobCoordinatorTests` ran 4 tests in
+  `NativeImageJobCoordinatorTests` and passed.
 
 `PARTIAL`:
 
@@ -601,7 +606,8 @@ Do not mark this feature working until all of these pass:
   wired/proven for the agent-triggered path.
 - Image edit remains manual/API-only; no `image_edit` agent tool exists yet.
 - Local SwiftPM test execution is blocked on this host by a global `Testing`
-  module import failure in existing tests.
+  module import failure in existing tests; the same filtered tests passed on
+  `erics-m5-max.local`.
 
 `BLOCKED FOR RELEASE`:
 
