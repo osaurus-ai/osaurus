@@ -16902,6 +16902,9 @@
         }
       }
     },
+    "Download an image-generation bundle, then pick it in the chat model selector to generate images." : {
+
+    },
     "Download failed" : {
       "localizations" : {
         "de" : {
@@ -16917,6 +16920,9 @@
           }
         }
       }
+    },
+    "Download from Hugging Face" : {
+
     },
     "Download later" : {
       "extractionState" : "stale",
@@ -23774,6 +23780,9 @@
     "Image generation produced no image." : {
 
     },
+    "Image models will appear here" : {
+
+    },
     "Image Opacity" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -23790,6 +23799,9 @@
           }
         }
       }
+    },
+    "Images" : {
+
     },
     "Immediately" : {
       "localizations" : {
@@ -31292,6 +31304,9 @@
         }
       }
     },
+    "No image models" : {
+
+    },
     "No installed plugin owns this capture capability." : {
       "localizations" : {
         "de" : {
@@ -33522,6 +33537,9 @@
         }
       }
     },
+    "On-device image models" : {
+
+    },
     "On-the-fly Compression" : {
       "localizations" : {
         "de" : {
@@ -34596,6 +34614,9 @@
           }
         }
       }
+    },
+    "org/Model-mflux-4bit" : {
+
     },
     "Osaurus" : {
       "localizations" : {
@@ -51399,6 +51420,9 @@
           }
         }
       }
+    },
+    "Suggested" : {
+
     },
     "Summarize text" : {
       "localizations" : {
