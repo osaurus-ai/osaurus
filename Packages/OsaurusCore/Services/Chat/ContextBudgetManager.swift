@@ -8,6 +8,9 @@
 //
 
 import Foundation
+import os
+
+private let contextBudgetLogger = Logger(subsystem: "ai.osaurus", category: "context-budget")
 
 /// Dynamic token breakdown for the context window, displayed in the
 /// context budget hover popover. Entries are derived from the composer's
@@ -387,7 +390,16 @@ public struct ContextBudgetManager: Sendable {
         guard protectedTailStart > 1 else {
             // Protected regions cover everything — nothing left to trim.
             markVisibleAsSent()
-            return (render(), Self.estimateTokens(for: render()) > budget)
+            let rendered = render()
+            let renderedTokens = Self.estimateTokens(for: rendered)
+            if renderedTokens > budget {
+                Self.logHistoryOverBudget(
+                    estimatedTokens: renderedTokens,
+                    budget: budget,
+                    phase: "protect-only check"
+                )
+            }
+            return (rendered, renderedTokens > budget)
         }
 
         // Phase 1: freeze summaries for middle tool results that were never
@@ -460,6 +472,13 @@ public struct ContextBudgetManager: Sendable {
         }
 
         markVisibleAsSent()
+        if runningTokens > budget {
+            Self.logHistoryOverBudget(
+                estimatedTokens: runningTokens,
+                budget: budget,
+                phase: "drop phase"
+            )
+        }
         return (render(), runningTokens > budget)
     }
 
@@ -496,8 +515,15 @@ public struct ContextBudgetManager: Sendable {
         let recentCount = countRecentMessages(in: messages, pairs: recentPairsToKeep)
         let protectedTailStart = messages.count - recentCount
 
-        // If protected regions cover everything, we can't trim further
+        // If protected regions cover everything, we can't trim further. We're
+        // already past the within-budget check above, so this returns an
+        // over-budget transcript — leave a breadcrumb.
         if firstMessageCount >= protectedTailStart {
+            Self.logHistoryOverBudget(
+                estimatedTokens: currentTokens,
+                budget: budget,
+                phase: "stateless protect-only"
+            )
             return messages
         }
 
@@ -564,10 +590,31 @@ public struct ContextBudgetManager: Sendable {
         result.append(contentsOf: middleToKeep)
         result.append(contentsOf: tail)
 
+        if runningTokens > budget {
+            Self.logHistoryOverBudget(
+                estimatedTokens: runningTokens,
+                budget: budget,
+                phase: "stateless drop phase"
+            )
+        }
         return result
     }
 
     // MARK: - Private Helpers
+
+    /// Log when history can't be brought within budget even after every
+    /// compaction lever — the protected first message + recent tail alone
+    /// exceed the window. A breadcrumb so an over-budget send isn't silent
+    /// (it pairs with the `overBudget` flag callers may surface to the user).
+    private static func logHistoryOverBudget(estimatedTokens: Int, budget: Int, phase: String) {
+        contextBudgetLogger.warning(
+            """
+            Context history still over budget after \(phase, privacy: .public): \
+            est \(estimatedTokens, privacy: .public) tok > \(budget, privacy: .public) budget — \
+            protected first message + recent tail alone exceed the window
+            """
+        )
+    }
 
     /// Group a contiguous message slice into atomic trim units, preserving
     /// order. A unit is one `assistant` turn plus the contiguous run of `tool`
