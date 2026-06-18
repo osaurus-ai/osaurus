@@ -1,0 +1,29 @@
+{
+  "agentId" : "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB",
+  "endedAt" : "2026-06-18T12:00:00Z",
+  "runId" : "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA",
+  "sessionId" : "session-malformed",
+  "startedAt" : "2026-06-18T12:00:05Z",
+  "status" : "mystery",
+  "triggerSource" : "chat",
+  "turns" : [
+    {
+      "content" : "call the tool",
+      "id" : "11111111-1111-1111-1111-111111111111",
+      "role" : "assistant",
+      "toolCalls" : [
+        {
+          "arguments" : "{\"path\":\"/tmp\"",
+          "id" : "call_missing_result",
+          "name" : "file_read"
+        }
+      ]
+    },
+    {
+      "content" : "{\"error\":\"not found\"}",
+      "id" : "22222222-2222-2222-2222-222222222222",
+      "role" : "tool",
+      "toolCallId" : "orphan_result"
+    }
+  ]
+}

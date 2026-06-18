@@ -43754,6 +43754,38 @@
         }
       }
     },
+    "Copy JSON report" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "JSON-Bericht kopieren"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "复制 JSON 报告"
+          }
+        }
+      }
+    },
+    "Copy Markdown report" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Markdown-Bericht kopieren"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "复制 Markdown 报告"
+          }
+        }
+      }
+    },
     "Copy Model ID" : {
       "localizations" : {
         "de" : {

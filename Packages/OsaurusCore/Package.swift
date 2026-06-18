@@ -253,7 +253,10 @@ let package = Package(
                 .product(name: "VecturaKit", package: "VecturaKit"),
             ],
             path: "Tests",
-            resources: [.process("ComputerUse/Fixtures")]
+                resources: [
+                    .process("ComputerUse/Fixtures"),
+                    .copy("Agent/Fixtures"),
+                ]
         ),
     ]
 )
