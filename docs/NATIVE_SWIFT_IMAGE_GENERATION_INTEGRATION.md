@@ -72,6 +72,44 @@ shows composition/patch artifacts, Ideogram still has JSON-caption/poster quirks
 q4/q3 Qwen edit variants remain noisy or hidden, and masks are intentionally
 unsupported.
 
+Osaurus live API proof on `erics-m5-max.local` also passed from the no-sign
+Release app built at branch `06920034f79273b5cbbf973e908d959a4ac947cd`.
+The app ran keychain-free with:
+
+```text
+/tmp/osaurus-image-live-proof-20260618-osaurus-image-live/build/DerivedData-image-live-nosign/Build/Products/Release/osaurus.app
+OSAURUS_TEST_ROOT=/tmp/osaurus-image-live-proof-20260618-osaurus-image-live/runtime-root
+OSU_MODELS_DIR=/Users/eric/.mlxstudio/models
+http://127.0.0.1:17837
+```
+
+The API proof artifacts are:
+
+```text
+/tmp/osaurus-image-live-proof-20260618-osaurus-image-live/runtime-root/proof/api-matrix/summary.json
+/tmp/osaurus-image-live-proof-20260618-local/osaurus-image-api-contact-sheet.png
+```
+
+Result summary from the Osaurus API matrix:
+
+| Row | Endpoint | Result | App RSS |
+| --- | --- | --- | --- |
+| `zimage_gen` | `/v1/images/generations` | HTTP 200 | 6,055,870,464 bytes |
+| `flux_gen` | `/v1/images/generations` | HTTP 200 | 15,451,013,120 bytes |
+| `qwen_image_gen` | `/v1/images/generations` | HTTP 200 | 44,091,604,992 bytes |
+| `ideogram_gen` | `/v1/images/generations` | HTTP 200 | 6,914,867,200 bytes |
+| `qwen_edit_q8_single` | `/v1/images/edits` | HTTP 200 | 24,291,950,592 bytes |
+| `qwen_edit_q8_multi` | `/v1/images/edits` | HTTP 200 | 22,411,886,592 bytes |
+| `gen_only_edit_reject` | `/v1/images/edits` | HTTP 400 | 22,410,641,408 bytes |
+| `qwen_edit_mask_reject` | `/v1/images/edits` | HTTP 501 | 22,411,968,512 bytes |
+
+`/health` after the matrix was still healthy with `http_inflight=0`,
+`loaded=[]`, and `local_model_scan.status="finished"`. The API rows prove
+catalog exposure, model-kind rejection, mask rejection, generation artifact
+paths, and q8 edit artifact paths through Osaurus. They do not yet prove the
+foreground SwiftUI chat workflow, HTTP cancellation while denoise is in flight,
+or unload/reload/generate-again behavior.
+
 ## Osaurus wiring
 
 The runtime lane owns:
@@ -104,6 +142,7 @@ exact bundle must pass all of these:
 6. The app and HTTP API agree on model capabilities, error wording, and output
    artifact paths.
 
-Until the app/API proof rows are complete, Osaurus documentation must describe
-native Swift image generation as wired and source-proven on this branch, but
-not release-cleared for production use.
+Until the remaining UI, cancellation, and unload/reload proof rows are complete,
+Osaurus documentation must describe native Swift image generation as wired,
+source-proven, and HTTP API live-proven on this branch, but not release-cleared
+for production use.
