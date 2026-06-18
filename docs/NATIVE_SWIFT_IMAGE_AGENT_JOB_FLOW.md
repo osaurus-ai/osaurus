@@ -4,11 +4,16 @@ Status: `DESIGN/HANDOFF - NOT IMPLEMENTED`
 
 Branch: `feat/image-generation-vmlxflux`
 
-This document records the next Osaurus image-generation requirement: the main
-chat agent should be able to ask local native Swift image generation/edit models
-to do work as a first-class job, with low RAM behavior on sub-24 GB machines and
-without disturbing the existing chat, privacy, tool, prompt, or memory-safety
-contracts.
+This document records the next Osaurus agent-delegation requirements:
+
+- the main chat agent should be able to ask local native Swift image
+  generation/edit models to do work as a first-class job, with low RAM behavior
+  on sub-24 GB machines; and
+- cloud/API chat models should be able to delegate bounded text/coding subtasks
+  to a user-selected local downloaded model to reduce cloud token cost.
+
+Both flows must avoid disturbing the existing chat, privacy, tool, prompt,
+permission, or memory-safety contracts.
 
 ## User Request
 
@@ -35,6 +40,26 @@ The desired flow is:
    cache behavior.
 9. This must be documented and live end-to-end tested before it is called
    working.
+
+Additional cloud-cost requirement:
+
+1. When the active model is a cloud/API provider, the user may enable a local
+   text delegate model that acts like a bounded RLM-style helper for coding and
+   analysis subtasks.
+2. The local delegate model is selected from downloaded local chat-capable
+   models, not from a hardcoded list or cloud catalog.
+3. The cloud model may post a local delegate job instead of spending more cloud
+   tokens on work that can be done locally.
+4. The local delegate job returns a compact result to the cloud model, with
+   local-only detail summarized rather than replaying full local transcripts.
+5. Text delegation, image generation, and image edit must each have explicit
+   permission policy: ask, deny, or always allow.
+6. The permission prompt must show the selected job type and target local model,
+   and should allow the user to switch to another downloaded compatible model
+   before approving.
+7. Local delegate settings must include load/unload behavior, budgets, and
+   memory-safety behavior so sub-24 GB users do not accidentally keep multiple
+   heavy local models resident.
 
 ## Current Privacy Filter Behavior
 
@@ -63,6 +88,12 @@ Important current behavior:
 The image job flow should copy the orchestration pattern, not the redaction
 logic: a first-class service owns the side job, exposes progress, and returns a
 safe artifact result to the original chat/tool loop.
+
+The local text delegate flow should also copy the orchestration pattern, not
+the privacy filter's redaction logic. It should be a first-class bounded local
+job with its own progress, permission, model selection, and result envelope. It
+should not be implemented by making the privacy filter recursive or by letting
+cloud providers directly operate local tools.
 
 ## Existing Image State
 
@@ -191,11 +222,166 @@ Local chat model:
   session history. Do not alter sampler or template settings to hide reload
   latency.
 
+## Cloud Cost Saver Local Text Delegate
+
+Status: `DESIGN/HANDOFF - NOT IMPLEMENTED`
+
+This is a sibling flow to image jobs. It lets a cloud/API chat model ask a
+local downloaded chat-capable model to do bounded helper work, especially coding
+analysis, file inspection summaries, test triage summaries, or other subtasks
+where local tokens are cheaper than cloud tokens.
+
+The local text delegate is not a fully recursive autonomous agent by default.
+It should be a constrained job service with a clear input, allowed context,
+allowed tools, token/turn budget, progress events, and a structured result.
+Recursive multi-turn delegation can be added later only if it has separate
+permission and budget controls.
+
+Recommended architecture:
+
+```text
+Cloud/API agent loop
+    -> LocalDelegateTool
+        -> LocalDelegateCoordinator
+            -> DelegatePermissionPolicy
+            -> DelegateModelSelectionPolicy
+                -> downloaded local chat-capable ModelPickerItem
+            -> LocalModelHandoffPolicy
+                -> ModelRuntime load/unload under Memory Safety settings
+            -> bounded local model run
+            -> compact structured result back to cloud agent loop
+```
+
+Minimum `local_delegate` arguments:
+
+- `task`: concise helper instruction
+- `mode`: `coding`, `analysis`, `summarize`, or `other`
+- `context_refs`: optional file/artifact/message references that Osaurus
+  resolves locally
+- `allowed_tools`: optional allowlist constrained by the user's permission
+  policy
+- `max_tokens`: optional, clamped by settings
+- `max_turns`: optional, clamped by settings
+- `model`: optional local model id, defaulting to the user's configured local
+  delegate model
+
+The tool result should include:
+
+- selected local delegate model
+- whether the delegate was loaded cold or already resident
+- summary result intended for the cloud model
+- optional local-only artifact/log id for user inspection
+- token counts and elapsed time when available
+- whether any requested tool/file permission was denied
+- final memory/residency status when available
+
+The cloud model should receive only the compact result unless the user or
+policy explicitly allows richer local transcript sharing. This is both a cost
+control and a privacy boundary.
+
+### Text Delegate RAM Rules
+
+Cloud/API chat model:
+
+- No active cloud model is resident locally, so only the selected local delegate
+  model needs local RAM.
+- Default behavior for low-RAM users should load the local delegate for the job
+  and unload it when the job completes.
+- An advanced setting may keep the delegate warm, but strict Memory Safety
+  should be allowed to override that when image generation/edit or another
+  local model would exceed policy.
+
+Local chat model:
+
+- Local-to-local text delegation should be disabled by default unless there is
+  a clear user-selected reason. It can easily double local residency or create
+  confusing recursive behavior.
+- If enabled, the coordinator must use the same unload/restore handoff rules as
+  image jobs when the delegate model differs from the active chat model and the
+  selected Memory Safety mode requires single-model residency.
+- If the active local chat model is already the selected delegate model, the
+  job should run in-process only if the agent-loop contract can guarantee no
+  recursive stream/tool corruption. Otherwise it should be refused with a typed
+  error until the coordinator supports it.
+
+## Settings GUI Requirements
+
+Add a small settings surface under local inference/agents rather than burying
+these controls inside prompts.
+
+Required controls:
+
+- Enable cloud-to-local text delegation.
+- Default local text delegate model, sourced from downloaded local chat-capable
+  `ModelPickerItem`s.
+- Default image generation model, sourced from downloaded image-capable models.
+- Default image edit model, sourced from downloaded edit-capable models.
+- Text delegate load policy: unload after job, keep warm when safe, or strict
+  single-job residency.
+- Image job load policy: unload displaced chat model first, unload image model
+  after agent-triggered job, and obey manual-panel policy separately.
+- Delegate budgets: max local delegate tokens, max local delegate turns, max
+  tool calls, and max elapsed time.
+- Sharing policy: compact result only, allow local transcript summary, or ask
+  before sharing expanded local detail back to the cloud model.
+- Permission defaults for each spawned job family: ask, deny, or always allow.
+
+The model picker must use the existing downloaded-model catalog path. The
+system prompt must not include the full downloaded model list. The coordinator
+can resolve `"auto"` or a configured default at runtime and return a typed
+missing-model error if the selected model has been deleted or is incomplete.
+
+## Permission Model
+
+Image generation, image edit, and local text delegation should be separate
+permission subjects because they have different cost, privacy, and RAM impact.
+
+Recommended subjects:
+
+- `agent.image.generate`
+- `agent.image.edit`
+- `agent.local_text_delegate`
+- `agent.local_text_delegate.tool_use`
+
+Recommended policy values:
+
+- `ask`: show a permission sheet before the job starts.
+- `deny`: refuse with a typed tool error.
+- `always_allow`: allow future jobs matching the saved scope without another
+  prompt.
+
+Permission prompt requirements:
+
+- Show the requesting active model/provider.
+- Show the job type: text delegate, image generate, or image edit.
+- Show the selected local model and allow switching to a compatible downloaded
+  model before approval.
+- Show requested tool/file/network scope for local text delegation.
+- Show estimated RAM policy and whether another local model will be unloaded.
+- Persist `always_allow` narrowly by job family, provider/agent, selected model
+  or model class, and scope. Do not make one broad global approval cover every
+  future tool or model.
+- Deny must not mutate chat history as if the job ran. It should return a
+  structured denial that the active model can explain.
+
+Security rules:
+
+- A cloud model must not directly grant itself local file, shell, network, or
+  plugin permissions by routing through the local delegate.
+- The local delegate inherits only permissions explicitly granted by the user
+  or already available under the current agent policy.
+- Privacy-filter placeholders must not be expanded into cloud-visible text
+  unless the existing local unscrub/sharing policy allows that exact surface.
+- Local transcripts that contain private file contents should stay local unless
+  the user approves sharing a summary or excerpt back to the cloud model.
+- No hidden sampler, system-prompt, or tool-parser changes may be introduced to
+  make delegation look successful.
+
 ## Progress UX
 
 Progress must be real events, not a timer guess.
 
-Minimum chat/tool progress states:
+Minimum image chat/tool progress states:
 
 - `Queued image job`
 - `Waiting for current chat generation to finish`
@@ -210,6 +396,22 @@ Minimum chat/tool progress states:
 For HTTP/SSE parity, image job events should map to machine-readable frames
 with the same phases. The chat UI should show these in the assistant/tool row
 without requiring the model to narrate progress.
+
+Minimum local text delegate progress states:
+
+- `Queued local delegate job`
+- `Checking delegate permission`
+- `Resolving local delegate model`
+- `Unloading resident model to free RAM` when applicable
+- `Loading local delegate model`
+- `Running local delegate`
+- `Summarizing delegate result`
+- `Unloading local delegate model` when applicable
+- `Returning delegate result`
+- `Done`
+
+The UI should make the distinction clear: cloud model is waiting on a local
+delegate job, not silently continuing to spend cloud tokens.
 
 ## RAM Safety Policy
 
@@ -303,16 +505,26 @@ Failure rules:
    can release image weights after completion.
 4. Add `NativeImageJobTool` and register it as a compact built-in tool, gated by
    image feature availability and agent/tool settings.
-5. Wire chat tool post-processing so image job results become image artifacts
+5. Add `LocalDelegateCoordinator` and `LocalDelegateTool`, gated by
+   cloud-to-local delegation settings and permission policy.
+6. Add settings storage/UI for default local delegate model, default image
+   generate/edit models, load policy, budgets, sharing policy, and per-job
+   permission defaults.
+7. Wire chat tool post-processing so image job results become image artifacts
    without requiring a second `share_artifact` call.
-6. Add progress event plumbing from coordinator to chat UI and HTTP/SSE proof
+8. Wire text delegate result post-processing so only the compact result returns
+   to the cloud model by default, with local-only logs/artifacts retained for
+   user inspection.
+9. Add progress event plumbing from coordinators to chat UI and HTTP/SSE proof
    harnesses.
-7. Add memory-safety policy for agent-triggered jobs vs manual panel jobs.
-8. Add docs and source guards for prompt/tool schema size and no recursive
-   agent workers.
-9. Add focused tests for tool argument validation, mode/model compatibility,
-   unload/restore sequencing, progress phases, and artifact result shape.
-10. Add live proof scripts on `erics-m5-max.local`.
+10. Add memory-safety policy for agent-triggered jobs vs manual panel jobs vs
+    cloud-to-local text delegate jobs.
+11. Add docs and source guards for prompt/tool schema size and no unbounded
+    recursive agent workers.
+12. Add focused tests for tool argument validation, mode/model compatibility,
+    downloaded-model selection, permissions, unload/restore sequencing,
+    progress phases, cost/token accounting, and artifact/result shape.
+13. Add live proof scripts on `erics-m5-max.local`.
 
 ## Live Proof Requirements
 
@@ -320,11 +532,23 @@ Do not mark this feature working until all of these pass:
 
 - Cloud chat model calls image tool -> local image generation -> artifact
   appears -> cloud model final answer references artifact.
+- Cloud chat model calls local text delegate -> downloaded local model loads ->
+  bounded coding/analysis result returns -> cloud model final answer uses the
+  compact result. Record cloud input/output token delta versus a no-delegate
+  baseline when possible.
 - Local chat model resident -> model emits image tool call -> local chat model
   unloads -> image model loads/generates/unloads -> local chat model reloads ->
   final answer appears.
 - Same as above for image edit with a real source image artifact.
+- Permission `ask`, `deny`, and `always_allow` are proven separately for local
+  text delegate, image generation, and image edit.
+- Permission prompt model override is proven with downloaded local text and
+  image models.
+- Deleted/incomplete configured delegate model produces a typed error and does
+  not silently pick a random cloud model.
 - Cancellation during image model load and during denoise both leave server
+  health clean and unload state correct.
+- Cancellation during local delegate load and delegate generation leaves server
   health clean and unload state correct.
 - Strict memory-safety mode refuses unsafe jobs before allocation with a typed
   error.
@@ -358,5 +582,10 @@ Do not mark this feature working until all of these pass:
 - No local-chat-model unload -> image-job -> chat-model restore live proof.
 - No cloud-chat-model -> local image tool e2e proof.
 - No image-edit agent tool proof.
+- No cloud-chat-model -> local text delegate e2e proof.
+- No delegate settings GUI exists for default local text/image models, load
+  policy, budgets, sharing policy, or permissions.
+- No ask/deny/always-allow permission proof exists for spawned image or text
+  jobs.
 - No agent-triggered RAM-safety preflight/refusal proof.
 - No progress UI proof for the agent-triggered path.
