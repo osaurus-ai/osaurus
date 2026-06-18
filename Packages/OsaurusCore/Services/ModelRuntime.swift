@@ -2273,8 +2273,18 @@ public actor ModelRuntime {
         stopSequences: [String] = [],
         draftStrategy: MLXLMCommon.DraftStrategy? = nil,
         enableCompiledBatchDecode: Bool = true,
-        prefillStepSize: Int? = nil
+        prefillStepSize: Int? = nil,
+        modelName: String? = nil
     ) -> MLXLMCommon.GenerateParameters {
+        // Laguna (XS.2 + M.1) ships no repetition_penalty and bare greedy decode
+        // rambles after the answer at any precision — the loop is a serving-loop
+        // gap, not the model port (proven: no-cache == cache, clean raw greedy).
+        // Supply the recipe defaults when the request/bundle didn't: a 1.15
+        // penalty over a phrase-scale window (256), vs the 20-token default that
+        // misses phrase-level repeats. A caller-supplied penalty still wins.
+        let isLaguna = modelName.map(ModelFamilyNames.isLagunaFamily) ?? false
+        let resolvedRepetitionPenalty = repetitionPenalty ?? (isLaguna ? 1.15 : nil)
+        let resolvedRepetitionContextSize = isLaguna ? 256 : 20
         var params = MLXLMCommon.GenerateParameters(
             maxTokens: maxTokens,
             enableCompiledBatchDecode: enableCompiledBatchDecode,
@@ -2282,8 +2292,8 @@ public actor ModelRuntime {
             topP: topP,
             topK: topK,
             minP: minP,
-            repetitionPenalty: repetitionPenalty,
-            repetitionContextSize: 20,
+            repetitionPenalty: resolvedRepetitionPenalty,
+            repetitionContextSize: resolvedRepetitionContextSize,
             extraStopStrings: stopSequences
         )
         params.draftStrategy = draftStrategy

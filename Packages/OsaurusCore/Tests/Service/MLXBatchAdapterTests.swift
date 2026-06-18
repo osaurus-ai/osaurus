@@ -2148,4 +2148,37 @@ struct MLXBatchAdapterTests {
         defaults.removePersistentDomain(forName: suiteName)
         return defaults
     }
+
+    // MARK: - Laguna serving-loop defaults
+
+    @Test func isLagunaFamily_matchesBothLinesAndRejectsLookalikes() {
+        #expect(ModelFamilyNames.isLagunaFamily("Laguna-M.1-JANG_2L"))
+        #expect(ModelFamilyNames.isLagunaFamily("JANGQ-AI/Laguna-M.1-JANG_1L"))
+        #expect(ModelFamilyNames.isLagunaFamily("laguna-xs.2-jangtq2"))
+        #expect(!ModelFamilyNames.isLagunaFamily("notlaguna-7b"))
+        #expect(!ModelFamilyNames.isLagunaFamily("qwen3.6-35b-a3b"))
+    }
+
+    @Test func makeGenerateParameters_appliesLagunaLoopDefaults() {
+        // Laguna with no caller penalty → recipe default 1.15 + 256 window.
+        let laguna = ModelRuntime.makeGenerateParameters(
+            temperature: 1.0, maxTokens: 64, topP: 1.0, repetitionPenalty: nil,
+            modelName: "JANGQ-AI/Laguna-M.1-JANG_2L")
+        #expect(laguna.repetitionPenalty == 1.15)
+        #expect(laguna.repetitionContextSize == 256)
+
+        // A caller-supplied penalty still wins; window stays the laguna 256.
+        let lagunaOverride = ModelRuntime.makeGenerateParameters(
+            temperature: 1.0, maxTokens: 64, topP: 1.0, repetitionPenalty: 1.05,
+            modelName: "Laguna-M.1-JANG_1L")
+        #expect(lagunaOverride.repetitionPenalty == 1.05)
+        #expect(lagunaOverride.repetitionContextSize == 256)
+
+        // Non-laguna is unchanged: no injected penalty, default 20 window.
+        let other = ModelRuntime.makeGenerateParameters(
+            temperature: 1.0, maxTokens: 64, topP: 1.0, repetitionPenalty: nil,
+            modelName: "qwen3.6-35b-a3b-mxfp4")
+        #expect(other.repetitionPenalty == nil)
+        #expect(other.repetitionContextSize == 20)
+    }
 }

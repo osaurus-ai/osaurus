@@ -1083,7 +1083,8 @@ struct MLXBatchAdapter {
             stopSequences: stopSequences,
             draftStrategy: effectiveDraftStrategy,
             enableCompiledBatchDecode: effective.compiledBatchDecode,
-            prefillStepSize: runtime.concurrency.prefillStepSize
+            prefillStepSize: runtime.concurrency.prefillStepSize,
+            modelName: modelName
         )
         // Block-diffusion speed/quality budget (DiffusionGemma): server
         // setting, default 16 (seeded by ServerRuntimeSettingsStore).
