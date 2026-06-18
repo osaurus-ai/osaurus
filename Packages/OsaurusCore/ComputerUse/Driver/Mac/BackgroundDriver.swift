@@ -11,6 +11,28 @@ import AppKit
 import CoreGraphics
 import Darwin
 import Foundation
+import os
+
+// MARK: - Input Diagnostics
+
+/// Gated diagnostics for the input-routing layer. Off unless the app is
+/// launched with `OSAURUS_CU_INPUT_DEBUG=1`. Logs the raw `SLEventPostToPid`
+/// return value and the transport `route` actually used, so transport bugs
+/// (like the SkyLight + `postToPid` double-delivery this flag was added to
+/// diagnose) are visible without guessing from a transcript. Writes to the
+/// unified log and to stderr so it surfaces whether launched via Console.app
+/// or a terminal.
+enum InputDebug {
+    static let isEnabled = ProcessInfo.processInfo.environment["OSAURUS_CU_INPUT_DEBUG"] == "1"
+    private static let logger = Logger(subsystem: "com.osaurus.computeruse", category: "input")
+
+    static func log(_ message: @autoclosure () -> String) {
+        guard isEnabled else { return }
+        let text = message()
+        logger.debug("\(text, privacy: .public)")
+        FileHandle.standardError.write(Data("[cu-input] \(text)\n".utf8))
+    }
+}
 
 // MARK: - Routing Telemetry
 
@@ -18,7 +40,7 @@ import Foundation
 /// The fallback chain — SkyLight → CGEvent.postToPid → HID tap — degrades
 /// from "fully backgrounded" to "warps the user's cursor" so it's important
 /// for the agent to know when the cursor moved.
-enum InputRoute: String, Codable {
+public enum InputRoute: String, Codable, Sendable {
     /// `SLEventPostToPid`. No cursor warp; trusted by Chromium renderers.
     case skyLight
     /// `CGEvent.postToPid`. No cursor warp; works for most Cocoa apps but
@@ -125,6 +147,32 @@ private enum BundleClass {
 final class BackgroundDriver: @unchecked Sendable {
     static let shared = BackgroundDriver()
 
+    /// Seam over the external transports `route`/`prepareForKeyboard` depend on.
+    /// Production uses `.live`; tests inject spies to assert that each event is
+    /// delivered through exactly one transport — the regression guard for the
+    /// SkyLight + `postToPid` double-delivery that doubled every keystroke.
+    struct Transports: Sendable {
+        var isWindowServerVisible: @Sendable (pid_t) -> Bool
+        var skyLightAvailable: @Sendable () -> Bool
+        var skyLightPost: @Sendable (CGEvent, pid_t) -> Bool
+        var postToPid: @Sendable (CGEvent, pid_t) -> Void
+        var hidPost: @Sendable (CGEvent) -> Void
+        var isChromium: @Sendable (pid_t) -> Bool
+        var focusWithoutRaise: @Sendable (pid_t) -> Void
+
+        static let live = Transports(
+            isWindowServerVisible: { SkyLightBridge.isWindowServerVisible(pid: $0) },
+            skyLightAvailable: { SkyLightBridge.isAvailable },
+            skyLightPost: { SkyLightBridge.postEvent($0, toPid: $1) },
+            postToPid: { $0.postToPid($1) },
+            hidPost: { $0.post(tap: .cghidEventTap) },
+            isChromium: { BundleClass.isChromium(pid: $0) },
+            focusWithoutRaise: { _ = SkyLightBridge.focusWithoutRaise(pid: $0) }
+        )
+    }
+
+    private let transports: Transports
+
     /// Diagnostics: most-recent route used. Tests assert against this; agents
     /// can read it via the `routeUsed` field returned in action results.
     private let routeLock = NSLock()
@@ -135,7 +183,9 @@ final class BackgroundDriver: @unchecked Sendable {
         return _lastRoute
     }
 
-    private init() {}
+    init(transports: Transports = .live) {
+        self.transports = transports
+    }
 
     // MARK: - Event source
 
@@ -157,8 +207,9 @@ final class BackgroundDriver: @unchecked Sendable {
     @discardableResult
     private func route(event: CGEvent, pid: pid_t, forceHID: Bool = false) -> InputRoute {
         if forceHID {
-            event.post(tap: .cghidEventTap)
+            transports.hidPost(event)
             record(route: .hidFallback)
+            InputDebug.log("route pid=\(pid) -> hidFallback (forceHID)")
             return .hidFallback
         }
 
@@ -166,20 +217,31 @@ final class BackgroundDriver: @unchecked Sendable {
         // GUI app. Both SkyLight's SLEventPostToPid and CoreGraphics'
         // postToPid have been observed to segfault when handed a stale,
         // never-existed, or CLI-only pid.
-        guard SkyLightBridge.isWindowServerVisible(pid: pid) else {
+        guard transports.isWindowServerVisible(pid) else {
             record(route: .perPid)
+            InputDebug.log("route pid=\(pid) -> perPid (not window-server-visible)")
             return .perPid
         }
 
-        if SkyLightBridge.isAvailable && SkyLightBridge.postEvent(event, toPid: pid) {
+        // SkyLight is the primary transport for every window-server-visible GUI
+        // app: it delivers without warping the cursor and Chromium renderers
+        // accept it. It is also TERMINAL — once SkyLight has the event we must
+        // NOT also postToPid, or the event lands twice. (postEvent now reports
+        // success on a completed call; it used to mis-detect SkyLight's
+        // non-zero success code as failure, which is what produced the
+        // double-delivery doubling.)
+        if transports.skyLightAvailable() && transports.skyLightPost(event, pid) {
             record(route: .skyLight)
             return .skyLight
         }
 
-        // CGEvent.postToPid is public CoreGraphics API. Works for almost all
-        // Cocoa apps; only Chromium's renderer filter is picky.
-        event.postToPid(pid)
-        let route: InputRoute = BundleClass.isChromium(pid: pid) ? .hidFallback : .perPid
+        // Reached only when the SkyLight symbol is unavailable (older/newer
+        // macOS, sandboxed host). CGEvent.postToPid is public CoreGraphics API
+        // and works for almost all Cocoa apps; only Chromium's renderer filter
+        // is picky.
+        transports.postToPid(event, pid)
+        let route: InputRoute = transports.isChromium(pid) ? .hidFallback : .perPid
+        InputDebug.log("route pid=\(pid) -> postToPid fallback (SkyLight unavailable); telemetry=\(route.rawValue)")
         if route == .hidFallback {
             // Per-pid won't actually deliver to Chrome web content; mark the
             // failure in telemetry so the agent knows the click probably missed.
@@ -210,9 +272,9 @@ final class BackgroundDriver: @unchecked Sendable {
         clickCount: Int = 1,
         windowId: CGWindowID? = nil
     ) -> InputResult {
-        SkyLightBridge.focusWithoutRaise(pid: pid)
+        transports.focusWithoutRaise(pid)
 
-        if BundleClass.isChromium(pid: pid) {
+        if transports.isChromium(pid) {
             // (-1, -1) decoy click ticks Chromium's user-activation gate so the
             // real click that follows is treated as a trusted user gesture.
             // The renderer drops the decoy because no window claims that pixel.
@@ -294,8 +356,8 @@ final class BackgroundDriver: @unchecked Sendable {
     /// gate with the same off-screen decoy click `click` uses. Without this,
     /// app shortcuts like Cmd+K posted to Slack "succeed" but never land.
     private func prepareForKeyboard(pid: pid_t) {
-        SkyLightBridge.focusWithoutRaise(pid: pid)
-        if BundleClass.isChromium(pid: pid) {
+        transports.focusWithoutRaise(pid)
+        if transports.isChromium(pid) {
             _ = postClickPair(pid: pid, point: CGPoint(x: -1, y: -1), button: .left, clickCount: 1)
             Thread.sleep(forTimeInterval: 0.01)
         }
@@ -320,9 +382,13 @@ final class BackgroundDriver: @unchecked Sendable {
         else {
             return .fail("Failed to create keyboard event")
         }
+        // Attach the character to the keyDown ONLY. Real keystrokes never carry
+        // text on release, Cocoa ignores any keyUp string, and Chromium/Electron
+        // inserts a SECOND copy of the character when the keyUp also carries a
+        // Unicode string — that double-insert is what produced "hheelllloo" in
+        // Slack. Leave keyUp as a bare key release.
         var utf16 = Array(String(char).utf16)
         down.keyboardSetUnicodeString(stringLength: utf16.count, unicodeString: &utf16)
-        up.keyboardSetUnicodeString(stringLength: utf16.count, unicodeString: &utf16)
 
         _ = route(event: down, pid: pid)
         _ = route(event: up, pid: pid)

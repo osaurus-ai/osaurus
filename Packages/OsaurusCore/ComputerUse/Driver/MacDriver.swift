@@ -280,23 +280,31 @@ public struct CUActionResult: Sendable, Equatable, Codable {
     public let stale: Bool
     public let removed: Bool
     public let delta: CUFocusDelta?
+    /// Which input transport actually delivered the event, for actions that
+    /// synthesize input (click/type/press/scroll/drag). `nil` for actions that
+    /// don't (observe/find/screenshot). Lets the agent and tests see when the
+    /// cursor warped (`hidFallback`) or a Chromium click likely missed
+    /// (`perPid`), instead of the transport being invisible.
+    public let routeUsed: InputRoute?
 
     public init(
         success: Bool,
         error: String? = nil,
         stale: Bool = false,
         removed: Bool = false,
-        delta: CUFocusDelta? = nil
+        delta: CUFocusDelta? = nil,
+        routeUsed: InputRoute? = nil
     ) {
         self.success = success
         self.error = error
         self.stale = stale
         self.removed = removed
         self.delta = delta
+        self.routeUsed = routeUsed
     }
 
-    public static func ok(delta: CUFocusDelta? = nil) -> CUActionResult {
-        CUActionResult(success: true, delta: delta)
+    public static func ok(delta: CUFocusDelta? = nil, routeUsed: InputRoute? = nil) -> CUActionResult {
+        CUActionResult(success: true, delta: delta, routeUsed: routeUsed)
     }
 
     public static func failure(_ message: String) -> CUActionResult {

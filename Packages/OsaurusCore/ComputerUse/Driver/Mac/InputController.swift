@@ -306,12 +306,14 @@ final class KeyboardController: @unchecked Sendable {
             return .fail("Failed to create keyboard event")
         }
 
+        // keyDown carries the character; keyUp must NOT. A Unicode-bearing keyUp
+        // makes Chromium/Electron insert the character a second time (Cocoa
+        // ignores it), so only the down event may carry text.
         var unicodeString = Array(str.utf16)
         keyDown.keyboardSetUnicodeString(
             stringLength: unicodeString.count,
             unicodeString: &unicodeString
         )
-        keyUp.keyboardSetUnicodeString(stringLength: unicodeString.count, unicodeString: &unicodeString)
 
         keyDown.post(tap: .cghidEventTap)
         keyUp.post(tap: .cghidEventTap)

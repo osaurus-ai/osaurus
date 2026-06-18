@@ -91,7 +91,17 @@ enum SkyLightBridge {
         // Same WindowServer-knowability guard as processSerialNumber. Avoids
         // segfaults inside the private function when targeting a CLI process.
         guard isWindowServerVisible(pid: pid) else { return false }
-        return fn(pid, event) == 0
+        // SLEventPostToPid does NOT use the CGError "0 == success" convention: it
+        // returns a non-zero status (observed 0xB0000000 / -1342177280) when it
+        // accepts and delivers the event. Gating success on `== 0` made this
+        // ALWAYS report failure, so `BackgroundDriver.route` treated SkyLight as a
+        // miss and *also* posted the same event via `CGEvent.postToPid` — every
+        // keystroke and click was delivered twice (the Chrome-omnibox / TextEdit
+        // "abb" doubling). A completed call to a window-server-visible pid IS the
+        // delivery, so report success and let `route` stop there.
+        let rc = fn(pid, event)
+        InputDebug.log("SLEventPostToPid pid=\(pid) rc=\(rc) (non-zero is success) -> delivered")
+        return true
     }
 
     /// True when the pid corresponds to a GUI app the WindowServer can

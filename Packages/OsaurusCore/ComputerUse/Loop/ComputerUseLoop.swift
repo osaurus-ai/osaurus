@@ -813,6 +813,14 @@ public enum ComputerUseLoop {
         if let delta = result.delta?.focusedElement {
             out += " Focus moved to \(delta.role)" + (delta.label.map { " \"\($0)\"" } ?? "") + "."
         }
+        switch result.routeUsed {
+        case .hidFallback:
+            out += " (input used the HID fallback, which moved the cursor)"
+        case .perPid:
+            out += " (input used per-pid routing; a Chromium web-content target may not have received it)"
+        case .skyLight, .none:
+            break
+        }
         out += view.hasChanges ? " The view changed." : " The view looks unchanged."
         out += "\n\nCurrent view:\n" + view.renderForModel()
         return out

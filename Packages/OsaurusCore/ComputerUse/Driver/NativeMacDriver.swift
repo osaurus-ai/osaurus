@@ -205,7 +205,10 @@ public struct NativeMacDriver: MacDriver {
                 }
                 if result.success {
                     let delta = resolvedPid.flatMap { computeFocusDelta(pid: $0) }
-                    return CUActionResult.ok(delta: delta.map(mapDelta))
+                    return CUActionResult.ok(
+                        delta: delta.map(mapDelta),
+                        routeUsed: inputRoute(pidAddressed: resolvedPid != nil)
+                    )
                 }
                 return .failure(result.error ?? "Type failed")
 
@@ -220,7 +223,10 @@ public struct NativeMacDriver: MacDriver {
                 }
                 if result.success {
                     let delta = resolvedPid.flatMap { computeFocusDelta(pid: $0) }
-                    return CUActionResult.ok(delta: delta.map(mapDelta))
+                    return CUActionResult.ok(
+                        delta: delta.map(mapDelta),
+                        routeUsed: inputRoute(pidAddressed: resolvedPid != nil)
+                    )
                 }
                 return .failure(result.error ?? "Press key failed")
             }
@@ -247,25 +253,35 @@ public struct NativeMacDriver: MacDriver {
                         ? MouseController.shared.doubleClick(at: point, button: mb)
                         : MouseController.shared.click(at: point, button: mb)
                 }
-                return mapInputResult(result)
+                return mapInputResult(result, routeUsed: inputRoute(pidAddressed: pid != nil))
 
             case let .scroll(direction, amount, x, y, pid):
                 let dir = mapScroll(direction)
                 if let pid {
                     return mapInputResult(
-                        BackgroundDriver.shared.scroll(pid: pid, direction: dir, amount: amount)
+                        BackgroundDriver.shared.scroll(pid: pid, direction: dir, amount: amount),
+                        routeUsed: inputRoute(pidAddressed: true)
                     )
                 }
                 if let x, let y { _ = MouseController.shared.moveTo(CGPoint(x: x, y: y)) }
-                return mapInputResult(MouseController.shared.scroll(direction: dir, amount: amount))
+                return mapInputResult(
+                    MouseController.shared.scroll(direction: dir, amount: amount),
+                    routeUsed: inputRoute(pidAddressed: false)
+                )
 
             case let .drag(startX, startY, endX, endY, pid):
                 let start = CGPoint(x: startX, y: startY)
                 let end = CGPoint(x: endX, y: endY)
                 if let pid {
-                    return mapInputResult(BackgroundDriver.shared.drag(pid: pid, from: start, to: end))
+                    return mapInputResult(
+                        BackgroundDriver.shared.drag(pid: pid, from: start, to: end),
+                        routeUsed: inputRoute(pidAddressed: true)
+                    )
                 }
-                return mapInputResult(MouseController.shared.drag(from: start, to: end))
+                return mapInputResult(
+                    MouseController.shared.drag(from: start, to: end),
+                    routeUsed: inputRoute(pidAddressed: false)
+                )
             }
         }
     }
@@ -363,8 +379,16 @@ private func mapActionResult(_ r: ElementActionResult) -> CUActionResult {
     )
 }
 
-private func mapInputResult(_ r: InputResult) -> CUActionResult {
-    CUActionResult(success: r.success, error: r.error)
+private func mapInputResult(_ r: InputResult, routeUsed: InputRoute? = nil) -> CUActionResult {
+    CUActionResult(success: r.success, error: r.error, routeUsed: routeUsed)
+}
+
+/// The transport an input action used: `BackgroundDriver`'s last route when the
+/// action was pid-addressed (backgrounded), else `.hidFallback` because the
+/// no-pid `MouseController`/`KeyboardController` paths post via the HID tap and
+/// warp the cursor.
+private func inputRoute(pidAddressed: Bool) -> InputRoute {
+    pidAddressed ? BackgroundDriver.shared.lastRoute : .hidFallback
 }
 
 private func mapButton(_ b: CUMouseButton) -> MouseButton {
