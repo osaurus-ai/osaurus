@@ -516,6 +516,26 @@ struct WatcherEditorSheet: View {
         return nil
     }
 
+    private var editingWatcher: Watcher? {
+        if case .edit(let watcher) = mode { return watcher }
+        return nil
+    }
+
+    /// True when an edited watcher still differs from what's stored, so
+    /// "Save Changes" can disable itself once nothing is left to apply.
+    /// Create mode is always "changed" and stays gated on validity alone.
+    private var hasChanges: Bool {
+        guard let original = editingWatcher else { return true }
+        return name.trimmingCharacters(in: .whitespacesAndNewlines) != original.name
+            || instructions.trimmingCharacters(in: .whitespacesAndNewlines) != original.instructions
+            || selectedAgentId != original.agentId
+            || isEnabled != original.isEnabled
+            || recursive != original.recursive
+            || responsiveness != original.responsiveness
+            || selectedWatchPath != original.watchPath
+            || selectedWatchBookmark != original.watchBookmark
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             headerView
@@ -903,6 +923,7 @@ struct WatcherEditorSheet: View {
                 name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                     || instructions.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                     || selectedWatchPath == nil
+                    || (isEditing && !hasChanges)
             )
             .keyboardShortcut(.return, modifiers: .command)
         }
@@ -1225,16 +1246,17 @@ private struct WatcherAgentOptionRow: View {
 
 private struct WatcherPrimaryButtonStyle: ButtonStyle {
     @Environment(\.theme) private var theme
+    @Environment(\.isEnabled) private var isEnabled
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(size: 13, weight: .medium))
-            .foregroundColor(.white)
+            .foregroundColor(isEnabled ? .white : theme.tertiaryText)
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
             .background(
                 RoundedRectangle(cornerRadius: 8)
-                    .fill(theme.accentColor)
+                    .fill(isEnabled ? theme.accentColor : theme.tertiaryBackground)
             )
             .opacity(configuration.isPressed ? 0.8 : 1.0)
     }

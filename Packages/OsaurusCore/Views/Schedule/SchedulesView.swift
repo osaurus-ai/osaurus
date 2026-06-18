@@ -1633,6 +1633,27 @@ struct ScheduleEditorSheet: View {
         return nil
     }
 
+    /// The schedule being edited, if any. Used to detect whether the form
+    /// still matches what's stored so "Save Changes" can disable itself.
+    private var editingSchedule: Schedule? {
+        if case .edit(let schedule) = mode { return schedule }
+        return nil
+    }
+
+    /// True when an edited schedule differs from its stored version.
+    /// Create mode is always "changed" so its button keeps the existing
+    /// click-to-reveal-validation behaviour.
+    private var hasChanges: Bool {
+        guard let original = editingSchedule else { return true }
+        return trimmedName != original.name
+            || trimmedInstructions != original.instructions
+            || selectedAgentId != original.agentId
+            || isEnabled != original.isEnabled
+            || selectedFolderPath != original.folderPath
+            || selectedFolderBookmark != original.folderBookmark
+            || buildFrequency() != original.frequency
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             headerView
@@ -2438,6 +2459,7 @@ struct ScheduleEditorSheet: View {
             }
             .buttonStyle(SchedulePrimaryButtonStyle())
             .keyboardShortcut(.return, modifiers: .command)
+            .disabled(isEditing && !hasChanges)
         }
         .padding(.horizontal, 24)
         .padding(.vertical, 16)
@@ -2645,16 +2667,17 @@ private struct ScheduleTextField: View {
 
 private struct SchedulePrimaryButtonStyle: ButtonStyle {
     @Environment(\.theme) private var theme
+    @Environment(\.isEnabled) private var isEnabled
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(size: 13, weight: .medium))
-            .foregroundColor(.white)
+            .foregroundColor(isEnabled ? .white : theme.tertiaryText)
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
             .background(
                 RoundedRectangle(cornerRadius: 8)
-                    .fill(theme.accentColor)
+                    .fill(isEnabled ? theme.accentColor : theme.tertiaryBackground)
             )
             .opacity(configuration.isPressed ? 0.8 : 1.0)
     }
