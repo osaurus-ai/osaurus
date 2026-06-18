@@ -111,14 +111,31 @@ public struct ContextWindowInfo: Sendable, Equatable {
     public let sizeClass: ContextSizeClass
     public let contextLength: Int?
 
-    public init(sizeClass: ContextSizeClass, contextLength: Int?) {
+    /// Whether the prompt should render in its compact form (ids-only
+    /// manifest, small SOUL budget, compact family guidance, no plugin-creator
+    /// recipe). True for small/tiny windows (existing behaviour) AND for local
+    /// models small enough that the per-step tokenization cost of a verbose
+    /// prompt outweighs the prose — even when their window is large. Kept on
+    /// the SAME resolver as `sizeClass` (not a parallel classifier) but
+    /// DISTINCT from the disable axis: a roomy local 12B prefers compaction
+    /// without losing memory/tools the way `.small`/`.tiny` do. Session-constant
+    /// (derived from the model id) → KV-cache safe.
+    public let prefersCompactPrompt: Bool
+
+    public init(
+        sizeClass: ContextSizeClass,
+        contextLength: Int?,
+        prefersCompactPrompt: Bool = false
+    ) {
         self.sizeClass = sizeClass
         self.contextLength = contextLength
+        self.prefersCompactPrompt = prefersCompactPrompt
     }
 
     /// Conservative default returned when the model id is unknown or
     /// blank — keeps tools and memory enabled so we never hide them
-    /// speculatively before the picker has resolved a model.
+    /// speculatively before the picker has resolved a model. Verbose by
+    /// default (cloud / unresolved models handle a full prompt fine).
     public static let unknown = ContextWindowInfo(sizeClass: .normal, contextLength: nil)
 }
 
@@ -140,6 +157,13 @@ public enum ContextSizeResolver {
     /// Phi-mini, smaller Qwen variants).
     public static let smallCeiling: Int = 8192
 
+    /// Local models at or under this parameter count prefer the compact
+    /// prompt even on a large context window. The bottleneck is prompt-size
+    /// tokenization on the user's own hardware (re-run every agent-loop step),
+    /// so this is a cost/benefit ceiling, not a capability one. Tunable;
+    /// default covers the common local fleet (8B–12B) with headroom.
+    public static let compactParamCeilingBillions: Double = 20
+
     /// Resolve the size class for a given model id.
     /// - Parameter modelId: The picker / API model identifier. May
     ///   be `nil` when the chat hasn't picked a model yet (preview
@@ -160,7 +184,10 @@ public enum ContextSizeResolver {
         if trimmed.caseInsensitiveCompare("foundation") == .orderedSame
             || trimmed.caseInsensitiveCompare("default") == .orderedSame
         {
-            return ContextWindowInfo(sizeClass: .tiny, contextLength: tinyCeiling)
+            // Tiny window already implies compact.
+            return ContextWindowInfo(
+                sizeClass: .tiny, contextLength: tinyCeiling, prefersCompactPrompt: true
+            )
         }
 
         // Cache-only: `resolve` runs synchronously inside chat view getters
@@ -172,11 +199,19 @@ public enum ContextSizeResolver {
         else { return .unknown }
 
         if ctx <= tinyCeiling {
-            return ContextWindowInfo(sizeClass: .tiny, contextLength: ctx)
+            return ContextWindowInfo(sizeClass: .tiny, contextLength: ctx, prefersCompactPrompt: true)
         }
         if ctx <= smallCeiling {
-            return ContextWindowInfo(sizeClass: .small, contextLength: ctx)
+            return ContextWindowInfo(sizeClass: .small, contextLength: ctx, prefersCompactPrompt: true)
         }
-        return ContextWindowInfo(sizeClass: .normal, contextLength: ctx)
+        // Large window, local model: prefer compact when the model is small
+        // enough that verbose-prompt tokenization isn't worth it. Unknown size
+        // on a local model also compacts (the fleet skews small, and compaction
+        // only drops prose — never a capability id or a tool from the schema).
+        let billions = ModelMetadataParser.parameterCountBillions(from: trimmed)
+        let prefersCompact = billions.map { $0 <= compactParamCeilingBillions } ?? true
+        return ContextWindowInfo(
+            sizeClass: .normal, contextLength: ctx, prefersCompactPrompt: prefersCompact
+        )
     }
 }

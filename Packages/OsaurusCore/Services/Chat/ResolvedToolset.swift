@@ -58,4 +58,12 @@ struct ResolvedToolset: Sendable {
     /// tools but skip this text so a "hi" turn does not pay the full agentic
     /// preamble cost before the model has any real task to solve.
     let capabilityPromptSectionsEnabled: Bool
+
+    /// Mirror of `ContextWindowInfo.prefersCompactPrompt` for the resolved
+    /// model. Drives the ids-only manifest, the small SOUL budget, compact
+    /// model-family guidance, and dropping the plugin-creator recipe. Distinct
+    /// from `sizeClass` so a roomy local model compacts without the
+    /// memory/tool disabling `.small`/`.tiny` carry. Session-constant →
+    /// KV-cache safe.
+    let prefersCompactPrompt: Bool
 }
