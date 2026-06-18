@@ -105,6 +105,54 @@ struct MCPProviderProbeServiceTests {
         #expect(decision.denialReason == .backgroundCaptureDenied)
     }
 
+    @Test func probePasteboardTextRedactsCredentialFragments() {
+        let provider = MCPProvider(
+            id: UUID(),
+            name: "Secretive MCP",
+            url: "",
+            authType: .none,
+            transport: .stdio,
+            executionHost: .host,
+            command: "node",
+            args: ["server.js", "--token=secret-token"]
+        )
+        let result = MCPProviderProbeResult.failure(
+            provider: provider,
+            startedAt: Date(),
+            stage: .connect,
+            reasonCode: .authRequired,
+            message:
+                #"HTTP 401 {"access_token":"secret-token","client_secret":"secret-code"} Authorization: Bearer raw-token"#,
+            action: "Retry after rotating password=hunter2."
+        )
+
+        #expect(!result.pasteboardText.contains("secret-token"))
+        #expect(!result.pasteboardText.contains("secret-code"))
+        #expect(!result.pasteboardText.contains("raw-token"))
+        #expect(!result.pasteboardText.contains("hunter2"))
+        #expect(result.pasteboardText.contains("client_secret"))
+        #expect(result.pasteboardText.contains("***"))
+
+        let legacyRawResult = MCPProviderProbeResult(
+            providerId: provider.id,
+            providerName: provider.name,
+            transportSummary: "stdio host node server.js --client_secret=legacy-secret",
+            startedAt: Date(),
+            finishedAt: Date(),
+            succeeded: false,
+            stage: .connect,
+            reasonCode: .authRequired,
+            toolCount: 0,
+            toolNames: [],
+            message: "legacy access_token=legacy-token",
+            action: "legacy password=legacy-password"
+        )
+
+        #expect(!legacyRawResult.pasteboardText.contains("legacy-secret"))
+        #expect(!legacyRawResult.pasteboardText.contains("legacy-token"))
+        #expect(!legacyRawResult.pasteboardText.contains("legacy-password"))
+    }
+
     @Test func diagnosticsAppendHealthAndCaptureRows() {
         let provider = MCPProvider(
             id: UUID(),

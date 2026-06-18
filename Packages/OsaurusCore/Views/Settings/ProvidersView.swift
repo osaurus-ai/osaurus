@@ -15,6 +15,12 @@ struct ProvidersView: View {
     @State private var showAddSheet = false
     @State private var editingProvider: MCPProvider?
     @State private var hasAppeared = false
+    @State private var providerFilter: MCPServerHubFilter = .all
+    @State private var credentialPresence: [UUID: MCPProviderCredentialPresence] = [:]
+    @State private var healthSnapshots: [UUID: MCPProviderHealthSnapshot] = MCPProviderHealthSnapshotStore.load()
+    @State private var reconnectingAll = false
+    @State private var probingAll = false
+    @State private var probingProviderIds: Set<UUID> = []
 
     var body: some View {
         ScrollView {
@@ -25,24 +31,29 @@ struct ProvidersView: View {
                 if manager.configuration.providers.isEmpty {
                     emptyState
                 } else {
-                    ForEach(Array(manager.configuration.providers.enumerated()), id: \.element.id) {
-                        index,
-                        provider in
+                    hubPanel
+
+                    ForEach(Array(visibleProviderReports.enumerated()), id: \.element.id) { index, report in
                         ProviderCard(
-                            provider: provider,
-                            state: manager.providerStates[provider.id],
+                            report: report,
                             animationIndex: index,
-                            onEdit: { editingProvider = provider },
-                            onDelete: { manager.removeProvider(id: provider.id) },
-                            onConnect: { Task { try? await manager.connect(providerId: provider.id) } },
-                            onDisconnect: { manager.disconnect(providerId: provider.id) },
+                            isTesting: probingProviderIds.contains(report.id),
+                            onEdit: { editingProvider = report.provider },
+                            onDelete: { manager.removeProvider(id: report.id) },
+                            onConnect: { Task { try? await manager.connect(providerId: report.id) } },
+                            onDisconnect: { manager.disconnect(providerId: report.id) },
+                            onTest: { probeProvider(report.provider) },
+                            onCopyDiagnostics: { copyDiagnostics(report.diagnostics) },
                             onToggleEnabled: { enabled in
-                                manager.setEnabled(enabled, for: provider.id)
+                                manager.setEnabled(enabled, for: report.id)
                             },
                             onSignIn: {
                                 Task {
                                     do {
-                                        _ = try await manager.oauthSignIn(providerId: provider.id)
+                                        _ = try await manager.oauthSignIn(providerId: report.id)
+                                        await MainActor.run {
+                                            refreshCredentialPresence()
+                                        }
                                     } catch {
                                         // The manager already wrote the error into
                                         // `MCPProviderState.lastError`, so the inline
@@ -50,7 +61,7 @@ struct ProvidersView: View {
                                         // toast it so the user notices even if their
                                         // card is scrolled off-screen.
                                         await MainActor.run {
-                                            ToastManager.shared.error(
+                                            _ = ToastManager.shared.error(
                                                 L("OAuth sign-in failed"),
                                                 message: error.localizedDescription
                                             )
@@ -61,17 +72,18 @@ struct ProvidersView: View {
                             onSaveBearerToken: { token in
                                 // Persist directly to Keychain (the provider record
                                 // itself doesn't change) and immediately retry.
-                                _ = MCPProviderKeychain.saveToken(token, for: provider.id)
+                                _ = MCPProviderKeychain.saveToken(token, for: report.id)
+                                refreshCredentialPresence()
                                 // Enable the provider so the retry connect doesn't no-op.
-                                if !provider.enabled {
-                                    manager.setEnabled(true, for: provider.id)
+                                if !report.provider.enabled {
+                                    manager.setEnabled(true, for: report.id)
                                 }
                                 Task {
                                     do {
-                                        try await manager.connect(providerId: provider.id)
+                                        try await manager.connect(providerId: report.id)
                                     } catch {
                                         await MainActor.run {
-                                            ToastManager.shared.error(
+                                            _ = ToastManager.shared.error(
                                                 L("Couldn't connect with new token"),
                                                 message: error.localizedDescription
                                             )
@@ -90,19 +102,31 @@ struct ProvidersView: View {
             withAnimation(.easeOut(duration: 0.25).delay(0.1)) {
                 hasAppeared = true
             }
+            refreshCredentialPresence()
+            refreshHealthSnapshots()
             applyPendingEditRequest()
         }
         .onChange(of: managementState.pendingMCPProviderEditId) { _, _ in
             applyPendingEditRequest()
         }
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: Foundation.Notification.Name.mcpProviderHealthSnapshotChanged
+            )
+        ) { _ in
+            refreshHealthSnapshots()
+        }
         .sheet(isPresented: $showAddSheet) {
             ProviderEditSheet(provider: nil) { provider, token in
                 manager.addProvider(provider, token: token)
+                refreshCredentialPresence()
             }
         }
         .sheet(item: $editingProvider) { provider in
             ProviderEditSheet(provider: provider) { updatedProvider, token in
                 manager.updateProvider(updatedProvider, token: token)
+                refreshCredentialPresence()
+                refreshHealthSnapshots()
             }
         }
     }
@@ -116,6 +140,151 @@ struct ProvidersView: View {
             editingProvider = provider
         }
         managementState.pendingMCPProviderEditId = nil
+    }
+
+    private var hubSnapshot: MCPServerHubSnapshot {
+        MCPServerHub.snapshot(
+            providers: manager.configuration.providers,
+            states: manager.providerStates,
+            proxy: GlobalProxySettings.currentDiagnostic(),
+            credentialsByProvider: credentialPresence,
+            healthSnapshots: healthSnapshots
+        )
+    }
+
+    private var visibleProviderReports: [MCPServerHubProviderReport] {
+        hubSnapshot.filtered(by: providerFilter)
+    }
+
+    private var hubPanel: some View {
+        MCPServerHubPanel(
+            snapshot: hubSnapshot,
+            filter: $providerFilter,
+            isReconnecting: reconnectingAll,
+            isProbing: probingAll,
+            onReconnectAll: reconnectEnabledProviders,
+            onProbeAll: probeEnabledProviders,
+            onCopyReport: copyHubReport
+        )
+    }
+
+    private func refreshCredentialPresence() {
+        let providers = manager.configuration.providers
+        Task {
+            var next: [UUID: MCPProviderCredentialPresence] = [:]
+            for provider in providers {
+                let providerID = provider.id
+                let presence = await Task.detached(priority: .utility) {
+                    MCPProviderCredentialPresence(
+                        bearerTokenPresent: MCPProviderKeychain.hasToken(for: providerID),
+                        oauthTokensPresent: MCPProviderKeychain.hasOAuthTokens(for: providerID)
+                    )
+                }.value
+                next[providerID] = presence
+            }
+            await MainActor.run {
+                credentialPresence = next
+            }
+        }
+    }
+
+    private func refreshHealthSnapshots() {
+        healthSnapshots = MCPProviderHealthSnapshotStore.load()
+    }
+
+    private func reconnectEnabledProviders() {
+        let targets = manager.configuration.providers.filter(\.enabled)
+        guard !targets.isEmpty else { return }
+        reconnectingAll = true
+        Task {
+            for provider in targets {
+                do {
+                    try await manager.connect(providerId: provider.id)
+                } catch {
+                    // Row state keeps the user-facing diagnostic.
+                }
+            }
+            await MainActor.run {
+                reconnectingAll = false
+            }
+        }
+    }
+
+    private func probeEnabledProviders() {
+        let targets = manager.configuration.providers.filter(\.enabled)
+        guard !targets.isEmpty else { return }
+        probingAll = true
+        probingProviderIds.formUnion(targets.map(\.id))
+        Task {
+            for provider in targets {
+                let result = await probeResult(for: provider)
+                MCPProviderHealthSnapshotStore.record(result, for: provider)
+            }
+            await MainActor.run {
+                refreshHealthSnapshots()
+                probingProviderIds.subtract(targets.map(\.id))
+                probingAll = false
+            }
+        }
+    }
+
+    private func probeProvider(_ provider: MCPProvider) {
+        guard !probingProviderIds.contains(provider.id) else { return }
+        probingProviderIds.insert(provider.id)
+        Task {
+            let result = await probeResult(for: provider)
+            MCPProviderHealthSnapshotStore.record(result, for: provider)
+            await MainActor.run {
+                refreshHealthSnapshots()
+                _ = probingProviderIds.remove(provider.id)
+            }
+        }
+    }
+
+    private func probeResult(for provider: MCPProvider) async -> MCPProviderProbeResult {
+        switch provider.transport {
+        case .http:
+            let credentials = await Task.detached(priority: .utility) {
+                let token: String? =
+                    switch provider.authType {
+                    case .bearerToken:
+                        MCPProviderKeychain.getToken(for: provider.id)
+                    case .oauth:
+                        MCPProviderKeychain.getOAuthTokens(for: provider.id)?.accessToken
+                    case .none:
+                        nil
+                    }
+                return (
+                    token,
+                    provider.resolvedHeaders()
+                )
+            }.value
+            return await MCPProviderProbeService.probeHTTP(
+                providerId: provider.id,
+                name: provider.name,
+                url: provider.url,
+                token: credentials.0,
+                headers: credentials.1,
+                streamingEnabled: provider.streamingEnabled,
+                discoveryTimeout: provider.discoveryTimeout
+            )
+        case .stdio:
+            return await MCPProviderProbeService.probeStdio(provider: provider)
+        }
+    }
+
+    private func copyHubReport() {
+        copyText(hubSnapshot.pasteboardText)
+    }
+
+    private func copyDiagnostics(_ report: ProviderDiagnosticReport) {
+        copyText(report.pasteboardText)
+    }
+
+    private func copyText(_ value: String) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(value, forType: .string)
     }
 
     private var headerSection: some View {
@@ -179,17 +348,200 @@ struct ProvidersView: View {
     }
 }
 
+// MARK: - MCP Server Hub Panel
+
+private struct MCPServerHubPanel: View {
+    @Environment(\.theme) private var theme
+
+    let snapshot: MCPServerHubSnapshot
+    @Binding var filter: MCPServerHubFilter
+    let isReconnecting: Bool
+    let isProbing: Bool
+    let onReconnectAll: () -> Void
+    let onProbeAll: () -> Void
+    let onCopyReport: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .center, spacing: 12) {
+                HStack(spacing: 10) {
+                    Image(systemName: iconName)
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(statusColor)
+                        .frame(width: 30, height: 30)
+                        .background(Circle().fill(statusColor.opacity(0.12)))
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("MCP Server Hub", bundle: .module)
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundColor(theme.primaryText)
+                            .lineLimit(1)
+                        Text(summaryText)
+                            .font(.system(size: 12))
+                            .foregroundColor(theme.secondaryText)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
+                }
+
+                Spacer()
+
+                hubIconButton(
+                    systemName: "antenna.radiowaves.left.and.right",
+                    isBusy: isProbing,
+                    isDisabled: isProbing || snapshot.enabledCount == 0,
+                    help: "Probe enabled",
+                    action: onProbeAll
+                )
+
+                hubIconButton(
+                    systemName: "arrow.clockwise",
+                    isBusy: isReconnecting,
+                    isDisabled: isReconnecting || snapshot.enabledCount == 0,
+                    help: "Reconnect enabled",
+                    action: onReconnectAll
+                )
+
+                hubIconButton(
+                    systemName: "doc.on.doc",
+                    isBusy: false,
+                    isDisabled: snapshot.totalCount == 0,
+                    help: "Copy diagnostics",
+                    action: onCopyReport
+                )
+            }
+
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 86), spacing: 8, alignment: .leading)],
+                alignment: .leading,
+                spacing: 8
+            ) {
+                MCPServerHubMetricPill(
+                    title: L("Connected"),
+                    value: "\(snapshot.connectedCount)",
+                    color: theme.successColor
+                )
+                MCPServerHubMetricPill(
+                    title: L("Attention"),
+                    value: "\(snapshot.attentionCount)",
+                    color: theme.warningColor
+                )
+                MCPServerHubMetricPill(title: L("Tools"), value: "\(snapshot.toolCount)", color: theme.accentColor)
+                MCPServerHubMetricPill(title: L("Stdio"), value: "\(snapshot.stdioCount)", color: theme.infoColor)
+                MCPServerHubMetricPill(title: L("Host"), value: "\(snapshot.hostStdioCount)", color: Color.orange)
+            }
+
+            Picker("", selection: $filter) {
+                ForEach(MCPServerHubFilter.allCases, id: \.self) { option in
+                    Text(option.displayName).tag(option)
+                }
+            }
+            .pickerStyle(.segmented)
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(theme.secondaryBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(statusColor.opacity(0.35), lineWidth: 1)
+                )
+        )
+    }
+
+    private func hubIconButton(
+        systemName: String,
+        isBusy: Bool,
+        isDisabled: Bool,
+        help: LocalizedStringKey,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            if isBusy {
+                ProgressView()
+                    .scaleEffect(0.55)
+                    .frame(width: 28, height: 28)
+            } else {
+                Image(systemName: systemName)
+                    .font(.system(size: 12, weight: .semibold))
+                    .frame(width: 28, height: 28)
+            }
+        }
+        .buttonStyle(PlainButtonStyle())
+        .foregroundColor(theme.secondaryText)
+        .background(Circle().fill(theme.tertiaryBackground))
+        .disabled(isDisabled)
+        .localizedHelp(help)
+    }
+
+    private var statusColor: Color {
+        switch snapshot.highestSeverity {
+        case .ok:
+            return theme.successColor
+        case .info:
+            return theme.infoColor
+        case .warning:
+            return theme.warningColor
+        case .blocked:
+            return theme.errorColor
+        }
+    }
+
+    private var iconName: String {
+        switch snapshot.highestSeverity {
+        case .ok:
+            return "checkmark.seal.fill"
+        case .info:
+            return "server.rack"
+        case .warning:
+            return "exclamationmark.triangle.fill"
+        case .blocked:
+            return "xmark.octagon.fill"
+        }
+    }
+
+    private var summaryText: String {
+        L(
+            "\(snapshot.connectedCount)/\(snapshot.totalCount) connected - \(snapshot.attentionCount) attention - \(snapshot.toolCount) tools"
+        )
+    }
+}
+
+private struct MCPServerHubMetricPill: View {
+    @Environment(\.theme) private var theme
+
+    let title: String
+    let value: String
+    let color: Color
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Text(value)
+                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                .foregroundColor(color)
+            Text(title)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(theme.secondaryText)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(Capsule().fill(color.opacity(0.1)))
+    }
+}
+
 // MARK: - Provider Card
 
 private struct ProviderCard: View {
     @Environment(\.theme) private var theme
-    let provider: MCPProvider
-    let state: MCPProviderState?
+    let report: MCPServerHubProviderReport
     var animationIndex: Int = 0
+    let isTesting: Bool
     let onEdit: () -> Void
     let onDelete: () -> Void
     let onConnect: () -> Void
     let onDisconnect: () -> Void
+    let onTest: () -> Void
+    let onCopyDiagnostics: () -> Void
     let onToggleEnabled: (Bool) -> Void
     let onSignIn: () -> Void
     /// Inline "Add API token" submit for bearer-token providers that hit a 401.
@@ -203,9 +555,9 @@ private struct ProviderCard: View {
     @State private var showDeleteConfirm = false
     /// Inline secure-field text for the bearer-token 401 banner. Cleared on submit.
     @State private var inlineBearerToken: String = ""
-    @State private var bearerTokenPresent = false
-    @State private var oauthTokensPresent = false
-    @State private var healthSnapshot: MCPProviderHealthSnapshot?
+
+    private var provider: MCPProvider { report.provider }
+    private var state: MCPProviderState? { report.state }
 
     private var isConnected: Bool {
         state?.isConnected ?? false
@@ -220,35 +572,7 @@ private struct ProviderCard: View {
     }
 
     private var diagnosticsReport: ProviderDiagnosticReport {
-        let baseReport = ProviderNetworkDiagnostics.mcpProviderReport(
-            provider: provider,
-            state: state,
-            proxy: GlobalProxySettings.currentDiagnostic(),
-            bearerTokenPresent: bearerTokenPresent,
-            oauthTokensPresent: oauthTokensPresent
-        )
-        return MCPLocalProviderDiagnostics.augment(
-            report: baseReport,
-            provider: provider,
-            healthSnapshot: healthSnapshot
-        )
-    }
-
-    @MainActor
-    private func refreshCredentialState() async {
-        let providerID = provider.id
-        let credentials = await Task.detached(priority: .utility) {
-            (
-                MCPProviderKeychain.hasToken(for: providerID),
-                MCPProviderKeychain.hasOAuthTokens(for: providerID)
-            )
-        }.value
-        bearerTokenPresent = credentials.0
-        oauthTokensPresent = credentials.1
-    }
-
-    private func refreshHealthSnapshot() {
-        healthSnapshot = MCPProviderHealthSnapshotStore.snapshot(providerId: provider.id)
+        report.diagnostics
     }
 
     var body: some View {
@@ -295,6 +619,14 @@ private struct ProviderCard: View {
                                 .truncationMode(
                                     provider.transport == .stdio ? .middle : .tail
                                 )
+
+                            if report.hasAttention {
+                                Text(report.summary)
+                                    .font(.system(size: 11))
+                                    .foregroundColor(theme.secondaryText)
+                                    .lineLimit(1)
+                                    .truncationMode(.tail)
+                            }
                         }
 
                         Spacer()
@@ -355,6 +687,39 @@ private struct ProviderCard: View {
                                     ? theme.errorColor.opacity(0.1) : (isConnecting ? Color.clear : theme.accentColor)
                             )
                     )
+
+                    Button(action: onTest) {
+                        if isTesting {
+                            ProgressView()
+                                .scaleEffect(0.55)
+                                .frame(width: 28, height: 28)
+                        } else {
+                            Image(systemName: "antenna.radiowaves.left.and.right")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundColor(theme.secondaryText)
+                                .frame(width: 28, height: 28)
+                        }
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .background(
+                        RoundedRectangle(cornerRadius: 7)
+                            .fill(theme.tertiaryBackground)
+                    )
+                    .disabled(isTesting)
+                    .localizedHelp("Probe")
+
+                    Button(action: onCopyDiagnostics) {
+                        Image(systemName: "doc.on.doc")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(theme.secondaryText)
+                            .frame(width: 28, height: 28)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .background(
+                        RoundedRectangle(cornerRadius: 7)
+                            .fill(theme.tertiaryBackground)
+                    )
+                    .localizedHelp("Copy diagnostics")
 
                     Menu {
                         Button(action: onEdit) {
@@ -455,23 +820,6 @@ private struct ProviderCard: View {
         .background(cardBackground)
         .animation(.easeOut(duration: 0.15), value: isHovering)
         .onHover { hovering in isHovering = hovering }
-        .task(id: provider.id) {
-            await refreshCredentialState()
-            refreshHealthSnapshot()
-        }
-        .onChange(of: provider.authType) { _, _ in
-            Task { await refreshCredentialState() }
-        }
-        .onReceive(
-            NotificationCenter.default.publisher(
-                for: Foundation.Notification.Name.mcpProviderHealthSnapshotChanged
-            )
-        ) { notification in
-            guard let changedId = notification.object as? UUID else { return }
-            if changedId == provider.id {
-                refreshHealthSnapshot()
-            }
-        }
         .opacity(hasAppeared ? 1 : 0)
         .onAppear {
             let delay = Double(animationIndex) * 0.03
@@ -1861,12 +2209,12 @@ private struct ProviderEditSheet: View {
                     probeChip(title: "Tools", value: "\(result.toolCount)")
                 }
 
-                Text(result.message)
+                Text(result.redactedMessage)
                     .font(.system(size: 12))
                     .foregroundColor(themeManager.currentTheme.secondaryText)
                     .fixedSize(horizontal: false, vertical: true)
 
-                if let action = result.action, !action.isEmpty {
+                if let action = result.redactedAction {
                     Text(action)
                         .font(.system(size: 12, weight: .medium))
                         .foregroundColor(themeManager.currentTheme.accentColor)

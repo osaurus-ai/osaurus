@@ -48,8 +48,8 @@ public enum MCPLocalProviderDiagnostics {
             severity: result.succeeded ? .ok : .blocked,
             detail: result.succeeded
                 ? L("\(result.toolCount) tool(s) discovered via \(snapshot.transportSummary).")
-                : result.message,
-            action: result.action
+                : result.redactedMessage,
+            action: result.redactedAction
         )
     }
 

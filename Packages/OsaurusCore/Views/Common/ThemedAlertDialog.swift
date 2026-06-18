@@ -28,6 +28,16 @@ public final class ThemedAlertCenter: ObservableObject {
     @Published private var activeByScope: [ThemedAlertScope: ThemedAlertRequest] = [:]
 
     func present(_ request: ThemedAlertRequest, scope: ThemedAlertScope) {
+        // A scope holds at most one alert. When a new alert replaces a
+        // different one already showing (e.g. an async sandbox-cleanup
+        // notice landing while a delete-confirmation is open), reset the
+        // clobbered presenter so its `isPresented` binding doesn't wedge
+        // at `true`. Without this, the source view's `@State` stays set
+        // and its `onChange`-driven re-present never fires again, so that
+        // control can never raise its alert a second time.
+        if let existing = activeByScope[scope], existing.id != request.id {
+            existing.onDismiss()
+        }
         activeByScope[scope] = request
     }
 

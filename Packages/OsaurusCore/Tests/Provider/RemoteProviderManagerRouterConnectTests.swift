@@ -287,4 +287,70 @@ struct RemoteProviderManagerRouterConnectTests {
             #expect(manager.providerStates[routerId]?.isConnected != true)
         }
     }
+
+    // MARK: - Master enable/disable switch
+
+    @Test func disablingRouter_dropsProviderHidesModelsAndStopsConnects() async throws {
+        await RemoteProviderTestLock.shared.run {
+            let manager = RemoteProviderManager.shared
+            resetRouter(manager)
+            defer { manager._testRemoveProviders(ids: [routerId]) }
+
+            manager.testIdentityExistsOverride = true
+            manager.testRetrySleepOverride = { _ in }
+
+            let counter = Counter()
+            manager.testFetchModelsOverride = { _ in
+                counter.increment()
+                return ["router/model-a"]
+            }
+
+            // Enabled + connected: the router is exposed to the picker source.
+            await manager.connectOsaurusRouterWithRetry(maxAttempts: 1)
+            #expect(manager.providerStates[routerId]?.isConnected == true)
+            #expect(manager.cachedAvailableModels().contains { $0.providerId == routerId })
+            #expect(counter.value == 1)
+
+            // Disable: provider dropped and excluded from the picker source.
+            manager.setOsaurusRouterEnabled(false)
+            #expect(manager.isOsaurusRouterEnabled == false)
+            #expect(manager.configuration.provider(id: routerId) == nil)
+            #expect(!manager.cachedAvailableModels().contains { $0.providerId == routerId })
+
+            // No further connects/fetches happen while the router is off.
+            counter.value = 0
+            await manager.connectOsaurusRouterWithRetry(maxAttempts: 3)
+            #expect(counter.value == 0)
+            #expect(manager.providerStates[routerId]?.isConnected != true)
+        }
+    }
+
+    @Test func reEnablingRouter_reinjectsAndReconnects() async throws {
+        await RemoteProviderTestLock.shared.run {
+            let manager = RemoteProviderManager.shared
+            resetRouter(manager)
+            defer { manager._testRemoveProviders(ids: [routerId]) }
+
+            manager.testIdentityExistsOverride = true
+            manager.testRetrySleepOverride = { _ in }
+            manager.testFetchModelsOverride = { _ in ["router/model-b"] }
+
+            // Off: provider absent, hidden from the picker source.
+            manager.setOsaurusRouterEnabled(false)
+            #expect(manager.configuration.provider(id: routerId) == nil)
+
+            // On: provider is re-injected synchronously; the spawned connect then
+            // reconnects and restores the model to the picker source.
+            manager.setOsaurusRouterEnabled(true)
+            #expect(manager.isOsaurusRouterEnabled == true)
+            #expect(manager.configuration.provider(id: routerId) != nil)
+
+            await manager._testAwaitRouterEnableWork()
+
+            let state = manager.providerStates[routerId]
+            #expect(state?.isConnected == true)
+            #expect(state?.discoveredModels == ["router/model-b"])
+            #expect(manager.cachedAvailableModels().contains { $0.providerId == routerId })
+        }
+    }
 }

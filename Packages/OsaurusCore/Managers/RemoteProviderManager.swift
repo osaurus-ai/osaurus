@@ -50,6 +50,13 @@ public final class RemoteProviderManager: ObservableObject {
     /// Current configuration
     @Published public private(set) var configuration: RemoteProviderConfiguration
 
+    /// SwiftUI mirror of `OsaurusRouter.isEnabled` (UserDefaults). The default
+    /// expression runs before `init`'s body, so the first
+    /// `ensureManagedOsaurusRouterProviderIfNeeded()` already sees it. Mutate
+    /// only via `setOsaurusRouterEnabled(_:)` to keep persistence, the managed
+    /// provider, and the picker in lockstep.
+    @Published public private(set) var isOsaurusRouterEnabled: Bool = OsaurusRouter.isEnabled
+
     /// Runtime state for each provider
     @Published public private(set) var providerStates: [UUID: RemoteProviderState] = [:]
 
@@ -111,7 +118,11 @@ public final class RemoteProviderManager: ObservableObject {
     }
 
     private func ensureManagedOsaurusRouterProviderIfNeeded() {
-        guard identityExists() else {
+        // A disabled router behaves exactly like a missing identity: drop the
+        // managed provider, its state, and any live service. This is what
+        // removes Osaurus from the model picker and makes every
+        // `connectOsaurusRouter*` path no-op while the user has it off.
+        guard isOsaurusRouterEnabled, identityExists() else {
             configuration.providers.removeAll(where: Self.isManagedOsaurusRouterProvider)
             providerStates.removeValue(forKey: Self.osaurusRouterProviderId)
             if let service = services.removeValue(forKey: Self.osaurusRouterProviderId) {
@@ -427,6 +438,38 @@ public final class RemoteProviderManager: ObservableObject {
         try? await connect(providerId: Self.osaurusRouterProviderId)
     }
 
+    /// User-facing master switch for the managed Osaurus Router. Disabling drops
+    /// the managed provider (see `ensureManagedOsaurusRouterProviderIfNeeded`)
+    /// and clears credits state; enabling re-injects it and reconnects with the
+    /// usual bounded retry. Idempotent.
+    public func setOsaurusRouterEnabled(_ enabled: Bool) {
+        guard enabled != isOsaurusRouterEnabled else { return }
+        OsaurusRouter.setEnabled(enabled)
+        isOsaurusRouterEnabled = enabled
+
+        // Inject (enable) or drop (disable) the managed provider and its live
+        // URLSession to match the new state.
+        ensureManagedOsaurusRouterProviderIfNeeded()
+
+        if enabled {
+            // Balance/usage refresh is owned by the Credits view, so this stays
+            // a pure connect that tests can drain.
+            osaurusRouterEnableTask = Task { [weak self] in
+                await self?.connectOsaurusRouterWithRetry()
+            }
+        } else {
+            osaurusRouterEnableTask?.cancel()
+            osaurusRouterEnableTask = nil
+            OsaurusRouterAccountService.shared.clearForDisabledRouter()
+        }
+
+        // Rebuild the picker and refresh status UI. Open chats observe
+        // `.remoteProviderModelsChanged` and fall back off an Osaurus model when
+        // it disappears.
+        notifyModelsChanged()
+        notifyStatusChanged()
+    }
+
     // MARK: - Osaurus Router connect retry & recovery
 
     /// Total attempts (including the first) for the launch-time router connect.
@@ -571,6 +614,10 @@ public final class RemoteProviderManager: ObservableObject {
 
     private var refreshConnectedTask: Task<Void, Never>?
 
+    /// Connect kicked off by `setOsaurusRouterEnabled(true)`. Retained so tests
+    /// can await it; nil when idle or after a disable.
+    private var osaurusRouterEnableTask: Task<Void, Never>?
+
     /// Last successful refetch per provider for throttling
     private var lastModelRefetchAt: [UUID: Date] = [:]
 
@@ -578,6 +625,7 @@ public final class RemoteProviderManager: ObservableObject {
 
     /// Test seam: when set, used in place of `RemoteProviderService.fetchModels`.
     var testFetchModelsOverride: (@MainActor (RemoteProvider) async throws -> [String])?
+    var testConnectionTransportOverride: (@MainActor (URLRequest) async throws -> (Data, URLResponse))?
 
     /// Re-query `/models` for one connected provider without tearing down its
     /// service, flipping `isConnecting`, or refreshing OAuth.
@@ -769,7 +817,8 @@ public final class RemoteProviderManager: ObservableObject {
         authType: RemoteProviderAuthType,
         providerType: RemoteProviderType = .openaiLegacy,
         apiKey: String?,
-        headers: [String: String]
+        headers: [String: String],
+        manualModelIds: [String] = []
     ) async throws -> [String] {
         if authType == .openAICodexOAuth && providerType == .openAICodex {
             // testConnection runs before sign-in (no OAuth tokens exist yet), so
@@ -797,7 +846,8 @@ public final class RemoteProviderManager: ObservableObject {
             providerType: providerType,
             enabled: true,
             autoConnect: false,
-            timeout: 30
+            timeout: 30,
+            manualModelIds: manualModelIds
         )
 
         // Manually add API key to headers for test (since it's not in Keychain)
@@ -857,7 +907,12 @@ public final class RemoteProviderManager: ObservableObject {
         }
 
         do {
-            let (data, response) = try await GlobalProxySettings.sharedSession().data(for: request)
+            let (data, response): (Data, URLResponse)
+            if let override = testConnectionTransportOverride {
+                (data, response) = try await override(request)
+            } else {
+                (data, response) = try await GlobalProxySettings.sharedSession().data(for: request)
+            }
 
             guard let httpResponse = response as? HTTPURLResponse else {
                 print("[Osaurus] Test Connection: Invalid response type")
@@ -866,14 +921,14 @@ public final class RemoteProviderManager: ObservableObject {
 
             print("[Osaurus] Test Connection: HTTP \(httpResponse.statusCode)")
 
-            if httpResponse.statusCode >= 400 {
-                let errorMessage = extractErrorMessage(from: data, statusCode: httpResponse.statusCode)
-                print("[Osaurus] Test Connection: Error response: \(errorMessage)")
-                throw RemoteProviderError.connectionFailed(errorMessage)
-            }
-
             // Parse models response based on provider type
             if providerType == .gemini {
+                if httpResponse.statusCode >= 400 {
+                    let errorMessage = extractErrorMessage(from: data, statusCode: httpResponse.statusCode)
+                    print("[Osaurus] Test Connection: Error response: \(errorMessage)")
+                    throw RemoteProviderError.connectionFailed(errorMessage)
+                }
+
                 let modelsResponse = try JSONDecoder().decode(GeminiModelsResponse.self, from: data)
                 let models = (modelsResponse.models ?? [])
                     .filter { model in
@@ -884,9 +939,13 @@ public final class RemoteProviderManager: ObservableObject {
                 print("[Osaurus] Test Connection (Gemini): Success - found \(models.count) models")
                 return models
             } else {
-                let modelsResponse = try JSONDecoder().decode(ModelsResponse.self, from: data)
-                print("[Osaurus] Test Connection: Success - found \(modelsResponse.data.count) models")
-                return modelsResponse.data.map { $0.id }
+                let models = try RemoteProviderService.decodeOpenAICompatibleModelsResponse(
+                    data: data,
+                    statusCode: httpResponse.statusCode,
+                    provider: tempProvider
+                )
+                print("[Osaurus] Test Connection: Success - found \(models.count) models")
+                return models
             }
         } catch let error as RemoteProviderError {
             throw error
@@ -1006,6 +1065,12 @@ public final class RemoteProviderManager: ObservableObject {
         providerStates[id] = state
     }
 
+    /// Await the connect spawned by the last `setOsaurusRouterEnabled(true)` so
+    /// toggle tests can assert a deterministic post-connect state. Test-only.
+    func _testAwaitRouterEnableWork() async {
+        await osaurusRouterEnableTask?.value
+    }
+
     /// Tear down test state added by `_testInstallConnectedProvider` and
     /// reset throttle / in-flight task so each test starts clean.
     func _testRemoveProviders(ids: [UUID]) {
@@ -1019,8 +1084,15 @@ public final class RemoteProviderManager: ObservableObject {
             }
         }
         refreshConnectedTask = nil
+        osaurusRouterEnableTask?.cancel()
+        osaurusRouterEnableTask = nil
+        // Restore the master switch to its default (on) so a test that toggled
+        // it off can't bleed into another test's managed-router expectations.
+        isOsaurusRouterEnabled = true
+        UserDefaults.standard.removeObject(forKey: OsaurusRouter.enabledDefaultsKey)
         osaurusRouterModelCatalog = [:]
         testFetchModelsOverride = nil
+        testConnectionTransportOverride = nil
         testIdentityExistsOverride = nil
         testRetrySleepOverride = nil
     }

@@ -8,12 +8,74 @@
 //  through the public route.
 //
 
+import CFNetwork
 import Foundation
 import Testing
 
 @testable import OsaurusCore
 
 struct RelayPublicURLProbeTests {
+    @Test func liveHealthCheckSessionUsesGlobalProxySetting() async throws {
+        try await StoragePathsTestLock.shared.run {
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+                "osaurus-relay-health-proxy-\(UUID().uuidString)",
+                isDirectory: true
+            )
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            let previousRoot = OsaurusPaths.overrideRoot
+            OsaurusPaths.overrideRoot = root
+            defer {
+                OsaurusPaths.overrideRoot = previousRoot
+                try? FileManager.default.removeItem(at: root)
+            }
+
+            try OsaurusPaths.ensureExists(OsaurusPaths.config())
+            var configuration = ServerConfiguration.default
+            configuration.globalProxyURL = "https://proxy.example.com:8443"
+            try JSONEncoder().encode(configuration).write(to: OsaurusPaths.serverConfigFile(), options: .atomic)
+
+            let session = RelayPublicURLProbe.makeHealthCheckSession()
+            defer { session.invalidateAndCancel() }
+
+            let dictionary = session.configuration.connectionProxyDictionary
+            #expect(dictionary?[proxyKey(kCFNetworkProxiesHTTPSEnable)] as? Int == 1)
+            #expect(dictionary?[proxyKey(kCFNetworkProxiesHTTPSProxy)] as? String == "proxy.example.com")
+            #expect(dictionary?[proxyKey(kCFNetworkProxiesHTTPSPort)] as? Int == 8443)
+            #expect(session.configuration.waitsForConnectivity == false)
+            #expect(session.configuration.timeoutIntervalForRequest == 8)
+            #expect(session.configuration.timeoutIntervalForResource == 8)
+        }
+    }
+
+    @Test func websocketSessionUsesGlobalProxySetting() async throws {
+        try await StoragePathsTestLock.shared.run {
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+                "osaurus-relay-websocket-proxy-\(UUID().uuidString)",
+                isDirectory: true
+            )
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            let previousRoot = OsaurusPaths.overrideRoot
+            OsaurusPaths.overrideRoot = root
+            defer {
+                OsaurusPaths.overrideRoot = previousRoot
+                try? FileManager.default.removeItem(at: root)
+            }
+
+            try OsaurusPaths.ensureExists(OsaurusPaths.config())
+            var configuration = ServerConfiguration.default
+            configuration.globalProxyURL = "socks5://proxy.example.com:1080"
+            try JSONEncoder().encode(configuration).write(to: OsaurusPaths.serverConfigFile(), options: .atomic)
+
+            let session = RelayTunnelManager.makeWebSocketSession()
+            defer { session.invalidateAndCancel() }
+
+            let dictionary = session.configuration.connectionProxyDictionary
+            #expect(dictionary?[proxyKey(kCFNetworkProxiesSOCKSEnable)] as? Int == 1)
+            #expect(dictionary?[proxyKey(kCFNetworkProxiesSOCKSProxy)] as? String == "proxy.example.com")
+            #expect(dictionary?[proxyKey(kCFNetworkProxiesSOCKSPort)] as? Int == 1080)
+        }
+    }
+
     @Test func healthRequestTargetsPublicHealthEndpoint() throws {
         let request = try #require(
             RelayPublicURLProbe.makeHealthRequest(baseURL: "https://0xabc.agent.osaurus.ai")
@@ -118,4 +180,8 @@ struct RelayPublicURLProbeTests {
             headerFields: ["Content-Type": "application/json"]
         )!
     }
+}
+
+private func proxyKey(_ value: CFString) -> AnyHashable {
+    AnyHashable(value as String)
 }

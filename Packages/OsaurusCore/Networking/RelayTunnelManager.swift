@@ -43,14 +43,18 @@ struct RelayPublicURLProbe: Sendable {
 
     static func live() -> RelayPublicURLProbe {
         RelayPublicURLProbe { request in
-            let config = URLSessionConfiguration.ephemeral
-            config.waitsForConnectivity = false
-            config.timeoutIntervalForRequest = timeout
-            config.timeoutIntervalForResource = timeout
-            let session = URLSession(configuration: config)
+            let session = Self.makeHealthCheckSession()
             defer { session.finishTasksAndInvalidate() }
             return try await session.data(for: request)
         }
+    }
+
+    static func makeHealthCheckSession() -> URLSession {
+        let config = URLSessionConfiguration.ephemeral
+        config.waitsForConnectivity = false
+        config.timeoutIntervalForRequest = timeout
+        config.timeoutIntervalForResource = timeout
+        return GlobalProxySettings.makeSession(base: config)
     }
 
     static func makeHealthRequest(baseURL: String) -> URLRequest? {
@@ -216,6 +220,10 @@ public final class RelayTunnelManager: ObservableObject {
         configuration = RelayConfigurationStore.load()
     }
 
+    nonisolated static func makeWebSocketSession() -> URLSession {
+        GlobalProxySettings.makeSession(base: .default)
+    }
+
     // MARK: - Public API
 
     /// Enable or disable tunneling for an agent. Persists the setting and connects/disconnects as needed.
@@ -315,7 +323,7 @@ public final class RelayTunnelManager: ObservableObject {
         // Re-check after the suspension: another connect may have won the race
         guard webSocketTask == nil || !isConnected else { return }
 
-        let session = URLSession(configuration: .default)
+        let session = Self.makeWebSocketSession()
         let task = session.webSocketTask(with: Self.relayURL)
         self.urlSession = session
         self.webSocketTask = task
