@@ -1,13 +1,13 @@
 # Native Swift image generation integration
 
 This documents the Osaurus-side boundary for native Swift MFlux/Flux-family
-image generation through vMLX. It is a wiring contract and release gate, not a
-claim that Osaurus can serve native Swift image models today.
+image generation through vMLX. It is both the current branch contract and the
+release gate for exposing local native image generation as production-ready.
 
 ## Current status
 
-Osaurus currently routes local MLX text/VLM generation through
-`vmlx-swift-lm`:
+On `feat/image-generation-vmlxflux`, Osaurus routes local MLX text/VLM
+generation through the consolidated `vmlx-swift` package:
 
 ```text
 ChatEngine
@@ -16,51 +16,65 @@ ChatEngine
             -> BatchEngine.generate(...)
 ```
 
-There is no Osaurus local `/v1/images/generations` or `/v1/images/edits`
-runtime path wired to native Swift `vMLXFlux` yet. Remote provider image
-generation, VLM image input, and artifact rendering are separate surfaces and
-do not prove local native image generation.
-
-The native Swift image work currently lives in `/Users/eric/vmlx-swift` as
-`vMLXFlux`, `vMLXFluxKit`, `vMLXFluxModels`, `vMLXFluxVideo`, and the
-`vmlxflux-probe` executable. The latest local full-matrix probe is:
+The same branch wires a dedicated native image lane instead of forcing image
+requests through `MLXBatchAdapter`:
 
 ```text
-/Users/eric/vmlx-swift/docs/local/vmlx-flux-probes/20260516T-native-mflux-full-matrix/
+HTTP /v1/images/generations, /v1/images/edits, /v1/images/upscale,
+or app image-model chat selection
+    -> ImageGenerationService
+        -> MetalGate exclusive image-generation lane
+            -> vMLXFlux.FluxEngine
 ```
 
-Result summary:
+Only `ImageGenerationService` imports `vMLXFlux`; HTTP DTOs and UI/model-picker
+types stay on Osaurus-native request/response structs. Remote provider image
+generation, VLM image input, and artifact rendering remain separate surfaces
+and do not prove local native image generation.
 
-| Local bundle | Detection/load | Generation | Verdict |
-| --- | --- | --- | --- |
-| `FLUX.2-klein-9B` | detected, load path entered | `0/3` turns complete | blocked: model body throws `notImplemented` |
-| `qwen-image-mflux-4bit` | detected, load path entered | `0/3` turns complete | blocked: model body throws `notImplemented` |
-| `Z-Image-Turbo` | detected, load path entered | `3/3` PNG turns | blocked: scaffold/noise output |
-| `Z-Image-Turbo-mflux-4bit` | detected, load path entered | `3/3` PNG turns | blocked: scaffold/noise output |
-
-The `loaded` rows above only prove the native constructor accepted the local
-directory and opened safetensors metadata/arrays. They do not prove real
-prompt-conditioned weights are applied or resident.
-
-## Required Osaurus wiring after vMLXFlux passes
-
-Do not expose native Swift image generation in Osaurus until the vMLX matrix
-has at least one `production_candidate` or stronger row with prompt-sensitive
-images.
-
-When that gate exists, the Osaurus integration should add a dedicated image
-runtime lane instead of forcing images through `MLXBatchAdapter`:
+The native Swift image engine lives in `osaurus-ai/vmlx-swift` as `vMLXFlux`,
+`vMLXFluxKit`, `vMLXFluxModels`, `vMLXFluxVideo`, and the `vmlxflux-probe`
+executable. This branch pins `vmlx-swift` to:
 
 ```text
-HTTP /v1/images/generations or app image UI
-    -> ImageModelRuntime
-        -> one FluxEngine actor per loaded image model
-            -> FluxEngine.load(name:from:)
-            -> FluxEngine.generate(...)
-                -> ImageGenEvent.step / preview / completed / failed
+d725c63f035650f9182648580e98d7776544648a
 ```
 
-The runtime lane must own:
+That vMLX revision was stress-tested on `erics-m5-max.local` with the remote
+scratch checkout:
+
+```text
+/tmp/vmlx-swift-image-extended-20260618T064304Z
+```
+
+The synced proof artifacts are:
+
+```text
+/Users/eric/vmlx-swift/docs/local/vmlx-flux-probes/20260618-image-extended2/extended-stress-summary.json
+/Users/eric/vmlx-swift/docs/local/vmlx-flux-outputs/20260618-image-extended2/extended-stress-contact-sheet.png
+```
+
+Result summary from the extended stress run:
+
+| Scope | Result |
+| --- | --- |
+| Load matrix | 2 cycles, 14/14 bundles loaded |
+| Text-to-image | Z-Image Turbo 4-bit/8-bit, Flux Schnell 4-bit/8-bit, Qwen Image 6-bit/8-bit passed |
+| Image edit | Qwen image edit q8 single-image, q8 multi-image, q5 multi-image, and q8 diagnostics passed |
+| Negative path | Qwen edit mask request rejected cleanly |
+| Ideogram | fp8 and NF4 JSON rows passed |
+| Summary | 16 rows, `failed_rows=0`, high-water max RSS 40,574,992,384 bytes |
+
+Visual inspection of the synced contact sheet confirms the text-to-image rows
+are prompt-sensitive and the q8 edit rows are usable. Remaining quality caveats
+are tracked as release gates, not source blockers: q5 multi-image edit still
+shows composition/patch artifacts, Ideogram still has JSON-caption/poster quirks,
+q4/q3 Qwen edit variants remain noisy or hidden, and masks are intentionally
+unsupported.
+
+## Osaurus wiring
+
+The runtime lane owns:
 
 - exact local model resolution under `~/.mlxstudio/models/image`;
 - generation-only vs edit/upscale/video capability checks;
@@ -74,11 +88,11 @@ The runtime lane must own:
 
 ## Production gate
 
-Before Osaurus exposes a native image model as local production-capable, the
-same exact bundle must pass all of these:
+Before Osaurus marks a native image model as local production-ready, the same
+exact bundle must pass all of these:
 
-1. `vmlxflux-probe --matrix` on `/Users/eric/vmlx-swift` reports no blockers
-   for that bundle.
+1. `vmlxflux-probe --matrix` and the extended stress runner on
+   `/Users/eric/vmlx-swift` report no blockers for that bundle.
 2. The model produces prompt-sensitive images for at least three turns:
    base prompt, same-scene modification, and style/material change.
 3. The output artifacts are valid PNG/JPEG files at requested dimensions and
@@ -90,5 +104,6 @@ same exact bundle must pass all of these:
 6. The app and HTTP API agree on model capabilities, error wording, and output
    artifact paths.
 
-Until then, Osaurus documentation must describe native Swift image generation
-as blocked upstream in vMLX, not as a supported local inference feature.
+Until the app/API proof rows are complete, Osaurus documentation must describe
+native Swift image generation as wired and source-proven on this branch, but
+not release-cleared for production use.
