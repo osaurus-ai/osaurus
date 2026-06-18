@@ -50,7 +50,7 @@ Current source map:
 
 | Request | Current status | First shippable step | Runtime boundary |
 | --- | --- | --- | --- |
-| Hugging Face local cache (#443) | Read-only HF cache and LM Studio discovery are implemented for verified MLX safetensors bundles; skipped candidates now have Settings diagnostics. | Add optional manifest/digest verification before load if mutation protection is required. | Host-only discovery/storage work; no vmlx change if the snapshot already loads as MLX. |
+| Hugging Face local cache (#443) | Read-only HF cache and LM Studio discovery are implemented for verified MLX safetensors bundles; skipped candidates now have Models > On Device and Settings diagnostics. | Add optional manifest/digest verification before load if mutation protection is required. | Host-only discovery/storage work; no vmlx change if the snapshot already loads as MLX. |
 | Hunyuan `hunyuan_v1_dense` (#358) | `mlx-community/HY-MT1.5-7B-bf16` advertises `model_type: hunyuan_v1_dense`; Osaurus now reports it as unsupported until vmlx has a native factory. | Enable catalog/runtime only after vmlx support and live validation land. | vmlx must own config mapping, weights, tokenizer/template behavior, and generation tests. |
 | DFlash speculative decoding (#1065) | Osaurus has one target model per local generation request and no draft-model contract. | Design a feature-flagged draft/target request shape plus benchmark evidence requirements. | vmlx or a dedicated MLX adapter must own the speculative loop and acceptance verification. |
 | LongCat Flash/Next (#886) | LongCat repos use custom code and new LongCat config shapes; LongCat-Next is a 74B any-to-any model that documents at least three 80GB GPUs for Transformers usage. Osaurus now reports LongCat local bundles as unsupported. | Keep local catalog entries hidden or blocked until native support and multimodal proof exist. | Native LongCat model classes, multimodal processors, lazy decoder paths, and cache geometry belong upstream. |
@@ -73,10 +73,13 @@ Implementation shape:
 3. Register a snapshot only if it satisfies the same minimum shape as
    `MLXModel.isDownloaded`: `config.json`, tokenizer assets, and
    `*.safetensors`.
-4. Store an Osaurus-local manifest keyed by repo id, revision, relative file
-   path, file size, and SHA-256 for every file the runtime will load.
-5. Before `ModelRuntime` loads a cache-backed model, verify the manifest still
-   matches. If a file changed, mark the model as stale and require a rescan.
+4. Store an Osaurus-local manifest keyed by repo id, revision, source, and the
+   absolute snapshot path so imported models reappear on launch before a
+   background rescan finishes.
+5. Before `ModelRuntime` loads a cache-backed model, resolve the external path
+   through `ExternalModelLocator` and keep the files in place. Full file digest
+   verification is a future hardening step, not part of the current import
+   contract.
 6. Never mutate the HF cache from Osaurus. Delete/uninstall controls should
    clearly say "remove from Osaurus catalog" unless the implementation later
    adds an explicit cache-management mode.
