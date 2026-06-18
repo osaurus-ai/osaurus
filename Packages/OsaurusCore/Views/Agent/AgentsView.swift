@@ -51,7 +51,6 @@ struct AgentsView: View {
     @State private var isReordering = false
     @State private var hasAppeared = false
     @State private var successMessage: String?
-    @State private var sandboxCleanupNotice: SandboxCleanupNotice?
     @State private var consumedDeeplinkAgentId: UUID?
 
     init(deeplinkAgentId: UUID? = nil) {
@@ -148,17 +147,6 @@ struct AgentsView: View {
             AgentReorderSheet()
                 .environment(\.theme, themeManager.currentTheme)
         }
-        .themedAlert(
-            sandboxCleanupNotice?.title ?? "Sandbox Cleanup",
-            isPresented: Binding(
-                get: { sandboxCleanupNotice != nil },
-                set: { newValue in
-                    if !newValue { sandboxCleanupNotice = nil }
-                }
-            ),
-            message: sandboxCleanupNotice?.message,
-            primaryButton: .primary("OK") { sandboxCleanupNotice = nil }
-        )
         .onAppear {
             agentManager.refresh()
             withAnimation(.easeOut(duration: 0.25).delay(0.05)) {
@@ -378,7 +366,20 @@ struct AgentsView: View {
                 return
             }
             showSuccess(L("Deleted \"\(agent.name)\""))
-            sandboxCleanupNotice = result.sandboxCleanupNotice
+            // Surface sandbox cleanup as a non-modal toast rather than a
+            // modal alert. The notice is set after a slow `await
+            // unprovision(...)`, by which point the user may already have
+            // opened another agent's delete confirmation — a modal here
+            // would clobber that dialog (see ThemedAlertCenter single-slot
+            // scope), so a toast keeps the in-progress flow intact.
+            if let notice = result.sandboxCleanupNotice {
+                switch notice.kind {
+                case .completed:
+                    ToastManager.shared.success(notice.title, message: notice.message)
+                case .incomplete:
+                    ToastManager.shared.warning(notice.title, message: notice.message)
+                }
+            }
         }
     }
 

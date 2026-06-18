@@ -23,6 +23,10 @@ final class NativeMarkdownView: NSView {
     override var acceptsFirstResponder: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
+    nonisolated static func makeRemoteImageSession() -> URLSession {
+        GlobalProxySettings.sharedSession()
+    }
+
     override func hitTest(_ point: NSPoint) -> NSView? {
         if let sub = super.hitTest(point) { return sub }
         // when the container is taller than the laid-out text (or timing leaves super.hitTest nil),
@@ -955,7 +959,7 @@ final class NativeMarkdownView: NSView {
                 }.value
             } else {
                 do {
-                    let (d, _) = try await URLSession.shared.data(from: url)
+                    let (d, _) = try await Self.makeRemoteImageSession().data(from: url)
                     data = d
                 } catch {
                     data = nil

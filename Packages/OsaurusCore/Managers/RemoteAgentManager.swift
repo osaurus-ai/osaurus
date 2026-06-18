@@ -243,17 +243,21 @@ public final class RemoteAgentManager: ObservableObject {
     /// Use an ephemeral URLSession so the deeplink path never races shared
     /// connection state (cookies, persistent connections from other features).
     private func postWithBackgroundSession(_ request: URLRequest) async throws -> (Data, URLResponse) {
-        let cfg = URLSessionConfiguration.ephemeral
-        cfg.waitsForConnectivity = true
-        cfg.timeoutIntervalForRequest = 30
-        cfg.timeoutIntervalForResource = 60
-        let session = URLSession(configuration: cfg)
+        let session = Self.makePairInviteSession()
         defer { session.finishTasksAndInvalidate() }
         do {
             return try await session.data(for: request)
         } catch {
             throw RemoteAgentPairError.networkFailed(error.localizedDescription)
         }
+    }
+
+    nonisolated static func makePairInviteSession() -> URLSession {
+        let cfg = URLSessionConfiguration.ephemeral
+        cfg.waitsForConnectivity = true
+        cfg.timeoutIntervalForRequest = 30
+        cfg.timeoutIntervalForResource = 60
+        return GlobalProxySettings.makeSession(base: cfg)
     }
 
     private func decodeErrorMessage(_ data: Data) -> String? {

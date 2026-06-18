@@ -123,7 +123,10 @@ public actor ThemesAPIClient {
 
     public init(baseURL: URL = ThemesAPIClient.defaultBaseURL) {
         self.baseURL = baseURL
+        self.session = Self.makeSession()
+    }
 
+    static func makeSession() -> URLSession {
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 30
         config.timeoutIntervalForResource = 60
@@ -131,7 +134,7 @@ public actor ThemesAPIClient {
         config.httpAdditionalHeaders = [
             "Accept": "application/json"
         ]
-        self.session = URLSession(configuration: config)
+        return GlobalProxySettings.makeSession(base: config)
     }
 
     // MARK: - POST /auth/challenge
@@ -234,9 +237,7 @@ public actor ThemesAPIClient {
             let error: String?
             let message: String?
         }
-        if let envelope = try? decodeJSON(ErrorEnvelope.self, from: data),
-            let code = envelope.error
-        {
+        if let envelope = try? decodeJSON(ErrorEnvelope.self, from: data), let code = envelope.error {
             throw ThemesAPIError.from(
                 code: code,
                 message: envelope.message,
