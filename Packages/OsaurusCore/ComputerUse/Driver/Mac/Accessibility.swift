@@ -11,6 +11,26 @@ import AppKit
 import ApplicationServices
 import Foundation
 
+// MARK: - CFTypeRef casts
+
+// AX attribute values arrive as untyped `CFTypeRef`s. CoreFoundation types
+// can't be conditionally downcast in Swift (`as?` is rejected as
+// always-succeeding), so we verify the concrete CF type id and only then
+// force-cast — provably safe, and returning nil for an unexpected type instead
+// of trapping. These centralize the unavoidable force-cast behind that check.
+
+private func axElement(_ ref: CFTypeRef?) -> AXUIElement? {
+    guard let ref, CFGetTypeID(ref) == AXUIElementGetTypeID() else { return nil }
+    // swiftlint:disable:next force_cast
+    return (ref as! AXUIElement)
+}
+
+private func axValue(_ ref: CFTypeRef?) -> AXValue? {
+    guard let ref, CFGetTypeID(ref) == AXValueGetTypeID() else { return nil }
+    // swiftlint:disable:next force_cast
+    return (ref as! AXValue)
+}
+
 // MARK: - Snapshot ID Format
 
 /// Element IDs are scoped to a snapshot so we can distinguish "stale ID from a
@@ -98,11 +118,11 @@ final class CachedElement: @unchecked Sendable {
         var position = CGPoint.zero
         var size = CGSize.zero
 
-        if let posVal = positionValue {
-            AXValueGetValue(posVal as! AXValue, .cgPoint, &position)
+        if let axPos = axValue(positionValue) {
+            AXValueGetValue(axPos, .cgPoint, &position)
         }
-        if let sizeVal = sizeValue {
-            AXValueGetValue(sizeVal as! AXValue, .cgSize, &size)
+        if let axSize = axValue(sizeValue) {
+            AXValueGetValue(axSize, .cgSize, &size)
         }
 
         return CGRect(origin: position, size: size)
@@ -385,8 +405,8 @@ final class AccessibilityManager: @unchecked Sendable {
                 kAXFocusedUIElementAttribute as CFString,
                 &ref
             )
-            guard status == .success, let raw = ref else { return nil }
-            return (raw as! AXUIElement)
+            guard status == .success else { return nil }
+            return axElement(ref)
         }()
 
         let focusedWindowElement: AXUIElement? = {
@@ -396,8 +416,8 @@ final class AccessibilityManager: @unchecked Sendable {
                 kAXFocusedWindowAttribute as CFString,
                 &ref
             )
-            guard status == .success, let raw = ref else { return nil }
-            return (raw as! AXUIElement)
+            guard status == .success else { return nil }
+            return axElement(ref)
         }()
 
         // Enumerate and order windows (focused first)
@@ -474,9 +494,8 @@ final class AccessibilityManager: @unchecked Sendable {
         let walkMenuBar =
             !(filter.focusedWindowOnly ?? false) && restrictWindowId == nil
         if walkMenuBar, elements.count < maxElements,
-            let menuBarRef = getAttribute(app, kAXMenuBarAttribute)
+            let menuBar = axElement(getAttribute(app, kAXMenuBarAttribute))
         {
-            let menuBar = menuBarRef as! AXUIElement
             traverseElement(
                 element: menuBar,
                 depth: 0,
@@ -547,8 +566,7 @@ final class AccessibilityManager: @unchecked Sendable {
         let help = getAttribute(element, kAXHelpAttribute) as? String
         let labelValue = getAttribute(element, "AXLabelValue") as? String
         let pairedTitleValue: String? = {
-            if let titleUIRef = getAttribute(element, "AXTitleUIElement") {
-                let titleUI = titleUIRef as! AXUIElement
+            if let titleUI = axElement(getAttribute(element, "AXTitleUIElement")) {
                 return getAttribute(titleUI, kAXValueAttribute) as? String
                     ?? getAttribute(titleUI, kAXTitleAttribute) as? String
             }
@@ -701,11 +719,11 @@ final class AccessibilityManager: @unchecked Sendable {
         var position = CGPoint.zero
         var size = CGSize.zero
 
-        if let posVal = positionValue {
-            AXValueGetValue(posVal as! AXValue, .cgPoint, &position)
+        if let axPos = axValue(positionValue) {
+            AXValueGetValue(axPos, .cgPoint, &position)
         }
-        if let sizeVal = sizeValue {
-            AXValueGetValue(sizeVal as! AXValue, .cgSize, &size)
+        if let axSize = axValue(sizeValue) {
+            AXValueGetValue(axSize, .cgSize, &size)
         }
 
         return CGRect(origin: position, size: size)
@@ -786,10 +804,10 @@ func computeFocusDelta(pid: Int32) -> FocusDelta? {
     var winRef: CFTypeRef?
     if AXUIElementCopyAttributeValue(app, kAXFocusedWindowAttribute as CFString, &winRef)
         == .success,
-        let win = winRef
+        let win = axElement(winRef)
     {
         var titleRef: CFTypeRef?
-        if AXUIElementCopyAttributeValue(win as! AXUIElement, kAXTitleAttribute as CFString, &titleRef)
+        if AXUIElementCopyAttributeValue(win, kAXTitleAttribute as CFString, &titleRef)
             == .success
         {
             focusedWindowTitle = titleRef as? String
@@ -800,9 +818,8 @@ func computeFocusDelta(pid: Int32) -> FocusDelta? {
     var elRef: CFTypeRef?
     if AXUIElementCopyAttributeValue(app, kAXFocusedUIElementAttribute as CFString, &elRef)
         == .success,
-        let el = elRef
+        let element = axElement(elRef)
     {
-        let element = el as! AXUIElement
         var roleRef: CFTypeRef?
         var titleRef: CFTypeRef?
         var valueRef: CFTypeRef?
@@ -1043,7 +1060,7 @@ func listWindowsForPid(_ pid: Int32) -> WindowListResult {
     // Focused window for the `focused: true` flag.
     var focusedRef: CFTypeRef?
     AXUIElementCopyAttributeValue(app, kAXFocusedWindowAttribute as CFString, &focusedRef)
-    let focusedWindow: AXUIElement? = focusedRef.map { $0 as! AXUIElement }
+    let focusedWindow: AXUIElement? = axElement(focusedRef)
 
     var windowsRef: CFTypeRef?
     guard
@@ -1073,8 +1090,8 @@ func listWindowsForPid(_ pid: Int32) -> WindowListResult {
         AXUIElementCopyAttributeValue(win, kAXSizeAttribute as CFString, &sizeRef)
         var pos = CGPoint.zero
         var size = CGSize.zero
-        if let p = posRef { AXValueGetValue(p as! AXValue, .cgPoint, &pos) }
-        if let s = sizeRef { AXValueGetValue(s as! AXValue, .cgSize, &size) }
+        if let axP = axValue(posRef) { AXValueGetValue(axP, .cgPoint, &pos) }
+        if let axS = axValue(sizeRef) { AXValueGetValue(axS, .cgSize, &size) }
 
         var minimizedRef: CFTypeRef?
         AXUIElementCopyAttributeValue(win, kAXMinimizedAttribute as CFString, &minimizedRef)
@@ -1147,12 +1164,10 @@ func getActiveWindow() -> MacActiveWindowInfo? {
     guard
         AXUIElementCopyAttributeValue(app, kAXFocusedWindowAttribute as CFString, &windowRef)
             == .success,
-        let window = windowRef
+        let windowElement = axElement(windowRef)
     else {
         return MacActiveWindowInfo(pid: pid, app: appName, title: nil, x: 0, y: 0, w: 0, h: 0)
     }
-
-    let windowElement = window as! AXUIElement
 
     var titleRef: CFTypeRef?
     let title: String?
@@ -1171,16 +1186,16 @@ func getActiveWindow() -> MacActiveWindowInfo? {
 
     if AXUIElementCopyAttributeValue(windowElement, kAXPositionAttribute as CFString, &positionRef)
         == .success,
-        let posVal = positionRef
+        let axPos = axValue(positionRef)
     {
-        AXValueGetValue(posVal as! AXValue, .cgPoint, &position)
+        AXValueGetValue(axPos, .cgPoint, &position)
     }
 
     if AXUIElementCopyAttributeValue(windowElement, kAXSizeAttribute as CFString, &sizeRef)
         == .success,
-        let sizeVal = sizeRef
+        let axSize = axValue(sizeRef)
     {
-        AXValueGetValue(sizeVal as! AXValue, .cgSize, &size)
+        AXValueGetValue(axSize, .cgSize, &size)
     }
 
     return MacActiveWindowInfo(
