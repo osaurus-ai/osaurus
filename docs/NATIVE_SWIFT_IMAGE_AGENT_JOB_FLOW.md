@@ -616,6 +616,13 @@ Do not mark this feature working until all of these pass:
   and passed. This proves source buildability and the policy gate that enables
   chat-model eviction only for `agent_single_residency`; it is not live
   unload/generate/reload RAM proof.
+- Remote proof on `erics-m5-max.local` from the same fresh clone after reset to
+  commit `36934a98`: `swift build --package-path Packages/OsaurusCore` passed,
+  and `swift test --package-path Packages/OsaurusCore --filter
+  NativeImageJobCoordinatorTests` ran 7 tests in `NativeImageJobCoordinatorTests`
+  and passed. This proves source buildability and progress payload metadata for
+  `session_id`, `assistant_turn_id`, and `tool_call_id`; it is not visible chat
+  UI proof.
 
 `PARTIAL`:
 
@@ -627,8 +634,8 @@ Do not mark this feature working until all of these pass:
   unload -> image job -> image unload -> chat warm-load under Activity Monitor
   footprint checks.
 - Progress events are recorded and posted through
-  `nativeImageJobProgressChanged`, but the chat UI progress row has not been
-  wired/proven for the agent-triggered path.
+  `nativeImageJobProgressChanged` with chat/tool-call identifiers, but the chat
+  UI progress row has not been wired/proven for the agent-triggered path.
 - Image edit now has a source-wired main-agent tool, but no live source-image
   artifact e2e proof has run through the actual agent loop.
 - Local SwiftPM test execution is blocked on this host by a global `Testing`
