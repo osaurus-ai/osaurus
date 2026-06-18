@@ -17,6 +17,15 @@ struct ImageModelsDownloadView: View {
     @Environment(\.theme) private var theme
 
     @State private var installed: [ImageModelInfo] = []
+    @State private var detail: DetailRequest?
+
+    /// Identifiable payload for presenting the detail modal.
+    private struct DetailRequest: Identifiable {
+        let id: String
+        let displayName: String
+        let repoId: String?
+        let info: ImageModelInfo?
+    }
 
     /// Non-optional download state for a bundle id (absent ⇒ not started).
     private func state(_ id: String) -> DownloadState {
@@ -69,6 +78,15 @@ struct ImageModelsDownloadView: View {
         .onReceive(NotificationCenter.default.publisher(for: .localModelsChanged)) { _ in
             Task { await refreshInstalled() }
         }
+        .sheet(item: $detail) { request in
+            ImageModelDetailView(
+                id: request.id,
+                displayName: request.displayName,
+                repoId: request.repoId,
+                info: request.info
+            )
+            .environment(\.theme, theme)
+        }
     }
 
     private func card(_ card: Card) -> some View {
@@ -81,14 +99,15 @@ struct ImageModelsDownloadView: View {
         )
     }
 
-    /// Card tap starts the download for a not-yet-installed curated model.
-    /// Installed bundles and in-flight downloads are no-ops (image models have
-    /// no detail sheet).
+    /// Card tap opens the detail modal (download / delete / re-download live
+    /// there), matching the On Device / Catalog tabs.
     private func tap(_ card: Card) {
-        guard let repoId = card.repoId else { return }
-        if downloads.isInstalled(card.id) { return }
-        if case .downloading = state(card.id) { return }
-        downloads.download(repoId: repoId, displayName: card.displayName)
+        detail = DetailRequest(
+            id: card.id,
+            displayName: card.displayName,
+            repoId: card.repoId,
+            info: installed.first { $0.id == card.id }
+        )
     }
 
     // MARK: - Card content

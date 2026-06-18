@@ -68,6 +68,11 @@ final class ImageModelDownloadService: ObservableObject {
     ]
     private static let excluded: Set<String> = ["README.md", ".gitattributes"]
 
+    /// Hidden marker written into each staged bundle recording the source HF
+    /// repo id, so a later re-download knows where to fetch from (installed
+    /// bundles otherwise only carry the local directory name).
+    private static let sourceMarkerName = ".osaurus-source"
+
     /// Max files staged in parallel. A single HTTPS connection to the HF CDN is
     /// throttled well below a fast link, so serial per-file fetches leave most
     /// of the pipe idle; mflux bundles are several large files, so fetching a
@@ -89,6 +94,50 @@ final class ImageModelDownloadService: ObservableObject {
         let dir = ImageGenerationService.imageModelsRoot().appendingPathComponent(id, isDirectory: true)
         var isDir: ObjCBool = false
         return FileManager.default.fileExists(atPath: dir.path, isDirectory: &isDir) && isDir.boolValue
+    }
+
+    /// Source HF repo a staged bundle was downloaded from. Reads the hidden
+    /// marker; falls back to a curated catalog entry with the same id. `nil`
+    /// when neither is known (e.g. an old imported bundle), in which case
+    /// re-download is unavailable and only delete is offered.
+    func sourceRepoId(for id: String) -> String? {
+        let marker = ImageGenerationService.imageModelsRoot()
+            .appendingPathComponent(id, isDirectory: true)
+            .appendingPathComponent(Self.sourceMarkerName)
+        if let raw = try? String(contentsOf: marker, encoding: .utf8) {
+            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { return trimmed }
+        }
+        return Self.catalog.first { $0.id == id }?.repoId
+    }
+
+    /// Delete a staged bundle from disk, cancel any in-flight download, and
+    /// refresh listeners + the picker cache so it disappears everywhere.
+    func delete(_ id: String) {
+        cancel(id)
+        let dir = ImageGenerationService.imageModelsRoot()
+            .appendingPathComponent(id, isDirectory: true)
+        states[id] = nil
+        metrics[id] = nil
+        Task.detached(priority: .utility) {
+            try? FileManager.default.removeItem(at: dir)
+            await MainActor.run {
+                NotificationCenter.default.post(name: .localModelsChanged, object: nil)
+            }
+            await ModelPickerItemCache.shared.buildModelPickerItems()
+        }
+    }
+
+    /// Record the source repo for a bundle so it can be re-downloaded later.
+    /// Runs off the main actor to keep file I/O off the UI thread.
+    private func writeSourceMarker(repoId: String, root: URL) {
+        Task.detached(priority: .utility) {
+            try? FileManager.default.createDirectory(
+                at: root, withIntermediateDirectories: true)
+            try? repoId.write(
+                to: root.appendingPathComponent(Self.sourceMarkerName),
+                atomically: true, encoding: .utf8)
+        }
     }
 
     /// Heuristic: does this HF repo look like a diffusers/mflux image bundle?
@@ -162,6 +211,7 @@ final class ImageModelDownloadService: ObservableObject {
         let totalBytes = files.reduce(Int64(0)) { $0 + $1.size }
         liveBytes[dirName] = [:]
         downloaders[dirName] = []
+        writeSourceMarker(repoId: repoId, root: root)
 
         do {
             // Fetch up to `maxConcurrentFiles` at once, refilling a lane as each
