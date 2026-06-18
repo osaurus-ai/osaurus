@@ -560,6 +560,107 @@ Do not mark this feature working until all of these pass:
 - Physical footprint evidence is recorded for a sub-24 GB style safety profile,
   or the row is marked `PARTIAL`/`BLOCKED` if only run on the 128 GB proof host.
 
+## Team E2E Proof Matrix
+
+Use this matrix as the shared red/green ledger for the Osaurus team. Do not
+delete failed rows. Change a row from `RED`/`BLOCKED` to `GREEN` only when the
+required evidence exists under an artifact directory and the exact commit,
+machine, command, model id, and output are recorded.
+
+Recommended artifact root for the next full run:
+
+```sh
+export IMAGE_AGENT_PROOF_ROOT="/tmp/osaurus-native-image-agent-e2e-$(date +%Y%m%d-%H%M%S)"
+mkdir -p "$IMAGE_AGENT_PROOF_ROOT"
+git rev-parse HEAD > "$IMAGE_AGENT_PROOF_ROOT/git-head.txt"
+sw_vers > "$IMAGE_AGENT_PROOF_ROOT/sw_vers.txt"
+uname -a > "$IMAGE_AGENT_PROOF_ROOT/uname.txt"
+```
+
+### Build And Source Gates
+
+| Row | Status | Command | Required evidence | Current blocker |
+| --- | --- | --- | --- | --- |
+| Source image UI wiring contract | GREEN | `scripts/live-proof/assert-image-ui-wiring.sh` | stdout copied to proof root | None for source contract; still not UI click proof |
+| SwiftPM build | GREEN | `swift build --package-path Packages/OsaurusCore` | exit 0 log | Local and remote build have passed |
+| Native image coordinator tests | GREEN on `erics-m5-max.local`, BLOCKED local | `swift test --package-path Packages/OsaurusCore --filter NativeImageJobCoordinatorTests` | 7/7 Swift Testing output | Local machine has package-wide `no such module 'Testing'`; remote host passes |
+| Keychain-free Release app build | RED | `scripts/live-proof/build-keychain-free-osaurus.sh "$IMAGE_AGENT_PROOF_ROOT/DerivedData"` | built `osaurus.app` path, xcodebuild log, ad-hoc codesign log | Not rerun after agent tool/residency commits |
+| Foreground SwiftUI launch | RED | `scripts/live-proof/open-keychain-free-osaurus.sh "$APP" "$IMAGE_AGENT_PROOF_ROOT/ui"` | app PID/window screenshot/log | Manual foreground click-through pending |
+| Headless app/server launch | RED | `scripts/live-proof/launch-keychain-free-osaurus.sh "$APP" "$IMAGE_AGENT_PROOF_ROOT/server"` | pid, app log, `/health` response | Needs current app build |
+
+### Settings And Permission Persistence
+
+| Row | Status | How to test | Required evidence | Current blocker |
+| --- | --- | --- | --- | --- |
+| Agent Delegation settings save/load | SOURCE-GREEN, LIVE-RED | Open Settings, choose local text delegate, image gen model, image edit model, load policies, budgets, and permission defaults; quit/relaunch; confirm same values | `~/.osaurus/config/agent-delegation.json` from test root plus before/after screenshots | Source tests exist; no live UI persistence proof |
+| Downloaded-model picker filtering | SOURCE-GREEN, LIVE-RED | Confirm local text picker shows chat-capable downloaded models only, image gen picker shows text-to-image models only, image edit picker shows edit-capable models only | screenshots plus `/images/models` JSON | Needs live app |
+| Permission `deny` for image generate | SOURCE-WIRED, LIVE-RED | Set image generate permission to `deny`; ask cloud/local chat to create an image | tool result envelope shows rejected, no image model load in logs | No live agent-loop run |
+| Permission `ask` for image generate | SOURCE-WIRED, LIVE-RED | Set image generate permission to `ask`; trigger tool; approve once | prompt screenshot, resulting job, saved policy state if "always allow" chosen | Prompt UI not live-proven |
+| Permission `always_allow` for image generate | SOURCE-WIRED, LIVE-RED | Set image generate permission to `always_allow`; trigger two jobs | second job starts without prompt, logs identify selected model | No repeated live proof |
+| Permission `deny` / `ask` / `always_allow` for image edit | SOURCE-WIRED, LIVE-RED | Repeat the three image-generate permission rows using a real source image artifact | prompt/result screenshots, no dangling tool call | No live edit agent-loop proof |
+| Permission `deny` / `ask` / `always_allow` for local text delegate | DESIGN-ONLY | Repeat with `local_delegate` once implemented | prompt/result screenshots, local delegate logs | Local text delegate tool/coordinator not implemented |
+| Permission model override in prompt | SETTINGS-SOURCE-WIRED, LIVE-RED | In the permission sheet, switch from default image model to another compatible downloaded model before approving | screenshot and final tool payload selected model | Prompt model override not proven |
+
+### Image Agent E2E Flows
+
+| Row | Status | Flow | Required evidence | Current blocker |
+| --- | --- | --- | --- | --- |
+| Cloud chat -> `image_generate` -> local image artifact -> final answer | RED | Select cloud/API provider, ask for a concrete image, let model call `image_generate`, verify final assistant answer references result | chat transcript, tool call JSON, progress events, generated image path, `/health` before/during/after | No live cloud agent-loop proof |
+| Local chat -> `image_generate` -> chat unload -> image job -> image unload -> chat restore -> final answer | RED | Select local chat model, preload/send one turn, then ask for image | `cachedModelSummaries`/`/health`, Activity Monitor footprint, app log showing unload/restore phases, final answer | No live resident-model proof |
+| Cloud chat -> `image_edit` with artifact path -> edited artifact -> final answer | RED | Generate or import source image, ask cloud chat to edit it, ensure `source_paths` points to local artifact | source image, edited image, tool payload, transcript | Source path/artifact integration not live-proven |
+| Local chat -> `image_edit` with artifact path -> unload/restore | RED | Same as local generate, but with real source image | RAM footprint, unload/restore logs, edited image | No live edit + residency proof |
+| Manual image panel generate | PARTIAL | Use manual composer with prompt, negative prompt, steps, guidance, size, seed | foreground screenshot, generated image, app log | Prior source/API proof only; current foreground click-through pending |
+| Manual image panel edit | PARTIAL | Attach or select source image, edit with Qwen-Image-Edit path | source and output images, screenshot, app log | Prior source/API proof only; current foreground click-through pending |
+| Cancellation during image model load | RED | Start large image job and cancel while loading | cancellation log, `/health`, resident model state | No live cancellation proof |
+| Cancellation during denoise/generation | RED | Cancel after step events begin | cancellation log, no stale image residency, `/health` | No live cancellation proof |
+| Repeated image jobs under `always_allow` | RED | Run 10 sequential image jobs: 5 generate, 5 edit | all outputs, no stale leases, no memory growth trend | No stress loop proof |
+
+### Local Text Delegate E2E Flows
+
+| Row | Status | Flow | Required evidence | Current blocker |
+| --- | --- | --- | --- | --- |
+| Cloud chat -> local coding delegate -> compact result -> final cloud answer | BLOCKED | Cloud model posts bounded local text job; local model returns compact result | transcript, token counts, delegate model load/unload log | `LocalDelegateCoordinator` and tool not implemented |
+| Local delegate model picker and settings | SOURCE-WIRED, TOOL-BLOCKED | Pick downloaded chat model in Agent Delegation settings | settings JSON/screenshots | Tool execution path missing |
+| Local delegate tool permissions | BLOCKED | Prove deny/ask/always_allow and scoped local tool permissions | permission prompt screenshots, result envelopes | Tool/coordinator not implemented |
+| Local delegate budget enforcement | BLOCKED | Exceed token/turn/time/tool budgets and verify typed refusal/stop | result envelopes and logs | Tool/coordinator not implemented |
+| Cloud token-cost comparison | BLOCKED | Run same coding task with and without local delegate, record cloud input/output tokens | billing/token logs, prompts, final answers | Local delegate missing |
+
+### Privacy, Prompt, Tool, And Artifact Stability
+
+| Row | Status | How to test | Required evidence | Current blocker |
+| --- | --- | --- | --- | --- |
+| Privacy filter still scrubs cloud-bound text | RED | Enable privacy filter, send direct private info to cloud model, verify outbound scrub and inbound/tool unscrub behavior | scrubbed request log, redaction review screenshot, no raw PII in cloud-bound payload | Needs live cloud run |
+| Local image prompt remains local | RED | With privacy filter enabled, ask cloud model to generate image using private text; verify local tool receives allowed local text/placeholders and cloud payload stays scrubbed | provider request log, tool args, output image | Needs exact live proof; placeholder behavior must be inspected |
+| Existing tool loop unaffected | RED | Run todo/complete/clarify/share_artifact/file read before and after image job | transcript, tool result envelopes | No post-image tool-loop regression run |
+| Prompt/schema budget stable | SOURCE-PARTIAL | Compare tool schema token estimate before/after; ensure no model catalog injected into prompt | prompt manifest or schema dump | Needs current prompt dump proof |
+| Artifact card/result shape | RED | Image tool result should render image artifact/card without requiring a second model-generated `share_artifact` call | screenshot, content blocks, artifact path | Tool returns paths; chat artifact post-processing not proven |
+
+### RAM And Stress Gates
+
+| Row | Status | How to test | Required evidence | Current blocker |
+| --- | --- | --- | --- | --- |
+| Strict single-model residency under local chat | RED | Record footprint before local chat, after unload, during image generation, after restore | Activity Monitor `phys_footprint` screenshots or `vmmap`/memory log, `/health` | No live RAM proof |
+| Sub-24 GB safety simulation | RED | Run with strict memory settings and a model combination that should refuse before allocation | typed refusal, no large allocation, no app crash | No strict preflight/refusal implementation proof |
+| 10-turn live-proof plan | RED | Mixed turns: normal chat, image generate, follow-up chat, image edit, denied image, approved image, cancel load, cancel denoise, privacy-filter cloud, final tool call | transcript, logs, images, `/health` after each turn | No live run |
+| 30-job stress loop | RED | 10 generate + 10 edit + 10 permission/cancel/error rows | output inventory, failure log, no memory growth trend | No stress harness |
+| App restart persistence | RED | Save settings, quit, relaunch, repeat one cloud generate and one local generate | settings JSON, screenshots, transcript | No relaunch proof |
+
+### Evidence Bundle Checklist
+
+Each completed live row should save:
+
+- `git-head.txt` with exact Osaurus commit and `Package.resolved`.
+- `vmlx-swift-revision.txt` from `Packages/OsaurusCore/Package.swift`.
+- `build.log` from SwiftPM or Xcode build.
+- `osaurus.log` from the launched app.
+- `/health` JSON before, during, and after the job.
+- `/images/models` JSON before the job.
+- chat transcript export or screenshots showing tool call, permission prompt,
+  progress row, artifact, and final answer.
+- generated source/output images for image rows.
+- Activity Monitor or equivalent `phys_footprint` evidence for RAM rows.
+- explicit `GREEN`, `RED`, `PARTIAL`, or `BLOCKED` status in this document.
+
 ## Current Status
 
 `SOURCE-WIRED / BUILDS`:
