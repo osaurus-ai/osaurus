@@ -1822,6 +1822,9 @@
         }
       }
     },
+    "%lld steps" : {
+
+    },
     "%lld tokens" : {
       "localizations" : {
         "de" : {
@@ -2827,6 +2830,15 @@
           }
         }
       }
+    },
+    "512" : {
+
+    },
+    "768" : {
+
+    },
+    "1024" : {
+
     },
     "A bounded model-discovery request is in flight." : {
       "localizations" : {
@@ -6233,6 +6245,9 @@
         }
       }
     },
+    "Attach one source image to edit with this model." : {
+
+    },
     "Attach snippet from %@" : {
       "comment" : "Auto-extracted format-string key (Apple String.LocalizationValue canonical form).",
       "extractionState" : "manual",
@@ -9429,6 +9444,9 @@
         }
       }
     },
+    "CFG" : {
+
+    },
     "Change Folder" : {
       "localizations" : {
         "de" : {
@@ -10351,6 +10369,9 @@
           }
         }
       }
+    },
+    "Classifier-free guidance" : {
+
     },
     "Claude models" : {
       "localizations" : {
@@ -15761,6 +15782,9 @@
         }
       }
     },
+    "Denoising steps" : {
+
+    },
     "Deny" : {
       "localizations" : {
         "de" : {
@@ -15848,6 +15872,9 @@
           }
         }
       }
+    },
+    "Describe the image..." : {
+
     },
     "Description" : {
       "localizations" : {
@@ -16902,9 +16929,6 @@
         }
       }
     },
-    "Download an image-generation bundle, then pick it in the chat model selector to generate images." : {
-
-    },
     "Download failed" : {
       "localizations" : {
         "de" : {
@@ -16920,9 +16944,6 @@
           }
         }
       }
-    },
-    "Download from Hugging Face" : {
-
     },
     "Download later" : {
       "extractionState" : "stale",
@@ -23285,6 +23306,9 @@
         }
       }
     },
+    "How strongly the prompt changes the source image" : {
+
+    },
     "How the chat looks before your first message." : {
       "localizations" : {
         "de" : {
@@ -23777,6 +23801,9 @@
     "Image generation failed: no model selected" : {
 
     },
+    "Image generation failed: selected model is not an image model." : {
+
+    },
     "Image generation produced no image." : {
 
     },
@@ -23895,7 +23922,11 @@
         }
       }
     },
+    "Import a model from Hugging Face" : {
+
+    },
     "Import an MLX model from Hugging Face" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -30400,6 +30431,9 @@
         }
       }
     },
+    "Negative prompt" : {
+
+    },
     "Network" : {
       "localizations" : {
         "de" : {
@@ -32873,6 +32907,9 @@
         }
       }
     },
+    "Not ready" : {
+
+    },
     "Not registered" : {
       "localizations" : {
         "de" : {
@@ -33537,7 +33574,7 @@
         }
       }
     },
-    "On-device image models" : {
+    "On-device image model" : {
 
     },
     "On-the-fly Compression" : {
@@ -34484,6 +34521,9 @@
         }
       }
     },
+    "Optional numeric seed" : {
+
+    },
     "Optional, e.g. /Users/me/projects/my-mcp" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -34614,9 +34654,6 @@
           }
         }
       }
-    },
-    "org/Model-mflux-4bit" : {
-
     },
     "Osaurus" : {
       "localizations" : {
@@ -34821,6 +34858,7 @@
       }
     },
     "Osaurus only runs MLX models. Try a repo from `OsaurusAI` or `mlx-community`." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -35078,6 +35116,9 @@
           }
         }
       }
+    },
+    "Output image size" : {
+
     },
     "Override added" : {
       "localizations" : {
@@ -35641,6 +35682,9 @@
           }
         }
       }
+    },
+    "Paste an MLX language model (try `OsaurusAI` or `mlx-community`) or an mflux image model — each is routed to the right place automatically." : {
+
     },
     "Paste API token here" : {
       "localizations" : {
@@ -47009,6 +47053,9 @@
         }
       }
     },
+    "Seed" : {
+
+    },
     "Select" : {
       "localizations" : {
         "de" : {
@@ -47290,6 +47337,9 @@
           }
         }
       }
+    },
+    "Selected image model does not accept source images." : {
+
     },
     "Selected model is outdated." : {
       "localizations" : {
@@ -51143,6 +51193,9 @@
         }
       }
     },
+    "Strength" : {
+
+    },
     "Stretch" : {
       "localizations" : {
         "de" : {
@@ -51420,9 +51473,6 @@
           }
         }
       }
-    },
-    "Suggested" : {
-
     },
     "Summarize text" : {
       "localizations" : {
@@ -52070,6 +52120,9 @@
           }
         }
       }
+    },
+    "Terms to avoid during image generation" : {
+
     },
     "Tertiary BG" : {
       "localizations" : {
