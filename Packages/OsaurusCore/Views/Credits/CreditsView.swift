@@ -6,6 +6,7 @@ struct CreditsView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
     @ObservedObject private var accountService = OsaurusRouterAccountService.shared
     @ObservedObject private var insightsService = InsightsService.shared
+    @ObservedObject private var providerManager = RemoteProviderManager.shared
 
     private static let activityPageSize = 10
     private static let ledgerMatchLimit = 500
@@ -20,6 +21,15 @@ struct CreditsView: View {
     @State private var isExportingDiagnostics = false
     @State private var diagnosticsMessage: String?
     @State private var showTopUpSheet = false
+    @State private var showDisableRouterConfirm = false
+
+    /// User master switch state. When off, the Credits screen hides the
+    /// balance/activity cards (the router is no longer polled) and shows the
+    /// "router off" explainer instead.
+    private var routerEnabled: Bool { providerManager.isOsaurusRouterEnabled }
+
+    /// Top-ups need both an active router and an identity to bill against.
+    private var canAddCredits: Bool { routerEnabled && OsaurusIdentity.exists() }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -30,11 +40,16 @@ struct CreditsView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    if !OsaurusIdentity.exists() {
-                        identityRequiredCard
+                    if routerEnabled {
+                        if !OsaurusIdentity.exists() {
+                            identityRequiredCard
+                        }
+                        balanceCard
+                        activityCard
+                    } else {
+                        routerOffCard
                     }
-                    balanceCard
-                    activityCard
+                    routerToggleFooter
                 }
                 .padding(.horizontal, 24)
                 .padding(.vertical, 24)
@@ -51,6 +66,13 @@ struct CreditsView: View {
         .onChange(of: accountService.usage) { _, _ in
             Task { await reloadLedger() }
         }
+        .onChange(of: providerManager.isOsaurusRouterEnabled) { _, isEnabled in
+            // Re-enabling while viewing Credits should populate balance/activity
+            // immediately (the toggle action itself only reconnects the router).
+            if isEnabled {
+                Task { await refreshCredits(resetPages: true) }
+            }
+        }
         .onAppear {
             withAnimation(.easeOut(duration: 0.25).delay(0.05)) {
                 hasAppeared = true
@@ -59,6 +81,26 @@ struct CreditsView: View {
         .sheet(isPresented: $showTopUpSheet) {
             CreditsTopUpSheet()
                 .environment(\.theme, themeManager.currentTheme)
+        }
+        .confirmationDialog(
+            Text("Turn off Osaurus Router?", bundle: .module),
+            isPresented: $showDisableRouterConfirm,
+            titleVisibility: .visible
+        ) {
+            Button(role: .destructive) {
+                providerManager.setOsaurusRouterEnabled(false)
+            } label: {
+                Text("Turn Off", bundle: .module)
+            }
+            Button(role: .cancel) {
+            } label: {
+                Text("Keep On", bundle: .module)
+            }
+        } message: {
+            Text(
+                "Osaurus will run fully local and free. Cloud models routed through Osaurus will be hidden, and any chat using one will switch to a local model. You can turn it back on anytime. Thanks for supporting Osaurus.",
+                bundle: .module
+            )
         }
     }
 
@@ -74,11 +116,13 @@ struct CreditsView: View {
             ) {
                 Task { await refreshCredits(resetPages: true) }
             }
+            .disabled(!routerEnabled)
+            .opacity(routerEnabled ? 1 : 0.55)
             HeaderPrimaryButton("Add credits", icon: "creditcard.fill") {
                 showTopUpSheet = true
             }
-            .disabled(!OsaurusIdentity.exists())
-            .opacity(!OsaurusIdentity.exists() ? 0.55 : 1)
+            .disabled(!canAddCredits)
+            .opacity(canAddCredits ? 1 : 0.55)
         }
     }
 
@@ -110,6 +154,80 @@ struct CreditsView: View {
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
+                }
+                Spacer()
+            }
+        }
+    }
+
+    // MARK: - Router master switch
+
+    /// Quiet, bottom-anchored footer that always renders. Deliberately
+    /// understated (no card chrome) so it stays discoverable without inviting a
+    /// casual opt-out: turning the router off routes through a confirmation,
+    /// turning it back on is a single tap.
+    private var routerToggleFooter: some View {
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Osaurus Router", bundle: .module)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(theme.secondaryText)
+                Text(
+                    "Runs cloud models and provider load-balancing; requests spend credits. Keeping it on helps support Osaurus development - thank you.",
+                    bundle: .module
+                )
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 12)
+
+            Toggle("", isOn: routerToggleBinding)
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .tint(theme.accentColor)
+        }
+        .padding(.top, 8)
+    }
+
+    /// Drives the footer switch. Enabling is immediate; disabling defers to the
+    /// confirmation dialog and leaves the published value (and the switch) on
+    /// until the user confirms, so an accidental flip is recoverable.
+    private var routerToggleBinding: Binding<Bool> {
+        Binding(
+            get: { providerManager.isOsaurusRouterEnabled },
+            set: { newValue in
+                if newValue {
+                    providerManager.setOsaurusRouterEnabled(true)
+                } else {
+                    showDisableRouterConfirm = true
+                }
+            }
+        )
+    }
+
+    /// Shown in place of the balance/activity cards while the router is off.
+    private var routerOffCard: some View {
+        card {
+            HStack(alignment: .top, spacing: 14) {
+                Image(systemName: "bolt.slash.fill")
+                    .font(.system(size: 22, weight: .semibold))
+                    .foregroundColor(theme.secondaryText)
+                    .frame(width: 28)
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Osaurus Router is off", bundle: .module)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(theme.primaryText)
+                    Text(
+                        "Osaurus is running fully local and free. Cloud models routed through Osaurus are hidden, and no requests are sent to Osaurus servers. Turn it back on below whenever you like.",
+                        bundle: .module
+                    )
+                    .font(.system(size: 12))
+                    .foregroundColor(theme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer()
             }
