@@ -50,6 +50,16 @@ public actor ImageGenerationService {
         cancelledJobIDs.insert(jobID)
     }
 
+    /// Release the resident image model after agent-triggered jobs or memory
+    /// pressure handoffs. Manual image-panel flows may choose to keep the
+    /// engine warm and skip this through `AgentDelegationImageLoadPolicy`.
+    public func unload() async {
+        if let engine {
+            await engine.unload()
+        }
+        loadedDirectoryName = nil
+    }
+
     // MARK: - Model store root
 
     /// Root directory scanned for local image bundles. Resolution order:

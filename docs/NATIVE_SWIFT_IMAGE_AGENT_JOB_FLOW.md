@@ -1,6 +1,6 @@
 # Native Swift image agent job flow
 
-Status: `DESIGN/HANDOFF - NOT IMPLEMENTED`
+Status: `PARTIAL - SOURCE WIRED, E2E PROOF MISSING`
 
 Branch: `feat/image-generation-vmlxflux`
 
@@ -562,7 +562,7 @@ Do not mark this feature working until all of these pass:
 
 ## Current Status
 
-`FIXED`:
+`SOURCE-WIRED / BUILDS`:
 
 - Native image API and manual composer wiring exist.
 - Model catalog and capability metadata are exposed.
@@ -572,17 +572,36 @@ Do not mark this feature working until all of these pass:
   persistence, compatible downloaded-model candidate filtering, and a Settings
   card for default local text/image models, load policy, sharing policy,
   budgets, and ask/deny/always-allow defaults.
+- `ImageGenerationService.unload()` now exposes explicit image-model release
+  for agent-triggered low-RAM jobs.
+- `NativeImageJobCoordinator` now resolves requested/configured/first-ready
+  local image generation models, records progress phases, runs generation
+  through `ImageGenerationService`, and unloads image weights after agent jobs
+  unless manual-panel keep-warm policy is selected.
+- `image_generate` is registered as a compact built-in tool. It enforces the
+  Agent Delegation image-generation permission default (`ask`, `deny`,
+  `always_allow`), passes prompt/negative prompt/steps/guidance/seed/model
+  arguments to the coordinator, and returns generated image paths plus progress
+  metadata.
+- Local source verification on 2026-06-18: `swift build --package-path
+  Packages/OsaurusCore` passed after these changes. `swift test --package-path
+  Packages/OsaurusCore --filter NativeImageJobCoordinatorTests` remained
+  blocked by the existing package-wide `no such module 'Testing'` failure before
+  test execution.
 
 `PARTIAL`:
 
 - Foreground manual SwiftUI click-through is still not proven.
-- Image generation is available as direct image-model chat/manual mode and HTTP
-  API, not as an ordinary main-agent tool.
-- Low-RAM unload/reload handoff is only available indirectly through existing
-  runtime unload primitives; there is no image-specific coordinator yet.
-- Agent delegation settings compile, but no runtime coordinator consumes them
-  yet and local SwiftPM test execution is blocked on this host by a global
-  `Testing` module import failure in existing tests.
+- Image generation now has a source-wired main-agent tool, but no live
+  cloud/local chat e2e proof has run through the actual agent loop.
+- The coordinator unloads image weights after agent-launched jobs, but active
+  local chat model snapshot/unload/restore is not wired yet.
+- Progress events are recorded and posted through
+  `nativeImageJobProgressChanged`, but the chat UI progress row has not been
+  wired/proven for the agent-triggered path.
+- Image edit remains manual/API-only; no `image_edit` agent tool exists yet.
+- Local SwiftPM test execution is blocked on this host by a global `Testing`
+  module import failure in existing tests.
 
 `BLOCKED FOR RELEASE`:
 
@@ -590,7 +609,7 @@ Do not mark this feature working until all of these pass:
 - No cloud-chat-model -> local image tool e2e proof.
 - No image-edit agent tool proof.
 - No cloud-chat-model -> local text delegate e2e proof.
-- No runtime permission prompt or ask/deny/always-allow proof exists for spawned
-  image or text jobs.
+- No runtime permission prompt or ask/deny/always-allow live proof exists for
+  spawned image or text jobs.
 - No agent-triggered RAM-safety preflight/refusal proof.
 - No progress UI proof for the agent-triggered path.
