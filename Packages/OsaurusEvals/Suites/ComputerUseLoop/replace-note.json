@@ -1,0 +1,19 @@
+{
+  "id": "computer_use_loop.replace-note",
+  "domain": "computer_use_loop",
+  "label": "CU loop • replace an existing field value",
+  "query": "Replace the note text with exactly 'Final version'.",
+  "notes": "Model-driven. The Note field is pre-filled with stale text, so the model must overwrite it (set_value, or clear + type) to land EXACTLY 'Final version' — not append to the existing draft. Exercises set_value / clear on a populated editable field.",
+  "fixtures": {},
+  "expect": {
+    "computerUseLoop": {
+      "app": "Notes",
+      "maxSteps": 8,
+      "elements": [
+        { "id": "note", "role": "textfield", "label": "Note", "value": "old draft text", "editable": true }
+      ],
+      "successValues": [{ "id": "note", "equals": "Final version" }],
+      "maxInvalidActions": 2
+    }
+  }
+}

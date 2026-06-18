@@ -37,6 +37,10 @@ public struct ComputerUseRunMetrics: Sendable, Equatable {
     public var coordinateFallbacks = 0
     /// Highest capture tier reached during the run.
     public var maxTier: CaptureTier = .ax
+    /// Total model tokens (prompt + completion) consumed across all model
+    /// steps, summed from each response's usage. `0` when the loop is driven by
+    /// a scripted provider (no model call).
+    public var modelTokens = 0
     /// Whether the cloud-vision route was ever taken (consented + scrubbed).
     public var cloudVisionUsed = false
     /// Effect-class distribution of gated actions.

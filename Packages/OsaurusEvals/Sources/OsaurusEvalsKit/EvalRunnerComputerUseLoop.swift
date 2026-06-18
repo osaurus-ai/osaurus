@@ -46,6 +46,15 @@ extension EvalRunner {
         let interrupt = InterruptToken()
         let limits = RunLimits(maxSteps: exp.maxSteps ?? 16, wallClockSeconds: 240)
 
+        // Scripted-model harness: when the scene supplies `scriptedActions`,
+        // the loop is driven deterministically via the `AgentStepProvider` seam
+        // (no model call), so failure-recovery / gate / verb scenarios run in
+        // CI. Otherwise the live `modelId` drives the loop as before.
+        let scriptedProvider: AgentStepProvider? =
+            (exp.scriptedActions?.isEmpty == false)
+            ? ComputerUseLoop.scriptedProvider(rawArguments: exp.scriptedActions!)
+            : nil
+
         let started = Date()
         let result = await ComputerUseLoop.run(
             goal: testCase.query,
@@ -58,7 +67,8 @@ extension EvalRunner {
             limits: limits,
             policySummary: "",
             vision: .none,
-            sessionId: "eval-cu-\(testCase.id)"
+            sessionId: "eval-cu-\(testCase.id)",
+            nextAction: scriptedProvider
         )
         let latency = Date().timeIntervalSince(started) * 1000
 
@@ -149,27 +159,69 @@ extension EvalRunner {
             )
         }
 
+        // 5. Step efficiency — did the model reach the goal without thrashing
+        // (and not "too fast", a scene-design smell). Only scored when set.
+        if let maxScored = exp.scoredMaxSteps {
+            check(
+                metrics.steps <= maxScored,
+                pass: "steps ok: \(metrics.steps) ≤ \(maxScored)",
+                fail: "steps \(metrics.steps) > \(maxScored) (inefficient)"
+            )
+        }
+        if let minScored = exp.scoredMinSteps {
+            check(
+                metrics.steps >= minScored,
+                pass: "steps ok: \(metrics.steps) ≥ \(minScored)",
+                fail: "steps \(metrics.steps) < \(minScored) (scene solvable too cheaply?)"
+            )
+        }
+
+        // 6. Verb order — the plan shape (a required subsequence of the executed
+        // verb trace, not necessarily contiguous).
+        if let order = exp.expectVerbsInOrder, !order.isEmpty {
+            check(
+                Self.containsSubsequence(verbTrace, order),
+                pass: "verb order ok: \(order) ⊑ [\(verbTrace.joined(separator: ","))]",
+                fail: "verb order \(order) not a subsequence of [\(verbTrace.joined(separator: ","))]"
+            )
+        }
+
+        // 7. Token budget — the cost ceiling for the live-model lane. Scripted
+        // runs spend 0 tokens, so this only bites a real model that reaches the
+        // goal but burns the budget getting there. Only scored when set.
+        if let maxTokens = exp.scoredMaxModelTokens {
+            check(
+                metrics.modelTokens <= maxTokens,
+                pass: "tokens ok: \(metrics.modelTokens) ≤ \(maxTokens)",
+                fail: "tokens \(metrics.modelTokens) > \(maxTokens) (over budget)"
+            )
+        }
+
         // Telemetry summary (always present so a pass is still legible).
         notes.append("outcome: \(result.outcome.summary)")
         notes.append(
             "telemetry: steps=\(metrics.steps) proposed=\(proposed) acted=\(acted) "
                 + "verifyChanged=\(metrics.verifyChanged) blocked=\(metrics.blocked) "
-                + "confirms=\(metrics.confirmsRequested) invalidActions=\(invalidActions)"
+                + "confirms=\(metrics.confirmsRequested) invalidActions=\(invalidActions) "
+                + "tokens=\(metrics.modelTokens) latencyMs=\(Int(latency))"
         )
         if let rate = metrics.axResolvableRate {
-            notes.append("axResolvableRate: \(String(format: "%.2f", rate)) "
-                + "(\(metrics.targetResolveSuccesses)/\(metrics.targetResolveAttempts))")
+            notes.append(
+                "axResolvableRate: \(String(format: "%.2f", rate)) "
+                    + "(\(metrics.targetResolveSuccesses)/\(metrics.targetResolveAttempts))"
+            )
         }
         notes.append("verbs: [\(verbTrace.joined(separator: ","))]")
 
         if !passed {
             notes.append(
-                "attribution: " + Self.attributeFailure(
-                    outcome: result.outcome,
-                    invalidActions: invalidActions,
-                    metrics: metrics,
-                    acted: acted
-                )
+                "attribution: "
+                    + Self.attributeFailure(
+                        outcome: result.outcome,
+                        invalidActions: invalidActions,
+                        metrics: metrics,
+                        acted: acted
+                    )
             )
             notes.append(
                 "final values: "
@@ -193,6 +245,16 @@ extension EvalRunner {
     }
 
     // MARK: - Helpers
+
+    /// Whether `needles` appear in `haystack` in order (a subsequence — gaps
+    /// allowed), the matcher for `expectVerbsInOrder`.
+    private static func containsSubsequence(_ haystack: [String], _ needles: [String]) -> Bool {
+        var i = 0
+        for verb in haystack where i < needles.count && verb == needles[i] {
+            i += 1
+        }
+        return i == needles.count
+    }
 
     /// Short, stable name for a `RunOutcome` used in `expectOutcome`
     /// matching and report lines.

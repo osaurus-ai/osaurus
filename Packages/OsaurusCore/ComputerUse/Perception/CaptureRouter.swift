@@ -69,6 +69,26 @@ public enum CaptureRouter {
         return current != .vision
     }
 
+    /// Decide whether an empty / near-empty AX view should escalate the capture
+    /// tier — the Electron / custom-drawn-UI case where the accessibility tree
+    /// carries nothing to act on. Returns the tier to capture at next, or `nil`
+    /// to stay put. Honors the `axEmpty` escalation reason and the same
+    /// Screen-Recording gate as `canEscalate`: with no pixels available there is
+    /// nothing to climb to, so the loop must work with the AX tree (or surface a
+    /// clear message). `threshold` is the minimum actionable element count; the
+    /// default of 1 escalates only on a truly empty view, which avoids
+    /// over-escalating legitimately simple screens.
+    public static func escalateForEmptyAX(
+        currentTier: CaptureTier,
+        itemCount: Int,
+        availability: MacDriverAvailability,
+        threshold: Int = 1
+    ) -> CaptureTier? {
+        guard itemCount < max(0, threshold) else { return nil }
+        guard canEscalate(from: currentTier, availability: availability) else { return nil }
+        return nextTier(current: currentTier, reason: .axEmpty, availability: availability)
+    }
+
     /// Whether the cloud-vision route is permitted at all. Requires explicit
     /// consent and Screen Recording (no pixels, no cloud vision). This is the
     /// FIRST half of the hard rule; the second half is that the route can only

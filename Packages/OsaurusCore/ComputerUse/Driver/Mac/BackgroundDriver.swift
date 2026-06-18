@@ -236,22 +236,29 @@ final class BackgroundDriver: @unchecked Sendable {
         }
 
         // Reached only when the SkyLight symbol is unavailable (older/newer
-        // macOS, sandboxed host). CGEvent.postToPid is public CoreGraphics API
-        // and works for almost all Cocoa apps; only Chromium's renderer filter
-        // is picky.
-        transports.postToPid(event, pid)
-        let route: InputRoute = transports.isChromium(pid) ? .hidFallback : .perPid
-        InputDebug.log("route pid=\(pid) -> postToPid fallback (SkyLight unavailable); telemetry=\(route.rawValue)")
-        if route == .hidFallback {
-            // Per-pid won't actually deliver to Chrome web content; mark the
-            // failure in telemetry so the agent knows the click probably missed.
-            // We still record .perPid as the *attempted* route — callers that
-            // care can re-try with HID via the explicit "click" path.
-            record(route: .perPid)
-            return .perPid
+        // macOS, sandboxed host).
+        //
+        // For Chromium/Electron web content, per-pid delivery is BOTH
+        // unconfirmable (postToPid is fire-and-forget) AND silently dropped by
+        // the renderer's trusted-gesture filter — the signature Slack/Electron
+        // miss. So rather than post a per-pid event that never lands and only
+        // logging telemetry, escalate straight to the HID tap. The cursor warp
+        // is the lesser evil vs. a keystroke/click that silently misses, and
+        // using a SINGLE transport (HID, not postToPid+HID) avoids the
+        // double-delivery class of bug.
+        if transports.isChromium(pid) {
+            transports.hidPost(event)
+            InputDebug.log("route pid=\(pid) -> hidFallback (Chromium; per-pid not deliverable)")
+            record(route: .hidFallback)
+            return .hidFallback
         }
-        record(route: route)
-        return route
+
+        // CGEvent.postToPid is public CoreGraphics API and works for almost all
+        // Cocoa apps; the cursor never moves.
+        transports.postToPid(event, pid)
+        InputDebug.log("route pid=\(pid) -> perPid (SkyLight unavailable)")
+        record(route: .perPid)
+        return .perPid
     }
 
     private func record(route: InputRoute) {

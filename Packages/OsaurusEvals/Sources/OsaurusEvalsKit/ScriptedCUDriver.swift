@@ -26,8 +26,9 @@ public actor ScriptedCUDriver: MacDriver {
 
     // MARK: - Mutable cell
 
-    /// One element in the scripted tree. `value` and `hidden` are the only
-    /// mutable bits; ids/roles/labels are fixed for the run so marks and
+    /// One element in the scripted tree. `value`, `hidden`, the click-failure
+    /// budget, and the async-reveal countdown are the mutable bits; ids /
+    /// roles / labels / tier / scroll gating are fixed for the run so marks and
     /// change-detection keys stay stable.
     private struct Cell {
         let id: String
@@ -38,6 +39,16 @@ public actor ScriptedCUDriver: MacDriver {
         let editable: Bool
         var hidden: Bool
         let onClick: EvalCase.ComputerUseLoopExpectations.ClickEffect?
+        /// Lowest capture tier at which this cell is rendered.
+        let minTier: CaptureTier
+        /// Remaining element-addressed click failures (stale-ref simulation).
+        var clickFailuresRemaining: Int
+        /// Captures that must elapse before a revealed cell actually appears
+        /// (async load). `nil` = not pending; `> 0` = ticking down.
+        let revealAfterCaptures: Int
+        var revealCountdown: Int?
+        /// Below the fold until the loop scrolls.
+        let revealOnScroll: Bool
     }
 
     // MARK: - State
@@ -50,6 +61,8 @@ public actor ScriptedCUDriver: MacDriver {
     /// focuses it). Drives `type` with no explicit target.
     private var focusedId: String?
     private var snapshotCounter = 0
+    /// Set once the loop performs any scroll; gates `revealOnScroll` cells.
+    private var didScroll = false
 
     // MARK: - Recorded signals (read by the scorer after the run)
 
@@ -72,12 +85,24 @@ public actor ScriptedCUDriver: MacDriver {
                 placeholder: element.placeholder,
                 editable: element.editable ?? false,
                 hidden: element.hidden ?? false,
-                onClick: element.onClick
+                onClick: element.onClick,
+                minTier: CaptureTier(rawValue: element.minTier ?? "ax") ?? .ax,
+                clickFailuresRemaining: max(0, element.clickFailures ?? 0),
+                revealAfterCaptures: max(0, element.revealAfterCaptures ?? 0),
+                revealCountdown: nil,
+                revealOnScroll: element.revealOnScroll ?? false
             )
         }
-        // Seed focus on the first visible editable field so a model that
+        // Seed focus on the first AX-visible editable field so a model that
         // types without an explicit target still lands somewhere sensible.
-        self.focusedId = self.cells.first(where: { $0.editable && !$0.hidden })?.id
+        self.focusedId =
+            self.cells.first(where: { $0.editable && $0.minTier == .ax && !$0.hidden && !$0.revealOnScroll })?
+            .id
+    }
+
+    /// Tier ordering helper: ax < som < vision.
+    private static func tierRank(_ tier: CaptureTier) -> Int {
+        CaptureTier.allCases.firstIndex(of: tier) ?? 0
     }
 
     // MARK: - Scorer read-back
@@ -176,9 +201,9 @@ public actor ScriptedCUDriver: MacDriver {
     }
 
     public func screenshot(pid: Int32?, windowId: Int?, annotate: Bool) async -> CUImage? {
-        // Minimal 1x1 placeholder — the scripted tree is the source of truth;
-        // pixels never carry information the AX path doesn't already have.
-        CUImage(base64: "", mimeType: "image/png", width: 1, height: 1)
+        // A real (tiny) PNG so the vision path receives decodable bytes; the
+        // scripted tree is still the source of truth for what's actionable.
+        Self.sampleImage
     }
 
     public func narrate(_ note: String, step: Int?, total: Int?) async {}
@@ -188,7 +213,7 @@ public actor ScriptedCUDriver: MacDriver {
     public func perform(_ action: CUElementAction) async -> CUActionResult {
         switch action {
         case .click(let id, _, _):
-            return applyClick(id: id)
+            return applyClick(id: id, viaCoordinate: false)
         case .setValue(let id, let value):
             executedVerbs.append("set_value")
             return applyEdit(id: id, value: value)
@@ -221,17 +246,20 @@ public actor ScriptedCUDriver: MacDriver {
         switch action {
         case .click(let x, let y, _, _, _):
             // Map a raw coordinate click back to the nearest visible element
-            // center so a model that falls back to coordinates still drives
-            // the same world. (The loop normally uses element actions; this
-            // is just defensive.)
+            // center. This is the loop's stale-ref fallback path, so a
+            // coordinate click ALWAYS lands (ignores `clickFailures`) — that's
+            // exactly the recovery the fallback exists to provide.
             if let hit = nearestVisible(toX: x, y: y) {
-                return applyClick(id: hit)
+                return applyClick(id: hit, viaCoordinate: true)
             }
             executedVerbs.append("click")
             return .ok()
         case .scroll:
             executedVerbs.append("scroll")
-            return .ok()
+            // Scrolling brings below-the-fold (`revealOnScroll`) cells into
+            // view on the next capture.
+            didScroll = true
+            return .ok(delta: focusDelta())
         case .drag:
             executedVerbs.append("drag")
             return .ok()
@@ -240,9 +268,20 @@ public actor ScriptedCUDriver: MacDriver {
 
     // MARK: - Mutation primitives
 
-    private func applyClick(id: String) -> CUActionResult {
+    private func applyClick(id: String, viaCoordinate: Bool) -> CUActionResult {
         guard let index = cells.firstIndex(where: { $0.id == id }), !cells[index].hidden else {
             return CUActionResult(success: false, error: "Element not found.", removed: true)
+        }
+        // Stale-ref injection: an element-addressed click fails as `removed`
+        // until the budget is spent. The coordinate fallback bypasses this, so
+        // a model that recovers via coordinates still makes progress.
+        if !viaCoordinate, cells[index].clickFailuresRemaining > 0 {
+            cells[index].clickFailuresRemaining -= 1
+            return CUActionResult(
+                success: false,
+                error: "The element reference went stale between capture and click.",
+                removed: true
+            )
         }
         executedVerbs.append("click")
         clickedIds.insert(id)
@@ -260,7 +299,14 @@ public actor ScriptedCUDriver: MacDriver {
             }
             for revealId in effect.reveal ?? [] {
                 if let target = cells.firstIndex(where: { $0.id == revealId }) {
-                    cells[target].hidden = false
+                    // Async reveal: a cell with `revealAfterCaptures` starts a
+                    // countdown and only appears after that many captures, so
+                    // the model has to wait/observe; otherwise it shows at once.
+                    if cells[target].revealAfterCaptures > 0 {
+                        cells[target].revealCountdown = cells[target].revealAfterCaptures
+                    } else {
+                        cells[target].hidden = false
+                    }
                 }
             }
         }
@@ -285,8 +331,20 @@ public actor ScriptedCUDriver: MacDriver {
         cells.first(where: { $0.id == id })?.value
     }
 
+    /// Whether a cell is rendered into a capture at `tier`, honoring hidden /
+    /// async-reveal countdown / scroll gating / minimum tier.
+    private func isRendered(_ cell: Cell, tier: CaptureTier) -> Bool {
+        if cell.hidden { return false }
+        if let cd = cell.revealCountdown, cd > 0 { return false }
+        if cell.revealOnScroll && !didScroll { return false }
+        if Self.tierRank(cell.minTier) > Self.tierRank(tier) { return false }
+        return true
+    }
+
     private func nearestVisible(toX x: Double, y: Double) -> String? {
-        let visible = cells.enumerated().filter { !$0.element.hidden }
+        // The most permissive tier — a coordinate click targets something the
+        // model already saw, so tier gating shouldn't hide it from the hit test.
+        let visible = cells.enumerated().filter { isRendered($0.element, tier: .vision) }
         guard !visible.isEmpty else { return nil }
         // Element layout mirrors `makeSnapshot`: a vertical stack, so match
         // on the row whose center y is closest.
@@ -314,10 +372,22 @@ public actor ScriptedCUDriver: MacDriver {
 
     private func makeSnapshot(tier: CaptureTier) -> CUSnapshot {
         snapshotCounter += 1
+        // Advance async-reveal countdowns one tick per capture; a cell whose
+        // countdown reaches zero becomes visible in THIS snapshot, so the model
+        // must wait/observe for it.
+        for i in cells.indices {
+            if let cd = cells[i].revealCountdown, cd > 0 {
+                let next = cd - 1
+                cells[i].revealCountdown = next
+                if next == 0 { cells[i].hidden = false }
+            }
+        }
         // Stable render order = declaration order of visible cells, so the
         // 1-based marks the model addresses don't shuffle between captures.
+        // `index` stays the RAW cell index so element y-coordinates (and the
+        // coordinate hit-test in `nearestVisible`) line up.
         var elements: [CUElement] = []
-        for (index, cell) in cells.enumerated() where !cell.hidden {
+        for (index, cell) in cells.enumerated() where isRendered(cell, tier: tier) {
             elements.append(
                 CUElement(
                     id: cell.id,
@@ -338,6 +408,9 @@ public actor ScriptedCUDriver: MacDriver {
                 )
             )
         }
+        // SOM / vision captures carry a real (tiny) decodable PNG, not an empty
+        // placeholder, so the vision attachment path has genuine bytes.
+        let pixels = tier == .ax ? nil : Self.sampleImage
         return CUSnapshot(
             snapshotId: snapshotCounter,
             pid: pid,
@@ -349,7 +422,17 @@ public actor ScriptedCUDriver: MacDriver {
                 CUWindowSummary(id: 1, title: appName, focused: true, x: 0, y: 0, w: 1200, h: 800)
             ],
             elements: elements,
-            image: tier == .ax ? nil : CUImage(base64: "", mimeType: "image/png", width: 1, height: 1)
+            image: pixels
         )
     }
+
+    /// A real 1×1 PNG (transparent) so SOM/vision snapshots and `screenshot`
+    /// carry decodable bytes rather than an empty-string placeholder.
+    private static let sampleImage = CUImage(
+        base64:
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M8AAAMBAQDJ/pLvAAAAAElFTkSuQmCC",
+        mimeType: "image/png",
+        width: 1,
+        height: 1
+    )
 }

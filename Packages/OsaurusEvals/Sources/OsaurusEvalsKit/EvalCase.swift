@@ -1124,6 +1124,24 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             /// What a click on this element does (buttons / toggles). Omitted
             /// for plain fields and static text.
             public let onClick: ClickEffect?
+            /// Lowest capture tier at which this element is visible: `ax`
+            /// (default), `som`, or `vision`. An element gated to `som`/`vision`
+            /// is INVISIBLE in a plain AX capture — the Electron / custom-drawn
+            /// shape that forces the loop's empty-AX → vision escalation. A scene
+            /// whose actionable controls are all `som`-gated starts empty at AX.
+            public let minTier: String?
+            /// Element-addressed clicks on this element fail as a stale/removed
+            /// ref this many times before succeeding (the signature Electron
+            /// failure). A COORDINATE click (the loop's fallback) always lands,
+            /// so this exercises the coordinate-fallback recovery end to end.
+            public let clickFailures: Int?
+            /// When a click `reveal`s this element, it stays hidden for this many
+            /// further captures (async load) — so the model must `wait`/`observe`
+            /// for it to appear rather than seeing it instantly.
+            public let revealAfterCaptures: Int?
+            /// The element is below the fold: absent until the loop performs a
+            /// `scroll`, then it stays visible. Exercises scroll-to-find.
+            public let revealOnScroll: Bool?
 
             public init(
                 id: String,
@@ -1133,7 +1151,11 @@ public struct EvalCase: Sendable, Codable, Identifiable {
                 placeholder: String? = nil,
                 editable: Bool? = nil,
                 hidden: Bool? = nil,
-                onClick: ClickEffect? = nil
+                onClick: ClickEffect? = nil,
+                minTier: String? = nil,
+                clickFailures: Int? = nil,
+                revealAfterCaptures: Int? = nil,
+                revealOnScroll: Bool? = nil
             ) {
                 self.id = id
                 self.role = role
@@ -1143,6 +1165,10 @@ public struct EvalCase: Sendable, Codable, Identifiable {
                 self.editable = editable
                 self.hidden = hidden
                 self.onClick = onClick
+                self.minTier = minTier
+                self.clickFailures = clickFailures
+                self.revealAfterCaptures = revealAfterCaptures
+                self.revealOnScroll = revealOnScroll
             }
         }
 
@@ -1226,6 +1252,30 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// Ceiling on invalid `agent_action` re-asks (the JSON-discipline
         /// signal). nil → not scored, but always reported.
         public let maxInvalidActions: Int?
+        /// Step-efficiency floor/ceiling, scored against the loop's productive
+        /// step count. `scoredMaxSteps` catches a model that thrashes its way
+        /// to the goal; `scoredMinSteps` catches a scene that's trivially
+        /// solvable in fewer steps than intended (a scene-design smell). Both
+        /// nil → efficiency is reported but not scored.
+        public let scoredMinSteps: Int?
+        public let scoredMaxSteps: Int?
+        /// Verbs that must appear, IN THIS RELATIVE ORDER, in the executed verb
+        /// trace (subsequence match, not contiguous). Encodes a required plan
+        /// shape, e.g. `["scroll","click"]` (scroll into view, then click) or
+        /// `["click","wait","set_value"]` (reveal, await async, then fill).
+        public let expectVerbsInOrder: [String]?
+        /// Ceiling on total model tokens (prompt + completion, summed across
+        /// every model step) the run may spend. The cost lever for the
+        /// live-model lane — a model that reaches the goal but burns the budget
+        /// to get there fails. `0` for scripted runs (no model call), so this
+        /// is effectively only scored on live cases. nil → reported, not scored.
+        public let scoredMaxModelTokens: Int?
+        /// Optional scripted model: a sequence of `agent_action` arguments-JSON
+        /// strings that DRIVE the loop deterministically in place of a live
+        /// model (via the `AgentStepProvider` seam). Lets failure-recovery and
+        /// gate/verb scenarios run in CI with no model. When present, the model
+        /// is never called; when nil, the case uses the live `modelId`.
+        public let scriptedActions: [String]?
 
         public init(
             app: String,
@@ -1237,7 +1287,12 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             successClicked: [String]? = nil,
             failIfClicked: [String]? = nil,
             finalSummaryContains: [String]? = nil,
-            maxInvalidActions: Int? = nil
+            maxInvalidActions: Int? = nil,
+            scoredMinSteps: Int? = nil,
+            scoredMaxSteps: Int? = nil,
+            expectVerbsInOrder: [String]? = nil,
+            scoredMaxModelTokens: Int? = nil,
+            scriptedActions: [String]? = nil
         ) {
             self.app = app
             self.elements = elements
@@ -1249,6 +1304,11 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.failIfClicked = failIfClicked
             self.finalSummaryContains = finalSummaryContains
             self.maxInvalidActions = maxInvalidActions
+            self.scoredMinSteps = scoredMinSteps
+            self.scoredMaxSteps = scoredMaxSteps
+            self.expectVerbsInOrder = expectVerbsInOrder
+            self.scoredMaxModelTokens = scoredMaxModelTokens
+            self.scriptedActions = scriptedActions
         }
     }
 

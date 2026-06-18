@@ -44,6 +44,39 @@ final class CaptureRouterTests: XCTestCase {
         )
     }
 
+    func testEscalateForEmptyAXClimbsWhenPixelsAvailable() {
+        let av = availability(screenRecording: true)
+        // Empty view (0 items) escalates one rung up the ladder.
+        XCTAssertEqual(CaptureRouter.escalateForEmptyAX(currentTier: .ax, itemCount: 0, availability: av), .som)
+        XCTAssertEqual(
+            CaptureRouter.escalateForEmptyAX(currentTier: .som, itemCount: 0, availability: av),
+            .vision
+        )
+        // Already at the top → nothing to climb to.
+        XCTAssertNil(CaptureRouter.escalateForEmptyAX(currentTier: .vision, itemCount: 0, availability: av))
+    }
+
+    func testEscalateForEmptyAXStaysOnPopulatedView() {
+        let av = availability(screenRecording: true)
+        XCTAssertNil(CaptureRouter.escalateForEmptyAX(currentTier: .ax, itemCount: 3, availability: av))
+        // A custom threshold treats a near-empty view as escalatable.
+        XCTAssertEqual(
+            CaptureRouter.escalateForEmptyAX(currentTier: .ax, itemCount: 1, availability: av, threshold: 2),
+            .som
+        )
+    }
+
+    func testEscalateForEmptyAXPinsWithoutScreenRecording() {
+        // No pixels available → no escalation even on an empty view.
+        XCTAssertNil(
+            CaptureRouter.escalateForEmptyAX(
+                currentTier: .ax,
+                itemCount: 0,
+                availability: availability(screenRecording: false)
+            )
+        )
+    }
+
     func testCloudRouteRequiresConsent() async {
         let frame = await makeScrubbedFrame()
         let av = availability(screenRecording: true)

@@ -29,19 +29,37 @@ public struct RunLimits: Sendable {
     public var maxConsecutiveDeadEnd: Int
     /// Wall-clock budget for the whole run.
     public var wallClockSeconds: TimeInterval
+    /// Per-model-step inference budget. A single hung inference is aborted (and
+    /// retried per `maxInferenceRetries`) instead of stalling until the whole
+    /// `wallClockSeconds`. `<= 0` disables the per-step timeout.
+    public var modelStepTimeoutSeconds: TimeInterval
+    /// Extra attempts after a model-step throws/times out before the run fails.
+    /// e.g. `2` means up to three tries total, with a short backoff between.
+    public var maxInferenceRetries: Int
+    /// Consecutive identical acting actions (same verb+target+payload) before
+    /// the run dead-ends as stalled. `<= 0` disables stall detection. Verbs
+    /// where repetition is legitimate progress (scroll/observe/wait/find) are
+    /// exempt.
+    public var maxRepeatedActions: Int
 
     public init(
         maxSteps: Int = 24,
         maxConsecutiveInvalid: Int = 3,
         maxConsecutiveReobserve: Int = 2,
         maxConsecutiveDeadEnd: Int = 3,
-        wallClockSeconds: TimeInterval = 300
+        wallClockSeconds: TimeInterval = 300,
+        modelStepTimeoutSeconds: TimeInterval = 90,
+        maxInferenceRetries: Int = 2,
+        maxRepeatedActions: Int = 4
     ) {
         self.maxSteps = max(1, maxSteps)
         self.maxConsecutiveInvalid = max(1, maxConsecutiveInvalid)
         self.maxConsecutiveReobserve = max(1, maxConsecutiveReobserve)
         self.maxConsecutiveDeadEnd = max(1, maxConsecutiveDeadEnd)
         self.wallClockSeconds = wallClockSeconds
+        self.modelStepTimeoutSeconds = modelStepTimeoutSeconds
+        self.maxInferenceRetries = max(0, maxInferenceRetries)
+        self.maxRepeatedActions = maxRepeatedActions
     }
 }
 
@@ -83,7 +101,85 @@ public struct ComputerUseRunResult: Sendable {
     }
 }
 
+// MARK: - Model-step seam
+
+/// One model-proposed action surfaced to the loop: the tool-call id plus the
+/// raw `agent_action` arguments JSON. The default provider builds this from the
+/// live `ChatEngine`; tests and scripted-model evals build it from a programmed
+/// sequence so the whole `run` loop is drivable without a real model.
+public struct ModelActionCall: Sendable, Equatable {
+    public let id: String
+    public let arguments: String
+
+    public init(id: String, arguments: String) {
+        self.id = id
+        self.arguments = arguments
+    }
+}
+
+/// A public, redacted projection of the conversation the loop has built so far.
+/// Lets an injected `AgentStepProvider` react to the latest tool result (e.g.
+/// recover after a rejected action) without exposing the module-internal
+/// `ChatMessage` to out-of-module callers (the eval harness imports OsaurusCore
+/// non-`@testable`, so the seam cannot reference internal types).
+public struct AgentStepInput: Sendable {
+    public struct Turn: Sendable, Equatable {
+        public let role: String
+        public let text: String
+
+        public init(role: String, text: String) {
+            self.role = role
+            self.text = text
+        }
+    }
+
+    /// 0-based productive-step index for this decision.
+    public let step: Int
+    /// The conversation so far as role + text only (images and tool-call
+    /// metadata are intentionally omitted).
+    public let transcript: [Turn]
+
+    public init(step: Int, transcript: [Turn]) {
+        self.step = step
+        self.transcript = transcript
+    }
+
+    /// The most recent `tool`-role result text, if any — the feedback a
+    /// recovering scripted model would key off.
+    public var lastToolResult: String? {
+        transcript.last(where: { $0.role == "tool" })?.text
+    }
+}
+
+/// Injectable model step. Returns the next action call, or `nil` to signal the
+/// model produced no usable tool call (the loop treats that as a re-ask).
+public typealias AgentStepProvider =
+    @Sendable (_ input: AgentStepInput) async throws -> ModelActionCall?
+
 public enum ComputerUseLoop {
+
+    /// Upper bound on a single `wait` so a model can't park the run against the
+    /// wall clock by requesting a huge pause.
+    static let maxWaitSeconds = 10
+
+    /// Build a deterministic provider that vends `actions` in order. After the
+    /// list is exhausted it repeats the final action (so a miscounted script
+    /// can't spin forever — pair it with `RunLimits.maxSteps`); end scripts with
+    /// a terminal `done`/`give_up` for a clean outcome.
+    public static func scriptedProvider(_ actions: [AgentAction]) -> AgentStepProvider {
+        let cursor = ScriptedActionCursor(actions)
+        return { _ in await cursor.next() }
+    }
+
+    /// Like `scriptedProvider(_:)` but vends raw `agent_action` arguments-JSON
+    /// strings in order (the eval scene format). Lets a scripted scenario drive
+    /// deliberately malformed steps — the exact bytes — for recovery coverage,
+    /// without round-tripping through `AgentAction`. Repeats the final entry
+    /// once exhausted; pair with `RunLimits.maxSteps`.
+    public static func scriptedProvider(rawArguments: [String]) -> AgentStepProvider {
+        let cursor = ScriptedArgumentCursor(rawArguments)
+        return { _ in await cursor.next() }
+    }
 
     /// Drive a goal to completion. Pure orchestration over the injected
     /// `MacDriver` / `ComputerUseGating` / confirm surface — no UI, no
@@ -99,10 +195,14 @@ public enum ComputerUseLoop {
         limits: RunLimits = RunLimits(),
         policySummary: String = "",
         vision: VisionContext = .none,
-        sessionId: String
+        sessionId: String,
+        nextAction: AgentStepProvider? = nil
     ) async -> ComputerUseRunResult {
         let deadline = Date().addingTimeInterval(limits.wallClockSeconds)
-        let engine = ChatEngine(source: .chatUI)
+        // Default path drives the live ChatEngine; an injected `nextAction`
+        // (tests / scripted-model evals) drives the loop deterministically and
+        // never constructs an engine.
+        let engine: ChatEngine? = nextAction == nil ? ChatEngine(source: .chatUI) : nil
 
         // Capture availability once: it gates the escalation ladder (som/vision
         // need Screen Recording) for the whole run.
@@ -140,10 +240,17 @@ public enum ComputerUseLoop {
         var imageTokensInContext = 0
 
         // Initial perception so the model's first turn has something to act on.
-        let initialView = await perceive(
+        // An empty AX tree (Electron, custom-drawn UI) escalates ax→som→vision
+        // when Screen Recording is granted, so turn 1 already carries pixels.
+        var initialFrame: CUImage? = nil
+        let initialView = await perceiveEscalatingEmptyAX(
             pid: currentPid,
             driver: driver,
             previous: nil,
+            availability: availability,
+            currentTier: &currentTier,
+            pendingFrameImage: &initialFrame,
+            metrics: &metrics,
             feed: feed,
             step: 0
         )
@@ -154,16 +261,31 @@ public enum ComputerUseLoop {
         messages.append(
             ChatMessage(
                 role: "user",
-                content: "Goal: \(goal)\n\nCurrent view:\n" + initialView.render
+                content: "Goal: \(goal)\n\nCurrent view:\n"
+                    + augmentEmptyAX(initialView.render, view: initialView.view, availability: availability)
             )
         )
         appendAppGuidance(app: currentApp, into: &messages, hinted: &hintedApps)
+        if let frame = initialFrame {
+            await attachFrame(
+                image: frame,
+                vision: vision,
+                availability: availability,
+                messages: &messages,
+                imageTokensInContext: &imageTokensInContext,
+                metrics: &metrics,
+                feed: feed,
+                step: 0
+            )
+        }
 
         var step = 0
         var consecutiveInvalid = 0
         var consecutiveDeadEnd = 0
         var lastReobserveTargetKey: String? = nil
         var consecutiveReobserve = 0
+        var lastActionSignature: String? = nil
+        var repeatedActionCount = 0
 
         func terminate(_ outcome: RunOutcome) -> ComputerUseRunResult {
             metrics.steps = step
@@ -203,14 +325,37 @@ public enum ComputerUseLoop {
                 manager: iterationBudget,
                 watermark: watermark
             )
-            let parsed: (id: String, arguments: String)?
+            // One model step, captured so the timeout + retry wrapper can run it
+            // repeatedly without re-deriving the (fixed) iteration messages.
+            let stepMessages = input.messages
+            let stepIndex = step
+            let produce: @Sendable () async throws -> ModelStepResult = {
+                if let nextAction {
+                    let stepInput = AgentStepInput(
+                        step: stepIndex,
+                        transcript: projectTranscript(stepMessages)
+                    )
+                    return ModelStepResult(call: try await nextAction(stepInput), tokens: 0)
+                } else {
+                    return try await modelStep(
+                        engine: engine!,
+                        modelId: modelId,
+                        sessionId: sessionId,
+                        messages: stepMessages
+                    )
+                }
+            }
+            let parsed: ModelActionCall?
             do {
-                parsed = try await modelStep(
-                    engine: engine,
-                    modelId: modelId,
-                    sessionId: sessionId,
-                    messages: input.messages
+                let stepResult = try await runModelStep(
+                    produce,
+                    timeout: limits.modelStepTimeoutSeconds,
+                    maxRetries: limits.maxInferenceRetries,
+                    feed: feed,
+                    step: step
                 )
+                metrics.modelTokens += stepResult.tokens
+                parsed = stepResult.call
             } catch {
                 return terminate(.failed(reason: error.localizedDescription))
             }
@@ -286,6 +431,36 @@ public enum ComputerUseLoop {
                 return terminate(.gaveUp(reason: action.reason ?? "The goal could not be achieved."))
             }
 
+            // Stall detection. A model that proposes the SAME acting action over
+            // and over isn't making progress (the classic "keep clicking a dead
+            // button" loop). Verbs where repetition is legitimate — scroll
+            // (paging a list), observe, wait (polling async UI), find — are
+            // exempt and reset the counter.
+            if limits.maxRepeatedActions > 0 {
+                if isRepeatProgressVerb(action.verb) {
+                    repeatedActionCount = 0
+                    lastActionSignature = nil
+                } else {
+                    let signature = actionSignature(action)
+                    if signature == lastActionSignature {
+                        repeatedActionCount += 1
+                    } else {
+                        repeatedActionCount = 1
+                        lastActionSignature = signature
+                    }
+                    if repeatedActionCount >= limits.maxRepeatedActions {
+                        metrics.deadEnds += 1
+                        return terminate(
+                            .deadEnd(
+                                reason:
+                                    "Repeated the same action (\(action.feedLabel)) "
+                                    + "\(repeatedActionCount) times without progress."
+                            )
+                        )
+                    }
+                }
+            }
+
             // Build the tool-result that closes this step (new view + outcome).
             var toolResult = ""
             var advancedStep = true
@@ -295,16 +470,48 @@ public enum ComputerUseLoop {
 
             switch action.verb {
             case .observe:
-                let p = await perceive(
+                let p = await perceiveEscalatingEmptyAX(
                     pid: currentPid,
                     driver: driver,
                     previous: lastView,
+                    availability: availability,
+                    currentTier: &currentTier,
+                    pendingFrameImage: &pendingFrameImage,
+                    metrics: &metrics,
                     feed: feed,
                     step: step + 1
                 )
                 lastView = p.view
                 lastSnapshot = p.snapshot
-                toolResult = p.render
+                toolResult = augmentEmptyAX(p.render, view: p.view, availability: availability)
+
+            case .wait:
+                // Bounded pause for async UI (spinners, loads). Capped so a
+                // model can't park the run on the wall clock; then re-perceive
+                // so the next turn sees whatever settled.
+                let seconds = min(max(action.seconds ?? 1, 0), Self.maxWaitSeconds)
+                feed.emit(
+                    FeedEvent(step: step + 1, kind: .act, title: "Wait \(seconds)s for UI to settle")
+                )
+                if seconds > 0 {
+                    try? await Task.sleep(nanoseconds: UInt64(seconds) * 1_000_000_000)
+                }
+                let p = await perceiveEscalatingEmptyAX(
+                    pid: currentPid,
+                    driver: driver,
+                    previous: lastView,
+                    availability: availability,
+                    currentTier: &currentTier,
+                    pendingFrameImage: &pendingFrameImage,
+                    metrics: &metrics,
+                    feed: feed,
+                    step: step + 1
+                )
+                lastView = p.view
+                lastSnapshot = p.snapshot
+                toolResult =
+                    "Waited \(seconds)s.\n"
+                    + augmentEmptyAX(p.render, view: p.view, availability: availability)
 
             case .find:
                 toolResult = await handleFind(
@@ -357,7 +564,7 @@ public enum ComputerUseLoop {
                     }
                 }
 
-            case .click, .type, .setValue, .clear, .pressKey, .scroll:
+            case .click, .doubleClick, .rightClick, .drag, .type, .setValue, .clear, .pressKey, .scroll:
                 guard let pid = currentPid else {
                     toolResult =
                         "No app is focused yet. Use `open` to launch or switch to an app first, then act."
@@ -444,6 +651,23 @@ public enum ComputerUseLoop {
                     if resolvedElement == nil { break }
                 }
 
+                // `drag` needs a second resolved element — the destination. Resolve
+                // it against the same snapshot so its mark/describe is consistent
+                // with the start; on failure, report and let the model retry rather
+                // than performing a half-specified drag.
+                var destinationElement: CUElement? = nil
+                if action.verb == .drag {
+                    let destResolution = TargetResolver.resolve(action.to, view: view, snapshot: snapshot)
+                    switch destResolution {
+                    case .resolved(_, let element):
+                        destinationElement = element
+                    case .reobserve(let reason), .deadEnd(let reason):
+                        toolResult = "Couldn't resolve the drag destination: \(reason)"
+                        advancedStep = false
+                    }
+                    if destinationElement == nil { break }
+                }
+
                 // Classify the real effect (verb baseline refined upward by the
                 // resolved element + app context), then let the injected gate decide.
                 let effect = EffectClassifier.classify(
@@ -474,6 +698,7 @@ public enum ComputerUseLoop {
                     toolResult = await act(
                         action: action,
                         element: resolvedElement,
+                        destinationElement: destinationElement,
                         pid: pid,
                         driver: driver,
                         availability: availability,
@@ -602,6 +827,79 @@ public enum ComputerUseLoop {
         return Perception(view: view, snapshot: snapshot, render: view.renderForModel())
     }
 
+    /// Perceive, climbing the capture ladder (ax→som→vision) while the AX view
+    /// is empty and pixels are available. The frame from the final escalated
+    /// capture is staged in `pendingFrameImage` for attachment after the step's
+    /// tool result. Bounded by the ladder height (at most two escalations), and
+    /// a no-op for a normal, populated view.
+    private static func perceiveEscalatingEmptyAX(
+        pid: Int32?,
+        driver: MacDriver,
+        previous: AgentView?,
+        availability: MacDriverAvailability,
+        currentTier: inout CaptureTier,
+        pendingFrameImage: inout CUImage?,
+        metrics: inout ComputerUseRunMetrics,
+        feed: ComputerUseFeed,
+        step: Int
+    ) async -> Perception {
+        var perception = await perceive(
+            pid: pid,
+            driver: driver,
+            previous: previous,
+            feed: feed,
+            step: step,
+            tier: currentTier
+        )
+        while let view = perception.view, view.items.isEmpty,
+            let next = CaptureRouter.escalateForEmptyAX(
+                currentTier: currentTier,
+                itemCount: view.items.count,
+                availability: availability
+            )
+        {
+            currentTier = next
+            metrics.raiseTier(to: currentTier)
+            perception = await perceive(
+                pid: pid,
+                driver: driver,
+                previous: previous,
+                feed: feed,
+                step: step,
+                tier: currentTier
+            )
+            // Stage the escalated frame; attached after the step's tool result.
+            pendingFrameImage = perception.snapshot?.image
+        }
+        return perception
+    }
+
+    /// Append a one-line, actionable note when a perceived view is empty: either
+    /// "I took a screenshot" (Screen Recording granted, so escalation produced
+    /// pixels) or a clear "grant Screen Recording / try another app" message
+    /// (denied, so the loop can't see the contents and the model should pick a
+    /// different approach rather than spin).
+    private static func augmentEmptyAX(
+        _ render: String,
+        view: AgentView?,
+        availability: MacDriverAvailability
+    ) -> String {
+        guard view?.items.isEmpty ?? false else { return render }
+        return render + "\n" + emptyAXNote(availability: availability)
+    }
+
+    private static func emptyAXNote(availability: MacDriverAvailability) -> String {
+        if availability.screenRecording {
+            return
+                "This app exposes no accessibility elements, so I captured a screenshot to look at it "
+                + "directly. Locate the control in the image, then address it with `target.describe`."
+        }
+        return
+            "This app exposes no accessibility elements and Screen Recording permission isn't granted, so I "
+            + "can't see its contents. Ask the user to grant Screen Recording in System Settings → Privacy & "
+            + "Security, or work in a different app."
+    }
+
     // MARK: - Find
 
     private static func handleFind(
@@ -614,37 +912,45 @@ public enum ComputerUseLoop {
         step: Int
     ) async -> String {
         guard let pid else { return "No app is focused. Use `open` first." }
-        // Re-perceive the full view so marks stay in one consistent space, then
-        // point at the matches by mark.
-        let snapshot = await driver.capture(pid: pid, tier: .ax)
-        let view = AgentView.build(from: snapshot, previous: lastView)
-        lastView = view
-        lastSnapshot = snapshot
-        let needle = action.query?.lowercased() ?? ""
-        let roleFilter = Set(action.roles.map { $0.lowercased() })
-        let matches = view.items.filter { item in
-            let roleOk = roleFilter.isEmpty || roleFilter.contains(item.role.lowercased())
-            let textOk =
-                needle.isEmpty
-                || (item.label?.lowercased().contains(needle) ?? false)
-                || (item.value?.lowercased().contains(needle) ?? false)
-            return roleOk && textOk
-        }
+        // Route to the driver's server-side query (it can search a richer tree
+        // than a plain capture and apply role/text filters at the source). The
+        // matches BECOME the current view, so the marks the model is told about
+        // resolve against `lastSnapshot` — no second mark space to keep in sync.
+        let roles = action.roles.isEmpty ? nil : action.roles
+        let found = await driver.find(
+            pid: pid,
+            text: action.query,
+            roles: roles,
+            windowId: nil,
+            enabledOnly: false,
+            limit: 50
+        )
+        // Build standalone (previous: nil): a narrowed result would otherwise
+        // report every element from the prior full view as "removed".
+        let view = AgentView.build(from: found, previous: nil)
         feed.emit(
             FeedEvent(
                 step: step,
                 kind: .act,
                 title: "Find " + (action.query.map { "\"\($0)\"" } ?? "elements"),
-                detail: "\(matches.count) match(es)",
-                success: !matches.isEmpty
+                detail: "\(view.items.count) match(es)",
+                success: !view.items.isEmpty
             )
         )
-        if matches.isEmpty {
-            return "No matches. Full view:\n" + view.renderForModel()
+        if view.items.isEmpty {
+            // Don't strand the model on an empty view — re-perceive the full app
+            // so it can keep going (scroll, observe, try a different query).
+            let full = await driver.capture(pid: pid, tier: .ax)
+            let fullView = AgentView.build(from: full, previous: lastView)
+            lastView = fullView
+            lastSnapshot = full
+            return "No matches. Full view:\n" + fullView.renderForModel()
         }
-        let marks = matches.prefix(12).map { "[\($0.mark)] \($0.role) \"\($0.label ?? "")\"" }
-            .joined(separator: "\n")
-        return "Matches (address by mark):\n" + marks
+        lastView = view
+        lastSnapshot = found
+        return
+            "Matches (these are now your current view — address them by mark; `observe` to see everything "
+            + "again):\n" + view.renderForModel()
     }
 
     // MARK: - Open
@@ -700,6 +1006,7 @@ public enum ComputerUseLoop {
     static func act(
         action: AgentAction,
         element: CUElement?,
+        destinationElement: CUElement? = nil,
         pid: Int32,
         driver: MacDriver,
         availability: MacDriverAvailability,
@@ -717,6 +1024,26 @@ public enum ComputerUseLoop {
         case .click:
             guard let element else { return "Click needs a resolved target." }
             result = await driver.perform(.click(id: element.id, button: .left, doubleClick: false))
+        case .doubleClick:
+            guard let element else { return "double_click needs a resolved target." }
+            result = await driver.perform(.click(id: element.id, button: .left, doubleClick: true))
+        case .rightClick:
+            guard let element else { return "right_click needs a resolved target." }
+            result = await driver.perform(.click(id: element.id, button: .right, doubleClick: false))
+        case .drag:
+            guard let element else { return "drag needs a resolved start target." }
+            guard let destinationElement else { return "drag needs a resolved destination." }
+            let start = element.center
+            let end = destinationElement.center
+            result = await driver.coordinate(
+                .drag(
+                    startX: Double(start.x),
+                    startY: Double(start.y),
+                    endX: Double(end.x),
+                    endY: Double(end.y),
+                    pid: pid
+                )
+            )
         case .type:
             result = await driver.perform(
                 .typeText(id: element?.id, pid: pid, text: action.text ?? "", replace: action.replace ?? true)
@@ -740,28 +1067,74 @@ public enum ComputerUseLoop {
             return "Unsupported action."
         }
 
-        // Coordinate fallback. A click resolved against the immutable snapshot
-        // value copy (so `TargetResolver` was happy) but failed at the LIVE AX
-        // layer because the element ref died between capture and click — the
-        // signature Electron failure in the Slack trace. The element's
-        // last-known frame is still good, so retry once as a per-pid coordinate
-        // click at its center, which needs no live ref.
-        if result.removed || result.stale, action.verb == .click, let element {
-            metrics.coordinateFallbacks += 1
+        // Coordinate fallback. The element resolved against the immutable
+        // snapshot value copy (so `TargetResolver` was happy) but the action
+        // failed at the LIVE AX layer because the ref died between capture and
+        // act — the signature Electron failure in the Slack trace. The
+        // element's last-known frame is still good, so retry at its center,
+        // which needs no live ref:
+        //   • click → a per-pid coordinate click at the center.
+        //   • type / set_value / clear → a coordinate click to FOCUS the field,
+        //     then re-issue the edit in pid context (`typeText` with no id),
+        //     since an id-addressed edit can't survive a stale ref. set_value
+        //     and clear are expressed as a wholesale replace (clear = empty).
+        if (result.removed || result.stale), let element {
             let center = element.center
-            let retry = await driver.coordinate(
-                .click(x: Double(center.x), y: Double(center.y), pid: pid)
-            )
-            feed.emit(
-                FeedEvent(
-                    step: step,
-                    kind: .act,
-                    title: "Retry click at element center",
-                    detail: retry.error,
-                    success: retry.success
+            let cx = Double(center.x)
+            let cy = Double(center.y)
+            // Emit the retry outcome and adopt it on success (shared shape).
+            func adoptRetry(_ retry: CUActionResult) {
+                feed.emit(
+                    FeedEvent(
+                        step: step,
+                        kind: .act,
+                        title: "Retry \(action.verb.rawValue) at element center",
+                        detail: retry.error,
+                        success: retry.success
+                    )
                 )
-            )
-            if retry.success { result = retry }
+                if retry.success { result = retry }
+            }
+            switch action.verb {
+            case .click, .doubleClick, .rightClick:
+                metrics.coordinateFallbacks += 1
+                let button: CUMouseButton = action.verb == .rightClick ? .right : .left
+                let double = action.verb == .doubleClick
+                adoptRetry(
+                    await driver.coordinate(
+                        .click(x: cx, y: cy, button: button, doubleClick: double, pid: pid)
+                    )
+                )
+
+            case .type, .setValue, .clear:
+                metrics.coordinateFallbacks += 1
+                let focus = await driver.coordinate(.click(x: cx, y: cy, pid: pid))
+                guard focus.success else {
+                    feed.emit(
+                        FeedEvent(
+                            step: step,
+                            kind: .act,
+                            title: "Could not focus element for \(action.verb.rawValue) retry",
+                            detail: focus.error,
+                            success: false
+                        )
+                    )
+                    break
+                }
+                let text: String
+                let replace: Bool
+                switch action.verb {
+                case .clear: (text, replace) = ("", true)
+                case .setValue: (text, replace) = (action.text ?? "", true)
+                default: (text, replace) = (action.text ?? "", action.replace ?? true)  // .type
+                }
+                adoptRetry(
+                    await driver.perform(.typeText(id: nil, pid: pid, text: text, replace: replace))
+                )
+
+            default:
+                break
+            }
         }
 
         feed.emit(
@@ -828,14 +1201,24 @@ public enum ComputerUseLoop {
 
     // MARK: - Model step
 
-    /// One forced agent_action call. Returns the first matching tool call, or
-    /// nil when the model emitted no usable tool call.
+    /// One model step's result: the proposed call (nil when the model emitted
+    /// no usable tool call) plus the token usage that step cost. `Sendable` so
+    /// it can cross the timeout/retry task group; `tokens` is `0` for the
+    /// scripted seam, which makes no model call.
+    struct ModelStepResult: Sendable {
+        var call: ModelActionCall?
+        var tokens: Int = 0
+    }
+
+    /// One forced agent_action call. Returns the first matching tool call (or
+    /// nil when the model emitted no usable tool call) and the step's token
+    /// usage so the run can accumulate a real token total.
     private static func modelStep(
         engine: ChatEngine,
         modelId: String,
         sessionId: String,
         messages: [ChatMessage]
-    ) async throws -> (id: String, arguments: String)? {
+    ) async throws -> ModelStepResult {
         var req = ChatCompletionRequest(
             model: modelId,
             messages: messages,
@@ -854,20 +1237,118 @@ public enum ComputerUseLoop {
         req.samplingParametersAreImplicit = true
         req.isAgentRequest = true
         let response = try await engine.completeChat(request: req)
-        guard let message = response.choices.first?.message else { return nil }
+        let tokens = response.usage.total_tokens
+        guard let message = response.choices.first?.message else {
+            return ModelStepResult(call: nil, tokens: tokens)
+        }
         if let calls = message.tool_calls,
             let call = calls.first(where: { $0.function.name == AgentAction.toolName }) ?? calls.first
         {
-            return (call.id, call.function.arguments)
+            return ModelStepResult(
+                call: ModelActionCall(id: call.id, arguments: call.function.arguments),
+                tokens: tokens
+            )
         }
-        return nil
+        return ModelStepResult(call: nil, tokens: tokens)
+    }
+
+    /// Project the internal conversation into the public, redacted turns an
+    /// injected `AgentStepProvider` may inspect (role + text only).
+    private static func projectTranscript(_ messages: [ChatMessage]) -> [AgentStepInput.Turn] {
+        messages.map { AgentStepInput.Turn(role: $0.role, text: $0.content ?? "") }
+    }
+
+    // MARK: - Model-step robustness
+
+    /// A model step exceeded its per-step inference budget.
+    private struct ModelStepTimeout: Error, LocalizedError {
+        var errorDescription: String? { "The model step timed out." }
+    }
+
+    /// Run one model step with a per-step timeout and bounded retries. A throw
+    /// or timeout is retried (with a short backoff) up to `maxRetries` times
+    /// before propagating, so a single transient inference failure or hang
+    /// doesn't sink the whole run.
+    private static func runModelStep<T: Sendable>(
+        _ produce: @escaping @Sendable () async throws -> T,
+        timeout: TimeInterval,
+        maxRetries: Int,
+        feed: ComputerUseFeed,
+        step: Int
+    ) async throws -> T {
+        var attempt = 0
+        while true {
+            do {
+                return try await withModelStepTimeout(timeout, produce)
+            } catch is CancellationError {
+                throw CancellationError()  // interrupt/teardown — don't retry
+            } catch {
+                if attempt >= maxRetries { throw error }
+                attempt += 1
+                feed.emit(
+                    FeedEvent(
+                        step: step,
+                        kind: .retry,
+                        title: "Model step failed; retrying (\(attempt)/\(maxRetries))",
+                        detail: error.localizedDescription
+                    )
+                )
+                // Bounded linear backoff: 0.25s, 0.5s, 0.75s, capped.
+                try? await Task.sleep(nanoseconds: UInt64(min(attempt, 4)) * 250_000_000)
+            }
+        }
+    }
+
+    /// Race the model step against a sleep. The first to finish wins; the loser
+    /// is cancelled. Cooperative tasks (the scripted test seam, `Task.sleep`)
+    /// unwind promptly; a non-cooperative live inference is still bounded by the
+    /// run's wall clock.
+    private static func withModelStepTimeout<T: Sendable>(
+        _ seconds: TimeInterval,
+        _ op: @escaping @Sendable () async throws -> T
+    ) async throws -> T {
+        guard seconds > 0 else { return try await op() }
+        return try await withThrowingTaskGroup(of: T.self) { group in
+            group.addTask { try await op() }
+            group.addTask {
+                try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+                throw ModelStepTimeout()
+            }
+            defer { group.cancelAll() }
+            guard let result = try await group.next() else { throw ModelStepTimeout() }
+            return result
+        }
+    }
+
+    /// Verbs whose repetition is legitimate progress (paging a list, polling
+    /// async UI, re-querying), so they're exempt from stall detection.
+    private static func isRepeatProgressVerb(_ verb: AgentVerb) -> Bool {
+        switch verb {
+        case .scroll, .observe, .wait, .find: return true
+        default: return false
+        }
+    }
+
+    /// A stable fingerprint of an acting action, used to detect a model that
+    /// keeps proposing the identical step without making progress.
+    private static func actionSignature(_ action: AgentAction) -> String {
+        [
+            action.verb.rawValue,
+            targetKey(action.target),
+            targetKey(action.to),
+            action.text ?? "",
+            action.key ?? "",
+            action.modifiers.joined(separator: "+"),
+            action.direction?.rawValue ?? "",
+            action.app ?? "",
+        ].joined(separator: "|")
     }
 
     // MARK: - Helpers
 
     private static func requiresTarget(_ verb: AgentVerb) -> Bool {
         switch verb {
-        case .click, .setValue, .clear: return true
+        case .click, .doubleClick, .rightClick, .drag, .setValue, .clear: return true
         default: return false
         }
     }
@@ -1022,6 +1503,10 @@ public enum ComputerUseLoop {
 
             Rules:
             - Each turn, call the `agent_action` tool exactly once with a single verb.
+            - Verbs: look with `observe`/`find`; interact with `click`, `double_click`, `right_click` \
+            (context menu), `type`, `set_value`, `clear`, `press_key`, `scroll`, and `drag` (`target` is \
+            the start, `to` is the destination); switch apps with `open`; pause for async UI (a spinner or \
+            load) with `wait` (`seconds`); finish with `done`/`give_up`.
             - Address elements by the `mark` number shown in the current view. If you don't have a mark, \
             use `target.describe` with the element's role and label.
             - After every action you get a fresh view with `*` marking elements that changed — use it to \
@@ -1040,5 +1525,43 @@ public enum ComputerUseLoop {
             prompt += "\n\nCurrent autonomy policy: \(trimmed)"
         }
         return prompt
+    }
+}
+
+// MARK: - Scripted cursor
+
+/// Reference-typed cursor so a `@Sendable` provider closure can vend a fixed
+/// action sequence across steps. Repeats the final action once exhausted.
+private actor ScriptedActionCursor {
+    private let actions: [AgentAction]
+    private var index = 0
+
+    init(_ actions: [AgentAction]) {
+        self.actions = actions
+    }
+
+    func next() -> ModelActionCall? {
+        guard !actions.isEmpty else { return nil }
+        let action = index < actions.count ? actions[index] : actions[actions.count - 1]
+        index += 1
+        return ModelActionCall(id: "scripted-\(index)", arguments: action.argumentsJSON())
+    }
+}
+
+/// As `ScriptedActionCursor`, but over raw `agent_action` arguments-JSON
+/// strings (so a scenario can script malformed bytes verbatim).
+private actor ScriptedArgumentCursor {
+    private let arguments: [String]
+    private var index = 0
+
+    init(_ arguments: [String]) {
+        self.arguments = arguments
+    }
+
+    func next() -> ModelActionCall? {
+        guard !arguments.isEmpty else { return nil }
+        let arg = index < arguments.count ? arguments[index] : arguments[arguments.count - 1]
+        index += 1
+        return ModelActionCall(id: "scripted-\(index)", arguments: arg)
     }
 }

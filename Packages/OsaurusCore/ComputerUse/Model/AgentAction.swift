@@ -24,10 +24,19 @@ public enum AgentVerb: String, Sendable, Codable, CaseIterable {
     /// Re-perceive the current app (no mutation). The loop perceives every
     /// step anyway; `observe` is the explicit "I just need a fresh look".
     case observe
+    /// Wait a short, bounded interval for async UI (a spinner, a load) to
+    /// settle, then re-perceive. `seconds` (capped) controls how long.
+    case wait
     /// Server-side element query (filter by text/role) — a focused capture.
     case find
-    /// Click / double-click an element (or its resolved center).
+    /// Click an element (or its resolved center).
     case click
+    /// Double-click an element (or its resolved center).
+    case doubleClick = "double_click"
+    /// Right-click an element to open its context menu.
+    case rightClick = "right_click"
+    /// Drag from one element (`target`) to another (`to`).
+    case drag
     /// Type text, optionally into a resolved field.
     case type
     /// Set an editable element's value wholesale.
@@ -51,11 +60,11 @@ public enum AgentVerb: String, Sendable, Codable, CaseIterable {
     /// only ever escalate, never lower, so this is the floor.
     public var baselineEffect: EffectClass {
         switch self {
-        case .observe, .find, .done, .giveUp:
+        case .observe, .wait, .find, .done, .giveUp:
             return .read
-        case .click, .scroll, .open:
+        case .click, .doubleClick, .rightClick, .scroll, .open:
             return .navigate
-        case .type, .setValue, .clear, .pressKey:
+        case .type, .setValue, .clear, .pressKey, .drag:
             return .edit
         }
     }
@@ -92,6 +101,11 @@ public struct AgentTarget: Sendable, Equatable {
 public struct AgentAction: Sendable, Equatable {
     public let verb: AgentVerb
     public let target: AgentTarget?
+    /// `drag` only: the destination element (resolved like `target`).
+    public let to: AgentTarget?
+    /// `wait` only: how long to pause before re-perceiving, in seconds. The
+    /// loop caps this so a model can't stall the run.
+    public let seconds: Int?
     /// Text payload for `type` / `set_value`.
     public let text: String?
     /// `type` only: replace the field's contents (default) vs append.
@@ -118,6 +132,8 @@ public struct AgentAction: Sendable, Equatable {
     public init(
         verb: AgentVerb,
         target: AgentTarget? = nil,
+        to: AgentTarget? = nil,
+        seconds: Int? = nil,
         text: String? = nil,
         replace: Bool? = nil,
         key: String? = nil,
@@ -132,6 +148,8 @@ public struct AgentAction: Sendable, Equatable {
     ) {
         self.verb = verb
         self.target = target
+        self.to = to
+        self.seconds = seconds
         self.text = text
         self.replace = replace
         self.key = key
@@ -152,8 +170,12 @@ public struct AgentAction: Sendable, Equatable {
     public var feedLabel: String {
         switch verb {
         case .observe: return "Observe"
+        case .wait: return "Wait" + (seconds.map { " \($0)s" } ?? "")
         case .find: return "Find " + (query.map { "\"\($0)\"" } ?? "elements")
         case .click: return "Click " + targetLabel
+        case .doubleClick: return "Double-click " + targetLabel
+        case .rightClick: return "Right-click " + targetLabel
+        case .drag: return "Drag " + targetLabel + " to " + destinationLabel
         case .type: return "Type " + quoted(text) + (target != nil ? " into \(targetLabel)" : "")
         case .setValue: return "Set " + targetLabel + " = " + quoted(text)
         case .clear: return "Clear " + targetLabel
@@ -167,7 +189,10 @@ public struct AgentAction: Sendable, Equatable {
         }
     }
 
-    private var targetLabel: String {
+    private var targetLabel: String { Self.label(for: target) }
+    private var destinationLabel: String { Self.label(for: to) }
+
+    private static func label(for target: AgentTarget?) -> String {
         guard let target else { return "target" }
         if let mark = target.mark { return "mark \(mark)" }
         if let d = target.describe, !d.isEmpty { return "\"\(d)\"" }
@@ -178,6 +203,44 @@ public struct AgentAction: Sendable, Equatable {
         guard let s, !s.isEmpty else { return "\"\"" }
         let clipped = s.count > 40 ? String(s.prefix(40)) + "…" : s
         return "\"\(clipped)\""
+    }
+
+    /// Serialize this action into the `agent_action` arguments JSON the model
+    /// would emit (only the fields the verb uses). Round-trips with `decode`,
+    /// so scripted-model providers in tests/evals can drive the loop with real
+    /// actions instead of brittle JSON string literals.
+    public func argumentsJSON() -> String {
+        var obj: [String: Any] = ["verb": verb.rawValue]
+        if let target {
+            var t: [String: Any] = [:]
+            if let mark = target.mark { t["mark"] = mark }
+            if let describe = target.describe { t["describe"] = describe }
+            if !t.isEmpty { obj["target"] = t }
+        }
+        if let to {
+            var t: [String: Any] = [:]
+            if let mark = to.mark { t["mark"] = mark }
+            if let describe = to.describe { t["describe"] = describe }
+            if !t.isEmpty { obj["to"] = t }
+        }
+        if let seconds { obj["seconds"] = seconds }
+        if let text { obj["text"] = text }
+        if let replace { obj["replace"] = replace }
+        if let key { obj["key"] = key }
+        if !modifiers.isEmpty { obj["modifiers"] = modifiers }
+        if let direction { obj["direction"] = direction.rawValue }
+        if let amount { obj["amount"] = amount }
+        if let app { obj["app"] = app }
+        if let query { obj["query"] = query }
+        if !roles.isEmpty { obj["roles"] = roles }
+        if let note { obj["note"] = note }
+        if let reason { obj["reason"] = reason }
+        guard let data = try? JSONSerialization.data(withJSONObject: obj),
+            let json = String(data: data, encoding: .utf8)
+        else {
+            return "{\"verb\":\"\(verb.rawValue)\"}"
+        }
+        return json
     }
 }
 
@@ -208,7 +271,8 @@ extension AgentAction {
                 "type": .string("string"),
                 "enum": .array(AgentVerb.allCases.map { .string($0.rawValue) }),
                 "description": .string(
-                    "The single next action. Read/look: observe, find. Move: click, scroll, open. "
+                    "The single next action. Read/look: observe, wait, find. "
+                        + "Move: click, double_click, right_click, scroll, drag, open. "
                         + "Edit: type, set_value, clear, press_key. Finish: done (success) or give_up."
                 ),
             ]),
@@ -228,7 +292,29 @@ extension AgentAction {
                         ),
                     ]),
                 ]),
-                "description": .string("Which element to act on (for click/type/set_value/clear)."),
+                "description": .string(
+                    "Which element to act on (for click/double_click/right_click/type/set_value/clear, "
+                        + "and the start element for drag)."
+                ),
+            ]),
+            "to": .object([
+                "type": .string("object"),
+                "additionalProperties": .bool(false),
+                "properties": .object([
+                    "mark": .object([
+                        "type": .string("integer"),
+                        "description": .string("The number shown next to the destination element."),
+                    ]),
+                    "describe": .object([
+                        "type": .string("string"),
+                        "description": .string("Natural-language fallback for the destination element."),
+                    ]),
+                ]),
+                "description": .string("Drag destination element (for drag)."),
+            ]),
+            "seconds": .object([
+                "type": .string("integer"),
+                "description": .string("How many seconds to wait for async UI to settle (for wait)."),
             ]),
             "text": .object([
                 "type": .string("string"),
@@ -352,6 +438,8 @@ extension AgentAction {
         }
 
         let target = parseTarget(dict["target"])
+        let to = parseTarget(dict["to"])
+        let seconds = ArgumentCoercion.int(dict["seconds"])
         let text = (dict["text"] as? String)
         let replace = ArgumentCoercion.bool(dict["replace"])
         let key = (dict["key"] as? String)
@@ -369,6 +457,8 @@ extension AgentAction {
         let action = AgentAction(
             verb: verb,
             target: target,
+            to: to,
+            seconds: seconds,
             text: text,
             replace: replace,
             key: key,
@@ -403,16 +493,24 @@ extension AgentAction {
     /// when something required for the chosen verb is missing.
     func semanticProblem() -> String? {
         switch verb {
-        case .observe:
+        case .observe, .wait:
             return nil
         case .find:
             if (query?.isEmpty ?? true) && roles.isEmpty {
                 return "find needs a `query` substring and/or `roles` filter."
             }
             return nil
-        case .click, .clear:
+        case .click, .clear, .doubleClick, .rightClick:
             if target?.isEmpty ?? true {
                 return "\(verb.rawValue) needs a `target` (a `mark` number or a `describe`)."
+            }
+            return nil
+        case .drag:
+            if target?.isEmpty ?? true {
+                return "drag needs a `target` (the start element)."
+            }
+            if to?.isEmpty ?? true {
+                return "drag needs a `to` (the destination element)."
             }
             return nil
         case .type, .setValue:
