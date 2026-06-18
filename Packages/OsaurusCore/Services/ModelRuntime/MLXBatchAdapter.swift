@@ -989,7 +989,7 @@ struct MLXBatchAdapter {
         // is a separate, fully-balanced acquire/release from the generation
         // gate below; the brief window between them is eval-free.
         let prepared: PreparedInput
-        await MetalGate.shared.enterGeneration()
+        await MetalGate.shared.enterGeneration(model: modelName)
         do {
             prepared = try await prepareInput(
                 modelName: modelName,
@@ -1001,9 +1001,9 @@ struct MLXBatchAdapter {
                 toolChoice: toolChoice,
                 trace: trace
             )
-            await MetalGate.shared.exitGeneration()
+            await MetalGate.shared.exitGeneration(model: modelName)
         } catch {
-            await MetalGate.shared.exitGeneration()
+            await MetalGate.shared.exitGeneration(model: modelName)
             if let soloLease { await soloLease.release() }
             throw error
         }
@@ -1125,7 +1125,7 @@ struct MLXBatchAdapter {
         // keep batching; only embedding is exclusive. Released by the producer
         // task once the upstream stream has fully drained, which (per the note
         // above) is AFTER vmlx's post-`.info` cache-store eval.
-        await MetalGate.shared.enterGeneration()
+        await MetalGate.shared.enterGeneration(model: modelName)
         let upstream = await engine.generate(
             input: prepared.input,
             parameters: mlxParams
@@ -1166,10 +1166,10 @@ struct MLXBatchAdapter {
             // Release the Metal gate's shared lock now that this generation's
             // GPU work (including the post-`.info` cache store) is fully done,
             // letting any waiting embedder run. Paired with the
-            // `enterGeneration()` taken before `engine.generate` above; the
-            // producer task always runs to completion, so the pair always
+            // `enterGeneration(model:)` taken before `engine.generate` above;
+            // the producer task always runs to completion, so the pair always
             // balances.
-            await MetalGate.shared.exitGeneration()
+            await MetalGate.shared.exitGeneration(model: modelName)
         }
 
         continuation.onTermination = { @Sendable _ in

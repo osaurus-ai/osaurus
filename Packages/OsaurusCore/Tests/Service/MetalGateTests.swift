@@ -2,10 +2,10 @@
 //  MetalGateTests.swift
 //  osaurus
 //
-//  MetalGate is a writer-preferring readers-writer lock: LLM generations share
-//  the lock (so batching is preserved); embedding is exclusive and waits for
-//  generations to drain. These tests exercise the basic acquire/release balance
-//  for both roles.
+//  MetalGate is mutual exclusion keyed by producer identity: same-model
+//  generations share the lock (so batching is preserved); a different model, an
+//  embedder, and a model load are each exclusive. These tests exercise the
+//  basic acquire/release balance for those roles.
 //
 
 import Foundation
@@ -32,12 +32,19 @@ struct MetalGateTests {
         await MetalGate.shared.exitEmbedding()
     }
 
-    @Test func generationsShareTheLock() async {
-        // Generations are shared readers — two acquisitions coexist (batching),
-        // and both release cleanly.
-        await MetalGate.shared.enterGeneration()
-        await MetalGate.shared.enterGeneration()
-        await MetalGate.shared.exitGeneration()
-        await MetalGate.shared.exitGeneration()
+    @Test func sameModelGenerationsShareTheLock() async {
+        // Same-model generations are shared — two acquisitions coexist
+        // (batching), and both release cleanly.
+        await MetalGate.shared.enterGeneration(model: "qwen3.5-4b")
+        await MetalGate.shared.enterGeneration(model: "qwen3.5-4b")
+        await MetalGate.shared.exitGeneration(model: "qwen3.5-4b")
+        await MetalGate.shared.exitGeneration(model: "qwen3.5-4b")
+    }
+
+    @Test func modelLoadProceedsWhenIdle() async {
+        // A model load is an exclusive producer; it acquires and releases
+        // cleanly when nothing else holds the GPU.
+        await MetalGate.shared.enterModelLoad(model: "qwen3.5-4b")
+        await MetalGate.shared.exitModelLoad(model: "qwen3.5-4b")
     }
 }
