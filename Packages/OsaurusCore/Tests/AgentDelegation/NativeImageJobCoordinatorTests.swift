@@ -87,6 +87,24 @@ struct NativeImageJobCoordinatorTests {
         #expect(resolved == "ready-edit")
     }
 
+    @Test func chatResidencyPolicyOnlyEvictsForAgentSingleResidency() {
+        #expect(
+            NativeImageChatResidencyPolicy.shouldUnloadChatModels(
+                for: AgentDelegationConfiguration(imageJobLoadPolicy: .agentSingleResidency)
+            )
+        )
+        #expect(
+            !NativeImageChatResidencyPolicy.shouldUnloadChatModels(
+                for: AgentDelegationConfiguration(imageJobLoadPolicy: .unloadImageAfterAgentJob)
+            )
+        )
+        #expect(
+            !NativeImageChatResidencyPolicy.shouldUnloadChatModels(
+                for: AgentDelegationConfiguration(imageJobLoadPolicy: .manualPanelKeepsImageLoaded)
+            )
+        )
+    }
+
     private func imageModel(
         id: String,
         ready: Bool,

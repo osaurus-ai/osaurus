@@ -188,6 +188,30 @@ public actor ModelRuntime {
         return modelCache[name] != nil
     }
 
+    /// Warm-load an installed local model without starting generation. Used by
+    /// delegated jobs that temporarily evict chat models for unified-memory
+    /// headroom, then restore the prior resident set after the helper job.
+    func preload(name: String) async throws {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw NSError(
+                domain: "ModelRuntime",
+                code: 20,
+                userInfo: [NSLocalizedDescriptionKey: "Cannot preload an empty model name"]
+            )
+        }
+        if modelCache[trimmed] != nil { return }
+        guard let found = ModelManager.findInstalledModel(named: trimmed) else {
+            throw NSError(
+                domain: "ModelRuntime",
+                code: 21,
+                userInfo: [NSLocalizedDescriptionKey: "Installed model not found for preload: \(trimmed)"]
+            )
+        }
+        if modelCache[found.name] != nil { return }
+        _ = try await loadContainer(id: found.id, name: found.name)
+    }
+
     func cachedModelSummaries(refreshTopology: Bool = false) async -> [ModelCacheSummary] {
         if refreshTopology {
             for holder in modelCache.values {

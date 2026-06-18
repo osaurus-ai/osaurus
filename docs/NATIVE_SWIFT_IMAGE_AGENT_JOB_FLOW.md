@@ -595,6 +595,12 @@ Do not mark this feature working until all of these pass:
   --package-path Packages/OsaurusCore` passed, and `swift test --package-path
   Packages/OsaurusCore --filter NativeImageJobCoordinatorTests` ran 4 tests in
   `NativeImageJobCoordinatorTests` and passed.
+- Remote proof on `erics-m5-max.local` from the same fresh clone after reset to
+  commit `89971b42`: `swift build --package-path Packages/OsaurusCore` passed,
+  and `swift test --package-path Packages/OsaurusCore --filter
+  NativeImageJobCoordinatorTests` ran 5 tests in `NativeImageJobCoordinatorTests`
+  and passed. This proves the source-wired coordinator/model-resolver path for
+  generation and edit model selection; it is not live chat-agent e2e proof.
 
 `PARTIAL`:
 
