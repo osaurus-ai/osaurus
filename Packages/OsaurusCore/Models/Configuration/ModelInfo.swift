@@ -224,17 +224,23 @@ extension ModelInfo {
         if alreadyWarming { return }
 
         Task.detached(priority: .utility) {
-            defer {
-                cacheLock.lock()
-                warmingModelIds.remove(modelId)
-                cacheLock.unlock()
-            }
+            // `finishWarming` is synchronous so the lock is taken outside this
+            // async context (`NSLock.lock()` is unavailable from async code).
+            defer { finishWarming(modelId: modelId) }
             // Fills `cache[modelId]` from disk as a side effect; the next view
             // render serves the memo. Deliberately no `.localModelsChanged`
             // post — the cache observer clears every entry on that signal, which
             // would drop the memo just filled and re-trigger this warm forever.
             _ = load(modelId: modelId)
         }
+    }
+
+    /// Clear a model's in-flight warm marker. Synchronous for the same
+    /// async-context locking reason as `finishRevalidation`.
+    private static func finishWarming(modelId: String) {
+        cacheLock.lock()
+        warmingModelIds.remove(modelId)
+        cacheLock.unlock()
     }
 
     private static func ensureCacheObserverInstalled() {
