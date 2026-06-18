@@ -757,6 +757,18 @@ Each completed live row should save:
   and passed. This proves source buildability and progress payload metadata for
   `session_id`, `assistant_turn_id`, and `tool_call_id`; it is not visible chat
   UI proof.
+- Remote proof on `erics-m5-max.local` from the same fresh clone after reset to
+  commit `1d544118`: `swift test --package-path Packages/OsaurusCore --filter
+  AgentDelegationConfigurationStoreTests` ran 4 tests and passed; `swift test
+  --package-path Packages/OsaurusCore --filter
+  AgentDelegationToolAvailabilityTests` ran 4 tests and passed; `swift test
+  --package-path Packages/OsaurusCore --filter NativeImageToolArtifactBridgeTests`
+  ran 2 tests and passed; `swift test --package-path Packages/OsaurusCore
+  --filter ContentBlockDisplayTests/imageGenerateToolResult_rendersSharedArtifactCard`
+  ran 1 test and passed; `swift build --package-path Packages/OsaurusCore`
+  passed. This proves source buildability, safe-default config decode,
+  delegation tool-schema gating, stale-call rejection, and image-result artifact
+  promotion. It is not live foreground chat-agent proof.
 
 `PARTIAL`:
 
@@ -775,6 +787,9 @@ Each completed live row should save:
 - Local SwiftPM test execution is blocked on this host by a global `Testing`
   module import failure in existing tests; the same filtered tests passed on
   `erics-m5-max.local`.
+- Agent Delegation Settings now own source-wired tool availability for image
+  delegation, but no live Settings UI screenshot or outbound provider payload
+  capture has proven the toggle behavior in the running app.
 
 `BLOCKED FOR RELEASE`:
 
