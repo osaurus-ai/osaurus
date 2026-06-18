@@ -91,6 +91,28 @@ final class ImageModelDownloadService: ObservableObject {
         return FileManager.default.fileExists(atPath: dir.path, isDirectory: &isDir) && isDir.boolValue
     }
 
+    /// Heuristic: does this HF repo look like a diffusers/mflux image bundle?
+    /// Used by the global Import flow to route image repos here instead of the
+    /// LLM path (which rejects them and would stage to the wrong directory).
+    /// Detects the diffusers layout — a top-level `model_index.json`, or a
+    /// `vae/` alongside a `transformer/`/`unet/` subdir — which mflux mirrors
+    /// preserve. Returns `false` on any listing failure so the caller falls
+    /// back to the existing LLM compatibility check.
+    static func isImageRepo(_ repoId: String) async -> Bool {
+        guard
+            let files = await HuggingFaceService.shared.fetchMatchingFiles(
+                repoId: repoId, patterns: patterns, excludedFiles: excluded)
+        else { return false }
+        let paths = files.map { $0.path.lowercased() }
+        let hasModelIndex = paths.contains { $0 == "model_index.json" }
+        let hasVAE = paths.contains { $0.hasPrefix("vae/") || $0.contains("/vae/") }
+        let hasTransformer = paths.contains { path in
+            path.hasPrefix("transformer/") || path.contains("/transformer/")
+                || path.hasPrefix("unet/") || path.contains("/unet/")
+        }
+        return hasModelIndex || (hasVAE && hasTransformer)
+    }
+
     func download(_ entry: ImageModelDownload) {
         download(repoId: entry.repoId, displayName: entry.displayName)
     }

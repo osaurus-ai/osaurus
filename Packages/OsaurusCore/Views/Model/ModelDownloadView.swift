@@ -240,6 +240,10 @@ struct ModelDownloadView: View {
                     showImportSheet = false
                     selectedTab = .all
                     searchText = repoId
+                },
+                onImportedImage: { _ in
+                    showImportSheet = false
+                    selectedTab = .images
                 }
             )
             .environment(\.theme, themeManager.currentTheme)
@@ -329,7 +333,7 @@ struct ModelDownloadView: View {
                     .foregroundColor(theme.secondaryText)
                 }
                 .buttonStyle(PlainButtonStyle())
-                .localizedHelp("Import an MLX model from Hugging Face")
+                .localizedHelp("Import a model from Hugging Face")
 
                 // Download status indicator (shown when downloads are active)
                 if modelManager.activeDownloadsCount > 0 {
@@ -1759,6 +1763,9 @@ private struct HuggingFaceImportSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     let onImported: (String) -> Void
+    /// Called when the pasted repo is an image bundle, staged via the image
+    /// store instead of the LLM path.
+    let onImportedImage: (String) -> Void
 
     @State private var inputText: String = ""
     @State private var errorMessage: String? = nil
@@ -1827,7 +1834,7 @@ private struct HuggingFaceImportSheet: View {
                 .foregroundColor(theme.accentColor)
                 .padding(.top, 1)
             Text(
-                "Osaurus only runs MLX models. Try a repo from `OsaurusAI` or `mlx-community`.",
+                "Paste an MLX language model (try `OsaurusAI` or `mlx-community`) or an mflux image model — each is routed to the right place automatically.",
                 bundle: .module
             )
             .font(.system(size: 12))
@@ -1931,6 +1938,19 @@ private struct HuggingFaceImportSheet: View {
         errorMessage = nil
         isResolving = true
         Task { @MainActor in
+            // Image bundles use a diffusers/mflux layout and a separate engine,
+            // so route them to the image store before the LLM compatibility
+            // check (which would reject them and stage to the wrong directory).
+            if await ImageModelDownloadService.isImageRepo(repoId) {
+                ImageModelDownloadService.shared.download(
+                    repoId: repoId,
+                    displayName: ImageModelDownload.directoryName(forRepoId: repoId)
+                )
+                isResolving = false
+                onImportedImage(repoId)
+                return
+            }
+
             let resolved = await ModelManager.shared.resolveModelIfMLXCompatible(byRepoId: repoId)
             isResolving = false
             if resolved != nil {
