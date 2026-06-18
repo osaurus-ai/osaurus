@@ -9,6 +9,22 @@
 
 import Foundation
 
+struct NativeImageJobContext: Sendable, Equatable {
+    var sessionID: String?
+    var assistantTurnID: UUID?
+    var toolCallID: String?
+
+    static let empty = NativeImageJobContext()
+
+    static func current() -> NativeImageJobContext {
+        NativeImageJobContext(
+            sessionID: ChatExecutionContext.currentSessionId,
+            assistantTurnID: ChatExecutionContext.currentAssistantTurnId,
+            toolCallID: ChatExecutionContext.currentToolCallId
+        )
+    }
+}
+
 struct NativeImageGenerateJobRequest: Sendable {
     var prompt: String
     var model: String?
@@ -20,6 +36,7 @@ struct NativeImageGenerateJobRequest: Sendable {
     var seed: UInt64?
     var numImages: Int
     var outputFormat: ImageOutputFormat
+    var context: NativeImageJobContext
 
     init(
         prompt: String,
@@ -31,7 +48,8 @@ struct NativeImageGenerateJobRequest: Sendable {
         guidance: Float? = nil,
         seed: UInt64? = nil,
         numImages: Int = 1,
-        outputFormat: ImageOutputFormat = .png
+        outputFormat: ImageOutputFormat = .png,
+        context: NativeImageJobContext = .empty
     ) {
         self.prompt = prompt
         self.model = model
@@ -43,6 +61,7 @@ struct NativeImageGenerateJobRequest: Sendable {
         self.seed = seed
         self.numImages = max(1, min(4, numImages))
         self.outputFormat = outputFormat
+        self.context = context
     }
 }
 
@@ -58,6 +77,7 @@ struct NativeImageEditJobRequest: Sendable {
     var strength: Float
     var seed: UInt64?
     var outputFormat: ImageOutputFormat
+    var context: NativeImageJobContext
 
     init(
         prompt: String,
@@ -70,7 +90,8 @@ struct NativeImageEditJobRequest: Sendable {
         guidance: Float? = nil,
         strength: Float = 0.75,
         seed: UInt64? = nil,
-        outputFormat: ImageOutputFormat = .png
+        outputFormat: ImageOutputFormat = .png,
+        context: NativeImageJobContext = .empty
     ) {
         self.prompt = prompt
         self.model = model
@@ -83,6 +104,7 @@ struct NativeImageEditJobRequest: Sendable {
         self.strength = min(1, max(0, strength))
         self.seed = seed
         self.outputFormat = outputFormat
+        self.context = context
     }
 }
 
@@ -107,6 +129,9 @@ struct NativeImageJobProgress: Sendable, Equatable {
     var total: Int?
     var etaSeconds: Double?
     var message: String?
+    var sessionID: String?
+    var assistantTurnID: UUID?
+    var toolCallID: String?
 
     init(
         jobID: String,
@@ -115,7 +140,8 @@ struct NativeImageJobProgress: Sendable, Equatable {
         step: Int? = nil,
         total: Int? = nil,
         etaSeconds: Double? = nil,
-        message: String? = nil
+        message: String? = nil,
+        context: NativeImageJobContext = .empty
     ) {
         self.jobID = jobID
         self.phase = phase
@@ -124,6 +150,9 @@ struct NativeImageJobProgress: Sendable, Equatable {
         self.total = total
         self.etaSeconds = etaSeconds
         self.message = message
+        self.sessionID = context.sessionID
+        self.assistantTurnID = context.assistantTurnID
+        self.toolCallID = context.toolCallID
     }
 
     var dictionary: [String: Any] {
@@ -136,6 +165,9 @@ struct NativeImageJobProgress: Sendable, Equatable {
         if let total { payload["total"] = total }
         if let etaSeconds { payload["eta_seconds"] = etaSeconds }
         if let message { payload["message"] = message }
+        if let sessionID { payload["session_id"] = sessionID }
+        if let assistantTurnID { payload["assistant_turn_id"] = assistantTurnID.uuidString }
+        if let toolCallID { payload["tool_call_id"] = toolCallID }
         return payload
     }
 }
@@ -252,8 +284,12 @@ actor NativeImageJobCoordinator {
             let task = Task {
                 var progress: [NativeImageJobProgress] = []
                 func record(_ event: NativeImageJobProgress) {
-                    progress.append(event)
-                    NativeImageJobProgressCenter.post(event)
+                    var contextualEvent = event
+                    contextualEvent.sessionID = request.context.sessionID
+                    contextualEvent.assistantTurnID = request.context.assistantTurnID
+                    contextualEvent.toolCallID = request.context.toolCallID
+                    progress.append(contextualEvent)
+                    NativeImageJobProgressCenter.post(contextualEvent)
                 }
 
                 let config = AgentDelegationConfigurationStore.snapshot()
@@ -361,8 +397,12 @@ actor NativeImageJobCoordinator {
             let task = Task {
                 var progress: [NativeImageJobProgress] = []
                 func record(_ event: NativeImageJobProgress) {
-                    progress.append(event)
-                    NativeImageJobProgressCenter.post(event)
+                    var contextualEvent = event
+                    contextualEvent.sessionID = request.context.sessionID
+                    contextualEvent.assistantTurnID = request.context.assistantTurnID
+                    contextualEvent.toolCallID = request.context.toolCallID
+                    progress.append(contextualEvent)
+                    NativeImageJobProgressCenter.post(contextualEvent)
                 }
 
                 let config = AgentDelegationConfigurationStore.snapshot()

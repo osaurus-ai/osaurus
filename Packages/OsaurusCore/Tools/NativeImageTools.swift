@@ -74,7 +74,8 @@ public final class NativeImageGenerateTool: OsaurusTool, @unchecked Sendable {
             guidance: optionalFloatValue(args["guidance"]).map { min(20, max(0, $0)) },
             seed: optionalUInt64Value(args["seed"]),
             numImages: optionalIntValue(args["num_images"]) ?? 1,
-            outputFormat: .png
+            outputFormat: .png,
+            context: NativeImageJobContext.current()
         )
 
         do {
@@ -256,7 +257,8 @@ public final class NativeImageEditTool: OsaurusTool, @unchecked Sendable {
             guidance: optionalFloatValue(args["guidance"]).map { min(20, max(0, $0)) },
             strength: optionalFloatValue(args["strength"]) ?? 0.75,
             seed: optionalUInt64Value(args["seed"]),
-            outputFormat: .png
+            outputFormat: .png,
+            context: NativeImageJobContext.current()
         )
 
         do {

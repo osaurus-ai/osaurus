@@ -578,6 +578,14 @@ Do not mark this feature working until all of these pass:
   local image generation models, records progress phases, runs generation
   through `ImageGenerationService`, and unloads image weights after agent jobs
   unless manual-panel keep-warm policy is selected.
+- The default `agent_single_residency` image policy now snapshots resident
+  local `ModelRuntime` chat models, waits for local chat generation to go idle,
+  unloads those chat models before the image job, unloads image weights after
+  the job, and attempts to warm-load the prior chat models again.
+- Native image job progress events now carry the active chat `session_id`,
+  `assistant_turn_id`, and `tool_call_id` from `ChatExecutionContext`, giving
+  the chat UI a stable binding target for a running `image_generate` or
+  `image_edit` call.
 - `image_generate` and `image_edit` are registered as compact built-in tools.
   They enforce the Agent Delegation image-generation/image-edit permission
   defaults (`ask`, `deny`, `always_allow`), pass prompt/negative
@@ -601,14 +609,23 @@ Do not mark this feature working until all of these pass:
   NativeImageJobCoordinatorTests` ran 5 tests in `NativeImageJobCoordinatorTests`
   and passed. This proves the source-wired coordinator/model-resolver path for
   generation and edit model selection; it is not live chat-agent e2e proof.
+- Remote proof on `erics-m5-max.local` from the same fresh clone after reset to
+  commit `d6147aa4`: `swift build --package-path Packages/OsaurusCore` passed,
+  and `swift test --package-path Packages/OsaurusCore --filter
+  NativeImageJobCoordinatorTests` ran 6 tests in `NativeImageJobCoordinatorTests`
+  and passed. This proves source buildability and the policy gate that enables
+  chat-model eviction only for `agent_single_residency`; it is not live
+  unload/generate/reload RAM proof.
 
 `PARTIAL`:
 
 - Foreground manual SwiftUI click-through is still not proven.
 - Image generation now has a source-wired main-agent tool, but no live
   cloud/local chat e2e proof has run through the actual agent loop.
-- The coordinator unloads image weights after agent-launched jobs, but active
-  local chat model snapshot/unload/restore is not wired yet.
+- The coordinator has a source-wired active local chat model
+  snapshot/unload/restore path, but no live resident-model proof has exercised
+  unload -> image job -> image unload -> chat warm-load under Activity Monitor
+  footprint checks.
 - Progress events are recorded and posted through
   `nativeImageJobProgressChanged`, but the chat UI progress row has not been
   wired/proven for the agent-triggered path.
@@ -622,7 +639,7 @@ Do not mark this feature working until all of these pass:
 
 - No local-chat-model unload -> image-job -> chat-model restore live proof.
 - No cloud-chat-model -> local image tool e2e proof.
-- No image-edit agent tool proof.
+- No image-edit agent loop proof with real source image artifact.
 - No cloud-chat-model -> local text delegate e2e proof.
 - No runtime permission prompt or ask/deny/always-allow live proof exists for
   spawned image or text jobs.

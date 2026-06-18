@@ -105,6 +105,26 @@ struct NativeImageJobCoordinatorTests {
         )
     }
 
+    @Test func progressDictionaryIncludesChatToolContext() throws {
+        let turnID = UUID()
+        let progress = NativeImageJobProgress(
+            jobID: "job-1",
+            phase: .generating,
+            model: "image-model",
+            step: 2,
+            total: 4,
+            context: NativeImageJobContext(
+                sessionID: "session-1",
+                assistantTurnID: turnID,
+                toolCallID: "tool-call-1"
+            )
+        ).dictionary
+
+        #expect(progress["session_id"] as? String == "session-1")
+        #expect(progress["assistant_turn_id"] as? String == turnID.uuidString)
+        #expect(progress["tool_call_id"] as? String == "tool-call-1")
+    }
+
     private func imageModel(
         id: String,
         ready: Bool,
