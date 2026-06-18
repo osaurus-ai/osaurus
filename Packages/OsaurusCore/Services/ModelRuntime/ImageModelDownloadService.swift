@@ -131,11 +131,12 @@ final class ImageModelDownloadService: ObservableObject {
     /// Record the source repo for a bundle so it can be re-downloaded later.
     /// Runs off the main actor to keep file I/O off the UI thread.
     private func writeSourceMarker(repoId: String, root: URL) {
+        let sourceMarkerName = Self.sourceMarkerName
         Task.detached(priority: .utility) {
             try? FileManager.default.createDirectory(
                 at: root, withIntermediateDirectories: true)
             try? repoId.write(
-                to: root.appendingPathComponent(Self.sourceMarkerName),
+                to: root.appendingPathComponent(sourceMarkerName),
                 atomically: true, encoding: .utf8)
         }
     }

@@ -330,6 +330,21 @@ extension ModelPickerItem {
         }
     }
 
+    var isLocalTextDelegateCandidate: Bool {
+        if case .local = source {
+            return isLikelyChatCapable
+        }
+        return false
+    }
+
+    var isImageGenerationDelegateCandidate: Bool {
+        source.isImageGeneration && imageReady && (imageCapabilities?.textToImage == true)
+    }
+
+    var isImageEditDelegateCandidate: Bool {
+        source.isImageGeneration && imageReady && (imageCapabilities?.imageEdit == true)
+    }
+
     /// Ranking used only when Chat needs an automatic fallback selection.
     ///
     /// Local discovery can include source/unquantized Gemma folders alongside
@@ -546,6 +561,43 @@ extension Array where Element == ModelPickerItem {
                 return lhs < rhs
             }
         return ranked?.element ?? first
+    }
+
+    var localTextDelegateCandidates: [ModelPickerItem] {
+        filter(\.isLocalTextDelegateCandidate)
+    }
+
+    var imageGenerationDelegateCandidates: [ModelPickerItem] {
+        filter(\.isImageGenerationDelegateCandidate)
+    }
+
+    var imageEditDelegateCandidates: [ModelPickerItem] {
+        filter(\.isImageEditDelegateCandidate)
+    }
+
+    func agentDelegationCandidate(
+        id: String?,
+        kind: AgentDelegationModelKind
+    ) -> ModelPickerItem? {
+        guard let id else { return nil }
+        let trimmed = id.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        return candidates(for: kind).first { $0.id == trimmed }
+    }
+
+    func defaultAgentDelegationCandidate(kind: AgentDelegationModelKind) -> ModelPickerItem? {
+        candidates(for: kind).first
+    }
+
+    private func candidates(for kind: AgentDelegationModelKind) -> [ModelPickerItem] {
+        switch kind {
+        case .localTextDelegate:
+            return localTextDelegateCandidates
+        case .imageGeneration:
+            return imageGenerationDelegateCandidates
+        case .imageEdit:
+            return imageEditDelegateCandidates
+        }
     }
 
     /// Group models by source for display in sections

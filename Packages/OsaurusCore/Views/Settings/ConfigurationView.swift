@@ -40,6 +40,7 @@ struct ConfigurationView: View {
     @State private var tempCoreModelProvider: String = ""
     @State private var tempCoreModelName: String = ""
     @State private var coreModelPickerItems: [ModelPickerItem] = []
+    @State private var agentDelegationConfiguration = AgentDelegationConfigurationStore.snapshot()
     @State private var tempEnableClipboardMonitoring: Bool = false
     /// Smooth streaming: pace the visible reveal at ~180 tok/s regardless
     /// of how fast / bursty the network delivers tokens. Default on.
@@ -480,6 +481,25 @@ struct ConfigurationView: View {
                             ToolPermissionsSection()
                         }
 
+                        // MARK: - Agent Delegation Section
+                        if matchesSearch(
+                            "Agent Delegation",
+                            "Delegate",
+                            "Subagent",
+                            "Cloud",
+                            "Local",
+                            "Image",
+                            "Permissions",
+                            "Always Allow",
+                            "Deny",
+                            "Budget"
+                        ) {
+                            AgentDelegationSettingsSection(
+                                configuration: $agentDelegationConfiguration,
+                                modelItems: coreModelPickerItems
+                            )
+                        }
+
                         // MARK: - Server settings moved
                         // The Server (Port/Expose/CORS) and Local
                         // Inference (Top P, eviction, idle residency)
@@ -688,10 +708,23 @@ struct ConfigurationView: View {
         .environment(\.theme, themeManager.currentTheme)
         .onAppear {
             loadConfiguration()
+            agentDelegationConfiguration = AgentDelegationConfigurationStore.snapshot()
             tempTelemetryEnabled = TelemetryService.shared.isEnabled
             tempCrashReportingEnabled = CrashReportingService.shared.isEnabled
             withAnimation(.easeOut(duration: 0.25).delay(0.05)) {
                 hasAppeared = true
+            }
+        }
+        .onChange(of: agentDelegationConfiguration) { _, newValue in
+            AgentDelegationConfigurationStore.save(newValue)
+        }
+        .onReceive(
+            NotificationCenter.default.publisher(for: .agentDelegationConfigurationChanged)
+        ) { notification in
+            if let configuration = notification.object as? AgentDelegationConfiguration,
+                configuration != agentDelegationConfiguration
+            {
+                agentDelegationConfiguration = configuration
             }
         }
         .onReceive(ModelPickerItemCache.shared.$items) { options in

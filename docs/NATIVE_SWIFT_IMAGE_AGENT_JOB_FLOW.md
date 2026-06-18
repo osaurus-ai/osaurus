@@ -568,6 +568,10 @@ Do not mark this feature working until all of these pass:
 - Model catalog and capability metadata are exposed.
 - `ImageGenerationService` serializes image generation through `MetalGate`.
 - Prior image API stress proof passed on `erics-m5-max.local`.
+- Agent delegation settings now have source-wired configuration, JSON
+  persistence, compatible downloaded-model candidate filtering, and a Settings
+  card for default local text/image models, load policy, sharing policy,
+  budgets, and ask/deny/always-allow defaults.
 
 `PARTIAL`:
 
@@ -576,6 +580,9 @@ Do not mark this feature working until all of these pass:
   API, not as an ordinary main-agent tool.
 - Low-RAM unload/reload handoff is only available indirectly through existing
   runtime unload primitives; there is no image-specific coordinator yet.
+- Agent delegation settings compile, but no runtime coordinator consumes them
+  yet and local SwiftPM test execution is blocked on this host by a global
+  `Testing` module import failure in existing tests.
 
 `BLOCKED FOR RELEASE`:
 
@@ -583,9 +590,7 @@ Do not mark this feature working until all of these pass:
 - No cloud-chat-model -> local image tool e2e proof.
 - No image-edit agent tool proof.
 - No cloud-chat-model -> local text delegate e2e proof.
-- No delegate settings GUI exists for default local text/image models, load
-  policy, budgets, sharing policy, or permissions.
-- No ask/deny/always-allow permission proof exists for spawned image or text
-  jobs.
+- No runtime permission prompt or ask/deny/always-allow proof exists for spawned
+  image or text jobs.
 - No agent-triggered RAM-safety preflight/refusal proof.
 - No progress UI proof for the agent-triggered path.
