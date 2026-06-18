@@ -1326,14 +1326,28 @@ public actor ModelRuntime {
             genLog.info(
                 "loadContainer: native MTP plan model=\(name, privacy: .public) nativeMTP=\(mtpPlan.loadConfiguration.nativeMTP, privacy: .public) draftStrategy=\(Self.describeDraftStrategy(mtpPlan.draftStrategy), privacy: .public) reason=\(mtpPlan.reason, privacy: .public) status=\(mtpPlan.statusLine ?? "none", privacy: .public) memorySafety=\(mtpPlan.memorySafetySummary, privacy: .public)"
             )
-            let container = try await loadModelContainer(
-                from: localURL,
-                using: tokenizerLoader,
-                configuration: serverSettings.resolvedModelConfiguration(
-                    base: ModelConfiguration(directory: localURL)
-                ),
-                loadConfiguration: mtpPlan.loadConfiguration
-            )
+            // Weight dequantization + kernel compilation drive the Metal
+            // command queue. Hold the GPU gate as an exclusive producer so a
+            // load can't run concurrently with an in-flight generation (or
+            // another load / the embedder) on the shared device — that race
+            // aborts the command buffer mid-flight. Released the moment the
+            // heavy load returns; the metadata checks below are GPU-free.
+            await MetalGate.shared.enterModelLoad(model: name)
+            let container: ModelContainer
+            do {
+                container = try await loadModelContainer(
+                    from: localURL,
+                    using: tokenizerLoader,
+                    configuration: serverSettings.resolvedModelConfiguration(
+                        base: ModelConfiguration(directory: localURL)
+                    ),
+                    loadConfiguration: mtpPlan.loadConfiguration
+                )
+            } catch {
+                await MetalGate.shared.exitModelLoad(model: name)
+                throw error
+            }
+            await MetalGate.shared.exitModelLoad(model: name)
             if Task.isCancelled {
                 container.disableCaching()
                 throw CancellationError()

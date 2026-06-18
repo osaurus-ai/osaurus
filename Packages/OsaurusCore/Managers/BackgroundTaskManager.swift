@@ -320,6 +320,13 @@ public final class BackgroundTaskManager: ObservableObject {
         // endpoint, plugin, or schedule).
         FeatureTelemetry.agentRun(source: "dispatch")
 
+        // The reattach lookup below opens the chat-history DB, which needs the
+        // storage key. On a cold-start race the launch prewarm may not have
+        // landed yet, and `db.open()` would run the keychain read synchronously
+        // on the main actor and hang the UI. Warm it off the cooperative
+        // executor first so the open hits the in-memory cache. Idempotent.
+        try? await StorageKeyManager.shared.prewarmCurrentKeyOffCooperativeExecutor()
+
         // Opt-in conversation grouping: when `external_session_key` is set
         // and a non-active matching session exists, reattach to it so the
         // new prompt becomes the next turn instead of starting a fresh row.

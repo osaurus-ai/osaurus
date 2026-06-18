@@ -3,6 +3,33 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.20.3</title>
+            <pubDate>Wed, 17 Jun 2026 00:25:47 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.20.3</sparkle:version>
+            <sparkle:shortVersionString>0.20.3</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.20.3/Osaurus-0.20.3.dmg" length="51841753" type="application/octet-stream" sparkle:edSignature="vaLAAgqXL9NwINJ0ctODDn5qgRtcSMlmfPnh0SPeOzOLVi9B5Wg9Y3ns+1ZkhBWUMoBC/lo6FkRjr2ESbNz9AA=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- [codex] Fix MCP stdio access key auth (#1541) by @mimeding
+- [codex] Route plugin host HTTP through global proxy (#1538) by @mimeding
+- Improve local access key lifecycle (#1532) by @mimeding
+- Add configurable Hugging Face cache path (#1531) by @mimeding
+- Route OAuth requests through global proxy (#1530) by @mimeding
+- Add Codex OAuth diagnostic context (#1529) by @mimeding
+- Fix pasted provider model-list URLs (#1528) by @mimeding
+
+## 🐛 Bug Fixes
+
+- fixed anthropic api failing on remote providers (#1540) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.20.2...0.20.3
+]]></description>
+        </item>
+        <item>
             <title>0.20.2</title>
             <pubDate>Tue, 16 Jun 2026 20:54:37 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>

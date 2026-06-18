@@ -971,7 +971,7 @@ final class NativeToolCallRowView: NSView {
         // before the ring finishes tracing).
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        categoryIcon.image = NSImage(systemSymbolName: category.icon, accessibilityDescription: nil)?
+        categoryIcon.image = SymbolImageCache.image(category.icon, accessibilityDescription: nil)?
             .withSymbolConfiguration(cfg)
         CATransaction.commit()
 
@@ -1574,7 +1574,7 @@ final class NativeToolCallRowView: NSView {
 
         chevron.translatesAutoresizingMaskIntoConstraints = false
         chevron.wantsLayer = true
-        chevron.image = NSImage(systemSymbolName: "chevron.right", accessibilityDescription: nil)
+        chevron.image = SymbolImageCache.image("chevron.right", accessibilityDescription: nil)
         chevron.contentTintColor = .tertiaryLabelColor
         chevron.imageScaling = .scaleProportionallyUpOrDown
         chevron.setContentCompressionResistancePriority(.required, for: .horizontal)

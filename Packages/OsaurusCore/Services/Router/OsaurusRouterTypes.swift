@@ -15,6 +15,24 @@ enum OsaurusRouter {
         return productionBaseURL
     }
 
+    /// UserDefaults key backing the user's master on/off switch for the Osaurus
+    /// Router. Absent = enabled, so the router is on by default for everyone and
+    /// only an explicit opt-out turns it off.
+    static let enabledDefaultsKey = "ai.osaurus.router.enabled"
+
+    /// Whether the Osaurus Router is enabled for this user. Defaults to `true`
+    /// when the key was never written, so existing installs (and tests) stay on.
+    /// When `false`, the managed router provider is dropped from the model
+    /// picker and every router/credits server request is suppressed.
+    static var isEnabled: Bool {
+        UserDefaults.standard.object(forKey: enabledDefaultsKey) as? Bool ?? true
+    }
+
+    /// Persist the user's master on/off choice for the Osaurus Router.
+    static func setEnabled(_ enabled: Bool) {
+        UserDefaults.standard.set(enabled, forKey: enabledDefaultsKey)
+    }
+
     static let minimumTopUpMicro = 5_000_000
 
     static func formatMicroUSD(_ rawValue: String) -> String {

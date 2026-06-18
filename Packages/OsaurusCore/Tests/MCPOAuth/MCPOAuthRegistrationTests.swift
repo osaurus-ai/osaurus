@@ -5,6 +5,7 @@
 //  RFC 7591 Dynamic Client Registration request/response shape.
 //
 
+import CFNetwork
 import Foundation
 import XCTest
 
@@ -26,6 +27,53 @@ final class MCPOAuthRegistrationTests: XCTestCase {
         )
 
         XCTAssertNil(request)
+    }
+
+    func testOAuthTransportUsesGlobalProxySetting() async throws {
+        try await StoragePathsTestLock.shared.run {
+            let root = try makeTemporaryOAuthProxyRoot()
+            let previousRoot = OsaurusPaths.overrideRoot
+            OsaurusPaths.overrideRoot = root
+            defer {
+                OsaurusPaths.overrideRoot = previousRoot
+                try? FileManager.default.removeItem(at: root)
+                _ = MCPOAuthHTTPTransport.noRedirectSession()
+            }
+
+            try writeOAuthProxyServerConfiguration(proxyURL: "https://proxy.example.com:8443")
+
+            let session = MCPOAuthHTTPTransport.noRedirectSession()
+            let dictionary = session.configuration.connectionProxyDictionary
+
+            XCTAssertEqual(dictionary?[proxyKey(kCFNetworkProxiesHTTPSEnable)] as? Int, 1)
+            XCTAssertEqual(dictionary?[proxyKey(kCFNetworkProxiesHTTPSProxy)] as? String, "proxy.example.com")
+            XCTAssertEqual(dictionary?[proxyKey(kCFNetworkProxiesHTTPSPort)] as? Int, 8443)
+        }
+    }
+
+    func testOAuthTransportRebuildsWhenGlobalProxyChanges() async throws {
+        try await StoragePathsTestLock.shared.run {
+            let root = try makeTemporaryOAuthProxyRoot()
+            let previousRoot = OsaurusPaths.overrideRoot
+            OsaurusPaths.overrideRoot = root
+            defer {
+                OsaurusPaths.overrideRoot = previousRoot
+                try? FileManager.default.removeItem(at: root)
+                _ = MCPOAuthHTTPTransport.noRedirectSession()
+            }
+
+            try writeOAuthProxyServerConfiguration(proxyURL: "http://proxy-one.example.com:8080")
+            let first = MCPOAuthHTTPTransport.noRedirectSession()
+
+            try writeOAuthProxyServerConfiguration(proxyURL: "socks5://proxy-two.example.com:1080")
+            let second = MCPOAuthHTTPTransport.noRedirectSession()
+            let dictionary = second.configuration.connectionProxyDictionary
+
+            XCTAssertFalse(first === second)
+            XCTAssertEqual(dictionary?[proxyKey(kCFNetworkProxiesSOCKSEnable)] as? Int, 1)
+            XCTAssertEqual(dictionary?[proxyKey(kCFNetworkProxiesSOCKSProxy)] as? String, "proxy-two.example.com")
+            XCTAssertEqual(dictionary?[proxyKey(kCFNetworkProxiesSOCKSPort)] as? Int, 1080)
+        }
     }
 
     func testRegistrationRequestHasNativePublicClientShape() async throws {
@@ -76,6 +124,27 @@ final class MCPOAuthRegistrationTests: XCTestCase {
             XCTAssertTrue(error is MCPOAuthRegistrationError)
         }
     }
+}
+
+private func makeTemporaryOAuthProxyRoot() throws -> URL {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+        "osaurus-mcp-oauth-proxy-\(UUID().uuidString)",
+        isDirectory: true
+    )
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    return root
+}
+
+private func writeOAuthProxyServerConfiguration(proxyURL: String?) throws {
+    try OsaurusPaths.ensureExists(OsaurusPaths.config())
+    var configuration = ServerConfiguration.default
+    configuration.globalProxyURL = proxyURL
+    let data = try JSONEncoder().encode(configuration)
+    try data.write(to: OsaurusPaths.serverConfigFile(), options: .atomic)
+}
+
+private func proxyKey(_ value: CFString) -> AnyHashable {
+    AnyHashable(value as String)
 }
 
 private final class OAuthRegistrationCapture: @unchecked Sendable {

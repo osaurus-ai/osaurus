@@ -64,7 +64,17 @@ enum SystemPermissionProbe {
 final class SystemPermissionService: NSObject, ObservableObject, CLLocationManagerDelegate {
     static let shared = SystemPermissionService()
 
-    private let locationManager = CLLocationManager()
+    // `CLLocationManager()` performs a synchronous XPC handshake with locationd
+    // on construction. Building it eagerly in `init` meant the first touch of the
+    // `.shared` singleton — including permission gates for unrelated tools — paid
+    // that cost on the main actor and could hang the UI for seconds. Build it
+    // lazily so the handshake happens only when location is actually checked or
+    // requested.
+    private lazy var locationManager: CLLocationManager = {
+        let manager = CLLocationManager()
+        manager.delegate = self
+        return manager
+    }()
 
     /// Published permission states for reactive UI updates
     @Published private(set) var permissionStates: [SystemPermission: Bool] = [:]
@@ -74,7 +84,6 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
 
     override private init() {
         super.init()
-        locationManager.delegate = self
         loadPermissionStates()
         refreshAllPermissions()
     }

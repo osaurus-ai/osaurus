@@ -867,10 +867,14 @@ public final class GitHubSkillService: ObservableObject {
     private let session: URLSession
 
     private init() {
+        self.session = Self.makeSession()
+    }
+
+    nonisolated static func makeSession() -> URLSession {
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 30
         config.timeoutIntervalForResource = 60
-        self.session = URLSession(configuration: config)
+        return GlobalProxySettings.makeSession(base: config)
     }
 
     // MARK: - URL Parsing

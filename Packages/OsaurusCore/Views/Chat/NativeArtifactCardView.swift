@@ -127,7 +127,7 @@ final class NativeArtifactCardView: NSView {
 
         applyIconGradient(for: artifact)
         let sym = Self.symbolName(for: artifact)
-        iconBadge.image = NSImage(systemSymbolName: sym, accessibilityDescription: nil)
+        iconBadge.image = SymbolImageCache.image(sym, accessibilityDescription: nil)
         iconBadge.contentTintColor = .white
         iconBadge.imageScaling = .scaleProportionallyUpOrDown
 
@@ -540,7 +540,7 @@ final class NativeArtifactCardView: NSView {
         container.addSubview(iv)
 
         videoPlayIcon.translatesAutoresizingMaskIntoConstraints = false
-        videoPlayIcon.image = NSImage(systemSymbolName: "play.circle.fill", accessibilityDescription: "Play")
+        videoPlayIcon.image = SymbolImageCache.image("play.circle.fill", accessibilityDescription: "Play")
         videoPlayIcon.contentTintColor = .white
         videoPlayIcon.imageScaling = .scaleProportionallyUpOrDown
         container.addSubview(videoPlayIcon)
@@ -606,7 +606,7 @@ final class NativeArtifactCardView: NSView {
 
         audioPlayButton.translatesAutoresizingMaskIntoConstraints = false
         audioPlayButton.isBordered = false
-        audioPlayButton.image = NSImage(systemSymbolName: "play.fill", accessibilityDescription: "Play")
+        audioPlayButton.image = SymbolImageCache.image("play.fill", accessibilityDescription: "Play")
         audioPlayButton.contentTintColor = NSColor(theme.accentColor)
         audioPlayButton.target = self
         audioPlayButton.action = #selector(openArtifactWithDefaultApp)
@@ -692,7 +692,7 @@ final class NativeArtifactCardView: NSView {
         row.layer?.cornerRadius = 8
         row.layer?.backgroundColor = NSColor(theme.tertiaryBackground).withAlphaComponent(0.4).cgColor
 
-        htmlIcon.image = NSImage(systemSymbolName: "globe", accessibilityDescription: nil)
+        htmlIcon.image = SymbolImageCache.image("globe", accessibilityDescription: nil)
         htmlIcon.contentTintColor = NSColor(theme.secondaryText)
         htmlIcon.imageScaling = .scaleProportionallyUpOrDown
 
@@ -941,7 +941,7 @@ final class NativeArtifactCardView: NSView {
         button.font = NSFont.systemFont(ofSize: CGFloat(theme.captionSize) - 1, weight: .medium)
         button.contentTintColor = NSColor(theme.accentColor)
         button.title = title
-        button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+        button.image = SymbolImageCache.image(symbol, accessibilityDescription: nil)
         button.imagePosition = .imageLeading
         button.imageHugsTitle = true
     }

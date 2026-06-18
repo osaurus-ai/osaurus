@@ -8,6 +8,16 @@
 import Foundation
 
 public struct SandboxCleanupNotice: Sendable {
+    /// Severity of the cleanup outcome, so a non-modal surface (toast)
+    /// can pick the right styling without re-deriving it from the title.
+    public enum Kind: Sendable {
+        /// Every requested cleanup step succeeded.
+        case completed
+        /// Some step was skipped or failed (warnings / container not running).
+        case incomplete
+    }
+
+    public let kind: Kind
     public let title: String
     public let message: String
 }
@@ -37,11 +47,16 @@ public struct SandboxAgentCleanupResult: Sendable {
             lines.append("Some cleanup steps could not be completed: \(warnings.joined(separator: " "))")
         }
 
+        let incomplete = skippedContainerUserCleanup || !warnings.isEmpty
         let title =
-            (skippedContainerUserCleanup || !warnings.isEmpty)
+            incomplete
             ? L("Sandbox Cleanup Incomplete")
             : L("Sandbox Resources Removed")
-        return SandboxCleanupNotice(title: title, message: lines.joined(separator: "\n\n"))
+        return SandboxCleanupNotice(
+            kind: incomplete ? .incomplete : .completed,
+            title: title,
+            message: lines.joined(separator: "\n\n")
+        )
     }
 }
 

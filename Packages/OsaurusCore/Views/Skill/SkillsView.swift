@@ -646,7 +646,7 @@ private struct SkillRow: View {
                                 HStack(spacing: 4) {
                                     Image(systemName: skill.isBuiltIn ? "eye" : "pencil")
                                         .font(.system(size: 10))
-                                    Text(skill.isBuiltIn ? "View" : "Edit")
+                                    Text(LocalizedStringKey(skill.isBuiltIn ? "View" : "Edit"), bundle: .module)
                                         .font(.system(size: 11, weight: .medium))
                                 }
                                 .foregroundColor(theme.accentColor)

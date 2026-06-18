@@ -1,10 +1,42 @@
 import Foundation
+import CFNetwork
 import Testing
 
 @testable import OsaurusCore
 
 @Suite("Osaurus router API client", .serialized)
 struct OsaurusRouterAPIClientTests {
+    @Test func defaultSessionUsesGlobalProxySetting() async throws {
+        try await StoragePathsTestLock.shared.run {
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+                "osaurus-router-proxy-\(UUID().uuidString)",
+                isDirectory: true
+            )
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            let previousRoot = OsaurusPaths.overrideRoot
+            OsaurusPaths.overrideRoot = root
+            defer {
+                OsaurusPaths.overrideRoot = previousRoot
+                try? FileManager.default.removeItem(at: root)
+            }
+
+            try OsaurusPaths.ensureExists(OsaurusPaths.config())
+            var configuration = ServerConfiguration.default
+            configuration.globalProxyURL = "socks5://proxy.example.com:1080"
+            try JSONEncoder().encode(configuration).write(to: OsaurusPaths.serverConfigFile(), options: .atomic)
+
+            let session = OsaurusRouterAPIClient.makeSession()
+            defer { session.invalidateAndCancel() }
+
+            let dictionary = session.configuration.connectionProxyDictionary
+            #expect(dictionary?[proxyKey(kCFNetworkProxiesSOCKSEnable)] as? Int == 1)
+            #expect(dictionary?[proxyKey(kCFNetworkProxiesSOCKSProxy)] as? String == "proxy.example.com")
+            #expect(dictionary?[proxyKey(kCFNetworkProxiesSOCKSPort)] as? Int == 1080)
+            #expect(session.configuration.timeoutIntervalForRequest == 30)
+            #expect(session.configuration.timeoutIntervalForResource == 120)
+        }
+    }
+
     @Test func balance_decodesMicroStringAndSendsAuthHeaders() async throws {
         let client = try makeClient { request in
             #expect(request.url?.path == "/credits/balance")
@@ -149,4 +181,8 @@ private extension URLRequest {
         }
         return data
     }
+}
+
+private func proxyKey(_ value: CFString) -> AnyHashable {
+    AnyHashable(value as String)
 }

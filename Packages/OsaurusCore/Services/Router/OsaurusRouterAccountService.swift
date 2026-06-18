@@ -49,13 +49,31 @@ final class OsaurusRouterAccountService: ObservableObject {
     }
 
     func refreshAll() async {
+        guard OsaurusRouter.isEnabled else { return }
         await RemoteProviderManager.shared.connectOsaurusRouterIfPossible()
         await refreshBalance()
         await refreshUsage(reset: true)
     }
 
+    /// Clear all cached account state when the user turns the router off. Called
+    /// from `RemoteProviderManager.setOsaurusRouterEnabled(false)` so the Credits
+    /// UI doesn't show a stale balance/activity while server polling is stopped.
+    func clearForDisabledRouter() {
+        balance = nil
+        usage = []
+        nextUsageCursor = nil
+        lastError = nil
+    }
+
     func refreshBalance() async {
-        guard OsaurusIdentity.exists() else {
+        // Master switch off: never hit `/credits/balance`. This also neutralizes
+        // the `didBecomeActive` observer below, which calls straight in here.
+        guard OsaurusRouter.isEnabled else { return }
+        // Eventually-consistent gate: `exists()` issues a synchronous keychain
+        // query that blocks the main actor for seconds. The memo is updated
+        // in-process on identity install/delete, so the balance refresh never
+        // needs a per-call `SecItemCopyMatching` here.
+        guard OsaurusIdentity.existsCached() else {
             balance = nil
             lastError = OsaurusRouterAPIError.noIdentity.localizedDescription
             return
@@ -84,6 +102,7 @@ final class OsaurusRouterAccountService: ObservableObject {
     }
 
     func refreshUsage(reset: Bool = true) async {
+        guard OsaurusRouter.isEnabled else { return }
         guard OsaurusIdentity.exists() else {
             usage = []
             nextUsageCursor = nil

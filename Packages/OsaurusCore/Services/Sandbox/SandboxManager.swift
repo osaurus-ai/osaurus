@@ -1627,7 +1627,7 @@
                     }
                 }
             }
-            let session = URLSession(configuration: .default, delegate: delegate, delegateQueue: nil)
+            let session = Self.makeArtifactDownloadSession(delegate: delegate)
             defer { session.finishTasksAndInvalidate() }
 
             var lastError: Error?
@@ -1683,6 +1683,10 @@
             throw SandboxError.provisionFailed(
                 "Download failed: \(lastError?.localizedDescription ?? "all URLs failed")"
             )
+        }
+
+        nonisolated static func makeArtifactDownloadSession(delegate: URLSessionDownloadDelegate) -> URLSession {
+            GlobalProxySettings.makeSession(base: .default, delegate: delegate, delegateQueue: nil)
         }
 
         /// `verifySHA256` wrapped in a detached task. Lets actor-isolated

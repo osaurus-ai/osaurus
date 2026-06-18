@@ -685,17 +685,18 @@ struct ProviderCredentialPromptSheet: View {
         let host = trimmed(extraFieldValue(for: "host"))
         let deployment = trimmed(extraFieldValue(for: "deployment"))
         let effectiveHost = host.isEmpty ? defaults.host : host
+        let deploymentModelIds =
+            deployment
+            .split(whereSeparator: { $0 == "\n" || $0 == "," })
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
         let basePath: String = {
             guard providerType == .azureOpenAI, !deployment.isEmpty else { return defaults.basePath }
             // The deployment field accepts a comma/newline-separated list
             // (persisted to `manualModelIds` on save). The inline connection
             // test only needs one valid deployment in the path — embedding the
             // whole raw string would corrupt it.
-            let first =
-                deployment
-                .split(whereSeparator: { $0 == "\n" || $0 == "," })
-                .first
-                .map { $0.trimmingCharacters(in: .whitespaces) } ?? ""
+            let first = deploymentModelIds.first ?? ""
             return first.isEmpty ? defaults.basePath : "/openai/deployments/\(first)/v1"
         }()
 
@@ -721,7 +722,8 @@ struct ProviderCredentialPromptSheet: View {
                     authType: request.instructions.storageAuthType,
                     providerType: providerType,
                     apiKey: key,
-                    headers: testHeaders
+                    headers: testHeaders,
+                    manualModelIds: providerType == .azureOpenAI ? deploymentModelIds : []
                 )
                 testSucceededModelCount = models.count
             } catch {
