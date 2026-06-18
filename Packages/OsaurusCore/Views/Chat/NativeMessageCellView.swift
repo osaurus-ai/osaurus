@@ -369,7 +369,7 @@ final class NativeHeaderView: NSView {
         let pointSize = CGFloat(theme.captionSize) - 1
         let cfg = NSImage.SymbolConfiguration(pointSize: pointSize, weight: .medium)
         control.setSymbol(
-            NSImage(systemSymbolName: icon, accessibilityDescription: help)?.withSymbolConfiguration(cfg),
+            SymbolImageCache.image(icon, accessibilityDescription: help)?.withSymbolConfiguration(cfg),
             toolTip: help,
             theme: theme,
             iconTint: tint
@@ -620,21 +620,21 @@ final class NativeAssistantActionsView: NSView {
         let pointSize = CGFloat(theme.captionSize) - 1
         let cfg = NSImage.SymbolConfiguration(pointSize: pointSize, weight: .medium)
         copyButton.setSymbol(
-            NSImage(systemSymbolName: "doc.on.doc", accessibilityDescription: L("Copy"))?
+            SymbolImageCache.image("doc.on.doc", accessibilityDescription: L("Copy"))?
                 .withSymbolConfiguration(cfg),
             toolTip: L("Copy"),
             theme: theme,
             iconTint: nil
         )
         regenerateButton.setSymbol(
-            NSImage(systemSymbolName: "arrow.counterclockwise", accessibilityDescription: L("Regenerate"))?
+            SymbolImageCache.image("arrow.counterclockwise", accessibilityDescription: L("Regenerate"))?
                 .withSymbolConfiguration(cfg),
             toolTip: L("Regenerate"),
             theme: theme,
             iconTint: nil
         )
         insightsButton.setSymbol(
-            NSImage(systemSymbolName: "waveform.path.ecg.magnifyingglass", accessibilityDescription: L("Insights"))?
+            SymbolImageCache.image("waveform.path.ecg.magnifyingglass", accessibilityDescription: L("Insights"))?
                 .withSymbolConfiguration(cfg),
             toolTip: L("View in Insights"),
             theme: theme,
@@ -692,7 +692,7 @@ final class NativeAssistantActionsView: NSView {
         let symbolName = isThisTurnPlaying ? "stop.fill" : "speaker.wave.2"
         let tooltip = isThisTurnPlaying ? L("Stop") : L("Read aloud")
         speakButton.setSymbol(
-            NSImage(systemSymbolName: symbolName, accessibilityDescription: tooltip)?
+            SymbolImageCache.image(symbolName, accessibilityDescription: tooltip)?
                 .withSymbolConfiguration(cfg),
             toolTip: tooltip,
             theme: theme,
@@ -929,7 +929,7 @@ private final class UserMessageInlineEditView: NSView, NSTextViewDelegate {
         confirmButton.isBordered = false
         confirmButton.wantsLayer = true
         confirmButton.translatesAutoresizingMaskIntoConstraints = false
-        confirmButton.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: nil)
+        confirmButton.image = SymbolImageCache.image("arrow.clockwise", accessibilityDescription: nil)
         confirmButton.imagePosition = .imageLeading
 
         cancelButton.setContentHuggingPriority(.required, for: .horizontal)
@@ -1096,7 +1096,7 @@ private final class UserMessageInlineEditView: NSView, NSTextViewDelegate {
         )
 
         confirmButton.layer?.cornerRadius = 6
-        if let sym = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: nil) {
+        if let sym = SymbolImageCache.image("arrow.clockwise", accessibilityDescription: nil) {
             let config = NSImage.SymbolConfiguration(pointSize: cap - 1, weight: .semibold)
             confirmButton.image = sym.withSymbolConfiguration(config) ?? sym
         }
@@ -2618,7 +2618,7 @@ private final class UserDocumentChipView: NSView {
         let summary = attachment.businessDocumentSummary
         let symbolName = summary?.systemImageName ?? attachment.fileIcon
         let config = NSImage.SymbolConfiguration(pointSize: 11, weight: .medium)
-        iconView.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)?
+        iconView.image = SymbolImageCache.image(symbolName, accessibilityDescription: nil)?
             .withSymbolConfiguration(config)
         iconView.contentTintColor = NSColor(theme.accentColor)
 

@@ -746,6 +746,159 @@ struct RemoteChatRequestEncodingTests {
         #expect(assistantJSON["tool_calls"] != nil)
     }
 
+    @Test func routerWireCompatibleMessages_collapsesDuplicateToolResultsByCallId() throws {
+        let assistant = ChatMessage(
+            role: "assistant",
+            content: nil,
+            tool_calls: [
+                ToolCall(
+                    id: "toolu_1",
+                    type: "function",
+                    function: ToolCallFunction(name: "read_file", arguments: #"{"path":"a"}"#)
+                )
+            ],
+            tool_call_id: nil
+        )
+        let result = ChatMessage(role: "tool", content: "FILE CONTENTS", tool_calls: nil, tool_call_id: "toolu_1")
+        let notice = ChatMessage(
+            role: "tool",
+            content: "[System Notice] history compacted",
+            tool_calls: nil,
+            tool_call_id: "toolu_1"
+        )
+
+        let normalized = RemoteProviderService.routerWireCompatibleMessages([assistant, result, notice])
+
+        #expect(normalized.map(\.role) == ["assistant", "tool"])
+        let toolMessage = try #require(normalized.last)
+        #expect(toolMessage.tool_call_id == "toolu_1")
+        #expect(toolMessage.content == "FILE CONTENTS\n\n[System Notice] history compacted")
+    }
+
+    @Test func routerWireCompatibleMessages_keepsDistinctParallelToolResults() throws {
+        let assistant = ChatMessage(
+            role: "assistant",
+            content: nil,
+            tool_calls: [
+                ToolCall(
+                    id: "toolu_1",
+                    type: "function",
+                    function: ToolCallFunction(name: "read_file", arguments: "{}")
+                ),
+                ToolCall(
+                    id: "toolu_2",
+                    type: "function",
+                    function: ToolCallFunction(name: "list_dir", arguments: "{}")
+                ),
+            ],
+            tool_call_id: nil
+        )
+        let first = ChatMessage(role: "tool", content: "A", tool_calls: nil, tool_call_id: "toolu_1")
+        let second = ChatMessage(role: "tool", content: "B", tool_calls: nil, tool_call_id: "toolu_2")
+
+        let normalized = RemoteProviderService.routerWireCompatibleMessages([assistant, first, second])
+
+        #expect(normalized.map(\.role) == ["assistant", "tool", "tool"])
+        #expect(normalized.dropFirst().compactMap(\.tool_call_id) == ["toolu_1", "toolu_2"])
+        #expect(normalized.dropFirst().compactMap(\.content) == ["A", "B"])
+    }
+
+    /// Regression for the Osaurus Router HTTP 400 "each tool_use must have a
+    /// single result": a transient `[System Notice]` riding the prior result's
+    /// tool_call_id must not become a second tool entry on the wire.
+    @Test func routerWireCompatibleMessages_singleToolEntryOnWireForNoticeRide() throws {
+        let assistant = ChatMessage(
+            role: "assistant",
+            content: nil,
+            tool_calls: [
+                ToolCall(id: "toolu_1", type: "function", function: ToolCallFunction(name: "run", arguments: "{}"))
+            ],
+            tool_call_id: nil
+        )
+        let result = ChatMessage(role: "tool", content: "ok", tool_calls: nil, tool_call_id: "toolu_1")
+        let notice = ChatMessage(
+            role: "tool",
+            content: "[System Notice] nudge",
+            tool_calls: nil,
+            tool_call_id: "toolu_1"
+        )
+
+        let normalized = RemoteProviderService.routerWireCompatibleMessages([assistant, result, notice])
+        let array = try Self.encodeAsArray(normalized)
+
+        let toolEntries = array.filter { ($0["tool_call_id"] as? String) == "toolu_1" }
+        #expect(toolEntries.count == 1)
+        #expect(toolEntries.first?["content"] as? String == "ok\n\n[System Notice] nudge")
+    }
+
+    @Test func toAnthropicRequest_emitsSingleToolResultPerToolUseId() throws {
+        let request = Self.makeRequest(
+            model: "claude-3-5-sonnet-20241022",
+            maxTokens: 1024,
+            messages: [
+                ChatMessage(role: "user", content: "read the file"),
+                ChatMessage(
+                    role: "assistant",
+                    content: nil,
+                    tool_calls: [
+                        ToolCall(
+                            id: "toolu_1",
+                            type: "function",
+                            function: ToolCallFunction(name: "read_file", arguments: "{}")
+                        )
+                    ],
+                    tool_call_id: nil
+                ),
+                ChatMessage(role: "tool", content: "RESULT", tool_calls: nil, tool_call_id: "toolu_1"),
+                ChatMessage(role: "tool", content: "[System Notice] note", tool_calls: nil, tool_call_id: "toolu_1"),
+            ]
+        )
+
+        let anthropic = request.toAnthropicRequest()
+        let blocks = Self.toolResultBlocks(in: anthropic)
+
+        #expect(blocks.count == 1)
+        let block = try #require(blocks.first)
+        #expect(block.tool_use_id == "toolu_1")
+        let text = block.content?.plainText ?? ""
+        #expect(text.contains("RESULT"))
+        #expect(text.contains("[System Notice] note"))
+    }
+
+    @Test func toAnthropicRequest_keepsDistinctToolResults() throws {
+        let request = Self.makeRequest(
+            model: "claude-3-5-sonnet-20241022",
+            maxTokens: 1024,
+            messages: [
+                ChatMessage(role: "user", content: "go"),
+                ChatMessage(
+                    role: "assistant",
+                    content: nil,
+                    tool_calls: [
+                        ToolCall(
+                            id: "toolu_1",
+                            type: "function",
+                            function: ToolCallFunction(name: "a", arguments: "{}")
+                        ),
+                        ToolCall(
+                            id: "toolu_2",
+                            type: "function",
+                            function: ToolCallFunction(name: "b", arguments: "{}")
+                        ),
+                    ],
+                    tool_call_id: nil
+                ),
+                ChatMessage(role: "tool", content: "A", tool_calls: nil, tool_call_id: "toolu_1"),
+                ChatMessage(role: "tool", content: "B", tool_calls: nil, tool_call_id: "toolu_2"),
+            ]
+        )
+
+        let anthropic = request.toAnthropicRequest()
+        let blocks = Self.toolResultBlocks(in: anthropic)
+
+        #expect(blocks.map(\.tool_use_id) == ["toolu_1", "toolu_2"])
+    }
+
     @Test func echoesReasoningContent_trueForDeepSeekHost() throws {
         #expect(
             RemoteProviderService.echoesReasoningContent(
@@ -1551,11 +1704,12 @@ struct RemoteChatRequestEncodingTests {
         maxTokens: Int?,
         reasoningEffort: String? = nil,
         tools: [Tool]? = nil,
-        thinking: ThinkingConfig? = nil
+        thinking: ThinkingConfig? = nil,
+        messages: [ChatMessage] = [ChatMessage(role: "user", content: "hi")]
     ) -> RemoteChatRequest {
         RemoteChatRequest(
             model: model,
-            messages: [ChatMessage(role: "user", content: "hi")],
+            messages: messages,
             temperature: 0.7,
             max_completion_tokens: maxTokens,
             stream: false,
@@ -1695,6 +1849,20 @@ struct RemoteChatRequestEncodingTests {
             throw DecodeAsDictionaryError.notAnObject
         }
         return obj
+    }
+
+    /// Flatten every `tool_result` block across an Anthropic request, in order,
+    /// for single-result-per-id assertions.
+    private static func toolResultBlocks(
+        in request: AnthropicMessagesRequest
+    ) -> [AnthropicToolResultBlock] {
+        request.messages.flatMap { message -> [AnthropicToolResultBlock] in
+            guard case .blocks(let blocks) = message.content else { return [] }
+            return blocks.compactMap { block in
+                if case .toolResult(let result) = block { return result }
+                return nil
+            }
+        }
     }
 
     private static func decodeAsDictionary(_ data: Data) throws -> [String: Any] {

@@ -257,7 +257,7 @@ public enum XAIOAuthService {
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await URLSession.shared.data(for: request)
+            (data, response) = try await GlobalProxySettings.sharedSession().data(for: request)
         } catch {
             throw XAIOAuthError.discoveryFailed("Network error: \(error.localizedDescription)")
         }
@@ -359,7 +359,7 @@ public enum XAIOAuthService {
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await URLSession.shared.data(for: request)
+            (data, response) = try await GlobalProxySettings.sharedSession().data(for: request)
         } catch {
             throw XAIOAuthError.tokenRequestFailed("Network error: \(error.localizedDescription)")
         }

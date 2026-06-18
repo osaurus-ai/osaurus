@@ -19,10 +19,14 @@ struct ExternalModelsSettingsView: View {
     @AppStorage(ExternalModelLocator.importLMStudioDefaultsKey)
     private var importLMStudio: Bool = true
 
+    @AppStorage(ExternalModelLocator.customHFCachePathDefaultsKey)
+    private var customHFCachePath: String = ""
+
     @State private var hfCount: Int = 0
     @State private var lmStudioCount: Int = 0
     @State private var scanReport: ExternalModelLocator.ScanReport?
     @State private var isScanning: Bool = false
+    @State private var showHFCachePicker: Bool = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -41,6 +45,10 @@ struct ExternalModelsSettingsView: View {
                 badge: importHFCache && hfCount > 0 ? "\(hfCount)" : nil,
                 isOn: $importHFCache
             )
+
+            if importHFCache {
+                hfCachePathControl
+            }
 
             SettingsToggle(
                 title: L("LM Studio"),
@@ -106,9 +114,82 @@ struct ExternalModelsSettingsView: View {
         .onAppear { refreshCounts() }
         .onChange(of: importHFCache) { _, _ in rescan() }
         .onChange(of: importLMStudio) { _, _ in rescan() }
+        .onChange(of: customHFCachePath) { _, _ in refreshCounts() }
         .onReceive(NotificationCenter.default.publisher(for: .localModelsChanged)) { _ in
             refreshCounts()
         }
+        .fileImporter(
+            isPresented: $showHFCachePicker,
+            allowedContentTypes: [.folder],
+            allowsMultipleSelection: false
+        ) { result in
+            if case .success(let urls) = result, let url = urls.first {
+                customHFCachePath = url.path
+                rescan()
+            }
+        }
+    }
+
+    private var hfCachePathControl: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("HF cache path", bundle: .module)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(theme.secondaryText)
+
+            HStack(spacing: 8) {
+                TextField(defaultHFCacheDisplayPath, text: $customHFCachePath)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundColor(theme.primaryText)
+                    .onSubmit { rescan() }
+
+                Button(
+                    action: { showHFCachePicker = true },
+                    label: {
+                        Image(systemName: "folder.badge.gearshape")
+                            .font(.system(size: 11, weight: .semibold))
+                            .frame(width: 22, height: 22)
+                    }
+                )
+                .buttonStyle(.plain)
+                .localizedHelp("Choose Hugging Face cache folder")
+
+                if !customHFCachePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Button(
+                        action: {
+                            customHFCachePath = ""
+                            rescan()
+                        },
+                        label: {
+                            Image(systemName: "arrow.counterclockwise")
+                                .font(.system(size: 11, weight: .semibold))
+                                .frame(width: 22, height: 22)
+                        }
+                    )
+                    .buttonStyle(.plain)
+                    .localizedHelp("Use default Hugging Face cache locations")
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(theme.inputBackground)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(theme.inputBorder, lineWidth: 1)
+                    )
+            )
+
+            Text(
+                "Empty scans HF_HUB_CACHE, HF_HOME/hub, and ~/.cache/huggingface/hub.",
+                bundle: .module
+            )
+            .font(.system(size: 10))
+            .foregroundColor(theme.tertiaryText)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.leading, 8)
     }
 
     private func refreshCounts() {
@@ -139,5 +220,12 @@ struct ExternalModelsSettingsView: View {
     private func skippedSummary(_ item: ExternalModelLocator.Skipped) -> String {
         let name = item.repoId ?? URL(fileURLWithPath: item.path).lastPathComponent
         return "\(name): \(item.reason.title)"
+    }
+
+    private var defaultHFCacheDisplayPath: String {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".cache/huggingface/hub", isDirectory: true)
+            .path
+            .replacingOccurrences(of: NSHomeDirectory(), with: "~")
     }
 }

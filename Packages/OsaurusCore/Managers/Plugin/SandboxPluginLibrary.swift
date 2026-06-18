@@ -171,22 +171,41 @@ public final class SandboxPluginLibrary: ObservableObject {
 
     // MARK: - Persistence
 
+    /// Kick off an off-main load of the recipe library, publishing results on
+    /// the main actor when done. The previous synchronous version scanned the
+    /// recipe directory and JSON-decoded every file inline, which blocked the
+    /// UI the first time the management/Tools surface touched `.shared`
+    /// (`ManagementBadgeStore` wiring + the Tools header). `plugins` starts
+    /// empty and populates a beat later.
     private func loadAll() {
-        let dir = OsaurusPaths.sandboxPluginLibrary()
-        let fm = FileManager.default
-        OsaurusPaths.ensureExistsSilent(dir)
-        guard let files = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) else { return }
-
-        var loaded: [SandboxPlugin] = []
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        for file in files where file.pathExtension == "json" {
-            guard let data = try? Data(contentsOf: file),
-                let plugin = try? decoder.decode(SandboxPlugin.self, from: data)
-            else { continue }
-            loaded.append(plugin)
+        Task { [weak self] in
+            let loaded = await Self.readLibraryFromDisk()
+            self?.plugins = loaded
         }
-        plugins = loaded.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    /// Read + decode + sort the recipe library entirely off the main thread.
+    private static func readLibraryFromDisk() async -> [SandboxPlugin] {
+        await Task.detached(priority: .userInitiated) {
+            let dir = OsaurusPaths.sandboxPluginLibrary()
+            let fm = FileManager.default
+            OsaurusPaths.ensureExistsSilent(dir)
+            guard let files = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)
+            else { return [] }
+
+            var loaded: [SandboxPlugin] = []
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            for file in files where file.pathExtension == "json" {
+                guard let data = try? Data(contentsOf: file),
+                    let plugin = try? decoder.decode(SandboxPlugin.self, from: data)
+                else { continue }
+                loaded.append(plugin)
+            }
+            return loaded.sorted {
+                $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+            }
+        }.value
     }
 
     // MARK: - Version Helpers

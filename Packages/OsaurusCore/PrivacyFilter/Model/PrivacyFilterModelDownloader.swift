@@ -179,11 +179,7 @@ public final class PrivacyFilterModelDownloader: NSObject, ObservableObject {
         let bytesTotal = wanted.reduce(Int64(0)) { $0 + $1.size }
         var bytesDownloaded: Int64 = 0
 
-        let session = URLSession(
-            configuration: .default,
-            delegate: self,
-            delegateQueue: nil
-        )
+        let session = Self.makeDownloadSession(delegate: self)
         self.session = session
 
         for (index, file) in wanted.enumerated() {
@@ -266,6 +262,10 @@ public final class PrivacyFilterModelDownloader: NSObject, ObservableObject {
         for (_, observer) in inflightObservers { observer.invalidate() }
         inflightObservers.removeAll()
         inflightContinuations.removeAll()
+    }
+
+    nonisolated static func makeDownloadSession(delegate: URLSessionDownloadDelegate) -> URLSession {
+        GlobalProxySettings.makeSession(base: .default, delegate: delegate, delegateQueue: nil)
     }
 
     private func runVerify() async {
@@ -437,7 +437,7 @@ private enum HuggingFaceTreeService {
         var req = URLRequest(url: url)
         req.setValue("application/json", forHTTPHeaderField: "Accept")
         do {
-            let (data, response) = try await URLSession.shared.data(for: req)
+            let (data, response) = try await GlobalProxySettings.sharedSession().data(for: req)
             guard let http = response as? HTTPURLResponse, (200 ..< 300).contains(http.statusCode) else {
                 return nil
             }

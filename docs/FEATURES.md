@@ -307,7 +307,7 @@ Research notes for the next local-runtime compatibility wave live in
 {"command": "osaurus", "args": ["mcp"]}
 ```
 
-This command bridge is for external clients connecting to Osaurus. It is separate from Remote MCP Providers, which only connect from Osaurus to URL-based HTTP/SSE MCP servers.
+This command bridge is for external clients connecting to Osaurus. If Server > Network exposure is enabled, provide an access key with `OSAURUS_MCP_ACCESS_KEY` in the MCP client's environment or pass `--access-key` in the `args` array. It is separate from Remote MCP Providers, which only connect from Osaurus to URL-based HTTP/SSE MCP servers.
 
 ---
 

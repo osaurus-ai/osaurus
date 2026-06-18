@@ -110,6 +110,7 @@ enum ExternalModelLocator {
 
     static let importHFCacheDefaultsKey = "ExternalModelImportHFCache"
     static let importLMStudioDefaultsKey = "ExternalModelImportLMStudio"
+    static let customHFCachePathDefaultsKey = "ExternalModelCustomHFCachePath"
 
     /// Both sources default ON so models from other tools are picked up
     /// automatically — the explicitly-requested "use models in all
@@ -119,6 +120,12 @@ enum ExternalModelLocator {
     }
     static var isLMStudioImportEnabled: Bool {
         UserDefaults.standard.object(forKey: importLMStudioDefaultsKey) as? Bool ?? true
+    }
+
+    static var customHFCachePath: String? {
+        let raw = UserDefaults.standard.string(forKey: customHFCachePathDefaultsKey) ?? ""
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     // MARK: - Registry state
@@ -292,7 +299,9 @@ enum ExternalModelLocator {
         }
 
         if isHFCacheImportEnabled {
-            reports.append(contentsOf: huggingFaceCacheRoots().map(scanHuggingFaceCacheReport(root:)))
+            reports.append(
+                contentsOf: huggingFaceCacheRoots().map(scanHuggingFaceCacheReport(root:))
+            )
         }
         if isLMStudioImportEnabled {
             reports.append(contentsOf: lmStudioRoots().map { scanReport(root: $0, source: .lmStudio) })
@@ -302,28 +311,51 @@ enum ExternalModelLocator {
 
     // MARK: - Roots
 
-    private static func huggingFaceCacheRoots() -> [URL] {
-        let fm = FileManager.default
-        let env = ProcessInfo.processInfo.environment
+    static func huggingFaceCacheRoots(
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
+        customPath: String? = ExternalModelLocator.customHFCachePath,
+        fileExists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }
+    ) -> [URL] {
         var roots: [URL] = []
-        func add(_ url: URL) {
+
+        func add(_ url: URL, requireExisting: Bool = true) {
             let standardized = url.standardizedFileURL
+            if requireExisting, !fileExists(standardized.path) { return }
             if !roots.contains(standardized) { roots.append(standardized) }
         }
-        if let hubCache = env["HF_HUB_CACHE"], !hubCache.isEmpty {
-            add(URL(fileURLWithPath: (hubCache as NSString).expandingTildeInPath, isDirectory: true))
+
+        if let customPath {
+            add(Self.fileURL(fromUserPath: customPath, homeDirectory: homeDirectory), requireExisting: false)
         }
-        if let hfHome = env["HF_HOME"], !hfHome.isEmpty {
+        if let hubCache = environment["HF_HUB_CACHE"], !hubCache.isEmpty {
+            add(Self.fileURL(fromUserPath: hubCache, homeDirectory: homeDirectory))
+        }
+        if let hfHome = environment["HF_HOME"], !hfHome.isEmpty {
             add(
-                URL(fileURLWithPath: (hfHome as NSString).expandingTildeInPath, isDirectory: true)
+                Self.fileURL(fromUserPath: hfHome, homeDirectory: homeDirectory)
                     .appendingPathComponent("hub", isDirectory: true)
             )
         }
         add(
-            fm.homeDirectoryForCurrentUser
+            homeDirectory
                 .appendingPathComponent(".cache/huggingface/hub", isDirectory: true)
         )
-        return roots.filter { fm.fileExists(atPath: $0.path) }
+        return roots
+    }
+
+    private static func fileURL(fromUserPath path: String, homeDirectory: URL) -> URL {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed == "~" {
+            return homeDirectory
+        }
+        if trimmed.hasPrefix("~/") {
+            return homeDirectory.appendingPathComponent(String(trimmed.dropFirst(2)), isDirectory: true)
+        }
+        return URL(
+            fileURLWithPath: (trimmed as NSString).expandingTildeInPath,
+            isDirectory: true
+        )
     }
 
     private static func lmStudioRoots() -> [URL] {

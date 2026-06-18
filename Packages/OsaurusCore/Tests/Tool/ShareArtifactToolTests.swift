@@ -2,11 +2,13 @@
 //  ShareArtifactToolTests.swift
 //  osaurusTests
 //
-//  Pins the path-vs-content precedence in `share_artifact`. The regression
-//  this guards against: a model mirrors the file path into `content` while
-//  also passing `path`, the tool honored `content`, and the downstream
-//  parser wrote the literal path string as the artifact body — shipping a
-//  broken (e.g. 20-byte) image instead of copying the real file.
+//  Pins `share_artifact`'s contract:
+//   - the schema root stays a plain object with no top-level combinator
+//     (issue #1560 — OpenAI/Anthropic 400 on a top-level anyOf/oneOf/etc.),
+//   - the path-vs-content argument rules are enforced in `execute()`, and
+//   - path mode wins when a model mirrors the file path into `content` (the
+//     original regression: the literal path string was written as the
+//     artifact body, shipping a broken file instead of copying the real one).
 //
 
 import Foundation
@@ -14,7 +16,7 @@ import Testing
 
 @testable import OsaurusCore
 
-@Suite("share_artifact path/content precedence", .serialized)
+@Suite("share_artifact tool", .serialized)
 struct ShareArtifactToolTests {
 
     private static func runLocked(_ body: @Sendable (URL) async throws -> Void) async throws {
@@ -91,5 +93,42 @@ struct ShareArtifactToolTests {
                 Issue.record("expected success, got failure: \(reason)")
             }
         }
+    }
+
+    /// Regression for issue #1560: the schema root must stay a plain object.
+    /// OpenAI and Anthropic 400 on a top-level `anyOf`/`oneOf`/`allOf`/`enum`/
+    /// `not` in a tool's `parameters`/`input_schema`, so the path-vs-content
+    /// contract is enforced in `execute()` instead of via a top-level
+    /// combinator. This pins the root shape so a future edit can't reintroduce
+    /// the provider-breaking schema.
+    @Test func schemaRoot_hasNoTopLevelCombinator() {
+        guard case .object(let params)? = ShareArtifactTool().parameters else {
+            Issue.record("share_artifact parameters missing or not an object")
+            return
+        }
+        #expect(params["type"] == .string("object"))
+        for forbidden in ["anyOf", "oneOf", "allOf", "not", "enum", "const"] {
+            #expect(
+                params[forbidden] == nil,
+                "top-level `\(forbidden)` must not appear in share_artifact's schema"
+            )
+        }
+    }
+
+    /// With the top-level `anyOf` removed, a bare `{}` no longer fails schema
+    /// preflight — `execute()` must still reject it with an `invalid_args`
+    /// envelope so the model gets the same actionable signal.
+    @Test func execute_emptyArgs_returnsInvalidArgs() async throws {
+        let envelope = try await ShareArtifactTool().execute(argumentsJSON: "{}")
+        #expect(EnvelopeAssertions.failureKind(envelope) == "invalid_args")
+    }
+
+    /// `content` without `filename` is enforced in the body, not the schema,
+    /// and must surface the same `invalid_args` envelope.
+    @Test func execute_contentWithoutFilename_returnsInvalidArgs() async throws {
+        let envelope = try await ShareArtifactTool().execute(
+            argumentsJSON: #"{"content":"hello world"}"#
+        )
+        #expect(EnvelopeAssertions.failureKind(envelope) == "invalid_args")
     }
 }

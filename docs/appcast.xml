@@ -3,6 +3,92 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.20.3</title>
+            <pubDate>Wed, 17 Jun 2026 00:25:47 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.20.3</sparkle:version>
+            <sparkle:shortVersionString>0.20.3</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.20.3/Osaurus-0.20.3.dmg" length="51841753" type="application/octet-stream" sparkle:edSignature="vaLAAgqXL9NwINJ0ctODDn5qgRtcSMlmfPnh0SPeOzOLVi9B5Wg9Y3ns+1ZkhBWUMoBC/lo6FkRjr2ESbNz9AA=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- [codex] Fix MCP stdio access key auth (#1541) by @mimeding
+- [codex] Route plugin host HTTP through global proxy (#1538) by @mimeding
+- Improve local access key lifecycle (#1532) by @mimeding
+- Add configurable Hugging Face cache path (#1531) by @mimeding
+- Route OAuth requests through global proxy (#1530) by @mimeding
+- Add Codex OAuth diagnostic context (#1529) by @mimeding
+- Fix pasted provider model-list URLs (#1528) by @mimeding
+
+## 🐛 Bug Fixes
+
+- fixed anthropic api failing on remote providers (#1540) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.20.2...0.20.3
+]]></description>
+        </item>
+        <item>
+            <title>0.20.2</title>
+            <pubDate>Tue, 16 Jun 2026 20:54:37 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.20.2</sparkle:version>
+            <sparkle:shortVersionString>0.20.2</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.20.2/Osaurus-0.20.2.dmg" length="51828380" type="application/octet-stream" sparkle:edSignature="7IgzLrTQaaPTK8byGPxFv07dHXOruptuoj3fkD3rTR93mhSweilZZJbrzLup9fIZCoFr6Vzt6IHD+3CgUgXsAQ=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+## 🐛 Bug Fixes
+
+- fixed issue where model selected during onboarding not used (#1535) by @tpae
+
+## 🧰 Maintenance
+
+- fix hanging with tools section, fixed sandbox vsock diagnostics (#1537) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.20.1...0.20.2
+]]></description>
+        </item>
+        <item>
+            <title>0.20.1</title>
+            <pubDate>Tue, 16 Jun 2026 16:01:45 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.20.1</sparkle:version>
+            <sparkle:shortVersionString>0.20.1</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.20.1/Osaurus-0.20.1.dmg" length="51814414" type="application/octet-stream" sparkle:edSignature="e41ipUT4SH6R4Z0vi6XkBNeJzaR8dq2RieWTlyj2i+VyjfKt9M+vZHtWQbwRlLttE9judKJBv7STK632Mv6CBQ=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Add tool exposure search diagnostics (#1526) by @mimeding
+- Improve host stdio MCP command resolution (#1524) by @mimeding
+- Add legacy storage merge marker (#1522) by @mimeding
+- [codex] Fix scrub-leaked localization fallback (#1519) by @mimeding
+- fixed app hangs (#1523) by @RaajeevChandran
+- Add raw JSON editing for themes (#1518) by @mimeding
+- updated chinese translations (#1520) by @ftzahao
+- Expose theme button colors in editor preview (#1517) by @mimeding
+- Add runtime proof matrix reporting (#1478) by @mimeding
+- Harden skill archive imports (#1477) by @mimeding
+- Add storage location standards audit (#1474) by @mimeding
+
+## 🐛 Bug Fixes
+
+- fixed issue with capabilities discover resetting kv cache (#1525) by @tpae
+- fixed incorrect tok/s from bursty token delivery (#1521) by @RaajeevChandran
+
+## 🧰 Maintenance
+
+- updated whats new steps (#1534) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.20.0...0.20.1
+]]></description>
+        </item>
+        <item>
             <title>0.20.0</title>
             <pubDate>Mon, 15 Jun 2026 23:54:55 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>

@@ -29,7 +29,36 @@ struct ProviderNetworkDiagnosticsTests {
         #expect(auth.severity == .blocked)
         #expect(auth.value == L("ChatGPT sign-in required"))
         #expect(report.pasteboardText.contains(L("ChatGPT sign-in required")))
+
+        let oauth = row("oauth-context", in: report)
+        #expect(oauth.severity == .warning)
+        #expect(oauth.value == L("Codex subscription"))
+        #expect(oauth.detail?.contains("providerType=openAICodex") == true)
+        #expect(oauth.detail?.contains("authType=openAICodexOAuth") == true)
+        #expect(oauth.detail?.contains("redirectURI=http://localhost:1455/auth/callback") == true)
+        #expect(oauth.detail?.contains("callbackPort=1455") == true)
+        #expect(oauth.detail?.contains("tokens=missing") == true)
         #expect(!report.pasteboardText.contains("secret-token"))
+    }
+
+    @Test func codexOAuthReportShowsSignedInContextWithoutSecrets() {
+        let provider = OpenAICodexOAuthService.makeProvider(id: UUID())
+        var state = RemoteProviderState(providerId: provider.id)
+        state.lastError = #"previous callback code=secret-code"#
+
+        let report = ProviderNetworkDiagnostics.remoteProviderReport(
+            provider: provider,
+            state: state,
+            proxy: .disabled,
+            apiKeyPresent: false,
+            oauthTokensPresent: true
+        )
+
+        let oauth = row("oauth-context", in: report)
+        #expect(oauth.severity == .info)
+        #expect(oauth.detail?.contains("tokens=present") == true)
+        #expect(oauth.detail?.contains("lastError=previous callback code=***") == true)
+        #expect(!report.pasteboardText.contains("secret-code"))
     }
 
     @Test func xaiOAuthReportFlagsMissingTokensWithoutLeakingSecrets() {

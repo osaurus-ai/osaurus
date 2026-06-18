@@ -20,6 +20,10 @@ struct ToolsManagerView: View {
     @State private var selectedTab: ToolsTab = .available
     @State private var searchText: String = ""
     @State private var hasAppeared = false
+    /// Guards against the redundant initial-refresh fan-out on appear
+    /// (`.task(id:)` first run + `$plugins` subscribe emission). The `.task`
+    /// owns the single initial load; everything else waits until after it.
+    @State private var hasLoadedOnce = false
     @State private var isRefreshingInstalled = false
     @ObservedObject private var managementState = ManagementStateManager.shared
 
@@ -29,6 +33,9 @@ struct ToolsManagerView: View {
     @State private var builtInSandboxToolEntries: [ToolRegistry.ToolEntry] = []
     @State private var remoteProviderCount: Int = 0
     @State private var policyInfoCache: [String: ToolRegistry.ToolPolicyInfo] = [:]
+    /// Precomputed once per refresh so tool rows never call
+    /// `ToolRegistry.availability(forTool:)` during SwiftUI layout.
+    @State private var availabilityCache: [String: ToolAvailability] = [:]
 
     // Cached filtered results
     @State private var installedPluginsWithTools: [(plugin: PluginState, tools: [ToolRegistry.ToolEntry])] = []
@@ -52,6 +59,7 @@ struct ToolsManagerView: View {
                     SandboxPluginsTabContent(
                         builtInTools: builtInSandboxToolEntries,
                         policyInfoCache: policyInfoCache,
+                        availabilityCache: availabilityCache,
                         onChange: { reload() }
                     )
                 }
@@ -62,7 +70,6 @@ struct ToolsManagerView: View {
         .background(theme.primaryBackground)
         .environment(\.theme, themeManager.currentTheme)
         .onAppear {
-            reload()
             withAnimation(.easeOut(duration: 0.25).delay(0.1)) {
                 hasAppeared = true
             }
@@ -72,11 +79,21 @@ struct ToolsManagerView: View {
             applyPendingSubTabRequest()
         }
         .task(id: searchText) {
-            try? await Task.sleep(nanoseconds: 150_000_000)
-            guard !Task.isCancelled else { return }
+            // Single owner of the initial load: the first run snapshots tools
+            // immediately, later runs (search edits) debounce. This replaces
+            // the old onAppear reload() + task + $plugins triple refresh.
+            if hasLoadedOnce {
+                try? await Task.sleep(nanoseconds: 150_000_000)
+                guard !Task.isCancelled else { return }
+            } else {
+                hasLoadedOnce = true
+            }
+            refreshToolSnapshot()
             await updateFilteredLists()
         }
         .onReceive(PluginRepositoryService.shared.$plugins) { _ in
+            // Skip the emission fired on subscribe; the .task already loaded.
+            guard hasLoadedOnce else { return }
             Task { await updateFilteredLists() }
         }
         .onReceive(NotificationCenter.default.publisher(for: .toolsListChanged)) { _ in
@@ -161,12 +178,13 @@ struct ToolsManagerView: View {
                     if !runtimeTools.isEmpty {
                         InstalledSectionHeader(title: L("Runtime Tools"), icon: "terminal")
 
-                        LazyVStack(spacing: 8) {
+                        VStack(spacing: 8) {
                             ForEach(runtimeTools) { entry in
                                 RuntimeManagedToolEntryRow(
                                     entry: entry,
                                     badge: runtimeBadge(for: entry),
                                     policyInfo: policyInfoCache[entry.name],
+                                    availability: cachedAvailability(availabilityCache, for: entry),
                                     onChange: { reload() }
                                 )
                             }
@@ -180,7 +198,8 @@ struct ToolsManagerView: View {
                             ToolPluginCard(
                                 plugin: item.plugin,
                                 tools: item.tools,
-                                policyInfoCache: policyInfoCache
+                                policyInfoCache: policyInfoCache,
+                                availabilityCache: availabilityCache
                             ) {
                                 reload()
                             }
@@ -196,6 +215,7 @@ struct ToolsManagerView: View {
                                 tools: item.tools,
                                 providerState: providerManager.providerStates[item.provider.id],
                                 policyInfoCache: policyInfoCache,
+                                availabilityCache: availabilityCache,
                                 onDisconnect: {
                                     providerManager.disconnect(providerId: item.provider.id)
                                 },
@@ -349,14 +369,18 @@ struct ToolsManagerView: View {
         runtimeManagedToolEntries = runtimeToolsResult
         builtInSandboxToolEntries = builtInSandboxToolsResult
 
-        // Build policy info cache once for all tools
+        // Build policy info + availability caches once for all tools so the
+        // rows render from snapshots instead of hitting the registry per body.
         var cache: [String: ToolRegistry.ToolPolicyInfo] = [:]
+        var availability: [String: ToolAvailability] = [:]
         for entry in currentToolEntries {
             if let info = ToolRegistry.shared.policyInfo(for: entry.name) {
                 cache[entry.name] = info
             }
+            availability[entry.name] = ToolRegistry.shared.availability(forTool: entry.name)
         }
         policyInfoCache = cache
+        availabilityCache = availability
 
         // Calculate plugins with missing permissions using the cache
         var permissionCount = 0
@@ -383,9 +407,16 @@ struct ToolsManagerView: View {
         return L("Runtime")
     }
 
-    private func reload() {
+    /// Snapshot the in-memory registry/provider state the filters read.
+    /// Kept separate so the initial `.task` load can populate it without
+    /// spawning a second `updateFilteredLists()` pass.
+    private func refreshToolSnapshot() {
         toolEntries = ToolRegistry.shared.listTools()
         remoteProviderCount = providerManager.configuration.providers.count
+    }
+
+    private func reload() {
+        refreshToolSnapshot()
         Task { await updateFilteredLists() }
     }
 
@@ -402,6 +433,16 @@ struct ToolsManagerView: View {
     }
 }
 
+/// Tool availability from a per-refresh snapshot, falling back to a direct
+/// (O(1)) registry lookup if the cache hasn't been populated for this tool.
+@MainActor
+private func cachedAvailability(
+    _ cache: [String: ToolAvailability],
+    for entry: ToolRegistry.ToolEntry
+) -> ToolAvailability {
+    cache[entry.name] ?? ToolRegistry.shared.availability(forTool: entry.name)
+}
+
 // MARK: - Sandbox Plugins Tab
 
 private struct SandboxPluginsTabContent: View {
@@ -410,6 +451,7 @@ private struct SandboxPluginsTabContent: View {
 
     let builtInTools: [ToolRegistry.ToolEntry]
     let policyInfoCache: [String: ToolRegistry.ToolPolicyInfo]
+    let availabilityCache: [String: ToolAvailability]
     let onChange: () -> Void
 
     @State private var showCreatePlugin = false
@@ -469,12 +511,13 @@ private struct SandboxPluginsTabContent: View {
                 if !builtInTools.isEmpty {
                     InstalledSectionHeader(title: L("Built-in Sandbox Tools"), icon: "terminal")
 
-                    LazyVStack(spacing: 8) {
+                    VStack(spacing: 8) {
                         ForEach(builtInTools) { entry in
                             RuntimeManagedToolEntryRow(
                                 entry: entry,
                                 badge: L("Sandbox"),
                                 policyInfo: policyInfoCache[entry.name],
+                                availability: cachedAvailability(availabilityCache, for: entry),
                                 onChange: onChange
                             )
                         }
@@ -628,7 +671,7 @@ private struct SandboxPluginToolCard: View {
     let onDelete: () -> Void
 
     @State private var isExpanded = false
-    @State private var isHovering = false
+    @State private var isMenuHovering = false
 
     private var toolCount: Int {
         plugin.tools?.count ?? 0
@@ -728,11 +771,12 @@ private struct SandboxPluginToolCard: View {
                         .frame(width: 28, height: 28)
                         .background(
                             RoundedRectangle(cornerRadius: 6)
-                                .fill(theme.tertiaryBackground.opacity(isHovering ? 1 : 0))
+                                .fill(theme.tertiaryBackground.opacity(isMenuHovering ? 1 : 0))
                         )
                 }
                 .menuStyle(.borderlessButton)
                 .fixedSize()
+                .onHover { isMenuHovering = $0 }
             }
 
             if isExpanded {
@@ -740,10 +784,10 @@ private struct SandboxPluginToolCard: View {
                     .padding(.vertical, 4)
 
                 if let tools = plugin.tools, !tools.isEmpty {
-                    LazyVStack(spacing: 8) {
+                    VStack(spacing: 8) {
                         ForEach(tools, id: \.id) { spec in
                             let toolName = "\(plugin.id)_\(spec.id)"
-                            let entry = ToolRegistry.shared.listTools().first { $0.name == toolName }
+                            let entry = ToolRegistry.shared.entry(named: toolName)
                             sandboxToolRow(spec: spec, entry: entry)
                         }
                     }
@@ -774,8 +818,7 @@ private struct SandboxPluginToolCard: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity)
-        .background(cardBackground)
-        .onHover { hovering in isHovering = hovering }
+        .background(HoverableCardBackground())
     }
 
     private func sandboxToolRow(spec: SandboxToolSpec, entry: ToolRegistry.ToolEntry?) -> some View {
@@ -811,8 +854,17 @@ private struct SandboxPluginToolCard: View {
                 .fill(theme.tertiaryBackground.opacity(0.5))
         )
     }
+}
 
-    private var cardBackground: some View {
+/// Rounded card chrome whose hover-reactive border/shadow live in their own
+/// small subview. Used as a `.background(...)` so hovering a card re-renders
+/// only this lightweight view instead of invalidating the card's content
+/// body — important when the mouse sweeps across a list of cards.
+private struct HoverableCardBackground: View {
+    @Environment(\.theme) private var theme
+    @State private var isHovering = false
+
+    var body: some View {
         RoundedRectangle(cornerRadius: 12)
             .fill(theme.cardBackground)
             .overlay(
@@ -828,7 +880,7 @@ private struct SandboxPluginToolCard: View {
                 x: 0,
                 y: theme.cardShadowY
             )
-            .drawingGroup()
+            .onHover { isHovering = $0 }
     }
 }
 
@@ -931,10 +983,10 @@ private struct ToolPluginCard: View {
     let plugin: PluginState
     let tools: [ToolRegistry.ToolEntry]
     let policyInfoCache: [String: ToolRegistry.ToolPolicyInfo]
+    let availabilityCache: [String: ToolAvailability]
     let onChange: () -> Void
 
     @State private var isExpanded: Bool = false
-    @State private var isHovering = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -1043,46 +1095,29 @@ private struct ToolPluginCard: View {
                     RoundedRectangle(cornerRadius: 8)
                         .fill(Color.red.opacity(0.08))
                 )
-                .transition(.opacity.combined(with: .move(edge: .top)))
+                .transition(.opacity)
             }
 
             if isExpanded && !tools.isEmpty && !plugin.hasLoadError {
                 Divider()
                     .padding(.vertical, 4)
 
-                LazyVStack(spacing: 8) {
+                VStack(spacing: 8) {
                     ForEach(tools, id: \.id) { entry in
-                        ToolEntryRow(entry: entry, policyInfo: policyInfoCache[entry.name], onChange: onChange)
+                        ToolEntryRow(
+                            entry: entry,
+                            policyInfo: policyInfoCache[entry.name],
+                            availability: cachedAvailability(availabilityCache, for: entry),
+                            onChange: onChange
+                        )
                     }
                 }
-                .transition(.opacity.combined(with: .move(edge: .top)))
+                .transition(.opacity)
             }
         }
         .padding(16)
         .frame(maxWidth: .infinity)
-        .background(cardBackground)
-        .onHover { hovering in
-            isHovering = hovering
-        }
-    }
-
-    private var cardBackground: some View {
-        RoundedRectangle(cornerRadius: 12)
-            .fill(theme.cardBackground)
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(
-                        isHovering ? theme.accentColor.opacity(0.2) : theme.cardBorder,
-                        lineWidth: 1
-                    )
-            )
-            .shadow(
-                color: theme.shadowColor.opacity(theme.shadowOpacity),
-                radius: theme.cardShadowRadius,
-                x: 0,
-                y: theme.cardShadowY
-            )
-            .drawingGroup()
+        .background(HoverableCardBackground())
     }
 }
 
@@ -1094,11 +1129,12 @@ private struct RemoteProviderToolsCard: View {
     let tools: [ToolRegistry.ToolEntry]
     let providerState: MCPProviderState?
     let policyInfoCache: [String: ToolRegistry.ToolPolicyInfo]
+    let availabilityCache: [String: ToolAvailability]
     let onDisconnect: () -> Void
     let onChange: () -> Void
 
     @State private var isExpanded: Bool = false
-    @State private var isHovering = false
+    @State private var isMenuHovering = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -1180,55 +1216,35 @@ private struct RemoteProviderToolsCard: View {
                         .frame(width: 28, height: 28)
                         .background(
                             RoundedRectangle(cornerRadius: 6)
-                                .fill(theme.tertiaryBackground.opacity(isHovering ? 1 : 0))
+                                .fill(theme.tertiaryBackground.opacity(isMenuHovering ? 1 : 0))
                         )
                 }
                 .menuStyle(.borderlessButton)
                 .fixedSize()
+                .onHover { isMenuHovering = $0 }
             }
 
             if isExpanded && !tools.isEmpty {
                 Divider()
                     .padding(.vertical, 4)
 
-                LazyVStack(spacing: 8) {
+                VStack(spacing: 8) {
                     ForEach(tools, id: \.id) { entry in
                         RemoteToolRow(
                             entry: entry,
                             providerName: provider.name,
                             policyInfo: policyInfoCache[entry.name],
+                            availability: cachedAvailability(availabilityCache, for: entry),
                             onChange: onChange
                         )
                     }
                 }
-                .transition(.opacity.combined(with: .move(edge: .top)))
+                .transition(.opacity)
             }
         }
         .padding(16)
         .frame(maxWidth: .infinity)
-        .background(cardBackground)
-        .onHover { hovering in
-            isHovering = hovering
-        }
-    }
-
-    private var cardBackground: some View {
-        RoundedRectangle(cornerRadius: 12)
-            .fill(theme.cardBackground)
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(
-                        isHovering ? theme.accentColor.opacity(0.2) : theme.cardBorder,
-                        lineWidth: 1
-                    )
-            )
-            .shadow(
-                color: theme.shadowColor.opacity(theme.shadowOpacity),
-                radius: theme.cardShadowRadius,
-                x: 0,
-                y: theme.cardShadowY
-            )
-            .drawingGroup()
+        .background(HoverableCardBackground())
     }
 }
 
@@ -1332,15 +1348,12 @@ private struct RuntimeManagedToolEntryRow: View {
     let entry: ToolRegistry.ToolEntry
     let badge: String
     let policyInfo: ToolRegistry.ToolPolicyInfo?
+    let availability: ToolAvailability
     let onChange: () -> Void
 
     private var hasMissingSystemPermissions: Bool {
         guard let info = policyInfo else { return false }
         return info.systemPermissionStates.values.contains(false)
-    }
-
-    private var availability: ToolAvailability {
-        ToolRegistry.shared.availability(forTool: entry.name)
     }
 
     var body: some View {
@@ -1423,15 +1436,12 @@ struct ToolEntryRow: View {
     @Environment(\.theme) private var theme
     let entry: ToolRegistry.ToolEntry
     let policyInfo: ToolRegistry.ToolPolicyInfo?
+    let availability: ToolAvailability
     let onChange: () -> Void
 
     private var hasMissingSystemPermissions: Bool {
         guard let info = policyInfo else { return false }
         return info.systemPermissionStates.values.contains(false)
-    }
-
-    private var availability: ToolAvailability {
-        ToolRegistry.shared.availability(forTool: entry.name)
     }
 
     var body: some View {
@@ -1506,6 +1516,7 @@ private struct RemoteToolRow: View {
     let entry: ToolRegistry.ToolEntry
     let providerName: String
     let policyInfo: ToolRegistry.ToolPolicyInfo?
+    let availability: ToolAvailability
     let onChange: () -> Void
 
     private var displayName: String {
@@ -1520,10 +1531,6 @@ private struct RemoteToolRow: View {
             return String(entry.name.dropFirst(prefix.count))
         }
         return entry.name
-    }
-
-    private var availability: ToolAvailability {
-        ToolRegistry.shared.availability(forTool: entry.name)
     }
 
     var body: some View {

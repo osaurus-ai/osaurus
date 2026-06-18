@@ -300,7 +300,11 @@ struct IdentityView: View {
         }
 
         for key in drift.staleAccessKeys where !key.revoked {
-            APIKeyManager.shared.revoke(id: key.id)
+            do {
+                try AccessKeyLifecycleService.shared.revokeAndRemove(id: key.id)
+            } catch {
+                failures.append("\(key.label): \(error.localizedDescription)")
+            }
         }
 
         lastActionResult =
@@ -1057,9 +1061,13 @@ private struct AgentAddressesSection: View {
     }
 
     private func revokeAccessKey(_ id: UUID) {
-        APIKeyManager.shared.revoke(id: id)
-        restartServerIfRunning()
-        onChange()
+        do {
+            try AccessKeyLifecycleService.shared.revokeAndRemove(id: id)
+            restartServerIfRunning()
+            onChange()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 
     private func accessKeys(for agent: Agent) -> [AccessKeyInfo] {
@@ -1092,7 +1100,7 @@ private struct AgentAddressesSection: View {
         generatorError = nil
 
         do {
-            let result = try APIKeyManager.shared.generate(
+            let result = try AccessKeyLifecycleService.shared.create(
                 label: label,
                 expiration: generatorExpiration,
                 agentIndex: agentIndex

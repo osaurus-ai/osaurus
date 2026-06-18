@@ -33,7 +33,7 @@ private func parseManualModelIds(_ text: String) -> [String] {
 /// Endpoint components recovered from a full URL pasted into a host field,
 /// so users can paste e.g. "https://api.example.com:8443/v1" and have the
 /// protocol, host, port, and base path fields filled in automatically.
-private struct PastedEndpointComponents {
+struct PastedEndpointComponents {
     var providerProtocol: RemoteProviderProtocol?
     var host: String
     var port: Int?
@@ -43,13 +43,13 @@ private struct PastedEndpointComponents {
 /// Only restructure input that was pasted (multi-character change) or that
 /// carries an explicit scheme; never mangle text the user is typing out
 /// character by character.
-private func shouldSplitHostInput(previous: String, value: String) -> Bool {
+func shouldSplitHostInput(previous: String, value: String) -> Bool {
     value.contains("://") || (value.count - previous.count > 1 && (value.contains("/") || value.contains(":")))
 }
 
 /// Parses host-field input that looks like a full URL. Returns nil when the
 /// text is already a bare host so callers leave their state untouched.
-private func parsePastedEndpoint(_ text: String) -> PastedEndpointComponents? {
+func parsePastedEndpoint(_ text: String) -> PastedEndpointComponents? {
     var remainder = text.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !remainder.isEmpty else { return nil }
 
@@ -76,7 +76,7 @@ private func parsePastedEndpoint(_ text: String) -> PastedEndpointComponents? {
         var path = String(remainder[slash...])
         remainder = String(remainder[..<slash])
         while path.count > 1 && path.hasSuffix("/") { path.removeLast() }
-        if path != "/" { basePath = path }
+        basePath = normalizedPastedProviderBasePath(from: path)
     }
 
     var port: Int?
@@ -91,6 +91,23 @@ private func parsePastedEndpoint(_ text: String) -> PastedEndpointComponents? {
     let host = remainder.trimmingCharacters(in: .whitespaces)
     guard !host.isEmpty else { return nil }
     return PastedEndpointComponents(providerProtocol: providerProtocol, host: host, port: port, basePath: basePath)
+}
+
+private func normalizedPastedProviderBasePath(from path: String) -> String? {
+    guard path != "/" else { return nil }
+
+    let operationSuffixes = [
+        "/chat/completions",
+        "/responses",
+        "/messages",
+        "/models",
+    ]
+    for suffix in operationSuffixes where path == suffix || path.hasSuffix(suffix) {
+        let base = String(path.dropLast(suffix.count))
+        return base.isEmpty ? "" : base
+    }
+
+    return path
 }
 
 // MARK: - Main View
@@ -1351,7 +1368,8 @@ private struct AddProviderFlow: View {
                         authType: .apiKey,
                         providerType: config.providerType,
                         apiKey: key,
-                        headers: HeaderEntry.buildHeaders(from: customHeaders)
+                        headers: HeaderEntry.buildHeaders(from: customHeaders),
+                        manualModelIds: parseManualModelIds(manualModelIdsText)
                     )
                 } else if selectedOAuthKind == .xai {
                     // Grok sign-in returns access/refresh tokens; stash them so
@@ -1373,7 +1391,8 @@ private struct AddProviderFlow: View {
                         authType: .apiKey,
                         providerType: config.providerType,
                         apiKey: apiKey,
-                        headers: HeaderEntry.buildHeaders(from: customHeaders)
+                        headers: HeaderEntry.buildHeaders(from: customHeaders),
+                        manualModelIds: parseManualModelIds(manualModelIdsText)
                     )
                 }
                 await MainActor.run {
@@ -1466,7 +1485,8 @@ private struct AddProviderFlow: View {
                     authType: customAuthType,
                     providerType: .openaiLegacy,
                     apiKey: testApiKey,
-                    headers: HeaderEntry.buildHeaders(from: customHeaders)
+                    headers: HeaderEntry.buildHeaders(from: customHeaders),
+                    manualModelIds: parseManualModelIds(manualModelIdsText)
                 )
                 await MainActor.run {
                     withAnimation {
@@ -2455,7 +2475,8 @@ private struct EditProviderFlow: View {
                     authType: authType,
                     providerType: providerType,
                     apiKey: testApiKey,
-                    headers: HeaderEntry.buildHeaders(from: customHeaders)
+                    headers: HeaderEntry.buildHeaders(from: customHeaders),
+                    manualModelIds: parseManualModelIds(manualModelIdsText)
                 )
                 await MainActor.run {
                     testResult = .success(models)

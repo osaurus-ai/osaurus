@@ -189,7 +189,8 @@ public actor ToolIndexService {
             let registered = snapshot.registeredNames.contains(name)
             let globallyEnabled = snapshot.enabledNames.contains(name)
             let indexedForSearch = indexedNames.contains(name)
-            let availability = snapshot.availabilityByName[name]
+            let availability =
+                snapshot.availabilityByName[name]
                 ?? ToolAvailability(
                     toolName: name,
                     runtime: nil,
@@ -235,7 +236,8 @@ public actor ToolIndexService {
                     return true
                 }
             }
-            let searchable = registered
+            let searchable =
+                registered
                 && !hasSearchBlocker
                 && (!databaseOpen || indexedForSearch)
 

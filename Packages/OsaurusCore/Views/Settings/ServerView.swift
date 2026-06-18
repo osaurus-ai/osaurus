@@ -230,6 +230,7 @@ private struct AccessKeysSection: View {
     @State private var generatedKey: String?
     @State private var isGeneratingKey = false
     @State private var keyGenError: String?
+    @State private var accessKeyError: String?
     @State private var didLoadAccessKeys = false
 
     var body: some View {
@@ -276,8 +277,19 @@ private struct AccessKeysSection: View {
                 .buttonStyle(PlainButtonStyle())
             }
 
+            Text(verbatim: accessKeySummaryText)
+                .font(.system(size: 11))
+                .foregroundColor(theme.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+
             if let generatedKey {
                 generatedKeyBanner(key: generatedKey)
+            }
+
+            if let accessKeyError {
+                Text(accessKeyError)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(theme.errorColor)
             }
 
             if accessKeys.isEmpty {
@@ -291,10 +303,12 @@ private struct AccessKeysSection: View {
                             .foregroundColor(theme.warningColor)
                     }
                     Text(
-                        didLoadAccessKeys
-                            ? "All API endpoints are restricted until you create an access key. Click \"Generate Key\" above to get started."
-                            : "Access key metadata is loaded on demand so startup never reads Keychain. Refresh to inspect existing keys.",
-                        bundle: .module
+                        verbatim:
+                            didLoadAccessKeys
+                            ? emptyAccessKeyMessage
+                            : L(
+                                "Access key metadata is loaded on demand so startup never reads Keychain. Refresh to inspect existing keys."
+                            )
                     )
                     .font(.system(size: 12))
                     .foregroundColor(theme.secondaryText)
@@ -415,6 +429,24 @@ private struct AccessKeysSection: View {
         )
     }
 
+    private var accessKeySummaryText: String {
+        if server.configuration.exposeToNetwork {
+            return L(
+                "Network and relay callers must present an access key. Local loopback bypass is disabled while network exposure is on."
+            )
+        }
+        return L(
+            "Localhost clients can call the API without a real key. Create access keys for LAN, relay, or clients that require a Bearer value."
+        )
+    }
+
+    private var emptyAccessKeyMessage: String {
+        if server.configuration.exposeToNetwork {
+            return L("Network and relay callers are restricted until you create an access key.")
+        }
+        return L("No keys are stored. Localhost still works without a real token while network exposure is off.")
+    }
+
     private func accessKeyRow(_ key: AccessKeyInfo) -> some View {
         let inactive = !key.isActive
         let isLegacy = legacyKeyIds.contains(key.id)
@@ -485,9 +517,7 @@ private struct AccessKeysSection: View {
 
             if !key.revoked {
                 Button(action: {
-                    APIKeyManager.shared.revoke(id: key.id)
-                    reloadAccessKeys()
-                    restartServerForKeyChange()
+                    revokeAccessKey(key.id)
                 }) {
                     Text("Revoke", bundle: .module)
                         .font(.system(size: 11, weight: .medium))
@@ -544,6 +574,7 @@ private struct AccessKeysSection: View {
 
         isGeneratingKey = true
         keyGenError = nil
+        accessKeyError = nil
 
         let expiration = newKeyExpiration
         Task {
@@ -552,7 +583,10 @@ private struct AccessKeysSection: View {
                 // keychain, both of which block on the security daemon over
                 // XPC. Run it off the main actor so the UI stays responsive.
                 let result = try await Task.detached(priority: .userInitiated) {
-                    try APIKeyManager.shared.generate(label: label, expiration: expiration)
+                    try AccessKeyLifecycleService.shared.create(
+                        label: label,
+                        expiration: expiration
+                    )
                 }.value
                 generatedKey = result.fullKey
                 showingKeyGenerator = false
@@ -564,6 +598,18 @@ private struct AccessKeysSection: View {
             }
 
             isGeneratingKey = false
+        }
+    }
+
+    private func revokeAccessKey(_ id: UUID) {
+        accessKeyError = nil
+        do {
+            try AccessKeyLifecycleService.shared.revokeAndRemove(id: id)
+            reloadAccessKeys(readKeychain: true)
+            restartServerForKeyChange()
+        } catch {
+            accessKeyError = error.localizedDescription
+            reloadAccessKeys(readKeychain: true)
         }
     }
 

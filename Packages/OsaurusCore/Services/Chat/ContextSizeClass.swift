@@ -190,11 +190,11 @@ public enum ContextSizeResolver {
             )
         }
 
-        // Reaching here with a real contextLength means `ModelInfo.load`
-        // resolved an on-disk MLX config — i.e. this is a LOCAL model. A failed
-        // load (remote / unresolved) falls through to `.unknown` (verbose),
-        // since cloud models tokenize server-side and handle a full prompt.
-        guard let info = ModelInfo.load(modelId: modelId),
+        // Cache-only: `resolve` runs synchronously inside chat view getters
+        // during layout, where `ModelInfo.load`'s cold-miss disk probe has hung
+        // the UI. A cold miss warms the memo off-main and reads as `.unknown`
+        // for this pass; a later render resolves the real window.
+        guard let info = ModelInfo.loadCachedOrWarm(modelId: modelId),
             let ctx = info.model.contextLength
         else { return .unknown }
 

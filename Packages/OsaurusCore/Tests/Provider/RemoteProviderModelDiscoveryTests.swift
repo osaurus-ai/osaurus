@@ -183,6 +183,77 @@ struct RemoteProviderModelDiscoveryTests {
         #expect(models == ["Cogito-v2-llama-109B-MoE-GGUF", "Devstral-Small-2507-GGUF"])
     }
 
+    @Test func lemonadeIssuePayload_parsesMixedRecipesAndMissingSize() throws {
+        let provider = makeProvider(basePath: "/api/v1")
+        let body = Data(
+            """
+            {
+              "object": "list",
+              "data": [
+                {
+                  "checkpoint": "black-forest-labs/FLUX.2-klein-4B:flux-2-klein-4b.safetensors",
+                  "checkpoints": {
+                    "main": "black-forest-labs/FLUX.2-klein-4B:flux-2-klein-4b.safetensors",
+                    "text_encoder": "Comfy-Org/vae-text-encorder-for-flux-klein-4b:split_files/text_encoders/qwen_3_4b.safetensors",
+                    "vae": "Comfy-Org/vae-text-encorder-for-flux-klein-4b:split_files/vae/flux2-vae.safetensors"
+                  },
+                  "created": 1234567890,
+                  "downloaded": true,
+                  "id": "Flux-2-Klein-4B",
+                  "image_defaults": {"cfg_scale": 1.0, "height": 1024, "steps": 4, "width": 1024},
+                  "labels": ["image"],
+                  "object": "model",
+                  "owned_by": "lemonade",
+                  "recipe": "sd-cpp",
+                  "recipe_options": {"cfg_scale": 1.0, "height": 1024, "steps": 4, "width": 1024},
+                  "size": 16.0,
+                  "suggested": true
+                },
+                {
+                  "checkpoint": "",
+                  "checkpoints": {"main": ""},
+                  "composite_models": ["gpt-oss-20b-mxfp4-GGUF", "SDXL-Turbo"],
+                  "created": 1234567890,
+                  "downloaded": true,
+                  "id": "Lemonade Medium",
+                  "labels": [],
+                  "object": "model",
+                  "owned_by": "lemonade",
+                  "recipe": "experience",
+                  "recipe_options": {},
+                  "suggested": false
+                },
+                {
+                  "checkpoint": "ggerganov/whisper.cpp:ggml-large-v3-turbo.bin",
+                  "checkpoints": {
+                    "main": "ggerganov/whisper.cpp:ggml-large-v3-turbo.bin",
+                    "npu_cache": "amd/whisper-large-turbo-onnx-npu:ggml-large-v3-turbo-encoder-vitisai.rai"
+                  },
+                  "created": 1234567890,
+                  "downloaded": true,
+                  "id": "Whisper-Large-v3-Turbo",
+                  "labels": ["audio", "transcription", "hot"],
+                  "object": "model",
+                  "owned_by": "lemonade",
+                  "recipe": "whispercpp",
+                  "recipe_options": {},
+                  "size": 1.55,
+                  "suggested": true
+                }
+              ]
+            }
+            """.utf8
+        )
+
+        let models = try RemoteProviderService.decodeOpenAICompatibleModelsResponse(
+            data: body,
+            statusCode: 200,
+            provider: provider
+        )
+
+        #expect(models == ["Flux-2-Klein-4B", "Lemonade Medium", "Whisper-Large-v3-Turbo"])
+    }
+
     private func makeProvider(
         providerProtocol: RemoteProviderProtocol = .https,
         port: Int? = nil,

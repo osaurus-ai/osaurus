@@ -52,7 +52,8 @@ public enum OsaurusPaths {
             return override
         }
         if let envRoot = ProcessInfo.processInfo.environment["OSAURUS_TEST_ROOT"],
-            !envRoot.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            !envRoot.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        {
             return URL(fileURLWithPath: envRoot, isDirectory: true)
         }
         return defaultRoot
@@ -171,7 +172,8 @@ public enum OsaurusPaths {
     public static func volumeFreeBytes(forPath path: String) -> Int64? {
         var legacyFree: Int64?
         if let attrs = try? FileManager.default.attributesOfFileSystem(forPath: path),
-            let free = (attrs[.systemFreeSize] as? NSNumber)?.int64Value {
+            let free = (attrs[.systemFreeSize] as? NSNumber)?.int64Value
+        {
             legacyFree = free
         }
         if let legacyFree, legacyFree > 0 {
@@ -182,7 +184,8 @@ public enum OsaurusPaths {
         var importantCapacity: Int64?
         let keys: Set<URLResourceKey> = [.volumeAvailableCapacityForImportantUsageKey]
         if let values = try? url.resourceValues(forKeys: keys),
-            let capacity = values.volumeAvailableCapacityForImportantUsage {
+            let capacity = values.volumeAvailableCapacityForImportantUsage
+        {
             importantCapacity = capacity
         }
         return resolvedVolumeFreeBytes(
@@ -211,11 +214,13 @@ public enum OsaurusPaths {
         let url = URL(fileURLWithPath: path)
         let keys: Set<URLResourceKey> = [.volumeTotalCapacityKey]
         if let values = try? url.resourceValues(forKeys: keys),
-            let capacity = values.volumeTotalCapacity {
+            let capacity = values.volumeTotalCapacity
+        {
             return Int64(capacity)
         }
         if let attrs = try? FileManager.default.attributesOfFileSystem(forPath: path),
-            let total = (attrs[.systemSize] as? NSNumber)?.int64Value {
+            let total = (attrs[.systemSize] as? NSNumber)?.int64Value
+        {
             return total
         }
         return nil
@@ -696,11 +701,11 @@ public enum OsaurusPaths {
         activeRoot: URL
     ) {
         let payload = """
-        legacy_application_support_migrated=1
-        legacy_root=\(legacyRoot.path)
-        active_root=\(activeRoot.path)
+            legacy_application_support_migrated=1
+            legacy_root=\(legacyRoot.path)
+            active_root=\(activeRoot.path)
 
-        """
+            """
         do {
             try ensureExists(marker.deletingLastPathComponent())
             try Data(payload.utf8).write(to: marker, options: .atomic)

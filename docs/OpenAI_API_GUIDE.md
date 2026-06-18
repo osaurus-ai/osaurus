@@ -332,7 +332,9 @@ from openai import OpenAI
 # Point to your local Osaurus server
 client = OpenAI(
     base_url="http://127.0.0.1:1337/v1",  # Use /v1 for OpenAI client compatibility
-    api_key="not-needed"  # Osaurus doesn't require authentication
+    # Local-only loopback accepts a placeholder. Use a real Settings access key
+    # when network exposure or relay access is enabled.
+    api_key="osaurus-local"
 )
 
 # List available models

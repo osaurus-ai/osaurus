@@ -93,6 +93,11 @@ extension ModelInfo {
     private nonisolated(unsafe) static var lastRevalidated: [String: Date] = [:]
     private nonisolated(unsafe) static var revalidatingModelIds: Set<String> = []
 
+    // Per-id in-flight marker for the off-main cold-miss warm (`warmInBackground`),
+    // so repeated cold reads from a view body don't spawn a probe on every layout
+    // pass while the first one is still walking the disk.
+    private nonisolated(unsafe) static var warmingModelIds: Set<String> = []
+
     /// Modification date of a file, or nil if it is missing/unreadable. Used to
     /// detect in-place `config.json` edits that `.localModelsChanged` misses.
     /// Goes through `FileManager.attributesOfItem` on a path string rather than
@@ -184,6 +189,58 @@ extension ModelInfo {
             cacheLock.unlock()
         }
         return info
+    }
+
+    /// Cache-only variant for synchronous view/layout paths. Returns the memo
+    /// when present; on a cold miss it warms the cache off the main thread and
+    /// returns nil immediately instead of probing disk on the calling thread.
+    /// `load(modelId:)`'s cold path runs `findModelDirectory`, whose
+    /// `contentsOfDirectoryAtURL` (a `getattrlistbulk` syscall) plus the
+    /// `config.json` read have hung the UI when reached from a SwiftUI getter
+    /// during layout (e.g. `ContextSizeResolver.resolve` off a chat body). A
+    /// later render serves the now-warm memo; callers treat the transient nil
+    /// as "unknown" and fall back conservatively rather than blocking.
+    static func loadCachedOrWarm(modelId: String) -> ModelInfo? {
+        ensureCacheObserverInstalled()
+        cacheLock.lock()
+        let cached = cache[modelId]
+        cacheLock.unlock()
+        if let cached {
+            revalidateInBackground(modelId: modelId, entry: cached)
+            return cached.info
+        }
+        warmInBackground(modelId: modelId)
+        return nil
+    }
+
+    /// Probe disk for `modelId` off the main thread to fill the memo, guarded by
+    /// a per-id in-flight marker so cold reads from a view body don't spawn a
+    /// probe on every layout pass.
+    private static func warmInBackground(modelId: String) {
+        cacheLock.lock()
+        let alreadyWarming = warmingModelIds.contains(modelId)
+        if !alreadyWarming { warmingModelIds.insert(modelId) }
+        cacheLock.unlock()
+        if alreadyWarming { return }
+
+        Task.detached(priority: .utility) {
+            // `finishWarming` is synchronous so the lock is taken outside this
+            // async context (`NSLock.lock()` is unavailable from async code).
+            defer { finishWarming(modelId: modelId) }
+            // Fills `cache[modelId]` from disk as a side effect; the next view
+            // render serves the memo. Deliberately no `.localModelsChanged`
+            // post — the cache observer clears every entry on that signal, which
+            // would drop the memo just filled and re-trigger this warm forever.
+            _ = load(modelId: modelId)
+        }
+    }
+
+    /// Clear a model's in-flight warm marker. Synchronous for the same
+    /// async-context locking reason as `finishRevalidation`.
+    private static func finishWarming(modelId: String) {
+        cacheLock.lock()
+        warmingModelIds.remove(modelId)
+        cacheLock.unlock()
     }
 
     private static func ensureCacheObserverInstalled() {

@@ -332,13 +332,15 @@ final class CapabilitiesDiscoverTool: OsaurusTool, @unchecked Sendable {
                 let raw = String(query[swiftRange])
                 let explicitTool = raw.hasPrefix("tool/")
                 let candidate = explicitTool ? String(raw.dropFirst("tool/".count)) : raw
-                let normalized = registeredToolNames.contains(candidate)
+                let normalized =
+                    registeredToolNames.contains(candidate)
                     ? candidate
                     : candidate.lowercased()
-                guard explicitTool
-                    || registeredToolNames.contains(normalized)
-                    || candidate.contains("_")
-                    || candidate.contains("-")
+                guard
+                    explicitTool
+                        || registeredToolNames.contains(normalized)
+                        || candidate.contains("_")
+                        || candidate.contains("-")
                 else { continue }
                 if seen.insert(normalized).inserted {
                     candidates.append(normalized)
@@ -406,7 +408,8 @@ final class CapabilitiesDiscoverTool: OsaurusTool, @unchecked Sendable {
 
         let normalized = trimmed.replacingOccurrences(of: #"<|"|>"#, with: #"""#)
         if let data = normalized.data(using: .utf8),
-            let array = try? JSONSerialization.jsonObject(with: data) as? [String] {
+            let array = try? JSONSerialization.jsonObject(with: data) as? [String]
+        {
             return array
         }
 

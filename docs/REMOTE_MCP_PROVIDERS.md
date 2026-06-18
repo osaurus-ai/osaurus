@@ -169,6 +169,13 @@ repro path. The copied text is safe to paste in an issue or Discord thread; it
 does not include bearer tokens, OAuth tokens, request bodies, env values, or raw
 headers.
 
+The top of the Providers page includes an **MCP Server Hub** summary when at
+least one provider exists. It aggregates connected, attention, tool, stdio, and
+host-stdio counts, and the segmented filter lets you narrow the row list to all,
+attention, connected, stdio, HTTP, or disabled providers. The hub actions can
+probe every enabled provider, reconnect every enabled provider, or copy a single
+redacted support report for the whole provider set.
+
 For stdio providers, diagnostics distinguish sandbox vs host execution and point
 command-not-found failures at the executable path/PATH fix. For HTTP/SSE
 providers, diagnostics show whether the global proxy is active, disabled, or
@@ -299,10 +306,19 @@ List all tools (including remote ones):
 curl http://127.0.0.1:1337/mcp/tools
 ```
 
+If Server > Network exposure is enabled, local loopback auth bypass is disabled.
+Use an access key from Settings > Server > Authentication:
+
+```bash
+curl -H "Authorization: Bearer $OSAURUS_MCP_ACCESS_KEY" \
+  http://127.0.0.1:1337/mcp/tools
+```
+
 Call a remote tool directly:
 
 ```bash
 curl http://127.0.0.1:1337/mcp/call \
+  -H "Authorization: Bearer $OSAURUS_MCP_ACCESS_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "name": "linear_search_issues",

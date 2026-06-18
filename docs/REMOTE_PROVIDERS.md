@@ -9,6 +9,7 @@ Remote Providers allow you to connect Osaurus to external APIs (OpenAI, Anthropi
 With Remote Providers, you can:
 
 - Access cloud models (ChatGPT, Claude via OpenRouter, etc.) through Osaurus
+- Use Osaurus Router, the hosted inference path tied to your Osaurus identity
 - Use multiple inference backends simultaneously
 - Switch between local and remote models seamlessly
 - Keep API keys secure in the macOS Keychain
@@ -175,6 +176,21 @@ Useful rows:
 ---
 
 ## Provider-Specific Notes
+
+### Osaurus Router
+
+Osaurus Router is the hosted Osaurus inference service. It is injected from the
+local Osaurus identity and should connect automatically at app startup, after
+identity changes, and when the app becomes active again.
+
+Router uses the OpenAI-compatible chat completions path with Router-only request
+normalization for billing and upstream compatibility. It also records
+metadata-only billing events in an encrypted local ledger so support can debug
+charged-but-empty reports without storing prompts or responses on Osaurus
+servers.
+
+See [Osaurus Router](OSAURUS_ROUTER.md) for the Router request contract,
+streaming diagnostics, billing hints, idempotency behavior, and local ledger.
 
 ### OpenAI
 

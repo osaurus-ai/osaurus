@@ -56,15 +56,13 @@ public struct ShareArtifactTool: OsaurusTool {
                 "description": .string("Brief human-readable description of what this artifact is."),
             ]),
         ]),
+        // The "path OR content(+filename)" contract is enforced in
+        // `execute()` rather than via a top-level schema combinator.
+        // OpenAI and Anthropic reject `anyOf`/`oneOf`/`allOf`/`enum`/`not`
+        // at the root of a tool's parameters (issue #1560), so the schema
+        // root stays a plain object and a bare `{}` (or empty path/content)
+        // surfaces a clear `invalidArgs` envelope from the body instead.
         "required": .array([]),
-        // Preflight-enforced "path OR content(+filename)": a bare `{}`
-        // fails schema validation with a clear `field` instead of
-        // round-tripping through the tool body's prose error. Path mode
-        // still wins when both arrive (see `execute`).
-        "anyOf": .array([
-            .object(["required": .array([.string("path")])]),
-            .object(["required": .array([.string("content"), .string("filename")])]),
-        ]),
     ])
 
     public init() {}

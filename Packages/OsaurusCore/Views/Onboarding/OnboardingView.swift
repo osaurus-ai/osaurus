@@ -517,17 +517,42 @@ public struct OnboardingView: View {
             configureAIState.selectedBrainSource?.telemetryValue
         )
 
-        // Hosted brain: once the implicit identity lands and the managed router
-        // connects, pin the (new/active) agent's default model to a Venice
-        // router model so the first message routes through Osaurus hosted.
-        // Selecting hosted triggered no payment; funding is gated later at first
-        // send via the existing router insufficient-funds flow.
-        if case .hostedOsaurus = configureAIState.selectedBrainSource {
-            pinHostedRouterModel(forAgent: createAgentState.createdAgentId ?? Agent.defaultId)
-        }
+        // Pin the new/active agent's default model to the brain the user chose
+        // on the Configure AI step, so the first chat respects their selection.
+        pinSelectedBrainModel()
 
         OnboardingService.shared.completeOnboarding()
         onComplete()
+    }
+
+    /// Pin the new/active agent's default model to the brain source the user
+    /// committed to on the Configure AI step. The three paths are mutually
+    /// exclusive (the brain source is recorded at the proceed moment), so a
+    /// single switch covers them.
+    private func pinSelectedBrainModel() {
+        let agentId = createAgentState.createdAgentId ?? Agent.defaultId
+        switch configureAIState.selectedBrainSource {
+        case .hostedOsaurus:
+            // Wait for the implicit identity + managed router, then pin a Venice
+            // router model so the first message routes through Osaurus hosted.
+            // Selecting hosted triggered no payment; funding is gated later at
+            // first send via the existing router insufficient-funds flow.
+            pinHostedRouterModel(forAgent: agentId)
+        case .local:
+            // The model may still be downloading; the id is durable and
+            // `ChatView.refreshPickerItems` re-resolves it once the bundle lands.
+            if let localModelId = configureAIState.localDefaultModelIdToPin {
+                AgentManager.shared.updateDefaultModel(for: agentId, model: localModelId)
+            }
+        case .providerKey:
+            // The provider auto-connects, but its catalog populates async; poll
+            // (bounded) for its first chat-capable model, then pin it.
+            if let providerId = configureAIState.providerModelPinTarget {
+                pinProviderModel(providerId: providerId, forAgent: agentId)
+            }
+        case nil:
+            break
+        }
     }
 
     /// After onboarding finishes with the hosted brain selected, wait for the
@@ -549,13 +574,41 @@ public struct OnboardingView: View {
 
             // The router's model catalog populates asynchronously after the
             // connect resolves; poll briefly for the first Venice model.
-            for _ in 0 ..< 12 {
-                if let model = RemoteProviderManager.shared.firstHostedVeniceModelId() {
-                    AgentManager.shared.updateDefaultModel(for: agentId, model: model)
-                    return
-                }
-                try? await Task.sleep(nanoseconds: 500_000_000)
+            await pinModelWhenAvailable(forAgent: agentId, attempts: 12) {
+                RemoteProviderManager.shared.firstHostedVeniceModelId()
             }
+        }
+    }
+
+    /// After onboarding finishes on the BYOK / OAuth path, wait (bounded) for
+    /// the just-connected provider's catalog to populate, then pin the agent's
+    /// default model to its first chat-capable model. Gives up quietly if the
+    /// catalog never arrives (the user can still pick a model in chat).
+    private func pinProviderModel(providerId: UUID, forAgent agentId: UUID) {
+        Task { @MainActor in
+            await pinModelWhenAvailable(forAgent: agentId, attempts: 20) {
+                RemoteProviderManager.shared.firstChatCapableModelId(forProviderId: providerId)
+            }
+        }
+    }
+
+    /// Poll (bounded) for a model id via `lookup`, pinning it as `agentId`'s
+    /// default the moment one resolves. Shared by the hosted-router and
+    /// BYOK/OAuth paths, whose catalogs both populate asynchronously after
+    /// onboarding finishes. Polls every 500ms up to `attempts` times, then
+    /// gives up quietly so it never hangs (the user can still pick in chat).
+    @MainActor
+    private func pinModelWhenAvailable(
+        forAgent agentId: UUID,
+        attempts: Int,
+        lookup: () -> String?
+    ) async {
+        for _ in 0 ..< attempts {
+            if let model = lookup() {
+                AgentManager.shared.updateDefaultModel(for: agentId, model: model)
+                return
+            }
+            try? await Task.sleep(nanoseconds: 500_000_000)
         }
     }
 

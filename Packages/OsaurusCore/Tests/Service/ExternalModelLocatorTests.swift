@@ -53,6 +53,72 @@ struct ExternalModelLocatorTests {
         #expect(ExternalModelLocator.repoId(fromCacheFolder: "random") == nil)
     }
 
+    @Test func huggingFaceCacheRoots_includesCustomPathEvenWhenMissing() {
+        let home = makeTempDir()
+        defer { try? FileManager.default.removeItem(at: home) }
+        let custom = home.appendingPathComponent("external-hf/hub", isDirectory: true)
+
+        let roots = ExternalModelLocator.huggingFaceCacheRoots(
+            environment: [:],
+            homeDirectory: home,
+            customPath: custom.path,
+            fileExists: { _ in false }
+        )
+
+        #expect(roots == [custom.standardizedFileURL])
+    }
+
+    @Test func huggingFaceCacheRoots_expandsTildeAgainstHomeAndDeduplicatesDefault() {
+        let home = makeTempDir()
+        defer { try? FileManager.default.removeItem(at: home) }
+        let defaultRoot = home.appendingPathComponent(".cache/huggingface/hub", isDirectory: true)
+        try? FileManager.default.createDirectory(at: defaultRoot, withIntermediateDirectories: true)
+
+        let roots = ExternalModelLocator.huggingFaceCacheRoots(
+            environment: [:],
+            homeDirectory: home,
+            customPath: "~/.cache/huggingface/hub",
+            fileExists: { $0 == defaultRoot.standardizedFileURL.path }
+        )
+
+        #expect(roots == [defaultRoot.standardizedFileURL])
+    }
+
+    @Test func huggingFaceCacheRoots_prefersCustomBeforeEnvironmentAndDefaultRoots() {
+        let home = makeTempDir()
+        defer { try? FileManager.default.removeItem(at: home) }
+        let custom = home.appendingPathComponent("custom-hf/hub", isDirectory: true)
+        let envHub = home.appendingPathComponent("env-hub", isDirectory: true)
+        let envHomeHub = home.appendingPathComponent("env-home/hub", isDirectory: true)
+        let defaultRoot = home.appendingPathComponent(".cache/huggingface/hub", isDirectory: true)
+        for root in [custom, envHub, envHomeHub, defaultRoot] {
+            try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        }
+
+        let roots = ExternalModelLocator.huggingFaceCacheRoots(
+            environment: [
+                "HF_HUB_CACHE": envHub.path,
+                "HF_HOME": home.appendingPathComponent("env-home", isDirectory: true).path,
+            ],
+            homeDirectory: home,
+            customPath: custom.path,
+            fileExists: { path in
+                [custom, envHub, envHomeHub, defaultRoot]
+                    .map { $0.standardizedFileURL.path }
+                    .contains(path)
+            }
+        )
+
+        #expect(
+            roots == [
+                custom.standardizedFileURL,
+                envHub.standardizedFileURL,
+                envHomeHub.standardizedFileURL,
+                defaultRoot.standardizedFileURL,
+            ]
+        )
+    }
+
     // MARK: - Bundle validation
 
     @Test func isMLXBundle_acceptsSafetensorsBundle() {

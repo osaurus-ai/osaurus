@@ -139,6 +139,45 @@ struct GlobalProxyConfigurationTests {
         }
     }
 
+    @Test func sharedSessionRebuildsWhenPersistedProxyChanges() async throws {
+        try await StoragePathsTestLock.shared.run {
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+                "osaurus-shared-proxy-session-\(UUID().uuidString)",
+                isDirectory: true
+            )
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            let previousRoot = OsaurusPaths.overrideRoot
+            OsaurusPaths.overrideRoot = root
+            defer {
+                OsaurusPaths.overrideRoot = previousRoot
+                _ = GlobalProxySettings.sharedSession()
+                try? FileManager.default.removeItem(at: root)
+            }
+
+            try OsaurusPaths.ensureExists(OsaurusPaths.config())
+            var configuration = ServerConfiguration.default
+            configuration.globalProxyURL = "http://proxy-a.example.com:8080"
+            try JSONEncoder().encode(configuration).write(to: OsaurusPaths.serverConfigFile(), options: .atomic)
+
+            let first = GlobalProxySettings.sharedSession()
+            #expect(
+                first.configuration.connectionProxyDictionary?[key(kCFNetworkProxiesHTTPProxy)] as? String
+                    == "proxy-a.example.com"
+            )
+
+            configuration.globalProxyURL = "socks5://proxy-b.example.com:1080"
+            try JSONEncoder().encode(configuration).write(to: OsaurusPaths.serverConfigFile(), options: .atomic)
+
+            let second = GlobalProxySettings.sharedSession()
+            #expect(first !== second)
+            #expect(
+                second.configuration.connectionProxyDictionary?[key(kCFNetworkProxiesSOCKSProxy)] as? String
+                    == "proxy-b.example.com"
+            )
+            #expect(second.configuration.connectionProxyDictionary?[key(kCFNetworkProxiesHTTPProxy)] == nil)
+        }
+    }
+
     @Test func rejectsUnsafeProxyURLInput() {
         let cases: [(String, GlobalProxyConfiguration.ValidationError)] = [
             ("", .empty),

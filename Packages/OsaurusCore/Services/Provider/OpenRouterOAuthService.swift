@@ -170,7 +170,7 @@ public enum OpenRouterOAuthService {
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: body, options: .osaurusCanonical)
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await GlobalProxySettings.sharedSession().data(for: request)
         guard let http = response as? HTTPURLResponse else {
             throw OpenRouterOAuthError.invalidKeyResponse
         }

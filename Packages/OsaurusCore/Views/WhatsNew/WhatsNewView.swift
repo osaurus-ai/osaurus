@@ -19,6 +19,13 @@ public struct WhatsNewModal: View {
 
     @State private var currentIndex: Int = 0
 
+    private enum Metrics {
+        static let width: CGFloat = 560
+        static let height: CGFloat = 400
+        static let heroHeight: CGFloat = 150
+        static let cornerRadius: CGFloat = 16
+    }
+
     public init(
         release: WhatsNewRelease,
         onClose: @escaping () -> Void,
@@ -31,61 +38,66 @@ public struct WhatsNewModal: View {
 
     public var body: some View {
         VStack(spacing: 0) {
-            // Sliding visual (image / sparkle background) — edge-to-edge,
-            // with the header (title + close button) overlaid on top.
-            // Identity is the *visual*, not the page — two consecutive
-            // sparkle pages share an identity, so SwiftUI doesn't run the
-            // slide transition between them.
+            // Compact hero: the page's glyph (or image) over an accent
+            // gradient, with a version pill + close button overlaid. The
+            // `visualIdentity` id drives the slide transition between pages.
             ZStack {
                 ContentAreaView(page: release.pages[currentIndex])
                     .id(visualIdentity(for: release.pages[currentIndex]))
                     .transition(slideTransition)
             }
-            .frame(height: 260)
-            .clipShape(
-                UnevenRoundedRectangle(
-                    topLeadingRadius: 16,
-                    bottomLeadingRadius: 16,
-                    bottomTrailingRadius: 16,
-                    topTrailingRadius: 16
-                )
-            )
+            .frame(height: Metrics.heroHeight)
+            .clipShape(RoundedRectangle(cornerRadius: Metrics.cornerRadius))
             .overlay(alignment: .top) { headerOverlay }
 
-            pageDots
-                .padding(.top, 14)
+            // Content block — eyebrow + progress dots, then the title and
+            // description, which now own most of the modal's height. The
+            // text updates in place with a soft rise-and-fade on each page
+            // change so the swap never feels abrupt.
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .center) {
+                    Text(localized: "What's New")
+                        .font(.system(size: 11, weight: .semibold))
+                        .textCase(.uppercase)
+                        .tracking(0.8)
+                        .foregroundStyle(theme.accentColor)
+                    Spacer()
+                    pageDots
+                }
 
-            // Text block updates in place with a soft rise-and-fade on each
-            // page change so the swap never feels abrupt.
-            textBlock(for: release.pages[currentIndex])
-                .id(release.pages[currentIndex].id)
-                .transition(
-                    .asymmetric(
-                        insertion: .opacity.combined(with: .offset(y: 8)),
-                        removal: .opacity.combined(with: .offset(y: -6))
+                textBlock(for: release.pages[currentIndex])
+                    .id(release.pages[currentIndex].id)
+                    .transition(
+                        .asymmetric(
+                            insertion: .opacity.combined(with: .offset(y: 8)),
+                            removal: .opacity.combined(with: .offset(y: -6))
+                        )
                     )
-                )
-                .padding(.horizontal, 20)
-                .padding(.top, 16)
-                .frame(maxWidth: .infinity, alignment: .topLeading)
+            }
+            .padding(.horizontal, 24)
+            .padding(.top, 20)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
 
-            Spacer(minLength: 0)
+            Spacer(minLength: 16)
 
             footer
         }
-        .frame(width: 560, height: 440)
+        .frame(width: Metrics.width, height: Metrics.height)
         .background(theme.primaryBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .clipShape(RoundedRectangle(cornerRadius: Metrics.cornerRadius))
     }
 
     // MARK: - Header (overlaid on content)
 
     private var headerOverlay: some View {
         HStack {
-            Text(localized: "What's New in v\(release.version)")
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(.white.opacity(0.85))
-                .shadow(color: .black.opacity(0.25), radius: 4, y: 1)
+            Text(verbatim: "v\(release.version)")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.95))
+                .padding(.horizontal, 8)
+                .frame(height: 20)
+                .background(.ultraThinMaterial, in: Capsule())
+                .shadow(color: .black.opacity(0.2), radius: 4, y: 1)
             Spacer()
             Button(action: onClose) {
                 Image(systemName: "xmark")
@@ -97,22 +109,24 @@ public struct WhatsNewModal: View {
             .buttonStyle(.plain)
             .localizedHelp("Close")
         }
-        .padding(.horizontal, 16)
-        .padding(.top, 14)
+        .padding(.horizontal, 14)
+        .padding(.top, 12)
     }
 
     // MARK: - Text block (title + description)
 
     private func textBlock(for page: WhatsNewPage) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 10) {
             Text(page.title)
-                .font(.system(size: 20, weight: .semibold))
+                .font(.system(size: 22, weight: .bold))
                 .foregroundStyle(theme.primaryText)
+                .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             Text(page.description)
-                .font(.system(size: 13))
+                .font(.system(size: 14))
                 .foregroundStyle(theme.secondaryText)
+                .lineSpacing(2)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -121,85 +135,114 @@ public struct WhatsNewModal: View {
     // MARK: - Footer
 
     private var footer: some View {
-        HStack {
-            arrowButton(systemName: "chevron.left", action: goBack, disabled: currentIndex == 0)
-            Spacer()
-            // Optional per-page CTA between the chevrons.
-            if let label = release.pages[currentIndex].actionLabel,
-                let action = release.pages[currentIndex].action
-            {
-                Button {
-                    onAction?(action)
-                } label: {
-                    Text(label)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(Color.white)
-                        .padding(.horizontal, 14)
-                        .frame(height: 30)
-                        .background(
-                            Capsule().fill(theme.accentColor)
-                        )
-                }
-                .buttonStyle(.plain)
-                .padding(.horizontal, 8)
-                Spacer()
-            }
-            arrowButton(
-                systemName: isLastPage ? "checkmark" : "chevron.right",
-                action: goNext,
-                disabled: false,
-                prominent: true
-            )
+        HStack(spacing: 10) {
+            backButton
+            Spacer(minLength: 12)
+            actionCluster
         }
-        .padding(.horizontal, 20)
-        .padding(.bottom, 18)
+        .padding(.horizontal, 24)
+        .padding(.bottom, 20)
     }
 
-    private func arrowButton(
-        systemName: String,
-        action: @escaping () -> Void,
-        disabled: Bool,
-        prominent: Bool = false
-    ) -> some View {
-        Button(action: action) {
-            Image(systemName: systemName)
+    /// Back lives on the far left as a subtle circular control and is
+    /// disabled on the first page. The advance / CTA buttons cluster on
+    /// the right so the primary action always sits in the same place.
+    private var backButton: some View {
+        Button(action: goBack) {
+            Image(systemName: "chevron.left")
                 .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(
-                    prominent
-                        ? Color.white
-                        : (disabled ? theme.tertiaryText : theme.primaryText)
-                )
+                .foregroundStyle(currentIndex == 0 ? theme.tertiaryText : theme.primaryText)
                 .frame(width: 34, height: 34)
-                .background(
-                    Circle().fill(
-                        prominent
-                            ? theme.accentColor
-                            : theme.secondaryBackground
-                    )
-                )
+                .background(Circle().fill(theme.secondaryBackground))
         }
         .buttonStyle(.plain)
-        .disabled(disabled)
-        .opacity(disabled ? 0.5 : 1)
-        .keyboardShortcut(
-            systemName == "chevron.left" ? .leftArrow : .rightArrow,
-            modifiers: []
+        .disabled(currentIndex == 0)
+        .opacity(currentIndex == 0 ? 0.5 : 1)
+        .keyboardShortcut(.leftArrow, modifiers: [])
+    }
+
+    @ViewBuilder
+    private var actionCluster: some View {
+        let page = release.pages[currentIndex]
+        let advance = capsuleButton(
+            label: Text(localized: isLastPage ? "Done" : "Next"),
+            systemImage: isLastPage ? "checkmark" : "chevron.right",
+            // The CTA, when present, is the action we want the user to
+            // take, so it takes the prominent fill and advance falls back
+            // to a secondary style.
+            prominent: page.action == nil,
+            action: goNext
         )
+        .keyboardShortcut(.rightArrow, modifiers: [])
+
+        if let label = page.actionLabel, let action = page.action {
+            capsuleButton(
+                label: Text(label),
+                systemImage: nil,
+                prominent: true,
+                action: {
+                    onAction?(action)
+                    // The CTA deep-links elsewhere (Settings, Credits, …).
+                    // Keep the carousel open so the user can finish the
+                    // remaining pages; only dismiss when this is the last one.
+                    if isLastPage { onClose() }
+                }
+            )
+            advance
+        } else {
+            advance
+        }
+    }
+
+    private func capsuleButton(
+        label: Text,
+        systemImage: String?,
+        prominent: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                label
+                if let systemImage {
+                    Image(systemName: systemImage)
+                        .font(.system(size: 12, weight: .semibold))
+                }
+            }
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(prominent ? Color.white : theme.primaryText)
+            .padding(.horizontal, 16)
+            .frame(height: 32)
+            .background(capsuleBackground(prominent: prominent))
+        }
+        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private func capsuleBackground(prominent: Bool) -> some View {
+        if prominent {
+            Capsule().fill(theme.accentColor)
+        } else {
+            Capsule()
+                .fill(theme.secondaryBackground)
+                .overlay(Capsule().stroke(theme.primaryBorder.opacity(0.4), lineWidth: 1))
+        }
     }
 
     private var pageDots: some View {
         HStack(spacing: 6) {
             ForEach(0 ..< release.pages.count, id: \.self) { i in
-                Circle()
+                Capsule()
                     .fill(
                         i == currentIndex
                             ? theme.accentColor
-                            : theme.secondaryText.opacity(0.3)
+                            : theme.secondaryText.opacity(0.25)
                     )
-                    .frame(width: 6, height: 6)
+                    // The active page widens into a pill so progress reads at a
+                    // glance even with several pages in the carousel.
+                    .frame(width: i == currentIndex ? 16 : 6, height: 6)
+                    .animation(.easeInOut(duration: 0.2), value: currentIndex)
             }
         }
-        .frame(maxWidth: .infinity)
     }
 
     private var slideTransition: AnyTransition {
@@ -230,17 +273,20 @@ public struct WhatsNewModal: View {
         }
     }
 
-    /// Used as the content view's `.id` so two consecutive sparkle pages
-    /// keep the same identity and don't trigger the slide transition.
+    /// Used as the content view's `.id` so the hero slides when the visual
+    /// actually changes. Two consecutive pages that resolve to the same glyph
+    /// (or image) keep the same identity and skip the slide transition.
     private func visualIdentity(for page: WhatsNewPage) -> String {
-        page.imageURL?.absoluteString ?? "__sparkle__"
+        page.imageURL?.absoluteString ?? "icon:\(page.systemImage ?? "sparkles")"
     }
 }
 
-// MARK: - Content area (image or sparkle)
+// MARK: - Hero visual (image or glyph)
 
 private struct ContentAreaView: View {
     let page: WhatsNewPage
+
+    private var glyph: String { page.systemImage ?? "sparkles" }
 
     var body: some View {
         Group {
@@ -251,17 +297,16 @@ private struct ContentAreaView: View {
                         image.resizable().aspectRatio(contentMode: .fill)
                     case .empty:
                         ZStack {
-                            SparklingStarsBackground()
+                            WhatsNewHeroBackground(systemImage: glyph)
                             ProgressView()
                         }
-                    case .failure:
-                        SparklingStarsBackground()
-                    @unknown default:
-                        SparklingStarsBackground()
+                    default:
+                        // `.failure` and any future phases fall back to the glyph.
+                        WhatsNewHeroBackground(systemImage: glyph)
                     }
                 }
             } else {
-                SparklingStarsBackground()
+                WhatsNewHeroBackground(systemImage: glyph)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

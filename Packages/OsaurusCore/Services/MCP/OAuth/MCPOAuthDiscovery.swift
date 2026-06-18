@@ -415,7 +415,7 @@ public actor MCPOAuthDiscovery {
         request.httpMethod = "GET"
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.timeoutInterval = 15
-        let (data, response) = try await MCPOAuthHTTPTransport.noRedirectSession.data(for: request)
+        let (data, response) = try await MCPOAuthHTTPTransport.noRedirectSession().data(for: request)
         guard let http = response as? HTTPURLResponse else {
             throw MCPOAuthDiscoveryError.transport("non-HTTP response")
         }

@@ -932,6 +932,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             menu.addItem(
                 NSMenuItem(title: "Reset Onboarding", action: #selector(dockResetOnboarding), keyEquivalent: "")
             )
+            menu.addItem(
+                NSMenuItem(title: "Preview What's New", action: #selector(dockPreviewWhatsNew), keyEquivalent: "")
+            )
         #endif
         return menu
     }
@@ -952,6 +955,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         @objc private func dockResetOnboarding() {
             OnboardingService.shared.resetOnboarding()
             showOnboardingWindow(forceShowIdentity: true)
+        }
+
+        @objc private func dockPreviewWhatsNew() {
+            WhatsNewGate.preview()
+            // A fresh chat window re-runs the `onAppear` gate check, which
+            // now force-returns every release's notes and presents the modal
+            // regardless of the dev build's bundle version.
+            ChatWindowManager.shared.createWindow()
         }
     #endif
 
@@ -1157,6 +1168,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // this, a quit within the 1s save debounce silently throws
         // away the latest seeds and the next launch is cold again.
         flushGreetingPoolSync()
+
+        // Tool enable/policy changes persist via a background serial writer to
+        // keep the UI snappy; drain it here so a toggle made right before quit
+        // isn't lost when `_exit` skips the pending write.
+        ToolConfigurationStore.flushPendingWrites()
 
         // Aptabase batches analytics in an in-memory queue and normally drains
         // it from its own `willTerminate` observer — but that flush is async and

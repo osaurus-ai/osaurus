@@ -333,7 +333,7 @@ extension SandboxPlugin {
 
     /// Import from a URL (fetches JSON from a remote URL).
     public static func fromURL(_ url: URL) async throws -> SandboxPlugin {
-        let (data, response) = try await URLSession.shared.data(from: url)
+        let (data, response) = try await makeManifestFetchSession().data(from: url)
         guard let httpResponse = response as? HTTPURLResponse,
             (200 ... 299).contains(httpResponse.statusCode)
         else {
@@ -342,6 +342,10 @@ extension SandboxPlugin {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         return try decoder.decode(SandboxPlugin.self, from: data)
+    }
+
+    static func makeManifestFetchSession() -> URLSession {
+        GlobalProxySettings.sharedSession()
     }
 
     /// Import from a GitHub repo URL (looks for osaurus.json at the root).

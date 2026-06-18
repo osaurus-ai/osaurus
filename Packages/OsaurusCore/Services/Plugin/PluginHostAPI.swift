@@ -70,14 +70,43 @@ final class PluginHostContext: @unchecked Sendable {
     /// than copying the struct.
     private(set) var hostAPIPtr: UnsafeMutablePointer<osr_host_api>?
 
+    private struct HTTPTransportSessionState {
+        let proxyKey: String
+        let session: URLSession
+    }
+
+    private static let noRedirectSessionBox = OSAllocatedUnfairLock<HTTPTransportSessionState?>(initialState: nil)
+
     /// Shared URLSession that suppresses redirects. `http_request`
     /// follows redirects manually so every `Location` target can pass
     /// through the same SSRF guard before the host connects.
-    private static let noRedirectSession: URLSession = {
+    static func noRedirectSession() -> URLSession {
+        let proxyKey = currentHTTPTransportProxyKey()
+        return noRedirectSessionBox.withLock { state in
+            if let state, state.proxyKey == proxyKey {
+                return state.session
+            }
+
+            state?.session.finishTasksAndInvalidate()
+            let session = makeNoRedirectSession()
+            state = HTTPTransportSessionState(proxyKey: proxyKey, session: session)
+            return session
+        }
+    }
+
+    private static func currentHTTPTransportProxyKey() -> String {
+        GlobalProxySettings.currentConfiguration()?.redactedDescription ?? ""
+    }
+
+    private static func makeNoRedirectSession() -> URLSession {
         let config = URLSessionConfiguration.ephemeral
         config.httpMaximumConnectionsPerHost = 10
-        return URLSession(configuration: config, delegate: NoRedirectDelegate.shared, delegateQueue: nil)
-    }()
+        return GlobalProxySettings.makeSession(
+            base: config,
+            delegate: NoRedirectDelegate.shared,
+            delegateQueue: nil
+        )
+    }
 
     private static let maxHTTPRedirects = 20
 
@@ -2494,7 +2523,7 @@ final class PluginHostContext: @unchecked Sendable {
                 var redirectCount = 0
 
                 while true {
-                    let (responseData, urlResponse) = try await Self.noRedirectSession.data(for: currentRequest)
+                    let (responseData, urlResponse) = try await Self.noRedirectSession().data(for: currentRequest)
                     let elapsed = Int(Date().timeIntervalSince(startTime) * 1000)
 
                     guard let httpResponse = urlResponse as? HTTPURLResponse else {

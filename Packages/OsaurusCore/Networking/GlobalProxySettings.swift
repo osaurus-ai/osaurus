@@ -32,9 +32,7 @@ public enum GlobalProxySettings {
     /// that need a custom delegate (download progress, redirect policy) must
     /// build and own their own session.
     public static func sharedSession() -> URLSession {
-        let key =
-            diskBackedServerConfiguration()?.globalProxyURL?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let key = currentProxyCacheKey()
         return sharedSessionBox.withLock { state in
             if let state, state.proxyKey == key {
                 return state.session
@@ -47,6 +45,15 @@ public enum GlobalProxySettings {
             return session
         }
     }
+
+    /// Cache key for shared network clients that need to rebuild when the
+    /// persisted proxy endpoint changes, including clients with custom
+    /// delegates that cannot use `sharedSession()`.
+    static func currentProxyCacheKey() -> String {
+        diskBackedServerConfiguration()?.globalProxyURL?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+
     /// Read the persisted server configuration and return the validated proxy
     /// endpoint. Invalid or missing values fail closed to normal networking so
     /// a stale config file cannot break all outbound traffic.

@@ -909,6 +909,20 @@ final class ToolRegistry: ObservableObject {
         return toolsByName.count
     }
 
+    /// O(1) single-tool lookup as a `ToolEntry`. Prefer this over
+    /// `listTools().first(where:)` on UI/render paths: `listTools()` sorts the
+    /// entire registry and rebuilds every tool's JSON schema, while this only
+    /// touches the one requested tool.
+    func entry(named name: String) -> ToolEntry? {
+        guard let tool = toolsByName[name] else { return nil }
+        return ToolEntry(
+            name: tool.name,
+            description: tool.description,
+            enabled: configuration.isEnabled(name: tool.name),
+            parameters: tool.parameters
+        )
+    }
+
     /// Set enablement for a tool and persist.
     func setEnabled(_ enabled: Bool, for name: String) {
         configuration.setEnabled(enabled, for: name)
@@ -1347,7 +1361,11 @@ final class ToolRegistry: ObservableObject {
         executionMode: ExecutionMode? = nil,
         selectedPreflightNames: Set<String>? = nil
     ) -> ToolAvailability {
-        guard let entry = listTools().first(where: { $0.name == toolName }) else {
+        // O(1) existence + enabled lookups. Avoids `listTools()` here — that
+        // sorts every tool and rebuilds each one's JSON schema, which is far
+        // too expensive to run per row on the SwiftUI render path (it tripped
+        // the main-thread hang watchdog; see `toolCount`).
+        guard toolsByName[toolName] != nil else {
             return ToolAvailability(
                 toolName: toolName,
                 runtime: nil,
@@ -1356,6 +1374,7 @@ final class ToolRegistry: ObservableObject {
                 detail: L("tool is not registered; install or enable the plugin/provider that owns it")
             )
         }
+        let isEnabled = configuration.isEnabled(name: toolName)
 
         let builtIn = builtInToolNames.contains(toolName)
         let runtimeManaged = runtimeManagedToolNames.contains(toolName)
@@ -1371,7 +1390,7 @@ final class ToolRegistry: ObservableObject {
             }
         }
 
-        if dynamic, !entry.enabled {
+        if dynamic, !isEnabled {
             appendReason(.disabled)
             details.append(L("globally disabled"))
         }

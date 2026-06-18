@@ -2119,6 +2119,15 @@ final class ChatSession: ObservableObject {
         send(pending.text, attachments: pending.attachments)
     }
 
+    /// Reused across runs so we don't pay the ICU date-symbol allocation that a
+    /// fresh `ISO8601DateFormatter` (or the `ISO8601DateFormatter.string` static)
+    /// triggers on every finalize. The time zone is reapplied per use.
+    private static let sessionDateFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withFullDate, .withDashSeparatorInDate]
+        return formatter
+    }()
+
     private func finalizeRun(runId: UUID?, persistConversationArtifacts: Bool) {
         guard let runId, activeRunId == runId else {
             if activeRunId == nil, isStreaming {
@@ -2217,11 +2226,9 @@ final class ChatSession: ObservableObject {
         }
 
         if !memoryOff, context.hasContent {
-            let today = ISO8601DateFormatter.string(
-                from: Date(),
-                timeZone: .current,
-                formatOptions: [.withFullDate, .withDashSeparatorInDate]
-            )
+            let formatter = Self.sessionDateFormatter
+            formatter.timeZone = .current
+            let today = formatter.string(from: Date())
             Task.detached {
                 await MemoryService.shared.bufferTurn(
                     userMessage: context.userContent,
@@ -4416,12 +4423,10 @@ struct ChatView: View {
             let hasLegacyPairedKeys = !APIKeyManager.shared
                 .legacyMasterScopedKeys(knownAgentAddresses: knownAgentAddrs)
                 .isEmpty
-            // What's New modal disabled.
-            // pendingWhatsNew = WhatsNewGate.pendingAutoShowRelease(
-            //     hasSandbox: hasSandbox,
-            //     hasLegacyPairedKeys: hasLegacyPairedKeys
-            // )
-            _ = (hasSandbox, hasLegacyPairedKeys)
+            pendingWhatsNew = WhatsNewGate.pendingAutoShowRelease(
+                hasSandbox: hasSandbox,
+                hasLegacyPairedKeys: hasLegacyPairedKeys
+            )
         }
         .onDisappear {
             cleanupKeyMonitor()
@@ -4462,10 +4467,11 @@ struct ChatView: View {
                     pendingWhatsNew = nil
                 },
                 onAction: { action in
-                    // Mark the release seen first so the user can't loop
-                    // back into it if they reopen the chat window quickly.
-                    WhatsNewGate.markShown(version: release.version)
-                    pendingWhatsNew = nil
+                    // Only perform the deep link here. The modal owns
+                    // dismissal — it stays open on non-final pages and calls
+                    // `onClose` (which marks the release seen) when the CTA is
+                    // on the last page, so a mid-carousel CTA doesn't skip the
+                    // remaining notes.
                     switch action {
                     case .openSandboxSettings:
                         AppDelegate.shared?.showManagementWindow(initialTab: .sandbox)
@@ -4483,6 +4489,8 @@ struct ChatView: View {
                         AppDelegate.shared?.showManagementWindow(initialTab: .storage)
                     case .openPrivacySettings:
                         AppDelegate.shared?.showManagementWindow(initialTab: .privacy)
+                    case .openCredits:
+                        AppDelegate.shared?.showManagementWindow(initialTab: .credits)
                     }
                 }
             )

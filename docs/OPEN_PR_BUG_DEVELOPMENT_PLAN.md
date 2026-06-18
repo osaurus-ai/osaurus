@@ -1,5 +1,69 @@
 # Open PR and Bug Development Plan
 
+Snapshot update: 2026-06-16 23:11 UTC, repo `osaurus-ai/osaurus`.
+
+This section is the current actionable plan. Older dated sections remain below
+as history and should not override this snapshot.
+
+## Current Live State - 2026-06-16 23:11 UTC
+
+- `origin/main` is `b768bbcb2a86e7cf577e69fe15040c3e1ba20c22`
+  (`fixed anthropic api failing on remote providers (#1540)`).
+- The local checkout and `mimeding/osaurus` fork `main` are synced to the same
+  commit.
+- Recently landed work since the last active planning pass includes #1528,
+  #1529, #1530, #1531, #1532, #1538, #1540, and the 0.20.2 tag/appcast work.
+- Current author-owned review stack is ready and green:
+  - #1527, system prompt injection proof trace: `CLEAN`, checks `SUCCESS`.
+  - #1533, agent defaults and team API: `CLEAN`, checks `SUCCESS`.
+  - #1536, MCP OAuth global proxy routing: `CLEAN`, checks `SUCCESS`.
+  - #1475, voice input and speech output controls: `CLEAN`, checks `SUCCESS`.
+- Newly actionable bug: #1539 reports that `osaurus mcp` returns an empty tool
+  list when Server > Network exposure disables loopback auth bypass. Current
+  source confirms the stdio bridge calls `/mcp/tools` and `/mcp/call` without
+  an `Authorization` header.
+- Evidence-request comments were posted on bugs needing reporter confirmation:
+  #1496, #1161, #1129, #662, #1225, #615, and #903.
+
+## Immediate Execution Order - 2026-06-16
+
+1. Publish the #1539 fix as a focused PR:
+   - Preserve zero-config behavior for local-only servers.
+   - Let `osaurus mcp` attach `Authorization: Bearer ...` from
+     `OSAURUS_MCP_ACCESS_KEY`, compatible env names, or `--access-key`.
+   - Update README / MCP docs and add CLI tests for token parsing and request
+     header construction.
+2. Ask `tpae` to review the green stack in small groups:
+   - #1527: bug-proof and runtime validation trace.
+   - #1533: agent defaults and team API.
+   - #1536: MCP OAuth global proxy coverage.
+   - #1475: voice input/output controls.
+3. Keep all issue threads awaiting reporter evidence in watch mode. Do not
+   claim those bugs fixed until new reporter evidence or local reproduction
+   confirms current-main behavior.
+4. After #1536 and the #1539 PR land, reassess remaining global proxy and MCP
+   gaps. Likely candidates are CLI pull, theme/router clients, repository
+   fetches, and any remaining bespoke `URLSession` creation outside shared
+   proxy policy.
+5. Defer broad document-stack, historical conflict, localization, voice, and
+   runtime research lanes until the current green stack receives maintainer
+   direction or merges into `main`.
+
+## Discord Review Message - 2026-06-16
+
+Suggested message:
+
+```text
+@tpae quick review request when you have a window: the current author-owned stack is green and CLEAN.
+
+- #1527: system prompt injection proof trace / runtime validation evidence.
+- #1533: agent defaults and team API.
+- #1536: MCP OAuth global proxy coverage.
+- #1475: voice input and speech output controls.
+
+I also picked up #1539 as the next focused bug fix: `osaurus mcp` needs to pass a Bearer access key when network exposure disables loopback trust, otherwise stdio clients see an empty tools list from HTTP 401.
+```
+
 Snapshot update: 2026-05-16 07:33 UTC, repo `osaurus-ai/osaurus`.
 
 This section is the current consolidated automation plan. It supersedes every

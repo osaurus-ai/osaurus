@@ -18,7 +18,7 @@ struct OsaurusCLI {
         case show(String)
         case run(String)
         case pull(String)
-        case mcp
+        case mcp([String])
         case ui
         case tools([String])
         case manifest([String])
@@ -45,7 +45,7 @@ struct OsaurusCLI {
         case "pull":
             if let modelId = rest.first, !modelId.isEmpty { return .pull(modelId) }
             return nil
-        case "mcp": return .mcp
+        case "mcp": return .mcp(rest)
         case "ui": return .ui
         case "tools": return .tools(rest)
         case "manifest": return .manifest(rest)
@@ -80,8 +80,8 @@ struct OsaurusCLI {
             await RunCommand.execute(args: [modelId])
         case .pull(let modelId):
             await PullCommand.execute(args: [modelId])
-        case .mcp:
-            await MCPCommand.execute(args: [])
+        case .mcp(let args):
+            await MCPCommand.execute(args: args)
         case .ui:
             await UICommand.execute(args: [])
         case .tools(let args):
@@ -109,7 +109,10 @@ struct OsaurusCLI {
                                       Start the server (default: localhost only). If --expose
                                       is set, a warning prompt will appear unless --yes is provided.
               osaurus stop            Stop the server
-              osaurus mcp             Run MCP stdio server proxying to local HTTP
+              osaurus mcp [--access-key KEY]
+                                      Run MCP stdio server proxying to local HTTP. When
+                                      server network exposure is enabled, provide an
+                                      access key here or via OSAURUS_MCP_ACCESS_KEY.
               osaurus version         Show version (also: --version or -v)
               osaurus status          Check if the Osaurus server is running
               osaurus list            List available model IDs

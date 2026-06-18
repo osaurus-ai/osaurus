@@ -18,12 +18,16 @@ actor OsaurusRouterAPIClient {
         self.baseURL = baseURL
         self.signer = signer
         self.authOverride = authOverride
+        self.session = session ?? Self.makeSession()
+        self.decoder = JSONDecoder()
+    }
+
+    static func makeSession() -> URLSession {
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 30
         config.timeoutIntervalForResource = 120
         config.waitsForConnectivity = false
-        self.session = session ?? URLSession(configuration: config)
-        self.decoder = JSONDecoder()
+        return GlobalProxySettings.makeSession(base: config)
     }
 
     func health() async throws {

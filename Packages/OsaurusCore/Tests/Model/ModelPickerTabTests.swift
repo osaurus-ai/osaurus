@@ -153,4 +153,72 @@ struct ModelPickerTabTests {
         #expect(tabs.map(\.key) == ["local"])
         #expect(tabs[0].models.map(\.id) == ["foundation"])
     }
+
+    // MARK: - Committed tab key resolution
+
+    /// Regression: the model lists refresh asynchronously while the picker is
+    /// open, so a tab can briefly vanish mid-refresh. An explicit user
+    /// selection must survive that transient absence — previously the "Local"
+    /// tab snapped back to "Osaurus" when Local momentarily disappeared.
+    @Test func resolveCommittedTabKey_keepsExplicitSelectionWhenTabTransientlyMissing() {
+        let osaurusId = RemoteProviderManager.osaurusRouterProviderId
+        let osaurusModel = ModelPickerItem(
+            id: "osaurus/llama-3.3",
+            displayName: "llama-3.3",
+            source: .remote(providerName: "Osaurus", providerId: osaurusId)
+        )
+        // Mid-refresh snapshot: local discovery briefly returned nothing, so
+        // only the Osaurus tab is present.
+        let tabsWithoutLocal = [osaurusModel].groupedByTab()
+        #expect(tabsWithoutLocal.contains { $0.key == "local" } == false)
+
+        let resolved = ModelPickerView.resolveCommittedTabKey(
+            current: "local",
+            tabs: tabsWithoutLocal,
+            selectedModel: osaurusModel.id
+        )
+        #expect(resolved == "local")
+    }
+
+    @Test func resolveCommittedTabKey_derivesDefaultFromSelectedModelWhenUnset() {
+        let osaurusId = RemoteProviderManager.osaurusRouterProviderId
+        let local = localModel(id: "mlx/local-a", name: "Local A")
+        let osaurus = ModelPickerItem(
+            id: "osaurus/llama-3.3",
+            displayName: "llama-3.3",
+            source: .remote(providerName: "Osaurus", providerId: osaurusId)
+        )
+        let tabs = [local, osaurus].groupedByTab()
+
+        // No committed key -> open on the tab holding the current model.
+        #expect(
+            ModelPickerView.resolveCommittedTabKey(
+                current: nil,
+                tabs: tabs,
+                selectedModel: osaurus.id
+            ) == "remote-\(osaurusId.uuidString)"
+        )
+        #expect(
+            ModelPickerView.resolveCommittedTabKey(
+                current: nil,
+                tabs: tabs,
+                selectedModel: local.id
+            ) == "local"
+        )
+        // Unknown / nil model -> first tab; no tabs at all -> nothing to commit.
+        #expect(
+            ModelPickerView.resolveCommittedTabKey(
+                current: nil,
+                tabs: tabs,
+                selectedModel: nil
+            ) == "local"
+        )
+        #expect(
+            ModelPickerView.resolveCommittedTabKey(
+                current: nil,
+                tabs: [],
+                selectedModel: nil
+            ) == nil
+        )
+    }
 }
