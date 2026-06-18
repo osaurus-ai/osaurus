@@ -176,6 +176,17 @@ The runtime lane owns:
 - failed-row reporting that distinguishes detection, load, tokenizer/encoder,
   key-map, generation, and quality gates.
 
+## Agent job handoff
+
+The next integration slice is documented in
+[`NATIVE_SWIFT_IMAGE_AGENT_JOB_FLOW.md`](NATIVE_SWIFT_IMAGE_AGENT_JOB_FLOW.md).
+It covers the requested main-chat-agent flow where a cloud or local chat model
+posts an image generation/edit job, local chat models temporarily unload to free
+RAM, the image model loads/generates/unloads with real progress, and the
+original local chat model is restored before the agent continues. That path is
+not implemented yet and remains a release blocker for calling native image
+generation seamless inside ordinary agent conversations.
+
 ## Production gate
 
 Before Osaurus marks a native image model as local production-ready, the same
