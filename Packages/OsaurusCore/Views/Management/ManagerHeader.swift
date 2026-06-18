@@ -210,6 +210,10 @@ struct ManagerHeaderWithTabs<Actions: View, TabsRow: View>: View {
 /// Accent-filled button for primary actions (Create, Add, etc.)
 struct HeaderPrimaryButton: View {
     @Environment(\.theme) private var theme
+    /// Drives the greyed-out look when a caller attaches `.disabled(...)`
+    /// — a plain accent fill otherwise stays fully saturated and reads as
+    /// actionable even when the button does nothing.
+    @Environment(\.isEnabled) private var isEnabled
 
     let title: String
     let icon: String?
@@ -235,17 +239,19 @@ struct HeaderPrimaryButton: View {
                     .lineLimit(1)
                     .fixedSize(horizontal: true, vertical: false)
             }
-            .foregroundColor(.white)
+            .foregroundColor(isEnabled ? .white : theme.tertiaryText)
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
             .background(
                 RoundedRectangle(cornerRadius: 8)
-                    .fill(theme.accentColor)
-                    .opacity(isHovering ? 0.9 : 1)
+                    .fill(isEnabled ? theme.accentColor : theme.tertiaryBackground)
+                    .opacity(isEnabled && isHovering ? 0.9 : 1)
             )
         }
         .buttonStyle(PlainButtonStyle())
+        .disabled(!isEnabled)
         .onHover { hovering in
+            guard isEnabled else { return }
             withAnimation(.easeOut(duration: 0.15)) {
                 isHovering = hovering
             }

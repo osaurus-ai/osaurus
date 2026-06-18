@@ -63,6 +63,14 @@ struct ConfigurationView: View {
     @State private var tempToastMaxVisible: String = ""
     @State private var tempToastMaxConcurrent: String = ""
 
+    /// Baseline of the save-relevant fields as last loaded or saved. The
+    /// "Save Changes" button is disabled while the live form equals this,
+    /// so a pristine settings screen reads as "nothing to save" rather
+    /// than an always-armed button. Fields applied immediately on change
+    /// (privacy toggles, toasts, smooth streaming, beta channel) are
+    /// deliberately excluded — they never flow through `saveConfiguration`.
+    @State private var savedFormState: SaveableFormState?
+
     // Search (passed from sidebar)
     @Binding var searchText: String
 
@@ -792,6 +800,7 @@ struct ConfigurationView: View {
             HeaderPrimaryButton("Save Changes", icon: "checkmark") {
                 saveConfiguration()
             }
+            .disabled(!hasUnsavedChanges)
         }
     }
 
@@ -896,6 +905,10 @@ struct ConfigurationView: View {
         tempToastMaxConcurrent =
             toastConfig.maxConcurrentTasks == toastDefaults.maxConcurrentTasks
             ? "" : String(toastConfig.maxConcurrentTasks)
+
+        // Capture the pristine baseline so the Save button stays disabled
+        // until the user actually edits something.
+        savedFormState = currentFormState
     }
 
     // MARK: - Reset to Defaults
@@ -952,6 +965,59 @@ struct ConfigurationView: View {
                 await OnboardingService.shared.performFactoryReset()
             }
         }
+    }
+
+    // MARK: - Dirty-State Tracking
+
+    /// Snapshot of exactly the fields that `saveConfiguration` persists.
+    /// Compared against the live form to decide whether "Save Changes"
+    /// has anything to do.
+    private struct SaveableFormState: Equatable {
+        var startAtLogin: Bool
+        var hideDockIcon: Bool
+        var hotkey: Hotkey?
+        var systemPrompt: String
+        var temperature: String
+        var maxTokens: String
+        var contextLength: String
+        var topP: String
+        var maxToolAttempts: String
+        var disableTools: Bool
+        var memoryEnabled: Bool
+        var coreModelProvider: String
+        var coreModelName: String
+        var enableClipboardMonitoring: Bool
+        var greetingPersona: String
+    }
+
+    /// Live snapshot of the save-relevant fields, built from the current
+    /// `temp*` state.
+    private var currentFormState: SaveableFormState {
+        SaveableFormState(
+            startAtLogin: tempStartAtLogin,
+            hideDockIcon: tempHideDockIcon,
+            hotkey: tempChatHotkey,
+            systemPrompt: tempSystemPrompt,
+            temperature: tempChatTemperature,
+            maxTokens: tempChatMaxTokens,
+            contextLength: tempChatContextLength,
+            topP: tempChatTopP,
+            maxToolAttempts: tempChatMaxToolAttempts,
+            disableTools: tempDisableTools,
+            memoryEnabled: tempMemoryEnabled,
+            coreModelProvider: tempCoreModelProvider,
+            coreModelName: tempCoreModelName,
+            enableClipboardMonitoring: tempEnableClipboardMonitoring,
+            greetingPersona: tempGreetingPersona
+        )
+    }
+
+    /// True once the user has edited any save-relevant field away from the
+    /// loaded/last-saved baseline. While the baseline is nil (initial load
+    /// hasn't completed) we treat the form as clean.
+    private var hasUnsavedChanges: Bool {
+        guard let savedFormState else { return false }
+        return currentFormState != savedFormState
     }
 
     // MARK: - Configuration Saving
@@ -1066,6 +1132,10 @@ struct ConfigurationView: View {
             // Server → Settings tab, which owns its own restart +
             // RuntimeConfig invalidation flow.
         }
+
+        // Re-baseline so the button disarms again now that the live form
+        // matches what's persisted.
+        savedFormState = currentFormState
 
         showSuccess(L("Settings saved successfully"))
     }
