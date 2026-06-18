@@ -899,6 +899,202 @@ struct RemoteChatRequestEncodingTests {
         #expect(blocks.map(\.tool_use_id) == ["toolu_1", "toolu_2"])
     }
 
+    // MARK: - tool_use / tool_result pairing (Anthropic 400 backstop)
+
+    /// An assistant `tool_use` whose `tool_result` was trimmed away (a
+    /// non-tool message follows it mid-conversation) must be dropped, not
+    /// forwarded as the orphan that trips "tool_use ids were found without
+    /// tool_result blocks immediately after". The assistant carries text, so
+    /// the turn survives as text-only.
+    @Test func toAnthropicRequest_dropsOrphanToolUseKeepingAssistantText() throws {
+        let request = Self.makeRequest(
+            model: "claude-3-5-sonnet-20241022",
+            maxTokens: 1024,
+            messages: [
+                ChatMessage(role: "user", content: "do it"),
+                ChatMessage(
+                    role: "assistant",
+                    content: "Let me check that file.",
+                    tool_calls: [
+                        ToolCall(
+                            id: "toolu_orphan",
+                            type: "function",
+                            function: ToolCallFunction(name: "read_file", arguments: "{}")
+                        )
+                    ],
+                    tool_call_id: nil
+                ),
+                // The tool result was trimmed; a later user turn follows.
+                ChatMessage(role: "user", content: "any progress?"),
+            ]
+        )
+
+        let anthropic = request.toAnthropicRequest()
+
+        #expect(!Self.toolUseBlocks(in: anthropic).contains { $0.id == "toolu_orphan" })
+        Self.assertAnthropicToolPairing(anthropic)
+    }
+
+    /// An assistant whose ONLY content was an orphaned `tool_use` (no text)
+    /// is removed entirely once the dangling call is dropped.
+    @Test func toAnthropicRequest_dropsAssistantWhenOnlyOrphanToolUseRemains() throws {
+        let request = Self.makeRequest(
+            model: "claude-3-5-sonnet-20241022",
+            maxTokens: 1024,
+            messages: [
+                ChatMessage(role: "user", content: "go"),
+                ChatMessage(
+                    role: "assistant",
+                    content: nil,
+                    tool_calls: [
+                        ToolCall(
+                            id: "toolu_orphan",
+                            type: "function",
+                            function: ToolCallFunction(name: "read_file", arguments: "{}")
+                        )
+                    ],
+                    tool_call_id: nil
+                ),
+                ChatMessage(role: "user", content: "still there?"),
+            ]
+        )
+
+        let anthropic = request.toAnthropicRequest()
+
+        #expect(Self.toolUseBlocks(in: anthropic).isEmpty)
+        // Only the two user turns remain; no assistant message survives.
+        #expect(!anthropic.messages.contains { $0.role == "assistant" })
+        Self.assertAnthropicToolPairing(anthropic)
+    }
+
+    /// A `tool_result` with no preceding `tool_use` (its assistant turn was
+    /// trimmed) is an orphan result and must be dropped.
+    @Test func toAnthropicRequest_dropsOrphanToolResult() throws {
+        let request = Self.makeRequest(
+            model: "claude-3-5-sonnet-20241022",
+            maxTokens: 1024,
+            messages: [
+                ChatMessage(role: "user", content: "go"),
+                ChatMessage(role: "tool", content: "STALE RESULT", tool_calls: nil, tool_call_id: "toolu_ghost"),
+                ChatMessage(role: "user", content: "continue"),
+            ]
+        )
+
+        let anthropic = request.toAnthropicRequest()
+
+        #expect(!Self.toolResultBlocks(in: anthropic).contains { $0.tool_use_id == "toolu_ghost" })
+        Self.assertAnthropicToolPairing(anthropic)
+    }
+
+    /// A `tool` turn with `nil` content must still emit a (non-empty)
+    /// `tool_result` rather than being silently skipped, which would orphan
+    /// its `tool_use`. Empty content rides as a single space (a truthful
+    /// empty result), never fabricated output.
+    @Test func toAnthropicRequest_emitsToolResultForNilContent() throws {
+        let request = Self.makeRequest(
+            model: "claude-3-5-sonnet-20241022",
+            maxTokens: 1024,
+            messages: [
+                ChatMessage(role: "user", content: "run it"),
+                ChatMessage(
+                    role: "assistant",
+                    content: nil,
+                    tool_calls: [
+                        ToolCall(
+                            id: "toolu_1",
+                            type: "function",
+                            function: ToolCallFunction(name: "run", arguments: "{}")
+                        )
+                    ],
+                    tool_call_id: nil
+                ),
+                ChatMessage(role: "tool", content: nil, tool_calls: nil, tool_call_id: "toolu_1"),
+            ]
+        )
+
+        let anthropic = request.toAnthropicRequest()
+        let blocks = Self.toolResultBlocks(in: anthropic)
+
+        #expect(blocks.count == 1)
+        #expect(blocks.first?.tool_use_id == "toolu_1")
+        #expect(!(blocks.first?.content?.plainText.isEmpty ?? true))
+        Self.assertAnthropicToolPairing(anthropic)
+    }
+
+    /// A trailing assistant tool-call turn (results not yet appended) is NOT
+    /// a trimmed-away middle orphan and must be preserved verbatim.
+    @Test func toAnthropicRequest_keepsTrailingAssistantToolUse() throws {
+        let request = Self.makeRequest(
+            model: "claude-3-5-sonnet-20241022",
+            maxTokens: 1024,
+            messages: [
+                ChatMessage(role: "user", content: "go"),
+                ChatMessage(
+                    role: "assistant",
+                    content: nil,
+                    tool_calls: [
+                        ToolCall(
+                            id: "toolu_last",
+                            type: "function",
+                            function: ToolCallFunction(name: "run", arguments: "{}")
+                        )
+                    ],
+                    tool_call_id: nil
+                ),
+            ]
+        )
+
+        let anthropic = request.toAnthropicRequest()
+
+        #expect(Self.toolUseBlocks(in: anthropic).contains { $0.id == "toolu_last" })
+    }
+
+    @Test func routerWireCompatibleMessages_dropsOrphanToolUse() throws {
+        let normalized = RemoteProviderService.routerWireCompatibleMessages([
+            ChatMessage(role: "user", content: "go"),
+            ChatMessage(
+                role: "assistant",
+                content: "Looking into it.",
+                tool_calls: [
+                    ToolCall(
+                        id: "toolu_orphan",
+                        type: "function",
+                        function: ToolCallFunction(name: "read_file", arguments: "{}")
+                    )
+                ],
+                tool_call_id: nil
+            ),
+            ChatMessage(role: "user", content: "next"),
+        ])
+
+        let hasOrphanCall = normalized.contains {
+            $0.tool_calls?.contains { $0.id == "toolu_orphan" } ?? false
+        }
+        #expect(!hasOrphanCall)
+        Self.assertChatMessageToolPairing(normalized)
+    }
+
+    @Test func routerWireCompatibleMessages_dropsOrphanToolResult() throws {
+        let normalized = RemoteProviderService.routerWireCompatibleMessages([
+            ChatMessage(role: "user", content: "go"),
+            ChatMessage(role: "tool", content: "STALE", tool_calls: nil, tool_call_id: "toolu_ghost"),
+            ChatMessage(
+                role: "assistant",
+                content: nil,
+                tool_calls: [
+                    ToolCall(id: "toolu_1", type: "function", function: ToolCallFunction(name: "run", arguments: "{}"))
+                ],
+                tool_call_id: nil
+            ),
+            ChatMessage(role: "tool", content: "FRESH", tool_calls: nil, tool_call_id: "toolu_1"),
+        ])
+
+        #expect(!normalized.contains { $0.role == "tool" && $0.tool_call_id == "toolu_ghost" })
+        // The valid pair survives untouched.
+        #expect(normalized.contains { $0.role == "tool" && $0.tool_call_id == "toolu_1" })
+        Self.assertChatMessageToolPairing(normalized)
+    }
+
     @Test func echoesReasoningContent_trueForDeepSeekHost() throws {
         #expect(
             RemoteProviderService.echoesReasoningContent(
@@ -1863,6 +2059,80 @@ struct RemoteChatRequestEncodingTests {
                 return nil
             }
         }
+    }
+
+    /// Flatten every `tool_use` block across an Anthropic request, in order.
+    private static func toolUseBlocks(
+        in request: AnthropicMessagesRequest
+    ) -> [AnthropicToolUseBlock] {
+        request.messages.flatMap { message -> [AnthropicToolUseBlock] in
+            guard case .blocks(let blocks) = message.content else { return [] }
+            return blocks.compactMap { block in
+                if case .toolUse(let use) = block { return use }
+                return nil
+            }
+        }
+    }
+
+    /// Assert the Anthropic invariant the 400 enforces: every `tool_use` id is
+    /// answered by a `tool_result` in the IMMEDIATELY following message, and
+    /// every `tool_result` is produced by the immediately preceding message's
+    /// `tool_use` (no orphan result).
+    private static func assertAnthropicToolPairing(_ request: AnthropicMessagesRequest) {
+        func useIds(_ message: AnthropicMessage?) -> Set<String> {
+            guard let message, case .blocks(let blocks) = message.content else { return [] }
+            return Set(
+                blocks.compactMap { block in
+                    if case .toolUse(let use) = block { return use.id }
+                    return nil
+                }
+            )
+        }
+        func resultIds(_ message: AnthropicMessage?) -> Set<String> {
+            guard let message, case .blocks(let blocks) = message.content else { return [] }
+            return Set(
+                blocks.compactMap { block in
+                    if case .toolResult(let result) = block { return result.tool_use_id }
+                    return nil
+                }
+            )
+        }
+
+        let messages = request.messages
+        for (index, message) in messages.enumerated() {
+            let uses = useIds(message)
+            if !uses.isEmpty {
+                let next = index + 1 < messages.count ? messages[index + 1] : nil
+                #expect(uses.isSubset(of: resultIds(next)))
+            }
+            let results = resultIds(message)
+            if !results.isEmpty {
+                let prev = index > 0 ? messages[index - 1] : nil
+                #expect(results.isSubset(of: useIds(prev)))
+            }
+        }
+    }
+
+    /// Forward-scan the OpenAI-style `ChatMessage` array (router output) for
+    /// the same invariant: an assistant turn's requested ids are all answered
+    /// by the contiguous following `tool` run, and no `tool` result appears
+    /// without a requesting assistant turn.
+    private static func assertChatMessageToolPairing(_ messages: [ChatMessage]) {
+        var pendingCallIds = Set<String>()
+        for message in messages {
+            switch message.role.lowercased() {
+            case "assistant":
+                #expect(pendingCallIds.isEmpty)
+                pendingCallIds = Set(message.tool_calls?.map(\.id) ?? [])
+            case "tool":
+                let id = message.tool_call_id ?? ""
+                #expect(pendingCallIds.contains(id))
+                pendingCallIds.remove(id)
+            default:
+                #expect(pendingCallIds.isEmpty)
+            }
+        }
+        #expect(pendingCallIds.isEmpty)
     }
 
     private static func decodeAsDictionary(_ data: Data) throws -> [String: Any] {

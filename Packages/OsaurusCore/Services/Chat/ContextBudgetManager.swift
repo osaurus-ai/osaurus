@@ -428,11 +428,29 @@ public struct ContextBudgetManager: Sendable {
         var runningTokens = Self.estimateTokens(for: render())
         var noteAccounted = watermark.droppedCount > 0
         while tailStart > 1, runningTokens > budget {
-            let dropped = visible[1]
-            watermark.recordDrop(at: dropped.origIndex, original: messages[dropped.origIndex])
-            visible.remove(at: 1)
-            tailStart -= 1
-            runningTokens -= Self.estimateTokens(forMessage: dropped.message)
+            // Drop the WHOLE oldest middle unit — an assistant turn plus the
+            // contiguous tool results answering it — never a lone message.
+            // Splitting a unit could leave an assistant `tool_use` without its
+            // `tool` result (or vice-versa), the orphan the encoder forwards
+            // as the Anthropic tool-pairing 400. The unit is measured inline
+            // over `visible` (avoiding a per-iteration array copy) and bounded
+            // by the middle so it never reaches into the protected tail.
+            let middleCount = tailStart - 1
+            var unitLength = 1
+            if visible[1].message.role.lowercased() == "assistant" {
+                while unitLength < middleCount,
+                    visible[1 + unitLength].message.role.lowercased() == "tool"
+                {
+                    unitLength += 1
+                }
+            }
+            for _ in 0 ..< unitLength {
+                let dropped = visible[1]
+                watermark.recordDrop(at: dropped.origIndex, original: messages[dropped.origIndex])
+                visible.remove(at: 1)
+                tailStart -= 1
+                runningTokens -= Self.estimateTokens(forMessage: dropped.message)
+            }
             if !noteAccounted {
                 runningTokens += Self.estimateTokens(
                     forMessage: ChatMessage(role: "user", content: Self.trimmedHistoryNote)
@@ -507,19 +525,30 @@ public struct ContextBudgetManager: Sendable {
         var result: [ChatMessage] = [trimmed[0]]  // Keep first message
         let tail = Array(trimmed[protectedTailStart...])
 
-        // Add middle messages from newest to oldest until budget is reached
+        // Group the middle into atomic units (an assistant turn plus the
+        // contiguous tool results answering it; any other message is its own
+        // unit) and keep WHOLE units newest→oldest. Keeping by message could
+        // retain a tool result whose assistant tool_use was dropped — the
+        // orphan the encoder rejects with Anthropic's tool_use/tool_result
+        // 400 — so we keep/drop indivisible units instead. Stopping at the
+        // first unit that doesn't fit leaves the survivors as a contiguous
+        // suffix that always begins on a clean unit boundary, never a bare
+        // tool result.
         let middle = Array(trimmed[firstMessageCount ..< protectedTailStart])
-        var middleToKeep: [ChatMessage] = []
+        let units = Self.groupIntoUnits(middle)
+        var keptUnits: [[ChatMessage]] = []
         var runningTokens = Self.estimateTokens(for: result) + Self.estimateTokens(for: tail)
 
-        // Iterate from end of middle to start, keeping what fits
-        for msg in middle.reversed() {
-            let msgTokens = Self.estimateTokens(for: [msg])
-            if runningTokens + msgTokens <= budget {
-                middleToKeep.insert(msg, at: 0)
-                runningTokens += msgTokens
+        for unit in units.reversed() {
+            let unitTokens = Self.estimateTokens(for: unit)
+            if runningTokens + unitTokens <= budget {
+                keptUnits.insert(unit, at: 0)
+                runningTokens += unitTokens
+            } else {
+                break
             }
         }
+        let middleToKeep = keptUnits.flatMap { $0 }
 
         // If we dropped some middle messages, insert a context note
         if middleToKeep.count < middle.count {
@@ -539,6 +568,28 @@ public struct ContextBudgetManager: Sendable {
     }
 
     // MARK: - Private Helpers
+
+    /// Group a contiguous message slice into atomic trim units, preserving
+    /// order. A unit is one `assistant` turn plus the contiguous run of `tool`
+    /// results answering it; any other message (user/system, or a stray orphan
+    /// tool) is its own single-message unit. Keeping/dropping whole units keeps
+    /// a `tool_use` and its `tool_result` together so trimming can never orphan
+    /// either half (the Anthropic tool-pairing 400).
+    static func groupIntoUnits(_ messages: [ChatMessage]) -> [[ChatMessage]] {
+        var units: [[ChatMessage]] = []
+        var index = 0
+        while index < messages.count {
+            var end = index + 1
+            if messages[index].role.lowercased() == "assistant" {
+                while end < messages.count, messages[end].role.lowercased() == "tool" {
+                    end += 1
+                }
+            }
+            units.append(Array(messages[index ..< end]))
+            index = end
+        }
+        return units
+    }
 
     /// Counts how many trailing messages constitute the requested number of
     /// assistant→tool pairs. A "pair" is an assistant turn followed by one
