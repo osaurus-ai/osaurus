@@ -46,6 +46,46 @@ struct NativeImageGenerateJobRequest: Sendable {
     }
 }
 
+struct NativeImageEditJobRequest: Sendable {
+    var prompt: String
+    var model: String?
+    var sourceImages: [Data]
+    var negativePrompt: String?
+    var width: Int?
+    var height: Int?
+    var steps: Int?
+    var guidance: Float?
+    var strength: Float
+    var seed: UInt64?
+    var outputFormat: ImageOutputFormat
+
+    init(
+        prompt: String,
+        model: String? = nil,
+        sourceImages: [Data],
+        negativePrompt: String? = nil,
+        width: Int? = nil,
+        height: Int? = nil,
+        steps: Int? = nil,
+        guidance: Float? = nil,
+        strength: Float = 0.75,
+        seed: UInt64? = nil,
+        outputFormat: ImageOutputFormat = .png
+    ) {
+        self.prompt = prompt
+        self.model = model
+        self.sourceImages = Array(sourceImages.prefix(4))
+        self.negativePrompt = negativePrompt
+        self.width = width
+        self.height = height
+        self.steps = steps
+        self.guidance = guidance
+        self.strength = min(1, max(0, strength))
+        self.seed = seed
+        self.outputFormat = outputFormat
+    }
+}
+
 enum NativeImageJobPhase: String, Sendable {
     case queued
     case loadingModel = "loading_model"
@@ -221,6 +261,93 @@ actor NativeImageJobCoordinator {
                         outputFormat: request.outputFormat
                     )
                     let stream = await imageService.generate(params, jobID: jobID)
+                    for try await event in stream {
+                        switch event {
+                        case .loadingModel(let loadedModel):
+                            record(NativeImageJobProgress(jobID: jobID, phase: .loadingModel, model: loadedModel))
+                        case .step(let step, let total, let eta):
+                            record(
+                                NativeImageJobProgress(
+                                    jobID: jobID,
+                                    phase: .generating,
+                                    model: model,
+                                    step: step,
+                                    total: total,
+                                    etaSeconds: eta
+                                )
+                            )
+                        case .preview:
+                            continue
+                        case .completed(let images):
+                            produced = images
+                        case .failed(let message, _):
+                            record(NativeImageJobProgress(jobID: jobID, phase: .failed, model: model, message: message))
+                            throw NativeImageJobCoordinatorError.requestFailed(message)
+                        case .cancelled:
+                            record(NativeImageJobProgress(jobID: jobID, phase: .cancelled, model: model))
+                            throw NativeImageJobCoordinatorError.cancelled
+                        }
+                    }
+
+                    let shouldUnload = config.imageJobLoadPolicy != .manualPanelKeepsImageLoaded
+                    if shouldUnload {
+                        record(NativeImageJobProgress(jobID: jobID, phase: .unloading, model: model))
+                        await imageService.unload()
+                    }
+                    record(NativeImageJobProgress(jobID: jobID, phase: .completed, model: model))
+                    continuation.yield(
+                        NativeImageJobResult(
+                            jobID: jobID,
+                            model: model,
+                            images: produced,
+                            progress: progress,
+                            unloadedAfterJob: shouldUnload
+                        )
+                    )
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
+    func edit(_ request: NativeImageEditJobRequest) async -> AsyncThrowingStream<NativeImageJobResult, Error> {
+        let jobID = UUID().uuidString
+        return AsyncThrowingStream { continuation in
+            let task = Task {
+                var progress: [NativeImageJobProgress] = []
+                func record(_ event: NativeImageJobProgress) {
+                    progress.append(event)
+                    NativeImageJobProgressCenter.post(event)
+                }
+
+                let config = AgentDelegationConfigurationStore.snapshot()
+                do {
+                    record(NativeImageJobProgress(jobID: jobID, phase: .queued))
+                    let models = (try? await imageService.availableModels()) ?? []
+                    let model = try NativeImageJobModelResolver.resolve(
+                        requested: request.model,
+                        configured: config.defaultImageEditModelId,
+                        available: models,
+                        kind: .imageEdit
+                    )
+                    var produced: [GeneratedImage] = []
+                    let params = ImageEditParameters(
+                        model: model,
+                        prompt: request.prompt,
+                        sourceImages: request.sourceImages,
+                        negativePrompt: request.negativePrompt,
+                        strength: request.strength,
+                        width: request.width,
+                        height: request.height,
+                        steps: request.steps,
+                        guidance: request.guidance,
+                        seed: request.seed,
+                        outputFormat: request.outputFormat
+                    )
+                    let stream = await imageService.edit(params, jobID: jobID)
                     for try await event in stream {
                         switch event {
                         case .loadingModel(let loadedModel):

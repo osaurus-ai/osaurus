@@ -71,6 +71,22 @@ struct NativeImageJobCoordinatorTests {
         }
     }
 
+    @Test func resolverSelectsReadyEditModelForImageEditJobs() throws {
+        let available = [
+            imageModel(id: "gen-only", ready: true, textToImage: true),
+            imageModel(id: "ready-edit", ready: true, textToImage: false, imageEdit: true),
+        ]
+
+        let resolved = try NativeImageJobModelResolver.resolve(
+            requested: nil,
+            configured: nil,
+            available: available,
+            kind: .imageEdit
+        )
+
+        #expect(resolved == "ready-edit")
+    }
+
     private func imageModel(
         id: String,
         ready: Bool,

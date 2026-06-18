@@ -191,6 +191,7 @@ final class ToolRegistry: ObservableObject {
             // Native local image generation. Tool body enforces the separate
             // Agent Delegation permission defaults and low-RAM unload policy.
             NativeImageGenerateTool(),
+            NativeImageEditTool(),
             // Agent DB feature (spec §6). The system prompt composer
             // gates these per-agent via `Agent.settings.dbEnabled`;
             // registering them as built-ins means agents that *do*

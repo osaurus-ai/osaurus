@@ -578,11 +578,13 @@ Do not mark this feature working until all of these pass:
   local image generation models, records progress phases, runs generation
   through `ImageGenerationService`, and unloads image weights after agent jobs
   unless manual-panel keep-warm policy is selected.
-- `image_generate` is registered as a compact built-in tool. It enforces the
-  Agent Delegation image-generation permission default (`ask`, `deny`,
-  `always_allow`), passes prompt/negative prompt/steps/guidance/seed/model
-  arguments to the coordinator, and returns generated image paths plus progress
-  metadata.
+- `image_generate` and `image_edit` are registered as compact built-in tools.
+  They enforce the Agent Delegation image-generation/image-edit permission
+  defaults (`ask`, `deny`, `always_allow`), pass prompt/negative
+  prompt/steps/guidance/seed/model arguments to the coordinator, and return
+  generated image paths plus progress metadata. `image_edit` accepts one to four
+  explicit local source image paths and rejects unsupported extensions,
+  non-file paths, and files above 80 MB.
 - Local source verification on 2026-06-18: `swift build --package-path
   Packages/OsaurusCore` passed after these changes. Local `swift test
   --package-path Packages/OsaurusCore --filter NativeImageJobCoordinatorTests`
@@ -604,7 +606,8 @@ Do not mark this feature working until all of these pass:
 - Progress events are recorded and posted through
   `nativeImageJobProgressChanged`, but the chat UI progress row has not been
   wired/proven for the agent-triggered path.
-- Image edit remains manual/API-only; no `image_edit` agent tool exists yet.
+- Image edit now has a source-wired main-agent tool, but no live source-image
+  artifact e2e proof has run through the actual agent loop.
 - Local SwiftPM test execution is blocked on this host by a global `Testing`
   module import failure in existing tests; the same filtered tests passed on
   `erics-m5-max.local`.
