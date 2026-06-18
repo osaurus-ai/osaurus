@@ -121,7 +121,8 @@ struct MCPProviderProbeServiceTests {
             startedAt: Date(),
             stage: .connect,
             reasonCode: .authRequired,
-            message: #"HTTP 401 {"access_token":"secret-token","client_secret":"secret-code"} Authorization: Bearer raw-token"#,
+            message:
+                #"HTTP 401 {"access_token":"secret-token","client_secret":"secret-code"} Authorization: Bearer raw-token"#,
             action: "Retry after rotating password=hunter2."
         )
 

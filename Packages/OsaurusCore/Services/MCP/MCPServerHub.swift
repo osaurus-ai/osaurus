@@ -184,9 +184,11 @@ public enum MCPServerHub {
         )
         let severity = diagnostics.rows.map(\.severity).max(by: mcpSeverityLessThan) ?? .info
         let status = status(for: provider, state: state, highestSeverity: severity)
-        let firstActionableRow = diagnostics.rows.first { $0.severity == .blocked }
+        let firstActionableRow =
+            diagnostics.rows.first { $0.severity == .blocked }
             ?? diagnostics.rows.first { provider.enabled && $0.severity == .warning }
-        let summaryRow = firstActionableRow
+        let summaryRow =
+            firstActionableRow
             ?? diagnostics.rows.first { $0.id == "local-health" }
             ?? diagnostics.rows.first { $0.id == "connection" }
 
@@ -215,7 +217,8 @@ public enum MCPServerHub {
         if state?.requiresAuth == true
             || state?.lastError?.isEmpty == false
             || highestSeverity == .blocked
-            || highestSeverity == .warning {
+            || highestSeverity == .warning
+        {
             return .needsAttention
         }
         return .idle

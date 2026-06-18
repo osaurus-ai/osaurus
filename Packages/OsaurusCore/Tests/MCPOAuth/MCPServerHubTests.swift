@@ -73,7 +73,7 @@ struct MCPServerHubTests {
                 disabled.id: MCPProviderCredentialPresence(bearerTokenPresent: false),
             ],
             healthSnapshots: [
-                failed.id: failedSnapshot,
+                failed.id: failedSnapshot
             ]
         )
 

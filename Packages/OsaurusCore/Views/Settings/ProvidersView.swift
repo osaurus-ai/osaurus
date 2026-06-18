@@ -245,14 +245,15 @@ struct ProvidersView: View {
         switch provider.transport {
         case .http:
             let credentials = await Task.detached(priority: .utility) {
-                let token: String? = switch provider.authType {
-                case .bearerToken:
-                    MCPProviderKeychain.getToken(for: provider.id)
-                case .oauth:
-                    MCPProviderKeychain.getOAuthTokens(for: provider.id)?.accessToken
-                case .none:
-                    nil
-                }
+                let token: String? =
+                    switch provider.authType {
+                    case .bearerToken:
+                        MCPProviderKeychain.getToken(for: provider.id)
+                    case .oauth:
+                        MCPProviderKeychain.getOAuthTokens(for: provider.id)?.accessToken
+                    case .none:
+                        nil
+                    }
                 return (
                     token,
                     provider.resolvedHeaders()
@@ -415,8 +416,16 @@ private struct MCPServerHubPanel: View {
                 alignment: .leading,
                 spacing: 8
             ) {
-                MCPServerHubMetricPill(title: L("Connected"), value: "\(snapshot.connectedCount)", color: theme.successColor)
-                MCPServerHubMetricPill(title: L("Attention"), value: "\(snapshot.attentionCount)", color: theme.warningColor)
+                MCPServerHubMetricPill(
+                    title: L("Connected"),
+                    value: "\(snapshot.connectedCount)",
+                    color: theme.successColor
+                )
+                MCPServerHubMetricPill(
+                    title: L("Attention"),
+                    value: "\(snapshot.attentionCount)",
+                    color: theme.warningColor
+                )
                 MCPServerHubMetricPill(title: L("Tools"), value: "\(snapshot.toolCount)", color: theme.accentColor)
                 MCPServerHubMetricPill(title: L("Stdio"), value: "\(snapshot.stdioCount)", color: theme.infoColor)
                 MCPServerHubMetricPill(title: L("Host"), value: "\(snapshot.hostStdioCount)", color: Color.orange)
