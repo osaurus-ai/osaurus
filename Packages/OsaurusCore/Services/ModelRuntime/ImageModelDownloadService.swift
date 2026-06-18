@@ -68,8 +68,21 @@ final class ImageModelDownloadService: ObservableObject {
     ]
     private static let excluded: Set<String> = ["README.md", ".gitattributes"]
 
+    /// Max files staged in parallel. A single HTTPS connection to the HF CDN is
+    /// throttled well below a fast link, so serial per-file fetches leave most
+    /// of the pipe idle; mflux bundles are several large files, so fetching a
+    /// handful at once keeps the connection saturated.
+    private static let maxConcurrentFiles = 4
+
     private var tasks: [String: Task<Void, Never>] = [:]
-    private var downloaders: [String: DirectDownloader] = [:]
+    /// All in-flight downloaders for a bundle, so `cancel` can stop every lane.
+    private var downloaders: [String: [DirectDownloader]] = [:]
+    /// Live absolute bytes received per file, keyed `[dirName][remotePath]`. The
+    /// sum across a bundle's files drives its aggregate progress while several
+    /// download concurrently.
+    private var liveBytes: [String: [String: Int64]] = [:]
+    /// Trailing throughput samples per bundle for a stable speed/ETA readout.
+    private var speedSamples: [String: [(t: TimeInterval, bytes: Int64)]] = [:]
 
     /// True when a bundle directory for `id` already exists on disk.
     func isInstalled(_ id: String) -> Bool {
@@ -90,6 +103,8 @@ final class ImageModelDownloadService: ObservableObject {
         if case .downloading = states[dirName, default: .notStarted] { return }
         states[dirName] = .downloading(progress: 0)
         metrics[dirName] = nil
+        liveBytes[dirName] = [:]
+        speedSamples[dirName] = []
         let task = Task { [weak self] in
             guard let self else { return }
             await self.run(repoId: trimmed, dirName: dirName)
@@ -100,8 +115,10 @@ final class ImageModelDownloadService: ObservableObject {
     func cancel(_ id: String) {
         tasks[id]?.cancel()
         tasks[id] = nil
-        downloaders[id]?.pause()
+        downloaders[id]?.forEach { $0.pause() }
         downloaders[id] = nil
+        liveBytes[id] = nil
+        speedSamples[id] = nil
         states[id] = .notStarted
         metrics[id] = nil
     }
@@ -121,38 +138,24 @@ final class ImageModelDownloadService: ObservableObject {
         }
 
         let totalBytes = files.reduce(Int64(0)) { $0 + $1.size }
-        var completedBytes: Int64 = 0
-        let downloader = DirectDownloader()
-        downloaders[dirName] = downloader
+        liveBytes[dirName] = [:]
+        downloaders[dirName] = []
 
         do {
-            for file in files {
-                try Task.checkCancellation()
-                guard
-                    let destination = HuggingFaceService.destinationURL(
-                        forRemotePath: file.path, under: root),
-                    let url = ModelDownloadService.resolveURL(repoId: repoId, path: file.path)
-                else { continue }
-
-                // Skip files already present at the expected size (resume).
-                if let existing = try? FileManager.default.attributesOfItem(atPath: destination.path)[.size]
-                    as? Int64, existing == file.size
-                {
-                    completedBytes += file.size
-                    updateProgress(dirName, received: completedBytes, total: totalBytes)
-                    continue
-                }
-
-                let base = completedBytes
-                try await downloader.download(
-                    from: url, to: destination, expectedSize: file.size
-                ) { [weak self] received, _ in
-                    Task { @MainActor [weak self] in
-                        self?.updateProgress(dirName, received: base + received, total: totalBytes)
+            // Fetch up to `maxConcurrentFiles` at once, refilling a lane as each
+            // file completes so the connection stays saturated end to end.
+            try await withThrowingTaskGroup(of: Void.self) { group in
+                var iterator = files.makeIterator()
+                func addNext() -> Bool {
+                    guard let file = iterator.next() else { return false }
+                    group.addTask { [weak self] in
+                        try await self?.downloadFile(
+                            file, repoId: repoId, root: root, dirName: dirName, total: totalBytes)
                     }
+                    return true
                 }
-                completedBytes += file.size
-                updateProgress(dirName, received: completedBytes, total: totalBytes)
+                for _ in 0 ..< Self.maxConcurrentFiles where addNext() {}
+                while try await group.next() != nil { _ = addNext() }
             }
             states[dirName] = .completed
             metrics[dirName] = nil
@@ -163,18 +166,84 @@ final class ImageModelDownloadService: ObservableObject {
         } catch is CancellationError {
             states[dirName] = .notStarted
             metrics[dirName] = nil
+        } catch is DirectDownloader.PauseInfo {
+            // A lane was paused by `cancel` while others were still in flight.
+            states[dirName] = .notStarted
+            metrics[dirName] = nil
         } catch {
             states[dirName] = .failed(error: String(describing: error))
             metrics[dirName] = nil
         }
         downloaders[dirName] = nil
+        liveBytes[dirName] = nil
+        speedSamples[dirName] = nil
         tasks[dirName] = nil
     }
 
-    private func updateProgress(_ id: String, received: Int64, total: Int64) {
+    /// Stage a single file. Runs on the main actor for bookkeeping, but the
+    /// network transfer awaits inside `DirectDownloader`, releasing the actor so
+    /// sibling lanes transfer concurrently.
+    private func downloadFile(
+        _ file: HuggingFaceService.MatchedFile,
+        repoId: String,
+        root: URL,
+        dirName: String,
+        total: Int64
+    ) async throws {
+        try Task.checkCancellation()
+        guard
+            let destination = HuggingFaceService.destinationURL(forRemotePath: file.path, under: root),
+            let url = ModelDownloadService.resolveURL(repoId: repoId, path: file.path)
+        else { return }
+
+        // Skip files already present at the expected size (resume).
+        if let existing = try? FileManager.default.attributesOfItem(atPath: destination.path)[.size]
+            as? Int64, existing == file.size
+        {
+            liveBytes[dirName, default: [:]][file.path] = file.size
+            updateProgress(dirName, total: total)
+            return
+        }
+
+        let downloader = DirectDownloader()
+        downloaders[dirName, default: []].append(downloader)
+        try await downloader.download(
+            from: url, to: destination, expectedSize: file.size
+        ) { [weak self] received, _ in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.liveBytes[dirName, default: [:]][file.path] = received
+                self.updateProgress(dirName, total: total)
+            }
+        }
+        liveBytes[dirName, default: [:]][file.path] = file.size
+        updateProgress(dirName, total: total)
+    }
+
+    /// Recompute aggregate progress + throughput from the live per-file byte
+    /// counts and a short trailing sample window.
+    private func updateProgress(_ id: String, total: Int64) {
+        let received = liveBytes[id]?.values.reduce(0, +) ?? 0
+
+        let now = CFAbsoluteTimeGetCurrent()
+        var window = speedSamples[id] ?? []
+        window.append((now, received))
+        window.removeAll { now - $0.t > 3 }  // ~3s trailing window
+        speedSamples[id] = window
+
+        var speed: Double?
+        var eta: Double?
+        if let first = window.first, window.count > 1, now - first.t > 0.001 {
+            let bps = Double(received - first.bytes) / (now - first.t)
+            if bps > 0 {
+                speed = bps
+                if total > received { eta = Double(total - received) / bps }
+            }
+        }
+
         let fraction = total > 0 ? min(1.0, Double(received) / Double(total)) : 0
         states[id] = .downloading(progress: fraction)
         metrics[id] = ModelDownloadService.DownloadMetrics(
-            bytesReceived: received, totalBytes: total, bytesPerSecond: nil, etaSeconds: nil)
+            bytesReceived: received, totalBytes: total, bytesPerSecond: speed, etaSeconds: eta)
     }
 }
