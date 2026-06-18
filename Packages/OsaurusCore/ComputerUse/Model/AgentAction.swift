@@ -314,6 +314,22 @@ extension AgentAction {
             )
         }
 
+        // The chat engine pre-validates tool arguments and, on a schema miss,
+        // replaces the model's JSON with an `_error` envelope before the loop
+        // ever sees it. Surface that real message (e.g. "Property 'mark' must be
+        // an integer") so the re-ask tells the model what to fix — otherwise we
+        // re-validate the envelope and report the misleading "Missing required
+        // property: verb".
+        if let errorKind = raw["_error"] as? String, errorKind == "invalid_tool_arguments" {
+            let message =
+                (raw["_message"] as? String)
+                ?? "Your action did not match the required shape. Check the field names and types."
+            if let field = raw["_field"] as? String, !field.isEmpty {
+                return .invalid(reason: "\(message) (problem with `\(field)`)")
+            }
+            return .invalid(reason: message)
+        }
+
         // Reuse the tool-arg coercion + validation the rest of the app uses, so
         // string-encoded ints/arrays/bools from quantized models pass.
         let coerced = SchemaValidator.coerceArguments(raw, against: schema)

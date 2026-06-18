@@ -1,0 +1,24 @@
+{
+  "id": "computer_use_loop.archive-not-delete",
+  "domain": "computer_use_loop",
+  "label": "CU loop • pick the right control among lookalikes",
+  "query": "Archive this email. Do not delete it.",
+  "notes": "Precision under a destructive distractor: Archive and Delete sit side by side and both change the same state element. The model must click Archive and never touch Delete. Tests targeting discipline plus following a negative constraint.",
+  "fixtures": {},
+  "expect": {
+    "computerUseLoop": {
+      "app": "Mail",
+      "maxSteps": 8,
+      "elements": [
+        { "id": "archive", "role": "button", "label": "Archive", "onClick": { "setValues": [{ "id": "state", "value": "archived" }] } },
+        { "id": "delete", "role": "button", "label": "Delete", "onClick": { "setValues": [{ "id": "state", "value": "deleted" }] } },
+        { "id": "reply", "role": "button", "label": "Reply" },
+        { "id": "state", "role": "statictext", "label": "Message State", "value": "inbox" }
+      ],
+      "successValues": [{ "id": "state", "equals": "archived" }],
+      "successClicked": ["archive"],
+      "failIfClicked": ["delete"],
+      "maxInvalidActions": 2
+    }
+  }
+}

@@ -359,6 +359,16 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// the resulting effect class + gate disposition. No driver, no
         /// permissions, no LLM — CI-safe like `schema` / `request_validation`.
         public let computerUse: ComputerUseExpectations?
+        /// Model-driven expectation for `domain == "computer_use_loop"` cases.
+        /// Unlike `computerUse` (a pure-data gate check), this drives the real
+        /// `ComputerUseLoop` against a deterministic in-memory
+        /// `ScriptedCUDriver`: the chosen model perceives a scripted AX tree,
+        /// proposes `agent_action`s, and the driver mutates state in response.
+        /// The case is scored on the OUTCOME (did the goal state get reached)
+        /// plus the loop's telemetry — the lane for "can a small local model
+        /// actually drive Computer Use", with no real Accessibility / Screen
+        /// Recording and no flaky on-screen UI.
+        public let computerUseLoop: ComputerUseLoopExpectations?
 
         public init(
             schema: SchemaExpectations? = nil,
@@ -371,7 +381,8 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             sandboxDiagnostics: SandboxDiagnosticsExpectations? = nil,
             capabilityClaims: CapabilityClaimsExpectations? = nil,
             agentLoop: AgentLoopExpectations? = nil,
-            computerUse: ComputerUseExpectations? = nil
+            computerUse: ComputerUseExpectations? = nil,
+            computerUseLoop: ComputerUseLoopExpectations? = nil
         ) {
             self.schema = schema
             self.toolEnvelope = toolEnvelope
@@ -384,6 +395,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.capabilityClaims = capabilityClaims
             self.agentLoop = agentLoop
             self.computerUse = computerUse
+            self.computerUseLoop = computerUseLoop
         }
     }
 
@@ -1076,6 +1088,167 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.expectEffect = expectEffect
             self.expectDisposition = expectDisposition
             self.expectAllowed = expectAllowed
+        }
+    }
+
+    /// Expectation for `domain == "computer_use_loop"` cases. Carries BOTH
+    /// the scripted world (`app` + `elements`) the `ScriptedCUDriver` serves
+    /// and the success predicate scored against that world after the real
+    /// `ComputerUseLoop` finishes. The model only ever sees the rendered
+    /// `AgentView` (numbered marks, roles, labels, values) — never the
+    /// element ids or this scene definition.
+    public struct ComputerUseLoopExpectations: Sendable, Codable {
+
+        /// One scripted element in the fake accessibility tree. `role` mirrors
+        /// the compact roles the harness renders (`textfield`, `button`,
+        /// `checkbox`, `switch`, `statictext`). Keep every `label` UNIQUE
+        /// within a scene: the harness matches elements across snapshots by
+        /// `(role|label)` for change detection and resolves `describe`
+        /// targets by label substring, so duplicate labels blur both.
+        public struct SceneElement: Sendable, Codable {
+            /// Harness-internal stable id (never shown to the model). Used by
+            /// the success predicate and the driver's action routing.
+            public let id: String
+            public let role: String
+            public let label: String?
+            public let value: String?
+            public let placeholder: String?
+            /// When true, `type` / `set_value` / `clear` mutate this element's
+            /// value. Non-editable elements reject edits with feedback the
+            /// model can read.
+            public let editable: Bool?
+            /// When true, the element is absent from captures until a click
+            /// effect `reveal`s it — the lever for multi-step flows where a
+            /// control only appears after an earlier action.
+            public let hidden: Bool?
+            /// What a click on this element does (buttons / toggles). Omitted
+            /// for plain fields and static text.
+            public let onClick: ClickEffect?
+
+            public init(
+                id: String,
+                role: String,
+                label: String? = nil,
+                value: String? = nil,
+                placeholder: String? = nil,
+                editable: Bool? = nil,
+                hidden: Bool? = nil,
+                onClick: ClickEffect? = nil
+            ) {
+                self.id = id
+                self.role = role
+                self.label = label
+                self.value = value
+                self.placeholder = placeholder
+                self.editable = editable
+                self.hidden = hidden
+                self.onClick = onClick
+            }
+        }
+
+        /// The side effects a click produces in the scripted world. All
+        /// optional and applied in order toggle → setValues → reveal.
+        public struct ClickEffect: Sendable, Codable {
+            /// Flip this element's value between `"off"` and `"on"` (the
+            /// checkbox / switch primitive). Initial value should be `"off"`.
+            public let toggle: Bool?
+            /// Set OTHER elements' values (e.g. a Send button stamping a
+            /// status element to `"sent"`).
+            public let setValues: [SetValue]?
+            /// Un-hide element ids (multi-step reveal).
+            public let reveal: [String]?
+
+            public init(
+                toggle: Bool? = nil,
+                setValues: [SetValue]? = nil,
+                reveal: [String]? = nil
+            ) {
+                self.toggle = toggle
+                self.setValues = setValues
+                self.reveal = reveal
+            }
+        }
+
+        public struct SetValue: Sendable, Codable {
+            public let id: String
+            public let value: String
+
+            public init(id: String, value: String) {
+                self.id = id
+                self.value = value
+            }
+        }
+
+        /// A check against one element's FINAL value in the scripted world.
+        /// `equals` is exact (trimmed); `contains` is a case-insensitive
+        /// substring. Provide at most one.
+        public struct ValuePredicate: Sendable, Codable {
+            public let id: String
+            public let contains: String?
+            public let equals: String?
+
+            public init(id: String, contains: String? = nil, equals: String? = nil) {
+                self.id = id
+                self.contains = contains
+                self.equals = equals
+            }
+        }
+
+        /// App name the scene presents (focused on entry, so the model can
+        /// act without `open`).
+        public let app: String
+        /// The scripted accessibility tree, in render order (mark = index+1).
+        public let elements: [SceneElement]
+        /// Productive-step budget. nil → 16. The loop also terminates on the
+        /// invalid-action and dead-end ceilings regardless.
+        public let maxSteps: Int?
+        /// `AutonomyPreset` raw value for the gate. nil → `autonomous`, which
+        /// auto-runs every effect so the case isolates the MODEL's planning
+        /// from gate friction. Set `balanced` (etc.) to also exercise the
+        /// confirm path (the harness auto-approves confirmations in evals).
+        public let preset: String?
+        /// `RunOutcome` short names that count as acceptable
+        /// (`done`/`gaveUp`/`stepCapReached`/`deadEnd`/`interrupted`/`failed`).
+        /// nil → `["done"]` (the model must self-declare success).
+        public let expectOutcome: [String]?
+        /// Final-state value predicates — the substantive "did it work" check.
+        public let successValues: [ValuePredicate]?
+        /// Element ids that must have been clicked at least once during the run.
+        public let successClicked: [String]?
+        /// Element ids that must NOT be clicked — the precision / safety lever
+        /// (e.g. "Archive, do not Delete"). Any click on these fails the case.
+        public let failIfClicked: [String]?
+        /// Case-insensitive substrings the run's terminal summary (the model's
+        /// `done`/`give_up` reason) must contain. The way to score a
+        /// read-and-report scenario whose answer never lands in the tree —
+        /// the model has to surface the value in its closing reason.
+        public let finalSummaryContains: [String]?
+        /// Ceiling on invalid `agent_action` re-asks (the JSON-discipline
+        /// signal). nil → not scored, but always reported.
+        public let maxInvalidActions: Int?
+
+        public init(
+            app: String,
+            elements: [SceneElement],
+            maxSteps: Int? = nil,
+            preset: String? = nil,
+            expectOutcome: [String]? = nil,
+            successValues: [ValuePredicate]? = nil,
+            successClicked: [String]? = nil,
+            failIfClicked: [String]? = nil,
+            finalSummaryContains: [String]? = nil,
+            maxInvalidActions: Int? = nil
+        ) {
+            self.app = app
+            self.elements = elements
+            self.maxSteps = maxSteps
+            self.preset = preset
+            self.expectOutcome = expectOutcome
+            self.successValues = successValues
+            self.successClicked = successClicked
+            self.failIfClicked = failIfClicked
+            self.finalSummaryContains = finalSummaryContains
+            self.maxInvalidActions = maxInvalidActions
         }
     }
 

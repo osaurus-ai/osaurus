@@ -144,6 +144,8 @@ public enum EvalRunner {
             return runRequestValidationCase(testCase, modelId: modelId)
         case "computer_use":
             return runComputerUseCase(testCase, modelId: modelId)
+        case "computer_use_loop":
+            return await runComputerUseLoopCase(testCase, modelId: modelId)
         case "capability_search":
             return await runCapabilitySearchCase(
                 testCase,

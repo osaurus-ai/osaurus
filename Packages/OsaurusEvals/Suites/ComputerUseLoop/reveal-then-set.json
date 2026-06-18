@@ -1,0 +1,21 @@
+{
+  "id": "computer_use_loop.reveal-then-set",
+  "domain": "computer_use_loop",
+  "label": "CU loop • reveal a hidden control, then set it",
+  "query": "In System Settings, open the Advanced section and set the Proxy Host to 'localhost'.",
+  "notes": "Multi-step discovery: the Proxy Host field does not exist until the model clicks 'Show Advanced', which reveals it. Tests that the model acts to expose a control, re-perceives, and then targets the newly-appeared field — not give up because the target wasn't visible at step 0.",
+  "fixtures": {},
+  "expect": {
+    "computerUseLoop": {
+      "app": "System Settings",
+      "maxSteps": 14,
+      "elements": [
+        { "id": "showadvanced", "role": "button", "label": "Show Advanced", "onClick": { "reveal": ["proxyhost"] } },
+        { "id": "proxyhost", "role": "textfield", "label": "Proxy Host", "value": "", "placeholder": "host", "editable": true, "hidden": true }
+      ],
+      "successValues": [{ "id": "proxyhost", "contains": "localhost" }],
+      "successClicked": ["showadvanced"],
+      "maxInvalidActions": 3
+    }
+  }
+}
