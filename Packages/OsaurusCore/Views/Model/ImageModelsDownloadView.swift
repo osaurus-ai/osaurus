@@ -4,8 +4,9 @@
 //
 //  The "Images" tab of the Models window: stage on-device image-generation
 //  bundles (vMLXFlux / mflux) so they become selectable in the chat model
-//  picker. Rendered as a card grid matching the other Models tabs. Curated
-//  models download in place; arbitrary image repos are added via the global
+//  picker. Renders image models through the same `ModelRowView` card the
+//  On Device / Catalog tabs use, so the grid is visually identical. Curated
+//  models download on tap; arbitrary image repos are added via the global
 //  Import button, which auto-detects image bundles and routes them here.
 //
 
@@ -24,49 +25,45 @@ struct ImageModelsDownloadView: View {
 
     /// One card per image model: installed bundles first, then curated
     /// suggestions not yet on disk.
-    private struct Row: Identifiable {
+    private struct Card: Identifiable {
         let id: String
-        let title: String
-        let subtitle: String
-        let note: String?
-        /// Download source; `nil` for installed-only rows (no re-download).
+        let content: ModelCardContent
+        /// Download source; `nil` for installed-only rows.
         let repoId: String?
-        let installed: Bool
-        let blockedReason: String?
+        let displayName: String
     }
 
-    private var rows: [Row] {
-        var result: [Row] = []
+    private var cards: [Card] {
+        var out: [Card] = []
         var seen = Set<String>()
         for model in installed {
             seen.insert(model.id)
-            result.append(
-                Row(
-                    id: model.id, title: model.displayName, subtitle: model.id, note: nil,
-                    repoId: nil, installed: true,
-                    blockedReason: model.ready ? nil : model.blockedReasons.first))
+            out.append(
+                Card(
+                    id: model.id, content: content(forInstalled: model), repoId: nil,
+                    displayName: model.displayName))
         }
         for entry in ImageModelDownloadService.catalog where !seen.contains(entry.id) {
-            result.append(
-                Row(
-                    id: entry.id, title: entry.displayName, subtitle: entry.repoId,
-                    note: entry.note, repoId: entry.repoId, installed: false, blockedReason: nil))
+            out.append(
+                Card(
+                    id: entry.id, content: content(forCatalog: entry), repoId: entry.repoId,
+                    displayName: entry.displayName))
         }
-        return result
+        return out
     }
 
+    // Match the catalog grid: adaptive columns (≥260) with 12pt column and
+    // 20pt row spacing.
     private let columns = [GridItem(.adaptive(minimum: 260), spacing: 12, alignment: .top)]
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                hint
-                LazyVGrid(columns: columns, spacing: 16) {
-                    ForEach(rows) { card($0) }
-                }
+            LazyVGrid(columns: columns, spacing: 20) {
+                ForEach(cards) { card($0) }
             }
-            .padding(24)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 24)
+            .padding(.top, 12)
+            .padding(.bottom, 24)
         }
         .task { await refreshInstalled() }
         .onReceive(NotificationCenter.default.publisher(for: .localModelsChanged)) { _ in
@@ -74,108 +71,80 @@ struct ImageModelsDownloadView: View {
         }
     }
 
-    private var hint: some View {
-        Text(
-            "Download a model, then pick it in the chat model selector to generate images. Use Import above to add any Hugging Face image repo.",
-            bundle: .module
-        )
-        .font(.system(size: 12))
-        .foregroundColor(theme.secondaryText)
-        .fixedSize(horizontal: false, vertical: true)
-    }
-
-    private func card(_ row: Row) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Image(systemName: "photo")
-                    .font(.system(size: 14))
-                    .foregroundColor(theme.accentColor)
-                Text(row.title)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-                    .lineLimit(1)
-                Spacer(minLength: 0)
-            }
-            Text(row.subtitle)
-                .font(.system(size: 11, design: .monospaced))
-                .foregroundColor(theme.tertiaryText)
-                .lineLimit(1)
-            if let note = row.note {
-                Text(note).font(.system(size: 11)).foregroundColor(theme.secondaryText)
-            }
-            if let blocked = row.blockedReason {
-                Text(blocked).font(.system(size: 11)).foregroundColor(.orange).lineLimit(2)
-            }
-
-            Spacer(minLength: 6)
-
-            actionRow(row)
-
-            if case .downloading = state(row.id) {
-                progressStrip(id: row.id)
-            } else if case .failed(let error) = state(row.id) {
-                Text(error).font(.system(size: 11)).foregroundColor(.red).lineLimit(2)
-            }
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity, minHeight: 124, alignment: .topLeading)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12).stroke(theme.cardBorder, lineWidth: 1))
+    private func card(_ card: Card) -> some View {
+        ModelRowView(
+            content: card.content,
+            downloadState: state(card.id),
+            metrics: downloads.metrics[card.id],
+            onViewDetails: { tap(card) },
+            onCancel: { downloads.cancel(card.id) }
         )
     }
 
-    @ViewBuilder
-    private func actionRow(_ row: Row) -> some View {
-        if row.installed {
-            installedBadge(attention: row.blockedReason != nil)
-        } else if case .downloading = state(row.id) {
-            Button(role: .destructive) { downloads.cancel(row.id) } label: {
-                Text("Cancel", bundle: .module)
-                    .font(.system(size: 12, weight: .medium))
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.bordered)
-        } else if downloads.isInstalled(row.id) || state(row.id) == .completed {
-            installedBadge(attention: false)
-        } else if let repoId = row.repoId {
-            Button { downloads.download(repoId: repoId, displayName: row.title) } label: {
-                Text("Download", bundle: .module)
-                    .font(.system(size: 12, weight: .semibold))
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.borderedProminent)
-        }
+    /// Card tap starts the download for a not-yet-installed curated model.
+    /// Installed bundles and in-flight downloads are no-ops (image models have
+    /// no detail sheet).
+    private func tap(_ card: Card) {
+        guard let repoId = card.repoId else { return }
+        if downloads.isInstalled(card.id) { return }
+        if case .downloading = state(card.id) { return }
+        downloads.download(repoId: repoId, displayName: card.displayName)
     }
 
-    private func installedBadge(attention: Bool) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: attention ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
-                .font(.system(size: 12))
-                .foregroundColor(attention ? .orange : .green)
-            Text(attention ? "Needs attention" : "Installed", bundle: .module)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(attention ? .orange : .green)
-        }
+    // MARK: - Card content
+
+    private func content(forInstalled model: ImageModelInfo) -> ModelCardContent {
+        ModelCardContent(
+            name: model.displayName,
+            description: model.ready
+                ? L("On-device image model")
+                : (model.blockedReasons.first ?? L("Not ready")),
+            gradientColors: ModelCardGradient.colors(
+                family: model.canonicalName ?? model.id, id: model.id),
+            isTopSuggestion: false,
+            isDownloaded: true,
+            useCase: nil,
+            compatibility: .unknown,
+            type: .image,
+            size: model.totalBytes > 0
+                ? ByteCountFormatter.string(fromByteCount: Int64(model.totalBytes), countStyle: .file)
+                : nil,
+            params: nil,
+            quant: quantText(bits: model.quantizationBits, id: model.id),
+            downloadsText: nil,
+            releaseText: nil
+        )
     }
 
-    private func progressStrip(id: String) -> some View {
-        let currentState = state(id)
-        let fraction: Double = {
-            if case .downloading(let p) = currentState { return p }
-            return 0
-        }()
-        return VStack(alignment: .leading, spacing: 4) {
-            ProgressView(value: fraction)
-            if let line = downloads.metrics[id]?.formattedLine {
-                Text(line).font(.system(size: 11)).foregroundColor(theme.secondaryText).lineLimit(1)
-            } else {
-                Text("\(Int(fraction * 100))%").font(.system(size: 11)).foregroundColor(
-                    theme.secondaryText)
-            }
-        }
+    private func content(forCatalog entry: ImageModelDownload) -> ModelCardContent {
+        ModelCardContent(
+            name: entry.displayName,
+            description: entry.note ?? "",
+            gradientColors: ModelCardGradient.colors(family: entry.id, id: entry.id),
+            isTopSuggestion: false,
+            isDownloaded: false,
+            useCase: nil,
+            compatibility: .unknown,
+            type: .image,
+            size: nil,
+            params: nil,
+            quant: quantText(bits: nil, id: entry.repoId),
+            downloadsText: nil,
+            releaseText: nil
+        )
+    }
+
+    /// Best-effort quantization label: explicit bit width when known, else
+    /// parsed from the repo/dir name (fp8, NF4, 4/6/8-bit).
+    private func quantText(bits: Int?, id: String) -> String? {
+        if let bits { return "\(bits)-bit" }
+        let lower = id.lowercased()
+        if lower.contains("fp8") { return "FP8" }
+        if lower.contains("nf4") { return "NF4" }
+        if lower.contains("8bit") || lower.contains("8-bit") { return "8-bit" }
+        if lower.contains("6bit") || lower.contains("6-bit") { return "6-bit" }
+        if lower.contains("4bit") || lower.contains("4-bit") { return "4-bit" }
+        return nil
     }
 
     private func refreshInstalled() async {

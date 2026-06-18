@@ -657,10 +657,9 @@ struct ModelDownloadView: View {
     /// stays identical.
     private func modelCard(for model: MLXModel) -> some View {
         ModelRowView(
-            model: model,
+            content: ModelCardContent(model: model, totalMemoryGB: systemMonitor.totalMemoryGB),
             downloadState: modelManager.effectiveDownloadState(for: model),
             metrics: modelManager.downloadMetrics[model.id],
-            totalMemoryGB: systemMonitor.totalMemoryGB,
             onViewDetails: { modelToShowDetails = model },
             onCancel: { modelManager.cancelDownload(model.id) },
             onPause: { modelManager.pauseDownload(model.id) },
