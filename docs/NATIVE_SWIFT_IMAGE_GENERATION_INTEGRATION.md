@@ -87,6 +87,7 @@ The API proof artifacts are:
 
 ```text
 /tmp/osaurus-image-live-proof-20260618-osaurus-image-live/runtime-root/proof/api-matrix/summary.json
+/tmp/osaurus-image-live-proof-20260618-osaurus-image-live/runtime-root/proof/cancel-reload/summary.json
 /tmp/osaurus-image-live-proof-20260618-local/osaurus-image-api-contact-sheet.png
 ```
 
@@ -106,9 +107,24 @@ Result summary from the Osaurus API matrix:
 `/health` after the matrix was still healthy with `http_inflight=0`,
 `loaded=[]`, and `local_model_scan.status="finished"`. The API rows prove
 catalog exposure, model-kind rejection, mask rejection, generation artifact
-paths, and q8 edit artifact paths through Osaurus. They do not yet prove the
-foreground SwiftUI chat workflow, HTTP cancellation while denoise is in flight,
-or unload/reload/generate-again behavior.
+paths, and q8 edit artifact paths through Osaurus.
+
+The same app instance then passed the cancel/reload stress row:
+
+| Row | Result | Detail | App RSS |
+| --- | --- | --- | --- |
+| `qwen_stream_cancel_after_step` | Passed | `/v1/images/generations` streamed `queued`, `loading_model`, `step=1/20`, then `/v1/images/cancel` returned HTTP 200 and the stream emitted `cancelled` | 29,612,032,000 bytes |
+| `reload_zimage_1` | HTTP 200 | Z-Image Turbo after the cancellation row | 35,391,733,760 bytes |
+| `switch_flux` | HTTP 200 | Flux Schnell after Z-Image | 44,124,930,048 bytes |
+| `reload_zimage_2` | HTTP 200 | Z-Image Turbo after Flux | 44,189,745,152 bytes |
+
+`/health` after cancel/reload was still `status=healthy`, `http_inflight=0`,
+`loaded=[]`, and `local_model_scan.status="finished"`. The isolated
+`OSAURUS_TEST_ROOT` had degraded memory/tool database state because it did not
+contain valid SQLCipher databases, but image generation, cancellation, unload,
+reload, and model switching all completed through the live HTTP service.
+
+These rows do not yet prove the foreground SwiftUI chat workflow.
 
 ## Osaurus wiring
 
@@ -137,12 +153,13 @@ exact bundle must pass all of these:
    are manually inspected or scored by a VLM/CLIP-style quality check.
 4. The Osaurus API path can cold-load, generate, cancel, unload, reload, and
    generate again without stale state or duplicate engines.
-5. Generation-only models reject `/v1/images/edits` with a clear 400, while
-   edit-capable models accept source image and mask payloads.
+5. Generation-only models reject `/v1/images/edits` with a clear 400.
+   Edit-capable models accept source image payloads; mask payloads are rejected
+   with a clear 501 until vMLX mask editing is implemented.
 6. The app and HTTP API agree on model capabilities, error wording, and output
    artifact paths.
 
-Until the remaining UI, cancellation, and unload/reload proof rows are complete,
-Osaurus documentation must describe native Swift image generation as wired,
-source-proven, and HTTP API live-proven on this branch, but not release-cleared
-for production use.
+Until the remaining foreground SwiftUI workflow proof is complete, Osaurus
+documentation must describe native Swift image generation as wired,
+source-proven, and HTTP API live-proven on this branch, but not fully
+release-cleared for production use.

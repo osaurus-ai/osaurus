@@ -4,7 +4,8 @@ Branch:
 
 ```text
 feat/image-generation-vmlxflux
-06920034f79273b5cbbf973e908d959a4ac947cd
+06920034f79273b5cbbf973e908d959a4ac947cd built for live app proof
+4194273c4a6afeaca3dce5ff98675fcc6884d141 documented API proof before cancel/reload doc update
 ```
 
 vMLX pin:
@@ -41,6 +42,7 @@ Artifacts:
 
 ```text
 /tmp/osaurus-image-live-proof-20260618-osaurus-image-live/runtime-root/proof/api-matrix/summary.json
+/tmp/osaurus-image-live-proof-20260618-osaurus-image-live/runtime-root/proof/cancel-reload/summary.json
 /tmp/osaurus-image-live-proof-20260618-osaurus-image-live/runtime-root/generated-images/
 /tmp/osaurus-image-live-proof-20260618-local/osaurus-image-api-contact-sheet.png
 ```
@@ -74,8 +76,29 @@ Visual notes:
 - Qwen edit q8 multi produced a combined apple and teapot scene.
 - Ideogram generated a poster-like image but still has the known text/poster artifact; treat as API-live with quality caveat, not production-clean text rendering.
 
+Cancel/reload rows:
+
+| Row | Result | Detail | App RSS |
+| --- | --- | --- | --- |
+| `qwen_stream_cancel_after_step` | Passed | streamed `queued`, `loading_model`, `step=1/20`, then `/v1/images/cancel` returned HTTP 200 and the stream emitted `cancelled` | 29,612,032,000 bytes |
+| `reload_zimage_1` | HTTP 200 | Z-Image Turbo after the cancellation row | 35,391,733,760 bytes |
+| `switch_flux` | HTTP 200 | Flux Schnell after Z-Image | 44,124,930,048 bytes |
+| `reload_zimage_2` | HTTP 200 | Z-Image Turbo after Flux | 44,189,745,152 bytes |
+
+Post cancel/reload health:
+
+```text
+status=healthy
+http_inflight=0
+loaded=[]
+local_model_scan.status=finished
+```
+
+Caveat: this proof used an isolated `OSAURUS_TEST_ROOT`; its memory/tool
+databases were degraded because the scratch root did not contain valid SQLCipher
+databases. The image API lanes remained healthy and completed the generation,
+edit, reject, cancellation, and reload/switch rows.
+
 Remaining gates:
 
 - Foreground SwiftUI chat workflow.
-- HTTP cancellation while denoise is in flight.
-- Unload/reload/generate-again behavior.
