@@ -26,6 +26,7 @@ struct EvalBootstrapPlanTests {
         // A selected case that requires an installed plugin auto-loads plugins
         // (which also brings up the search indices), so no extra index scope.
         #expect(plan == EvalBootstrapPlan(loadInstalledPlugins: true, initializeSearchIndices: false))
+        #expect(plan.usesIsolatedSearchStorage)
     }
 
     @Test func capabilitySearchInitializesIndicesWithoutPluginLoadingByDefault() {
@@ -172,7 +173,7 @@ struct EvalBootstrapPlanTests {
     }
 
     @MainActor
-    @Test func nonIsolatedBootstrapDoesNotReplaceExistingRootOverride() {
+    @Test func noWorkBootstrapDoesNotReplaceExistingRootOverride() {
         let previousRoot = OsaurusPaths.overrideRoot
         let existingRoot = FileManager.default.temporaryDirectory
             .appendingPathComponent("osaurus-evals-existing-\(UUID().uuidString)", isDirectory: true)
@@ -182,7 +183,7 @@ struct EvalBootstrapPlanTests {
         }
 
         let root = EvalBootstrap.configureIsolatedSearchStorageIfNeeded(
-            for: EvalBootstrapPlan(loadInstalledPlugins: true, initializeSearchIndices: false)
+            for: EvalBootstrapPlan(loadInstalledPlugins: false, initializeSearchIndices: false)
         )
 
         #expect(root == nil)
