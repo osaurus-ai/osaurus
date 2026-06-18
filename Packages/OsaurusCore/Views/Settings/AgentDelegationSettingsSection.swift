@@ -28,6 +28,17 @@ struct AgentDelegationSettingsSection: View {
     var body: some View {
         SettingsSection(title: "Agent Delegation", icon: "person.2.wave.2") {
             VStack(alignment: .leading, spacing: 16) {
+                SettingsSubsection(label: "Availability") {
+                    SettingsToggle(
+                        title: "Enable Agent Delegation",
+                        description:
+                            "Expose delegated local helper jobs to chat models. When off, delegate tools are removed from the model tool list.",
+                        isOn: $configuration.agentDelegationEnabled
+                    )
+                }
+
+                SettingsDivider()
+
                 SettingsSubsection(label: "Cloud Cost Saver") {
                     VStack(alignment: .leading, spacing: 12) {
                         SettingsToggle(
@@ -48,12 +59,20 @@ struct AgentDelegationSettingsSection: View {
                             emptyLabel: "Choose automatically"
                         )
                     }
+                    .disabled(!configuration.agentDelegationEnabled)
                 }
 
                 SettingsDivider()
 
                 SettingsSubsection(label: "Image Jobs") {
                     VStack(alignment: .leading, spacing: 12) {
+                        SettingsToggle(
+                            title: "Enable Chat Image Jobs",
+                            description:
+                                "Expose image generation and image editing tools to chat models. Manual image panels keep their own loading behavior.",
+                            isOn: $configuration.imageDelegationEnabled
+                        )
+
                         modelPicker(
                             title: "Default Image Generator",
                             selection: Binding(
@@ -76,6 +95,7 @@ struct AgentDelegationSettingsSection: View {
                             emptyLabel: "Choose automatically"
                         )
                     }
+                    .disabled(!configuration.agentDelegationEnabled)
                 }
 
                 SettingsDivider()

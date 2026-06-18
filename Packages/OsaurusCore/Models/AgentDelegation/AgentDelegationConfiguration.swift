@@ -121,7 +121,9 @@ struct AgentDelegationBudgets: Codable, Equatable, Sendable {
 }
 
 struct AgentDelegationConfiguration: Codable, Equatable, Sendable {
+    var agentDelegationEnabled: Bool
     var cloudTextDelegationEnabled: Bool
+    var imageDelegationEnabled: Bool
     var defaultLocalTextDelegateModelId: String?
     var defaultImageGenerationModelId: String?
     var defaultImageEditModelId: String?
@@ -132,7 +134,9 @@ struct AgentDelegationConfiguration: Codable, Equatable, Sendable {
     var budgets: AgentDelegationBudgets
 
     init(
+        agentDelegationEnabled: Bool = false,
         cloudTextDelegationEnabled: Bool = false,
+        imageDelegationEnabled: Bool = false,
         defaultLocalTextDelegateModelId: String? = nil,
         defaultImageGenerationModelId: String? = nil,
         defaultImageEditModelId: String? = nil,
@@ -142,7 +146,9 @@ struct AgentDelegationConfiguration: Codable, Equatable, Sendable {
         permissionDefaults: AgentDelegationPermissionDefaults = AgentDelegationPermissionDefaults(),
         budgets: AgentDelegationBudgets = AgentDelegationBudgets()
     ) {
+        self.agentDelegationEnabled = agentDelegationEnabled
         self.cloudTextDelegationEnabled = cloudTextDelegationEnabled
+        self.imageDelegationEnabled = imageDelegationEnabled
         self.defaultLocalTextDelegateModelId = defaultLocalTextDelegateModelId
         self.defaultImageGenerationModelId = defaultImageGenerationModelId
         self.defaultImageEditModelId = defaultImageEditModelId
@@ -155,9 +161,19 @@ struct AgentDelegationConfiguration: Codable, Equatable, Sendable {
 
     static let `default` = AgentDelegationConfiguration()
 
+    var localTextDelegationActive: Bool {
+        agentDelegationEnabled && cloudTextDelegationEnabled
+    }
+
+    var imageDelegationActive: Bool {
+        agentDelegationEnabled && imageDelegationEnabled
+    }
+
     var normalized: AgentDelegationConfiguration {
         AgentDelegationConfiguration(
+            agentDelegationEnabled: agentDelegationEnabled,
             cloudTextDelegationEnabled: cloudTextDelegationEnabled,
+            imageDelegationEnabled: imageDelegationEnabled,
             defaultLocalTextDelegateModelId: Self.normalizedModelId(defaultLocalTextDelegateModelId),
             defaultImageGenerationModelId: Self.normalizedModelId(defaultImageGenerationModelId),
             defaultImageEditModelId: Self.normalizedModelId(defaultImageEditModelId),
@@ -166,6 +182,56 @@ struct AgentDelegationConfiguration: Codable, Equatable, Sendable {
             sharingPolicy: sharingPolicy,
             permissionDefaults: permissionDefaults,
             budgets: budgets.normalized
+        )
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case agentDelegationEnabled
+        case cloudTextDelegationEnabled
+        case imageDelegationEnabled
+        case defaultLocalTextDelegateModelId
+        case defaultImageGenerationModelId
+        case defaultImageEditModelId
+        case textDelegateLoadPolicy
+        case imageJobLoadPolicy
+        case sharingPolicy
+        case permissionDefaults
+        case budgets
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            agentDelegationEnabled: try container.decodeIfPresent(Bool.self, forKey: .agentDelegationEnabled) ?? false,
+            cloudTextDelegationEnabled: try container.decodeIfPresent(Bool.self, forKey: .cloudTextDelegationEnabled) ?? false,
+            imageDelegationEnabled: try container.decodeIfPresent(Bool.self, forKey: .imageDelegationEnabled) ?? false,
+            defaultLocalTextDelegateModelId: try container.decodeIfPresent(
+                String.self,
+                forKey: .defaultLocalTextDelegateModelId
+            ),
+            defaultImageGenerationModelId: try container.decodeIfPresent(
+                String.self,
+                forKey: .defaultImageGenerationModelId
+            ),
+            defaultImageEditModelId: try container.decodeIfPresent(String.self, forKey: .defaultImageEditModelId),
+            textDelegateLoadPolicy: try container.decodeIfPresent(
+                AgentDelegationTextLoadPolicy.self,
+                forKey: .textDelegateLoadPolicy
+            ) ?? .unloadAfterJob,
+            imageJobLoadPolicy: try container.decodeIfPresent(
+                AgentDelegationImageLoadPolicy.self,
+                forKey: .imageJobLoadPolicy
+            ) ?? .agentSingleResidency,
+            sharingPolicy: try container.decodeIfPresent(
+                AgentDelegationSharingPolicy.self,
+                forKey: .sharingPolicy
+            ) ?? .compactResultOnly,
+            permissionDefaults: try container.decodeIfPresent(
+                AgentDelegationPermissionDefaults.self,
+                forKey: .permissionDefaults
+            ) ?? AgentDelegationPermissionDefaults(),
+            budgets: try container.decodeIfPresent(AgentDelegationBudgets.self, forKey: .budgets)
+                ?? AgentDelegationBudgets()
         )
     }
 

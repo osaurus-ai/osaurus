@@ -198,7 +198,7 @@ struct ContentBlockDisplayTests {
         assistant.toolCalls = [call]
         assistant.toolResults[call.id] = ToolEnvelope.success(
             tool: "image_generate",
-            text: Self.enrichedArtifactMarker(
+            text: try Self.enrichedArtifactMarker(
                 filename: "green-apple.png",
                 mimeType: "image/png",
                 hostPath: "/tmp/green-apple.png",

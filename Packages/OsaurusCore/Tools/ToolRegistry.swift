@@ -321,8 +321,10 @@ final class ToolRegistry: ObservableObject {
 
     /// Get specs for specific tools by name (ignores enabled state).
     func specs(forTools toolNames: [String]) -> [Tool] {
+        let delegationExcluded = agentDelegationExcludedToolNames()
         return toolNames.compactMap { name in
-            toolsByName[name]?.asOpenAITool()
+            guard !delegationExcluded.contains(name) else { return nil }
+            return toolsByName[name]?.asOpenAITool()
         }
     }
 
@@ -1244,6 +1246,8 @@ final class ToolRegistry: ObservableObject {
         Self.folderToolNames.union(builtInSandboxToolNames)
     }
 
+    static let agentDelegationImageToolNames: Set<String> = ["image_generate", "image_edit"]
+
     /// Read-only snapshot of the built-in sandbox tool names. Exposed so the
     /// composer's canonical-order helper can group them at the top of the
     /// `<tools>` block without reaching into private state.
@@ -1288,6 +1292,16 @@ final class ToolRegistry: ObservableObject {
         }
         if mode.usesHostFolderTools || mode.usesSandboxTools {
             excluded.formUnion(folderConflictingToolNames)
+        }
+        excluded.formUnion(agentDelegationExcludedToolNames())
+        return excluded
+    }
+
+    private func agentDelegationExcludedToolNames() -> Set<String> {
+        let config = AgentDelegationConfigurationStore.snapshot()
+        var excluded: Set<String> = []
+        if !config.imageDelegationActive {
+            excluded.formUnion(Self.agentDelegationImageToolNames)
         }
         return excluded
     }
@@ -1386,6 +1400,11 @@ final class ToolRegistry: ObservableObject {
         if dynamic, !isEnabled {
             appendReason(.disabled)
             details.append(L("globally disabled"))
+        }
+
+        if agentDelegationExcludedToolNames().contains(toolName) {
+            appendReason(.disabled)
+            details.append(L("agent delegation is disabled in Settings"))
         }
 
         if dynamic, let agentAllowedNames, !agentAllowedNames.contains(toolName) {

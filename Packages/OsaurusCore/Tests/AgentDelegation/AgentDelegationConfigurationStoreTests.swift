@@ -35,7 +35,9 @@ struct AgentDelegationConfigurationStoreTests {
 
         AgentDelegationConfigurationStore.setOverrideDirectory(sandbox)
         let config = AgentDelegationConfiguration(
+            agentDelegationEnabled: true,
             cloudTextDelegationEnabled: true,
+            imageDelegationEnabled: true,
             defaultLocalTextDelegateModelId: "  local-chat  ",
             defaultImageGenerationModelId: "flux",
             defaultImageEditModelId: "qwen-edit",
@@ -63,12 +65,37 @@ struct AgentDelegationConfigurationStoreTests {
 
         AgentDelegationConfigurationStore.invalidateSnapshot()
         let reloaded = AgentDelegationConfigurationStore.snapshot()
+        #expect(reloaded.agentDelegationEnabled == true)
         #expect(reloaded.cloudTextDelegationEnabled == true)
+        #expect(reloaded.imageDelegationEnabled == true)
+        #expect(reloaded.localTextDelegationActive == true)
+        #expect(reloaded.imageDelegationActive == true)
         #expect(reloaded.defaultLocalTextDelegateModelId == "local-chat")
         #expect(reloaded.budgets.maxDelegateTokens == 32_768)
         #expect(reloaded.budgets.maxDelegateTurns == 8)
         #expect(reloaded.budgets.maxToolCalls == 32)
         #expect(reloaded.budgets.maxElapsedSeconds == 1_800)
+    }
+
+    @Test("legacy files decode with safe delegation defaults")
+    func legacyFilesDecodeWithSafeDefaults() throws {
+        let data = Data(
+            """
+            {
+              "cloudTextDelegationEnabled": true,
+              "defaultImageGenerationModelId": "flux"
+            }
+            """.utf8
+        )
+
+        let decoded = try JSONDecoder().decode(AgentDelegationConfiguration.self, from: data)
+
+        #expect(decoded.agentDelegationEnabled == false)
+        #expect(decoded.cloudTextDelegationEnabled == true)
+        #expect(decoded.imageDelegationEnabled == false)
+        #expect(decoded.localTextDelegationActive == false)
+        #expect(decoded.imageDelegationActive == false)
+        #expect(decoded.defaultImageGenerationModelId == "flux")
     }
 
     @Test("override directory swaps between sandboxes")

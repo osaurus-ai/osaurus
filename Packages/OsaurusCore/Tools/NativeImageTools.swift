@@ -60,6 +60,14 @@ public final class NativeImageGenerateTool: OsaurusTool, @unchecked Sendable {
         guard case .value(let prompt) = promptReq else { return promptReq.failureEnvelope ?? "" }
 
         let config = AgentDelegationConfigurationStore.snapshot()
+        guard config.imageDelegationActive else {
+            return ToolEnvelope.failure(
+                kind: .rejected,
+                message: "Image generation is disabled in Agent Delegation settings.",
+                tool: name,
+                retryable: false
+            )
+        }
         if let denied = await permissionDenialIfNeeded(config: config, argumentsJSON: argumentsJSON) {
             return denied
         }
@@ -228,6 +236,14 @@ public final class NativeImageEditTool: OsaurusTool, @unchecked Sendable {
         guard case .value(let sourcePaths) = pathsReq else { return pathsReq.failureEnvelope ?? "" }
 
         let config = AgentDelegationConfigurationStore.snapshot()
+        guard config.imageDelegationActive else {
+            return ToolEnvelope.failure(
+                kind: .rejected,
+                message: "Image edit is disabled in Agent Delegation settings.",
+                tool: name,
+                retryable: false
+            )
+        }
         if let denied = await permissionDenialIfNeeded(config: config, argumentsJSON: argumentsJSON) {
             return denied
         }

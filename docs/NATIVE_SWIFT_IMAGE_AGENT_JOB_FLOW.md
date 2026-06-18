@@ -112,12 +112,10 @@ Already proven on this branch:
 
 Still not implemented:
 
-- No model-visible image job tool exists for the main chat agent.
-- No image-job coordinator unloads the active local LLM before an image job.
-- No automatic local LLM restore/reload is tied to a completed image job.
-- No agent-loop progress surface exists for image jobs.
-- No RAM-safety policy distinguishes agent-triggered image jobs from manual
-  image-panel use.
+- No live foreground Osaurus run has proven `image_generate` / `image_edit`
+  from an actual chat model turn.
+- No live foreground Osaurus run has proven the Settings toggles remove and
+  re-add delegation tools from the real prompt/tool payload.
 - No live e2e proof exists for local-chat-model unload -> image model load ->
   image output -> image unload -> local-chat-model reload -> final chat answer.
 
@@ -311,7 +309,11 @@ these controls inside prompts.
 
 Required controls:
 
+- Master Agent Delegation enablement. When this is off, delegated text/image
+  job guidance and tools must be absent from chat prompt/tool payloads.
 - Enable cloud-to-local text delegation.
+- Enable chat image generation/edit delegation separately from manual image
+  panels.
 - Default local text delegate model, sourced from downloaded local chat-capable
   `ModelPickerItem`s.
 - Default image generation model, sourced from downloaded image-capable models.
@@ -330,6 +332,25 @@ The model picker must use the existing downloaded-model catalog path. The
 system prompt must not include the full downloaded model list. The coordinator
 can resolve `"auto"` or a configured default at runtime and return a typed
 missing-model error if the selected model has been deleted or is incomplete.
+
+Current source status:
+
+- `AgentDelegationSettingsSection` exposes the master Agent Delegation toggle,
+  cloud-to-local text toggle, chat image-job toggle, default local
+  text/image/edit model pickers, load policies, permission defaults, sharing
+  policy, and budgets.
+- `AgentDelegationConfiguration` persists the master/image toggles with
+  backward-compatible decode defaults. Older config files decode with the
+  master toggle off, so old installs do not unexpectedly inject delegated tools
+  into prompts.
+- `ToolRegistry.alwaysLoadedSpecs` and `ToolRegistry.specs(forTools:)` hide
+  `image_generate` and `image_edit` unless both the master toggle and chat image
+  delegation toggle are on.
+- `ToolRegistry.availability(forTool:)` reports disabled delegation tools as
+  disabled with settings detail, and `capabilities_load` rejects them instead of
+  reintroducing disabled built-ins.
+- `NativeImageGenerateTool` and `NativeImageEditTool` reject stale direct
+  execution when image delegation is disabled.
 
 ## Permission Model
 
@@ -592,7 +613,9 @@ uname -a > "$IMAGE_AGENT_PROOF_ROOT/uname.txt"
 
 | Row | Status | How to test | Required evidence | Current blocker |
 | --- | --- | --- | --- | --- |
-| Agent Delegation settings save/load | SOURCE-GREEN, LIVE-RED | Open Settings, choose local text delegate, image gen model, image edit model, load policies, budgets, and permission defaults; quit/relaunch; confirm same values | `~/.osaurus/config/agent-delegation.json` from test root plus before/after screenshots | Source tests exist; no live UI persistence proof |
+| Agent Delegation settings save/load | SOURCE-GREEN, LIVE-RED | Open Settings, toggle master delegation, cloud text delegate, image delegate, choose local text delegate, image gen model, image edit model, load policies, budgets, and permission defaults; quit/relaunch; confirm same values | `~/.osaurus/config/agent-delegation.json` from test root plus before/after screenshots | Source tests cover persistence/decode; no live UI persistence proof |
+| Delegation off removes image tools from prompt/tool payload | SOURCE-WIRED, LIVE-RED | Turn master delegation off, start chat, inspect outgoing tool schemas/context budget | outbound request/tool schema log, context-budget screenshot | Source tests cover `ToolRegistry.alwaysLoadedSpecs`; no live provider payload proof |
+| Image delegation off blocks capability reload/stale execution | SOURCE-WIRED, LIVE-RED | Master on, image delegation off; ask model to load/call `image_generate` | disabled availability detail, rejected stale call envelope | Source tests cover registry/spec/direct execution; no live agent-loop proof |
 | Downloaded-model picker filtering | SOURCE-GREEN, LIVE-RED | Confirm local text picker shows chat-capable downloaded models only, image gen picker shows text-to-image models only, image edit picker shows edit-capable models only | screenshots plus `/images/models` JSON | Needs live app |
 | Permission `deny` for image generate | SOURCE-WIRED, LIVE-RED | Set image generate permission to `deny`; ask cloud/local chat to create an image | tool result envelope shows rejected, no image model load in logs | No live agent-loop run |
 | Permission `ask` for image generate | SOURCE-WIRED, LIVE-RED | Set image generate permission to `ask`; trigger tool; approve once | prompt screenshot, resulting job, saved policy state if "always allow" chosen | Prompt UI not live-proven |
@@ -633,7 +656,7 @@ uname -a > "$IMAGE_AGENT_PROOF_ROOT/uname.txt"
 | Local image prompt remains local | RED | With privacy filter enabled, ask cloud model to generate image using private text; verify local tool receives allowed local text/placeholders and cloud payload stays scrubbed | provider request log, tool args, output image | Needs exact live proof; placeholder behavior must be inspected |
 | Existing tool loop unaffected | RED | Run todo/complete/clarify/share_artifact/file read before and after image job | transcript, tool result envelopes | No post-image tool-loop regression run |
 | Prompt/schema budget stable | SOURCE-PARTIAL | Compare tool schema token estimate before/after; ensure no model catalog injected into prompt | prompt manifest or schema dump | Needs current prompt dump proof |
-| Artifact card/result shape | RED | Image tool result should render image artifact/card without requiring a second model-generated `share_artifact` call | screenshot, content blocks, artifact path | Tool returns paths; chat artifact post-processing not proven |
+| Artifact card/result shape | SOURCE-WIRED, LIVE-RED | Image tool result should render image artifact/card without requiring a second model-generated `share_artifact` call | screenshot, content blocks, artifact path | Source bridge/test added; no live chat screenshot |
 
 ### RAM And Stress Gates
 
@@ -673,6 +696,12 @@ Each completed live row should save:
   persistence, compatible downloaded-model candidate filtering, and a Settings
   card for default local text/image models, load policy, sharing policy,
   budgets, and ask/deny/always-allow defaults.
+- Agent delegation settings now include a safe-default master enablement toggle
+  and a separate chat image-job toggle. When disabled, image delegation tools
+  are filtered out of `alwaysLoadedSpecs`, direct `specs(forTools:)`, and
+  stale direct execution.
+- `capabilities_load` now rejects disabled delegation tools instead of allowing
+  a model to re-load disabled built-ins mid-session.
 - `ImageGenerationService.unload()` now exposes explicit image-model release
   for agent-triggered low-RAM jobs.
 - `NativeImageJobCoordinator` now resolves requested/configured/first-ready
@@ -694,6 +723,10 @@ Each completed live row should save:
   generated image paths plus progress metadata. `image_edit` accepts one to four
   explicit local source image paths and rejects unsupported extensions,
   non-file paths, and files above 80 MB.
+- `NativeImageToolArtifactBridge` promotes successful image tool output paths
+  into existing `SharedArtifact` chat artifacts. `ContentBlock` treats
+  `image_generate` / `image_edit` enriched results as artifact-card capable,
+  so the model should not need to call `share_artifact` for the generated image.
 - Local source verification on 2026-06-18: `swift build --package-path
   Packages/OsaurusCore` passed after these changes. Local `swift test
   --package-path Packages/OsaurusCore --filter NativeImageJobCoordinatorTests`
