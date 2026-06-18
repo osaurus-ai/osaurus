@@ -4,9 +4,9 @@
 //
 //  The "Images" tab of the Models window: stage on-device image-generation
 //  bundles (vMLXFlux / mflux) so they become selectable in the chat model
-//  picker. Curated mirrors plus a free-form "download any repo" field — any
-//  mflux repo works as long as its name carries a recognizable family token
-//  (z-image, flux1-schnell, qwen-image, ideogram, …).
+//  picker. Rendered as a card grid matching the other Models tabs. Curated
+//  models download in place; arbitrary image repos are added via the global
+//  Import button, which auto-detects image bundles and routes them here.
 //
 
 import SwiftUI
@@ -16,22 +16,56 @@ struct ImageModelsDownloadView: View {
     @Environment(\.theme) private var theme
 
     @State private var installed: [ImageModelInfo] = []
-    @State private var customRepoId: String = ""
 
     /// Non-optional download state for a bundle id (absent ⇒ not started).
     private func state(_ id: String) -> DownloadState {
         downloads.states[id] ?? .notStarted
     }
 
+    /// One card per image model: installed bundles first, then curated
+    /// suggestions not yet on disk.
+    private struct Row: Identifiable {
+        let id: String
+        let title: String
+        let subtitle: String
+        let note: String?
+        /// Download source; `nil` for installed-only rows (no re-download).
+        let repoId: String?
+        let installed: Bool
+        let blockedReason: String?
+    }
+
+    private var rows: [Row] {
+        var result: [Row] = []
+        var seen = Set<String>()
+        for model in installed {
+            seen.insert(model.id)
+            result.append(
+                Row(
+                    id: model.id, title: model.displayName, subtitle: model.id, note: nil,
+                    repoId: nil, installed: true,
+                    blockedReason: model.ready ? nil : model.blockedReasons.first))
+        }
+        for entry in ImageModelDownloadService.catalog where !seen.contains(entry.id) {
+            result.append(
+                Row(
+                    id: entry.id, title: entry.displayName, subtitle: entry.repoId,
+                    note: entry.note, repoId: entry.repoId, installed: false, blockedReason: nil))
+        }
+        return result
+    }
+
+    private let columns = [GridItem(.adaptive(minimum: 260), spacing: 12, alignment: .top)]
+
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                intro
-                customDownloadField
-                if !installed.isEmpty { installedSection }
-                catalogSection
+            VStack(alignment: .leading, spacing: 16) {
+                hint
+                LazyVGrid(columns: columns, spacing: 16) {
+                    ForEach(rows) { card($0) }
+                }
             }
-            .padding(20)
+            .padding(24)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .task { await refreshInstalled() }
@@ -40,119 +74,90 @@ struct ImageModelsDownloadView: View {
         }
     }
 
-    // MARK: - Sections
-
-    private var intro: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("On-device image models", bundle: .module)
-                .font(.system(size: 15, weight: .semibold))
-            Text(
-                "Download an image-generation bundle, then pick it in the chat model selector to generate images.",
-                bundle: .module
-            )
-            .font(.system(size: 12))
-            .foregroundColor(theme.secondaryText)
-        }
+    private var hint: some View {
+        Text(
+            "Download a model, then pick it in the chat model selector to generate images. Use Import above to add any Hugging Face image repo.",
+            bundle: .module
+        )
+        .font(.system(size: 12))
+        .foregroundColor(theme.secondaryText)
+        .fixedSize(horizontal: false, vertical: true)
     }
 
-    private var customDownloadField: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Download from Hugging Face", bundle: .module)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(theme.secondaryText)
-            HStack(spacing: 8) {
-                TextField("org/Model-mflux-4bit", text: $customRepoId)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(size: 13))
-                    .onSubmit { startCustomDownload() }
-                Button {
-                    startCustomDownload()
-                } label: {
-                    Text("Download", bundle: .module)
-                        .font(.system(size: 13, weight: .medium))
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(customRepoId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            }
-            if let row = activeRow(forRepoId: customRepoId) {
-                progressStrip(id: row)
-            }
-        }
-    }
-
-    private var installedSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Installed", bundle: .module)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(theme.secondaryText)
-            ForEach(installed, id: \.id) { model in
-                HStack(spacing: 8) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundColor(.green)
-                        .font(.system(size: 13))
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(model.displayName).font(.system(size: 13, weight: .medium))
-                        Text(model.id).font(.system(size: 11)).foregroundColor(theme.secondaryText)
-                    }
-                    Spacer()
-                    if !model.ready, let reason = model.blockedReasons.first {
-                        Text(reason).font(.system(size: 11)).foregroundColor(.orange)
-                    }
-                }
-                .padding(10)
-                .background(RoundedRectangle(cornerRadius: 8).fill(theme.tertiaryBackground.opacity(0.4)))
-            }
-        }
-    }
-
-    private var catalogSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Suggested", bundle: .module)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(theme.secondaryText)
-            ForEach(ImageModelDownloadService.catalog) { entry in
-                catalogRow(entry)
-            }
-        }
-    }
-
-    private func catalogRow(_ entry: ImageModelDownload) -> some View {
+    private func card(_ row: Row) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(entry.displayName).font(.system(size: 13, weight: .medium))
-                    Text(entry.repoId).font(.system(size: 11)).foregroundColor(theme.secondaryText)
-                    if let note = entry.note {
-                        Text(note).font(.system(size: 11)).foregroundColor(theme.secondaryText)
-                    }
-                }
-                Spacer()
-                trailingControl(for: entry.id, repoId: entry.repoId, displayName: entry.displayName)
+                Image(systemName: "photo")
+                    .font(.system(size: 14))
+                    .foregroundColor(theme.accentColor)
+                Text(row.title)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
             }
-            if case .downloading = state(entry.id) {
-                progressStrip(id: entry.id)
+            Text(row.subtitle)
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundColor(theme.tertiaryText)
+                .lineLimit(1)
+            if let note = row.note {
+                Text(note).font(.system(size: 11)).foregroundColor(theme.secondaryText)
+            }
+            if let blocked = row.blockedReason {
+                Text(blocked).font(.system(size: 11)).foregroundColor(.orange).lineLimit(2)
+            }
+
+            Spacer(minLength: 6)
+
+            actionRow(row)
+
+            if case .downloading = state(row.id) {
+                progressStrip(id: row.id)
+            } else if case .failed(let error) = state(row.id) {
+                Text(error).font(.system(size: 11)).foregroundColor(.red).lineLimit(2)
             }
         }
-        .padding(10)
-        .background(RoundedRectangle(cornerRadius: 8).fill(theme.tertiaryBackground.opacity(0.4)))
+        .padding(14)
+        .frame(maxWidth: .infinity, minHeight: 124, alignment: .topLeading)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(theme.cardBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12).stroke(theme.cardBorder, lineWidth: 1))
+        )
     }
 
     @ViewBuilder
-    private func trailingControl(for id: String, repoId: String, displayName: String) -> some View {
-        if downloads.isInstalled(id) || state(id) == .completed {
-            Text("Installed", bundle: .module)
+    private func actionRow(_ row: Row) -> some View {
+        if row.installed {
+            installedBadge(attention: row.blockedReason != nil)
+        } else if case .downloading = state(row.id) {
+            Button(role: .destructive) { downloads.cancel(row.id) } label: {
+                Text("Cancel", bundle: .module)
+                    .font(.system(size: 12, weight: .medium))
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+        } else if downloads.isInstalled(row.id) || state(row.id) == .completed {
+            installedBadge(attention: false)
+        } else if let repoId = row.repoId {
+            Button { downloads.download(repoId: repoId, displayName: row.title) } label: {
+                Text("Download", bundle: .module)
+                    .font(.system(size: 12, weight: .semibold))
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+        }
+    }
+
+    private func installedBadge(attention: Bool) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: attention ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
+                .font(.system(size: 12))
+                .foregroundColor(attention ? .orange : .green)
+            Text(attention ? "Needs attention" : "Installed", bundle: .module)
                 .font(.system(size: 12, weight: .medium))
-                .foregroundColor(.green)
-        } else if case .downloading = state(id) {
-            Button(role: .destructive) { downloads.cancel(id) } label: {
-                Text("Cancel", bundle: .module).font(.system(size: 12, weight: .medium))
-            }
-            .buttonStyle(.bordered)
-        } else {
-            Button { downloads.download(repoId: repoId, displayName: displayName) } label: {
-                Text("Download", bundle: .module).font(.system(size: 12, weight: .medium))
-            }
-            .buttonStyle(.bordered)
+                .foregroundColor(attention ? .orange : .green)
         }
     }
 
@@ -164,35 +169,13 @@ struct ImageModelsDownloadView: View {
         }()
         return VStack(alignment: .leading, spacing: 4) {
             ProgressView(value: fraction)
-            HStack {
-                if let line = downloads.metrics[id]?.formattedLine {
-                    Text(line).font(.system(size: 11)).foregroundColor(theme.secondaryText)
-                } else {
-                    Text("\(Int(fraction * 100))%").font(.system(size: 11)).foregroundColor(theme.secondaryText)
-                }
-                Spacer()
-                if case .failed(let error) = currentState {
-                    Text(error).font(.system(size: 11)).foregroundColor(.red).lineLimit(1)
-                }
+            if let line = downloads.metrics[id]?.formattedLine {
+                Text(line).font(.system(size: 11)).foregroundColor(theme.secondaryText).lineLimit(1)
+            } else {
+                Text("\(Int(fraction * 100))%").font(.system(size: 11)).foregroundColor(
+                    theme.secondaryText)
             }
         }
-    }
-
-    // MARK: - Helpers
-
-    private func activeRow(forRepoId repoId: String) -> String? {
-        let id = ImageModelDownload.directoryName(forRepoId: repoId.trimmingCharacters(in: .whitespacesAndNewlines))
-        guard !id.isEmpty else { return nil }
-        if case .downloading = state(id) { return id }
-        if case .failed = state(id) { return id }
-        return nil
-    }
-
-    private func startCustomDownload() {
-        let trimmed = customRepoId.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        let name = ImageModelDownload.directoryName(forRepoId: trimmed)
-        downloads.download(repoId: trimmed, displayName: name)
     }
 
     private func refreshInstalled() async {
