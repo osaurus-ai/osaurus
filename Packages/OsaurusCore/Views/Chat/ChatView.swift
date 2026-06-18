@@ -1780,6 +1780,34 @@ final class ChatSession: ObservableObject {
         }
     }
 
+    /// Convert a successful native image tool result into the same enriched
+    /// artifact envelope that `share_artifact` uses, so generated/edited images
+    /// render as first-class chat cards.
+    private func processNativeImageToolResult(
+        toolName: String,
+        toolResult: String
+    ) async -> String {
+        guard let sessionId else { return toolResult }
+        let contextId = sessionId.uuidString
+        let outcome = await Task.detached(priority: .userInitiated) {
+            NativeImageToolArtifactBridge.processFirstImageArtifact(
+                toolName: toolName,
+                toolResult: toolResult,
+                contextId: contextId,
+                contextType: .chat
+            )
+        }.value
+
+        guard let outcome else { return toolResult }
+        switch outcome {
+        case .success(let processed):
+            return ToolEnvelope.success(tool: toolName, text: processed.enrichedToolResult)
+        case .failure(let reason):
+            NSLog("[NativeImageToolArtifactBridge] artifact promotion failed for %@: %@", toolName, String(describing: reason))
+            return toolResult
+        }
+    }
+
     /// Translate a `SharedArtifact.ResolutionFailure` into a
     /// `ToolEnvelope.failure` whose `message` tells the model exactly
     /// what went wrong AND what to try next. The "next" hint is keyed on
@@ -3293,6 +3321,14 @@ final class ChatSession: ObservableObject {
                             resultText = await self.processShareArtifactResult(
                                 toolResult: resultText,
                                 executionMode: executionMode
+                            )
+                            if let artifact = SharedArtifact.fromEnrichedToolResult(resultText) {
+                                await PluginManager.shared.notifyArtifactHandlers(artifact: artifact)
+                            }
+                        } else if NativeImageToolArtifactBridge.isNativeImageTool(inv.toolName) {
+                            resultText = await self.processNativeImageToolResult(
+                                toolName: inv.toolName,
+                                toolResult: resultText
                             )
                             if let artifact = SharedArtifact.fromEnrichedToolResult(resultText) {
                                 await PluginManager.shared.notifyArtifactHandlers(artifact: artifact)

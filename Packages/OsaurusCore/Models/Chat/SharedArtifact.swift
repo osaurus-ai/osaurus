@@ -390,6 +390,78 @@ extension SharedArtifact {
         return .success(ProcessingResult(artifact: artifact, enrichedToolResult: enriched))
     }
 
+    /// Process a host file that Osaurus itself produced, such as a native image
+    /// generation output. This deliberately bypasses the model-controlled
+    /// `path` resolver used by `share_artifact`; callers must only pass paths
+    /// returned by trusted local services.
+    static func processTrustedLocalFileResult(
+        fileURL: URL,
+        filename requestedFilename: String? = nil,
+        mimeType requestedMimeType: String? = nil,
+        description: String? = nil,
+        contextId: String,
+        contextType: ArtifactContextType
+    ) -> Result<ProcessingResult, ResolutionFailure> {
+        let sourceURL = canonicalizedURL(fileURL)
+        let sourcePath = sourceURL.path
+        let filename = sanitizeArtifactFilename(requestedFilename ?? sourceURL.lastPathComponent)
+        let mimeType = requestedMimeType ?? SharedArtifact.mimeType(from: filename)
+
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: sourcePath, isDirectory: &isDir) else {
+            return .failure(.fileNotFound(path: sourcePath, searchedLocations: [sourcePath]))
+        }
+        guard !isDir.boolValue else {
+            return .failure(.copyFailed(source: sourcePath, reason: "native image result is a directory"))
+        }
+
+        let contextDir = OsaurusPaths.contextArtifactsDir(contextId: contextId)
+        OsaurusPaths.ensureExistsSilent(contextDir)
+        guard let destPath = resolveDestinationPath(filename: filename, contextDir: contextDir) else {
+            return .failure(.destinationRejected(filename: filename))
+        }
+
+        if FileManager.default.fileExists(atPath: destPath.path) {
+            try? FileManager.default.removeItem(at: destPath)
+        }
+        do {
+            try FileManager.default.copyItem(at: sourceURL, to: destPath)
+        } catch {
+            return .failure(.copyFailed(source: sourcePath, reason: error.localizedDescription))
+        }
+
+        let fileSize = (try? FileManager.default.attributesOfItem(atPath: destPath.path)[.size] as? Int) ?? 0
+        let artifact = SharedArtifact(
+            contextId: contextId,
+            contextType: contextType,
+            filename: filename,
+            mimeType: mimeType,
+            fileSize: fileSize,
+            hostPath: destPath.path,
+            description: description,
+            isFinalResult: false
+        )
+
+        var metadata: [String: Any] = [
+            "filename": filename,
+            "mime_type": mimeType,
+            "has_content": false,
+            "path": sourcePath,
+            "host_path": artifact.hostPath,
+            "context_id": contextId,
+            "context_type": contextType.rawValue,
+            "file_size": artifact.fileSize,
+        ]
+        if let description { metadata["description"] = description }
+
+        let markerText = makeMarkerText(metadata: metadata)
+        guard let parsed = parseMarkers(from: markerText) else {
+            return .failure(.markersMissing)
+        }
+        let enriched = rebuildToolResult(markerText, parsed: parsed, contentLines: [])
+        return .success(ProcessingResult(artifact: artifact, enrichedToolResult: enriched))
+    }
+
     /// Reconstructs a SharedArtifact from an enriched tool result string (for display).
     /// Only succeeds when the result has been enriched with host_path, context_id, etc.
     ///
@@ -625,5 +697,11 @@ extension SharedArtifact {
         }
 
         return prefix + inner + suffix
+    }
+
+    private static func makeMarkerText(metadata: [String: Any]) -> String {
+        let jsonData = try? JSONSerialization.data(withJSONObject: metadata, options: .osaurusCanonical)
+        let jsonLine = jsonData.flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+        return startMarker + jsonLine + endMarker
     }
 }

@@ -507,7 +507,7 @@ extension ContentBlock {
                     }
 
                     let result = turn.toolResults[call.id]
-                    if call.function.name == "share_artifact",
+                    if Self.isArtifactRenderingToolName(call.function.name),
                         let result,
                         let artifact = Self.parseSharedArtifactFromResult(result)
                     {
@@ -612,6 +612,10 @@ extension ContentBlock {
     /// Reconstructs a SharedArtifact from an enriched share_artifact tool result.
     private static func parseSharedArtifactFromResult(_ result: String) -> SharedArtifact? {
         SharedArtifact.fromEnrichedToolResult(result)
+    }
+
+    private static func isArtifactRenderingToolName(_ name: String) -> Bool {
+        name == "share_artifact" || NativeImageToolArtifactBridge.isNativeImageTool(name)
     }
 
     /// Parses a ChartSpec from a render_chart tool result marker.
