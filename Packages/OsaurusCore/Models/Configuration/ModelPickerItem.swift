@@ -99,6 +99,13 @@ struct ModelPickerItem: Identifiable, Hashable {
     /// filter the Osaurus tab by context limit; `nil` when unknown.
     let contextLength: Int?
 
+    /// Image-generation metadata. Nil for text/remote chat models.
+    let imageKind: String?
+    let imageCapabilities: ImageModelCapabilities?
+    let imageDefaultSteps: Int?
+    let imageDefaultGuidance: Float?
+    let imageReady: Bool
+
     init(
         id: String,
         displayName: String,
@@ -110,7 +117,12 @@ struct ModelPickerItem: Identifiable, Hashable {
         description: String? = nil,
         inputPriceMicroPerMTok: Int64? = nil,
         outputPriceMicroPerMTok: Int64? = nil,
-        contextLength: Int? = nil
+        contextLength: Int? = nil,
+        imageKind: String? = nil,
+        imageCapabilities: ImageModelCapabilities? = nil,
+        imageDefaultSteps: Int? = nil,
+        imageDefaultGuidance: Float? = nil,
+        imageReady: Bool = false
     ) {
         self.id = id
         self.displayName = displayName
@@ -123,6 +135,11 @@ struct ModelPickerItem: Identifiable, Hashable {
         self.inputPriceMicroPerMTok = inputPriceMicroPerMTok
         self.outputPriceMicroPerMTok = outputPriceMicroPerMTok
         self.contextLength = contextLength
+        self.imageKind = imageKind
+        self.imageCapabilities = imageCapabilities
+        self.imageDefaultSteps = imageDefaultSteps
+        self.imageDefaultGuidance = imageDefaultGuidance
+        self.imageReady = imageReady
     }
 
     /// Check if model matches search query using fuzzy matching.
@@ -166,7 +183,12 @@ extension ModelPickerItem {
             displayName: model.displayName,
             source: .imageGeneration,
             quantization: model.quantizationBits.map { "\($0)-bit" },
-            description: model.ready ? nil : model.blockedReasons.first
+            description: model.ready ? nil : model.blockedReasons.first,
+            imageKind: model.kind,
+            imageCapabilities: model.capabilities,
+            imageDefaultSteps: model.defaultSteps,
+            imageDefaultGuidance: model.defaultGuidance,
+            imageReady: model.ready
         )
     }
 

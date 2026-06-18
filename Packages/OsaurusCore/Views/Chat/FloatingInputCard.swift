@@ -40,6 +40,7 @@ struct FloatingInputCard: View {
     var sessionSpendMicro: Int = 0
     /// Whether to show the session spend chip (true only for Osaurus Router sessions).
     var showSessionSpend: Bool = false
+    @Binding var imageComposerSettings: ImageComposerSettings
     let onSend: (String?) -> Void
     let onStop: () -> Void
     /// Trigger to focus the input field (increment to focus)
@@ -88,6 +89,7 @@ struct FloatingInputCard: View {
         contextBreakdown: ContextBreakdown = .zero,
         sessionSpendMicro: Int = 0,
         showSessionSpend: Bool = false,
+        imageComposerSettings: Binding<ImageComposerSettings> = .constant(ImageComposerSettings()),
         onSend: @escaping (String?) -> Void,
         onStop: @escaping () -> Void,
         focusTrigger: Int = 0,
@@ -118,6 +120,7 @@ struct FloatingInputCard: View {
         self.contextBreakdown = contextBreakdown
         self.sessionSpendMicro = sessionSpendMicro
         self.showSessionSpend = showSessionSpend
+        self._imageComposerSettings = imageComposerSettings
         self.onSend = onSend
         self.onStop = onStop
         self.focusTrigger = focusTrigger
@@ -1838,6 +1841,19 @@ extension FloatingInputCard {
         return pickerItems.first { $0.id == id }
     }
 
+    private var selectedImagePickerItem: ModelPickerItem? {
+        guard selectedPickerItem?.source.isImageGeneration == true else { return nil }
+        return selectedPickerItem
+    }
+
+    private var imageCapabilities: ImageModelCapabilities? {
+        selectedImagePickerItem?.imageCapabilities
+    }
+
+    private var isImageComposerActive: Bool {
+        selectedImagePickerItem != nil
+    }
+
     private var isSelectedModelDeprecated: Bool {
         guard let id = selectedModel else { return false }
         return ModelManager.replacementForDeprecatedModel(id) != nil
@@ -2820,6 +2836,12 @@ extension FloatingInputCard {
                 .padding(.top, hasChipRow ? 6 : 10)
                 .padding(.bottom, 6)
 
+            if isImageComposerActive {
+                imageComposerControls
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 6)
+            }
+
             buttonBar
                 .padding(.horizontal, 12)
                 .padding(.vertical, 12)
@@ -3202,7 +3224,124 @@ extension FloatingInputCard {
     }
 
     /// Placeholder text for the input field.
-    private var placeholderText: String { L("Message or attach files...") }
+    private var placeholderText: String {
+        if selectedImagePickerItem != nil {
+            return L("Describe the image...")
+        }
+        return L("Message or attach files...")
+    }
+
+    // MARK: - Image Composer Controls
+
+    private var imageComposerModeText: String {
+        if imageCapabilities?.imageEdit == true { return L("Edit") }
+        return L("Generate")
+    }
+
+    private var imageSizeBinding: Binding<String> {
+        Binding(
+            get: { "\(imageComposerSettings.width)x\(imageComposerSettings.height)" },
+            set: { value in
+                let parts = value.split(separator: "x")
+                guard parts.count == 2,
+                    let width = Int(parts[0]),
+                    let height = Int(parts[1])
+                else { return }
+                imageComposerSettings.width = width
+                imageComposerSettings.height = height
+            }
+        )
+    }
+
+    private var negativePrompt: Binding<String> {
+        Binding(
+            get: { imageComposerSettings.negativePrompt },
+            set: { imageComposerSettings.negativePrompt = $0 }
+        )
+    }
+
+    private var seedText: Binding<String> {
+        Binding(
+            get: { imageComposerSettings.seed },
+            set: { imageComposerSettings.seed = $0.filter(\.isNumber) }
+        )
+    }
+
+    private var imageComposerControls: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Label(imageComposerModeText, systemImage: "photo")
+                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .semibold))
+                    .foregroundColor(theme.secondaryText)
+                    .lineLimit(1)
+
+                Picker("", selection: imageSizeBinding) {
+                    Text("512", bundle: .module).tag("512x512")
+                    Text("768", bundle: .module).tag("768x768")
+                    Text("1024", bundle: .module).tag("1024x1024")
+                }
+                .labelsHidden()
+                .pickerStyle(.segmented)
+                .frame(width: 170)
+                .localizedHelp("Output image size")
+
+                Stepper(value: $imageComposerSettings.steps, in: 1...50, step: 1) {
+                    Text("\(imageComposerSettings.steps) steps")
+                        .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                        .foregroundColor(theme.secondaryText)
+                        .frame(minWidth: 62, alignment: .leading)
+                }
+                .controlSize(.small)
+                .localizedHelp("Denoising steps")
+
+                LabeledContent {
+                    TextField("", value: $imageComposerSettings.guidance, format: .number.precision(.fractionLength(1)))
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 48)
+                } label: {
+                    Text("CFG", bundle: .module)
+                        .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .medium))
+                        .foregroundColor(theme.tertiaryText)
+                }
+                .localizedHelp("Classifier-free guidance")
+
+                TextField("Seed", text: seedText)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 92)
+                    .localizedHelp("Optional numeric seed")
+
+                if imageCapabilities?.imageEdit == true {
+                    LabeledContent {
+                        TextField("", value: $imageComposerSettings.strength, format: .number.precision(.fractionLength(2)))
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 50)
+                    } label: {
+                        Text("Strength", bundle: .module)
+                            .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .medium))
+                            .foregroundColor(theme.tertiaryText)
+                    }
+                    .localizedHelp("How strongly the prompt changes the source image")
+                }
+            }
+
+            if imageCapabilities?.negativePrompt == true {
+                TextField("Negative prompt", text: negativePrompt)
+                    .textFieldStyle(.roundedBorder)
+                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .regular))
+                    .localizedHelp("Terms to avoid during image generation")
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(theme.secondaryBackground.opacity(0.45))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(theme.primaryBorder.opacity(0.25), lineWidth: 0.5)
+        )
+    }
 
     private var textInputArea: some View {
         EditableTextView(

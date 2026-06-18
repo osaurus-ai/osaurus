@@ -160,6 +160,7 @@ final class ChatSession: ObservableObject {
     @Published var selectedModel: String? = nil
     @Published var pickerItems: [ModelPickerItem] = []
     @Published var activeModelOptions: [String: ModelOptionValue] = [:]
+    @Published var imageComposerSettings = ImageComposerSettings()
     @Published var hasAnyModel: Bool = false
     @Published var isDiscoveringModels: Bool = true
     /// When true, voice input auto-restarts after AI responds (continuous conversation mode)
@@ -481,11 +482,13 @@ final class ChatSession: ObservableObject {
                 AgentManager.shared.updateDefaultModel(for: pid, model: model)
 
                 self.loadActiveModelOptions(for: model)
+                self.applyImageModelDefaults(for: model)
 
                 // Clear pending image attachments when switching to a non-VLM model
                 let newModelSupportsImages: Bool = {
                     if model.lowercased() == "foundation" { return false }
                     guard let option = self.pickerItems.first(where: { $0.id == model }) else { return false }
+                    if option.imageCapabilities?.imageEdit == true { return true }
                     if case .remote = option.source { return true }
                     return option.isVLM
                 }()
@@ -631,6 +634,7 @@ final class ChatSession: ObservableObject {
             selectedModel = pickerItems.firstChatCapable?.id
         }
         loadActiveModelOptions(for: selectedModel)
+        applyImageModelDefaults(for: selectedModel)
         isLoadingModel = false
     }
 
@@ -660,6 +664,7 @@ final class ChatSession: ObservableObject {
         isLoadingModel = true
         selectedModel = newSelected
         loadActiveModelOptions(for: selectedModel)
+        applyImageModelDefaults(for: selectedModel)
         isLoadingModel = false
         hasAnyModel = !newOptions.isEmpty
     }
@@ -670,6 +675,7 @@ final class ChatSession: ObservableObject {
         if model.lowercased() == "foundation" { return false }
         if ModelMediaCapabilities.from(modelId: model).supportsImage { return true }
         guard let option = pickerItems.first(where: { $0.id == model }) else { return false }
+        if option.imageCapabilities?.imageEdit == true { return true }
         if case .remote = option.source { return true }
         return option.isVLM
     }
@@ -688,6 +694,20 @@ final class ChatSession: ObservableObject {
     var selectedPickerItem: ModelPickerItem? {
         guard let model = selectedModel else { return nil }
         return pickerItems.first { $0.id == model }
+    }
+
+    var selectedImagePickerItem: ModelPickerItem? {
+        guard let model = selectedModel else { return nil }
+        return pickerItems.first { $0.id == model && $0.source.isImageGeneration }
+    }
+
+    private func applyImageModelDefaults(for model: String?) {
+        guard let model,
+            let item = pickerItems.first(where: { $0.id == model && $0.source.isImageGeneration })
+        else { return }
+        var settings = imageComposerSettings
+        settings.applyModelDefaults(steps: item.imageDefaultSteps, guidance: item.imageDefaultGuidance)
+        imageComposerSettings = settings
     }
 
     /// True when the selected model is served by the managed Osaurus Router
@@ -2636,6 +2656,7 @@ final class ChatSession: ObservableObject {
     func runImageGeneration(
         prompt: String,
         attachments: [Attachment],
+        settings: ImageComposerSettings,
         into turn: ChatTurn,
         runId: UUID
     ) async {
@@ -2646,6 +2667,11 @@ final class ChatSession: ObservableObject {
         }
         guard !prompt.isEmpty else {
             turn.content = L("Enter a prompt to generate an image.")
+            rebuildVisibleBlocks()
+            return
+        }
+        guard let imageItem = selectedImagePickerItem else {
+            turn.content = L("Image generation failed: selected model is not an image model.")
             rebuildVisibleBlocks()
             return
         }
@@ -2663,8 +2689,47 @@ final class ChatSession: ObservableObject {
         }
 
         var reachedTerminal = false
-        let params = ImageGenerationParameters(model: model, prompt: prompt)
-        let stream = await ImageGenerationService.shared.generate(params, jobID: runId.uuidString)
+        let sourceImages = attachments.loadImages()
+        let stream: AsyncThrowingStream<ImageGenerationEvent, Error>
+        if imageItem.imageCapabilities?.imageEdit == true || imageItem.imageKind == "imageEdit" {
+            guard !sourceImages.isEmpty else {
+                turn.content = L("Attach one source image to edit with this model.")
+                rebuildVisibleBlocks()
+                return
+            }
+            let params = ImageEditParameters(
+                model: model,
+                prompt: prompt,
+                sourceImages: sourceImages,
+                negativePrompt: settings.normalizedNegativePrompt,
+                strength: settings.clampedStrength,
+                width: settings.clampedWidth,
+                height: settings.clampedHeight,
+                steps: settings.clampedSteps,
+                guidance: settings.clampedGuidance,
+                seed: settings.normalizedSeed
+            )
+            stream = await ImageGenerationService.shared.edit(params, jobID: runId.uuidString)
+        } else {
+            guard sourceImages.isEmpty else {
+                turn.content = L("Selected image model does not accept source images.")
+                rebuildVisibleBlocks()
+                return
+            }
+            let params = ImageGenerationParameters(
+                model: model,
+                prompt: prompt,
+                negativePrompt: settings.normalizedNegativePrompt,
+                width: settings.clampedWidth,
+                height: settings.clampedHeight,
+                steps: settings.clampedSteps,
+                guidance: settings.clampedGuidance,
+                seed: settings.normalizedSeed,
+                numImages: 1,
+                outputFormat: .png
+            )
+            stream = await ImageGenerationService.shared.generate(params, jobID: runId.uuidString)
+        }
         do {
             for try await event in stream {
                 guard isRunActive(runId) else { break }
@@ -2802,6 +2867,7 @@ final class ChatSession: ObservableObject {
         // streaming pipeline (e.g. from a sandbox plugin running on a
         // detached task) couldn't tell what agent they belonged to.
         let turnAgentId = agentId ?? Agent.defaultId
+        let imageSettings = imageComposerSettings
 
         currentTask = Task { @MainActor [weak self] in
             guard let self else { return }
@@ -2829,6 +2895,7 @@ final class ChatSession: ObservableObject {
                     await self.runImageGeneration(
                         prompt: trimmed,
                         attachments: attachments,
+                        settings: imageSettings,
                         into: assistantTurn,
                         runId: runId
                     )
@@ -4388,6 +4455,7 @@ struct ChatView: View {
                                 contextBreakdown: observedSession.estimatedContextBreakdown,
                                 sessionSpendMicro: observedSession.sessionRouterSpendMicro,
                                 showSessionSpend: observedSession.isOsaurusRouterSession,
+                                imageComposerSettings: $observedSession.imageComposerSettings,
                                 onSend: { manualText in
                                     if let manualText = manualText {
                                         observedSession.input = manualText

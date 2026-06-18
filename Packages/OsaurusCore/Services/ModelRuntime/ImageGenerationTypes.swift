@@ -20,7 +20,7 @@ public enum ImageOutputFormat: String, Sendable, Codable {
 }
 
 /// Capability flags the UI uses to show/hide controls for a given model.
-public struct ImageModelCapabilities: Sendable, Equatable {
+public struct ImageModelCapabilities: Sendable, Equatable, Hashable {
     public var textToImage: Bool
     public var imageEdit: Bool
     public var upscale: Bool
@@ -180,6 +180,83 @@ public struct ImageEditParameters: Sendable {
         self.guidance = guidance
         self.seed = seed
         self.outputFormat = outputFormat
+    }
+}
+
+/// User-adjustable image generation/edit settings owned by the chat composer.
+/// These values are UI-native but map one-to-one to `ImageGenerationParameters`
+/// and `ImageEditParameters`.
+public struct ImageComposerSettings: Sendable, Codable, Equatable {
+    public var negativePrompt: String
+    public var steps: Int
+    public var guidance: Double
+    public var width: Int
+    public var height: Int
+    public var seed: String
+    public var strength: Double
+
+    public init(
+        negativePrompt: String = "",
+        steps: Int = 20,
+        guidance: Double = 3.5,
+        width: Int = 512,
+        height: Int = 512,
+        seed: String = "",
+        strength: Double = 0.75
+    ) {
+        self.negativePrompt = negativePrompt
+        self.steps = steps
+        self.guidance = guidance
+        self.width = width
+        self.height = height
+        self.seed = seed
+        self.strength = strength
+    }
+
+    public var normalizedNegativePrompt: String? {
+        let trimmed = negativePrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    public var normalizedSeed: UInt64? {
+        let trimmed = seed.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        return UInt64(trimmed)
+    }
+
+    public var clampedSteps: Int {
+        min(50, max(1, steps))
+    }
+
+    public var clampedWidth: Int {
+        Self.clampDimension(width)
+    }
+
+    public var clampedHeight: Int {
+        Self.clampDimension(height)
+    }
+
+    public var clampedGuidance: Float {
+        Float(min(20, max(0, guidance)))
+    }
+
+    public var clampedStrength: Float {
+        Float(min(1, max(0, strength)))
+    }
+
+    public mutating func applyModelDefaults(steps: Int?, guidance: Float?) {
+        if let steps {
+            self.steps = min(50, max(1, steps))
+        }
+        if let guidance {
+            self.guidance = Double(guidance)
+        }
+    }
+
+    private static func clampDimension(_ value: Int) -> Int {
+        let bounded = min(1024, max(256, value))
+        let rounded = (bounded / 16) * 16
+        return max(256, rounded)
     }
 }
 
