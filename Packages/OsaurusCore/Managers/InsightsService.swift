@@ -60,6 +60,16 @@ final class InsightsService: ObservableObject {
 
     private var pipelineCancellable: AnyCancellable?
 
+    /// Incoming logs are buffered and flushed to `logs` in batches so a burst
+    /// of requests (e.g. a tool-heavy agent loop hammering the local server)
+    /// fires one `objectWillChange` per flush window instead of one per
+    /// request. Per-request publishing of the ring buffer has stalled the main
+    /// actor under sustained traffic.
+    private var pendingLogs: [RequestLog] = []
+    private var pendingRequestCount: Int = 0
+    private let flushSubject = PassthroughSubject<Void, Never>()
+    private var flushCancellable: AnyCancellable?
+
     // MARK: - Initialization
 
     private init() {
@@ -102,6 +112,13 @@ final class InsightsService: ObservableObject {
             self.filteredLogs = filtered
             self.stats = stats
         }
+
+        // Coalesce buffered logs into the ring buffer ~100 ms after the last
+        // arrival, so a burst publishes once rather than per request.
+        flushCancellable =
+            flushSubject
+            .debounce(for: .milliseconds(100), scheduler: DispatchQueue.main)
+            .sink { [weak self] in self?.flushPendingLogs() }
     }
 
     private static func computeFilteredLogs(
@@ -177,9 +194,34 @@ final class InsightsService: ObservableObject {
 
     /// Log a completed request
     func log(_ request: RequestLog) {
-        // Insert at beginning (most recent first)
-        logs.insert(request, at: 0)
-        totalRequestCount += 1
+        // Buffer (most recent first); the debounced flush applies the batch to
+        // the published ring buffer so a burst doesn't publish per request.
+        pendingLogs.insert(request, at: 0)
+        pendingRequestCount += 1
+
+        // Bound the buffer so a sustained burst can't grow it past the ring
+        // limit before the next flush.
+        if pendingLogs.count > maxLogCount {
+            pendingLogs.removeLast(pendingLogs.count - maxLogCount)
+        }
+
+        flushSubject.send()
+    }
+
+    /// Apply buffered logs to the published ring buffer in one batch. Idempotent
+    /// and safe to call synchronously before a read that needs the latest
+    /// entries (`focus` / `hasLog`).
+    private func flushPendingLogs() {
+        guard !pendingLogs.isEmpty else { return }
+
+        let batch = pendingLogs
+        let received = pendingRequestCount
+        pendingLogs.removeAll(keepingCapacity: true)
+        pendingRequestCount = 0
+
+        // `batch` is newest-first; prepending keeps the ring buffer ordered.
+        logs.insert(contentsOf: batch, at: 0)
+        totalRequestCount += received
 
         // Enforce ring buffer limit
         if logs.count > maxLogCount {
@@ -189,6 +231,8 @@ final class InsightsService: ObservableObject {
 
     /// Clear all logs
     func clear() {
+        pendingLogs.removeAll()
+        pendingRequestCount = 0
         logs.removeAll()
         totalRequestCount = 0
         pendingFocusLogId = nil
@@ -200,6 +244,7 @@ final class InsightsService: ObservableObject {
     /// the caller may still open the tab to show the full list.
     @discardableResult
     func focus(turnId: UUID) -> Bool {
+        flushPendingLogs()
         guard let match = logs.first(where: { $0.turnId == turnId }) else {
             return false
         }
@@ -212,6 +257,7 @@ final class InsightsService: ObservableObject {
     /// loops can produce multiple request logs for the same assistant turn.
     @discardableResult
     func focus(requestId: String) -> Bool {
+        flushPendingLogs()
         let normalized = requestId.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalized.isEmpty,
             let match = logs.first(where: { $0.requestId == normalized })
@@ -226,13 +272,15 @@ final class InsightsService: ObservableObject {
     /// Logs are intentionally ephemeral, so callers use this to decide whether
     /// to surface an Insights affordance without mutating focus state.
     func hasLog(turnId: UUID) -> Bool {
-        logs.contains { $0.turnId == turnId }
+        flushPendingLogs()
+        return logs.contains { $0.turnId == turnId }
     }
 
     /// True when an in-memory request log still exists for this request id.
     func hasLog(requestId: String) -> Bool {
         let normalized = requestId.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalized.isEmpty else { return false }
+        flushPendingLogs()
         return logs.contains { $0.requestId == normalized }
     }
 
