@@ -131,10 +131,10 @@ final class ScreenshotController: @unchecked Sendable {
             return DisplayInfo(
                 index: index,
                 displayId: displayId,
-                x: Int(bounds.origin.x),
-                y: Int(bounds.origin.y),
-                width: Int(bounds.width),
-                height: Int(bounds.height),
+                x: safeInt(bounds.origin.x),
+                y: safeInt(bounds.origin.y),
+                width: safeInt(bounds.width),
+                height: safeInt(bounds.height),
                 isMain: displayId == mainDisplayID
             )
         }
@@ -302,8 +302,8 @@ final class ScreenshotController: @unchecked Sendable {
         let filter = SCContentFilter(desktopIndependentWindow: scWindow)
         let scale = backingScale(forFrame: scWindow.frame)
         let config = SCStreamConfiguration()
-        config.width = max(1, Int(scWindow.frame.width * scale))
-        config.height = max(1, Int(scWindow.frame.height * scale))
+        config.width = max(1, safeInt(scWindow.frame.width * scale))
+        config.height = max(1, safeInt(scWindow.frame.height * scale))
         config.showsCursor = false
         config.ignoreShadowsSingleWindow = true
         return try? await SCScreenshotManager.captureImage(
@@ -324,8 +324,8 @@ final class ScreenshotController: @unchecked Sendable {
         let filter = SCContentFilter(display: scDisplay, excludingWindows: [])
         let scale = backingScale(forFrame: scDisplay.frame)
         let config = SCStreamConfiguration()
-        config.width = max(1, Int(Double(scDisplay.width) * scale))
-        config.height = max(1, Int(Double(scDisplay.height) * scale))
+        config.width = max(1, safeInt(Double(scDisplay.width) * scale))
+        config.height = max(1, safeInt(Double(scDisplay.height) * scale))
         config.showsCursor = false
         return try? await SCScreenshotManager.captureImage(
             contentFilter: filter,

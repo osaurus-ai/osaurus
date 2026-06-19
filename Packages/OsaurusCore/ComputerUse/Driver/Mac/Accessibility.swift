@@ -31,6 +31,20 @@ private func axValue(_ ref: CFTypeRef?) -> AXValue? {
     return (ref as! AXValue)
 }
 
+// MARK: - Safe numeric conversion
+
+/// Safely convert a CGFloat coordinate/size to Int.
+/// AX position/size attributes (and other window-server geometry) can be NaN or
+/// infinite for offscreen or malformed elements; `Int(CGFloat)` traps on any
+/// non-finite or out-of-range value. Clamp at the conversion boundary instead.
+func safeInt(_ value: CGFloat) -> Int {
+    guard value.isFinite else { return 0 }
+    let rounded = value.rounded()
+    if rounded >= CGFloat(Int.max) { return Int.max }
+    if rounded <= CGFloat(Int.min) { return Int.min }
+    return Int(rounded)
+}
+
 // MARK: - Snapshot ID Format
 
 /// Element IDs are scoped to a snapshot so we can distinguish "stale ID from a
@@ -433,10 +447,10 @@ final class AccessibilityManager: @unchecked Sendable {
                     id: idx + 1,
                     title: title,
                     focused: isFocused,
-                    x: Int(frame.origin.x),
-                    y: Int(frame.origin.y),
-                    w: Int(frame.size.width),
-                    h: Int(frame.size.height)
+                    x: safeInt(frame.origin.x),
+                    y: safeInt(frame.origin.y),
+                    w: safeInt(frame.size.width),
+                    h: safeInt(frame.size.height)
                 )
                 windowSummaries.append(summary)
                 orderedWindows.append((windowElement, summary))
@@ -606,7 +620,11 @@ final class AccessibilityManager: @unchecked Sendable {
         }()
 
         if matchesRoleFilter && passesInteractive && hasContent && passesEnabled && passesText {
-            if let frame = getFrame(element), frame.width > 0, frame.height > 0 {
+            if let frame = getFrame(element),
+                frame.origin.x.isFinite, frame.origin.y.isFinite,
+                frame.width.isFinite, frame.height.isFinite,
+                frame.width > 0, frame.height > 0
+            {
                 let elementNum = nextElementNum
                 nextElementNum += 1
                 let elementId = SnapshotIdFormat.format(snapshot: snapshotId, element: elementNum)
@@ -643,10 +661,10 @@ final class AccessibilityManager: @unchecked Sendable {
                     windowId: windowId,
                     focused: isFocused,
                     enabled: enabled,
-                    x: Int(frame.origin.x),
-                    y: Int(frame.origin.y),
-                    w: Int(frame.width),
-                    h: Int(frame.height),
+                    x: safeInt(frame.origin.x),
+                    y: safeInt(frame.origin.y),
+                    w: safeInt(frame.width),
+                    h: safeInt(frame.height),
                     actions: actions.map { simplifyAction($0) }
                 )
                 elements.append(info)
@@ -1127,10 +1145,10 @@ func listWindowsForPid(_ pid: Int32) -> WindowListResult {
                 title: title,
                 focused: focused,
                 minimized: minimized,
-                x: Int(pos.x),
-                y: Int(pos.y),
-                w: Int(size.width),
-                h: Int(size.height)
+                x: safeInt(pos.x),
+                y: safeInt(pos.y),
+                w: safeInt(size.width),
+                h: safeInt(size.height)
             )
         )
     }
@@ -1202,9 +1220,9 @@ func getActiveWindow() -> MacActiveWindowInfo? {
         pid: pid,
         app: appName,
         title: title,
-        x: Int(position.x),
-        y: Int(position.y),
-        w: Int(size.width),
-        h: Int(size.height)
+        x: safeInt(position.x),
+        y: safeInt(position.y),
+        w: safeInt(size.width),
+        h: safeInt(size.height)
     )
 }

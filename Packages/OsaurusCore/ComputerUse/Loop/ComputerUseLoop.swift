@@ -162,6 +162,12 @@ public enum ComputerUseLoop {
     /// wall clock by requesting a huge pause.
     static let maxWaitSeconds = 10
 
+    /// Bounds on a single `scroll` amount (wheel clicks). The raw model value is
+    /// an unbounded 64-bit Int; clamping keeps it positive and inside Int32 so
+    /// neither the `Int32(...)` conversion nor the driver's `-amount` negation
+    /// can trap.
+    static let scrollAmountRange: ClosedRange<Int> = 1 ... 1000
+
     /// Build a deterministic provider that vends `actions` in order. After the
     /// list is exhausted it repeats the final action (so a miscounted script
     /// can't spin forever — pair it with `RunLimits.maxSteps`); end scripts with
@@ -1060,8 +1066,9 @@ public enum ComputerUseLoop {
             )
         case .scroll:
             let dir = action.direction ?? .down
+            let amount = Int32((action.amount ?? 3).clamped(to: Self.scrollAmountRange))
             result = await driver.coordinate(
-                .scroll(direction: dir, amount: Int32(action.amount ?? 3), x: nil, y: nil, pid: pid)
+                .scroll(direction: dir, amount: amount, x: nil, y: nil, pid: pid)
             )
         default:
             return "Unsupported action."
@@ -1307,7 +1314,9 @@ public enum ComputerUseLoop {
         _ seconds: TimeInterval,
         _ op: @escaping @Sendable () async throws -> T
     ) async throws -> T {
-        guard seconds > 0 else { return try await op() }
+        // A non-finite timeout means "no timeout": run the op without racing a
+        // sleep, since UInt64(infinity * ...) would trap.
+        guard seconds > 0, seconds.isFinite else { return try await op() }
         return try await withThrowingTaskGroup(of: T.self) { group in
             group.addTask { try await op() }
             group.addTask {
@@ -1563,5 +1572,11 @@ private actor ScriptedArgumentCursor {
         let arg = index < arguments.count ? arguments[index] : arguments[arguments.count - 1]
         index += 1
         return ModelActionCall(id: "scripted-\(index)", arguments: arg)
+    }
+}
+
+extension Comparable {
+    fileprivate func clamped(to range: ClosedRange<Self>) -> Self {
+        min(max(self, range.lowerBound), range.upperBound)
     }
 }
