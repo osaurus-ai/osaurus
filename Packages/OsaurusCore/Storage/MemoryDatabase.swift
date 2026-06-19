@@ -187,9 +187,8 @@ public final class MemoryDatabase: @unchecked Sendable {
 
     private func openConnection() throws {
         let path = OsaurusPaths.memoryDatabaseFile().path
-        let key = try StorageKeyManager.shared.currentKey()
         do {
-            db = try EncryptedSQLiteOpener.open(path: path, key: key)
+            db = try OsaurusStorageOpener.open(path: path)
         } catch let error as EncryptedSQLiteError {
             throw MemoryDatabaseError.failedToOpen(error.localizedDescription)
         }

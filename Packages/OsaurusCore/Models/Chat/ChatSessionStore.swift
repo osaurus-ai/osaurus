@@ -62,8 +62,9 @@ enum ChatSessionStore {
         guard !didOpen else { return }
         // Do not synchronously prewarm here. This runs on MainActor, and
         // Sentry APPLE-MACOS-40/41/42 showed Keychain decrypt/read can hang
-        // the UI when a cold cache reaches this path.
-        guard StorageKeyManager.shared.hasCachedKey else {
+        // the UI when a cold cache reaches this path. In plaintext mode
+        // (the default) no key is required, so readiness is always true.
+        guard StorageKeyManager.shared.isStorageReadyForWrites else {
             print("[ChatSessionStore] Chat history unavailable: storage key is not already unlocked")
             return
         }

@@ -23,8 +23,10 @@ struct AttachmentSpilloverTests {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         OsaurusPaths.overrideRoot = root
 
-        // Inject a deterministic key so we don't touch the real
-        // Keychain. Available only in DEBUG builds.
+        // These tests verify the SQLCipher/`.osec` spillover path, so opt in to
+        // encrypted at-rest mode and inject a deterministic key (DEBUG-only) so
+        // we don't touch the real Keychain.
+        try StorageEncryptionPolicy.shared.setDesiredMode(.encrypted)
         StorageKeyManager.shared._setKeyForTesting(
             SymmetricKey(data: Data(repeating: 0x33, count: 32))
         )
@@ -35,6 +37,7 @@ struct AttachmentSpilloverTests {
         OsaurusPaths.overrideRoot = nil
         try? FileManager.default.removeItem(at: root)
         StorageKeyManager.shared.wipeCache()
+        StorageEncryptionPolicy.shared.invalidateCache()
     }
 
     @Test

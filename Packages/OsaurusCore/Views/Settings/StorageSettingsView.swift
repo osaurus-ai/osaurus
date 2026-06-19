@@ -2,13 +2,14 @@
 //  StorageSettingsView.swift
 //  osaurus
 //
-//  Settings panel for at-rest encryption: explains the encryption
-//  posture in plain language and exposes the two admin actions —
-//  export plaintext backup and rotate the storage key — with
-//  guardrails so a user can't accidentally destroy their data.
+//  Settings panel for at-rest encryption posture. Osaurus stores local data
+//  **plaintext by default** (relying on FileVault) for reliability, and lets
+//  users opt in to SQLCipher encryption here. The panel reflects the *actual*
+//  on-disk state, exposes the opt-in toggle (which runs a live migration),
+//  and keeps the plaintext-backup / key-rotation admin actions.
 //
-//  Surfaced by the WhatsNew page action `openStorageSettings` and
-//  reachable from the management settings sidebar.
+//  Surfaced by the WhatsNew page action `openStorageSettings` and reachable
+//  from the management settings sidebar.
 //
 
 import AppKit
@@ -18,12 +19,23 @@ public struct StorageSettingsView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
+    @State private var posture: StorageOnDiskPosture = .empty
+    @State private var desiredEncrypted: Bool = false
     @State private var keyPresent: Bool = false
+    @State private var fileVaultOn: Bool = false
+
+    @State private var storeIssues: [StorageStoreIssue] = []
+    @State private var recoveringStore: String?
+    @State private var pendingResetStore: StorageRecoveryService.Store?
+    @State private var showStoreResetConfirm: Bool = false
+
     @State private var lastSummary: String = ""
     @State private var isWorking: Bool = false
-    @State private var showRotateConfirm: Bool = false
+    @State private var workingLabel: String = ""
     @State private var errorMessage: String?
 
+    @State private var showEnableConfirm: Bool = false
+    @State private var showRotateConfirm: Bool = false
     @State private var hasExportedBackupThisSession: Bool = false
     @State private var showTechnicalDetails: Bool = false
 
@@ -40,8 +52,11 @@ public struct StorageSettingsView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
-                    aboutCard
-                    statusCard
+                    postureCard
+                    if !storeIssues.isEmpty {
+                        recoveryCard
+                    }
+                    tradeoffsCard
                     actionsCard
                     footnote
                 }
@@ -60,6 +75,15 @@ public struct StorageSettingsView: View {
                 hasAppeared = true
             }
         }
+        .alert("Encrypt local data at rest?", isPresented: $showEnableConfirm) {
+            Button(localized: "Cancel", role: .cancel) {}
+            Button(localized: "Enable encryption") { applyEncryption(true) }
+        } message: {
+            Text(
+                "Osaurus will re-encrypt your databases and attachments with SQLCipher using a key stored in your macOS Keychain. If that key is ever lost — wiping the Keychain, re-signing the app, or migrating Macs without iCloud Keychain — the encrypted data becomes unrecoverable. Keep a plaintext backup if you rely on this data.",
+                bundle: .module
+            )
+        }
         .alert("Rotate the storage key?", isPresented: $showRotateConfirm) {
             if !hasExportedBackupThisSession {
                 Button(localized: "Back up first…") { runExport(reason: .beforeRotate) }
@@ -69,69 +93,271 @@ public struct StorageSettingsView: View {
         } message: {
             Text(rotateAlertMessage)
         }
-    }
-
-    // MARK: - Derived state
-
-    private var rotateAlertMessage: String {
-        if hasExportedBackupThisSession {
-            return
-                "A new 256-bit key will be generated and every encrypted database + file under ~/.osaurus will be re-encrypted against it. The old key is destroyed — backups made under the old key will no longer be readable on this Mac."
+        .alert(
+            "Reset this store?",
+            isPresented: $showStoreResetConfirm,
+            presenting: pendingResetStore
+        ) { store in
+            Button(localized: "Cancel", role: .cancel) {}
+            Button(localized: "Reset", role: .destructive) { resetStore(store) }
+        } message: { store in
+            Text(
+                "\(store.displayName) is moved to ~/.osaurus/quarantine/ (never deleted) and recreated empty so the feature works again. Data in the old file stays in quarantine — keep a plaintext backup if you might recover the key.",
+                bundle: .module
+            )
         }
-        return
-            "A new 256-bit key will be generated and every encrypted database + file under ~/.osaurus will be re-encrypted against it. The old key is destroyed — backups made under the old key will no longer be readable on this Mac. We strongly recommend exporting a plaintext backup first."
     }
 
     // MARK: - Header
 
     private var headerView: some View {
         ManagerHeader(
-            title: L("Encrypted storage"),
-            subtitle: L("End-to-end at-rest encryption for your local data")
+            title: L("Local data encryption"),
+            subtitle: L("Plaintext by default — opt in to SQLCipher at-rest encryption")
         )
     }
 
-    // MARK: - About card
+    // MARK: - Posture + toggle
 
-    private var aboutCard: some View {
+    private var postureCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 10) {
+                Image(systemName: postureIcon)
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundColor(postureColor)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(LocalizedStringKey(postureTitle), bundle: .module)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(theme.primaryText)
+                    Text(LocalizedStringKey(postureSubtitle), bundle: .module)
+                        .font(.system(size: 12))
+                        .foregroundColor(theme.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer()
+            }
+
+            Divider().background(theme.primaryBorder.opacity(0.2))
+
+            HStack(alignment: .center, spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Encrypt local data at rest (SQLCipher)", bundle: .module)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(theme.primaryText)
+                    Text(
+                        "Turning this on or off migrates every database and attachment to the new format.",
+                        bundle: .module
+                    )
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 12)
+                if isWorking {
+                    HStack(spacing: 6) {
+                        ProgressView().scaleEffect(0.6)
+                        Text(LocalizedStringKey(workingLabel), bundle: .module)
+                            .font(.system(size: 11))
+                            .foregroundColor(theme.secondaryText)
+                    }
+                } else {
+                    Toggle("", isOn: encryptionBinding)
+                        .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
+                        .labelsHidden()
+                }
+            }
+
+            if let err = errorMessage {
+                statusLine(text: err, color: theme.errorColor, icon: "exclamationmark.triangle")
+            }
+            if !lastSummary.isEmpty {
+                statusLine(text: lastSummary, color: theme.successColor, icon: "checkmark.circle")
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(cardBackground)
+    }
+
+    // MARK: - Trade-offs
+
+    private var tradeoffsCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             Label {
-                Text("About encrypted storage", bundle: .module)
+                Text("Why encryption is opt-in", bundle: .module)
             } icon: {
-                Image(systemName: "lock.shield.fill")
+                Image(systemName: "scalemass")
                     .foregroundColor(theme.accentColor)
             }
             .font(.system(size: 13, weight: .semibold))
             .foregroundColor(theme.primaryText)
 
             VStack(alignment: .leading, spacing: 8) {
+                fileVaultRow
                 aboutRow(
-                    icon: "doc.text.magnifyingglass",
+                    icon: "externaldrive.fill.badge.checkmark",
                     text:
-                        "Chats, long-term memory, methods, tool indexes, and configuration files are encrypted at rest with AES-256 (SQLCipher)."
+                        "On modern Macs, FileVault already encrypts your whole disk at rest. Plaintext storage relies on that, and is the most reliable option — it never depends on a Keychain key."
                 )
                 aboutRow(
-                    icon: "key.fill",
+                    icon: "lock.fill",
                     text:
-                        "The 256-bit encryption key lives in your macOS Keychain. It never leaves this Mac and is not synced to iCloud."
+                        "SQLCipher adds a second layer: databases and attachments are encrypted with a 256-bit key in your Keychain. Useful if you share the Mac account or don't use FileVault."
                 )
                 aboutRow(
-                    icon: "checkmark.shield",
+                    icon: "exclamationmark.triangle.fill",
                     text:
-                        "If you're moving Macs or wiping macOS, export a plaintext backup first. Otherwise no action is needed — encryption runs automatically."
+                        "The trade-off is reliability: if the Keychain key is lost (Keychain wipe, app re-sign, or Mac migration without iCloud Keychain), encrypted data can't be opened. Plaintext data is never at that risk."
+                )
+                aboutRow(
+                    icon: "magnifyingglass",
+                    text:
+                        "Either way, full-text search and all features work the same; encryption only changes how bytes sit on disk."
                 )
             }
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(theme.cardBorder, lineWidth: 1)
-                )
-        )
+        .background(cardBackground)
+    }
+
+    /// Concrete FileVault status so the plaintext recommendation reflects the
+    /// machine's real at-rest protection: green/reassuring when on, an amber
+    /// caution when off (since plaintext then has no disk encryption behind it,
+    /// and it's also why an existing encrypted install was kept encrypted).
+    private var fileVaultRow: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: fileVaultOn ? "checkmark.shield.fill" : "exclamationmark.shield.fill")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(fileVaultOn ? theme.successColor : theme.warningColor)
+                .frame(width: 16, alignment: .center)
+                .padding(.top, 2)
+            Text(
+                LocalizedStringKey(
+                    fileVaultOn
+                        ? "FileVault is on — your disk is already encrypted at rest, so plaintext storage stays protected and is the most reliable choice."
+                        : "FileVault is off — plaintext storage would not be encrypted at rest. Keep SQLCipher on, or turn on FileVault in System Settings → Privacy & Security."
+                ),
+                bundle: .module
+            )
+            .font(.system(size: 12, weight: .medium))
+            .foregroundColor(fileVaultOn ? theme.successColor : theme.warningColor)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    // MARK: - Per-store recovery
+
+    /// Shown only when one or more stores failed to open this session.
+    /// Lists the real cause per store and offers Retry / Reset so a lost
+    /// key (or corruption) never leaves the user with a silently dead
+    /// subsystem and no way forward.
+    private var recoveryCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label {
+                Text("Stores needing attention", bundle: .module)
+            } icon: {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundColor(theme.warningColor)
+            }
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundColor(theme.primaryText)
+
+            VStack(alignment: .leading, spacing: 12) {
+                ForEach(sortedStoreIssues, id: \.store) { issue in
+                    storeIssueRow(issue)
+                    if issue.store != sortedStoreIssues.last?.store {
+                        Divider().background(theme.primaryBorder.opacity(0.2))
+                    }
+                }
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(cardBackground)
+    }
+
+    private var sortedStoreIssues: [StorageStoreIssue] {
+        storeIssues.sorted { $0.store < $1.store }
+    }
+
+    @ViewBuilder
+    private func storeIssueRow(_ issue: StorageStoreIssue) -> some View {
+        let store = StorageRecoveryService.Store(rawValue: issue.store)
+        let label = store?.displayName ?? issue.store
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Text(LocalizedStringKey(label), bundle: .module)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+                Text(LocalizedStringKey(issueKindBadge(issue.kind)), bundle: .module)
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(issueKindColor(issue.kind)))
+                Spacer(minLength: 8)
+                if recoveringStore == issue.store {
+                    ProgressView().scaleEffect(0.55)
+                } else if store != nil {
+                    HStack(spacing: 6) {
+                        actionButton(
+                            icon: "arrow.clockwise",
+                            label: "Retry",
+                            isPrimary: false,
+                            isDisabled: recoveringStore != nil
+                        ) { retryStore(store!) }
+                        actionButton(
+                            icon: "trash",
+                            label: "Reset…",
+                            isPrimary: false,
+                            isDisabled: recoveringStore != nil
+                        ) {
+                            pendingResetStore = store
+                            showStoreResetConfirm = true
+                        }
+                    }
+                }
+            }
+            Text(LocalizedStringKey(issueKindCause(issue.kind)), bundle: .module)
+                .font(.system(size: 11))
+                .foregroundColor(theme.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func issueKindBadge(_ kind: StorageOpenIssueKind) -> String {
+        switch kind {
+        case .locked: return "LOCKED"
+        case .corrupt: return "CORRUPT"
+        case .migration: return "MIGRATION"
+        case .unknown: return "ERROR"
+        }
+    }
+
+    private func issueKindColor(_ kind: StorageOpenIssueKind) -> Color {
+        switch kind {
+        case .locked: return theme.warningColor
+        case .corrupt: return theme.errorColor
+        case .migration: return theme.errorColor
+        case .unknown: return theme.secondaryText
+        }
+    }
+
+    private func issueKindCause(_ kind: StorageOpenIssueKind) -> String {
+        switch kind {
+        case .locked:
+            return
+                "Encrypted, but the storage key is unavailable on this Mac. Restore the Keychain key and Retry, or Reset to start fresh."
+        case .corrupt:
+            return
+                "The file isn't a readable database (corruption or a key mismatch). Reset to recreate it; the original is quarantined."
+        case .migration:
+            return "A schema migration failed. Retry after updating, or Reset to recreate the store."
+        case .unknown:
+            return "The store failed to open for an unrecognized reason. Retry, or Reset if it persists."
+        }
     }
 
     private func aboutRow(icon: String, text: String) -> some View {
@@ -148,75 +374,7 @@ public struct StorageSettingsView: View {
         }
     }
 
-    // MARK: - Status card
-
-    private var statusCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 10) {
-                Image(systemName: keyPresent ? "checkmark.shield.fill" : "exclamationmark.shield.fill")
-                    .font(.system(size: 16, weight: .medium))
-                    .foregroundColor(keyPresent ? theme.successColor : theme.warningColor)
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(
-                        keyPresent ? "Encryption key installed" : "No encryption key found",
-                        bundle: .module
-                    )
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-
-                    Text(LocalizedStringKey(statusSubtitle), bundle: .module)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.secondaryText)
-                }
-                Spacer()
-            }
-
-            DisclosureGroup(isExpanded: $showTechnicalDetails) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Service: com.osaurus.storage", bundle: .module)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundColor(theme.tertiaryText)
-                        .textSelection(.enabled)
-                    Text("Account: data-encryption-key", bundle: .module)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundColor(theme.tertiaryText)
-                        .textSelection(.enabled)
-                    Text("Cipher: AES-256-CBC + HMAC-SHA512, page size 4096, kdf_iter 256000", bundle: .module)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundColor(theme.tertiaryText)
-                        .textSelection(.enabled)
-                }
-                .padding(.top, 6)
-            } label: {
-                Text("Show technical details", bundle: .module)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(theme.tertiaryText)
-            }
-            .accentColor(theme.tertiaryText)
-        }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(theme.cardBorder, lineWidth: 1)
-                )
-        )
-    }
-
-    /// Single source of truth for the small reassurance / status
-    /// line under the status card title.
-    private var statusSubtitle: String {
-        if !keyPresent {
-            return "Generate a key from the Keychain to encrypt new data."
-        }
-        return "Your data is encrypted at rest. No action needed."
-    }
-
-    // MARK: - Actions card
+    // MARK: - Actions
 
     private var actionsCard: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -234,44 +392,70 @@ public struct StorageSettingsView: View {
                     title: "Export plaintext backup…",
                     buttonLabel: "Export…",
                     subtitle:
-                        "Decrypts every artifact under ~/.osaurus and writes a plaintext copy to the destination of your choice. Recommended before reinstalling macOS or moving Macs.",
+                        "Writes a plaintext copy of every database, attachment, and config under ~/.osaurus to a folder you choose. Recommended before reinstalling macOS or moving Macs.",
                     isPrimary: true,
                     isDisabled: isWorking
                 ) {
                     runExport(reason: .userInitiated)
                 }
 
-                Divider().background(theme.primaryBorder.opacity(0.2))
+                if desiredEncrypted {
+                    Divider().background(theme.primaryBorder.opacity(0.2))
 
-                actionRow(
-                    icon: "key.fill",
-                    title: "Rotate storage key",
-                    buttonLabel: "Rotate",
-                    subtitle: "Generate a new 256-bit key and re-encrypt every artifact. The old key is destroyed.",
-                    isPrimary: false,
-                    isDisabled: isWorking
-                ) {
-                    showRotateConfirm = true
+                    actionRow(
+                        icon: "key.fill",
+                        title: "Rotate storage key",
+                        buttonLabel: "Rotate",
+                        subtitle:
+                            "Generate a new 256-bit key and re-encrypt every artifact. The old key is destroyed. Only available while encryption is on.",
+                        isPrimary: false,
+                        isDisabled: isWorking
+                    ) {
+                        showRotateConfirm = true
+                    }
                 }
-            }
 
-            if let err = errorMessage {
-                statusLine(text: err, color: theme.errorColor, icon: "exclamationmark.triangle")
-            }
-            if !lastSummary.isEmpty {
-                statusLine(text: lastSummary, color: theme.successColor, icon: "checkmark.circle")
+                if desiredEncrypted {
+                    Divider().background(theme.primaryBorder.opacity(0.2))
+                    technicalDetails
+                }
             }
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(theme.cardBorder, lineWidth: 1)
+        .background(cardBackground)
+    }
+
+    private var technicalDetails: some View {
+        DisclosureGroup(isExpanded: $showTechnicalDetails) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Service: com.osaurus.storage", bundle: .module)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(theme.tertiaryText)
+                    .textSelection(.enabled)
+                Text("Account: data-encryption-key", bundle: .module)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(theme.tertiaryText)
+                    .textSelection(.enabled)
+                Text("Cipher: AES-256-CBC + HMAC-SHA512, page size 4096, kdf_iter 256000", bundle: .module)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(theme.tertiaryText)
+                    .textSelection(.enabled)
+                Text(
+                    keyPresent ? "Keychain key: present" : "Keychain key: not found",
+                    bundle: .module
                 )
-        )
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundColor(theme.tertiaryText)
+                .textSelection(.enabled)
+            }
+            .padding(.top, 6)
+        } label: {
+            Text("Show technical details", bundle: .module)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(theme.tertiaryText)
+        }
+        .accentColor(theme.tertiaryText)
     }
 
     @ViewBuilder
@@ -357,11 +541,20 @@ public struct StorageSettingsView: View {
         }
     }
 
+    private var cardBackground: some View {
+        RoundedRectangle(cornerRadius: 12)
+            .fill(theme.cardBackground)
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(theme.cardBorder, lineWidth: 1)
+            )
+    }
+
     // MARK: - Footnote
 
     private var footnote: some View {
         Text(
-            "Wiping the macOS Keychain or migrating to a new Mac without iCloud Keychain sync makes encrypted storage unrecoverable. Take a plaintext backup first if you need to migrate.",
+            "When encryption is on, wiping the macOS Keychain or migrating to a new Mac without iCloud Keychain sync makes encrypted storage unrecoverable. Export a plaintext backup before migrating.",
             bundle: .module
         )
         .font(.system(size: 11))
@@ -369,16 +562,187 @@ public struct StorageSettingsView: View {
         .fixedSize(horizontal: false, vertical: true)
     }
 
+    // MARK: - Derived state
+
+    private var rotateAlertMessage: String {
+        if hasExportedBackupThisSession {
+            return
+                "A new 256-bit key will be generated and every encrypted database + file under ~/.osaurus will be re-encrypted against it. The old key is destroyed — backups made under the old key will no longer be readable on this Mac."
+        }
+        return
+            "A new 256-bit key will be generated and every encrypted database + file under ~/.osaurus will be re-encrypted against it. The old key is destroyed — backups made under the old key will no longer be readable on this Mac. We strongly recommend exporting a plaintext backup first."
+    }
+
+    private var postureTitle: String {
+        switch posture {
+        case .empty: return "No local data yet"
+        case .plaintext: return "Stored as plaintext"
+        case .encrypted: return "Encrypted with SQLCipher"
+        case .mixed: return "Migration in progress"
+        }
+    }
+
+    private var postureSubtitle: String {
+        switch posture {
+        case .empty:
+            return desiredEncrypted
+                ? "New data will be encrypted with SQLCipher."
+                : "New data will be stored as plaintext, protected by FileVault."
+        case .plaintext:
+            return "Your databases are not encrypted by Osaurus. macOS FileVault protects them at rest."
+        case .encrypted:
+            return "Your databases are encrypted with a 256-bit key in your macOS Keychain."
+        case .mixed:
+            return "Some stores are still converting. Reopen this panel in a moment to confirm."
+        }
+    }
+
+    private var postureIcon: String {
+        switch posture {
+        case .empty: return "tray"
+        case .plaintext: return "externaldrive"
+        case .encrypted: return "lock.shield.fill"
+        case .mixed: return "arrow.triangle.2.circlepath"
+        }
+    }
+
+    private var postureColor: Color {
+        switch posture {
+        case .empty: return theme.secondaryText
+        case .plaintext: return theme.accentColor
+        case .encrypted: return theme.successColor
+        case .mixed: return theme.warningColor
+        }
+    }
+
+    private var encryptionBinding: Binding<Bool> {
+        Binding(
+            get: { desiredEncrypted },
+            set: { newValue in
+                if newValue {
+                    // Enabling adds the key-loss risk — confirm first. The
+                    // toggle stays visually off until `applyEncryption` lands.
+                    showEnableConfirm = true
+                } else {
+                    applyEncryption(false)
+                }
+            }
+        )
+    }
+
     // MARK: - Actions
 
     private func refresh() async {
-        keyPresent = StorageKeyManager.shared.keyExists()
+        let snapshot = await Task.detached(priority: .userInitiated) {
+            (
+                StorageMigrationCoordinator.detectOnDiskPosture(),
+                StorageEncryptionPolicy.shared.isEncryptionEnabled,
+                StorageKeyManager.shared.keyExists(),
+                PersistenceHealth.shared.storeIssues(),
+                FileVaultStatus.isEnabled()
+            )
+        }.value
+        posture = snapshot.0
+        desiredEncrypted = snapshot.1
+        keyPresent = snapshot.2
+        storeIssues = snapshot.3
+        fileVaultOn = snapshot.4
     }
 
-    /// Why an export is being run — drives the open-panel copy,
-    /// the success summary line, and what happens after success
-    /// (reveal in Finder vs. re-present the rotate confirmation).
-    /// Consolidates what used to be two near-duplicate methods.
+    private func retryStore(_ store: StorageRecoveryService.Store) {
+        guard recoveringStore == nil else { return }
+        recoveringStore = store.rawValue
+        errorMessage = nil
+        Task {
+            let ok = await StorageRecoveryService.shared.retryStore(store)
+            await MainActor.run {
+                self.recoveringStore = nil
+                if ok {
+                    self.lastSummary = String(
+                        format: L("%@ reopened."),
+                        store.displayName
+                    )
+                } else {
+                    self.errorMessage = String(
+                        format: L("%@ still can't be opened. Try Reset."),
+                        store.displayName
+                    )
+                }
+            }
+            await refresh()
+        }
+    }
+
+    private func resetStore(_ store: StorageRecoveryService.Store) {
+        guard recoveringStore == nil else { return }
+        recoveringStore = store.rawValue
+        errorMessage = nil
+        Task {
+            let dest = await StorageRecoveryService.shared.resetStore(store)
+            await MainActor.run {
+                self.recoveringStore = nil
+                if let dest {
+                    self.lastSummary = String(
+                        format: L("%@ reset. Old file kept at %@."),
+                        store.displayName,
+                        dest.lastPathComponent
+                    )
+                } else {
+                    self.lastSummary = String(format: L("%@ reset."), store.displayName)
+                }
+            }
+            await refresh()
+        }
+    }
+
+    private func applyEncryption(_ enabled: Bool) {
+        isWorking = true
+        workingLabel = enabled ? "Encrypting…" : "Decrypting…"
+        errorMessage = nil
+        lastSummary = ""
+        Task {
+            do {
+                let report = try await StorageMigrationCoordinator.shared.setEncryptionEnabled(enabled)
+                await MainActor.run {
+                    self.isWorking = false
+                    self.desiredEncrypted = enabled
+                    if !report.locked.isEmpty {
+                        self.errorMessage = String(
+                            format: L(
+                                "%lld store(s) couldn't be converted because the encryption key is unavailable."
+                            ),
+                            report.locked.count
+                        )
+                    } else if !report.failed.isEmpty {
+                        self.errorMessage = String(
+                            format: L("%lld store(s) failed to convert."),
+                            report.failed.count
+                        )
+                    } else if enabled {
+                        self.lastSummary = String(
+                            format: L("Encrypted %lld store(s) at rest."),
+                            report.converted
+                        )
+                    } else {
+                        self.lastSummary = String(
+                            format: L("Decrypted %lld store(s); now plaintext at rest."),
+                            report.converted
+                        )
+                    }
+                }
+                await refresh()
+            } catch {
+                await MainActor.run {
+                    self.isWorking = false
+                    self.errorMessage = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    /// Why an export is being run — drives the open-panel copy, the success
+    /// summary line, and what happens after success (reveal in Finder vs.
+    /// re-present the rotate confirmation).
     private enum ExportReason {
         case userInitiated
         case beforeRotate
@@ -406,6 +770,7 @@ public struct StorageSettingsView: View {
 
             let backupDir = dest.appendingPathComponent("osaurus-plaintext-backup", isDirectory: true)
             isWorking = true
+            workingLabel = "Exporting…"
             errorMessage = nil
             do {
                 let summary = try await StorageExportService.shared.exportPlaintextBackup(to: backupDir)
@@ -430,6 +795,7 @@ public struct StorageSettingsView: View {
 
     private func rotateKey() {
         isWorking = true
+        workingLabel = "Rotating…"
         errorMessage = nil
         Task {
             do {
@@ -448,5 +814,4 @@ public struct StorageSettingsView: View {
             }
         }
     }
-
 }

@@ -450,9 +450,8 @@ public final class AgentDatabase: @unchecked Sendable {
     public var isOpen: Bool { queue.sync { db != nil } }
 
     private func openConnection() throws {
-        let key = try StorageKeyManager.shared.currentKey()
         do {
-            db = try EncryptedSQLiteOpener.open(path: path, key: key)
+            db = try OsaurusStorageOpener.open(path: path)
         } catch let error as EncryptedSQLiteError {
             throw AgentDatabaseError.failedToOpen(error.localizedDescription)
         }

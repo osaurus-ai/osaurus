@@ -45,7 +45,7 @@ Canonical reference for all Osaurus features, their status, and documentation.
 | Transcription Mode               | Stable    | "Voice Input"      | VOICE_INPUT.md                | Services/Voice/TranscriptionModeService.swift, Views/Voice/TranscriptionOverlayView.swift         |
 | Sandbox                          | macOS 26+ | "Sandbox"          | SANDBOX.md                    | Services/Sandbox/SandboxManager.swift, Tools/BuiltinSandboxTools.swift, Managers/Plugin/SandboxPluginManager.swift, Views/Sandbox/SandboxView.swift |
 | Computer Use                     | Experimental | -               | COMPUTER_USE.md               | ComputerUse/ (Tool, Loop, Policy, Perception, Recipes, Driver), Views/Settings/ComputerUseSettingsView.swift, Views/Chat/ComputerUseFeedView.swift |
-| Storage Encryption               | Stable    | -                  | STORAGE.md                    | Identity/StorageKeyManager.swift, Storage/EncryptedSQLiteOpener.swift, Storage/StorageDatabaseCatalog.swift, Storage/StorageMutationGate.swift, Storage/StorageExportService.swift, Storage/EncryptedFileStore.swift, Storage/AttachmentBlobStore.swift, Storage/StorageMaintenance.swift, Views/Settings/StorageSettingsView.swift, SQLCipher/ |
+| Storage (plaintext default, opt-in encryption) | Stable | -          | STORAGE.md                    | Storage/StorageFileFormat.swift, Storage/StorageEncryptionPolicy.swift, Storage/OsaurusStorageOpener.swift, Storage/StorageMigrationCoordinator.swift, Storage/StorageRecoveryService.swift, Storage/StorageFile.swift, Storage/PersistenceHealth.swift, Identity/StorageKeyManager.swift, Storage/EncryptedSQLiteOpener.swift, Storage/StorageDatabaseCatalog.swift, Storage/StorageMutationGate.swift, Storage/StorageExportService.swift, Storage/EncryptedFileStore.swift, Storage/AttachmentBlobStore.swift, Storage/StorageMaintenance.swift, Views/Settings/StorageSettingsView.swift, SQLCipher/ |
 | CLI                              | Stable    | "CLI Reference"    | (in README)                   | Packages/OsaurusCLI/                                                                  |
 
 ---
@@ -70,7 +70,7 @@ Canonical reference for all Osaurus features, their status, and documentation.
 │  │   ├── WatchersView (Watchers)                                         │
 │  │   ├── ThemesView (Themes)                                             │
 │  │   ├── SandboxView (Sandbox Container & Plugins)                       │
-│  │   ├── StorageSettingsView (Encryption key, backup, key rotation)      │
+│  │   ├── StorageSettingsView (Encryption opt-in, backup, recovery)       │
 │  │   ├── InsightsView (Developer: Insights)                              │
 │  │   ├── ServerView (Developer: Server Explorer)                         │
 │  │   ├── VoiceView (Voice Input & VAD Settings)                          │

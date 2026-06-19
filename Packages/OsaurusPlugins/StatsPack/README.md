@@ -16,8 +16,10 @@ First-party statistics/data-science format pack for the in-process v1
 - JSONL as one JSON value per line. Object records stream fields in sorted-key
   order; arrays and scalars stream positionally.
 - SQLite read-only for `.sqlite`, `.sqlite3`, and `.db` files. The adapter uses
-  Osaurus's existing vendored SQLCipher/SQLite surface and opens user databases
-  read-only.
+  Osaurus's existing vendored SQLCipher/SQLite surface and opens user-supplied
+  databases read-only without applying a key, so it reads plaintext SQLite
+  files directly. (A user-supplied SQLCipher-encrypted file would not be
+  readable through this path; that is out of scope for the stats pack reader.)
 
 ## Deliberately Not Supported In v1
 

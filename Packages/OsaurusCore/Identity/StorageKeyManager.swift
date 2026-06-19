@@ -167,6 +167,19 @@ public final class StorageKeyManager: @unchecked Sendable {
         return cached
     }
 
+    /// True when storage can be opened/written right now without risking a
+    /// synchronous Keychain prompt. In the default plaintext posture no key
+    /// is needed, so this is always true; in opt-in encrypted mode it requires
+    /// the DEK to already be resident (`hasCachedKey`). Launch and UI gates use
+    /// this so plaintext stores always come up while encrypted stores still
+    /// fail closed until the key is unlocked.
+    public var isStorageReadyForWrites: Bool {
+        if StorageEncryptionPolicy.shared.isEncryptionEnabled {
+            return hasCachedKey
+        }
+        return true
+    }
+
     /// Populate the in-process key cache before storage database queues start
     /// opening. This keeps later `currentKey()` calls off the slow Keychain path.
     public func prewarmCurrentKey() throws {

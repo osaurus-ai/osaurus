@@ -73,6 +73,11 @@ struct MemoryView: View {
     @State var recentLogs: [ProcessingLogRow] = []
     @State var bufferTelemetry = BufferTurnTelemetry()
     @State var memoryDBOpen: Bool = false
+    /// True while a Retry/Reset recovery action is running for the memory
+    /// store, so the diagnostics buttons disable to prevent re-entrancy.
+    @State var memoryRecoveryRunning: Bool = false
+    /// Drives the "Reset memory store?" confirmation before quarantining.
+    @State var showMemoryResetConfirm: Bool = false
     @State var chatActive: Bool = false
     @State var distillSnapshot = DistillationCoordinator.Snapshot(queued: 0, active: false)
     @State var probeBufferRunning: Bool = false
@@ -1096,8 +1101,10 @@ struct MemoryView: View {
     private func clearAllMemory() {
         let db = MemoryDatabase.shared
         db.close()
-        let dbFile = OsaurusPaths.memoryDatabaseFile()
-        try? FileManager.default.removeItem(at: dbFile)
+        // Remove the database *and* its -wal/-shm sidecars. Deleting only the
+        // main file leaves a stale WAL that SQLite would replay on reopen,
+        // resurrecting "cleared" rows or corrupting the fresh database.
+        StorageFile.remove(path: OsaurusPaths.memoryDatabaseFile().path)
         try? db.open()
         Task { await MemorySearchService.shared.clearIndex() }
         loadData()

@@ -186,13 +186,13 @@ That's the entire surface. v1's 18 knobs (`mmrLambda`, `mmrFetchMultiplier`, `ve
 
 ## Storage
 
-All memory data is stored in a local SQLite database with WAL mode. Since 0.17.7 the database is **encrypted at rest** with [SQLCipher](STORAGE.md) using a key kept in your macOS Keychain — the same key chat history, methods, and tool indexes use.
+All memory data is stored in a local SQLite database with WAL mode. As of 0.21.0 the database is **plaintext SQLite by default** (relying on macOS FileVault for at-rest protection), with **opt-in SQLCipher encryption** available in **Settings → Storage** — the same posture chat history, methods, and tool indexes share. The earlier always-on encryption was walked back because a missing Keychain key could silently brick memory and search; see [STORAGE.md → Why encryption is opt-in](STORAGE.md#why-encryption-is-opt-in).
 
-**Location:** `~/.osaurus/memory/memory.sqlite` (SQLCipher)
+**Location:** `~/.osaurus/memory/memory.sqlite` (plaintext SQLite, or SQLCipher when encryption is opted in)
 
 **Configuration:** `~/.osaurus/config/memory.json` (plaintext)
 
-**Vector index:** `~/.osaurus/memory/vectura/<agentId>/` — partitioned per agent so one agent's vectors never collide with another's. The vector files themselves are not yet encrypted (see [STORAGE.md → Limitations](STORAGE.md#limitations-and-trade-offs)); they are rebuilt from the encrypted SQLite source on first read after migration.
+**Vector index:** `~/.osaurus/memory/vectura/<agentId>/` — partitioned per agent so one agent's vectors never collide with another's. The vector files are plaintext in both modes (see [STORAGE.md → Limitations](STORAGE.md#limitations-and-trade-offs)); they are rebuilt from the SQLite source on demand.
 
 The schema is versioned. The v1 → v2 migration ([`migrateToV5`](../Packages/OsaurusCore/Storage/MemoryDatabase.swift)) carries forward your identity, episodes (renamed from `conversation_summaries`), and transcript (renamed from `conversation_chunks`). The noisy v1 working-memory entries, profile events, verification audit log, agent activity, embeddings cache, and graph tables are all dropped — `pinned_facts` rebuilds organically from new conversations.
 
@@ -308,7 +308,7 @@ The Memory view includes a danger zone for clearing all memory data. This remove
 
 ### Memory Console
 
-The Memory Console is an administrative view over the encrypted memory database:
+The Memory Console is an administrative view over the memory database:
 
 - **Inspect** shows a privacy-safe preview and metadata for pinned facts, episodes, and transcript turns. Emails, phone numbers, account-like values, URLs, and credential-shaped tokens are redacted before display.
 - **Search** can be scoped to all memory, pinned facts, episodes, transcript, or one agent. Disabled rows are hidden by default and can be included explicitly.
@@ -338,4 +338,4 @@ The v5 schema migration is automatic on first launch after an upgrade. It runs a
 
 `pinned_facts` starts empty and accrues organically as new sessions are distilled. The Vectura vector index is wiped and rebuilt lazily on first read.
 
-Alongside the schema migration, the [storage encryption migration](STORAGE.md) runs once on first launch of 0.17.7+ and re-keys `memory.sqlite` (and every other Osaurus database) into SQLCipher. It's automatic and shows a brief overlay; details, key-rotation, and plaintext-export instructions live in [STORAGE.md](STORAGE.md).
+Alongside the schema migration, [storage convergence](STORAGE.md#migration-and-convergence) runs once on first launch. As of 0.21.0 it converges `memory.sqlite` (and every other Osaurus database) to the desired posture — **decrypting an existing SQLCipher install to plaintext when macOS FileVault is enabled, or keeping it encrypted when FileVault is off** (and re-encrypting if you opted in). The migration is invisible: no prompt or notice. If the Keychain key is already gone, the store is marked degraded (never deleted) and **Memory → Diagnostics** surfaces the real cause with Retry / Reset recovery. Details, key-rotation, opt-in encryption, and plaintext-export instructions live in [STORAGE.md](STORAGE.md).

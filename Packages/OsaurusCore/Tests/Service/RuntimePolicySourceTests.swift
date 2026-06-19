@@ -193,7 +193,7 @@ struct RuntimePolicySourceTests {
         #expect(!initBody.contains("prewarmCurrentKeyOffCooperativeExecutor()"))
 
         let store = try Self.source("Models/Chat/ChatSessionStore.swift")
-        #expect(store.contains("StorageKeyManager.shared.hasCachedKey"))
+        #expect(store.contains("StorageKeyManager.shared.isStorageReadyForWrites"))
         #expect(store.contains("Chat history unavailable: storage key is not already unlocked"))
         #expect(!store.contains("prewarmCurrentKey()"))
         #expect(store.contains("Sentry APPLE-MACOS-40/41/42"))
@@ -202,7 +202,7 @@ struct RuntimePolicySourceTests {
     @Test("chat history writer skips persistence unless storage key is already unlocked")
     func chatHistoryWriterSkipsPersistenceUnlessStorageKeyCached() throws {
         let source = try Self.source("Storage/ChatHistoryWriter.swift")
-        let gate = try #require(source.range(of: "StorageKeyManager.shared.hasCachedKey"))
+        let gate = try #require(source.range(of: "StorageKeyManager.shared.isStorageReadyForWrites"))
         let open = try #require(source.range(of: "try db.open()"))
 
         #expect(gate.lowerBound < open.lowerBound)
@@ -224,7 +224,9 @@ struct RuntimePolicySourceTests {
     func schedulerStartupDoesNotUnlockStorageKey() throws {
         let source = try Self.source("AppDelegate.swift")
         let schedulerBlock = try #require(
-            source.range(of: "Task { @MainActor in\n            guard StorageKeyManager.shared.hasCachedKey else")
+            source.range(
+                of: "Task { @MainActor in\n            guard StorageKeyManager.shared.isStorageReadyForWrites else"
+            )
         )
         let schedulerStart = try #require(source.range(of: "NextRunScheduler.shared.start()"))
 

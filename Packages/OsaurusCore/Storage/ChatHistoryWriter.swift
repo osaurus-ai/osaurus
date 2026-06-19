@@ -58,11 +58,14 @@ enum ChatHistoryWriter {
         // This runs on a background request executor — not the launch-critical
         // path — so loading the key now is safe, and it prevents silently
         // dropping the write. Only the genuine "key can't be unlocked" case
-        // falls through to the skip below.
-        if !StorageKeyManager.shared.hasCachedKey {
+        // falls through to the skip below. Plaintext mode needs no key, so
+        // the prewarm is skipped and readiness is always true.
+        if StorageEncryptionPolicy.shared.isEncryptionEnabled,
+            !StorageKeyManager.shared.hasCachedKey
+        {
             try? StorageKeyManager.shared.prewarmCurrentKey()
         }
-        guard StorageKeyManager.shared.hasCachedKey else {
+        guard StorageKeyManager.shared.isStorageReadyForWrites else {
             print("[ChatHistoryWriter] Skipping chat history persistence: storage key is not already unlocked")
             return
         }

@@ -169,9 +169,8 @@ public final class ToolDatabase: @unchecked Sendable {
 
     private func openConnection() throws {
         let path = OsaurusPaths.toolIndexDatabaseFile().path
-        let key = try StorageKeyManager.shared.currentKey()
         do {
-            db = try EncryptedSQLiteOpener.open(path: path, key: key)
+            db = try OsaurusStorageOpener.open(path: path)
         } catch let error as EncryptedSQLiteError {
             throw ToolDatabaseError.failedToOpen(error.localizedDescription)
         }

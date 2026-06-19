@@ -2165,22 +2165,34 @@ struct MLXBatchAdapterTests {
         // lagunaMinimal's literal 〈|EOS|〉 emit), and was triggering the rep-penalty
         // TokenRing crash. Laguna now uses the same defaults as any other model.
         let laguna = ModelRuntime.makeGenerateParameters(
-            temperature: 1.0, maxTokens: 64, topP: 1.0, repetitionPenalty: nil,
-            modelName: "JANGQ-AI/Laguna-M.1-JANG_2L")
+            temperature: 1.0,
+            maxTokens: 64,
+            topP: 1.0,
+            repetitionPenalty: nil,
+            modelName: "JANGQ-AI/Laguna-M.1-JANG_2L"
+        )
         #expect(laguna.repetitionPenalty == nil)
         #expect(laguna.repetitionContextSize == 20)
 
         // A caller-supplied penalty still flows through unchanged.
         let lagunaOverride = ModelRuntime.makeGenerateParameters(
-            temperature: 1.0, maxTokens: 64, topP: 1.0, repetitionPenalty: 1.05,
-            modelName: "Laguna-M.1-JANG_1L")
+            temperature: 1.0,
+            maxTokens: 64,
+            topP: 1.0,
+            repetitionPenalty: 1.05,
+            modelName: "Laguna-M.1-JANG_1L"
+        )
         #expect(lagunaOverride.repetitionPenalty == 1.05)
         #expect(lagunaOverride.repetitionContextSize == 20)
 
         // Non-laguna is identical: no injected penalty, default 20 window.
         let other = ModelRuntime.makeGenerateParameters(
-            temperature: 1.0, maxTokens: 64, topP: 1.0, repetitionPenalty: nil,
-            modelName: "qwen3.6-35b-a3b-mxfp4")
+            temperature: 1.0,
+            maxTokens: 64,
+            topP: 1.0,
+            repetitionPenalty: nil,
+            modelName: "qwen3.6-35b-a3b-mxfp4"
+        )
         #expect(other.repetitionPenalty == nil)
         #expect(other.repetitionContextSize == 20)
     }

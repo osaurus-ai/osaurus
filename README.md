@@ -68,7 +68,7 @@ osaurus status   # Check status
 
 Agents are the core of Osaurus. Each one gets its own prompts, memory, and visual theme -- a research assistant, a coding partner, a file organizer, whatever you need. Tools and skills are automatically selected via RAG search based on the task at hand -- no manual configuration needed. Everything else in the harness exists to make agents smarter, faster, and more capable over time.
 
-Agents can also opt into a private encrypted database and a single self-scheduled next run -- see [Agent DB & Self-Scheduling](docs/AGENT_DB.md).
+Agents can also opt into a private local database and a single self-scheduled next run -- see [Agent DB & Self-Scheduling](docs/AGENT_DB.md). Local storage is plaintext by default (protected by FileVault) with opt-in SQLCipher encryption -- see [Storage](docs/STORAGE.md).
 
 ### Agent Loop
 

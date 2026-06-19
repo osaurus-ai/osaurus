@@ -26,6 +26,7 @@ public enum EncryptedFileStoreError: LocalizedError {
     case truncatedEnvelope
     case decryptionFailed
     case encodingFailed
+    case fileMissing
 
     public var errorDescription: String? {
         switch self {
@@ -33,6 +34,7 @@ public enum EncryptedFileStoreError: LocalizedError {
         case .truncatedEnvelope: return "Encrypted file is too short to contain a valid envelope"
         case .decryptionFailed: return "Decryption failed (wrong key or tampered ciphertext)"
         case .encodingFailed: return "Failed to encode value to JSON"
+        case .fileMissing: return "No plaintext or encrypted file exists at the requested path"
         }
     }
 }
@@ -132,6 +134,62 @@ public enum EncryptedFileStore {
     public static func readJSON<T: Decodable>(_ url: URL, as type: T.Type, key: SymmetricKey? = nil) throws -> T {
         let plaintext = try read(url, key: key)
         return try JSONDecoder().decode(type, from: plaintext)
+    }
+
+    // MARK: - Policy-aware twin IO
+
+    /// Write `data` for a *logical* plaintext URL, honoring the current
+    /// at-rest policy:
+    ///   - plaintext mode -> write raw bytes to `plaintextURL`, removing any
+    ///     stale `.osec` twin.
+    ///   - encrypted mode -> AES-GCM write the `.osec` twin, removing any stale
+    ///     plaintext twin.
+    /// This keeps `~/.osaurus` consistent with the user's chosen posture and
+    /// is the path `AttachmentBlobStore` uses for blobs.
+    public static func writePolicyAware(
+        _ data: Data,
+        toPlaintextURL plaintextURL: URL,
+        key: SymmetricKey? = nil
+    ) throws {
+        let dir = plaintextURL.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let encrypted = encryptedURL(for: plaintextURL)
+        if StorageEncryptionPolicy.shared.isEncryptionEnabled {
+            try write(data, to: encrypted, key: key)
+            try? FileManager.default.removeItem(at: plaintextURL)
+        } else {
+            try data.write(to: plaintextURL, options: [.atomic])
+            try? FileManager.default.removeItem(at: encrypted)
+        }
+    }
+
+    /// Detection-first read of a *logical* plaintext URL: prefer the plaintext
+    /// twin when present, else decrypt the `.osec` twin. Independent of the
+    /// current policy so a mid-migration mix still reads correctly.
+    public static func readPolicyAware(plaintextURL: URL, key: SymmetricKey? = nil) throws -> Data {
+        if FileManager.default.fileExists(atPath: plaintextURL.path) {
+            return try Data(contentsOf: plaintextURL)
+        }
+        let encrypted = encryptedURL(for: plaintextURL)
+        if FileManager.default.fileExists(atPath: encrypted.path) {
+            return try read(encrypted, key: key)
+        }
+        throw EncryptedFileStoreError.fileMissing
+    }
+
+    /// The existing twin (plaintext preferred) for a logical plaintext URL, or
+    /// nil when neither exists.
+    public static func existingTwin(forPlaintextURL plaintextURL: URL) -> URL? {
+        if FileManager.default.fileExists(atPath: plaintextURL.path) { return plaintextURL }
+        let encrypted = encryptedURL(for: plaintextURL)
+        if FileManager.default.fileExists(atPath: encrypted.path) { return encrypted }
+        return nil
+    }
+
+    /// Remove both twins of a logical plaintext URL.
+    public static func removeTwins(forPlaintextURL plaintextURL: URL) {
+        try? FileManager.default.removeItem(at: plaintextURL)
+        try? FileManager.default.removeItem(at: encryptedURL(for: plaintextURL))
     }
 
     // MARK: - Path helpers

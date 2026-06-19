@@ -237,16 +237,16 @@ struct MemoryManagementConsoleView: View {
                 )
                 .textFieldStyle(.plain)
                 .font(.system(size: 12))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 7)
-                    .background(
-                        RoundedRectangle(cornerRadius: 7)
-                            .fill(theme.inputBackground)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 7)
-                                    .stroke(theme.inputBorder, lineWidth: 1)
-                            )
-                    )
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .background(
+                    RoundedRectangle(cornerRadius: 7)
+                        .fill(theme.inputBackground)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 7)
+                                .stroke(theme.inputBorder, lineWidth: 1)
+                        )
+                )
 
                 Picker("Preview Agent", selection: $previewAgentId) {
                     Text(Agent.default.displayName).tag(Agent.defaultId.uuidString)

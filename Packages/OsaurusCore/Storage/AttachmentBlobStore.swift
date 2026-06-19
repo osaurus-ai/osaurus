@@ -54,7 +54,14 @@ public enum AttachmentBlobStore {
         OsaurusPaths.chatHistory().appendingPathComponent("blobs", isDirectory: true)
     }
 
-    /// `~/.osaurus/chat-history/blobs/<sha256>.osec`
+    /// Logical (plaintext) blob path `~/.osaurus/chat-history/blobs/<sha256>`.
+    /// In plaintext mode the bytes live here; in encrypted mode the `.osec`
+    /// twin (`blobURL(for:)`) holds the AES-GCM envelope instead.
+    public static func logicalBlobURL(for sha256: String) -> URL {
+        blobsDir().appendingPathComponent(sha256)
+    }
+
+    /// Encrypted blob twin `~/.osaurus/chat-history/blobs/<sha256>.osec`.
     public static func blobURL(for sha256: String) -> URL {
         blobsDir().appendingPathComponent("\(sha256).osec")
     }
@@ -80,37 +87,38 @@ public enum AttachmentBlobStore {
     @discardableResult
     public static func write(_ data: Data) throws -> String {
         let hash = contentHash(data)
-        let url = blobURL(for: hash)
-        if FileManager.default.fileExists(atPath: url.path) {
+        if exists(hash) {
             return hash
         }
         do {
-            try EncryptedFileStore.write(data, to: url)
+            // Honors the at-rest policy: plaintext bytes by default, AES-GCM
+            // `.osec` twin when encryption is enabled.
+            try EncryptedFileStore.writePolicyAware(data, toPlaintextURL: logicalBlobURL(for: hash))
         } catch {
             throw AttachmentBlobError.writeFailed(error.localizedDescription)
         }
         return hash
     }
 
-    /// Read and decrypt the blob with the given content hash.
+    /// Read the blob with the given content hash (detection-first: plaintext
+    /// twin preferred, `.osec` decrypted otherwise).
     public static func read(_ hash: String) throws -> Data {
-        let url = blobURL(for: hash)
         do {
-            return try EncryptedFileStore.read(url)
+            return try EncryptedFileStore.readPolicyAware(plaintextURL: logicalBlobURL(for: hash))
         } catch {
             throw AttachmentBlobError.readFailed(error.localizedDescription)
         }
     }
 
-    /// Returns true when a blob with this hash exists on disk.
+    /// Returns true when a blob with this hash exists on disk (either twin).
     public static func exists(_ hash: String) -> Bool {
-        FileManager.default.fileExists(atPath: blobURL(for: hash).path)
+        EncryptedFileStore.existingTwin(forPlaintextURL: logicalBlobURL(for: hash)) != nil
     }
 
     /// Delete a blob. Caller is responsible for ensuring no other turn
     /// references it.
     public static func delete(_ hash: String) {
-        try? FileManager.default.removeItem(at: blobURL(for: hash))
+        EncryptedFileStore.removeTwins(forPlaintextURL: logicalBlobURL(for: hash))
     }
 
     // MARK: - Spillover for `Attachment` arrays

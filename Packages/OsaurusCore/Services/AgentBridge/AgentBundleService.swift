@@ -335,15 +335,30 @@ public actor AgentBundleService {
             throw AgentBundleError.manifestInvalid("manifest agentId mismatch")
         }
 
-        // 2. Rekey `db.sqlite` from bundle key → host storage key.
+        // 2. Materialize `db.sqlite` from the bundle key into the host's
+        //    at-rest posture: plaintext by default, or SQLCipher (host key)
+        //    when the user opted in. The bundle itself is always an encrypted,
+        //    passphrase-protected artifact regardless of local posture.
         let dbPath = staging.appendingPathComponent("db.sqlite").path
         if fm.fileExists(atPath: dbPath) {
-            let hostKey = try StorageKeyManager.shared.currentKey()
-            try Self.rekeyBundleDatabase(
-                path: dbPath,
-                fromBundleKey: preview.bundleKey,
-                toHostKey: hostKey
-            )
+            let destKey: SymmetricKey? =
+                StorageEncryptionPolicy.shared.isEncryptionEnabled
+                ? try StorageKeyManager.shared.currentKey()
+                : nil
+            let converted = staging.appendingPathComponent("db.converted.sqlite").path
+            try? fm.removeItem(atPath: converted)
+            StorageFile.removeSidecars(for: converted)
+            do {
+                try StorageFormatConverter.export(
+                    from: dbPath,
+                    srcKey: preview.bundleKey,
+                    to: converted,
+                    dstKey: destKey
+                )
+            } catch {
+                throw AgentBundleError.rekeyFailed(error.localizedDescription)
+            }
+            try moveOverwriting(from: converted, to: dbPath)
         }
 
         // 3. Move files into the live agent directory. The agent JSON
@@ -456,21 +471,24 @@ public actor AgentBundleService {
             sqlite3_close(conn)
             return
         }
-        do {
-            try fm.copyItem(atPath: src, toPath: destination.path)
-        } catch {
-            throw AgentBundleError.writeFailed("copy db: \(error.localizedDescription)")
-        }
-        // Pre-rekey we close any in-process handles so the bundle copy
-        // isn't fighting the live file (it isn't — we copied — but the
-        // copy might have inherited an unfinished WAL). Best-effort.
+        // Close any in-process handle so we read a consistent file (no
+        // unfinished WAL), then export the live DB — which may be plaintext
+        // (default at-rest) or SQLCipher (opt-in) — into the bundle encrypted
+        // with the portable bundle key.
         await MainActor.run { AgentDatabaseStore.shared.close(agentId) }
-        let hostKey = try StorageKeyManager.shared.currentKey()
-        try Self.rekeyBundleDatabase(
-            path: destination.path,
-            fromBundleKey: hostKey,
-            toHostKey: newKey
-        )
+        let srcKey = try OsaurusStorageOpener.resolveKey(for: src)
+        try? fm.removeItem(at: destination)
+        StorageFile.removeSidecars(for: destination.path)
+        do {
+            try StorageFormatConverter.export(
+                from: src,
+                srcKey: srcKey,
+                to: destination.path,
+                dstKey: newKey
+            )
+        } catch {
+            throw AgentBundleError.writeFailed("export db: \(error.localizedDescription)")
+        }
     }
 
     /// Open the rekeyed bundle DB and tally tables + views for the
@@ -566,25 +584,6 @@ public actor AgentBundleService {
     /// side (bundle key → host key). Mirrors the body of
     /// `StorageExportService.rekeyDatabase` but expressed in our
     /// `EncryptedSQLiteOpener.rekey` API.
-    fileprivate static func rekeyBundleDatabase(
-        path: String,
-        fromBundleKey oldKey: SymmetricKey,
-        toHostKey newKey: SymmetricKey
-    ) throws {
-        let conn = try EncryptedSQLiteOpener.open(
-            path: path,
-            key: oldKey,
-            applyPerfPragmas: false,
-            applyForeignKeys: false
-        )
-        defer { sqlite3_close(conn) }
-        do {
-            try EncryptedSQLiteOpener.rekey(connection: conn, newKey: newKey)
-        } catch {
-            throw AgentBundleError.rekeyFailed(error.localizedDescription)
-        }
-    }
-
     // MARK: - File moves
 
     private func moveOverwriting(from srcPath: String, to dstPath: String) throws {

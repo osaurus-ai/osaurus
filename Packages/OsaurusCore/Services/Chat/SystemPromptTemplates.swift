@@ -703,14 +703,14 @@ public enum SystemPromptTemplates {
         }
         return """
 
-        \(sandboxSectionHeading)
+            \(sandboxSectionHeading)
 
-        \(sandboxEnvironmentBlock(home: home))
+            \(sandboxEnvironmentBlock(home: home))
 
-        \(hostReadCombined ? sandboxToolGuideCombined(backgroundEnabled: backgroundEnabled) : sandboxToolGuide(backgroundEnabled: backgroundEnabled))
+            \(hostReadCombined ? sandboxToolGuideCombined(backgroundEnabled: backgroundEnabled) : sandboxToolGuide(backgroundEnabled: backgroundEnabled))
 
-        \(sandboxRuntimeHints(hostReadCombined: hostReadCombined))
-        """
+            \(sandboxRuntimeHints(hostReadCombined: hostReadCombined))
+            """
     }
 
     /// Mid-session-mutable sandbox state: the installed-package summary and

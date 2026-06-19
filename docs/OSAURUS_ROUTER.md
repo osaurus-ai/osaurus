@@ -97,14 +97,17 @@ and tool results must not be written to Router billing records.
 
 ## On-Device Billing Ledger
 
-Router charges are also persisted to an encrypted local ledger so support can
+Router charges are also persisted to a local ledger so support can
 debug "I was charged but saw nothing" reports without storing transcripts on
 Osaurus servers.
 
 Ledger properties:
 
 - File: `~/.osaurus/billing/ledger.sqlite`
-- Encryption: SQLCipher via the shared storage key
+- Encryption: follows the app-wide storage posture — plaintext SQLite by default
+  (protected by FileVault), or SQLCipher under the shared storage key when
+  [encryption is opted in](STORAGE.md#why-encryption-is-opt-in). The ledger is
+  metadata-only either way (no prompt/response/tool text).
 - Retention: newest 10,000 rows and at most 365 days
 - Export: metadata-only diagnostics from the Dashboard
 - Correlation: request id, session id, assistant turn id, model, token counts,

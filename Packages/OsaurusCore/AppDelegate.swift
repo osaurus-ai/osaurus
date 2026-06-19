@@ -306,8 +306,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             ModelPickerItemCache.shared.prewarm()
         }
 
-        Task.detached(priority: .utility) {
-            try? await StorageKeyManager.shared.prewarmCurrentKeyOffCooperativeExecutor()
+        // Only warm the storage key when the user opted in to encryption.
+        // The default plaintext posture needs no key, so launch never touches
+        // the Keychain in that case.
+        if StorageEncryptionPolicy.shared.isEncryptionEnabled {
+            Task.detached(priority: .utility) {
+                try? await StorageKeyManager.shared.prewarmCurrentKeyOffCooperativeExecutor()
+            }
         }
 
         // Seed the identity-existence memo off the main thread so the first
@@ -334,26 +339,38 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // `EncryptedSQLiteOpener`; each `*Database.shared.open()` only parks
         // on `StorageMutationGate` while a key rotation is in flight.
         let embeddingInitTask = Task.detached(priority: .utility) {
-            // Await the key prewarm before the cache gate so storage-dependent
-            // init isn't skipped purely because the (separately dispatched)
-            // launch prewarm hasn't landed yet. Uses the off-cooperative
-            // variant so it never pins a Swift cooperative thread inside the
-            // synchronous Keychain read, and stays off the launch-critical
-            // main-actor path. Idempotent with the prewarm above.
-            try? await StorageKeyManager.shared.prewarmCurrentKeyOffCooperativeExecutor()
-            guard StorageKeyManager.shared.hasCachedKey else {
-                MemoryLogger.database.error(
-                    "Storage-dependent search/index services disabled — storage key is not already unlocked"
-                )
-                return
+            // Converge on-disk storage to the selected posture (default:
+            // plaintext) before opening anything. For existing encrypted
+            // installs this decrypts in place while the key is still available;
+            // for plaintext installs it is a fast no-op. Runs under the storage
+            // mutation gate so lazy opens park until it finishes.
+            await StorageMigrationCoordinator.shared.convergeOnLaunch()
+
+            // Only encrypted mode needs the Keychain key resident before we
+            // open SQLCipher databases. Await the prewarm before the cache gate
+            // so storage-dependent init isn't skipped purely because the
+            // (separately dispatched) launch prewarm hasn't landed yet. Uses
+            // the off-cooperative variant so it never pins a Swift cooperative
+            // thread inside the synchronous Keychain read. In plaintext mode
+            // no key is required, so storage-dependent services always come up.
+            if StorageEncryptionPolicy.shared.isEncryptionEnabled {
+                try? await StorageKeyManager.shared.prewarmCurrentKeyOffCooperativeExecutor()
+                guard StorageKeyManager.shared.hasCachedKey else {
+                    MemoryLogger.database.error(
+                        "Storage-dependent search/index services disabled — storage key is not already unlocked"
+                    )
+                    return
+                }
             }
             var memoryDBOpened = false
+            var lastMemoryOpenError: Error?
             for attempt in 1 ... 3 {
                 do {
                     try MemoryDatabase.shared.open()
                     memoryDBOpened = true
                     break
                 } catch {
+                    lastMemoryOpenError = error
                     MemoryLogger.database.error("Memory database open attempt \(attempt)/3 failed: \(error)")
                     if attempt < 3 {
                         try? await Task.sleep(nanoseconds: UInt64(attempt) * 500_000_000)
@@ -364,23 +381,35 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                 await MemorySearchService.shared.initialize()
             } else {
                 MemoryLogger.database.error("Memory system disabled — database failed to open after 3 attempts")
+                // Preserve the real cause so diagnostics can classify it
+                // (key-locked vs corrupt vs migration) and offer recovery.
                 PersistenceHealth.shared.recordDatabaseOpenFailure(
-                    subsystem: "memory",
-                    error: MemoryDatabaseError.failedToOpen("open failed after 3 attempts")
+                    subsystem: StorageRecoveryService.Store.memory.rawValue,
+                    error: lastMemoryOpenError
+                        ?? MemoryDatabaseError.failedToOpen("open failed after 3 attempts"),
+                    path: OsaurusPaths.memoryDatabaseFile().path
                 )
             }
 
             do {
                 try MethodDatabase.shared.open()
             } catch {
-                PersistenceHealth.shared.recordDatabaseOpenFailure(subsystem: "method", error: error)
+                PersistenceHealth.shared.recordDatabaseOpenFailure(
+                    subsystem: StorageRecoveryService.Store.method.rawValue,
+                    error: error,
+                    path: OsaurusPaths.methodsDatabaseFile().path
+                )
             }
             await MethodSearchService.shared.initialize()
 
             do {
                 try ToolDatabase.shared.open()
             } catch {
-                PersistenceHealth.shared.recordDatabaseOpenFailure(subsystem: "tool", error: error)
+                PersistenceHealth.shared.recordDatabaseOpenFailure(
+                    subsystem: StorageRecoveryService.Store.tool.rawValue,
+                    error: error,
+                    path: OsaurusPaths.toolIndexDatabaseFile().path
+                )
             }
             await ToolSearchService.shared.initialize()
 
@@ -431,10 +460,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // Initialize WatcherManager to start file system watchers
         _ = WatcherManager.shared
 
-        // Start the self-scheduling loop only if encrypted storage is already
-        // unlocked. Startup must not trigger a Keychain/password prompt.
+        // Start the self-scheduling loop once storage is ready. In plaintext
+        // mode (the default) that's immediate; in opt-in encrypted mode it
+        // waits until the key is resident so startup never triggers a
+        // Keychain/password prompt.
         Task { @MainActor in
-            guard StorageKeyManager.shared.hasCachedKey else {
+            guard StorageKeyManager.shared.isStorageReadyForWrites else {
                 NSLog("[Osaurus] Scheduler disabled: storage key is not already unlocked")
                 return
             }

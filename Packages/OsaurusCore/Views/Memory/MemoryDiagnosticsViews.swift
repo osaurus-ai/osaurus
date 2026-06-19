@@ -45,6 +45,16 @@ extension MemoryView {
             primaryButton: .primary(L("Start backfill")) { runBackfill() },
             secondaryButton: .cancel(L("Cancel"))
         )
+        .themedAlert(
+            L("Reset memory store?"),
+            isPresented: $showMemoryResetConfirm,
+            message:
+                L(
+                    "The unreadable database is moved to ~/.osaurus/quarantine/ (never deleted) and a fresh, empty memory store is created so memory and search work again. Distilled facts and episodes in the old file stay in quarantine — export a plaintext backup first if you might recover the key."
+                ),
+            primaryButton: .destructive(L("Reset store")) { runMemoryRecovery(reset: true) },
+            secondaryButton: .cancel(L("Cancel"))
+        )
     }
 
     /// Top diagnostics card: an at-a-glance health headline, then the
@@ -289,19 +299,7 @@ extension MemoryView {
             value: config.enabled ? L("yes") : L("no"),
             statusColor: config.enabled ? .green : .red
         )
-        diagnosticRow(
-            label: "Memory DB open",
-            value: memoryDBOpen ? L("yes") : L("no"),
-            statusColor: memoryDBOpen ? .green : .red,
-            detail: memoryDBOpen
-                ? nil
-                : L(
-                    """
-                    Memory database failed to open. Check Console for \
-                    SQLCipher errors and the storage migration logs.
-                    """
-                )
-        )
+        memoryDBStatusRow
         diagnosticRow(
             label: "Extraction mode",
             value: extractionModeDescription(config.extractionMode),
@@ -316,6 +314,144 @@ extension MemoryView {
             statusColor: coreModelStatusColor(coreModelStatus),
             detail: coreModelStatusDetail(coreModelStatus)
         )
+    }
+
+    // MARK: - Memory DB health + recovery
+
+    /// The "Memory DB open" row. When closed, it classifies the *real*
+    /// cause (key-locked vs corrupt vs migration, via `PersistenceHealth`)
+    /// instead of the old generic string, and offers in-place recovery —
+    /// Retry the open, or Reset (quarantine + recreate) the store.
+    @ViewBuilder
+    var memoryDBStatusRow: some View {
+        if memoryDBOpen {
+            diagnosticRow(label: "Memory DB open", value: L("yes"), statusColor: .green)
+        } else {
+            let issue = PersistenceHealth.shared.storeIssue(
+                for: StorageRecoveryService.Store.memory.rawValue
+            )
+            VStack(alignment: .leading, spacing: 8) {
+                diagnosticRow(
+                    label: "Memory DB open",
+                    value: L("no"),
+                    statusColor: .red,
+                    detail: memoryDBFailureDetail(issue)
+                )
+                memoryRecoveryControls
+            }
+        }
+    }
+
+    /// Plain-language cause for a closed memory DB, derived from the
+    /// classified `StorageStoreIssue` and the database's last open error.
+    private func memoryDBFailureDetail(_ issue: StorageStoreIssue?) -> String {
+        let cause: String
+        switch issue?.kind {
+        case .locked:
+            cause = L(
+                "The storage encryption key is unavailable on this Mac (Keychain reset, app re-sign, or migration without iCloud Keychain). Your encrypted memory can't be unlocked with the current key."
+            )
+        case .corrupt:
+            cause = L(
+                "The database file is unreadable — it may be corrupt or was encrypted with a different key."
+            )
+        case .migration:
+            cause = L(
+                "A schema migration failed, so the database couldn't be upgraded to this build's format."
+            )
+        case .unknown:
+            cause = L("The memory database failed to open for an unrecognized reason.")
+        case .none:
+            cause = L(
+                "The memory database isn't open. It may still be initializing, or it failed silently — try Retry."
+            )
+        }
+        let underlying = issue?.message ?? MemoryDatabase.shared.lastOpenErrorDescription
+        if let underlying, !underlying.isEmpty {
+            return cause + "\n\n" + L("Details: \(underlying)")
+        }
+        return cause
+    }
+
+    /// Retry / Reset buttons shown under a closed memory DB row.
+    private var memoryRecoveryControls: some View {
+        HStack(spacing: 8) {
+            recoveryButton(
+                title: L("Retry open"),
+                icon: "arrow.clockwise",
+                tint: theme.accentColor,
+                disabled: memoryRecoveryRunning
+            ) {
+                runMemoryRecovery(reset: false)
+            }
+            recoveryButton(
+                title: L("Reset store…"),
+                icon: "trash",
+                tint: theme.errorColor,
+                disabled: memoryRecoveryRunning
+            ) {
+                showMemoryResetConfirm = true
+            }
+            if memoryRecoveryRunning {
+                ProgressView().controlSize(.small)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.leading, 17)
+    }
+
+    private func recoveryButton(
+        title: String,
+        icon: String,
+        tint: Color,
+        disabled: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                Image(systemName: icon)
+                    .font(.system(size: 10, weight: .semibold))
+                Text(title)
+                    .font(.system(size: 11, weight: .semibold))
+            }
+            .foregroundColor(tint)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 4)
+            .background(Capsule().fill(tint.opacity(0.12)))
+        }
+        .buttonStyle(PlainButtonStyle())
+        .disabled(disabled)
+    }
+
+    /// Run a recovery action against the memory store off the main actor,
+    /// then refresh diagnostics so the row reflects the new state.
+    func runMemoryRecovery(reset: Bool) {
+        guard !memoryRecoveryRunning else { return }
+        memoryRecoveryRunning = true
+        Task {
+            if reset {
+                let dest = await StorageRecoveryService.shared.resetStore(.memory)
+                await MainActor.run {
+                    if let dest {
+                        showToast(L("Memory store reset. Old file kept at \(dest.lastPathComponent)."))
+                    } else {
+                        showToast(L("Memory store reset."))
+                    }
+                }
+            } else {
+                let ok = await StorageRecoveryService.shared.retryStore(.memory)
+                await MainActor.run {
+                    showToast(
+                        ok ? L("Memory database reopened.") : L("Still can't open memory — try Reset."),
+                        isError: !ok
+                    )
+                }
+            }
+            await MainActor.run {
+                memoryRecoveryRunning = false
+                loadData()
+            }
+        }
     }
 
     /// Throughput counters that show whether turns are flowing through the
