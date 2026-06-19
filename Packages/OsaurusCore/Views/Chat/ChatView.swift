@@ -360,6 +360,11 @@ final class ChatSession: ObservableObject {
     nonisolated(unsafe) private var contextEstimateCancellable: AnyCancellable?
 
     init() {
+        // Warm the agent-secret account memo off the main thread before the
+        // first preview compose reads it synchronously — the Keychain
+        // enumeration it performs has otherwise hung the UI on chat open.
+        AgentSecretsKeychain.prewarmAccounts()
+
         let cache = ModelPickerItemCache.shared
         if cache.isLoaded {
             pickerItems = cache.items
