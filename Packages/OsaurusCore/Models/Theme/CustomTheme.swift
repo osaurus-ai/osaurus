@@ -302,7 +302,10 @@ public struct ThemeBackground: Codable, Equatable, Sendable {
     /// wallpaper-sized image on the main thread — enough to trip the app-hang
     /// watchdog. Keying on the payload means edits (new base64) miss naturally;
     /// `NSCache` evicts under memory pressure so no manual invalidation is needed.
-    private static let decodedImageCache = NSCache<NSString, NSImage>()
+    /// `nonisolated(unsafe)` is sound here: `NSCache` performs its own internal
+    /// locking, so concurrent `object(forKey:)` / `setObject(_:forKey:)` from any
+    /// actor is safe despite the type not being `Sendable`.
+    private nonisolated(unsafe) static let decodedImageCache = NSCache<NSString, NSImage>()
 
     /// Decode base64 image data to NSImage (memoized by payload).
     public func decodedImage() -> NSImage? {
