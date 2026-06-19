@@ -55,6 +55,37 @@ extension EvalRunner {
             ? ComputerUseLoop.scriptedProvider(rawArguments: exp.scriptedActions!)
             : nil
 
+        // Tiny-context skip (mirrors the `agent_loop` / `capability_claims`
+        // tiny-context skips). The loop's `modelStep` FORCES an `agent_action`
+        // tool call (`tools: [AgentAction.toolSpec]`, `tool_choice: .forced`),
+        // but a model whose context size class auto-disables tool calling —
+        // Apple Foundation and any other ≤4K-token-window model
+        // (`ContextSizeClass.tiny`) — has its tool schema stripped at compose
+        // time, so it can never emit a valid action. Driving it live would
+        // re-ask to the invalid cap (a capability-mismatch FAIL) or, for the
+        // on-device Foundation runtime, block in the model call past the
+        // wall-clock guard (the step timeout can't cancel a non-cooperative
+        // XPC call). Surface it as an honest SKIP. Scripted cases make no model
+        // call (`scriptedProvider != nil`) and still run for every model.
+        if scriptedProvider == nil {
+            let window = ContextSizeResolver.resolve(modelId: modelId)
+            if window.sizeClass.disablesTools {
+                return .terminal(
+                    id: testCase.id,
+                    label: label,
+                    domain: testCase.domain,
+                    outcome: .skipped,
+                    notes: [
+                        "tools auto-disabled for '\(modelId)': context size class "
+                            + "\(window.sizeClass) (≤\(ContextSizeResolver.tinyCeiling)-token "
+                            + "window) strips the agent_action tool schema the Computer "
+                            + "Use loop forces; live model-driven case skipped"
+                    ],
+                    modelId: modelId
+                )
+            }
+        }
+
         let started = Date()
         let result = await ComputerUseLoop.run(
             goal: testCase.query,

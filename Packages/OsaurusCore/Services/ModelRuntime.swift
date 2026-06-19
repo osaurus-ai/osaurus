@@ -381,6 +381,19 @@ public actor ModelRuntime {
         await cancelActiveGeneration()
     }
 
+    /// Bounded GPU/Metal teardown for out-of-process CLIs (e.g.
+    /// `osaurus-evals`) that load MLX and then exit. Mirrors the host
+    /// app's quit teardown (`AppDelegate.applicationShouldTerminate`
+    /// phase 3): cancel in-flight generations, then `clearAll(quit: true)`
+    /// so a stuck lease can't wedge exit or crash the Metal teardown. The
+    /// caller should follow with `Darwin._exit` to skip the MLX/Metal C++
+    /// static destructors that would otherwise hang at process exit. The
+    /// caller is responsible for bounding this with a deadline.
+    public static func shutdownForOutOfProcessExit() async {
+        await shared.cancelAllGenerations()
+        await shared.clearAll(quit: true)
+    }
+
     /// Cancel the active decode for `name` without evicting the loaded
     /// container. HTTP non-streaming callers use this when the client drops
     /// before any response body can be written; otherwise the server can keep

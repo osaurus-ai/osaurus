@@ -376,7 +376,15 @@ actor MLXService: ToolCapableService {
         else {
             return nil
         }
-        return ToolCallFormat.infer(from: modelType, configData: configData)
+        // `ToolCallFormat.infer` returns nil to mean "no model-specific format —
+        // use the default JSON `<tool_call>{…}</tool_call>` parser" (its
+        // documented contract), NOT "tools unsupported". Base Qwen3
+        // (`model_type == "qwen3"`) has no dedicated infer case and lands here;
+        // folding nil into the default `.json` format keeps the supports-check
+        // from misreading a tool-capable default-format model as unsupported.
+        // Genuinely tool-less families (e.g. gemma3n) are gated by name in
+        // `supportsLocalToolCalling` before this is ever consulted.
+        return ToolCallFormat.infer(from: modelType, configData: configData) ?? .json
     }
 
     private nonisolated static func explicitToolFormat(inJangConfig data: Data) -> ToolCallFormat?? {

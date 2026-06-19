@@ -72,11 +72,19 @@ public struct EvalBootstrapPlan: Sendable, Equatable {
         loadInstalledPlugins || !searchIndexScope.isEmpty
     }
 
-    /// True when the selected cases only need derived search indices.
-    /// Those runs should stay hermetic so fixture writes cannot touch
-    /// the developer's real method database or block on Keychain.
+    /// True when the run will open/sync any of the shared search DBs
+    /// (`tool_index`, `methods`, skill index) — i.e. whenever it loads
+    /// installed plugins (`loadInstalledPlugins()` syncs all three) OR
+    /// brings up a non-empty index scope. Those runs must stay hermetic:
+    /// a developer (or CI) with the Osaurus host app running holds the
+    /// real `~/.osaurus` SQLite DBs in WAL mode, so the eval's
+    /// `ToolDatabase.open()` against the same files fails (→ silent
+    /// registry fallback, `index=0`) or its `syncFromRegistry()` write
+    /// deadlocks against the app. Isolating to a temp root sidesteps that;
+    /// the plugin `Tools/` dir is symlinked back in so plugin discovery
+    /// still works (see `configureIsolatedSearchStorageIfNeeded`).
     public var usesIsolatedSearchStorage: Bool {
-        !loadInstalledPlugins && !searchIndexScope.isEmpty
+        requiresWork
     }
 
     public static func make(
@@ -87,11 +95,26 @@ public struct EvalBootstrapPlan: Sendable, Equatable {
         switch preference {
         case .force:
             return EvalBootstrapPlan(loadInstalledPlugins: true, searchIndexScope: .empty)
-        // `automatic` and `disabled` resolve identically: no current domain
-        // needs installed native plugins loaded by default, so both just
-        // bring up whatever search-index lanes the selected cases require.
-        // Pass `--bootstrap-plugins` (`.force`) to opt into plugin loading.
-        case .automatic, .disabled:
+        case .automatic:
+            // Auto-load installed native plugins when a selected case
+            // explicitly requires one (`fixtures.requirePlugins`, e.g. the
+            // capability_claims browser cases). Without this those cases skip
+            // as "missing plugins" even when the plugin is installed on disk.
+            // Plugin bootstrap (`EvalHostBootstrap.loadInstalledPlugins`) also
+            // brings up the search indices, so no extra index scope is needed.
+            // Suites with no plugin-required selected case keep avoiding the
+            // dlopen cost and only bring up the index lanes they need.
+            // `--bootstrap-plugins` (`.force`) still forces loading;
+            // `--no-bootstrap-plugins` (`.disabled`) opts out even when cases
+            // request plugins.
+            if suite.selectedCasesRequireInstalledPlugins(filter: filter) {
+                return EvalBootstrapPlan(loadInstalledPlugins: true, searchIndexScope: .empty)
+            }
+            return EvalBootstrapPlan(
+                loadInstalledPlugins: false,
+                searchIndexScope: suite.searchIndexBootstrapScopeWithoutPluginBootstrap(filter: filter)
+            )
+        case .disabled:
             return EvalBootstrapPlan(
                 loadInstalledPlugins: false,
                 searchIndexScope: suite.searchIndexBootstrapScopeWithoutPluginBootstrap(filter: filter)
@@ -116,13 +139,62 @@ public enum EvalBootstrap {
     ) -> URL? {
         guard plan.usesIsolatedSearchStorage else { return nil }
 
+        // Resolve the REAL plugin install dir before overriding the root —
+        // `OsaurusPaths.tools()` is `root()/Tools`, so we have to capture it
+        // while `root()` still points at `~/.osaurus`.
+        let realToolsDir = plan.loadInstalledPlugins ? OsaurusPaths.tools() : nil
+
+        // Same capture-before-override rule for the external-models manifest
+        // (`root()/cache/external-models.json`): the id -> absolute bundle-path
+        // registry that makes HF-cache / LM-Studio models resolvable via
+        // ExternalModelLocator -> discoverLocalModels -> ChatEngine routing. An
+        // eval whose `--model` lives only in `~/.cache/huggingface/hub` (e.g.
+        // `mlx-community/Qwen3-4B-4bit`) is reachable ONLY through this manifest;
+        // under the isolated temp root it is absent, so an LLM run on the
+        // isolated path (CapabilityClaims) would route the model to `.none` and
+        // error every case with `modelNotFound`.
+        let realExternalModelsManifest = OsaurusPaths.externalModelsManifestFile()
+
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("osaurus-evals-\(UUID().uuidString)", isDirectory: true)
         try? FileManager.default.createDirectory(
             at: root,
             withIntermediateDirectories: true
         )
+
+        // Plugin discovery scans `root()/Tools`. When this run loads
+        // installed plugins, symlink the real Tools dir into the isolated
+        // root so `PluginManager.loadAll()` still finds (and registers the
+        // tools/skills of) the user's installed plugins, while the derived
+        // search DBs are created fresh in temp. Read-only dylib scan — no
+        // lock contention with a running host app, unlike the DBs.
+        if let realToolsDir,
+            FileManager.default.fileExists(atPath: realToolsDir.path)
+        {
+            let linkedTools = root.appendingPathComponent("Tools", isDirectory: true)
+            try? FileManager.default.createSymbolicLink(
+                at: linkedTools,
+                withDestinationURL: realToolsDir
+            )
+        }
+
         OsaurusPaths.overrideRoot = root
+
+        // Symlink the real external-models manifest into the isolated cache so
+        // HF-cache / LM-Studio MLX models stay resolvable on the isolated path.
+        // The manifest records absolute bundle paths, so reads resolve in
+        // place; read-only — the eval LLM path never rescans or rewrites it.
+        if FileManager.default.fileExists(atPath: realExternalModelsManifest.path) {
+            let isolatedManifest = OsaurusPaths.externalModelsManifestFile()
+            try? FileManager.default.createDirectory(
+                at: isolatedManifest.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try? FileManager.default.createSymbolicLink(
+                at: isolatedManifest,
+                withDestinationURL: realExternalModelsManifest
+            )
+        }
 
         #if DEBUG
             StorageKeyManager.shared._setKeyForTesting(
@@ -134,6 +206,11 @@ public enum EvalBootstrap {
     }
 
     public static func run(_ plan: EvalBootstrapPlan) async {
+        // Colocate the MLX Metal shader library beside this CLI binary
+        // before any local model load. No-op for remote-only runs and
+        // when the metallib is already present (see MLXMetallibBootstrap).
+        MLXMetallibBootstrap.ensureBesideExecutable()
+
         if plan.loadInstalledPlugins {
             await EvalHostBootstrap.loadInstalledPlugins()
             return
@@ -147,6 +224,11 @@ public enum EvalBootstrap {
     /// Bring up the search indices used by `CapabilitySearchEvaluator`
     /// without scanning or dlopen-ing installed native plugins.
     private static func initializeSearchIndices(_ scope: EvalSearchIndexBootstrapScope) async {
+        // Every search lane needs the shared embedder; warn loudly up
+        // front if it's missing rather than silently building empty
+        // vector indices that make capability_search look broken.
+        EmbeddingService.ensureModelPresent()
+
         if scope.tools {
             try? ToolDatabase.shared.open()
             await ToolSearchService.shared.initialize()
@@ -168,6 +250,17 @@ public enum EvalBootstrap {
 }
 
 public extension EvalSuite {
+    /// True when any selected case explicitly requires an installed native
+    /// plugin (`fixtures.requirePlugins`). Drives the automatic plugin
+    /// bootstrap so plugin-gated cases (e.g. the capability_claims browser
+    /// cases) actually run instead of skipping as "missing plugins" when the
+    /// plugin is installed on disk.
+    func selectedCasesRequireInstalledPlugins(filter: String?) -> Bool {
+        selectedCases(filter: filter).contains {
+            !($0.fixtures.requirePlugins?.isEmpty ?? true)
+        }
+    }
+
     /// Search indices are only useful for cases that will reach the search
     /// evaluator. Without plugin bootstrap, plugin-required cases skip before
     /// searching, so a filtered run of those cases should not block on index IO.

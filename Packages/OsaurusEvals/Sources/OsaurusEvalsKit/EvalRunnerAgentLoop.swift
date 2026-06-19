@@ -35,10 +35,17 @@ extension EvalRunner {
             )
         }
 
-        // Sandbox skip gating (same semantics as `requirePlugins`): a
-        // host without a working sandbox SKIPS the case instead of
-        // failing it, so contributors without Apple Containerization
-        // can still run the rest of the suite.
+        // Sandbox availability gate (same "didn't apply" semantics as
+        // `requirePlugins`): a host without a working, fully-set-up sandbox
+        // SKIPS the case instead of failing it, so contributors without
+        // Apple Containerization can still run the rest of the suite. This
+        // cheap OS/setup check runs BEFORE the tiny-context skip below so
+        // that for sandbox cases an unusable host reports an honest
+        // "sandbox unavailable" reason for EVERY model — including
+        // tiny-context ones (Apple Foundation) that would otherwise mask it
+        // as "tools auto-disabled". Runtime boot/cool-down failures this
+        // cheap check can't see are caught later at the registrar probe and
+        // likewise mapped to SKIP.
         let sandboxFixture = testCase.fixtures.sandbox
         let sandboxMode: AgentLoopSandboxMode? = sandboxFixture.map {
             $0.hostFolder == true ? .combined : .pure
@@ -59,6 +66,31 @@ extension EvalRunner {
                     modelId: modelId
                 )
             }
+        }
+
+        // Capability skip (same "didn't apply, not regressed" semantics): a
+        // model whose context size class auto-disables tool calling — Apple
+        // Foundation and any other ≤4K-token-window model
+        // (`ContextSizeClass.tiny`) — cannot be handed the folder/sandbox
+        // tools every `agent_loop` case requires. Osaurus strips the entire
+        // tool schema at compose time for such models, so the run would
+        // otherwise score a wall of FAILs against an empty toolset (a
+        // capability mismatch, not an agentic-quality result). Surface it as
+        // SKIP with the resolved size class so cross-model reports stay honest.
+        let contextWindow = ContextSizeResolver.resolve(modelId: modelId)
+        if contextWindow.sizeClass.disablesTools {
+            return .terminal(
+                id: testCase.id,
+                label: label,
+                domain: testCase.domain,
+                outcome: .skipped,
+                notes: [
+                    "tools auto-disabled for '\(modelId)': context size class "
+                        + "\(contextWindow.sizeClass) (≤\(ContextSizeResolver.tinyCeiling)-token "
+                        + "window) strips the tool schema; agent_loop requires folder tools"
+                ],
+                modelId: modelId
+            )
         }
 
         // Fresh per-case workspace. Deleted in all exits below.
@@ -139,8 +171,39 @@ extension EvalRunner {
                 )
             }
 
+            /// Host can't provide a sandbox at all (no container, boot
+            /// failed, or in failure cool-down): tear down and SKIP — the
+            /// same "didn't apply" signal as a missing plugin, not a model
+            /// failure. Distinct from `sandboxSetupFailed` so a real
+            /// per-agent provisioning bug still ERRORs.
+            func sandboxUnavailableSkip(_ note: String) async -> EvalCaseReport {
+                await cleanupSandboxCase(
+                    agentId: evalAgentId,
+                    pluginIdsBeforeRun: pluginIdsBeforeRun
+                )
+                return .terminal(
+                    id: testCase.id,
+                    label: label,
+                    domain: testCase.domain,
+                    outcome: .skipped,
+                    notes: [note],
+                    modelId: modelId
+                )
+            }
+
             await SandboxToolRegistrar.shared.registerTools(for: evalAgentId)
             if let reason = SandboxToolRegistrar.shared.unavailabilityReason(for: evalAgentId) {
+                // Host-capability failures (no container, startup/boot
+                // failed, or in failure cool-down) mean this host simply
+                // can't provide a sandbox — SKIP, don't ERROR, matching the
+                // OS/setup gate above and `requirePlugins` semantics. A
+                // per-agent `provisioningFailed` is a real setup bug worth
+                // surfacing, so it still ERRORs.
+                if Self.sandboxKindIsHostCapability(reason.kind) {
+                    return await sandboxUnavailableSkip(
+                        "sandbox unavailable (\(reason.kind.rawValue)): \(reason.message)"
+                    )
+                }
                 return await sandboxSetupFailed(
                     "sandbox boot/provision failed (\(reason.kind.rawValue)): \(reason.message)"
                 )
@@ -362,6 +425,26 @@ extension EvalRunner {
         return agent.id
     }
 
+    /// Stand up an isolated, fully-enabled auto-mode eval agent for a
+    /// `capability_claims` abstention case. Its allowlist is the live
+    /// dynamic-tool registry minus the case's `ensureToolsDisabled` names,
+    /// so `effectiveEnabledToolNames` is authoritative (non-nil) and the
+    /// must-be-absent tools are verifiably absent. This makes the
+    /// `ensureToolsDisabled` gate satisfiable instead of force-skipping on
+    /// the Default agent's legacy global tool mode. Auto mode + an allowlist
+    /// mirrors a real fully-enabled agent (manifest grounds "do you have X";
+    /// the lean hot set + always-loaded `capabilities_discover`/`_load` let
+    /// the model discover/abstain). Tear down with `removeEvalAgent`.
+    static func installCapabilityClaimsAgent(excluding forbidden: [String]) -> UUID {
+        let agentId = installEvalAgent(nil)
+        AgentManager.shared.updateToolSelectionMode(.auto, for: agentId)
+        let forbiddenSet = Set(forbidden)
+        let allowlist = EvalHostBootstrap.dynamicToolNames()
+            .filter { !forbiddenSet.contains($0) }
+        AgentManager.shared.updateEnabledToolNames(allowlist, for: agentId)
+        return agentId
+    }
+
     // MARK: - Sandbox fixtures
 
     /// Skip-decision for sandbox cases: a host without a working,
@@ -378,6 +461,23 @@ extension EvalRunner {
             return "sandbox setup incomplete on this host"
         }
         return nil
+    }
+
+    /// Which `SandboxToolRegistrar.UnavailabilityReason.Kind`s mean "this
+    /// host can't provide a sandbox at all" (so the case SKIPS, same as a
+    /// missing plugin) vs a real per-run setup bug (which ERRORs). The
+    /// cheap `sandboxSkipReason` gate above only sees OS version + setup
+    /// flag; the registrar surfaces actual boot/cool-down failures only
+    /// after a `registerTools` probe, so this classifies that result.
+    static func sandboxKindIsHostCapability(
+        _ kind: SandboxToolRegistrar.UnavailabilityReason.Kind
+    ) -> Bool {
+        switch kind {
+        case .containerUnavailable, .startupFailed:
+            return true
+        case .provisioningFailed:
+            return false
+        }
     }
 
     /// Map the case's sandbox fixture onto the eval agent's
@@ -455,7 +555,9 @@ extension EvalRunner {
     /// scheduled (so the host app's scheduler never wakes a deleted
     /// agent), then delete the agent record — `AgentStore.delete` also
     /// drops the per-agent database directory and scheduler rows.
-    private static func removeEvalAgent(_ agentId: UUID) {
+    /// Internal (not private) so the capability_claims path in
+    /// `EvalRunner.swift` can tear down its isolated eval agent too.
+    static func removeEvalAgent(_ agentId: UUID) {
         _ = try? LocalAgentBridge.shared.cancelNextRun(agentId: agentId)
         AgentStore.delete(id: agentId)
         AgentManager.shared.refresh()

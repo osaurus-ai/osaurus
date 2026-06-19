@@ -1,0 +1,15 @@
+{
+  "id": "argument_coercion.bool-no",
+  "domain": "argument_coercion",
+  "label": "coercion • 'no' coerces to false (negative vocabulary)",
+  "query": "",
+  "notes": "Complements bool-yes ('YES' -> true). 'no' shares the same switch branch as 'false' and '0', so this pins the entire negative vocabulary maps to false rather than being rejected as unknown.",
+  "fixtures": {},
+  "expect": {
+    "argumentCoercion": {
+      "helper": "bool",
+      "value": "no",
+      "expect": false
+    }
+  }
+}

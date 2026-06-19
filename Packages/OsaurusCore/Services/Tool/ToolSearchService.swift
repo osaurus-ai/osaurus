@@ -334,12 +334,14 @@ public actor ToolSearchService {
         query: String,
         topK: Int = 10,
         minFusedScore: Float = 0.01,
+        minEmbedCosine: Float = 0,
         allowedNames: Set<String>? = nil
     ) async -> [ToolSearchResult] {
         let (results, _) = await searchHybridWithDiagnostic(
             query: query,
             topK: topK,
             minFusedScore: minFusedScore,
+            minEmbedCosine: minEmbedCosine,
             allowedNames: allowedNames
         )
         return results
@@ -361,6 +363,7 @@ public actor ToolSearchService {
         query: String,
         topK: Int,
         minFusedScore: Float,
+        minEmbedCosine: Float = 0,
         allowedNames: Set<String>? = nil
     ) async -> (results: [ToolSearchResult], diagnostic: ToolSearchHybridDiagnostic) {
         guard topK > 0 else {
@@ -412,11 +415,27 @@ public actor ToolSearchService {
         // Compute fused score per name. Items missing from one source
         // contribute zero from that side — RRF treats absence as
         // "infinite rank", which equals zero contribution.
+        //
+        // Score-aware embed gate: when `minEmbedCosine > 0`, an embedding
+        // candidate whose raw cosine is below that quality floor
+        // contributes ZERO to fusion (as if it weren't an embed hit at
+        // all). Pure rank-based RRF saturates near `2/(k+1)`, so without
+        // this an abstain-noise tool that merely RANKS in the embed top-K
+        // (regardless of how low its cosine is) fuses its way past the
+        // cutoff; gating by cosine quality lets abstain queries reach zero
+        // accepted while real recall (cosine ≥ floor) keeps its normal RRF
+        // contribution. `minEmbedCosine == 0` disables the gate so legacy
+        // callers are byte-for-byte unchanged.
         let fused: [(name: String, score: Float)] =
             allNames
             .map { name -> (String, Float) in
                 let s1 = bm25RankByName[name].map { 1.0 / (k + Float($0)) } ?? 0
-                let s2 = embedRankByName[name].map { 1.0 / (k + Float($0)) } ?? 0
+                let embedQualifies =
+                    minEmbedCosine <= 0 || (embedScoreByName[name] ?? 0) >= minEmbedCosine
+                let s2 =
+                    embedQualifies
+                    ? (embedRankByName[name].map { 1.0 / (k + Float($0)) } ?? 0)
+                    : 0
                 return (name, s1 + s2)
             }
             .sorted { $0.score > $1.score }

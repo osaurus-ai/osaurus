@@ -92,10 +92,21 @@ public actor VMLXModel2VecEmbedder: VecturaEmbedder {
     }
 
     private func resolveModelDirectory() throws -> URL {
+        guard let directory = Self.locateModelDirectory(modelName: modelName) else {
+            throw VMLXModel2VecEmbedderError.modelNotFound(modelName)
+        }
+        return directory
+    }
+
+    /// Non-throwing resolution shared by the loader and by availability
+    /// probes (e.g. `EmbeddingService.ensureModelPresent()`). Returns the
+    /// usable model directory from the env override, `~/models`, or the
+    /// Hugging Face cache, or `nil` when no usable copy exists locally.
+    public static func locateModelDirectory(modelName: String) -> URL? {
         let env = ProcessInfo.processInfo.environment
         if let override = env["OSAURUS_EMBEDDING_MODEL_DIR"], !override.isEmpty {
             let url = URL(fileURLWithPath: override, isDirectory: true)
-            if Self.isUsableModelDirectory(url) {
+            if isUsableModelDirectory(url) {
                 return url
             }
         }
@@ -109,15 +120,15 @@ public actor VMLXModel2VecEmbedder: VecturaEmbedder {
         ]
 
         for candidate in candidates {
-            if Self.isUsableModelDirectory(candidate) {
+            if isUsableModelDirectory(candidate) {
                 return candidate
             }
-            if let snapshot = Self.latestUsableSnapshot(in: candidate) {
+            if let snapshot = latestUsableSnapshot(in: candidate) {
                 return snapshot
             }
         }
 
-        throw VMLXModel2VecEmbedderError.modelNotFound(modelName)
+        return nil
     }
 
     private static func isUsableModelDirectory(_ url: URL) -> Bool {

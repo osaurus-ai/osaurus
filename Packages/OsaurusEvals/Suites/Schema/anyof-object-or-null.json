@@ -1,0 +1,28 @@
+{
+  "id": "schema.anyof-object-or-null",
+  "domain": "schema",
+  "label": "schema • anyOf object|null union accepts an object payload",
+  "query": "",
+  "notes": "Exercises the anyOf combinator on a non-scalar branch: a property declared `anyOf: [object, null]` must accept an object value through the object branch (first-match dispatch). Complements oneof-string-or-int, which only covers scalar branches.",
+  "fixtures": {},
+  "expect": {
+    "schema": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "metadata": {
+            "anyOf": [
+              { "type": "object" },
+              { "type": "null" }
+            ]
+          }
+        },
+        "required": ["metadata"]
+      },
+      "arguments": {
+        "metadata": { "source": "import" }
+      },
+      "expectValid": true
+    }
+  }
+}

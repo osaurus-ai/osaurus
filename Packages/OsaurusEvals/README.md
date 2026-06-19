@@ -48,6 +48,35 @@ make evals-report EVALS_OUT=reports/today.json      # custom output path
 make evals EVALS_SUITE=Packages/OsaurusEvals/Suites/AgentLoop  # other suite
 ```
 
+### Asset prerequisites (handled automatically)
+
+Local MLX model evals and `capability_search` need two assets that the SwiftPM
+CLI can't bundle for itself:
+
+- **MLX metallib** — local MLX model loads fail with "Failed to load the default
+  metallib" unless `default.metallib` sits next to the `osaurus-evals` binary
+  (SwiftPM CLI builds don't embed the Cmlx Metal library the way `make app`
+  does).
+- **`minishlab/potion-base-4M` embedder** — without it the capability_search
+  semantic index is empty and retrieval results are unreliable.
+
+Every `make evals*` target now runs `make evals-prep` first, which executes
+`scripts/evals/prepare-evals-env.sh` to colocate the metallib (from an existing
+`make app` / Xcode build, or `OSAURUS_MLX_METALLIB`) and download the embedder
+into the Hugging Face cache (via `hf` or `uvx`). It's idempotent and a no-op
+once both assets are in place. Skip it with `OSAURUS_EVALS_SKIP_PREP=1` (or run
+`make evals-prep` standalone). When you invoke `swift run osaurus-evals`
+directly, the CLI falls back to colocating the metallib at startup and logs a
+loud warning if the embedder is missing.
+
+The `CapabilityClaims` browser cases additionally need the `osaurus.browser`
+native plugin installed. Because installing it mutates `~/.osaurus`, the prep
+step does it only when you opt in with `OSAURUS_EVALS_INSTALL_BROWSER=1`
+(`osaurus` CLI required); otherwise those cases skip as "missing plugins". When
+a selected case declares `fixtures.requirePlugins`, the runner now
+auto-bootstraps installed plugins (no `--bootstrap-plugins` needed); pass
+`--no-plugin-bootstrap` to force-skip them.
+
 Or call the CLI directly if you need flags the Makefile doesn't expose:
 
 ```bash
@@ -161,6 +190,7 @@ Field notes:
 - `expect.capabilitySearch.expectedTools` / `expectedMethods` / `expectedSkills` — `{ anyOf: [...names], minMatches: N }` matchers. Each matched name must appear in the **accepted** hit set for its lane (i.e. above the lane's threshold).
 - `expect.capabilitySearch.maxAccepted` — caps total accepted hits across all three lanes. `0` is the abstain-style assertion: any accepted hit fails the case.
 - `expect.capabilitySearch.thresholdOverride` — per-case sweep value. **Tools-lane only** (RRF fused-score scale, max ≈ 0.033). Methods + skills lanes always use their own production embed-cosine constants — sweeping a fused-score value into the cosine lane would silently disable the cosine quality gate.
+- `--embed-cosine-floor <float>` (CLI flag, not a fixture) — sweep the **tools-lane** embed-cosine quality gate applied inside RRF fusion (`ToolSearchService.searchHybrid(minEmbedCosine:)`). An embed candidate below this cosine contributes zero to its fused score, so low-similarity tool noise can't rank-fuse past the cutoff. `nil` uses the shipped `CapabilitySearch.minimumEmbedCosineForTools` (0.25); pass `0` to disable the gate and record raw pre-gate cosines. Orthogonal to `--threshold` (the final fused cutoff). The calibration that set 0.25 is recorded in `Config/capability-search-sweep.md`.
 
 ### `capability_claims` domain
 

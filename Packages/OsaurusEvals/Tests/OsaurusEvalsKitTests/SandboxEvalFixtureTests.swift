@@ -134,6 +134,17 @@ struct SandboxEvalFixtureTests {
         )
     }
 
+    @Test @MainActor func hostCapabilityKindsSkipButProvisioningErrors() {
+        // Host can't provide a sandbox at all -> SKIP (same as a missing
+        // plugin), so grok/qwen stop ERRORing on a host where Apple
+        // Containerization can't boot or is in failure cool-down.
+        #expect(EvalRunner.sandboxKindIsHostCapability(.containerUnavailable))
+        #expect(EvalRunner.sandboxKindIsHostCapability(.startupFailed))
+        // A per-agent provisioning failure is a real setup bug and must
+        // still surface as ERROR, not be masked as a skip.
+        #expect(!EvalRunner.sandboxKindIsHostCapability(.provisioningFailed))
+    }
+
     // MARK: - sandboxFiles scoring
 
     @Test @MainActor func sandboxFileScoringResolvesAgainstProvidedRoot() throws {

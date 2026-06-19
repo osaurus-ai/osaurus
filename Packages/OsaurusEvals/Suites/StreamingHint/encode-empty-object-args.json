@@ -1,0 +1,14 @@
+{
+  "id": "streaming_hint.encode-empty-object-args",
+  "domain": "streaming_hint",
+  "label": "streaming_hint • encodeArgs round-trips an empty-object args fragment",
+  "query": "",
+  "notes": "A zero-argument tool call (e.g. capabilities_discover) streams its args as '{}'. Pins that the args sentinel encode -> isSentinel -> decodeArgs round-trips the empty-object fragment intact rather than collapsing it to an empty string.",
+  "fixtures": {},
+  "expect": {
+    "streamingHint": {
+      "op": "encodeArgs",
+      "payload": "{}"
+    }
+  }
+}

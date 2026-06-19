@@ -37,6 +37,7 @@ public enum EvalRunner {
         model: ModelSelection,
         filter: String? = nil,
         thresholdOverride: Float? = nil,
+        embedCosineFloorOverride: Float? = nil,
         bootstrapMode: BootstrapMode = .loadInstalledPlugins
     ) async -> EvalReport {
         if bootstrapMode == .loadInstalledPlugins {
@@ -74,7 +75,8 @@ public enum EvalRunner {
                 let row = await runOne(
                     testCase,
                     modelId: modelLabel,
-                    thresholdOverride: thresholdOverride
+                    thresholdOverride: thresholdOverride,
+                    embedCosineFloorOverride: embedCosineFloorOverride
                 )
                 rows.append(annotatedWithCaseNotes(row, from: testCase))
             }
@@ -123,7 +125,8 @@ public enum EvalRunner {
     private static func runOne(
         _ testCase: EvalCase,
         modelId: String,
-        thresholdOverride: Float? = nil
+        thresholdOverride: Float? = nil,
+        embedCosineFloorOverride: Float? = nil
     ) async -> EvalCaseReport {
         let label = testCase.label ?? testCase.id
 
@@ -150,7 +153,8 @@ public enum EvalRunner {
             return await runCapabilitySearchCase(
                 testCase,
                 modelId: modelId,
-                cliThresholdOverride: thresholdOverride
+                cliThresholdOverride: thresholdOverride,
+                cliEmbedCosineFloorOverride: embedCosineFloorOverride
             )
         case "capability_claims":
             return await runCapabilityClaimsCase(testCase, modelId: modelId)
@@ -798,7 +802,8 @@ public enum EvalRunner {
     private static func runCapabilitySearchCase(
         _ testCase: EvalCase,
         modelId: String,
-        cliThresholdOverride: Float?
+        cliThresholdOverride: Float?,
+        cliEmbedCosineFloorOverride: Float? = nil
     ) async -> EvalCaseReport {
         let label = testCase.label ?? testCase.id
 
@@ -841,7 +846,8 @@ public enum EvalRunner {
         let observed = await CapabilitySearchEvaluator.evaluate(
             query: testCase.query,
             topK: topK,
-            threshold: threshold
+            threshold: threshold,
+            embedCosineFloor: cliEmbedCosineFloorOverride
         )
 
         await restoreSkillEnabledState(priorSkillState)
@@ -978,10 +984,62 @@ public enum EvalRunner {
             }
         }
 
-        let resolvedAgentId = AgentManager.shared.activeAgent.id
+        // Capability skip (mirrors the `agent_loop` tiny-context skip and the
+        // `ensureToolsDisabled` skip below): a model whose context size class
+        // auto-disables tool calling — Apple Foundation and any other
+        // ≤4K-token-window model (`ContextSizeClass.tiny`) — cannot satisfy a
+        // case that REQUIRES a tool call, because Osaurus strips the tool
+        // schema at compose time for such models. A `mustCallTools` /
+        // `loadSkillFirst` case would then score a capability-mismatch FAIL
+        // rather than an honest-claims result, so surface it as SKIP. The
+        // abstention cases (no tool requirement — they assert the model does
+        // NOT over-claim a capability it lacks) still run: a tool-less model
+        // is exactly their premise, so they stay meaningful here.
+        let claimsRequiresTools =
+            !(exp.mustCallTools?.isEmpty ?? true) || exp.loadSkillFirst != nil
+        let claimsWindow = ContextSizeResolver.resolve(modelId: modelId)
+        if claimsRequiresTools && claimsWindow.sizeClass.disablesTools {
+            return .terminal(
+                id: testCase.id,
+                label: label,
+                domain: testCase.domain,
+                outcome: .skipped,
+                notes: [
+                    "tools auto-disabled for '\(modelId)': context size class "
+                        + "\(claimsWindow.sizeClass) (≤\(ContextSizeResolver.tinyCeiling)-token "
+                        + "window) strips the tool schema; this case requires a tool call"
+                ],
+                modelId: modelId
+            )
+        }
 
-        // Skip rather than mutate global state when a must-be-absent tool
-        // is actually enabled.
+        // Cases that assert a tool MUST be absent (`ensureToolsDisabled`)
+        // can't be proven against the Default agent's legacy global tool
+        // mode, where `effectiveEnabledToolNames == nil` means "everything
+        // is reachable" — so the gate below would always skip. Stand up an
+        // isolated, fully-enabled auto-mode eval agent whose allowlist is the
+        // live dynamic-tool registry minus the forbidden names; that makes
+        // the absence authoritative (and naturally excludes fictional tools
+        // like send_fax / place_trade) so the case actually runs. The agent
+        // is torn down on every exit path via `defer`. Cases with no
+        // `ensureToolsDisabled` keep using the active agent unchanged.
+        let claimsAbsenceNames = testCase.fixtures.ensureToolsDisabled ?? []
+        let isolatedClaimsAgentId: UUID? =
+            claimsAbsenceNames.isEmpty
+            ? nil
+            : installCapabilityClaimsAgent(excluding: claimsAbsenceNames)
+        defer {
+            if let isolatedClaimsAgentId {
+                removeEvalAgent(isolatedClaimsAgentId)
+            }
+        }
+        let resolvedAgentId = isolatedClaimsAgentId ?? AgentManager.shared.activeAgent.id
+
+        // Skip only when a must-be-absent tool is GENUINELY reachable on the
+        // resolved agent (e.g. a host that really ships a `send_fax` tool) —
+        // that would change what the abstention case proves. With the
+        // isolated agent above the allowlist is non-nil and excludes the
+        // forbidden names, so the well-behaved case proceeds.
         if let mustBeAbsent = testCase.fixtures.ensureToolsDisabled, !mustBeAbsent.isEmpty {
             let enabled = AgentManager.shared.effectiveEnabledToolNames(for: resolvedAgentId)
             // nil = legacy global-enabled mode: everything is reachable,
