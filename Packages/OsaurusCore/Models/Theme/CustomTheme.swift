@@ -295,12 +295,25 @@ public struct ThemeBackground: Codable, Equatable, Sendable {
         ThemeBackground(type: .solid)
     }
 
-    /// Decode base64 image data to NSImage
+    /// Process-wide cache of decoded background images, keyed by their base64
+    /// payload. `CustomizableTheme.backgroundImage` reads `decodedImage()` from
+    /// SwiftUI body getters, so without this every render of a themed surface
+    /// re-ran a full base64 + `NSImage(data:)` decode of a potentially
+    /// wallpaper-sized image on the main thread — enough to trip the app-hang
+    /// watchdog. Keying on the payload means edits (new base64) miss naturally;
+    /// `NSCache` evicts under memory pressure so no manual invalidation is needed.
+    private static let decodedImageCache = NSCache<NSString, NSImage>()
+
+    /// Decode base64 image data to NSImage (memoized by payload).
     public func decodedImage() -> NSImage? {
-        guard let imageData = imageData,
-            let data = Data(base64Encoded: imageData)
+        guard let imageData, !imageData.isEmpty else { return nil }
+        let key = imageData as NSString
+        if let cached = Self.decodedImageCache.object(forKey: key) { return cached }
+        guard let data = Data(base64Encoded: imageData),
+            let image = NSImage(data: data)
         else { return nil }
-        return NSImage(data: data)
+        Self.decodedImageCache.setObject(image, forKey: key)
+        return image
     }
 }
 
