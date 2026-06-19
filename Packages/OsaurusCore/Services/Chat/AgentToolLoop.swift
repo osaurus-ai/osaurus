@@ -287,7 +287,12 @@ enum AgentLoopBudget {
     @MainActor
     static func resolveContextWindowSync(modelId: String) -> Int {
         if foundationModelIds.contains(modelId) { return foundationContextWindow }
-        if let info = ModelInfo.load(modelId: modelId), let ctx = info.model.contextLength {
+        // Serve the memo or warm it off-thread — never probe disk here. This runs
+        // on every layout pass (context chip, send gate), and `ModelInfo.load`'s
+        // cold path (`findModelDirectory` + `config.json` read) blocks the main
+        // thread long enough to trip the app-hang detector. A transient nil on a
+        // cold cache falls through to the conservative store/fallback value.
+        if let info = ModelInfo.loadCachedOrWarm(modelId: modelId), let ctx = info.model.contextLength {
             return ctx
         }
         return ChatConfigurationStore.load().contextLength ?? fallbackContextWindow
