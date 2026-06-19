@@ -2276,15 +2276,15 @@ public actor ModelRuntime {
         prefillStepSize: Int? = nil,
         modelName: String? = nil
     ) -> MLXLMCommon.GenerateParameters {
-        // Laguna (XS.2 + M.1) ships no repetition_penalty and bare greedy decode
-        // rambles after the answer at any precision — the loop is a serving-loop
-        // gap, not the model port (proven: no-cache == cache, clean raw greedy).
-        // Supply the recipe defaults when the request/bundle didn't: a 1.15
-        // penalty over a phrase-scale window (256), vs the 20-token default that
-        // misses phrase-level repeats. A caller-supplied penalty still wins.
-        let isLaguna = modelName.map(ModelFamilyNames.isLagunaFamily) ?? false
-        let resolvedRepetitionPenalty = repetitionPenalty ?? (isLaguna ? 1.15 : nil)
-        let resolvedRepetitionContextSize = isLaguna ? 256 : 20
+        // Laguna no longer needs a forced repetition penalty: the prior 1.15 /
+        // ctx-256 default was masking a vmlx YaRN `_mscale` bug (pinned to 1.0,
+        // stripping the trained ~1.42x q/k scaling) and a chat-template double-BOS
+        // bug. Both are fixed in the engine, so rep=1.0 and rep=1.15 now produce
+        // identical coherent output. Drop the laguna special-case — it also drove
+        // a TokenRing index-out-of-range crash on longer prompts at ctx 256. A
+        // caller-supplied penalty still applies; default is the standard 20 window.
+        let resolvedRepetitionPenalty = repetitionPenalty
+        let resolvedRepetitionContextSize = 20
         var params = MLXLMCommon.GenerateParameters(
             maxTokens: maxTokens,
             enableCompiledBatchDecode: enableCompiledBatchDecode,
