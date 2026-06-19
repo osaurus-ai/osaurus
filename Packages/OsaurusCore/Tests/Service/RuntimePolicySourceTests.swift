@@ -617,7 +617,7 @@ struct RuntimePolicySourceTests {
         // whitespace-free pre-tokens) that collapses multi-second prefill on
         // tool-heavy prompts while staying byte-identical to canonical output
         // even on non-monotonic whitespace merge ranks.
-        let expectedRuntimeHardenedRevision = "576b5f5ef1dd3a133c9cc97ac7fd17515e9fa57b"
+        let expectedRuntimeHardenedRevision = "76ee9b8765e49de962ae43454f6f1b97b658c08c"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
         let appRevision = try Self.vmlxPinRevision(in: appResolved)
