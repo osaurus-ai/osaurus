@@ -69,6 +69,19 @@ public enum SystemPromptTemplates {
         - `share_artifact(path | content+filename)` — the only way the user sees a generated image, chart, report, code blob, or any file. **The file MUST exist before this call.** Sandbox: save under your home dir (default cwd), not `/tmp`. For inline text/markdown, pass `content`+`filename` and skip the file write.
         """
 
+    /// Compact agent-loop cheat-sheet for small-context / small local models
+    /// (`prefersCompactPrompt`). Same four tools and the load-bearing rules
+    /// (3+ step todo, complete-alone-at-end, one-question clarify, file-exists
+    /// artifact), one line each.
+    public static let agentLoopGuidanceCompact = """
+        ## Agent loop
+
+        - `todo(markdown)` — user-visible checklist. For 3+ step tasks, write it before starting, then re-send the full list with each box checked as you finish.
+        - `complete(summary)` — once at the very end, never alongside other tools: WHAT you did + HOW you verified. No vague placeholders.
+        - `clarify(question)` — ask one concrete question only when guessing wrong would change the result; otherwise pick a sensible default.
+        - `share_artifact(path | content+filename)` — the only way the user sees a file/image/report; the file MUST exist first. Sandbox: save under home, not `/tmp`.
+        """
+
     // MARK: - Grounding
 
     /// Anti-fabrication directive injected whenever tools are present
@@ -100,11 +113,26 @@ public enum SystemPromptTemplates {
         - Say what you can't do only after genuinely trying with the tools you have, and never invent a tool name or fabricate a value to fill a gap.
         """
 
-    /// Select the grounding variant for the resolved schema. The flag is
-    /// session-constant (the schema is frozen at session start), so the
-    /// choice is KV-cache safe.
-    public static func groundingDirective(discoveryAvailable: Bool) -> String {
-        discoveryAvailable ? groundingDirectiveFull : groundingDirectiveBase
+    /// Compact discovery-aware grounding for small-context / small local
+    /// models (`prefersCompactPrompt`). Keeps the three load-bearing claims
+    /// (ground live data, try-before-you-deny, capability-claims must be
+    /// backed) — just tighter. Still names `capabilities_discover` / the
+    /// Enabled list, so it is only chosen when discovery is in the schema.
+    public static let groundingDirectiveFullCompact = """
+        ## Grounding
+
+        - Ground live-data and factual claims (weather, prices, web, file contents, command output, current state) in a tool result, not memory.
+        - You can almost always get there: a shell/network tool fetches external data and `capabilities_discover` finds tools you lack. Try before saying you can't, and never invent a tool name or fabricate a value.
+        - "I can't do X" / "I don't have a tool for X" must be backed by the Enabled capabilities list or an empty `capabilities_discover` — never by X being absent from your current schema (a fixed subset, not the full enabled set).
+        """
+
+    /// Select the grounding variant for the resolved schema. The flags are
+    /// session-constant (the schema + size class are frozen at session start),
+    /// so the choice is KV-cache safe. `compact` only narrows the
+    /// discovery-aware variant — the tool-name-free base is already minimal.
+    public static func groundingDirective(discoveryAvailable: Bool, compact: Bool = false) -> String {
+        guard discoveryAvailable else { return groundingDirectiveBase }
+        return compact ? groundingDirectiveFullCompact : groundingDirectiveFull
     }
 
     // MARK: - Capability Discovery Nudge
@@ -142,7 +170,42 @@ public enum SystemPromptTemplates {
     /// create plugins, step 4 (build a sandbox plugin) and the "build when
     /// reusable" closing line are dropped and the ladder renumbers so the
     /// terminus stays last — no wasted context on an unavailable path.
-    public static func capabilityDiscoveryNudgeSandbox(canCreatePlugins: Bool) -> String {
+    public static func capabilityDiscoveryNudgeSandbox(
+        canCreatePlugins: Bool,
+        compact: Bool = false
+    ) -> String {
+        if compact {
+            // Same escalation, prose-folded: discover/load, then build from
+            // sandbox primitives, then (optionally) a plugin, then the
+            // unavailable terminus. Drops the per-shape sub-bullets and the
+            // coding-agent preamble that dominate the full ladder's tokens.
+            let buildStep =
+                "build it from sandbox primitives (network, python3, node, sqlite3, curl, "
+                + "`sandbox_install`) — most APIs are authenticated HTTP, DBs need a driver + "
+                + "connection string, CLIs install and run; read unfamiliar API docs over the "
+                + "network first"
+            var rungs = [
+                "check the Enabled capabilities list",
+                "`capabilities_discover` then `capabilities_load` anything returned",
+                buildStep,
+            ]
+            if canCreatePlugins {
+                rungs.append("if it's reusable, build a sandbox plugin (see Building new tools)")
+            }
+            rungs.append(
+                "only after these come up empty tell the user it's unavailable and say what you tried"
+            )
+            let numbered = rungs.enumerated()
+                .map { "\($0.offset + 1)) \($0.element)" }
+                .joined(separator: "; ")
+            return """
+                ## Discovering more tools
+
+                Your tool list is a fixed starting set, not exhaustive. The Enabled capabilities list names more to load by id with `capabilities_load`; when something is missing and NOT listed, `capabilities_discover({"query": "<what you need>"})` searches the rest. Do not invent tool names.
+
+                A missing capability is the start of work, not a dead end. In order: \(numbered). Credentials follow Secret handling; destructive actions follow Risk-aware actions.
+                """
+        }
         let intro = """
             ## Discovering more tools
 
@@ -227,6 +290,15 @@ public enum SystemPromptTemplates {
         - Never record a secret value in SOUL.md, memory, or any persisted note; reference it by its env var instead.
         """
 
+    /// Compact secret-handling discipline for small-context / small local
+    /// models (`prefersCompactPrompt`). Same rules — collect out-of-band, read
+    /// via env var, never leak — folded into two bullets.
+    public static let secretHandlingGuidanceCompact = """
+        ## Secret handling
+        - Never have the user paste a secret into chat (it's persisted). Collect via `sandbox_secret_set` (key, description, instructions; OMIT value) — the harness prompts out-of-band. Call `sandbox_secret_check` first; skip if it exists.
+        - Secrets surface as env vars named by key: read them from the environment (e.g. `os.environ["SHOPIFY_TOKEN"]`), never inline; no tool returns a value. Never echo, write in plaintext, pass as a tool argument, or record in SOUL.md/memory — reference by env var.
+        """
+
     // MARK: - Self-improvement
 
     /// Self-improvement discipline. Sandbox-only: it references workspace
@@ -237,22 +309,33 @@ public enum SystemPromptTemplates {
     /// `canCreatePlugins` toggles the two plugin-build bullets: when the agent
     /// cannot create plugins, they are dropped so the section spends no context
     /// describing an unavailable path.
-    public static func selfImprovementGuidance(canCreatePlugins: Bool) -> String {
+    public static func selfImprovementGuidance(
+        canCreatePlugins: Bool,
+        compact: Bool = false
+    ) -> String {
         let persistence =
-            "- Workspace files persist across messages. Save reusable scripts and clients there rather than rebuilding them."
+            compact
+            ? "- Workspace files persist across messages — save reusable scripts and clients there instead of rebuilding."
+            : "- Workspace files persist across messages. Save reusable scripts and clients there rather than rebuilding them."
         let pluginBuild =
-            "- Build or update a sandbox plugin when you notice any of these: you just completed a multi-step integration that worked, you found the working path after hitting dead ends, the user corrected your approach, or the same integration is coming up again. Capture the working path while you still have it."
+            compact
+            ? "- Build or fix a sandbox plugin when a multi-step integration works, you find the path after dead ends, or the user corrects you — capture the working path while you have it."
+            : "- Build or update a sandbox plugin when you notice any of these: you just completed a multi-step integration that worked, you found the working path after hitting dead ends, the user corrected your approach, or the same integration is coming up again. Capture the working path while you still have it."
         let pluginFix =
             "- When a plugin you built turns out wrong or incomplete, fix the plugin itself rather than working around it. Plugins improve through use."
         let soul =
-            "- When you observe a durable, cross-session pattern in how the user works, record it in `~/SOUL.md` with `sandbox_write_file` (edits apply on the next session). Capture stable preferences, conventions, environment facts, and lessons learned; keep session facts, one-off paths, and project details out."
+            compact
+            ? "- Record durable cross-session patterns in `~/SOUL.md` via `sandbox_write_file` (applies next session); keep session facts and one-off paths out."
+            : "- When you observe a durable, cross-session pattern in how the user works, record it in `~/SOUL.md` with `sandbox_write_file` (edits apply on the next session). Capture stable preferences, conventions, environment facts, and lessons learned; keep session facts, one-off paths, and project details out."
         let secret =
             "- Anything you build that touches a secret follows Secret handling."
 
         var bullets = [persistence]
         if canCreatePlugins {
             bullets.append(pluginBuild)
-            bullets.append(pluginFix)
+            // The "fix the plugin you built" rung is a refinement of the build
+            // rung above; compact folds it away to save the line.
+            if !compact { bullets.append(pluginFix) }
         }
         bullets.append(soul)
         bullets.append(secret)
@@ -488,6 +571,15 @@ public enum SystemPromptTemplates {
         - Do not add docstrings, comments, or type annotations to code you did not modify.
         """
 
+    /// Compact code-style discipline for small-context / small local models
+    /// (`prefersCompactPrompt`). Same scope-creep guardrails, folded.
+    public static let codeStyleGuidanceCompact = """
+        ## Code style
+
+        - Limit changes to what was requested — no adjacent refactoring or style cleanup, no defensive handling for conditions that can't arise here.
+        - Don't extract helpers for single-use logic. Comment only genuinely non-obvious reasoning; don't annotate code you didn't modify.
+        """
+
     /// Risk-aware action discipline. Fires on the broader
     /// `SystemPromptComposer.mutationToolNames` gate (any tool that can
     /// mutate the filesystem OR run arbitrary code / install deps) — wider
@@ -499,6 +591,15 @@ public enum SystemPromptTemplates {
         - Local, reversible work — reading, editing a file, running a command or test, installing into the sandbox — needs no permission; just do it.
         - Only pause to confirm for genuinely destructive or hard-to-undo actions: deleting the user's files, `rm -rf`, dropping data, force-pushing. The test is reversibility — if it's reversible, proceed.
         - When encountering unexpected state (unfamiliar files, unknown processes), investigate before removing anything.
+        """
+
+    /// Compact risk-aware discipline for small-context / small local models
+    /// (`prefersCompactPrompt`). Keeps the reversibility test, folded.
+    public static let riskAwareGuidanceCompact = """
+        ## Risk-aware actions
+
+        - Local, reversible work (read, edit a file, run a command or test, install into the sandbox) needs no permission — just do it.
+        - Pause to confirm only for destructive or hard-to-undo actions (deleting the user's files, `rm -rf`, dropping data, force-push); the test is reversibility. Investigate unexpected state before removing anything.
         """
 
     /// Computer Use grounding. Rendered only when the `computer_use` tool
@@ -579,9 +680,28 @@ public enum SystemPromptTemplates {
     public static func sandbox(
         home: String = "",
         hostReadCombined: Bool = false,
-        backgroundEnabled: Bool = false
+        backgroundEnabled: Bool = false,
+        compact: Bool = false
     ) -> String {
-        """
+        if compact {
+            // Same load-bearing facts (absolute home path so `cwd` isn't
+            // guessed, internet-is-available, the dispatch table) folded into
+            // the environment paragraph + one dispatch list, with the runtime
+            // hints absorbed into the dispatch tail.
+            let dispatch =
+                hostReadCombined
+                ? sandboxToolGuideCombinedCompact(backgroundEnabled: backgroundEnabled)
+                : sandboxToolGuideCompact(backgroundEnabled: backgroundEnabled)
+            return """
+
+                \(sandboxSectionHeading)
+
+                \(sandboxEnvironmentBlockCompact(home: home, hostReadCombined: hostReadCombined))
+
+                \(dispatch)
+                """
+        }
+        return """
 
         \(sandboxSectionHeading)
 
@@ -693,6 +813,49 @@ public enum SystemPromptTemplates {
             \(shellBullet)
             - Multi-line code/scripts: `sandbox_write_file` the script, then `sandbox_exec` to run it (e.g. `python3 script.py`). NEVER embed multi-line code in `python3 -c` / `node -e`: the JSON→shell→code escaping breaks.
             - Run independent calls in parallel; chain dependent shell steps with `&&`.
+            """
+    }
+
+    /// Compact environment framing (`prefersCompactPrompt`). Folds the
+    /// home-path, internet, and installed-tools lines into one paragraph.
+    /// The absolute home line is preserved verbatim in intent — dropping it
+    /// makes models guess `/root` for `cwd` and eat a rejection.
+    private static func sandboxEnvironmentBlockCompact(home: String, hostReadCombined: Bool) -> String {
+        let homeLine =
+            home.isEmpty
+            ? "Your home (`~`) is your sandbox home"
+            : "Home: `\(home)` (`~` / `$HOME`); commands run there by default — no `cwd` needed"
+        return """
+            Isolated Alpine Linux ARM64 sandbox. \(homeLine). Files persist across messages. Internet works — fetch live data (weather, web pages, APIs) directly with `curl`, `wget`, Python `requests`, or Node `fetch`. Installed: bash, python3, node, git, curl, wget, jq, rg, sqlite3, build-base, cmake, vim, tree.
+            """
+    }
+
+    /// Compact non-combined dispatch + absorbed runtime hints.
+    private static func sandboxToolGuideCompact(backgroundEnabled: Bool) -> String {
+        let shell =
+            backgroundEnabled
+            ? "`sandbox_exec` (single-line; `background:true` + `sandbox_process` for servers)"
+            : "`sandbox_exec` (single-line)"
+        return """
+            Tool dispatch:
+            - Files: `sandbox_read_file` (read/list); `sandbox_write_file` (`content` whole-file, or `old_string`+`new_string` to edit). Search: `sandbox_search_files` (`target="content"|"files"`).
+            - Shell: \(shell). Multi-line code: `sandbox_write_file` a script then `sandbox_exec` it (e.g. `python3 script.py`) — never `python3 -c` / `node -e`.
+            - Install deps with `sandbox_install` (`pip`/`npm`/`apk`); inspect large logs with \(sandboxReadFileHint). Run independent calls in parallel; chain dependent steps with `&&`. Sandbox is disposable.
+            """
+    }
+
+    /// Compact combined-mode dispatch + absorbed runtime hints. Mirrors
+    /// `sandboxToolGuideCombined` (host `file_*` read family, sandbox writes).
+    private static func sandboxToolGuideCombinedCompact(backgroundEnabled: Bool) -> String {
+        let shell =
+            backgroundEnabled
+            ? "`sandbox_exec` (single-line; `background:true` + `sandbox_process` for servers)"
+            : "`sandbox_exec` (single-line)"
+        return """
+            Tool dispatch:
+            - Read/list/search: `file_read`, `file_search` (reach your workspace and `/workspace/...` sandbox paths — see `## Files`). Sandbox writes: `sandbox_write_file` (`content` whole-file or `old_string`+`new_string` edit; workspace is read-only).
+            - Shell: \(shell). Multi-line code: `sandbox_write_file` a script then `sandbox_exec` it (e.g. `python3 script.py`) — never `python3 -c` / `node -e`.
+            - Install deps with `sandbox_install` (`pip`/`npm`/`apk`); inspect large logs with \(sandboxReadFileHintCombined). Run independent calls in parallel; chain dependent steps with `&&`. Sandbox is disposable.
             """
     }
 

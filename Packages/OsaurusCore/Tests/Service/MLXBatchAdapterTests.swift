@@ -2148,4 +2148,40 @@ struct MLXBatchAdapterTests {
         defaults.removePersistentDomain(forName: suiteName)
         return defaults
     }
+
+    // MARK: - Laguna serving-loop defaults
+
+    @Test func isLagunaFamily_matchesBothLinesAndRejectsLookalikes() {
+        #expect(ModelFamilyNames.isLagunaFamily("Laguna-M.1-JANG_2L"))
+        #expect(ModelFamilyNames.isLagunaFamily("JANGQ-AI/Laguna-M.1-JANG_1L"))
+        #expect(ModelFamilyNames.isLagunaFamily("laguna-xs.2-jangtq2"))
+        #expect(!ModelFamilyNames.isLagunaFamily("notlaguna-7b"))
+        #expect(!ModelFamilyNames.isLagunaFamily("qwen3.6-35b-a3b"))
+    }
+
+    @Test func makeGenerateParameters_lagunaUsesStandardDefaults() {
+        // The forced Laguna rep-penalty 1.15 / window 256 special-case was removed:
+        // it was compensating for the missing-BOS chat bug (fixed in vmlx by restoring
+        // lagunaMinimal's literal 〈|EOS|〉 emit), and was triggering the rep-penalty
+        // TokenRing crash. Laguna now uses the same defaults as any other model.
+        let laguna = ModelRuntime.makeGenerateParameters(
+            temperature: 1.0, maxTokens: 64, topP: 1.0, repetitionPenalty: nil,
+            modelName: "JANGQ-AI/Laguna-M.1-JANG_2L")
+        #expect(laguna.repetitionPenalty == nil)
+        #expect(laguna.repetitionContextSize == 20)
+
+        // A caller-supplied penalty still flows through unchanged.
+        let lagunaOverride = ModelRuntime.makeGenerateParameters(
+            temperature: 1.0, maxTokens: 64, topP: 1.0, repetitionPenalty: 1.05,
+            modelName: "Laguna-M.1-JANG_1L")
+        #expect(lagunaOverride.repetitionPenalty == 1.05)
+        #expect(lagunaOverride.repetitionContextSize == 20)
+
+        // Non-laguna is identical: no injected penalty, default 20 window.
+        let other = ModelRuntime.makeGenerateParameters(
+            temperature: 1.0, maxTokens: 64, topP: 1.0, repetitionPenalty: nil,
+            modelName: "qwen3.6-35b-a3b-mxfp4")
+        #expect(other.repetitionPenalty == nil)
+        #expect(other.repetitionContextSize == 20)
+    }
 }

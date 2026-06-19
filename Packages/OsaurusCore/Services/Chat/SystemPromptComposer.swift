@@ -454,6 +454,32 @@ public struct SystemPromptComposer: Sendable {
         }
     }
 
+    /// Whether tools are suppressed for this compose.
+    ///
+    /// The per-agent "Tools" toggle (Configure tab) is a chat-only kill-switch.
+    /// In sandbox mode the user has already made an explicit execution grant via
+    /// Autonomous Execution (that's what resolves the mode to `.sandbox` in the
+    /// first place), so the sandbox tool surface — and the operational baseline
+    /// the agent loop needs to drive it — stays exposed even when that per-agent
+    /// toggle is off.
+    ///
+    /// Two signals are NOT overridable and win in every mode:
+    ///   - `globalToolsDisabled`: the session-global `ChatConfiguration`
+    ///     "Disable tools" switch, an absolute kill-switch.
+    ///   - `sizeClassDisablesTools`: the small-context auto-disable, a hard
+    ///     capability limit.
+    static func resolveEffectiveToolsOff(
+        toolsDisabled: Bool,
+        globalToolsDisabled: Bool,
+        sizeClassDisablesTools: Bool,
+        executionMode: ExecutionMode
+    ) -> Bool {
+        if globalToolsDisabled || sizeClassDisablesTools { return true }
+        // Global switch is excluded above, so `toolsDisabled` now reflects the
+        // per-agent Tools toggle alone — which sandbox mode overrides.
+        return toolsDisabled && !executionMode.usesSandboxTools
+    }
+
     /// Assemble every tool-axis decision for the request: size-class
     /// auto-disable, final tool set, always-loaded snapshot, and the frozen
     /// enabled-capabilities manifest.
@@ -475,7 +501,12 @@ public struct SystemPromptComposer: Sendable {
         // creator) cascades correctly without each gate having to know
         // about the size class itself.
         let window = ContextSizeResolver.resolve(modelId: snapshot.model)
-        let effectiveToolsOff = snapshot.toolsDisabled || window.sizeClass.disablesTools
+        let effectiveToolsOff = resolveEffectiveToolsOff(
+            toolsDisabled: snapshot.toolsDisabled,
+            globalToolsDisabled: snapshot.globalToolsDisabled,
+            sizeClassDisablesTools: window.sizeClass.disablesTools,
+            executionMode: executionMode
+        )
         let contextDisable = ContextDisableInfo.from(
             sizeClass: window.sizeClass,
             modelId: snapshot.model,
@@ -717,7 +748,8 @@ public struct SystemPromptComposer: Sendable {
                     id: "selfImprovement",
                     label: L("Self-Improvement"),
                     content: SystemPromptTemplates.selfImprovementGuidance(
-                        canCreatePlugins: snapshot.canCreatePlugins
+                        canCreatePlugins: snapshot.canCreatePlugins,
+                        compact: toolset.prefersCompactPrompt
                     )
                 )
             )
@@ -789,7 +821,8 @@ public struct SystemPromptComposer: Sendable {
                     id: "grounding",
                     label: L("Grounding"),
                     content: SystemPromptTemplates.groundingDirective(
-                        discoveryAvailable: resolvedNames.contains("capabilities_discover")
+                        discoveryAvailable: resolvedNames.contains("capabilities_discover"),
+                        compact: toolset.prefersCompactPrompt
                     )
                 )
             )
@@ -807,7 +840,9 @@ public struct SystemPromptComposer: Sendable {
                 .static(
                     id: "codeStyle",
                     label: L("Code Style"),
-                    content: SystemPromptTemplates.codeStyleGuidance
+                    content: toolset.prefersCompactPrompt
+                        ? SystemPromptTemplates.codeStyleGuidanceCompact
+                        : SystemPromptTemplates.codeStyleGuidance
                 )
             )
         }
@@ -818,7 +853,9 @@ public struct SystemPromptComposer: Sendable {
                 .static(
                     id: "riskAware",
                     label: L("Risk-Aware Actions"),
-                    content: SystemPromptTemplates.riskAwareGuidance
+                    content: toolset.prefersCompactPrompt
+                        ? SystemPromptTemplates.riskAwareGuidanceCompact
+                        : SystemPromptTemplates.riskAwareGuidance
                 )
             )
         }
@@ -834,7 +871,9 @@ public struct SystemPromptComposer: Sendable {
                 .static(
                     id: "secretHandling",
                     label: L("Secret Handling"),
-                    content: SystemPromptTemplates.secretHandlingGuidance
+                    content: toolset.prefersCompactPrompt
+                        ? SystemPromptTemplates.secretHandlingGuidanceCompact
+                        : SystemPromptTemplates.secretHandlingGuidance
                 )
             )
         }
@@ -873,7 +912,9 @@ public struct SystemPromptComposer: Sendable {
                 .static(
                     id: "agentLoopGuidance",
                     label: L("Agent Loop"),
-                    content: SystemPromptTemplates.agentLoopGuidance
+                    content: toolset.prefersCompactPrompt
+                        ? SystemPromptTemplates.agentLoopGuidanceCompact
+                        : SystemPromptTemplates.agentLoopGuidance
                 )
             )
         }
@@ -902,7 +943,8 @@ public struct SystemPromptComposer: Sendable {
                     content: SystemPromptTemplates.sandbox(
                         home: sandboxHome,
                         hostReadCombined: executionMode.hostReadContext != nil,
-                        backgroundEnabled: snapshot.autonomousConfig?.backgroundProcessEnabled ?? false
+                        backgroundEnabled: snapshot.autonomousConfig?.backgroundProcessEnabled ?? false,
+                        compact: toolset.prefersCompactPrompt
                     )
                 )
             )
@@ -969,7 +1011,8 @@ public struct SystemPromptComposer: Sendable {
             let nudge =
                 executionMode.usesSandboxTools
                 ? SystemPromptTemplates.capabilityDiscoveryNudgeSandbox(
-                    canCreatePlugins: snapshot.canCreatePlugins
+                    canCreatePlugins: snapshot.canCreatePlugins,
+                    compact: toolset.prefersCompactPrompt
                 )
                 : SystemPromptTemplates.capabilityDiscoveryNudge
             composer.append(
@@ -1538,7 +1581,12 @@ public struct SystemPromptComposer: Sendable {
         executionMode: ExecutionMode
     ) -> ResolvedToolset {
         let window = ContextSizeResolver.resolve(modelId: snapshot.model)
-        let effectiveToolsOff = snapshot.toolsDisabled || window.sizeClass.disablesTools
+        let effectiveToolsOff = resolveEffectiveToolsOff(
+            toolsDisabled: snapshot.toolsDisabled,
+            globalToolsDisabled: snapshot.globalToolsDisabled,
+            sizeClassDisablesTools: window.sizeClass.disablesTools,
+            executionMode: executionMode
+        )
         let contextDisable = ContextDisableInfo.from(
             sizeClass: window.sizeClass,
             modelId: snapshot.model,
@@ -1912,6 +1960,25 @@ public struct SystemPromptComposer: Sendable {
             for name in ToolRegistry.configureToolNames {
                 byName.removeValue(forKey: name)
             }
+        }
+
+        // Sandbox-override surface: when the per-agent Tools toggle is off and
+        // the ONLY reason tools resolved at all is the sandbox execution grant
+        // (see `resolveEffectiveToolsOff` — reaching here past the guard with
+        // `snapshot.toolsDisabled` set means it can't be the global/size-class
+        // path), expose only the sandbox primitives + the agent-loop tools.
+        // The capability-discovery gateway (`capabilities_discover` /
+        // `capabilities_load`) and every per-agent plugin capability are
+        // dropped, so a "chat-only + sandbox" agent runs code and curls live
+        // data itself but can't reach the plugin ecosystem. Any plugin tools a
+        // prior turn loaded into `additionalToolNames` are filtered out too.
+        // The composer's discovery / grounding / nudge sections gate on the
+        // resolved schema, so removing discovery here cascades automatically
+        // (no nudge; the tool-name-free base grounding variant).
+        if snapshot.toolsDisabled, executionMode.usesSandboxTools {
+            let allowed = ToolRegistry.shared.builtInSandboxToolNamesSnapshot
+                .union(Self.agentLoopToolNames)
+            byName = byName.filter { allowed.contains($0.key) }
         }
 
         return canonicalToolOrder(Array(byName.values))

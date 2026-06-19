@@ -64,10 +64,10 @@ struct MemorySafetySection: View {
                         .textSelection(.enabled)
 
                     HStack(spacing: 12) {
-                        summaryPill("Load", value: loadCapSummary)
-                        summaryPill("Allocator", value: allocatorCapSummary)
-                        summaryPill("KV", value: kvCapSummary)
-                        summaryPill("Concurrency", value: concurrencySummary)
+                        summaryPill(L("Load"), value: loadCapSummary)
+                        summaryPill(L("Allocator"), value: allocatorCapSummary)
+                        summaryPill(L("KV"), value: kvCapSummary)
+                        summaryPill(L("Concurrency"), value: concurrencySummary)
                     }
 
                     ForEach(resolvedPlan.warnings, id: \.self) { warning in
@@ -160,11 +160,11 @@ struct MemorySafetySection: View {
 
     private var sliderLabel: String {
         switch draft.memorySafety.slider {
-        case 0: return "Performance"
-        case 1: return "Balanced"
-        case 2: return "Safe Auto"
-        case 3: return "Strict"
-        default: return "Diagnostic / Custom"
+        case 0: return L("Performance")
+        case 1: return L("Balanced")
+        case 2: return L("Safe Auto")
+        case 3: return L("Strict")
+        default: return L("Diagnostic / Custom")
         }
     }
 
