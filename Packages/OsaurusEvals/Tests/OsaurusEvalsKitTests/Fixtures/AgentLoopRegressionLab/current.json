@@ -1,0 +1,90 @@
+{
+  "cases": [
+    {
+      "domain": "agent_loop",
+      "id": "agent_loop.edit-file-then-verify",
+      "label": "agent loop edit file",
+      "latencyMs": 900,
+      "modelId": "foundation",
+      "notes": [],
+      "outcome": "passed",
+      "query": "fix a typo",
+      "toolUsage": [
+        { "calls": 1, "deduped": 0, "errors": 0, "tool": "file_read" },
+        { "calls": 1, "deduped": 0, "errors": 0, "tool": "file_write" },
+        { "calls": 1, "deduped": 0, "errors": 0, "tool": "complete" }
+      ]
+    },
+    {
+      "domain": "agent_loop",
+      "id": "agent_loop.search-then-multi-file-edit",
+      "label": "agent loop search then edit",
+      "latencyMs": 2400,
+      "modelId": "foundation",
+      "notes": [
+        "command exit mismatch: grep fetchDataV1 exited 0",
+        "finalText missing 'updated imports'"
+      ],
+      "outcome": "failed",
+      "query": "rename API calls",
+      "toolUsage": [
+        { "calls": 1, "deduped": 0, "errors": 0, "tool": "file_search" },
+        { "calls": 1, "deduped": 0, "errors": 0, "tool": "file_edit" },
+        { "calls": 1, "deduped": 0, "errors": 1, "tool": "shell_run" }
+      ]
+    },
+    {
+      "domain": "agent_loop",
+      "id": "agent_loop.compaction-stress",
+      "label": "agent loop compaction",
+      "latencyMs": 4500,
+      "modelId": "foundation",
+      "notes": [],
+      "outcome": "passed",
+      "query": "summarize logs",
+      "toolUsage": [
+        { "calls": 1, "deduped": 0, "errors": 0, "tool": "todo" },
+        { "calls": 3, "deduped": 0, "errors": 0, "tool": "file_read" }
+      ]
+    },
+    {
+      "domain": "agent_loop",
+      "id": "agent_loop.legacy-case",
+      "label": "agent loop legacy failure",
+      "latencyMs": 1500,
+      "modelId": "foundation",
+      "notes": [
+        "still fails: stale summary"
+      ],
+      "outcome": "failed",
+      "query": "legacy failing task",
+      "toolUsage": [
+        { "calls": 1, "deduped": 0, "errors": 1, "tool": "file_read" }
+      ]
+    },
+    {
+      "domain": "agent_loop",
+      "id": "agent_loop.write-new-file",
+      "label": "agent loop write new file",
+      "latencyMs": 700,
+      "modelId": "foundation",
+      "notes": [
+        "agent loop error: tool schema unavailable"
+      ],
+      "outcome": "errored",
+      "query": "write TODO"
+    },
+    {
+      "domain": "agent_loop",
+      "id": "agent_loop.new-stable",
+      "label": "agent loop new stable",
+      "latencyMs": 600,
+      "modelId": "foundation",
+      "notes": [],
+      "outcome": "passed",
+      "query": "new passing task"
+    }
+  ],
+  "modelId": "foundation",
+  "startedAt": "2026-06-18T00:00:00Z"
+}

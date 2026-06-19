@@ -203,6 +203,18 @@ struct SlashCommandEditorSheet: View {
     private var theme: ThemeProtocol { themeManager.currentTheme }
     private var isEditing: Bool { command != nil }
 
+    /// True when an edited command still differs from what's stored, so
+    /// "Save" can disable itself once there's nothing to apply. Create
+    /// mode is always "changed" so its button keeps surfacing the
+    /// name-required validation on click.
+    private var hasChanges: Bool {
+        guard let command else { return true }
+        return name.trimmingCharacters(in: .whitespacesAndNewlines) != command.name
+            || description != command.description
+            || template != (command.template ?? "")
+            || icon != command.icon
+    }
+
     private let availableIcons = [
         "text.bubble", "wand.and.stars", "doc.text", "globe", "scissors",
         "pencil", "magnifyingglass", "arrow.triangle.2.circlepath", "lightbulb",
@@ -391,6 +403,7 @@ struct SlashCommandEditorSheet: View {
                     Text(isEditing ? "Save" : "Add Command", bundle: .module)
                 }
                 .buttonStyle(SlashCommandButtonStyle(isPrimary: true, theme: theme))
+                .disabled(isEditing && !hasChanges)
             }
             .padding(16)
         }
@@ -431,21 +444,36 @@ struct SlashCommandEditorSheet: View {
 struct SlashCommandButtonStyle: ButtonStyle {
     var isPrimary: Bool = false
     let theme: ThemeProtocol
+    @Environment(\.isEnabled) private var isEnabled
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(size: 12, weight: .medium))
-            .foregroundColor(isPrimary ? .white : theme.primaryText)
+            .foregroundColor(primaryForeground)
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
             .background(
                 RoundedRectangle(cornerRadius: 7)
-                    .fill(isPrimary ? theme.accentColor : theme.tertiaryBackground)
+                    .fill(primaryFill)
                     .overlay(
                         RoundedRectangle(cornerRadius: 7)
                             .stroke(isPrimary ? Color.clear : theme.inputBorder, lineWidth: 1)
                     )
             )
             .opacity(configuration.isPressed ? 0.8 : 1.0)
+    }
+
+    private var primaryForeground: Color {
+        if isPrimary {
+            return isEnabled ? .white : theme.tertiaryText
+        }
+        return theme.primaryText
+    }
+
+    private var primaryFill: Color {
+        if isPrimary {
+            return isEnabled ? theme.accentColor : theme.tertiaryBackground
+        }
+        return theme.tertiaryBackground
     }
 }

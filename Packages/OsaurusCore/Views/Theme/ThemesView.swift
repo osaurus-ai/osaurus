@@ -20,6 +20,39 @@ struct IdentifiableTheme: Identifiable {
     }
 }
 
+private enum ThemeLibraryFilter: String, CaseIterable, Identifiable {
+    case all
+    case local
+    case imported
+    case shared
+    case needsReview
+    case duplicates
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .all: return "All"
+        case .local: return "Local"
+        case .imported: return "Imported"
+        case .shared: return "Shared"
+        case .needsReview: return "Needs Review"
+        case .duplicates: return "Duplicates"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .all: return "square.grid.2x2"
+        case .local: return "paintbrush.pointed"
+        case .imported: return "tray.and.arrow.down"
+        case .shared: return "link"
+        case .needsReview: return "exclamationmark.triangle"
+        case .duplicates: return "doc.on.doc"
+        }
+    }
+}
+
 struct ThemesView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
     @ObservedObject private var managementState = ManagementStateManager.shared
@@ -53,6 +86,12 @@ struct ThemesView: View {
     @State private var installedThemes: [CustomTheme] = []
     @State private var builtInThemes: [CustomTheme] = []
     @State private var customThemes: [CustomTheme] = []
+    @State private var libraryFilter: ThemeLibraryFilter = .all
+    @State private var validationReports: [UUID: ThemeValidationReport] = [:]
+    @State private var duplicateGroups: [ThemeDuplicateGroup] = []
+    @State private var librarySummary: ThemeLibrarySummary = .empty
+    @State private var previewCacheHealth: ThemePreviewCacheHealth = .empty
+    @State private var showRollbackConfirmation = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -73,8 +112,10 @@ struct ThemesView: View {
                 } else {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 24) {
-                            // Community gallery discovery banner
-                            communityThemesBanner
+                            let visibleBuiltInThemes = filteredThemes(builtInThemes)
+                            let visibleCustomThemes = filteredThemes(customThemes)
+
+                            themeLibraryManagementCenter
                                 .transition(.opacity)
 
                             // Active theme indicator
@@ -84,28 +125,36 @@ struct ThemesView: View {
                             }
 
                             // Built-in themes
-                            if !builtInThemes.isEmpty {
+                            if !visibleBuiltInThemes.isEmpty {
                                 themesSection(
                                     title: L("Built-in Themes"),
-                                    count: builtInThemes.count,
-                                    themes: builtInThemes
+                                    count: visibleBuiltInThemes.count,
+                                    themes: visibleBuiltInThemes
                                 )
                                 .transition(.opacity)
                             }
 
                             // Custom themes
-                            if !customThemes.isEmpty {
+                            if !visibleCustomThemes.isEmpty {
                                 themesSection(
-                                    title: L("Custom Themes"),
-                                    count: customThemes.count,
-                                    themes: customThemes
+                                    title: customSectionTitle,
+                                    count: visibleCustomThemes.count,
+                                    themes: visibleCustomThemes
                                 )
                                 .transition(.opacity)
                             }
 
+                            // Community gallery discovery banner
+                            communityThemesBanner
+                                .transition(.opacity)
+
                             // Empty state for custom themes
-                            if customThemes.isEmpty && !builtInThemes.isEmpty {
+                            if customThemes.isEmpty && !builtInThemes.isEmpty && libraryFilter == .all {
                                 emptyCustomThemesView
+                            }
+
+                            if libraryFilter != .all && visibleBuiltInThemes.isEmpty && visibleCustomThemes.isEmpty {
+                                emptyFilteredThemesView
                             }
                         }
                         .padding(24)
@@ -156,7 +205,8 @@ struct ThemesView: View {
             handleExport(result)
         }
         .sheet(item: $sharingTheme) { identifiable in
-            ShareThemeSheet(themeToShare: identifiable.theme) { _ in
+            ShareThemeSheet(themeToShare: identifiable.theme) { outcome in
+                markThemeShared(identifiable.theme, outcome: outcome)
                 showToast(L("Theme shared"))
             }
         }
@@ -211,6 +261,19 @@ struct ThemesView: View {
                 showDeleteConfirmation = false
                 themeToDelete = nil
             }
+        )
+        .themedAlert(
+            String(localized: "Rollback to Default", bundle: .module),
+            isPresented: $showRollbackConfirmation,
+            message: String(
+                localized:
+                    "Clear the active custom theme and return to the built-in theme for the current appearance mode? Installed themes will stay in the library.",
+                bundle: .module
+            ),
+            primaryButton: .destructive(String(localized: "Rollback", bundle: .module)) {
+                rollbackToDefaultTheme()
+            },
+            secondaryButton: .cancel(L("Cancel")) {}
         )
     }
 
@@ -389,6 +452,284 @@ struct ThemesView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    // MARK: - Library Management Center
+
+    private var themeLibraryManagementCenter: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Theme Library", bundle: .module)
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(theme.primaryText)
+                    Text("Validate, filter, deduplicate, and recover installed themes.", bundle: .module)
+                        .font(.system(size: 12))
+                        .foregroundColor(theme.secondaryText)
+                }
+
+                Spacer(minLength: 12)
+
+                HStack(spacing: 8) {
+                    libraryActionButton(
+                        title: "Rollback",
+                        icon: "arrow.uturn.backward",
+                        disabled: themeManager.activeCustomTheme == nil
+                    ) {
+                        showRollbackConfirmation = true
+                    }
+
+                    libraryActionButton(title: "Clear Cache", icon: "trash") {
+                        clearPreviewCache()
+                    }
+                }
+            }
+
+            libraryStatGrid
+            previewCacheHealthRow
+            libraryFilterBar
+
+            if !duplicateGroups.isEmpty {
+                duplicateOverview
+            }
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(theme.secondaryBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(theme.primaryBorder.opacity(0.55), lineWidth: 1)
+                )
+        )
+    }
+
+    private var libraryStatGrid: some View {
+        LazyVGrid(
+            columns: [GridItem(.adaptive(minimum: 132, maximum: 180), spacing: 10)],
+            spacing: 10
+        ) {
+            libraryStatTile("Local", count: librarySummary.localCount, icon: "paintbrush.pointed", color: theme.accentColor)
+            libraryStatTile("Imported", count: librarySummary.importedCount, icon: "tray.and.arrow.down", color: theme.infoColor)
+            libraryStatTile("Shared", count: librarySummary.sharedCount, icon: "link", color: theme.successColor)
+            libraryStatTile("Issues", count: librarySummary.validationErrorCount + librarySummary.validationWarningCount, icon: "exclamationmark.triangle", color: issueStatColor)
+            libraryStatTile("Duplicate Sets", count: librarySummary.duplicateGroupCount, icon: "doc.on.doc", color: duplicateGroups.isEmpty ? theme.tertiaryText : theme.warningColor)
+        }
+    }
+
+    private func libraryStatTile(_ title: String, count: Int, icon: String, color: Color) -> some View {
+        HStack(spacing: 9) {
+            Image(systemName: icon)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(color)
+                .frame(width: 24, height: 24)
+                .background(Circle().fill(color.opacity(0.14)))
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text("\(count)", bundle: .module)
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+                Text(LocalizedStringKey(title), bundle: .module)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(theme.cardBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(theme.cardBorder.opacity(0.8), lineWidth: 1)
+                )
+        )
+    }
+
+    private var previewCacheHealthRow: some View {
+        HStack(spacing: 10) {
+            Image(systemName: previewCacheHealth.isHealthy ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(previewCacheHealth.isHealthy ? theme.successColor : theme.warningColor)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Preview cache health", bundle: .module)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+                Text(verbatim: cacheHealthSummary)
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.secondaryText)
+                    .lineLimit(2)
+            }
+
+            Spacer(minLength: 8)
+
+            Button {
+                refreshPreviewCacheHealth()
+            } label: {
+                Image(systemName: "arrow.clockwise")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(theme.secondaryText)
+                    .frame(width: 28, height: 28)
+                    .background(
+                        RoundedRectangle(cornerRadius: 7)
+                            .fill(theme.tertiaryBackground)
+                    )
+            }
+            .buttonStyle(.plain)
+            .help(Text("Refresh cache health", bundle: .module))
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(theme.cardBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(theme.cardBorder.opacity(0.75), lineWidth: 1)
+                )
+        )
+    }
+
+    private var libraryFilterBar: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(ThemeLibraryFilter.allCases) { filter in
+                    Button {
+                        withAnimation(theme.animationQuick()) {
+                            libraryFilter = filter
+                        }
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: filter.icon)
+                                .font(.system(size: 11, weight: .semibold))
+                            Text(LocalizedStringKey(filter.title), bundle: .module)
+                                .font(.system(size: 12, weight: .medium))
+                                .lineLimit(1)
+                        }
+                        .foregroundColor(libraryFilter == filter ? Color.white : theme.secondaryText)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 7)
+                        .background(
+                            Capsule()
+                                .fill(libraryFilter == filter ? theme.accentColor : theme.tertiaryBackground)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
+    private var duplicateOverview: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "doc.on.doc.fill")
+                    .font(.system(size: 12))
+                    .foregroundColor(theme.warningColor)
+                Text("Duplicate detection", bundle: .module)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+                Spacer()
+                Button {
+                    withAnimation(theme.animationQuick()) {
+                        libraryFilter = .duplicates
+                    }
+                } label: {
+                    Text("Review", bundle: .module)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(theme.accentColor)
+                }
+                .buttonStyle(.plain)
+            }
+
+            ForEach(duplicateGroups.prefix(2)) { group in
+                Text(group.members.map(\.name).joined(separator: "  •  "))
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.secondaryText)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(theme.warningColor.opacity(0.08))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(theme.warningColor.opacity(0.22), lineWidth: 1)
+                )
+        )
+    }
+
+    private var emptyFilteredThemesView: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "line.3.horizontal.decrease.circle")
+                .font(.system(size: 30))
+                .foregroundColor(theme.tertiaryText)
+            Text("No themes match this filter", bundle: .module)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(theme.primaryText)
+            Button {
+                withAnimation(theme.animationQuick()) {
+                    libraryFilter = .all
+                }
+            } label: {
+                Text("Show All Themes", bundle: .module)
+                    .font(.system(size: 12, weight: .medium))
+            }
+            .buttonStyle(.bordered)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 36)
+    }
+
+    private func libraryActionButton(
+        title: String,
+        icon: String,
+        disabled: Bool = false,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: icon)
+                    .font(.system(size: 11, weight: .semibold))
+                Text(LocalizedStringKey(title), bundle: .module)
+                    .font(.system(size: 12, weight: .medium))
+            }
+            .foregroundColor(disabled ? theme.tertiaryText : theme.primaryText)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(theme.tertiaryBackground)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(theme.inputBorder.opacity(disabled ? 0.35 : 1), lineWidth: 1)
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(disabled)
+    }
+
+    private var issueStatColor: Color {
+        if librarySummary.validationErrorCount > 0 { return theme.errorColor }
+        if librarySummary.validationWarningCount > 0 { return theme.warningColor }
+        return theme.successColor
+    }
+
+    private var cacheHealthSummary: String {
+        let cost = ByteCountFormatter.string(
+            fromByteCount: Int64(previewCacheHealth.cachedCostBytes),
+            countStyle: .file
+        )
+        let limit = ByteCountFormatter.string(
+            fromByteCount: Int64(previewCacheHealth.totalCostLimit),
+            countStyle: .file
+        )
+        return "\(previewCacheHealth.cachedEntryCount) images, \(cost) tracked of \(limit), \(previewCacheHealth.inFlightDecodeCount) decoding, \(previewCacheHealth.failedDecodeCount) failed decodes"
+    }
+
     private func showToast(_ message: String, type: SimpleToastType = .success) {
         withAnimation(theme.springAnimation()) {
             toastType = type
@@ -420,6 +761,17 @@ struct ThemesView: View {
         }
     }
 
+    private var customSectionTitle: String {
+        switch libraryFilter {
+        case .all: return L("Custom Themes")
+        case .local: return "Local Themes"
+        case .imported: return "Imported Themes"
+        case .shared: return "Shared Themes"
+        case .needsReview: return "Themes Needing Review"
+        case .duplicates: return "Duplicate Themes"
+        }
+    }
+
     /// Sort once, partition once. Called on initial load and whenever
     /// `ThemeManager` republishes its installed list.
     private func refreshPartitions(from themes: [CustomTheme]) {
@@ -427,6 +779,86 @@ struct ThemesView: View {
         installedThemes = sorted
         builtInThemes = sorted.filter { $0.isBuiltIn }
         customThemes = sorted.filter { !$0.isBuiltIn }
+        let reports = ThemeLibraryManagementService.validationReports(for: sorted)
+        let reportMap = Dictionary(uniqueKeysWithValues: reports.map { ($0.themeID, $0) })
+        let duplicates = ThemeLibraryManagementService.duplicateGroups(in: sorted)
+        validationReports = reportMap
+        duplicateGroups = duplicates
+        librarySummary = ThemeLibraryManagementService.summary(
+            for: sorted,
+            reports: reports,
+            duplicateGroups: duplicates
+        )
+        refreshPreviewCacheHealth()
+    }
+
+    private func filteredThemes(_ themes: [CustomTheme]) -> [CustomTheme] {
+        themes.filter(shouldShowTheme(_:))
+    }
+
+    private func shouldShowTheme(_ themeItem: CustomTheme) -> Bool {
+        switch libraryFilter {
+        case .all:
+            return true
+        case .local:
+            return ThemeLibraryManagementService.source(for: themeItem) == .local
+        case .imported:
+            return ThemeLibraryManagementService.source(for: themeItem) == .imported
+        case .shared:
+            return ThemeLibraryManagementService.source(for: themeItem) == .shared
+        case .needsReview:
+            return validationReports[themeItem.metadata.id]?.needsReview == true
+        case .duplicates:
+            return duplicateThemeIDs.contains(themeItem.metadata.id)
+        }
+    }
+
+    private var duplicateThemeIDs: Set<UUID> {
+        Set(duplicateGroups.flatMap { $0.members.map(\.id) })
+    }
+
+    private func duplicateGroupSize(for themeItem: CustomTheme) -> Int {
+        duplicateGroups.first { group in
+            group.members.contains { $0.id == themeItem.metadata.id }
+        }?.count ?? 0
+    }
+
+    private func refreshPreviewCacheHealth() {
+        Task {
+            let snapshot = await ThemePreviewImageCache.shared.healthSnapshot()
+            await MainActor.run {
+                previewCacheHealth = snapshot
+            }
+        }
+    }
+
+    private func clearPreviewCache() {
+        Task {
+            await ThemePreviewImageCache.shared.removeAll()
+            let snapshot = await ThemePreviewImageCache.shared.healthSnapshot()
+            await MainActor.run {
+                previewCacheHealth = snapshot
+                showToast(String(localized: "Preview cache cleared", bundle: .module))
+            }
+        }
+    }
+
+    private func rollbackToDefaultTheme() {
+        ThemeConfigurationStore.rollbackActiveThemeToDefault()
+        themeManager.clearCustomTheme()
+        themeManager.refreshInstalledThemes()
+        refreshPartitions(from: themeManager.installedThemes)
+        showToast(String(localized: "Rolled back to the default theme", bundle: .module))
+    }
+
+    private func markThemeShared(_ themeItem: CustomTheme, outcome: ThemeShareOutcome) {
+        guard !themeItem.isBuiltIn else { return }
+        _ = ThemeConfigurationStore.markThemeShared(
+            id: themeItem.metadata.id,
+            hash: outcome.hash,
+            serverURL: outcome.serverURL
+        )
+        themeManager.refreshInstalledThemes()
     }
 
     // MARK: - Active Theme Section
@@ -522,6 +954,9 @@ struct ThemesView: View {
                     ThemePreviewCard(
                         theme: themeItem,
                         isActive: isActive,
+                        source: ThemeLibraryManagementService.source(for: themeItem),
+                        validationReport: validationReports[themeItem.metadata.id],
+                        duplicateGroupSize: duplicateGroupSize(for: themeItem),
                         onApply: {
                             themeManager.applyCustomTheme(themeItem)
                             showToast(L("Applied \"\(themeItem.metadata.name)\""))
@@ -700,6 +1135,7 @@ struct ThemesView: View {
             author: "User"
         )
         newTheme.isBuiltIn = false
+        newTheme.library = ThemeLibraryInfo(source: .local)
         openEditor(for: newTheme)
     }
 
@@ -797,6 +1233,9 @@ struct ThemesView: View {
 struct ThemePreviewCard: View {
     let theme: CustomTheme
     let isActive: Bool
+    let source: ThemeLibrarySource
+    let validationReport: ThemeValidationReport?
+    let duplicateGroupSize: Int
     let onApply: () -> Void
     let onEdit: () -> Void
     let onExport: () -> Void
@@ -817,6 +1256,9 @@ struct ThemePreviewCard: View {
     init(
         theme: CustomTheme,
         isActive: Bool,
+        source: ThemeLibrarySource,
+        validationReport: ThemeValidationReport?,
+        duplicateGroupSize: Int,
         onApply: @escaping () -> Void,
         onEdit: @escaping () -> Void,
         onExport: @escaping () -> Void,
@@ -826,6 +1268,9 @@ struct ThemePreviewCard: View {
     ) {
         self.theme = theme
         self.isActive = isActive
+        self.source = source
+        self.validationReport = validationReport
+        self.duplicateGroupSize = duplicateGroupSize
         self.onApply = onApply
         self.onEdit = onEdit
         self.onExport = onExport
@@ -903,15 +1348,17 @@ struct ThemePreviewCard: View {
                 }
 
                 if theme.isBuiltIn {
-                    Text("Built-in", bundle: .module)
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(currentTheme.secondaryText)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(
-                            Capsule()
-                                .fill(currentTheme.tertiaryBackground)
-                        )
+                    sourceBadge("Built-in", color: currentTheme.secondaryText)
+                } else {
+                    sourceBadge(sourceLabel(source), color: sourceColor(source))
+                }
+
+                if let validationReport, validationReport.needsReview {
+                    validationBadge(validationReport)
+                }
+
+                if duplicateGroupSize > 1 {
+                    sourceBadge("Duplicate", color: currentTheme.warningColor)
                 }
             }
 
@@ -1006,6 +1453,60 @@ struct ThemePreviewCard: View {
                 Circle()
                     .stroke(currentTheme.primaryBorder, lineWidth: 1)
             )
+    }
+
+    private func sourceBadge(_ label: String, color: Color) -> some View {
+        Text(LocalizedStringKey(label), bundle: .module)
+            .font(.system(size: 10, weight: .medium))
+            .foregroundColor(color)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(
+                Capsule()
+                    .fill(color.opacity(0.14))
+            )
+    }
+
+    private func validationBadge(_ report: ThemeValidationReport) -> some View {
+        HStack(spacing: 3) {
+            Image(systemName: report.errorCount > 0 ? "xmark.octagon.fill" : "exclamationmark.triangle.fill")
+                .font(.system(size: 8, weight: .bold))
+            Text(LocalizedStringKey(report.errorCount > 0 ? "Invalid" : "Review"), bundle: .module)
+                .font(.system(size: 10, weight: .medium))
+        }
+        .foregroundColor(report.errorCount > 0 ? currentTheme.errorColor : currentTheme.warningColor)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 2)
+        .background(
+            Capsule()
+                .fill((report.errorCount > 0 ? currentTheme.errorColor : currentTheme.warningColor).opacity(0.14))
+        )
+        .help(Text(verbatim: validationHelp(report)))
+    }
+
+    private func sourceLabel(_ source: ThemeLibrarySource) -> String {
+        switch source {
+        case .builtIn: return "Built-in"
+        case .local: return "Local"
+        case .imported: return "Imported"
+        case .shared: return "Shared"
+        }
+    }
+
+    private func sourceColor(_ source: ThemeLibrarySource) -> Color {
+        switch source {
+        case .builtIn: return currentTheme.secondaryText
+        case .local: return currentTheme.accentColor
+        case .imported: return currentTheme.infoColor
+        case .shared: return currentTheme.successColor
+        }
+    }
+
+    private func validationHelp(_ report: ThemeValidationReport) -> String {
+        if let first = report.issues.first {
+            return "\(first.field): \(first.message)"
+        }
+        return "Theme validation passed"
     }
 }
 

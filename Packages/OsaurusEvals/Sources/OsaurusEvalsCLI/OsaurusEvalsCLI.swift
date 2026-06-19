@@ -28,14 +28,30 @@ struct OsaurusEvalsCLI {
 
     static func main() async {
         let args = Array(CommandLine.arguments.dropFirst())
-        guard let first = args.first, first == "run" else {
+        guard let command = args.first else {
             printUsage()
-            exit(args.isEmpty ? 0 : 2)
+            exit(0)
         }
 
+        switch command {
+        case "run":
+            await runCommand(Array(args.dropFirst()))
+        case "agent-loop-lab":
+            exit(await runAgentLoopLab(Array(args.dropFirst())))
+        case "--help", "-h":
+            printUsage()
+            exit(0)
+        default:
+            printUsage()
+            exit(2)
+        }
+    }
+
+    @MainActor
+    static func runCommand(_ args: [String]) async {
         let opts: Options
         do {
-            opts = try Options.parse(Array(args.dropFirst()))
+            opts = try Options.parse(args)
         } catch {
             FileHandle.standardError.write(
                 Data(("argument error: \(error.localizedDescription)\n").utf8)
@@ -547,6 +563,7 @@ struct OsaurusEvalsCLI {
                 osaurus-evals run --suite <dir> [--model <id>] [--filter <substr>] [--out <path>]
                                               [--threshold <float>] [--report-forensics]
                                               [--startup-timeout <seconds>]
+                osaurus-evals agent-loop-lab --baseline <path> [--suite <dir> ...] [--model <id>]
 
             FLAGS:
                 --suite <dir>         Required. Directory of *.json eval cases
@@ -617,6 +634,7 @@ struct OsaurusEvalsCLI {
                 osaurus-evals run --suite Suites/CapabilitySearch --filter browser --out report.json
                 osaurus-evals run --suite Suites/CapabilitySearch --threshold 0.25 --report-forensics
                 osaurus-evals run --suite Suites/CapabilitySearch --fail-on-floor
+                osaurus-evals agent-loop-lab --baseline reports/main-agentloop
             """
         print(usage)
     }

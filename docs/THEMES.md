@@ -9,6 +9,7 @@ This document describes the JSON schema for Osaurus custom themes. Themes can be
 - **`metadata.id`** is ignored on import -- a new UUID is always generated.
 - **`isBuiltIn`** is forced to `false` on import.
 - All top-level sections are required unless noted otherwise.
+- `library` is optional provenance metadata managed by Osaurus. It is safe to omit in hand-written themes.
 
 ## Top-Level Structure
 
@@ -23,6 +24,7 @@ This document describes the JSON schema for Osaurus custom themes. Themes can be
   "shadows": { ... },
   "messages": { ... },
   "borders": { ... },
+  "library": { ... },
   "isBuiltIn": false,
   "isDark": true
 }
@@ -33,7 +35,7 @@ This document describes the JSON schema for Osaurus custom themes. Themes can be
 | `isBuiltIn` | Bool | Always set to `false` for custom themes. Forced to `false` on import. |
 | `isDark` | Bool | Whether this is a dark theme. Affects system appearance matching. |
 
-`messages` and `borders` are optional -- they fall back to defaults if omitted.
+`messages`, `borders`, and `library` are optional -- missing `messages` and `borders` fall back to defaults, and missing `library` is treated as a local custom theme.
 
 ---
 
@@ -209,6 +211,23 @@ Optional section -- defaults are used if omitted.
 | `cardCornerRadius` | Double | `12` | Corner radius for card-style elements. |
 | `inputCornerRadius` | Double | `8` | Corner radius for input fields. |
 | `borderOpacity` | Double | `0.3` | Default border opacity applied to border colors. |
+
+---
+
+## library
+
+Optional section managed by the Theme Library view. Imports and shares may rewrite it so the UI can distinguish local, imported, and shared themes.
+
+| Field | Type | Description |
+|---|---|---|
+| `source` | String | One of `"local"`, `"imported"`, `"shared"`, or `"builtIn"`. Built-in presets ignore this field. |
+| `importedAt` | String? (ISO 8601) | When Osaurus imported the theme from a file or shared ID. |
+| `sharedAt` | String? (ISO 8601) | When Osaurus last marked the theme as shared. |
+| `remoteHash` | String? | 64-character shared theme ID when installed or uploaded through the theme sharing service. |
+| `remoteURL` | String? | Public theme server URL for the shared theme ID. |
+| `sourceDetail` | String? | Human-readable source note such as the imported filename. |
+
+Theme sharing canonicalization strips `library`, local UUIDs, and local timestamps before hashing so the same theme JSON does not get a different shared ID simply because it was imported on another machine.
 
 ---
 

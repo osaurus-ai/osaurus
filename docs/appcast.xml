@@ -3,6 +3,47 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.20.4</title>
+            <pubDate>Thu, 18 Jun 2026 11:50:15 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.20.4</sparkle:version>
+            <sparkle:shortVersionString>0.20.4</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.20.4/Osaurus-0.20.4.dmg" length="51951252" type="application/octet-stream" sparkle:edSignature="HCl0eLo2Ab/1g7lGliv+XWgkcXUjUN6t0Mk1vxxdzFfTFp8SoSMAnsJwQY5pPaTVG00CajlLgbB69mjDTbMjAw=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- improved tool calls and prefill speed for small local models (#1577) by @RaajeevChandran
+- Add MCP Server Hub (#1559) by @mimeding
+- Allow manual provider models during connection tests (#1552) by @mimeding
+- Route sandbox plugin manifests through global proxy (#1549) by @mimeding
+- Route sandbox artifact downloads through global proxy (#1548) by @mimeding
+- Route relay tunnel traffic through global proxy (#1547) by @mimeding
+- Route remote agent invites through global proxy (#1546) by @mimeding
+- Route privacy model downloads through global proxy (#1545) by @mimeding
+- Route router API through global proxy (#1543) by @mimeding
+- Route theme API through global proxy (#1542) by @mimeding
+- Route GitHub skill imports through global proxy (#1544) by @mimeding
+- Route MCP OAuth through global proxy (#1536) by @mimeding
+- Route markdown image downloads through global proxy (#1550) by @mimeding
+- updated chinese translations (#1553) by @ftzahao
+
+## 🐛 Bug Fixes
+
+- resolved crashes and hangs (#1575) by @RaajeevChandran
+- fixed issue with agent deletion (#1564) by @tpae
+- fixed issue with share artifact tool (#1561) by @tpae
+- fixed main thread blocking processes (#1556) by @RaajeevChandran
+
+## 🧰 Maintenance
+
+- added ability to disable osaurus router (#1563) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.20.3...0.20.4
+]]></description>
+        </item>
+        <item>
             <title>0.20.3</title>
             <pubDate>Wed, 17 Jun 2026 00:25:47 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>

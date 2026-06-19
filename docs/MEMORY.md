@@ -288,6 +288,7 @@ Open the Management window (`⌘ Shift M`) → **Memory** to see:
 - Your **identity** (auto-derived content + manual overrides)
 - **Pinned facts** with salience bars and use counts
 - **Episodes** for the default agent
+- **Memory Console** search, inspection, disable/forget actions, diagnostics, and bounded context previews
 - **Per-agent counts**
 - **Processing statistics** (total calls, success rate, average duration)
 - **Database size**
@@ -304,6 +305,17 @@ Identity overrides are explicit facts that always appear in context.
 ### Clearing Memory
 
 The Memory view includes a danger zone for clearing all memory data. This removes identity, pinned facts, episodes, and transcript. The action is irreversible.
+
+### Memory Console
+
+The Memory Console is an administrative view over the encrypted memory database:
+
+- **Inspect** shows a privacy-safe preview and metadata for pinned facts, episodes, and transcript turns. Emails, phone numbers, account-like values, URLs, and credential-shaped tokens are redacted before display.
+- **Search** can be scoped to all memory, pinned facts, episodes, transcript, or one agent. Disabled rows are hidden by default and can be included explicitly.
+- **Disable** removes pinned facts and episodes from future recall without deleting the row. Transcript turns do not have a disabled state in the current schema, so the console explains that limitation and keeps **Forget** available.
+- **Forget** permanently deletes the selected row and removes its vector document when a matching vector id exists.
+- **Diagnose** reports storage health: schema version, row counts, pending signals, processing logs, FTS mirror availability, vector index state, and recent storage errors.
+- **Bounded context preview** assembles the memory block for a selected agent/query under an explicit token cap, then redacts the preview before showing it.
 
 ### Sync / Run Consolidation
 

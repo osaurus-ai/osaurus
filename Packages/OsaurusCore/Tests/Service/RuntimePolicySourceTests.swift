@@ -616,8 +616,11 @@ struct RuntimePolicySourceTests {
         // plus the quadratic-BPE merge fix (O(n^2) -> O(n log n) on long
         // whitespace-free pre-tokens) that collapses multi-second prefill on
         // tool-heavy prompts while staying byte-identical to canonical output
-        // even on non-monotonic whitespace merge ranks.
-        let expectedRuntimeHardenedRevision = "2bd6606f31ec8bc8017ef190dc983e835987e58c"
+        // even on non-monotonic whitespace merge ranks,
+        // plus the Gemma nested-object tool-call argument parse fix
+        // (vmlx-swift#76): GemmaFunctionParser now recurses into `{...}` values
+        // so object-typed tool parameters arrive as objects, not raw strings.
+        let expectedRuntimeHardenedRevision = "14040d24e9f1dc7b63c22b4cbb4573c5aa4fc506"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
         let appRevision = try Self.vmlxPinRevision(in: appResolved)

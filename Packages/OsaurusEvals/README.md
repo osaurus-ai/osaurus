@@ -57,6 +57,36 @@ swift run osaurus-evals run --suite Suites/CapabilitySearch --filter browser --o
 swift run osaurus-evals run --suite Suites/CapabilitySearch --bootstrap-plugins
 ```
 
+For maintainer proof on agent-loop changes, use the regression lab. It runs
+selected `agent_loop` suites, writes per-suite JSON artifacts, compares the
+current run against a saved baseline report or report directory, and emits a
+concise JSON + Markdown summary:
+
+```bash
+scripts/evals/agent-loop-regression-lab.sh \
+  --baseline reports/main-agentloop-baseline \
+  --model foundation
+
+# Compare saved reports without running a model (useful for smoke/fixtures):
+swift run --package-path Packages/OsaurusEvals osaurus-evals agent-loop-lab \
+  --baseline baseline.json \
+  --current current.json \
+  --out-dir build/evals/lab-smoke
+```
+
+The default run selection is `Suites/AgentLoop` plus `Suites/AgentLoopFrontier`.
+Pass `--suite <dir>` repeatedly to narrow or expand it. Artifacts land under
+`build/evals/agent-loop-regression-lab/<timestamp>/` unless `--out-dir` is set:
+
+- `reports/<Suite>.json` — raw `EvalReport` output for each suite run.
+- `regression-summary.json` — machine-readable case deltas.
+- `regression-summary.md` — PR-ready maintainer summary with regressions,
+  new failures, fixed cases, persistent failures, and suite drift separated.
+
+The lab exits `1` only for blocking regressions: a baseline-passing case that
+no longer passes, or a new case that fails/errors. Existing failures that stay
+red are reported as persistent failures without blocking the comparison.
+
 Startup bootstrap is domain-aware. Suites that require installed native plugins
 load them and rebuild search indices so they mirror the host app. `capability_search`
 suites initialize only the selected tool / method / skill index lanes without
@@ -226,6 +256,17 @@ The suite covers seventeen scenarios under `Suites/AgentLoop/`: `edit-file-then-
 make evals EVALS_SUITE=Packages/OsaurusEvals/Suites/AgentLoop MODEL=foundation
 make evals EVALS_SUITE=Packages/OsaurusEvals/Suites/AgentLoop MODEL=mlx-community/Qwen3-4B-MLX-4bit
 make evals EVALS_SUITE=Packages/OsaurusEvals/Suites/AgentLoop MODEL=openai/gpt-4o-mini JUDGE_MODEL=openai/gpt-4o
+```
+
+For release or PR proof against a known-good row, prefer the regression lab so
+the raw reports and summary stay together:
+
+```bash
+scripts/evals/agent-loop-regression-lab.sh \
+  --baseline build/eval-baselines/<model>/agent-loop \
+  --suite Packages/OsaurusEvals/Suites/AgentLoop \
+  --suite Packages/OsaurusEvals/Suites/AgentLoopFrontier \
+  --model <prefix>/<model-id>
 ```
 
 ### `computer_use_loop` domain

@@ -212,6 +212,10 @@ public actor ThemesAPIClient {
         return data
     }
 
+    public func themeURL(hash: String) -> URL {
+        baseURL.appendingPathComponent("themes/\(hash)")
+    }
+
     // MARK: - Internal
 
     private func perform(_ request: URLRequest) async throws -> (Data, URLResponse) {
