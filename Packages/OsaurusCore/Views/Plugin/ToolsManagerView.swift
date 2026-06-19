@@ -31,12 +31,23 @@ struct ToolsManagerView: View {
     @State private var toolEntries: [ToolRegistry.ToolEntry] = []
     @State private var runtimeManagedToolEntries: [ToolRegistry.ToolEntry] = []
     @State private var builtInSandboxToolEntries: [ToolRegistry.ToolEntry] = []
+    /// Built-in and native tools that don't belong to a plugin, provider, or
+    /// the runtime/sandbox buckets. Surfaced as their own group so every
+    /// registered tool has exactly one home on the Available tab.
+    @State private var builtInNativeToolEntries: [ToolRegistry.ToolEntry] = []
     @State private var remoteProviderCount: Int = 0
     @State private var policyInfoCache: [String: ToolRegistry.ToolPolicyInfo] = [:]
     /// Precomputed once per refresh so tool rows never call
     /// `ToolRegistry.availability(forTool:)` during SwiftUI layout.
     @State private var availabilityCache: [String: ToolAvailability] = [:]
     @State private var exposureDiagnostic: ToolExposureDiagnostic?
+    /// Per-tool exposure rows, precomputed once per refresh so grouped rows
+    /// render their state pill from a snapshot instead of re-querying.
+    @State private var exposureRowsByName: [String: ToolExposureDiagnostic.Row] = [:]
+    /// Tool names that pass the active source/state filters. Re-derived purely
+    /// in-memory from `exposureDiagnostic` whenever the filters change, so a
+    /// filter/chip tap never triggers the DB-backed snapshot rebuild.
+    @State private var allowedToolNames: Set<String> = []
     @State private var exposureSourceFilter: ToolExposureSourceFilter = .all
     @State private var exposureStateFilter: ToolExposureStateFilter = .all
     @State private var exposureExportError: String?
@@ -109,6 +120,12 @@ struct ToolsManagerView: View {
             remoteProviderCount = providerManager.configuration.providers.count
             reload()
         }
+        .onChange(of: exposureSourceFilter) { _, _ in
+            recomputeAllowedToolNames()
+        }
+        .onChange(of: exposureStateFilter) { _, _ in
+            recomputeAllowedToolNames()
+        }
         .alert(
             Text("Export Failed", bundle: .module),
             isPresented: Binding(
@@ -179,27 +196,33 @@ struct ToolsManagerView: View {
                     description: "Tools from installed plugins and connected providers"
                 )
 
-                let plugins = installedPluginsWithTools
-                let remoteTools = remoteProviderTools
-                let runtimeTools = runtimeManagedToolEntries
-                let exposureRows = filteredExposureRows
-
-                if let exposureDiagnostic {
+                if let exposureDiagnostic, !exposureDiagnostic.rows.isEmpty {
                     ToolExposureControlCenter(
                         diagnostic: exposureDiagnostic,
-                        rows: exposureRows,
+                        matchingCount: filteredExposureRows.count,
                         sourceFilter: $exposureSourceFilter,
                         stateFilter: $exposureStateFilter,
-                        toolEntriesByName: Dictionary(
-                            uniqueKeysWithValues: toolEntries.map { ($0.name, $0) }
-                        ),
-                        policyInfoCache: policyInfoCache,
-                        onExport: exportExposureReport,
-                        onChange: { reload() }
+                        onExport: exportExposureReport
                     )
                 }
 
-                if runtimeTools.isEmpty && plugins.isEmpty && remoteTools.isEmpty {
+                let builtInNative = visibleTools(builtInNativeToolEntries)
+                let runtimeTools = visibleTools(runtimeManagedToolEntries)
+                let pluginGroups = visiblePluginGroups()
+                let remoteGroups = visibleRemoteGroups()
+
+                let hasAnyTool =
+                    !builtInNativeToolEntries.isEmpty
+                    || !runtimeManagedToolEntries.isEmpty
+                    || !installedPluginsWithTools.isEmpty
+                    || !remoteProviderTools.isEmpty
+                let hasAnyVisible =
+                    !builtInNative.isEmpty
+                    || !runtimeTools.isEmpty
+                    || !pluginGroups.isEmpty
+                    || !remoteGroups.isEmpty
+
+                if !hasAnyTool {
                     emptyState(
                         icon: "wrench.and.screwdriver",
                         title: L("No tools available"),
@@ -207,9 +230,28 @@ struct ToolsManagerView: View {
                             ? L("Enable a working folder, sandbox, plugin, or remote provider to add tools")
                             : L("Try a different search term")
                     )
+                } else if !hasAnyVisible {
+                    filteredEmptyState
                 } else {
                     if pluginsWithMissingPermissionsCount > 0 {
                         ToolPermissionBanner(count: pluginsWithMissingPermissionsCount)
+                    }
+
+                    if !builtInNative.isEmpty {
+                        InstalledSectionHeader(title: L("Built-in Tools"), icon: "shippingbox")
+
+                        VStack(spacing: 8) {
+                            ForEach(builtInNative) { entry in
+                                RuntimeManagedToolEntryRow(
+                                    entry: entry,
+                                    badge: builtInBadge(for: entry),
+                                    policyInfo: policyInfoCache[entry.name],
+                                    availability: cachedAvailability(availabilityCache, for: entry),
+                                    exposureRow: exposureRowsByName[entry.name],
+                                    onChange: { applyLocalToolMutation(name: entry.name) }
+                                )
+                            }
+                        }
                     }
 
                     if !runtimeTools.isEmpty {
@@ -222,43 +264,43 @@ struct ToolsManagerView: View {
                                     badge: runtimeBadge(for: entry),
                                     policyInfo: policyInfoCache[entry.name],
                                     availability: cachedAvailability(availabilityCache, for: entry),
-                                    onChange: { reload() }
+                                    exposureRow: exposureRowsByName[entry.name],
+                                    onChange: { applyLocalToolMutation(name: entry.name) }
                                 )
                             }
                         }
                     }
 
-                    if !plugins.isEmpty {
+                    if !pluginGroups.isEmpty {
                         InstalledSectionHeader(title: L("Plugin Tools"), icon: "puzzlepiece.extension")
 
-                        ForEach(plugins, id: \.plugin.id) { item in
+                        ForEach(pluginGroups, id: \.plugin.id) { item in
                             ToolPluginCard(
                                 plugin: item.plugin,
                                 tools: item.tools,
                                 policyInfoCache: policyInfoCache,
-                                availabilityCache: availabilityCache
-                            ) {
-                                reload()
-                            }
+                                availabilityCache: availabilityCache,
+                                exposureRowsByName: exposureRowsByName,
+                                onToolMutated: { applyLocalToolMutation(name: $0) }
+                            )
                         }
                     }
 
-                    if !remoteTools.isEmpty {
+                    if !remoteGroups.isEmpty {
                         InstalledSectionHeader(title: L("Remote Tools"), icon: "server.rack")
 
-                        ForEach(remoteTools, id: \.provider.id) { item in
+                        ForEach(remoteGroups, id: \.provider.id) { item in
                             RemoteProviderToolsCard(
                                 provider: item.provider,
                                 tools: item.tools,
                                 providerState: providerManager.providerStates[item.provider.id],
                                 policyInfoCache: policyInfoCache,
                                 availabilityCache: availabilityCache,
+                                exposureRowsByName: exposureRowsByName,
                                 onDisconnect: {
                                     providerManager.disconnect(providerId: item.provider.id)
                                 },
-                                onChange: {
-                                    reload()
-                                }
+                                onToolMutated: { applyLocalToolMutation(name: $0) }
                             )
                         }
                     }
@@ -303,7 +345,20 @@ struct ToolsManagerView: View {
         let currentProviders = providerManager.configuration.providers
         let currentProviderStates = providerManager.providerStates
 
-        let (installedPluginsResult, remoteToolsResult, runtimeToolsResult, builtInSandboxToolsResult) =
+        // Snapshot the exposure diagnostic up front (the only DB-backed step)
+        // so the detached pass below can also partition built-in/native tools
+        // from the same source classification.
+        let diagnostic = await ToolIndexService.shared.exposureSnapshot()
+        guard !Task.isCancelled else { return }
+        let rowsByName = Dictionary(uniqueKeysWithValues: diagnostic.rows.map { ($0.toolName, $0) })
+
+        let (
+            installedPluginsResult,
+            remoteToolsResult,
+            runtimeToolsResult,
+            builtInSandboxToolsResult,
+            builtInNativeToolsResult
+        ) =
             await Task.detached(priority: .userInitiated) {
 
                 func matchesToolSearch(_ tool: ToolRegistry.ToolEntry) -> Bool {
@@ -396,7 +451,25 @@ struct ToolsManagerView: View {
                     .filter { builtInSandboxNames.contains($0.name) }
                     .filter(matchesToolSearch)
 
-                return (installedPlugins, remoteTools, runtimeTools, builtInSandboxTools)
+                // 4. Built-in and native tools that have no other home. Every
+                // other group (plugin/provider/runtime) is keyed off concrete
+                // catalog entries; these are the remaining registered tools
+                // (capability infrastructure, native helpers) classified as
+                // built-in/native by the exposure diagnostic.
+                let shownNames =
+                    Set(runtimeTools.map(\.name))
+                    .union(installedPlugins.flatMap { $0.tools.map(\.name) })
+                    .union(remoteTools.flatMap { $0.tools.map(\.name) })
+                let builtInNativeTools =
+                    currentToolEntries
+                    .filter { entry in
+                        guard let source = rowsByName[entry.name]?.source else { return false }
+                        return source == .builtIn || source == .native
+                    }
+                    .filter { !shownNames.contains($0.name) }
+                    .filter(matchesToolSearch)
+
+                return (installedPlugins, remoteTools, runtimeTools, builtInSandboxTools, builtInNativeTools)
             }.value
 
         guard !Task.isCancelled else { return }
@@ -405,6 +478,7 @@ struct ToolsManagerView: View {
         remoteProviderTools = remoteToolsResult
         runtimeManagedToolEntries = runtimeToolsResult
         builtInSandboxToolEntries = builtInSandboxToolsResult
+        builtInNativeToolEntries = builtInNativeToolsResult
 
         // Build policy info + availability caches once for all tools so the
         // rows render from snapshots instead of hitting the registry per body.
@@ -419,21 +493,10 @@ struct ToolsManagerView: View {
         policyInfoCache = cache
         availabilityCache = availability
 
-        // Calculate plugins with missing permissions using the cache
-        var permissionCount = 0
-        for (_, tools) in installedPluginsResult {
-            for tool in tools {
-                if let info = cache[tool.name] {
-                    if info.systemPermissionStates.values.contains(false) {
-                        permissionCount += 1
-                        break
-                    }
-                }
-            }
-        }
-        pluginsWithMissingPermissionsCount = permissionCount
-
-        exposureDiagnostic = await ToolIndexService.shared.exposureSnapshot()
+        exposureDiagnostic = diagnostic
+        exposureRowsByName = rowsByName
+        recomputeAllowedToolNames()
+        recomputePermissionBannerCount()
     }
 
     private var filteredExposureRows: [ToolExposureDiagnostic.Row] {
@@ -443,6 +506,137 @@ struct ToolsManagerView: View {
             source: exposureSourceFilter.source,
             state: exposureStateFilter.state
         )
+    }
+
+    /// Re-derive the source/state allowed-name set from the in-memory
+    /// diagnostic. Cheap and main-thread only; called when the filters change
+    /// or after a refresh, never triggering the DB-backed snapshot.
+    private func recomputeAllowedToolNames() {
+        guard let exposureDiagnostic else {
+            allowedToolNames = []
+            return
+        }
+        if exposureSourceFilter == .all && exposureStateFilter == .all {
+            allowedToolNames = Set(exposureDiagnostic.rows.map(\.toolName))
+        } else {
+            allowedToolNames = Set(
+                exposureDiagnostic.filteredRows(
+                    source: exposureSourceFilter.source,
+                    state: exposureStateFilter.state
+                ).map(\.toolName)
+            )
+        }
+    }
+
+    private func recomputePermissionBannerCount() {
+        var count = 0
+        for (_, tools) in installedPluginsWithTools {
+            let needsPermission = tools.contains { entry in
+                policyInfoCache[entry.name]?.systemPermissionStates.values.contains(false) == true
+            }
+            if needsPermission { count += 1 }
+        }
+        pluginsWithMissingPermissionsCount = count
+    }
+
+    // MARK: - Grouped list filtering
+
+    private var filterActive: Bool {
+        exposureSourceFilter != .all || exposureStateFilter != .all
+    }
+
+    /// Narrow a group's tools by the active source/state filters. Free-text
+    /// search is already applied while the groups are built in
+    /// `updateFilteredLists()`, so this only intersects the in-memory
+    /// allowed-name set.
+    private func visibleTools(_ tools: [ToolRegistry.ToolEntry]) -> [ToolRegistry.ToolEntry] {
+        guard filterActive else { return tools }
+        return tools.filter { allowedToolNames.contains($0.name) }
+    }
+
+    private func visiblePluginGroups() -> [(plugin: PluginState, tools: [ToolRegistry.ToolEntry])] {
+        installedPluginsWithTools.compactMap { item in
+            let tools = visibleTools(item.tools)
+            if tools.isEmpty {
+                // Surface load-error plugins (which have no tools) only when not
+                // narrowing by source/state, since a state filter can't match them.
+                if !filterActive && item.plugin.hasLoadError {
+                    return (item.plugin, [])
+                }
+                return nil
+            }
+            return (item.plugin, tools)
+        }
+    }
+
+    private func visibleRemoteGroups() -> [(provider: MCPProvider, tools: [ToolRegistry.ToolEntry])] {
+        remoteProviderTools.compactMap { item in
+            let tools = visibleTools(item.tools)
+            return tools.isEmpty ? nil : (item.provider, tools)
+        }
+    }
+
+    private var filteredEmptyState: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "line.3.horizontal.decrease.circle")
+                .foregroundColor(theme.tertiaryText)
+            Text("No exposure rows match the current filters", bundle: .module)
+                .font(.system(size: 12))
+                .foregroundColor(theme.secondaryText)
+            Spacer()
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity)
+        .background(RoundedRectangle(cornerRadius: 8).fill(theme.tertiaryBackground.opacity(0.5)))
+    }
+
+    /// Apply a single tool's enable/policy change locally instead of rebuilding
+    /// the whole screen. Patches the cached snapshots in place and refreshes
+    /// only that tool's exposure row, so toggling one tool never re-runs the
+    /// DB-backed full snapshot.
+    private func applyLocalToolMutation(name: String) {
+        let live = ToolRegistry.shared.entry(named: name)
+        func patch(_ tools: inout [ToolRegistry.ToolEntry]) {
+            guard let live, let idx = tools.firstIndex(where: { $0.name == name }) else { return }
+            tools[idx] = live
+        }
+        patch(&toolEntries)
+        patch(&runtimeManagedToolEntries)
+        patch(&builtInSandboxToolEntries)
+        patch(&builtInNativeToolEntries)
+        for i in installedPluginsWithTools.indices { patch(&installedPluginsWithTools[i].tools) }
+        for i in remoteProviderTools.indices { patch(&remoteProviderTools[i].tools) }
+
+        if let info = ToolRegistry.shared.policyInfo(for: name) {
+            policyInfoCache[name] = info
+        }
+        availabilityCache[name] = ToolRegistry.shared.availability(forTool: name)
+        recomputePermissionBannerCount()
+
+        Task { @MainActor in
+            let refreshed = await ToolIndexService.shared.exposureDiagnostic(forToolNames: [name])
+            guard let row = refreshed.rows.first else { return }
+            exposureRowsByName[name] = row
+            if let current = exposureDiagnostic,
+                let idx = current.rows.firstIndex(where: { $0.toolName == name })
+            {
+                var newRows = current.rows
+                newRows[idx] = row
+                exposureDiagnostic = ToolExposureDiagnostic(
+                    registeredToolCount: current.registeredToolCount,
+                    indexedToolCount: current.indexedToolCount,
+                    rows: newRows
+                )
+            }
+            recomputeAllowedToolNames()
+        }
+    }
+
+    private func builtInBadge(for entry: ToolRegistry.ToolEntry) -> String {
+        if exposureRowsByName[entry.name]?.source == .native {
+            return L("Native")
+        }
+        return L("Built-in")
     }
 
     private func runtimeBadge(for entry: ToolRegistry.ToolEntry) -> String {
@@ -580,23 +774,58 @@ private enum ToolExposureStateFilter: String, CaseIterable, Identifiable {
     var title: String {
         state?.displayLabel ?? "All States"
     }
+
+    static func filter(for state: ToolExposureState) -> ToolExposureStateFilter {
+        switch state {
+        case .exposed: return .exposed
+        case .loadable: return .loadable
+        case .hidden: return .hidden
+        case .disabled: return .disabled
+        case .blocked: return .blocked
+        case .unavailable: return .unavailable
+        }
+    }
+}
+
+/// Shared color/icon styling for exposure states, used by the control-center
+/// summary chips and the per-row state pill so they always agree.
+private enum ToolExposureStateStyle {
+    static func color(for state: ToolExposureState, theme: ThemeProtocol) -> Color {
+        switch state {
+        case .exposed: return theme.successColor
+        case .loadable: return theme.accentColor
+        case .hidden: return theme.warningColor
+        case .disabled: return theme.secondaryText
+        case .blocked, .unavailable: return theme.errorColor
+        }
+    }
+
+    static func icon(for state: ToolExposureState) -> String {
+        switch state {
+        case .exposed: return "eye"
+        case .loadable: return "arrow.down.circle"
+        case .hidden: return "eye.slash"
+        case .disabled: return "power"
+        case .blocked: return "lock"
+        case .unavailable: return "exclamationmark.triangle"
+        }
+    }
 }
 
 private struct ToolExposureControlCenter: View {
     @Environment(\.theme) private var theme
 
     let diagnostic: ToolExposureDiagnostic
-    let rows: [ToolExposureDiagnostic.Row]
+    /// Number of tools matching the active search + source + state filters,
+    /// used only for the `matching/total` badge.
+    let matchingCount: Int
     @Binding var sourceFilter: ToolExposureSourceFilter
     @Binding var stateFilter: ToolExposureStateFilter
-    let toolEntriesByName: [String: ToolRegistry.ToolEntry]
-    let policyInfoCache: [String: ToolRegistry.ToolPolicyInfo]
     let onExport: () -> Void
-    let onChange: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .top, spacing: 12) {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .center, spacing: 12) {
                 ZStack {
                     RoundedRectangle(cornerRadius: 8)
                         .fill(theme.accentColor.opacity(0.12))
@@ -606,87 +835,75 @@ private struct ToolExposureControlCenter: View {
                 }
                 .frame(width: 40, height: 40)
 
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Text("Tool Exposure Control Center", bundle: .module)
-                            .font(.system(size: 15, weight: .semibold, design: .rounded))
-                            .foregroundColor(theme.primaryText)
-
-                        Text("\(rows.count)/\(diagnostic.rows.count)", bundle: .module)
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundColor(theme.secondaryText)
-                            .padding(.horizontal, 7)
-                            .padding(.vertical, 3)
-                            .background(Capsule().fill(theme.tertiaryBackground))
-                    }
-
-                    HStack(spacing: 6) {
-                        exposureCountBadge(.exposed, icon: "eye")
-                        exposureCountBadge(.loadable, icon: "arrow.down.circle")
-                        exposureCountBadge(.hidden, icon: "eye.slash")
-                        exposureCountBadge(.disabled, icon: "power")
-                        exposureCountBadge(.blocked, icon: "lock")
-                    }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Tool Exposure Control Center", bundle: .module)
+                        .font(.system(size: 15, weight: .semibold, design: .rounded))
+                        .foregroundColor(theme.primaryText)
+                    Text("Audit how each tool is exposed to the model", bundle: .module)
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.secondaryText)
+                        .lineLimit(1)
                 }
 
-                Spacer()
+                Spacer(minLength: 8)
 
-                HStack(spacing: 8) {
-                    ExposureFilterMenu(
-                        icon: "square.grid.2x2",
-                        title: sourceFilter.title,
-                        options: ToolExposureSourceFilter.allCases,
-                        selection: $sourceFilter
-                    )
-
-                    ExposureFilterMenu(
-                        icon: "line.3.horizontal.decrease.circle",
-                        title: stateFilter.title,
-                        options: ToolExposureStateFilter.allCases,
-                        selection: $stateFilter
-                    )
-
-                    Button(action: onExport) {
-                        Image(systemName: "square.and.arrow.up")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundColor(theme.primaryText)
-                            .frame(width: 30, height: 28)
-                            .background(
-                                RoundedRectangle(cornerRadius: 7)
-                                    .fill(theme.tertiaryBackground)
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 7)
-                                            .stroke(theme.inputBorder, lineWidth: 1)
-                                    )
-                            )
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                    .help(Text("Export reporter-safe exposure report", bundle: .module))
-                }
+                Text("\(matchingCount)/\(diagnostic.rows.count)", bundle: .module)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(theme.secondaryText)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(Capsule().fill(theme.tertiaryBackground))
+                    .fixedSize()
             }
 
-            if rows.isEmpty {
-                HStack(spacing: 8) {
-                    Image(systemName: "magnifyingglass")
-                        .foregroundColor(theme.tertiaryText)
-                    Text("No exposure rows match the current filters", bundle: .module)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.secondaryText)
-                    Spacer()
-                }
-                .padding(12)
-                .background(RoundedRectangle(cornerRadius: 8).fill(theme.tertiaryBackground.opacity(0.5)))
-            } else {
-                VStack(spacing: 8) {
-                    ForEach(rows) { row in
-                        ToolExposureRowView(
-                            row: row,
-                            entry: toolEntriesByName[row.toolName],
-                            policyInfo: policyInfoCache[row.toolName],
-                            onChange: onChange
-                        )
+            FlowLayout(spacing: 6) {
+                exposureCountChip(.exposed)
+                exposureCountChip(.loadable)
+                exposureCountChip(.hidden)
+                exposureCountChip(.disabled)
+                exposureCountChip(.blocked)
+                exposureCountChip(.unavailable)
+            }
+
+            HStack(spacing: 8) {
+                ExposureFilterMenu(
+                    icon: "square.grid.2x2",
+                    title: sourceFilter.title,
+                    options: ToolExposureSourceFilter.allCases,
+                    selection: $sourceFilter
+                )
+
+                ExposureFilterMenu(
+                    icon: "line.3.horizontal.decrease.circle",
+                    title: stateFilter.title,
+                    options: ToolExposureStateFilter.allCases,
+                    selection: $stateFilter
+                )
+
+                Spacer(minLength: 8)
+
+                Button(action: onExport) {
+                    HStack(spacing: 5) {
+                        Image(systemName: "square.and.arrow.up")
+                            .font(.system(size: 11, weight: .semibold))
+                        Text("Export", bundle: .module)
+                            .font(.system(size: 11, weight: .medium))
                     }
+                    .foregroundColor(theme.primaryText)
+                    .padding(.horizontal, 10)
+                    .frame(height: 28)
+                    .background(
+                        RoundedRectangle(cornerRadius: 7)
+                            .fill(theme.tertiaryBackground)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 7)
+                                    .stroke(theme.inputBorder, lineWidth: 1)
+                            )
+                    )
                 }
+                .buttonStyle(PlainButtonStyle())
+                .fixedSize()
+                .help(Text("Export reporter-safe exposure report", bundle: .module))
             }
         }
         .padding(16)
@@ -694,32 +911,34 @@ private struct ToolExposureControlCenter: View {
         .background(HoverableCardBackground())
     }
 
-    private func exposureCountBadge(_ state: ToolExposureState, icon: String) -> some View {
-        HStack(spacing: 4) {
-            Image(systemName: icon)
-                .font(.system(size: 9, weight: .semibold))
-            Text("\(diagnostic.stateCounts[state, default: 0]) \(state.displayLabel)", bundle: .module)
-                .font(.system(size: 10, weight: .medium))
+    /// A summary chip that doubles as a one-tap state filter. `lineLimit(1)` +
+    /// `fixedSize` keep each label on one line; `FlowLayout` wraps the row
+    /// instead of letting labels break character-by-character.
+    private func exposureCountChip(_ state: ToolExposureState) -> some View {
+        let isActive = stateFilter.state == state
+        let tint = ToolExposureStateStyle.color(for: state, theme: theme)
+        return Button {
+            stateFilter = isActive ? .all : ToolExposureStateFilter.filter(for: state)
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: ToolExposureStateStyle.icon(for: state))
+                    .font(.system(size: 9, weight: .semibold))
+                Text("\(diagnostic.stateCounts[state, default: 0]) \(state.displayLabel)", bundle: .module)
+                    .font(.system(size: 10, weight: .medium))
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+            }
+            .foregroundColor(tint)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(
+                Capsule()
+                    .fill(tint.opacity(isActive ? 0.22 : 0.12))
+                    .overlay(Capsule().stroke(tint.opacity(isActive ? 0.55 : 0), lineWidth: 1))
+            )
         }
-        .foregroundColor(color(for: state))
-        .padding(.horizontal, 7)
-        .padding(.vertical, 4)
-        .background(Capsule().fill(color(for: state).opacity(0.12)))
-    }
-
-    private func color(for state: ToolExposureState) -> Color {
-        switch state {
-        case .exposed:
-            return theme.successColor
-        case .loadable:
-            return theme.accentColor
-        case .hidden:
-            return theme.warningColor
-        case .disabled:
-            return theme.secondaryText
-        case .blocked, .unavailable:
-            return theme.errorColor
-        }
+        .buttonStyle(PlainButtonStyle())
+        .help(Text("Filter by this state", bundle: .module))
     }
 }
 
@@ -779,119 +998,51 @@ private struct ExposureFilterMenu<Option: ToolExposureFilterOption>: View {
     }
 }
 
-private struct ToolExposureRowView: View {
+/// Compact exposure-state pill shown on grouped tool rows. Renders nothing when
+/// no diagnostic row is available; hovering reveals the verbose index/search
+/// diagnostics so rows stay clean by default.
+private struct ToolExposureStatePill: View {
     @Environment(\.theme) private var theme
-
-    let row: ToolExposureDiagnostic.Row
-    let entry: ToolRegistry.ToolEntry?
-    let policyInfo: ToolRegistry.ToolPolicyInfo?
-    let onChange: () -> Void
+    let row: ToolExposureDiagnostic.Row?
 
     var body: some View {
-        HStack(spacing: 10) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(stateColor.opacity(0.1))
-                Image(systemName: iconName)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(stateColor)
-            }
-            .frame(width: 28, height: 28)
-
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 5) {
-                    Text(verbatim: row.toolName)
-                        .font(.system(size: 13, weight: .medium, design: .rounded))
-                        .foregroundColor(theme.primaryText)
-                        .lineLimit(1)
-
-                    ExposurePill(label: row.source.displayLabel, color: theme.accentColor)
-                    ExposurePill(label: row.state.displayLabel, color: stateColor)
-                }
-
-                if !row.description.isEmpty {
-                    Text(verbatim: row.description)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.secondaryText)
-                        .lineLimit(1)
-                }
-
-                HStack(spacing: 6) {
-                    ToolAvailabilityBadge(availability: row.availability)
-                    Text(row.availability.displayDetail)
-                        .font(.system(size: 10))
-                        .foregroundColor(theme.tertiaryText)
-                        .lineLimit(1)
-                }
-
-                HStack(spacing: 6) {
-                    exposureReasonText
-                    Text("tokens \(row.tokenEstimate)", bundle: .module)
-                        .font(.system(size: 10))
-                        .foregroundColor(theme.tertiaryText)
-                }
-            }
-
-            Spacer()
-
-            if let policyInfo {
-                ToolPolicyMenu(
-                    toolName: row.toolName,
-                    info: policyInfo,
-                    onChange: onChange
-                )
-            }
-
-            if row.allowsGlobalEnablementChange, let entry {
-                ToolEnableToggle(entry: entry, onChange: onChange)
-            }
+        if let row {
+            ExposurePill(
+                label: row.state.displayLabel,
+                color: ToolExposureStateStyle.color(for: row.state, theme: theme)
+            )
+            .help(Self.diagnosticsDetail(for: row))
         }
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(theme.tertiaryBackground.opacity(0.5))
-        )
     }
 
-    private var exposureReasonText: some View {
-        let indexStatus = row.indexedForSearch ? "indexed" : "not indexed"
-        let searchStatus = row.searchableByCapabilitiesDiscover ? "discoverable" : "not discoverable"
+    private static func diagnosticsDetail(for row: ToolExposureDiagnostic.Row) -> String {
+        let index = row.indexedForSearch ? "indexed" : "not indexed"
+        let search = row.searchableByCapabilitiesDiscover ? "discoverable" : "not discoverable"
         let reasons = row.searchReasonCodes.map(\.rawValue).joined(separator: ", ")
-        return Text("\(indexStatus) / \(searchStatus) / \(reasons)", bundle: .module)
-            .font(.system(size: 10))
-            .foregroundColor(theme.tertiaryText)
-            .lineLimit(1)
+        var detail = "\(index) / \(search)"
+        if !reasons.isEmpty { detail += " / \(reasons)" }
+        return detail + " · tokens \(row.tokenEstimate)"
     }
+}
 
-    private var iconName: String {
-        switch row.state {
-        case .exposed:
-            return "eye"
-        case .loadable:
-            return "arrow.down.circle"
-        case .hidden:
-            return "eye.slash"
-        case .disabled:
-            return "power"
-        case .blocked:
-            return "lock"
-        case .unavailable:
-            return "exclamationmark.triangle"
-        }
-    }
+/// Availability reason plus the optional schema token estimate, shown as the
+/// trailing detail line on every grouped tool row.
+private struct ToolRowMetaLine: View {
+    @Environment(\.theme) private var theme
+    let availability: ToolAvailability
+    let exposureRow: ToolExposureDiagnostic.Row?
 
-    private var stateColor: Color {
-        switch row.state {
-        case .exposed:
-            return theme.successColor
-        case .loadable:
-            return theme.accentColor
-        case .hidden:
-            return theme.warningColor
-        case .disabled:
-            return theme.secondaryText
-        case .blocked, .unavailable:
-            return theme.errorColor
+    var body: some View {
+        HStack(spacing: 6) {
+            Text(availability.displayDetail)
+                .font(.system(size: 10))
+                .foregroundColor(theme.tertiaryText)
+                .lineLimit(1)
+            if let exposureRow {
+                Text("tokens \(exposureRow.tokenEstimate)", bundle: .module)
+                    .font(.system(size: 10))
+                    .foregroundColor(theme.tertiaryText)
+            }
         }
     }
 }
@@ -1451,7 +1602,8 @@ private struct ToolPluginCard: View {
     let tools: [ToolRegistry.ToolEntry]
     let policyInfoCache: [String: ToolRegistry.ToolPolicyInfo]
     let availabilityCache: [String: ToolAvailability]
-    let onChange: () -> Void
+    let exposureRowsByName: [String: ToolExposureDiagnostic.Row]
+    let onToolMutated: (String) -> Void
 
     @State private var isExpanded: Bool = false
 
@@ -1575,7 +1727,8 @@ private struct ToolPluginCard: View {
                             entry: entry,
                             policyInfo: policyInfoCache[entry.name],
                             availability: cachedAvailability(availabilityCache, for: entry),
-                            onChange: onChange
+                            exposureRow: exposureRowsByName[entry.name],
+                            onChange: { onToolMutated(entry.name) }
                         )
                     }
                 }
@@ -1597,8 +1750,9 @@ private struct RemoteProviderToolsCard: View {
     let providerState: MCPProviderState?
     let policyInfoCache: [String: ToolRegistry.ToolPolicyInfo]
     let availabilityCache: [String: ToolAvailability]
+    let exposureRowsByName: [String: ToolExposureDiagnostic.Row]
     let onDisconnect: () -> Void
-    let onChange: () -> Void
+    let onToolMutated: (String) -> Void
 
     @State private var isExpanded: Bool = false
     @State private var isMenuHovering = false
@@ -1702,7 +1856,8 @@ private struct RemoteProviderToolsCard: View {
                             providerName: provider.name,
                             policyInfo: policyInfoCache[entry.name],
                             availability: cachedAvailability(availabilityCache, for: entry),
-                            onChange: onChange
+                            exposureRow: exposureRowsByName[entry.name],
+                            onChange: { onToolMutated(entry.name) }
                         )
                     }
                 }
@@ -1816,6 +1971,7 @@ private struct RuntimeManagedToolEntryRow: View {
     let badge: String
     let policyInfo: ToolRegistry.ToolPolicyInfo?
     let availability: ToolAvailability
+    var exposureRow: ToolExposureDiagnostic.Row? = nil
     let onChange: () -> Void
 
     private var hasMissingSystemPermissions: Bool {
@@ -1839,16 +1995,14 @@ private struct RuntimeManagedToolEntryRow: View {
                     }
 
                     ToolAvailabilityBadge(availability: availability)
+                    ToolExposureStatePill(row: exposureRow)
                 }
 
                 Text(entry.description)
                     .font(.system(size: 11))
                     .foregroundColor(theme.secondaryText)
                     .lineLimit(1)
-                Text(availability.displayDetail)
-                    .font(.system(size: 10))
-                    .foregroundColor(theme.tertiaryText)
-                    .lineLimit(1)
+                ToolRowMetaLine(availability: availability, exposureRow: exposureRow)
             }
 
             Spacer()
@@ -1904,6 +2058,7 @@ struct ToolEntryRow: View {
     let entry: ToolRegistry.ToolEntry
     let policyInfo: ToolRegistry.ToolPolicyInfo?
     let availability: ToolAvailability
+    var exposureRow: ToolExposureDiagnostic.Row? = nil
     let onChange: () -> Void
 
     private var hasMissingSystemPermissions: Bool {
@@ -1963,15 +2118,13 @@ struct ToolEntryRow: View {
                     .foregroundColor(theme.primaryText)
 
                 ToolAvailabilityBadge(availability: availability)
+                ToolExposureStatePill(row: exposureRow)
             }
             Text(entry.description)
                 .font(.system(size: 11))
                 .foregroundColor(theme.tertiaryText)
                 .lineLimit(1)
-            Text(availability.displayDetail)
-                .font(.system(size: 10))
-                .foregroundColor(theme.tertiaryText)
-                .lineLimit(1)
+            ToolRowMetaLine(availability: availability, exposureRow: exposureRow)
         }
     }
 }
@@ -1984,6 +2137,7 @@ private struct RemoteToolRow: View {
     let providerName: String
     let policyInfo: ToolRegistry.ToolPolicyInfo?
     let availability: ToolAvailability
+    var exposureRow: ToolExposureDiagnostic.Row? = nil
     let onChange: () -> Void
 
     private var displayName: String {
@@ -2018,15 +2172,13 @@ private struct RemoteToolRow: View {
                         .foregroundColor(theme.primaryText)
 
                     ToolAvailabilityBadge(availability: availability)
+                    ToolExposureStatePill(row: exposureRow)
                 }
                 Text(entry.description)
                     .font(.system(size: 11))
                     .foregroundColor(theme.tertiaryText)
                     .lineLimit(1)
-                Text(availability.displayDetail)
-                    .font(.system(size: 10))
-                    .foregroundColor(theme.tertiaryText)
-                    .lineLimit(1)
+                ToolRowMetaLine(availability: availability, exposureRow: exposureRow)
             }
 
             Spacer()

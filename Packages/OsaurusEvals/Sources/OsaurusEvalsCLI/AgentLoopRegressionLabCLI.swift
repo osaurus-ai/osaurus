@@ -206,7 +206,8 @@ extension OsaurusEvalsCLI {
         suiteURL: URL,
         usedNames: inout [String: Int]
     ) -> String {
-        let base = suiteURL.lastPathComponent.isEmpty
+        let base =
+            suiteURL.lastPathComponent.isEmpty
             ? suiteURL.deletingLastPathComponent().lastPathComponent
             : suiteURL.lastPathComponent
         let count = usedNames[base, default: 0]

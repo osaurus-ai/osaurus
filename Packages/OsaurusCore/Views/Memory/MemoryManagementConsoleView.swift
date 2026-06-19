@@ -278,13 +278,29 @@ struct MemoryManagementConsoleView: View {
 
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 126), spacing: 8)], spacing: 8) {
                 healthTile("Pinned", "\(health.activePinnedCount)", footnote: "\(health.disabledPinnedCount) disabled")
-                healthTile("Episodes", "\(health.activeEpisodeCount)", footnote: "\(health.disabledEpisodeCount) disabled")
+                healthTile(
+                    "Episodes",
+                    "\(health.activeEpisodeCount)",
+                    footnote: "\(health.disabledEpisodeCount) disabled"
+                )
                 healthTile("Transcript", "\(health.transcriptCount)", footnote: "stored turns")
                 healthTile("Pending", "\(health.pendingSignals.totalSignals)", footnote: "signals")
-                healthTile("Schema", health.schemaVersion.map(String.init) ?? "-", footnote: "expected \(health.expectedSchemaVersion)")
+                healthTile(
+                    "Schema",
+                    health.schemaVersion.map(String.init) ?? "-",
+                    footnote: "expected \(health.expectedSchemaVersion)"
+                )
                 healthTile("FTS", health.ftsTablesReady ? "Ready" : "Missing", footnote: "text mirrors")
-                healthTile("Vector", health.vectorSearchAvailable ? "Ready" : "Fallback", footnote: "\(health.vectorIndexFailures) failures")
-                healthTile("Logs", "\(health.processingStats.totalCalls)", footnote: "\(health.processingStats.errorCount) errors")
+                healthTile(
+                    "Vector",
+                    health.vectorSearchAvailable ? "Ready" : "Fallback",
+                    footnote: "\(health.vectorIndexFailures) failures"
+                )
+                healthTile(
+                    "Logs",
+                    "\(health.processingStats.totalCalls)",
+                    footnote: "\(health.processingStats.errorCount) errors"
+                )
             }
 
             if !health.diagnostics.isEmpty {
@@ -709,7 +725,9 @@ private struct MemoryConsoleInspectSheet: View {
                     metadataTile("Conversation at", conversationAt)
                 }
                 if !item.metadata.tags.isEmpty { metadataTile("Tags", item.metadata.tags.joined(separator: ", ")) }
-                if !item.metadata.topics.isEmpty { metadataTile("Topics", item.metadata.topics.joined(separator: ", ")) }
+                if !item.metadata.topics.isEmpty {
+                    metadataTile("Topics", item.metadata.topics.joined(separator: ", "))
+                }
                 if !item.metadata.entities.isEmpty {
                     metadataTile("Entities", item.metadata.entities.joined(separator: ", "))
                 }

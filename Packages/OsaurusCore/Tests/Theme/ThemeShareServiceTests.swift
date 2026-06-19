@@ -16,7 +16,9 @@ struct ThemeShareServiceTests {
         let normalized = hash.lowercased()
 
         #expect(ThemeShareService.parseHash(from: hash) == normalized)
-        #expect(ThemeShareService.parseHash(from: ThemeShareService.deepLink(for: normalized).absoluteString) == normalized)
+        #expect(
+            ThemeShareService.parseHash(from: ThemeShareService.deepLink(for: normalized).absoluteString) == normalized
+        )
         #expect(ThemeShareService.parseHash(from: "https://themes.osaurus.ai/themes/\(hash)") == normalized)
         #expect(ThemeShareService.parseHash(from: "not-a-theme-id") == nil)
     }

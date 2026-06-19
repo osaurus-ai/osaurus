@@ -180,10 +180,10 @@ struct MemoryManagementConsoleTests {
 
     @Test func privacyRedactorMasksSensitiveValuesAndBoundsPreview() {
         let sensitive = """
-        Email alex@example.com, phone 415-555-1212, SSN 123-45-6789,
-        account 4242 4242 4242 4242, token sk-test_abcdefghijklmnopqrstuvwxyz1234567890,
-        url https://example.com/private/path
-        """
+            Email alex@example.com, phone 415-555-1212, SSN 123-45-6789,
+            account 4242 4242 4242 4242, token sk-test_abcdefghijklmnopqrstuvwxyz1234567890,
+            url https://example.com/private/path
+            """
 
         let redacted = MemoryPrivacyRedactor.redact(sensitive, maxCharacters: 120)
 

@@ -315,10 +315,13 @@ private extension SandboxView {
                             .lineLimit(2)
                     } else {
                         readinessPill(.unproven)
-                        Text("Run preflight to inspect host paths, permissions, and repair suggestions.", bundle: .module)
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.secondaryText)
-                            .lineLimit(2)
+                        Text(
+                            "Run preflight to inspect host paths, permissions, and repair suggestions.",
+                            bundle: .module
+                        )
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.secondaryText)
+                        .lineLimit(2)
                     }
 
                     Spacer(minLength: 12)

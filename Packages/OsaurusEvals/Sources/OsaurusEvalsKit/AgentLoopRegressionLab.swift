@@ -524,10 +524,11 @@ public enum AgentLoopRegressionLab {
         current: EvalCaseOutcome?
     ) -> Bool {
         guard let baseline, let current else { return false }
-        return isFailing(baseline) && isFailing(current) && !isBlockingRegression(
-            baseline: baseline,
-            current: current
-        )
+        return isFailing(baseline) && isFailing(current)
+            && !isBlockingRegression(
+                baseline: baseline,
+                current: current
+            )
     }
 
     private static func isFailing(_ outcome: EvalCaseOutcome?) -> Bool {
