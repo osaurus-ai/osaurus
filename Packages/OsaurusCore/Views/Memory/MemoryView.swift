@@ -8,6 +8,29 @@
 
 import SwiftUI
 
+// MARK: - Memory Tab
+
+/// Sub-navigation for the Memory section. Mirrors the house pattern used by
+/// `ToolsTab` / `VoiceTab` / `ServerTab` so Memory gets the same
+/// `ManagerHeaderWithTabs` + `HeaderTabsRow` chrome as the rest of the app.
+enum MemoryTab: String, CaseIterable, AnimatedTabItem {
+    case identity
+    case memories
+    case agents
+    case settings
+    case diagnostics
+
+    var title: String {
+        switch self {
+        case .identity: return L("Identity")
+        case .memories: return L("Memories")
+        case .agents: return L("Agents")
+        case .settings: return L("Settings")
+        case .diagnostics: return L("Diagnostics")
+        }
+    }
+}
+
 struct MemoryView: View {
     @ObservedObject var themeManager = ThemeManager.shared
     @ObservedObject var agentManager = AgentManager.shared
@@ -48,7 +71,6 @@ struct MemoryView: View {
     @State var totalPinned: Int = 0
     @State var coreModelStatus: CoreModelStatus = .unset
     @State var recentLogs: [ProcessingLogRow] = []
-    @State var diagnosticsExpanded: Bool = false
     @State var bufferTelemetry = BufferTurnTelemetry()
     @State var memoryDBOpen: Bool = false
     @State var chatActive: Bool = false
@@ -77,6 +99,7 @@ struct MemoryView: View {
 
     // MARK: UI State
 
+    @State private var selectedTab: MemoryTab = .identity
     @State private var selectedAgent: Agent?
     @State private var hasAppeared = false
     @State private var isLoading = true
@@ -140,34 +163,16 @@ struct MemoryView: View {
 
                 Group {
                     if isLoading {
-                        VStack {
-                            Spacer()
-                            ProgressView()
-                                .controlSize(.small)
-                                .padding(.bottom, 4)
-                            Text("Loading memory...", bundle: .module)
-                                .font(.system(size: 12))
-                                .foregroundColor(theme.tertiaryText)
-                            Spacer()
-                        }
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        loadingView
                     } else {
-                        ScrollView {
-                            VStack(alignment: .leading, spacing: 16) {
-                                if !config.enabled {
-                                    disabledBanner
-                                }
-
-                                identitySection
-                                overridesSection
-                                memoryConsoleSection
-                                agentsSection
-                                statsSection
-                                configurationSection
-                                dangerZoneSection
-                                diagnosticsSection
+                        VStack(spacing: 0) {
+                            if !config.enabled {
+                                disabledBanner
+                                    .padding(.horizontal, 24)
+                                    .padding(.top, 16)
                             }
-                            .padding(24)
+
+                            tabContent
                         }
                     }
                 }
@@ -231,7 +236,7 @@ struct MemoryView: View {
     // MARK: - Header
 
     private var headerView: some View {
-        ManagerHeaderWithActions(
+        ManagerHeaderWithTabs(
             title: L("Memory"),
             subtitle: L("Manage your identity, overrides, and memory configuration")
         ) {
@@ -239,6 +244,90 @@ struct MemoryView: View {
                 refreshData()
             }
             .accessibilityLabel(Text("Refresh memory data", bundle: .module))
+        } tabsRow: {
+            HeaderTabsRow(
+                selection: $selectedTab,
+                counts: [
+                    .memories: totalPinned + totalEpisodes,
+                    .agents: agentMemoryCounts.count,
+                ],
+                badges: [.diagnostics: pendingSignals.totalSignals]
+            )
+        }
+    }
+
+    // MARK: - Tab Content
+
+    @ViewBuilder
+    private var tabContent: some View {
+        switch selectedTab {
+        case .identity: identityTab
+        case .memories: memoriesTab
+        case .agents: agentsTab
+        case .settings: settingsTab
+        case .diagnostics: diagnosticsTab
+        }
+    }
+
+    private var loadingView: some View {
+        VStack {
+            Spacer()
+            ProgressView()
+                .controlSize(.small)
+                .padding(.bottom, 4)
+            Text("Loading memory...", bundle: .module)
+                .font(.system(size: 12))
+                .foregroundColor(theme.tertiaryText)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var identityTab: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                identitySection
+                overridesSection
+            }
+            .padding(24)
+        }
+    }
+
+    private var memoriesTab: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                memoryConsoleSection
+            }
+            .padding(24)
+        }
+    }
+
+    private var agentsTab: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                agentsSection
+            }
+            .padding(24)
+        }
+    }
+
+    private var settingsTab: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                statsSection
+                configurationSection
+                dangerZoneSection
+            }
+            .padding(24)
+        }
+    }
+
+    private var diagnosticsTab: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                diagnosticsSection
+            }
+            .padding(24)
         }
     }
 
@@ -436,153 +525,95 @@ struct MemoryView: View {
         }
     }
 
-    // MARK: - Default Agent Memory Group
+    // MARK: - Default Agent Summary Row
 
-    private var defaultAgentMemoryGroup: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 10) {
-                Circle()
-                    .fill(theme.accentColor)
-                    .frame(width: 8, height: 8)
+    /// Compact default-agent entry for the Agents tab. Full browsing of the
+    /// default agent's pinned facts / episodes now lives in the Memories
+    /// console (its agent filter has a Default Agent option), so this row
+    /// only surfaces the memory count, a context preview, and a jump into
+    /// the Memories tab — no more duplicated pinned/episode panels.
+    private var defaultAgentSummaryRow: some View {
+        HStack(spacing: 10) {
+            Circle()
+                .fill(theme.accentColor)
+                .frame(width: 8, height: 8)
 
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Default Agent", bundle: .module)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(theme.primaryText)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Default Agent", bundle: .module)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(theme.primaryText)
 
-                    Text("Uses your global memory settings", bundle: .module)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
-                        .lineLimit(1)
+                Text("Uses your global memory settings", bundle: .module)
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.tertiaryText)
+                    .lineLimit(1)
+            }
+
+            Spacer()
+
+            let totalCount = defaultAgentPinned.count + defaultAgentEpisodes.count
+            if totalCount > 0 {
+                Text(pluralizedMemory(totalCount, "memory", "memories"))
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(theme.secondaryText)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 2)
+                    .background(
+                        Capsule().fill(theme.tertiaryBackground)
+                    )
+            }
+
+            Button {
+                Task {
+                    let cfg = MemoryConfigurationStore.load()
+                    let ctx = await MemoryContextAssembler.assembleContext(
+                        agentId: Agent.defaultId.uuidString,
+                        config: cfg
+                    )
+                    let trimmed = ctx.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let text =
+                        trimmed.isEmpty
+                        ? "(No memory context assembled — memory may be empty or disabled)"
+                        : trimmed
+                    contextPreviewItem = ContextPreviewItem(text: text)
                 }
+            } label: {
+                Image(systemName: "eye")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(theme.tertiaryText)
+                    .frame(width: 26, height: 26)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(theme.tertiaryBackground)
+                    )
+            }
+            .buttonStyle(PlainButtonStyle())
+            .localizedHelp("Preview memory context")
 
-                Spacer()
-
-                let totalCount = defaultAgentPinned.count + defaultAgentEpisodes.count
-                if totalCount > 0 {
-                    Text(pluralizedMemory(totalCount, "memory", "memories"))
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(theme.secondaryText)
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 2)
-                        .background(
-                            Capsule().fill(theme.tertiaryBackground)
-                        )
+            Button {
+                withAnimation(.easeOut(duration: 0.2)) {
+                    selectedTab = .memories
                 }
-
-                Button {
-                    Task {
-                        let cfg = MemoryConfigurationStore.load()
-                        let ctx = await MemoryContextAssembler.assembleContext(
-                            agentId: Agent.defaultId.uuidString,
-                            config: cfg
-                        )
-                        let trimmed = ctx.trimmingCharacters(in: .whitespacesAndNewlines)
-                        let text =
-                            trimmed.isEmpty
-                            ? "(No memory context assembled — memory may be empty or disabled)"
-                            : trimmed
-                        contextPreviewItem = ContextPreviewItem(text: text)
-                    }
-                } label: {
-                    Image(systemName: "eye")
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "rectangle.and.text.magnifyingglass")
+                        .font(.system(size: 10, weight: .medium))
+                    Text("Browse in Memories", bundle: .module)
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(theme.tertiaryText)
-                        .frame(width: 26, height: 26)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(theme.tertiaryBackground)
-                        )
                 }
-                .buttonStyle(PlainButtonStyle())
-                .localizedHelp("Preview memory context")
+                .foregroundColor(theme.secondaryText)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(theme.tertiaryBackground)
+                )
             }
-            .padding(.vertical, 10)
-            .padding(.horizontal, 4)
-
-            if !defaultAgentPinned.isEmpty || !defaultAgentEpisodes.isEmpty {
-                VStack(alignment: .leading, spacing: 12) {
-                    if !defaultAgentPinned.isEmpty {
-                        VStack(alignment: .leading, spacing: 8) {
-                            HStack(spacing: 6) {
-                                Image(systemName: "pin.fill")
-                                    .font(.system(size: 10, weight: .medium))
-                                    .foregroundColor(theme.tertiaryText)
-                                Text("PINNED FACTS", bundle: .module)
-                                    .font(.system(size: 10, weight: .bold))
-                                    .foregroundColor(theme.tertiaryText)
-                                    .tracking(0.3)
-                                Text("\(defaultAgentPinned.count)", bundle: .module)
-                                    .font(.system(size: 10, weight: .semibold))
-                                    .foregroundColor(theme.tertiaryText)
-                                    .padding(.horizontal, 5)
-                                    .padding(.vertical, 1)
-                                    .background(Capsule().fill(theme.tertiaryBackground))
-                            }
-
-                            PinnedFactsPanel(
-                                facts: defaultAgentPinned,
-                                onDelete: { factId in
-                                    try? MemoryDatabase.shared.deletePinnedFact(id: factId)
-                                    defaultAgentPinned.removeAll { $0.id == factId }
-                                    // Drop the vector too (SQL<->vector consistency);
-                                    // nil scope sweeps every bucket so the embedding
-                                    // can't outlive its SQL row.
-                                    Task { await MemorySearchService.shared.removeDocument(id: factId) }
-                                }
-                            )
-                            .frame(maxHeight: 400)
-                        }
-                    }
-
-                    if !defaultAgentEpisodes.isEmpty {
-                        VStack(alignment: .leading, spacing: 8) {
-                            HStack(spacing: 6) {
-                                Image(systemName: "doc.text")
-                                    .font(.system(size: 10, weight: .medium))
-                                    .foregroundColor(theme.tertiaryText)
-                                Text("EPISODES", bundle: .module)
-                                    .font(.system(size: 10, weight: .bold))
-                                    .foregroundColor(theme.tertiaryText)
-                                    .tracking(0.3)
-                                Text("\(defaultAgentEpisodes.count)", bundle: .module)
-                                    .font(.system(size: 10, weight: .semibold))
-                                    .foregroundColor(theme.tertiaryText)
-                                    .padding(.horizontal, 5)
-                                    .padding(.vertical, 1)
-                                    .background(Capsule().fill(theme.tertiaryBackground))
-                            }
-
-                            ScrollView {
-                                VStack(alignment: .leading, spacing: 0) {
-                                    ForEach(Array(defaultAgentEpisodes.enumerated()), id: \.element.id) {
-                                        index,
-                                        episode in
-                                        if index > 0 {
-                                            Divider().opacity(0.5)
-                                        }
-                                        EpisodeRow(episode: episode)
-                                    }
-                                }
-                            }
-                            .frame(maxHeight: 300)
-                            .padding(10)
-                            .background(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .fill(theme.inputBackground.opacity(0.5))
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 8)
-                                            .stroke(theme.inputBorder, lineWidth: 1)
-                                    )
-                            )
-                        }
-                    }
-                }
-                .padding(.top, 4)
-                .padding(.horizontal, 4)
-                .padding(.bottom, 6)
-            }
+            .buttonStyle(PlainButtonStyle())
+            .localizedHelp("Browse the default agent's memories")
         }
+        .padding(.vertical, 10)
+        .padding(.horizontal, 4)
     }
 
     // MARK: - Agents Section
@@ -600,7 +631,7 @@ struct MemoryView: View {
     private var agentsSection: some View {
         MemorySectionCard(title: L("Agents"), icon: "person.2") {
             VStack(spacing: 0) {
-                defaultAgentMemoryGroup
+                defaultAgentSummaryRow
 
                 if !agentMemoryCounts.isEmpty {
                     Divider()

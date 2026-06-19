@@ -30,7 +30,33 @@ extension MemoryView {
     ///   * distill running but skipping   → log full of "skipped" rows
     ///   * distill calling an unhealthy model → log full of "error" rows
     var diagnosticsSection: some View {
-        MemorySectionCard(title: L("Diagnostics"), icon: "stethoscope") {
+        VStack(alignment: .leading, spacing: 16) {
+            pipelineCard
+            perAgentMemoryCard
+            recentProcessingLogCard
+        }
+        .themedAlert(
+            L("Backfill chat history?"),
+            isPresented: $showBackfillConfirm,
+            message:
+                L(
+                    "This walks every chat session in your history, buffers their turns into pending_signals, then runs distillation. It can take a while if you have hundreds of sessions — each one is a single LLM call against your core model. Already-distilled sessions are skipped."
+                ),
+            primaryButton: .primary(L("Start backfill")) { runBackfill() },
+            secondaryButton: .cancel(L("Cancel"))
+        )
+    }
+
+    /// Top diagnostics card: an at-a-glance health headline, then the
+    /// write-pipeline state split into "Status" (config gates that decide
+    /// whether the pipeline can run) and "Activity" (throughput counters).
+    /// The backfill / probe actions live in the card header and surface
+    /// their progress inline.
+    private var pipelineCard: some View {
+        MemorySectionCard(
+            title: L("Pipeline"),
+            icon: "waveform.path.ecg"
+        ) {
             MemorySectionActionButton(
                 backfillButtonTitle,
                 icon: "tray.and.arrow.down"
@@ -46,51 +72,74 @@ extension MemoryView {
                 runBufferProbe()
             }
             .disabled(probeBufferRunning)
-
-            Button {
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    diagnosticsExpanded.toggle()
-                }
-            } label: {
-                Image(systemName: diagnosticsExpanded ? "chevron.up" : "chevron.down")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(theme.secondaryText)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Capsule().fill(theme.tertiaryBackground))
-            }
-            .buttonStyle(PlainButtonStyle())
         } content: {
-            if diagnosticsExpanded {
-                VStack(alignment: .leading, spacing: 14) {
-                    pipelineStateGroup
-                    if backfillRunning {
-                        backfillProgressBanner
-                    } else if let backfillSummary {
-                        backfillSummaryBanner(backfillSummary)
-                    }
-                    if let probeBufferResult {
-                        bufferProbeResultBanner(probeBufferResult)
-                    }
-                    Divider().opacity(0.5)
-                    perAgentMemoryGroup
-                    Divider().opacity(0.5)
-                    recentProcessingLogGroup
+            VStack(alignment: .leading, spacing: 14) {
+                pipelineHeadlineBanner
+
+                if backfillRunning {
+                    backfillProgressBanner
+                } else if let backfillSummary {
+                    backfillSummaryBanner(backfillSummary)
                 }
-            } else {
-                pipelineStateOneLiner
+                if let probeBufferResult {
+                    bufferProbeResultBanner(probeBufferResult)
+                }
+
+                diagnosticSubsection(L("Status")) {
+                    statusRows
+                }
+
+                Divider().opacity(0.4)
+
+                diagnosticSubsection(L("Activity")) {
+                    activityRows
+                }
             }
         }
-        .themedAlert(
-            L("Backfill chat history?"),
-            isPresented: $showBackfillConfirm,
-            message:
-                L(
-                    "This walks every chat session in your history, buffers their turns into pending_signals, then runs distillation. It can take a while if you have hundreds of sessions — each one is a single LLM call against your core model. Already-distilled sessions are skipped."
-                ),
-            primaryButton: .primary(L("Start backfill")) { runBackfill() },
-            secondaryButton: .cancel(L("Cancel"))
+    }
+
+    /// At-a-glance pipeline health derived from `diagnosticHeadline()`.
+    /// Replaces the old collapsed one-liner now that diagnostics is its
+    /// own always-expanded tab.
+    private var pipelineHeadlineBanner: some View {
+        let summary = diagnosticHeadline()
+        return HStack(spacing: 8) {
+            Circle()
+                .fill(summary.color)
+                .frame(width: 8, height: 8)
+            Text(summary.text)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(theme.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(summary.color.opacity(0.08))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(summary.color.opacity(0.22), lineWidth: 1)
+                )
         )
+    }
+
+    /// Uppercase sub-header + grouped content, matching the per-agent /
+    /// recent-activity section chrome used elsewhere in this tab.
+    @ViewBuilder
+    private func diagnosticSubsection<Content: View>(
+        _ title: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.system(size: 10, weight: .bold))
+                .foregroundColor(theme.tertiaryText)
+                .tracking(0.4)
+                .textCase(.uppercase)
+            content()
+        }
     }
 
     // MARK: - Backfill
@@ -231,96 +280,92 @@ extension MemoryView {
 
     // MARK: - Pipeline state
 
-    var pipelineStateOneLiner: some View {
-        let summary = diagnosticHeadline()
-        return HStack(spacing: 8) {
-            Circle()
-                .fill(summary.color)
-                .frame(width: 8, height: 8)
-            Text(summary.text)
-                .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText)
-        }
+    /// Configuration gates that decide whether the pipeline can run at
+    /// all: global enable, DB health, extraction mode, and core model.
+    @ViewBuilder
+    var statusRows: some View {
+        diagnosticRow(
+            label: "Memory enabled",
+            value: config.enabled ? L("yes") : L("no"),
+            statusColor: config.enabled ? .green : .red
+        )
+        diagnosticRow(
+            label: "Memory DB open",
+            value: memoryDBOpen ? L("yes") : L("no"),
+            statusColor: memoryDBOpen ? .green : .red,
+            detail: memoryDBOpen
+                ? nil
+                : L(
+                    """
+                    Memory database failed to open. Check Console for \
+                    SQLCipher errors and the storage migration logs.
+                    """
+                )
+        )
+        diagnosticRow(
+            label: "Extraction mode",
+            value: extractionModeDescription(config.extractionMode),
+            statusColor: config.extractionMode == .sessionEnd ? .green : .orange,
+            detail: config.extractionMode == .manual
+                ? L("Manual mode never auto-distills. Use 'Distill pending' or set to sessionEnd.")
+                : nil
+        )
+        diagnosticRow(
+            label: "Core model",
+            value: coreModelStatusText(coreModelStatus),
+            statusColor: coreModelStatusColor(coreModelStatus),
+            detail: coreModelStatusDetail(coreModelStatus)
+        )
     }
 
-    var pipelineStateGroup: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            diagnosticRow(
-                label: "Memory enabled",
-                value: config.enabled ? L("yes") : L("no"),
-                statusColor: config.enabled ? .green : .red
-            )
-            diagnosticRow(
-                label: "Memory DB open",
-                value: memoryDBOpen ? L("yes") : L("no"),
-                statusColor: memoryDBOpen ? .green : .red,
-                detail: memoryDBOpen
-                    ? nil
-                    : L(
-                        """
-                        Memory database failed to open. Check Console for \
-                        SQLCipher errors and the storage migration logs.
-                        """
-                    )
-            )
-            diagnosticRow(
-                label: "Extraction mode",
-                value: extractionModeDescription(config.extractionMode),
-                statusColor: config.extractionMode == .sessionEnd ? .green : .orange,
-                detail: config.extractionMode == .manual
-                    ? L("Manual mode never auto-distills. Use 'Distill pending' or set to sessionEnd.")
-                    : nil
-            )
-            diagnosticRow(
-                label: "Core model",
-                value: coreModelStatusText(coreModelStatus),
-                statusColor: coreModelStatusColor(coreModelStatus),
-                detail: coreModelStatusDetail(coreModelStatus)
-            )
-            diagnosticRow(
-                label: "Pending signals",
-                value:
-                    L("\(pendingSignals.totalSignals) pending · \(pendingSignals.allTimeSignals) all-time"),
-                statusColor: pendingSignalsStatusColor,
-                detail: pendingSignalsStatusDetail
-            )
-            diagnosticRow(
-                label: "Episodes",
-                value: "\(totalEpisodes)",
-                statusColor: totalEpisodes == 0 ? .red : .green
-            )
-            diagnosticRow(
-                label: "Pinned facts",
-                value: "\(totalPinned)",
-                statusColor: totalPinned == 0 ? .gray : .green
-            )
-            // The two coordinators added in 2026-05 to make
-            // distillation safe on heavy MLX core models. "Live chat"
-            // shows whether ChatEngine has any in-flight generation;
-            // "Distill queue" shows the DistillationCoordinator's
-            // single-flight depth + whether a body is executing right
-            // now. Together they explain "why is my distillation
-            // pausing?" without the user needing to read logs.
-            diagnosticRow(
-                label: "Live chat",
-                value: chatActive ? L("active") : L("idle"),
-                statusColor: chatActive ? .orange : .green,
-                detail: chatActive
-                    ? L(
-                        """
-                        Background distillation is paused while a chat \
-                        generation is streaming — they share GPU/unified memory.
-                        """
-                    )
-                    : nil
-            )
-            diagnosticRow(
-                label: "Distill queue",
-                value: distillQueueValueText,
-                statusColor: distillQueueStatusColor
-            )
-            bufferTelemetryRow
-        }
+    /// Throughput counters that show whether turns are flowing through the
+    /// pipeline: pending signals, episodes, pinned facts, live chat,
+    /// distill queue, and buffer telemetry.
+    @ViewBuilder
+    var activityRows: some View {
+        diagnosticRow(
+            label: "Pending signals",
+            value:
+                L("\(pendingSignals.totalSignals) pending · \(pendingSignals.allTimeSignals) all-time"),
+            statusColor: pendingSignalsStatusColor,
+            detail: pendingSignalsStatusDetail
+        )
+        diagnosticRow(
+            label: "Episodes",
+            value: "\(totalEpisodes)",
+            statusColor: totalEpisodes == 0 ? .red : .green
+        )
+        diagnosticRow(
+            label: "Pinned facts",
+            value: "\(totalPinned)",
+            statusColor: totalPinned == 0 ? .gray : .green
+        )
+        // The two coordinators added in 2026-05 to make
+        // distillation safe on heavy MLX core models. "Live chat"
+        // shows whether ChatEngine has any in-flight generation;
+        // "Distill queue" shows the DistillationCoordinator's
+        // single-flight depth + whether a body is executing right
+        // now. Together they explain "why is my distillation
+        // pausing?" without the user needing to read logs.
+        diagnosticRow(
+            label: "Live chat",
+            value: chatActive ? L("active") : L("idle"),
+            statusColor: chatActive ? .orange : .green,
+            detail: chatActive
+                ? L(
+                    """
+                    Background distillation is paused while a chat \
+                    generation is streaming — they share GPU/unified memory.
+                    """
+                )
+                : nil
+        )
+        diagnosticRow(
+            label: "Distill queue",
+            value: distillQueueValueText,
+            statusColor: distillQueueStatusColor
+        )
+        bufferTelemetryRow
     }
 
     private var distillQueueValueText: String {
@@ -408,14 +453,23 @@ extension MemoryView {
 
     // MARK: - Per-agent memory
 
-    var perAgentMemoryGroup: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("PER-AGENT MEMORY", bundle: .module)
-                .font(.system(size: 10, weight: .bold))
-                .foregroundColor(theme.tertiaryText)
-                .tracking(0.4)
-            ForEach(agentManager.agents, id: \.id) { agent in
-                perAgentMemoryRow(agent)
+    var perAgentMemoryCard: some View {
+        MemorySectionCard(
+            title: L("Per-Agent Memory"),
+            icon: "person.2",
+            count: agentManager.agents.isEmpty ? nil : agentManager.agents.count
+        ) {
+            if agentManager.agents.isEmpty {
+                Text("No agents configured. Create an agent first.", bundle: .module)
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.tertiaryText)
+                    .padding(.vertical, 2)
+            } else {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(agentManager.agents, id: \.id) { agent in
+                        perAgentMemoryRow(agent)
+                    }
+                }
             }
         }
     }
@@ -480,20 +534,12 @@ extension MemoryView {
 
     // MARK: - Recent processing log
 
-    var recentProcessingLogGroup: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text("RECENT PROCESSING LOG", bundle: .module)
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundColor(theme.tertiaryText)
-                    .tracking(0.4)
-                Spacer()
-                if !recentLogs.isEmpty {
-                    Text("\(recentLogs.count) row\(recentLogs.count == 1 ? "" : "s")", bundle: .module)
-                        .font(.system(size: 10))
-                        .foregroundColor(theme.tertiaryText)
-                }
-            }
+    var recentProcessingLogCard: some View {
+        MemorySectionCard(
+            title: L("Recent Activity"),
+            icon: "list.bullet.rectangle",
+            count: recentLogs.isEmpty ? nil : recentLogs.count
+        ) {
             if recentLogs.isEmpty {
                 Text(
                     "No processing log entries yet. If you've been chatting, the distill pipeline never reached the model.",
@@ -501,12 +547,14 @@ extension MemoryView {
                 )
                 .font(.system(size: 11))
                 .foregroundColor(theme.tertiaryText)
-                .padding(.vertical, 6)
+                .padding(.vertical, 2)
             } else {
-                ForEach(recentLogs) { row in
-                    processingLogRow(row)
-                    if row.id != recentLogs.last?.id {
-                        Divider().opacity(0.3)
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(recentLogs) { row in
+                        processingLogRow(row)
+                        if row.id != recentLogs.last?.id {
+                            Divider().opacity(0.3)
+                        }
                     }
                 }
             }

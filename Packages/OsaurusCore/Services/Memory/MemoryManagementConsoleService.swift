@@ -116,6 +116,16 @@ public struct MemoryManagementConsoleService: Sendable {
         db: MemoryDatabase = .shared,
         includeVectorState: Bool = true
     ) async throws -> MemoryConsoleSnapshot {
+        // The Memory tab opens the shared database lazily from its own load
+        // task, and the console can race ahead of it (e.g. when the Memories
+        // tab is the first thing rendered). `open()` is idempotent and
+        // serialized, so opening here is safe and avoids surfacing a
+        // "database is not open" error for what is really a startup ordering
+        // issue. A genuine open failure still flows through `diagnoseStorage`
+        // as an `unavailable` health state rather than a thrown error.
+        if !db.isOpen {
+            try? db.open()
+        }
         let items = try search(query: query, db: db)
         let health = await diagnoseStorage(db: db, includeVectorState: includeVectorState)
         return MemoryConsoleSnapshot(query: query, items: items, health: health)

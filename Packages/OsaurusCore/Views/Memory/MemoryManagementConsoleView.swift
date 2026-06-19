@@ -23,6 +23,7 @@ struct MemoryManagementConsoleView: View {
     @State private var includeDisabled = false
     @State private var isLoading = false
     @State private var showDiagnostics = false
+    @State private var showContextPreview = false
     @State private var snapshot: MemoryConsoleSnapshot?
     @State private var selectedItem: MemoryConsoleItem?
     @State private var pendingAction: PendingMemoryConsoleAction?
@@ -33,40 +34,30 @@ struct MemoryManagementConsoleView: View {
     @State private var isPreviewLoading = false
 
     var body: some View {
-        MemorySectionCard(
-            title: "Memory Console",
-            icon: "rectangle.and.text.magnifyingglass",
-            count: snapshot?.items.count,
-            trailing: {
-                HStack(spacing: 6) {
-                    MemorySectionActionButton(
-                        showDiagnostics ? "Hide Diagnostics" : "Diagnose",
-                        icon: "stethoscope"
-                    ) {
-                        showDiagnostics.toggle()
-                        if showDiagnostics { refresh() }
-                    }
+        VStack(alignment: .leading, spacing: 14) {
+            searchToolbar
+            filtersRow
 
-                    MemorySectionActionButton("Search", icon: "magnifyingglass") {
-                        refresh()
-                    }
-                }
-            },
-            content: {
-                VStack(alignment: .leading, spacing: 14) {
-                    controls
-
-                    if showDiagnostics, let health = snapshot?.health {
-                        diagnosticsPanel(health)
-                    }
-
-                    contextPreviewPanel
-
-                    Divider().opacity(0.5)
-
-                    resultsPanel
-                }
+            if showDiagnostics, let health = snapshot?.health {
+                diagnosticsPanel(health)
             }
+
+            if showContextPreview {
+                contextPreviewPanel
+            }
+
+            Divider().opacity(0.5)
+
+            resultsPanel
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(theme.cardBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(theme.cardBorder, lineWidth: 1)
+                )
         )
         .onAppear {
             if snapshot == nil { refresh() }
@@ -76,79 +67,150 @@ struct MemoryManagementConsoleView: View {
                 .frame(minWidth: 560, minHeight: 520)
         }
         .themedAlert(
-            pendingAction?.title ?? "Memory Action",
+            pendingAction?.title ?? L("Memory Action"),
             isPresented: Binding(
                 get: { pendingAction != nil },
                 set: { if !$0 { pendingAction = nil } }
             ),
             message: pendingAction?.message,
-            primaryButton: .destructive(pendingAction?.buttonTitle ?? "Confirm") {
+            primaryButton: .destructive(pendingAction?.buttonTitle ?? L("Confirm")) {
                 performPendingAction()
             },
-            secondaryButton: .cancel("Cancel") {
+            secondaryButton: .cancel(L("Cancel")) {
                 pendingAction = nil
             },
             presentationStyle: .contained
         )
     }
 
-    private var controls: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 10) {
-                HStack(spacing: 8) {
-                    Image(systemName: "magnifyingglass")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(theme.tertiaryText)
-                    TextField("Search memories", text: $searchText)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 13))
-                        .onSubmit { refresh() }
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(theme.inputBackground)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8)
-                                .stroke(theme.inputBorder, lineWidth: 1)
-                        )
+    private var searchToolbar: some View {
+        HStack(spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(theme.tertiaryText)
+
+                TextField(
+                    "",
+                    text: $searchText,
+                    prompt: Text("Search memories", bundle: .module)
                 )
+                .textFieldStyle(.plain)
+                .font(.system(size: 13))
+                .onSubmit { refresh() }
+
+                if !searchText.isEmpty {
+                    Button {
+                        searchText = ""
+                        refresh()
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 12))
+                            .foregroundColor(theme.tertiaryText)
+                    }
+                    .buttonStyle(.plain)
+                    .help(Text("Clear search", bundle: .module))
+                }
 
                 if isLoading {
                     ProgressView()
                         .controlSize(.small)
                 }
             }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(theme.inputBackground)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(theme.inputBorder, lineWidth: 1)
+                    )
+            )
 
-            HStack(spacing: 12) {
-                Picker("Scope", selection: $scope) {
-                    ForEach(MemoryConsoleScope.allCases) { value in
-                        Text(value.displayName).tag(value)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .frame(maxWidth: 360)
-                .onChange(of: scope) { _, _ in refresh() }
+            consoleToggleButton(
+                title: "Storage health",
+                icon: "stethoscope",
+                isActive: showDiagnostics
+            ) {
+                showDiagnostics.toggle()
+                if showDiagnostics { refresh() }
+            }
 
-                Picker("Agent", selection: $agentFilter) {
-                    Text("All agents", bundle: .module).tag(MemoryAgentFilter.all)
-                    Text(Agent.default.displayName).tag(MemoryAgentFilter.defaultAgent)
-                    ForEach(agents) { agent in
-                        Text(agent.displayName).tag(MemoryAgentFilter.agent(agent.id.uuidString))
-                    }
-                }
-                .frame(width: 220)
-                .onChange(of: agentFilter) { _, _ in refresh() }
-
-                Toggle(isOn: $includeDisabled) {
-                    Text("Include disabled", bundle: .module)
-                        .font(.system(size: 12))
-                }
-                .toggleStyle(.checkbox)
-                .onChange(of: includeDisabled) { _, _ in refresh() }
+            consoleToggleButton(
+                title: "Context preview",
+                icon: "doc.text.magnifyingglass",
+                isActive: showContextPreview
+            ) {
+                showContextPreview.toggle()
             }
         }
+    }
+
+    private var filtersRow: some View {
+        HStack(spacing: 12) {
+            Picker("", selection: $scope) {
+                ForEach(MemoryConsoleScope.allCases) { value in
+                    Text(LocalizedStringKey(value.displayName), bundle: .module).tag(value)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.segmented)
+            .frame(maxWidth: 320)
+            .onChange(of: scope) { _, _ in refresh() }
+
+            Picker("", selection: $agentFilter) {
+                Text("All agents", bundle: .module).tag(MemoryAgentFilter.all)
+                Text(Agent.default.displayName).tag(MemoryAgentFilter.defaultAgent)
+                ForEach(agents) { agent in
+                    Text(agent.displayName).tag(MemoryAgentFilter.agent(agent.id.uuidString))
+                }
+            }
+            .labelsHidden()
+            .frame(width: 200)
+            .onChange(of: agentFilter) { _, _ in refresh() }
+
+            Toggle(isOn: $includeDisabled) {
+                Text("Include disabled", bundle: .module)
+                    .font(.system(size: 12))
+            }
+            .toggleStyle(.checkbox)
+            .onChange(of: includeDisabled) { _, _ in refresh() }
+
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func consoleToggleButton(
+        title: String,
+        icon: String,
+        isActive: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                Image(systemName: icon)
+                    .font(.system(size: 11, weight: .medium))
+                Text(LocalizedStringKey(title), bundle: .module)
+                    .font(.system(size: 12, weight: .medium))
+            }
+            .foregroundColor(isActive ? theme.accentColor : theme.secondaryText)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(isActive ? theme.accentColor.opacity(0.12) : theme.tertiaryBackground)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(
+                                isActive ? theme.accentColor.opacity(0.35) : Color.clear,
+                                lineWidth: 1
+                            )
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+        .fixedSize()
     }
 
     private var contextPreviewPanel: some View {
@@ -168,9 +230,13 @@ struct MemoryManagementConsoleView: View {
             }
 
             HStack(spacing: 10) {
-                TextField("Preview query", text: $previewQuery)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 12))
+                TextField(
+                    "",
+                    text: $previewQuery,
+                    prompt: Text("Preview query", bundle: .module)
+                )
+                .textFieldStyle(.plain)
+                .font(.system(size: 12))
                     .padding(.horizontal, 10)
                     .padding(.vertical, 7)
                     .background(
@@ -331,11 +397,19 @@ struct MemoryManagementConsoleView: View {
 
     private var resultsPanel: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
+            HStack(spacing: 8) {
                 Text("RESULTS", bundle: .module)
                     .font(.system(size: 10, weight: .bold))
                     .foregroundColor(theme.tertiaryText)
                     .tracking(0.3)
+                if let count = snapshot?.items.count {
+                    Text("\(count)", bundle: .module)
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(theme.secondaryText)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 1)
+                        .background(Capsule().fill(theme.tertiaryBackground))
+                }
                 Spacer()
                 if let generatedAt = snapshot?.generatedAt {
                     Text(generatedAt, style: .time)
@@ -434,7 +508,7 @@ struct MemoryManagementConsoleView: View {
             } catch {
                 await MainActor.run {
                     isLoading = false
-                    let message = "Failed to load memory console: \(error.localizedDescription)"
+                    let message = L("Failed to load memory console: \(error.localizedDescription)")
                     showToast(message, true)
                 }
             }
@@ -476,7 +550,7 @@ struct MemoryManagementConsoleView: View {
                 }
             } catch {
                 await MainActor.run {
-                    let message = "Memory action failed: \(error.localizedDescription)"
+                    let message = L("Memory action failed: \(error.localizedDescription)")
                     showToast(message, true)
                 }
             }
@@ -521,24 +595,26 @@ private struct PendingMemoryConsoleAction {
 
     var title: String {
         switch mutation {
-        case .disable: return "Disable Memory?"
-        case .forget: return "Forget Memory?"
+        case .disable: return L("Disable Memory?")
+        case .forget: return L("Forget Memory?")
         }
     }
 
     var buttonTitle: String {
         switch mutation {
-        case .disable: return "Disable"
-        case .forget: return "Forget"
+        case .disable: return L("Disable")
+        case .forget: return L("Forget")
         }
     }
 
     var message: String {
         switch mutation {
         case .disable:
-            return "This removes the memory from future recall while keeping the row available for diagnostics."
+            return L("This removes the memory from future recall while keeping the row available for diagnostics.")
         case .forget:
-            return "This permanently deletes the selected memory row and removes its vector document when present."
+            return L(
+                "This permanently deletes the selected memory row and removes its vector document when present."
+            )
         }
     }
 }
@@ -564,7 +640,7 @@ private struct MemoryConsoleResultRow: View {
 
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 7) {
-                    Text(item.kind.displayName)
+                    Text(LocalizedStringKey(item.kind.displayName), bundle: .module)
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundColor(theme.primaryText)
                     if item.isDisabled {
@@ -605,6 +681,7 @@ private struct MemoryConsoleResultRow: View {
                     .opacity(item.canDisable ? 1 : 0.35)
                 iconButton("trash", help: "Forget memory", action: onForget)
             }
+            .fixedSize()
         }
         .padding(12)
     }
@@ -617,7 +694,11 @@ private struct MemoryConsoleResultRow: View {
         }
     }
 
-    private func iconButton(_ systemName: String, help: String, action: @escaping () -> Void) -> some View {
+    private func iconButton(
+        _ systemName: String,
+        help: LocalizedStringKey,
+        action: @escaping () -> Void
+    ) -> some View {
         Button(action: action) {
             Image(systemName: systemName)
                 .font(.system(size: 12, weight: .medium))
@@ -629,7 +710,7 @@ private struct MemoryConsoleResultRow: View {
                 )
         }
         .buttonStyle(.plain)
-        .help(help)
+        .help(Text(help, bundle: .module))
     }
 }
 
