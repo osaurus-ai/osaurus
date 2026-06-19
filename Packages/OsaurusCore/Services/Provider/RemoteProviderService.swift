@@ -1809,6 +1809,7 @@ public actor RemoteProviderService: ToolCapableService {
                     attempt += 1
 
                     var outboundRequest = urlRequest
+                    var secureOpener: SecureResponseOpener? = nil
                     if let secureProvider {
                         // Seal per attempt: each call consumes a fresh
                         // sequence number, so a retry can't be a replay.
@@ -1818,7 +1819,10 @@ public actor RemoteProviderService: ToolCapableService {
                             urlSession: currentSession
                         )
                         outboundRequest = wrapped.request
-                        secureDecoder = SecureFrameStreamDecoder(opener: wrapped.opener)
+                        // Hold the opener; the decoder is built only once we
+                        // confirm the response is an encrypted SSE stream. A
+                        // buffered error envelope is decoded separately below.
+                        secureOpener = wrapped.opener
                     }
 
                     let (bytes, response) = try await Self.connectWithRetry(
@@ -1866,6 +1870,57 @@ public actor RemoteProviderService: ToolCapableService {
                             )
                         )
                         return
+                    }
+
+                    // Secure peers seal a streamed agent run as encrypted SSE
+                    // (outer `text/event-stream`). An inner response that
+                    // finished before any SSE header was written — an early
+                    // error (e.g. 403 agent_scope_denied, 503, 400) or a
+                    // non-streamed body — instead arrives as a single buffered
+                    // frame in an `application/json` envelope (outer 200, real
+                    // status inside the ciphertext). Decode it here and surface
+                    // the real inner status/body, rather than feeding it to the
+                    // SSE frame decoder, which would fail with a misleading
+                    // `streamTruncated`.
+                    if let secureOpener {
+                        let outerContentType =
+                            httpResponse.value(forHTTPHeaderField: "Content-Type") ?? ""
+                        if !outerContentType.lowercased().hasPrefix("text/event-stream") {
+                            var buffered = Data()
+                            for try await byte in bytes {
+                                buffered.append(byte)
+                            }
+                            let inner: SecureChannel.InnerResponse
+                            do {
+                                inner = try SecureChannelClient.openBufferedResponse(
+                                    buffered,
+                                    opener: secureOpener
+                                )
+                            } catch {
+                                continuation.finish(throwing: error)
+                                return
+                            }
+                            let innerBody =
+                                inner.body.flatMap { Data(base64urlEncoded: $0) } ?? Data()
+                            if inner.status >= 400 {
+                                let message = String(decoding: innerBody, as: UTF8.self)
+                                continuation.finish(
+                                    throwing: RemoteProviderServiceError.requestFailed(
+                                        "HTTP \(inner.status): \(message)"
+                                    )
+                                )
+                            } else {
+                                // Buffered 2xx — unusual for a stream request,
+                                // but still a complete answer: surface its body
+                                // and finish cleanly.
+                                if !innerBody.isEmpty {
+                                    continuation.yield(String(decoding: innerBody, as: UTF8.self))
+                                }
+                                continuation.finish()
+                            }
+                            return
+                        }
+                        secureDecoder = SecureFrameStreamDecoder(opener: secureOpener)
                     }
 
                     connectedBytes = bytes
@@ -2347,11 +2402,21 @@ public actor RemoteProviderService: ToolCapableService {
                 url = geminiURL
             }
         } else if requestProviderType == .osaurus {
-            // Native Osaurus agent: POST /agents/{remoteAgentId}/run
-            guard let agentId = provider.remoteAgentId else {
+            // Native Osaurus agent: POST /agents/{identifier}/run. Address the
+            // agent by its pinned crypto address (the identity the Secure
+            // Channel verifies and the host resolves) — the local
+            // `remoteAgentId` is a receiver-minted UUID the host can't map.
+            // Fall back to `remoteAgentId` only for legacy providers that were
+            // paired before an address was pinned.
+            let identifier: String
+            if let address = provider.remoteAgentAddress, !address.isEmpty {
+                identifier = address
+            } else if let agentId = provider.remoteAgentId {
+                identifier = agentId.uuidString
+            } else {
                 throw RemoteProviderServiceError.invalidURL
             }
-            guard let agentURL = provider.url(for: "/agents/\(agentId.uuidString)/run") else {
+            guard let agentURL = provider.url(for: "/agents/\(identifier)/run") else {
                 throw RemoteProviderServiceError.invalidURL
             }
             url = agentURL
@@ -4111,10 +4176,15 @@ extension RemoteProviderService {
             }
         }
 
-        // Fallback: fetch the agent's configured default_model
-        guard let agentId = provider.remoteAgentId,
-            let url = provider.url(for: "/agents/\(agentId.uuidString)")
-        else {
+        // Fallback: fetch the agent's configured default_model. Address by the
+        // crypto address first (the stable identity the host resolves and a
+        // paired peer knows), falling back to the minted remoteAgentId, so the
+        // host's /agents/{id} resolves the agent instead of 400-ing on a random
+        // UUID and degrading the picker to ["default"]. Mirrors buildURLRequest.
+        let identifier =
+            provider.remoteAgentAddress.flatMap { $0.isEmpty ? nil : $0 }
+            ?? provider.remoteAgentId?.uuidString
+        guard let identifier, let url = provider.url(for: "/agents/\(identifier)") else {
             return ["default"]
         }
         var req = URLRequest(url: url)

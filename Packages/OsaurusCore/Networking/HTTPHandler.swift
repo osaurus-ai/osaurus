@@ -4182,9 +4182,17 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logStartTime = startTime
         let logUserAgent = userAgent
 
-        // Extract agent ID: /agents/{id}
+        // Extract agent ID: /agents/{id}. Resolve the path id as a UUID or a
+        // crypto address (the stable identity a paired remote peer knows),
+        // mirroring /agents/{id}/run so remote model discovery resolves the
+        // agent instead of falling back to ["default"].
         let components = path.split(separator: "/")
-        guard components.count == 2, components[0] == "agents", let agentId = UUID(uuidString: String(components[1]))
+        let resolvedAgentId: UUID? =
+            components.count == 2
+            ? (UUID(uuidString: String(components[1]))
+                ?? AgentIdentityRegistry.shared.agentId(forAddress: String(components[1])))
+            : nil
+        guard components.count == 2, components[0] == "agents", let agentId = resolvedAgentId
         else {
             hop {
                 var headers = [("Content-Type", "application/json; charset=utf-8")]
@@ -4327,15 +4335,23 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             return
         }
 
-        // Extract agent ID: /agents/{id}/run. Accept the local-friendly
-        // "default" alias for clients that do not know the built-in UUID yet;
-        // remote built-in access is still rejected by the guard below.
+        // Extract agent identifier: /agents/{id}/run. Accept the local-friendly
+        // "default" alias for clients that don't know the built-in UUID yet, a
+        // real agent UUID (loopback / local callers), or a crypto address
+        // (0x...) — the stable identity a paired remote peer knows and the
+        // Secure Channel pins. Mirrors /agents/{id}/dispatch so remote peers can
+        // address an agent without learning its host-local UUID. Remote
+        // built-in access is still rejected by the guard below.
         let pathComponents = path.split(separator: "/")
         let agentPathIdentifier = pathComponents.count >= 2 ? String(pathComponents[1]) : ""
-        let agentId: UUID? =
-            agentPathIdentifier.lowercased() == "default"
-            ? Agent.defaultId
-            : UUID(uuidString: agentPathIdentifier)
+        let agentId: UUID?
+        if agentPathIdentifier.lowercased() == "default" {
+            agentId = Agent.defaultId
+        } else if let uuid = UUID(uuidString: agentPathIdentifier) {
+            agentId = uuid
+        } else {
+            agentId = AgentIdentityRegistry.shared.agentId(forAddress: agentPathIdentifier)
+        }
         guard pathComponents.count >= 2, let agentId else {
             sendResponse(
                 context: context,

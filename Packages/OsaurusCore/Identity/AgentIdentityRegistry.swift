@@ -37,6 +37,17 @@ public final class AgentIdentityRegistry: @unchecked Sendable {
         return addressByAgentId[id]
     }
 
+    /// Reverse of `address(forAgentId:)`: the agent UUID whose crypto address
+    /// matches `address` (case-insensitive), if any. Lets off-main components
+    /// (e.g. the NIO request path) resolve a `0x...` agent address to its local
+    /// UUID without hopping to the main actor.
+    public func agentId(forAddress address: String) -> UUID? {
+        let target = address.lowercased()
+        lock.lock()
+        defer { lock.unlock() }
+        return addressByAgentId.first(where: { $0.value == target })?.key
+    }
+
     /// Lowercased set of every agent's crypto address.
     public func currentAddresses() -> Set<String> {
         lock.lock()

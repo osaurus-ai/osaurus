@@ -211,6 +211,59 @@ struct HTTPHandlerEndpointTests {
         }
     }
 
+    // MARK: - Agent metadata resolution
+
+    /// A paired remote peer addresses agent metadata by the agent's crypto
+    /// address (the stable identity it knows), not the host-local UUID. The
+    /// host must resolve that address via `AgentIdentityRegistry` so model
+    /// discovery returns the real metadata instead of `invalid_agent_id`
+    /// (which degraded the remote model picker to `["default"]`).
+    @Test func getAgent_byCryptoAddress_resolvesMetadata() async throws {
+        let server = try await startServer()
+        defer { Task { await server.shutdown() } }
+
+        try await ChatHistoryTestStorage.run {
+            let hostAgentId = UUID()
+            let address = "0xfeed000000000000000000000000000000000099"
+            let agent = Agent(
+                id: hostAgentId,
+                name: "Metadata Peer",
+                defaultModel: "fake-metadata-model",
+                isBuiltIn: false,
+                agentIndex: 0,
+                agentAddress: address
+            )
+            AgentManager.shared.add(agent)
+            AgentIdentityRegistry.shared.update(
+                addresses: [address],
+                indices: [0],
+                addressByAgentId: [hostAgentId: address]
+            )
+            defer {
+                AgentIdentityRegistry.shared.update(addresses: [], indices: [], addressByAgentId: [:])
+            }
+
+            // Address resolves to this agent's metadata.
+            let (data, resp) = try await URLSession.shared.data(
+                from: URL(string: "http://\(server.host):\(server.port)/agents/\(address)")!
+            )
+            #expect((resp as? HTTPURLResponse)?.statusCode == 200)
+            let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+            #expect(obj?["id"] as? String == hostAgentId.uuidString)
+            #expect(obj?["default_model"] as? String == "fake-metadata-model")
+
+            // An address with no registry mapping still fails closed.
+            let unknown = "0xdead000000000000000000000000000000000000"
+            let (badData, badResp) = try await URLSession.shared.data(
+                from: URL(string: "http://\(server.host):\(server.port)/agents/\(unknown)")!
+            )
+            #expect((badResp as? HTTPURLResponse)?.statusCode == 400)
+            #expect(String(decoding: badData, as: UTF8.self).contains("invalid_agent_id"))
+
+            _ = await AgentManager.shared.delete(id: hostAgentId)
+        }
+    }
+
     // MARK: - Test Server Bootstrap
 
     private struct TestServer {
