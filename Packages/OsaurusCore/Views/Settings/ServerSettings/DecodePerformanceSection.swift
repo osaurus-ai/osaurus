@@ -61,10 +61,10 @@ struct DecodePerformanceSection: View {
 
     private func codecTitle(_ codec: VMLXTiedHeadCodec) -> String {
         switch codec {
-        case .fp16Passthrough: return "As shipped (fp16 passthrough)"
-        case .q8: return "8-bit (q8, conservative)"
-        case .q6: return "6-bit (q6, GGUF-head parity)"
-        case .q4: return "4-bit (q4, fastest)"
+        case .fp16Passthrough: return L("As shipped (fp16 passthrough)")
+        case .q8: return L("8-bit (q8, conservative)")
+        case .q6: return L("6-bit (q6, GGUF-head parity)")
+        case .q4: return L("4-bit (q4, fastest)")
         }
     }
 }
