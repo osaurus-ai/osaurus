@@ -1,0 +1,24 @@
+{
+  "id": "computer_use_loop.drag-reorder",
+  "domain": "computer_use_loop",
+  "label": "CU loop • drag one element onto another",
+  "query": "Drag the Draft card onto the Archive bin.",
+  "notes": "Deterministic (scripted-model) case for the drag verb: the loop must resolve BOTH the start (`target`) and destination (`to`) elements and issue a single coordinate drag between their centers. The scripted world records the drag in its verb trace (a drag has no value side effect here), so this proves the two-endpoint wiring rather than a state mutation.",
+  "fixtures": {},
+  "expect": {
+    "computerUseLoop": {
+      "app": "Board",
+      "maxSteps": 6,
+      "elements": [
+        { "id": "draft", "role": "cell", "label": "Draft card" },
+        { "id": "archive", "role": "cell", "label": "Archive bin" }
+      ],
+      "expectOutcome": ["done"],
+      "expectVerbsInOrder": ["drag"],
+      "scriptedActions": [
+        "{\"verb\":\"drag\",\"target\":{\"mark\":1},\"to\":{\"mark\":2},\"note\":\"drag draft to archive\"}",
+        "{\"verb\":\"done\",\"reason\":\"moved the draft to archive\"}"
+      ]
+    }
+  }
+}

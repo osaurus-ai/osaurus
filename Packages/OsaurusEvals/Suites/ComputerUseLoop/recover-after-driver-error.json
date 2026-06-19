@@ -1,0 +1,23 @@
+{
+  "id": "computer_use_loop.recover-after-driver-error",
+  "domain": "computer_use_loop",
+  "label": "CU loop • recover from a stale element ref",
+  "query": "Turn on Mute.",
+  "notes": "Deterministic (scripted-model) case for the Electron stale-ref failure: the Mute switch's element-addressed click fails once as a removed ref (clickFailures: 1), so the loop must fall back to a coordinate click — which lands and flips the toggle. Proves the coordinate-fallback recovery end to end with no model.",
+  "fixtures": {},
+  "expect": {
+    "computerUseLoop": {
+      "app": "Slack",
+      "maxSteps": 8,
+      "elements": [
+        { "id": "mute", "role": "switch", "label": "Mute", "value": "off", "onClick": { "toggle": true }, "clickFailures": 1 }
+      ],
+      "successValues": [{ "id": "mute", "equals": "on" }],
+      "successClicked": ["mute"],
+      "scriptedActions": [
+        "{\"verb\":\"click\",\"target\":{\"mark\":1},\"note\":\"toggle mute\"}",
+        "{\"verb\":\"done\",\"reason\":\"muted the channel\"}"
+      ]
+    }
+  }
+}

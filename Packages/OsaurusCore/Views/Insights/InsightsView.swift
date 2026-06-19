@@ -132,8 +132,8 @@ struct InsightsView: View {
             HeaderSecondaryButton("Clear", icon: "trash") {
                 showClearConfirmation = true
             }
-            .opacity(insightsService.logs.isEmpty ? 0.5 : 1)
-            .disabled(insightsService.logs.isEmpty)
+            .opacity(insightsService.hasLogs ? 1 : 0.5)
+            .disabled(!insightsService.hasLogs)
         }
     }
 

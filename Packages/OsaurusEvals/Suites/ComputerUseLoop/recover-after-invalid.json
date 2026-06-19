@@ -1,0 +1,26 @@
+{
+  "id": "computer_use_loop.recover-after-invalid",
+  "domain": "computer_use_loop",
+  "label": "CU loop • recover after a malformed action",
+  "query": "Submit the form.",
+  "notes": "Deterministic (scripted-model) recovery case: the first action is intentionally malformed JSON, so the loop must re-ask, and the scripted recovery then clicks Submit and finishes. Proves the re-ask budget feeds the error back and the run continues. Runs in CI with no model because scriptedActions is set.",
+  "fixtures": {},
+  "expect": {
+    "computerUseLoop": {
+      "app": "Form",
+      "maxSteps": 8,
+      "elements": [
+        { "id": "submit", "role": "button", "label": "Submit", "onClick": { "setValues": [{ "id": "status", "value": "submitted" }] } },
+        { "id": "status", "role": "statictext", "label": "Status", "value": "draft" }
+      ],
+      "successValues": [{ "id": "status", "equals": "submitted" }],
+      "successClicked": ["submit"],
+      "maxInvalidActions": 3,
+      "scriptedActions": [
+        "{ not valid json",
+        "{\"verb\":\"click\",\"target\":{\"mark\":1},\"note\":\"submit the form\"}",
+        "{\"verb\":\"done\",\"reason\":\"submitted the form\"}"
+      ]
+    }
+  }
+}

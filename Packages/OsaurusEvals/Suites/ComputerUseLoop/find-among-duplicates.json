@@ -1,0 +1,30 @@
+{
+  "id": "computer_use_loop.find-among-duplicates",
+  "domain": "computer_use_loop",
+  "label": "CU loop • find one control in a large, lookalike list",
+  "query": "Find and click the Checkout button.",
+  "notes": "Model-driven. A long list with repeated 'Add to cart' / 'Details' labels (duplicate labels are deliberate here) and one uniquely-labeled Checkout. The model should `find` (or scan) to locate the unique target and address it by mark, not by an ambiguous describe. Exercises the find verb plus large/duplicate-label trees.",
+  "fixtures": {},
+  "expect": {
+    "computerUseLoop": {
+      "app": "Shop",
+      "maxSteps": 10,
+      "elements": [
+        { "id": "p1", "role": "statictext", "label": "Product", "value": "Wireless Mouse" },
+        { "id": "add1", "role": "button", "label": "Add to cart" },
+        { "id": "det1", "role": "button", "label": "Details" },
+        { "id": "p2", "role": "statictext", "label": "Product", "value": "Mechanical Keyboard" },
+        { "id": "add2", "role": "button", "label": "Add to cart" },
+        { "id": "det2", "role": "button", "label": "Details" },
+        { "id": "p3", "role": "statictext", "label": "Product", "value": "USB-C Hub" },
+        { "id": "add3", "role": "button", "label": "Add to cart" },
+        { "id": "det3", "role": "button", "label": "Details" },
+        { "id": "checkout", "role": "button", "label": "Checkout", "onClick": { "setValues": [{ "id": "cart", "value": "ordered" }] } },
+        { "id": "cart", "role": "statictext", "label": "Cart Status", "value": "browsing" }
+      ],
+      "successValues": [{ "id": "cart", "equals": "ordered" }],
+      "successClicked": ["checkout"],
+      "maxInvalidActions": 3
+    }
+  }
+}

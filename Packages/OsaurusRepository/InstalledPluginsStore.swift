@@ -176,4 +176,32 @@ public final class InstalledPluginsStore: @unchecked Sendable {
         // Fall back to highest installed version
         return installedVersions(pluginId: pluginId).first
     }
+
+    /// Immutable, value-typed view of on-disk install state captured in a single
+    /// scan. Built by `snapshot()` so callers can resolve every plugin's latest
+    /// version once, off the main actor, then assemble UI state without further
+    /// file I/O.
+    public struct Snapshot: Sendable {
+        public let installedIds: [String]
+        public let latestVersions: [String: SemanticVersion]
+
+        public func latestVersion(for pluginId: String) -> SemanticVersion? {
+            latestVersions[pluginId]
+        }
+    }
+
+    /// Scans the Tools directory and resolves each installed plugin's latest
+    /// version in one pass. Performs synchronous file I/O (directory listings and
+    /// `readlink` via `latestInstalledVersion`) and MUST be called off the main
+    /// actor — running these per-plugin probes on the main thread has tripped the
+    /// app-hang detector.
+    public func snapshot() -> Snapshot {
+        let ids = allInstalledPluginIds()
+        var versions: [String: SemanticVersion] = [:]
+        versions.reserveCapacity(ids.count)
+        for id in ids {
+            versions[id] = latestInstalledVersion(pluginId: id)
+        }
+        return Snapshot(installedIds: ids, latestVersions: versions)
+    }
 }

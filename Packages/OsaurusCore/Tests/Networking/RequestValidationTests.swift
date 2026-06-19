@@ -76,4 +76,50 @@ struct RequestValidationTests {
         #expect(reason != nil)
         #expect((reason ?? "").contains("json_schema"))
     }
+
+    @Test func chatRequestIgnoresFIMFieldsWithoutDroppingTools() throws {
+        let data = Data(
+            #"""
+            {
+              "model": "default",
+              "messages": [{"role": "user", "content": "hello"}],
+              "suffix": "ignored by chat",
+              "middle": "ignored by chat",
+              "tools": [
+                {
+                  "type": "function",
+                  "function": {
+                    "name": "lookup",
+                    "description": "Lookup a thing",
+                    "parameters": {
+                      "type": "object",
+                      "properties": {
+                        "query": {"type": "string"}
+                      },
+                      "required": ["query"]
+                    }
+                  }
+                }
+              ],
+              "tool_choice": "auto"
+            }
+            """#.utf8
+        )
+
+        let req = try JSONDecoder().decode(ChatCompletionRequest.self, from: data)
+        #expect(HTTPHandler.unsupportedSamplerReason(req) == nil)
+        #expect(req.messages.count == 1)
+        #expect(req.tools?.first?.function.name == "lookup")
+        guard case .auto? = req.tool_choice else {
+            Issue.record("Expected tool_choice auto to survive decoding")
+            return
+        }
+
+        let encoded = try JSONEncoder().encode(req)
+        let payload = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        #expect(payload["suffix"] == nil)
+        #expect(payload["middle"] == nil)
+        #expect(payload["tools"] != nil)
+        #expect(payload["tool_choice"] != nil)
+    }
 }

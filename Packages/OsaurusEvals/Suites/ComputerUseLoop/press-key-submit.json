@@ -1,0 +1,20 @@
+{
+  "id": "computer_use_loop.press-key-submit",
+  "domain": "computer_use_loop",
+  "label": "CU loop • type a query and submit with Return",
+  "query": "Search for 'weather today' and submit the search by pressing Return.",
+  "notes": "Model-driven. Exercises type followed by press_key. The scripted world has no key bindings (press_key is a legible no-op), so the contract is the typed value landing in the field AND the type→press_key verb order — i.e. the model fills the field then submits with a key rather than hunting for a button.",
+  "fixtures": {},
+  "expect": {
+    "computerUseLoop": {
+      "app": "Browser",
+      "maxSteps": 8,
+      "elements": [
+        { "id": "search", "role": "textfield", "label": "Search", "value": "", "placeholder": "Search the web", "editable": true }
+      ],
+      "successValues": [{ "id": "search", "contains": "weather today" }],
+      "expectVerbsInOrder": ["type", "press_key"],
+      "maxInvalidActions": 2
+    }
+  }
+}

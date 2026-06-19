@@ -1450,9 +1450,46 @@ struct ModelDownloadView: View {
             // A superseded task must not touch the snapshot or the handle —
             // the task that cancelled it now owns both.
             guard !Task.isCancelled else { return }
-            gridListsSnapshot = lists
+            applyGridLists(lists)
             gridListsRefreshTask = nil
         }
+    }
+
+    /// Swap in a freshly computed grid snapshot, animating the mosaic when the
+    /// membership change is bounded.
+    ///
+    /// The heavy filter/sort already ran off-main (`makeGridLists`), so the
+    /// `withAnimation` closure is only the assignment — there is no synchronous
+    /// recompute inside the transaction (the shape that caused earlier
+    /// `withAnimation` app hangs). The guard is purely about transition volume:
+    /// animating a wholesale swap (e.g. clearing a search to reveal the full
+    /// catalog) would build and transition a large batch of cells in one spring
+    /// transaction on the main thread — a hang risk, and not legible anyway —
+    /// so past `maxAnimatedGridChurn` inserted+removed cells we swap instantly.
+    /// Reorders of surviving cells are cheap and don't count, so a pure sort
+    /// always animates.
+    private func applyGridLists(_ lists: GridLists) {
+        let churn = Self.membershipChurn(gridListsSnapshot.displayed, lists.displayed)
+        if churn <= Self.maxAnimatedGridChurn {
+            withAnimation(GridDiff.spring) {
+                gridListsSnapshot = lists
+            }
+        } else {
+            gridListsSnapshot = lists
+        }
+    }
+
+    /// Above this many inserted + removed cells, a grid swap applies without the
+    /// mosaic spring to keep the animation off the main thread's critical path.
+    private static let maxAnimatedGridChurn = 40
+
+    /// Count of models that must insert or remove between two lists. Survivors
+    /// that merely change position are excluded — those animate cheaply and are
+    /// the heart of the mosaic.
+    private static func membershipChurn(_ a: [MLXModel], _ b: [MLXModel]) -> Int {
+        let aIds = Set(a.map(\.id))
+        let bIds = Set(b.map(\.id))
+        return aIds.symmetricDifference(bIds).count
     }
 
     /// Debounced refresh for `modelManager.objectWillChange` bursts so

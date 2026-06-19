@@ -142,6 +142,10 @@ public enum EvalRunner {
             return runSandboxDiagnosticsCase(testCase, modelId: modelId)
         case "request_validation":
             return runRequestValidationCase(testCase, modelId: modelId)
+        case "computer_use":
+            return runComputerUseCase(testCase, modelId: modelId)
+        case "computer_use_loop":
+            return await runComputerUseLoopCase(testCase, modelId: modelId)
         case "capability_search":
             return await runCapabilitySearchCase(
                 testCase,
@@ -644,6 +648,128 @@ public enum EvalRunner {
                 notes.append("expected reason to contain '\(needle)'")
             }
         }
+        return .terminal(
+            id: testCase.id,
+            label: label,
+            domain: testCase.domain,
+            outcome: passed ? .passed : .failed,
+            notes: notes,
+            modelId: modelId
+        )
+    }
+
+    // MARK: - Computer Use domain
+
+    /// Pure-data evaluator for `domain == "computer_use"`. Reconstructs a
+    /// scripted `AgentAction` + resolution context, runs it through the
+    /// harness's `EffectClassifier` and `AutonomyPolicy`, and pins the
+    /// resulting effect class, gate disposition, and allowlist decision.
+    /// No driver, no permissions, no model — the gate's safe-by-default
+    /// behaviour locked against regression on every PR.
+    private static func runComputerUseCase(_ testCase: EvalCase, modelId: String) -> EvalCaseReport {
+        let label = testCase.label ?? testCase.id
+        guard let exp = testCase.expect.computerUse else {
+            return Self.errored(
+                testCase,
+                label: label,
+                modelId: modelId,
+                note: "missing `expect.computerUse`"
+            )
+        }
+        guard let verb = AgentVerb(rawValue: exp.verb) else {
+            return Self.errored(
+                testCase,
+                label: label,
+                modelId: modelId,
+                note: "unknown verb '\(exp.verb)' (expected an AgentVerb raw value)"
+            )
+        }
+
+        // 1) Rebuild the action exactly as the loop would hand it to the gate.
+        let target: AgentTarget? = {
+            if exp.mark == nil && (exp.describe?.isEmpty ?? true) { return nil }
+            return AgentTarget(mark: exp.mark, describe: exp.describe)
+        }()
+        let action = AgentAction(
+            verb: verb,
+            target: target,
+            text: exp.text,
+            key: exp.key,
+            modifiers: exp.modifiers ?? [],
+            note: exp.note
+        )
+
+        // 2) Classify the effect, optionally with per-app recipe signals.
+        let recipeSignals =
+            (exp.useRecipes ?? false) ? AppRecipes.signals(for: exp.appName) : RecipeSignals.empty
+        let effect = EffectClassifier.classify(
+            action: action,
+            resolvedRole: exp.resolvedRole,
+            resolvedLabel: exp.resolvedLabel,
+            appName: exp.appName,
+            recipeSignals: recipeSignals
+        )
+
+        // 3) Build the policy and resolve disposition + allowlist gate.
+        let preset = exp.preset.flatMap { AutonomyPreset(rawValue: $0) } ?? .default
+        var perApp: [String: AutonomyPreset] = [:]
+        for (app, raw) in exp.perApp ?? [:] {
+            guard let p = AutonomyPreset(rawValue: raw) else {
+                return Self.errored(
+                    testCase,
+                    label: label,
+                    modelId: modelId,
+                    note: "unknown perApp preset '\(raw)' for app '\(app)'"
+                )
+            }
+            perApp[AutonomyPolicy.normalize(app)] = p
+        }
+        let policy = AutonomyPolicy(
+            globalPreset: preset,
+            perApp: perApp,
+            allowlist: exp.allowlist
+        )
+        let ceiling = exp.ceiling.flatMap { AutonomyPreset(rawValue: $0) }.map {
+            AutonomyCeiling.cappedAt($0)
+        }
+        let allowed = policy.isAppAllowed(exp.appName)
+        let disposition = policy.disposition(for: effect, app: exp.appName, ceiling: ceiling)
+
+        // 4) Score every present expectation; an empty set just records.
+        var notes: [String] = []
+        var passed = true
+
+        if let want = exp.expectEffect {
+            if effect.rawValue == want {
+                notes.append("effect ok: \(effect.rawValue)")
+            } else {
+                passed = false
+                notes.append("effect mismatch: expected \(want), got \(effect.rawValue)")
+            }
+        }
+        if let want = exp.expectDisposition {
+            if disposition.rawValue == want {
+                notes.append("disposition ok: \(disposition.rawValue)")
+            } else {
+                passed = false
+                notes.append("disposition mismatch: expected \(want), got \(disposition.rawValue)")
+            }
+        }
+        if let want = exp.expectAllowed {
+            if allowed == want {
+                notes.append("allowlist ok: allowed=\(allowed)")
+            } else {
+                passed = false
+                notes.append("allowlist mismatch: expected allowed=\(want), got \(allowed)")
+            }
+        }
+        if exp.expectEffect == nil, exp.expectDisposition == nil, exp.expectAllowed == nil {
+            notes.append(
+                "recorded: effect=\(effect.rawValue) disposition=\(disposition.rawValue) "
+                    + "allowed=\(allowed)"
+            )
+        }
+
         return .terminal(
             id: testCase.id,
             label: label,

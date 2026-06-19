@@ -1174,6 +1174,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // isn't lost when `_exit` skips the pending write.
         ToolConfigurationStore.flushPendingWrites()
 
+        // Same for the Computer Use autonomy policy (its own coalescing writer).
+        ComputerUsePolicyStore.flushPendingWrites()
+
         // Aptabase batches analytics in an in-memory queue and normally drains
         // it from its own `willTerminate` observer — but that flush is async and
         // the `_exit(0)` below skips it. Kick a final bounded, best-effort send

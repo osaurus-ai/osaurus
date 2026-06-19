@@ -47,6 +47,43 @@ public struct ThemeMetadata: Codable, Equatable, Sendable {
     }
 }
 
+// MARK: - Theme Library Metadata
+
+/// Where a theme entered the local library. This is intentionally persisted
+/// with custom themes so the library can distinguish hand-authored themes
+/// from file imports and share-link installs after relaunch.
+public enum ThemeLibrarySource: String, Codable, CaseIterable, Sendable {
+    case builtIn
+    case local
+    case imported
+    case shared
+}
+
+public struct ThemeLibraryInfo: Codable, Equatable, Sendable {
+    public var source: ThemeLibrarySource
+    public var importedAt: Date?
+    public var sharedAt: Date?
+    public var remoteHash: String?
+    public var remoteURL: String?
+    public var sourceDetail: String?
+
+    public init(
+        source: ThemeLibrarySource = .local,
+        importedAt: Date? = nil,
+        sharedAt: Date? = nil,
+        remoteHash: String? = nil,
+        remoteURL: String? = nil,
+        sourceDetail: String? = nil
+    ) {
+        self.source = source
+        self.importedAt = importedAt
+        self.sharedAt = sharedAt
+        self.remoteHash = remoteHash
+        self.remoteURL = remoteURL
+        self.sourceDetail = sourceDetail
+    }
+}
+
 // MARK: - Theme Colors
 
 /// All customizable colors in a theme
@@ -613,6 +650,10 @@ public struct CustomTheme: Codable, Equatable, Sendable {
     /// Syntax highlighting theme name (Highlightr). nil = auto (dark/light).
     public var codeHighlightTheme: String?
 
+    /// Optional library provenance. Missing values are treated as local
+    /// custom themes, while built-in presets are always classified as built-in.
+    public var library: ThemeLibraryInfo?
+
     /// Whether this is a built-in theme (cannot be deleted)
     public var isBuiltIn: Bool
     public var isDark: Bool
@@ -628,6 +669,7 @@ public struct CustomTheme: Codable, Equatable, Sendable {
         messages: ThemeMessages = ThemeMessages(),
         borders: ThemeBorders = ThemeBorders(),
         codeHighlightTheme: String? = nil,
+        library: ThemeLibraryInfo? = nil,
         isBuiltIn: Bool = false,
         isDark: Bool = true
     ) {
@@ -641,6 +683,7 @@ public struct CustomTheme: Codable, Equatable, Sendable {
         self.messages = messages
         self.borders = borders
         self.codeHighlightTheme = codeHighlightTheme
+        self.library = library
         self.isBuiltIn = isBuiltIn
         self.isDark = isDark
     }
@@ -658,6 +701,7 @@ public struct CustomTheme: Codable, Equatable, Sendable {
         messages = try container.decodeIfPresent(ThemeMessages.self, forKey: .messages) ?? ThemeMessages()
         borders = try container.decodeIfPresent(ThemeBorders.self, forKey: .borders) ?? ThemeBorders()
         codeHighlightTheme = try container.decodeIfPresent(String.self, forKey: .codeHighlightTheme)
+        library = try container.decodeIfPresent(ThemeLibraryInfo.self, forKey: .library)
         isBuiltIn = try container.decode(Bool.self, forKey: .isBuiltIn)
         isDark = try container.decode(Bool.self, forKey: .isDark)
     }

@@ -190,6 +190,8 @@ private extension ManagementView {
             ServerView()
         case .permissions:
             PermissionsView()
+        case .computerUse:
+            ComputerUseSettingsView()
         case .privacy:
             PrivacyView()
         case .identity:

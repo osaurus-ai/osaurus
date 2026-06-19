@@ -1,0 +1,21 @@
+{
+  "id": "computer_use_loop.read-and-report",
+  "domain": "computer_use_loop",
+  "label": "CU loop • read a value off screen and report it",
+  "query": "Look at the Account screen and tell me the email address on the account. Report it in your done summary.",
+  "notes": "Pure read: nothing to mutate. The answer only lives in the rendered view, so the model has to perceive, extract the email, and surface it in its done reason. Tests that the model reads the screen and reports rather than blindly acting — and that it doesn't fabricate.",
+  "fixtures": {},
+  "expect": {
+    "computerUseLoop": {
+      "app": "Account",
+      "maxSteps": 6,
+      "elements": [
+        { "id": "name", "role": "statictext", "label": "Full Name", "value": "Casey Rivera" },
+        { "id": "email", "role": "statictext", "label": "Email Address", "value": "casey.rivera@example.com" },
+        { "id": "plan", "role": "statictext", "label": "Plan", "value": "Pro Annual" }
+      ],
+      "finalSummaryContains": ["casey.rivera@example.com"],
+      "maxInvalidActions": 2
+    }
+  }
+}

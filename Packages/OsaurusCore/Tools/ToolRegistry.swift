@@ -223,6 +223,14 @@ final class ToolRegistry: ObservableObject {
             OsaurusStatusTool(),
             OsaurusListTool(),
             OsaurusDescribeTool(),
+            // Computer Use (macOS automation harness). Registered as a
+            // built-in so the runtime can execute it and ChatView can
+            // intercept its live activity feed, but the system prompt
+            // composer strips it authoritatively unless the agent opts in
+            // via `computerUseEnabled` (custom agents only). Conforms to
+            // PermissionedTool: execution preflights Accessibility +
+            // Screen Recording before the loop runs.
+            ComputerUseTool(),
         ]
         var configChanged = false
         for tool in builtIns {
@@ -1463,6 +1471,20 @@ final class ToolRegistry: ObservableObject {
 
     static let capabilityToolNames: Set<String> = [
         "capabilities_discover", "capabilities_load",
+    ]
+
+    /// Built-in tools that are authoritatively gated per-agent and must never
+    /// surface through `capabilities_discover`. Unlike the lean-by-default
+    /// built-in gates (render_chart, speak, search_memory, the scheduler trio,
+    /// db_*) — which stay discoverable so a `capabilities_load` can pull them in
+    /// mid-session — these have NO load carve-out: `SystemPromptComposer`
+    /// auto-injects them into the schema when the owning agent flag is on and
+    /// strips them otherwise. Indexing them would let the model "discover" a
+    /// capability it can never load (the per-agent gate re-strips it), so they
+    /// are kept out of the search index entirely. `computer_use` is the sole
+    /// member today.
+    static let nonDiscoverableBuiltInToolNames: Set<String> = [
+        ComputerUseTool.toolName
     ]
 
     /// Always-loaded tool specs: built-in + runtime-managed tools.

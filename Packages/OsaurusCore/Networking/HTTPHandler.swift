@@ -5631,9 +5631,55 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             requestBodyString = nil
         }
 
-        guard let req = try? JSONDecoder().decode(CompletionRequest.self, from: data),
-            !req.prompt.isEmpty
-        else {
+        guard let req = try? JSONDecoder().decode(CompletionRequest.self, from: data) else {
+            let body = Self.errorBody(
+                .openai(type: "invalid_request_error"),
+                message: "Invalid request format: 'prompt' is required"
+            )
+            sendResponse(
+                context: context,
+                version: head.version,
+                status: .badRequest,
+                headers: [("Content-Type", "application/json; charset=utf-8")],
+                body: body
+            )
+            logRequest(
+                method: "POST",
+                path: "/completions",
+                userAgent: userAgent,
+                requestBody: requestBodyString,
+                responseStatus: 400,
+                startTime: startTime,
+                errorMessage: "Invalid completions request"
+            )
+            return
+        }
+
+        if let unsupported = req.unsupportedFIMReason {
+            let body = Self.errorBody(
+                .openai(type: "invalid_request_error"),
+                message: unsupported
+            )
+            sendResponse(
+                context: context,
+                version: head.version,
+                status: .badRequest,
+                headers: [("Content-Type", "application/json; charset=utf-8")],
+                body: body
+            )
+            logRequest(
+                method: "POST",
+                path: "/completions",
+                userAgent: userAgent,
+                requestBody: requestBodyString,
+                responseStatus: 400,
+                startTime: startTime,
+                errorMessage: unsupported
+            )
+            return
+        }
+
+        guard !req.prompt.isEmpty else {
             let body = Self.errorBody(
                 .openai(type: "invalid_request_error"),
                 message: "Invalid request format: 'prompt' is required"

@@ -80,7 +80,9 @@ final class PluginRepositoryService: ObservableObject {
         NotificationCenter.default.publisher(for: .toolsListChanged)
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
-                self?.updateInstalledState()
+                Task { @MainActor [weak self] in
+                    await self?.updateInstalledState()
+                }
             }
             .store(in: &cancellables)
     }
@@ -89,11 +91,9 @@ final class PluginRepositoryService: ObservableObject {
 
     /// Start the background refresh timer
     func startBackgroundRefresh() {
-        // Immediately populate installed plugins from disk before any network call
-        loadInstalledPluginsFromDisk()
-
-        // Initial refresh
+        // Populate installed plugins from disk before any network call, then refresh.
         Task {
+            await loadInstalledPluginsFromDisk()
             await refresh()
         }
 
@@ -121,7 +121,7 @@ final class PluginRepositoryService: ObservableObject {
 
         // Ensure installed plugins are visible immediately, before any network call
         if plugins.isEmpty {
-            loadInstalledPluginsFromDisk()
+            await loadInstalledPluginsFromDisk()
         }
 
         // Run git operations on background thread
@@ -133,13 +133,17 @@ final class PluginRepositoryService: ObservableObject {
             lastError = "Unable to reach plugin repository"
         }
 
-        // Parse specs on background thread (reads from local cache even if git failed)
+        // Parse specs and resolve installed state on background threads (both read
+        // from local cache / disk even if git failed).
         let specs = await Task.detached(priority: .utility) {
             CentralRepositoryManager.shared.listAllSpecs()
         }.value
+        let snapshot = await Task.detached(priority: .utility) {
+            InstalledPluginsStore.shared.snapshot()
+        }.value
 
         // Update state (already on main actor), merging with installed plugins
-        updatePlugins(from: specs)
+        updatePlugins(from: specs, snapshot: snapshot)
         lastRefreshed = Date()
         isRefreshing = false
 
@@ -242,7 +246,12 @@ final class PluginRepositoryService: ObservableObject {
     // MARK: - State Construction
 
     /// Creates a PluginState from a repository spec, enriched with local install state.
-    private static func makeState(from spec: PluginSpec) -> PluginState {
+    /// `installedVersion` is resolved off the main actor by the caller (see
+    /// `InstalledPluginsStore.snapshot()`) so this stays free of file I/O.
+    private static func makeState(
+        from spec: PluginSpec,
+        installedVersion: SemanticVersion?
+    ) -> PluginState {
         PluginState(
             pluginId: spec.plugin_id,
             name: spec.name,
@@ -250,7 +259,7 @@ final class PluginRepositoryService: ObservableObject {
             authors: spec.authors,
             license: spec.license,
             capabilities: spec.capabilities,
-            installedVersion: InstalledPluginsStore.shared.latestInstalledVersion(pluginId: spec.plugin_id),
+            installedVersion: installedVersion,
             latestVersion: spec.versions.map(\.version).sorted(by: >).first,
             loadError: PluginManager.shared.loadError(for: spec.plugin_id)
         )
@@ -258,7 +267,10 @@ final class PluginRepositoryService: ObservableObject {
 
     /// Creates a PluginState for a locally installed plugin using manifest data.
     /// Used when no repo spec is available (offline / plugin not in repository).
-    private static func makeInstalledState(for pluginId: String) -> PluginState {
+    private static func makeInstalledState(
+        for pluginId: String,
+        installedVersion: SemanticVersion?
+    ) -> PluginState {
         var name: String?
         var desc: String?
         var authors: [String]?
@@ -290,7 +302,7 @@ final class PluginRepositoryService: ObservableObject {
             authors: authors,
             license: license,
             capabilities: capabilities,
-            installedVersion: InstalledPluginsStore.shared.latestInstalledVersion(pluginId: pluginId),
+            installedVersion: installedVersion,
             loadError: PluginManager.shared.loadError(for: pluginId)
         )
     }
@@ -299,18 +311,27 @@ final class PluginRepositoryService: ObservableObject {
 
     /// Populates the plugins list from locally installed plugins on disk.
     /// Called eagerly before any network operation so the Installed tab is always available.
-    private func loadInstalledPluginsFromDisk() {
-        // Self-heal: repoint or remove any dangling `current` symlinks left behind by a
-        // crashed install or pre-fix TOFU key rotation. Idempotent and cheap.
-        PluginInstallManager.repairDanglingCurrentSymlinks()
+    private func loadInstalledPluginsFromDisk() async {
+        // Symlink repair and the per-plugin disk scan are synchronous file I/O
+        // (directory listings, `readlink`) that has hung the UI when run on the
+        // main thread. Do both off the main actor and assemble state from the
+        // resulting snapshot.
+        let snapshot = await Task.detached(priority: .utility) {
+            // Self-heal: repoint or remove any dangling `current` symlinks left behind
+            // by a crashed install or pre-fix TOFU key rotation. Idempotent and cheap.
+            PluginInstallManager.repairDanglingCurrentSymlinks()
+            return InstalledPluginsStore.shared.snapshot()
+        }.value
 
-        let installedIds = InstalledPluginsStore.shared.allInstalledPluginIds()
-        guard !installedIds.isEmpty else { return }
+        guard !snapshot.installedIds.isEmpty else { return }
 
         let installingIds = Set(plugins.filter { $0.isInstalling }.map { $0.id })
 
-        plugins = installedIds.map { pluginId in
-            var state = Self.makeInstalledState(for: pluginId)
+        plugins = snapshot.installedIds.map { pluginId in
+            var state = Self.makeInstalledState(
+                for: pluginId,
+                installedVersion: snapshot.latestVersion(for: pluginId)
+            )
             state.isInstalling = installingIds.contains(pluginId)
             return state
         }.sorted { $0.displayName < $1.displayName }
@@ -319,17 +340,26 @@ final class PluginRepositoryService: ObservableObject {
     }
 
     /// Merges repo specs with locally installed plugins into a single list.
-    private func updatePlugins(from specs: [PluginSpec]) {
+    /// `snapshot` carries the off-actor-resolved install state so this performs
+    /// no file I/O on the main actor.
+    private func updatePlugins(from specs: [PluginSpec], snapshot: InstalledPluginsStore.Snapshot) {
         var specPluginIds = Set<String>()
         var result: [PluginState] = specs.map { spec in
             specPluginIds.insert(spec.plugin_id)
-            return Self.makeState(from: spec)
+            return Self.makeState(
+                from: spec,
+                installedVersion: snapshot.latestVersion(for: spec.plugin_id)
+            )
         }
 
         // Append installed plugins that have no matching repo spec
-        for pluginId in InstalledPluginsStore.shared.allInstalledPluginIds()
-        where !specPluginIds.contains(pluginId) {
-            result.append(Self.makeInstalledState(for: pluginId))
+        for pluginId in snapshot.installedIds where !specPluginIds.contains(pluginId) {
+            result.append(
+                Self.makeInstalledState(
+                    for: pluginId,
+                    installedVersion: snapshot.latestVersion(for: pluginId)
+                )
+            )
         }
 
         plugins = result.sorted { $0.displayName < $1.displayName }
@@ -337,17 +367,27 @@ final class PluginRepositoryService: ObservableObject {
     }
 
     /// Refreshes install/error state and picks up newly installed plugins.
-    private func updateInstalledState() {
+    private func updateInstalledState() async {
+        // Resolve install state off the main actor; the per-plugin version probes
+        // do synchronous `readlink`/directory I/O that has hung the UI.
+        let snapshot = await Task.detached(priority: .utility) {
+            InstalledPluginsStore.shared.snapshot()
+        }.value
+
         let currentIds = Set(plugins.map { $0.id })
 
-        for pluginId in InstalledPluginsStore.shared.allInstalledPluginIds()
-        where !currentIds.contains(pluginId) {
-            plugins.append(Self.makeInstalledState(for: pluginId))
+        for pluginId in snapshot.installedIds where !currentIds.contains(pluginId) {
+            plugins.append(
+                Self.makeInstalledState(
+                    for: pluginId,
+                    installedVersion: snapshot.latestVersion(for: pluginId)
+                )
+            )
         }
 
         for i in plugins.indices {
             let pluginId = plugins[i].pluginId
-            plugins[i].installedVersion = InstalledPluginsStore.shared.latestInstalledVersion(pluginId: pluginId)
+            plugins[i].installedVersion = snapshot.latestVersion(for: pluginId)
             plugins[i].loadError = PluginManager.shared.loadError(for: pluginId)
         }
 

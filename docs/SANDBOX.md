@@ -63,6 +63,49 @@ Switch to the **Sandbox** tab in the Tools manager to browse, import, or create 
 
 ---
 
+## Provisioning Preflight
+
+Before provisioning, or when a sandbox setup looks unhealthy, open the
+Management window (`⌘ Shift M`) → **Sandbox** and use **Provisioning
+Preflight**. The report inspects the resolved Osaurus root, config directory
+and `sandbox.json`, cache directory, temporary directory, container workspace,
+agent/shared workspace roots, kernel/initfs assets, warm rootfs state, and the
+runtime bridge socket.
+
+Readiness is intentionally typed and conservative:
+
+| Readiness | Meaning |
+|-----------|---------|
+| `ready` | Required host paths exist, are the expected type, and passed read/write checks. |
+| `needs_setup` | Setup is incomplete or provisioning-created paths/assets are missing but repairable. |
+| `blocked` | A required path, permission, platform, architecture, or disk-space check failed. |
+| `unproven` | A check could not be proven and should not be treated as healthy. |
+
+Each finding includes a code, severity, status, affected path when available,
+and a concrete repair suggestion. Missing and unproven checks stay visible in
+the report instead of being coerced to a pass state.
+
+### Support and CI Proof
+
+Use **Copy JSON** on the preflight card to attach a support artifact or CI proof
+record. The JSON uses stable snake-case keys and includes:
+
+- resolved paths and source (`default_home`, `environment_override`, or
+  `test_override`);
+- configuration source and setup state;
+- per-location status, read/write probe result, file size, and volume capacity
+  where available;
+- typed findings with repair suggestions;
+- overall readiness.
+
+Maintainers can exercise the model and report output with:
+
+```bash
+swift test --package-path Packages/OsaurusCore --filter SandboxProvisioningDiagnostics
+```
+
+---
+
 ## Architecture
 
 ```

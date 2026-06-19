@@ -12,6 +12,7 @@ import os
 /// default; stream it with
 /// `log stream --debug --predicate 'subsystem == "ai.osaurus" AND category == "reasoning"'`.
 private let reasoningLogger = Logger(subsystem: "ai.osaurus", category: "reasoning")
+private let wirePairingLogger = Logger(subsystem: "ai.osaurus", category: "wire-pairing")
 
 /// Errors specific to remote provider operations
 public enum RemoteProviderServiceError: LocalizedError {
@@ -2430,6 +2431,17 @@ public actor RemoteProviderService: ToolCapableService {
             if requestProviderType == .osaurusRouter {
                 outbound.messages = Self.routerWireCompatibleMessages(outbound.messages)
                 outbound.clamp_to_balance = false
+            } else {
+                // Plain OpenAI-compat upstreams enforce tool pairing both ways
+                // ("an assistant message with tool_calls must be followed by
+                // tool messages" and "a tool message must follow tool_calls").
+                // Collapse same-id duplicates, then drop any orphaned half-pair
+                // so a trimmed/over-budget history can't 400 — same backstop the
+                // router, Anthropic, and Gemini paths already run.
+                outbound.messages = Self.enforcingToolUseResultPairing(
+                    Self.mergingDuplicateToolResults(outbound.messages),
+                    provider: String(describing: requestProviderType)
+                )
             }
             bodyData = try encoder.encode(outbound)
         }
@@ -2527,6 +2539,164 @@ public actor RemoteProviderService: ToolCapableService {
         }
     }
 
+    /// True when `text` has at least one non-whitespace character. Anthropic
+    /// rejects content blocks that are empty OR whitespace-only ("text content
+    /// blocks must contain non-whitespace text"), so the assistant text block
+    /// and the empty-`tool_result` placeholder gate on this rather than
+    /// `isEmpty` alone — a lone `" "` would still trip the 400.
+    static func hasMeaningfulText(_ text: String?) -> Bool {
+        guard let text else { return false }
+        return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// The non-whitespace placeholder a truthful empty/nil tool result rides
+    /// as. Anthropic and OpenAI Responses both reject empty/whitespace-only
+    /// tool output, yet the result must still be emitted to keep its
+    /// `tool_use`/`function_call` paired — so an empty result carries this
+    /// marker rather than being dropped or fabricated.
+    static let emptyToolResultMarker = "(no output)"
+
+    /// Wire text for a tool result: the content when it carries non-whitespace
+    /// text, else `emptyToolResultMarker`. Centralizes the empty → marker rule
+    /// the Anthropic and Responses encoders share.
+    static func toolResultText(_ content: String?) -> String {
+        guard hasMeaningfulText(content), let content else { return emptyToolResultMarker }
+        return content
+    }
+
+    /// Enforce Anthropic's "every `tool_use` is immediately answered by a
+    /// matching `tool_result`" invariant at the wire boundary. History
+    /// trimming (`ContextBudgetManager`) is the root-cause fix, but a full
+    /// context window can still hand us a half-pair; emitting it trips the
+    /// HTTP 400 "tool_use ids were found without tool_result blocks
+    /// immediately after". This single forward pass repairs orphans by
+    /// TRUTHFUL REMOVAL — never by synthesizing tool output (see AGENTS.md):
+    ///
+    /// - For an `assistant` turn with `tool_calls`, only the calls whose id
+    ///   has a matching `tool` result in the immediately-following run of
+    ///   tool messages survive; the assistant is re-emitted with exactly
+    ///   those calls. If none survive, the assistant is kept only when it
+    ///   still carries visible text (tool_calls dropped), else removed.
+    /// - A `tool` result whose id isn't claimed by the preceding assistant's
+    ///   surviving calls is dropped (orphan result).
+    /// - Parallel-tool batches and message order are preserved. Run
+    ///   `mergingDuplicateToolResults` FIRST so notice-ride duplicates are
+    ///   collapsed into the real result before pairing is judged.
+    static func enforcingToolUseResultPairing(
+        _ messages: [ChatMessage],
+        provider: String = "remote"
+    ) -> [ChatMessage] {
+        // Re-wrap an assistant turn with a new content/tool_calls pair while
+        // carrying its reasoning fields through unchanged.
+        func reassembledAssistant(
+            _ source: ChatMessage,
+            content: String?,
+            toolCalls: [ToolCall]?
+        ) -> ChatMessage {
+            ChatMessage(
+                role: source.role,
+                content: content,
+                tool_calls: toolCalls,
+                tool_call_id: source.tool_call_id,
+                reasoning_content: source.reasoning_content,
+                reasoning_item_id: source.reasoning_item_id,
+                reasoning_encrypted: source.reasoning_encrypted
+            )
+        }
+
+        var result: [ChatMessage] = []
+        result.reserveCapacity(messages.count)
+        // Diagnostics: count truthful removals so a full-context 400 leaves a
+        // breadcrumb in the log instead of a silent repair.
+        var droppedToolUse = 0
+        var droppedToolResult = 0
+
+        var index = 0
+        while index < messages.count {
+            let message = messages[index]
+            let role = message.role.lowercased()
+
+            // Only an assistant turn that actually requested tools opens a
+            // tool_use/tool_result run; everything else is judged on its own.
+            guard role == "assistant", let toolCalls = message.tool_calls, !toolCalls.isEmpty else {
+                // A `tool` result with no preceding tool_use to claim it is an
+                // orphan (its assistant was trimmed away) — drop it. Anything
+                // else passes through untouched.
+                if role != "tool" {
+                    result.append(message)
+                } else {
+                    droppedToolResult += 1
+                }
+                index += 1
+                continue
+            }
+
+            // A TRAILING assistant tool-call turn has no results yet because
+            // they simply haven't been appended — it's the latest turn, not a
+            // trimmed-away middle orphan (the reported 400 was messages.78 of
+            // 128k, deep in the middle). Keep it verbatim: dropping it would
+            // discard the model's pending tool request and break the
+            // established "keep trailing assistant tool_call turn" contract.
+            if index == messages.count - 1 {
+                result.append(message)
+                break
+            }
+
+            // Gather the contiguous run of tool results answering this turn,
+            // recording which tool_call_ids actually came back.
+            var runEnd = index + 1
+            var answeredCallIds = Set<String>()
+            while runEnd < messages.count, messages[runEnd].role.lowercased() == "tool" {
+                if let callId = messages[runEnd].tool_call_id {
+                    answeredCallIds.insert(callId)
+                }
+                runEnd += 1
+            }
+
+            let keptCalls = toolCalls.filter { answeredCallIds.contains($0.id) }
+            let keptCallIds = Set(keptCalls.map(\.id))
+            droppedToolUse += toolCalls.count - keptCalls.count
+
+            if keptCalls.count == toolCalls.count {
+                // Every call is answered — keep the turn (and its carriers) verbatim.
+                result.append(message)
+            } else if !keptCalls.isEmpty {
+                result.append(reassembledAssistant(message, content: message.content, toolCalls: keptCalls))
+            } else if let content = message.content, hasMeaningfulText(content) {
+                // No call survived but the turn still said something — keep the
+                // text, drop the now-unanswerable tool_calls. Whitespace-only
+                // content counts as nothing (Anthropic rejects it), so such a
+                // turn falls through and is dropped entirely below.
+                result.append(reassembledAssistant(message, content: content, toolCalls: nil))
+            }
+            // else: empty assistant with no surviving calls — drop entirely.
+
+            // Re-emit the run's results in order, keeping only those that
+            // answer a surviving call (drops orphan results in the batch).
+            for resultIndex in (index + 1) ..< runEnd {
+                let toolMessage = messages[resultIndex]
+                if let callId = toolMessage.tool_call_id, keptCallIds.contains(callId) {
+                    result.append(toolMessage)
+                } else {
+                    droppedToolResult += 1
+                }
+            }
+
+            index = runEnd
+        }
+
+        if droppedToolUse > 0 || droppedToolResult > 0 {
+            wirePairingLogger.warning(
+                """
+                Repaired tool_use/tool_result pairing before \(provider, privacy: .public) encode: \
+                dropped \(droppedToolUse, privacy: .public) orphan tool_use, \
+                \(droppedToolResult, privacy: .public) orphan tool_result (truthful removal)
+                """
+            )
+        }
+        return result
+    }
+
     /// Router fan-out advertises one OpenAI-compatible request to many
     /// upstreams, so it uses the strictest shared chat-completions history
     /// shape. User media stays multimodal; assistant history leaves Osaurus as
@@ -2534,8 +2704,13 @@ public actor RemoteProviderService: ToolCapableService {
     /// omitted assistant content on tool-call turns.
     static func routerWireCompatibleMessages(_ messages: [ChatMessage]) -> [ChatMessage] {
         // Collapse same-id tool results FIRST: the router fans out to Claude,
-        // which rejects more than one tool_result per tool_use_id.
-        let deduped = mergingDuplicateToolResults(messages)
+        // which rejects more than one tool_result per tool_use_id. THEN drop
+        // any orphaned tool_use/tool_result half-pair (also a Claude 400) so
+        // the fan-out target never sees a dangling tool call.
+        let deduped = enforcingToolUseResultPairing(
+            mergingDuplicateToolResults(messages),
+            provider: "osaurusRouter"
+        )
         let wireMessages = routerMessagesDroppingUnsupportedAssistantPrefill(deduped)
         return wireMessages.map { message in
             guard requiresRouterAssistantStringContent(message) else { return message }
@@ -2965,8 +3140,16 @@ struct RemoteChatRequest: Encodable {
         }
 
         // Collapse same-id tool results so each tool_use_id yields exactly one
-        // tool_result block (Anthropic rejects duplicates).
-        for msg in RemoteProviderService.mergingDuplicateToolResults(messages) {
+        // tool_result block (Anthropic rejects duplicates), THEN drop any
+        // tool_use left without its tool_result (or vice-versa) so a trimmed
+        // half-pair can't trip the "tool_use ids ... without tool_result"
+        // 400. Pairing runs after the merge so a notice-ride duplicate is
+        // folded into the real result before the pairing check.
+        let pairedMessages = RemoteProviderService.enforcingToolUseResultPairing(
+            RemoteProviderService.mergingDuplicateToolResults(messages),
+            provider: "anthropic"
+        )
+        for msg in pairedMessages {
             switch msg.role {
             case "system":
                 // Flush any pending tool results before system message
@@ -2995,7 +3178,7 @@ struct RemoteChatRequest: Encodable {
                 // Convert assistant messages, including tool calls
                 var blocks: [AnthropicContentBlock] = []
 
-                if let content = msg.content, !content.isEmpty {
+                if let content = msg.content, RemoteProviderService.hasMeaningfulText(content) {
                     blocks.append(.text(AnthropicTextBlock(text: content)))
                 }
 
@@ -3032,14 +3215,20 @@ struct RemoteChatRequest: Encodable {
 
             case "tool":
                 // Collect tool results - they will be batched into a single user message
-                // when we encounter a non-tool message or reach the end
-                if let toolCallId = msg.tool_call_id, let content = msg.content {
+                // when we encounter a non-tool message or reach the end.
+                //
+                // ALWAYS emit when a tool_call_id is present, even for nil/empty
+                // content: silently skipping it would orphan the matching
+                // tool_use and trip the Anthropic 400. `toolResultText` supplies
+                // a non-whitespace marker for an empty result.
+                if let toolCallId = msg.tool_call_id {
+                    let resultText = RemoteProviderService.toolResultText(msg.content)
                     pendingToolResults.append(
                         .toolResult(
                             AnthropicToolResultBlock(
                                 type: "tool_result",
                                 tool_use_id: toolCallId,
-                                content: .text(content),
+                                content: .text(resultText),
                                 is_error: nil
                             )
                         )
@@ -3124,8 +3313,14 @@ struct RemoteChatRequest: Encodable {
         }
 
         // Collapse same-id tool results so a repeated tool_call_id maps to a
-        // single functionResponse instead of duplicates.
-        for msg in RemoteProviderService.mergingDuplicateToolResults(messages) {
+        // single functionResponse instead of duplicates, then drop any
+        // orphaned tool_use/tool_result half-pair for parity with the
+        // Anthropic path (Gemini likewise requires functionResponse to follow
+        // functionCall).
+        for msg in RemoteProviderService.enforcingToolUseResultPairing(
+            RemoteProviderService.mergingDuplicateToolResults(messages),
+            provider: "gemini"
+        ) {
             switch msg.role {
             case "system":
                 // System messages become systemInstruction
@@ -3429,7 +3624,16 @@ struct RemoteChatRequest: Encodable {
         var inputItems: [OpenResponsesInputItem] = []
         var instructions: String?
 
-        for msg in messages {
+        // Responses pairs function_call <-> function_call_output by call_id; an
+        // unmatched item 400s ("No tool call found for function call output" /
+        // "No tool output found for function call"). Collapse same-id duplicates
+        // then drop orphaned half-pairs first, mirroring the Anthropic, Gemini,
+        // and OpenAI-compat paths.
+        let pairedMessages = RemoteProviderService.enforcingToolUseResultPairing(
+            RemoteProviderService.mergingDuplicateToolResults(messages),
+            provider: "openResponses"
+        )
+        for msg in pairedMessages {
             switch msg.role {
             case "system":
                 // System messages become instructions
@@ -3505,13 +3709,17 @@ struct RemoteChatRequest: Encodable {
                 }
 
             case "tool":
-                // Tool results become function_call_output items
-                if let toolCallId = msg.tool_call_id, let content = msg.content {
+                // Tool results become function_call_output items. ALWAYS emit
+                // when a call_id is present — skipping a nil/empty result would
+                // re-orphan its function_call. `toolResultText` supplies a
+                // non-whitespace marker for an empty result.
+                if let toolCallId = msg.tool_call_id {
+                    let output = RemoteProviderService.toolResultText(msg.content)
                     inputItems.append(
                         .functionCallOutput(
                             OpenResponsesFunctionCallOutputItem(
                                 callId: toolCallId,
-                                output: content
+                                output: output
                             )
                         )
                     )

@@ -626,18 +626,19 @@ public struct SystemPromptComposer: Sendable {
     ///   8. codeStyle                 static, gated on file-edit tools
     ///   9. riskAware                 static, gated on file-mutation tools
     ///  10. secretHandling            static, sandbox-only
-    ///  11. agentLoopGuidance         static, gated on loop tools in schema
-    ///  12. sandbox / folderContext   static framing, mode-specific, gated on tools on
-    ///  13. capabilityNudge           static, gated on capabilities_discover
+    ///  11. computerUse               static, gated on computer_use in schema
+    ///  12. agentLoopGuidance         static, gated on loop tools in schema
+    ///  13. sandbox / folderContext   static framing, mode-specific, gated on tools on
+    ///  14. capabilityNudge           static, gated on capabilities_discover
     ///                                (sandbox: build-ladder variant, canCreatePlugins-aware)
-    ///  14. enabledManifest           static, frozen, gated on capabilities_load
+    ///  15. enabledManifest           static, frozen, gated on capabilities_load
     ///                                (all enabled tools + plugin skills + standalone skills)
-    ///  15. skillsGovern              static body, paired with enabledManifest
-    ///  16. pluginCreator             static, injected when plugin creation is enabled
+    ///  16. skillsGovern              static body, paired with enabledManifest
+    ///  17. pluginCreator             static, injected when plugin creation is enabled
     ///                                (session-constant gate — joins the cached prefix)
-    ///  17. agentDBSchema             dynamic, live schema snapshot (mutates mid-session)
-    ///  18. sandboxState              dynamic, installed packages + secrets (mutate mid-session)
-    ///  19. sandboxUnavailable        dynamic, gated on registrar failure
+    ///  18. agentDBSchema             dynamic, live schema snapshot (mutates mid-session)
+    ///  19. sandboxState              dynamic, installed packages + secrets (mutate mid-session)
+    ///  20. sandboxUnavailable        dynamic, gated on registrar failure
     ///
     /// Statics come before dynamics so the cached prefix
     /// (`PromptManifest.staticPrefixContent`) reaches as far as possible —
@@ -834,6 +835,24 @@ public struct SystemPromptComposer: Sendable {
                     id: "secretHandling",
                     label: L("Secret Handling"),
                     content: SystemPromptTemplates.secretHandlingGuidance
+                )
+            )
+        }
+
+        // Computer Use: rendered only when the `computer_use` tool actually
+        // resolved into the schema. That gate (set in `resolveTools`) is the
+        // single authoritative `computerUseEnabled` check — custom-agent opt-in,
+        // the Default agent never reaches here — so the section can never
+        // advertise desktop automation the model can't invoke. Schema-gated
+        // like codeStyle / riskAware / agentLoopGuidance, so it is
+        // session-constant and KV-cache stable, and it surfaces as its own
+        // context-budget line so an enabled agent can see Computer Use is live.
+        if !effectiveToolsOff, resolvedNames.contains(ComputerUseTool.toolName) {
+            composer.append(
+                .static(
+                    id: "computerUse",
+                    label: L("Computer Use"),
+                    content: SystemPromptTemplates.computerUseGuidance
                 )
             )
         }
@@ -1862,6 +1881,18 @@ public struct SystemPromptComposer: Sendable {
                     byName.removeValue(forKey: name)
                 }
             }
+        }
+
+        // Computer Use is an AUTHORITATIVE per-agent gate. Unlike the
+        // lean-by-default built-ins above (which are auto-mode-only and
+        // honour a `capabilities_load` carve-out), `computer_use` is
+        // stripped whenever the flag is off — in BOTH auto and manual mode,
+        // with no `additionalToolNames` bypass. The model can never see the
+        // tool unless the agent explicitly opted in. The Default agent is
+        // additionally excluded by the allowlist filter below, so Computer
+        // Use is a custom-agent-only capability.
+        if !snapshot.computerUseEnabled {
+            byName.removeValue(forKey: ComputerUseTool.toolName)
         }
 
         // Phase C default-agent surface:

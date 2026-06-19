@@ -160,6 +160,7 @@ struct MemoryView: View {
 
                                 identitySection
                                 overridesSection
+                                memoryConsoleSection
                                 agentsSection
                                 statsSection
                                 configurationSection
@@ -585,6 +586,16 @@ struct MemoryView: View {
     }
 
     // MARK: - Agents Section
+
+    private var memoryConsoleSection: some View {
+        MemoryManagementConsoleView(
+            agents: agentManager.agents,
+            onMemoryChanged: { loadData() },
+            showToast: { message, isError in
+                showToast(message, isError: isError)
+            }
+        )
+    }
 
     private var agentsSection: some View {
         MemorySectionCard(title: L("Agents"), icon: "person.2") {

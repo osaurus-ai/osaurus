@@ -1,0 +1,26 @@
+{
+  "id": "computer_use_loop.toggle-switch",
+  "domain": "computer_use_loop",
+  "label": "CU loop • turn on a settings switch",
+  "query": "Open System Settings and turn on Night Shift.",
+  "notes": "A single toggle: the model must click the switch (not type, not observe forever) and recognise the value flipped to 'on'. Tests the click verb + reading a state change off the verify view.",
+  "fixtures": {},
+  "expect": {
+    "computerUseLoop": {
+      "app": "System Settings",
+      "maxSteps": 8,
+      "elements": [
+        { "id": "wifi", "role": "switch", "label": "Wi-Fi", "value": "on" },
+        { "id": "nightshift", "role": "switch", "label": "Night Shift", "value": "off", "onClick": { "toggle": true } },
+        { "id": "bluetooth", "role": "switch", "label": "Bluetooth", "value": "off", "onClick": { "toggle": true } }
+      ],
+      "successValues": [
+        { "id": "nightshift", "equals": "on" },
+        { "id": "bluetooth", "equals": "off" }
+      ],
+      "successClicked": ["nightshift"],
+      "failIfClicked": ["wifi"],
+      "maxInvalidActions": 2
+    }
+  }
+}

@@ -820,6 +820,21 @@ final class NativeToolCallRowView: NSView {
     /// Avoids re-subscribing on every layout-only `configure(item:)`
     /// pass for the same row.
     private var liveExecBoundCallId: String?
+    /// Computer Use activity feed pane. Mounts for `computer_use` rows when
+    /// `ComputerUseFeedRegistry` has a feed for this row's tool-call-id (live
+    /// run or grace tail). A SwiftUI `ComputerUseFeedView` hosted in AppKit —
+    /// the one place this native cell uses an `NSHostingView`, because the
+    /// feed is a small, self-contained streaming list. Mutually exclusive with
+    /// `terminalView` / `resultView` on the `contentContainer` bottom pin.
+    private var computerUseHostingView: NSView?
+    private var computerUseBottomConstraint: NSLayoutConstraint?
+    private var computerUseHeightConstraint: NSLayoutConstraint?
+    private var computerUseFeedSubscription: AnyCancellable?
+    private var computerUseBoundCallId: String?
+    /// Fixed height for the feed pane (header + a few visible rows; the list
+    /// scrolls internally). Kept constant so the row's `measuredHeight` is
+    /// predictable as events stream in.
+    private static let computerUsePaneHeight: CGFloat = 220
     private let separatorView = NSView()
     /// pins contentContainer height for hit-testing; toggled when result section is shown
     private var contentBottomToArgs: NSLayoutConstraint?
@@ -1084,11 +1099,17 @@ final class NativeToolCallRowView: NSView {
             // dedups on toolCallId, so this is a no-op on the second
             // call for the same row.
             bindLiveOutputIfPresent(toolCallId: item.call.id, theme: theme)
+            // Computer Use rows additionally watch the feed registry so the
+            // activity pane mounts/unmounts as the run registers and drops.
+            if item.call.function.name == ComputerUseTool.toolName {
+                bindComputerUseFeedIfPresent(toolCallId: item.call.id, theme: theme)
+            }
         }
 
-        // Tear down terminal pane when the row collapses.
+        // Tear down panes when the row collapses.
         if !isExpanded {
             tearDownTerminalView()
+            tearDownComputerUseView()
         }
 
         applyHeight()
@@ -1117,7 +1138,8 @@ final class NativeToolCallRowView: NSView {
         } else {
             terminalH = 0
         }
-        return rowH + 1 + 8 + sectionTitleH + argsH + terminalH + resultH + 8
+        let computerUseH: CGFloat = computerUseHostingView != nil ? (8 + Self.computerUsePaneHeight) : 0
+        return rowH + 1 + 8 + sectionTitleH + argsH + terminalH + computerUseH + resultH + 8
     }
 
     // MARK: - Terminal pane bindings
@@ -1140,6 +1162,19 @@ final class NativeToolCallRowView: NSView {
     /// ends.
     private func applyResultOrLiveState(width: CGFloat, theme: any ThemeProtocol) {
         guard let item = currentItem else { return }
+
+        // 0) Computer Use rows render the activity feed (live or grace tail)
+        //    instead of the args/result markdown. Once the feed leaves the
+        //    registry (grace elapsed) we fall through to the markdown summary.
+        if item.call.function.name == ComputerUseTool.toolName,
+            let feed = ComputerUseFeedRegistry.shared.feed(for: item.call.id)
+        {
+            tearDownResultSection()
+            tearDownTerminalView()
+            mountComputerUseView(feed: feed, theme: theme)
+            return
+        }
+        tearDownComputerUseView()
 
         // 1) Live path takes priority while a tool is actively running.
         if let entry = LiveExecRegistry.shared.currentEntries()[item.call.id],
@@ -1284,6 +1319,81 @@ final class NativeToolCallRowView: NSView {
         terminalView = nil
         // Restore args' bottom pin so contentContainer keeps a single
         // bottom anchor (otherwise the layout becomes ambiguous).
+        contentBottomToArgs?.isActive = true
+        applyHeight()
+    }
+
+    // MARK: - Computer Use feed pane
+
+    /// Subscribe to `ComputerUseFeedRegistry` and re-run
+    /// `applyResultOrLiveState` on every snapshot so the pane mounts when a
+    /// run registers its feed and falls through to the markdown summary once
+    /// the grace tail drops it. Idempotent on the same id.
+    private func bindComputerUseFeedIfPresent(toolCallId: String, theme: any ThemeProtocol) {
+        if computerUseBoundCallId == toolCallId, computerUseFeedSubscription != nil { return }
+        computerUseFeedSubscription?.cancel()
+        computerUseBoundCallId = toolCallId
+        let width = currentWidth
+        computerUseFeedSubscription = ComputerUseFeedRegistry.shared.feedsPublisher
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                MainActor.assumeIsolated {
+                    self.applyResultOrLiveState(width: width, theme: theme)
+                }
+            }
+    }
+
+    /// Mount (or reuse) the SwiftUI feed pane for `feed`. Mirrors
+    /// `mountTerminalView`'s constraint swap so `contentContainer` never has
+    /// two active bottom pins.
+    private func mountComputerUseView(feed: ComputerUseFeed, theme: any ThemeProtocol) {
+        let host: NSView
+        if let existing = computerUseHostingView {
+            host = existing
+        } else {
+            let hosting = NSHostingView(rootView: ComputerUseFeedView(feed: feed))
+            hosting.translatesAutoresizingMaskIntoConstraints = false
+            contentContainer.addSubview(hosting)
+            let av = ensureArgsView()
+            let heightConst = hosting.heightAnchor.constraint(
+                equalToConstant: Self.computerUsePaneHeight
+            )
+            computerUseHeightConstraint = heightConst
+            NSLayoutConstraint.activate([
+                hosting.leadingAnchor.constraint(
+                    equalTo: contentContainer.leadingAnchor,
+                    constant: Self.sectionContentInset
+                ),
+                hosting.trailingAnchor.constraint(
+                    equalTo: contentContainer.trailingAnchor,
+                    constant: -Self.sectionContentInset
+                ),
+                hosting.topAnchor.constraint(equalTo: av.bottomAnchor, constant: 8),
+                heightConst,
+            ])
+            let pin = contentContainer.bottomAnchor.constraint(equalTo: hosting.bottomAnchor)
+            computerUseBottomConstraint = pin
+            computerUseHostingView = hosting
+            host = hosting
+        }
+        // Swap pins atomically (see mountTerminalView for why).
+        contentBottomToArgs?.isActive = false
+        computerUseBottomConstraint?.isActive = true
+        _ = host
+        applyHeight()
+    }
+
+    private func tearDownComputerUseView() {
+        computerUseFeedSubscription?.cancel()
+        computerUseFeedSubscription = nil
+        computerUseBoundCallId = nil
+        guard let host = computerUseHostingView else { return }
+        computerUseBottomConstraint?.isActive = false
+        computerUseBottomConstraint = nil
+        computerUseHeightConstraint = nil
+        host.removeFromSuperview()
+        computerUseHostingView = nil
         contentBottomToArgs?.isActive = true
         applyHeight()
     }

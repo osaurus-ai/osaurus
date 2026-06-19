@@ -1,0 +1,17 @@
+{
+  "id": "computer_use.allowlist-blocks-unlisted-app",
+  "domain": "computer_use",
+  "label": "computer use • allowlist rejects an unlisted app",
+  "query": "Look at Mail.",
+  "notes": "When an allowlist is set, an app not on it is rejected before disposition is even consulted.",
+  "fixtures": {},
+  "expect": {
+    "computerUse": {
+      "verb": "observe",
+      "appName": "Mail",
+      "preset": "balanced",
+      "allowlist": ["notes", "safari"],
+      "expectAllowed": false
+    }
+  }
+}

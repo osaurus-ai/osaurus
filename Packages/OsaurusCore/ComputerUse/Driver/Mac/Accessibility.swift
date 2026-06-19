@@ -1,0 +1,1210 @@
+//
+//  Accessibility.swift
+//  OsaurusCore — Computer Use
+//
+//  Native macOS driver, brought in-core from osaurus-ai/osaurus-macos-use.
+//  Accessibility-tree traversal, snapshot-scoped element caching, and the
+//  app/window listing helpers the harness perceives the screen through.
+//
+
+import AppKit
+import ApplicationServices
+import Foundation
+
+// MARK: - CFTypeRef casts
+
+// AX attribute values arrive as untyped `CFTypeRef`s. CoreFoundation types
+// can't be conditionally downcast in Swift (`as?` is rejected as
+// always-succeeding), so we verify the concrete CF type id and only then
+// force-cast — provably safe, and returning nil for an unexpected type instead
+// of trapping. These centralize the unavoidable force-cast behind that check.
+
+private func axElement(_ ref: CFTypeRef?) -> AXUIElement? {
+    guard let ref, CFGetTypeID(ref) == AXUIElementGetTypeID() else { return nil }
+    // swiftlint:disable:next force_cast
+    return (ref as! AXUIElement)
+}
+
+private func axValue(_ ref: CFTypeRef?) -> AXValue? {
+    guard let ref, CFGetTypeID(ref) == AXValueGetTypeID() else { return nil }
+    // swiftlint:disable:next force_cast
+    return (ref as! AXValue)
+}
+
+// MARK: - Snapshot ID Format
+
+/// Element IDs are scoped to a snapshot so we can distinguish "stale ID from a
+/// previous observation" from "element no longer exists".
+/// Format: "s{snapshotId}-{elementNumber}" (e.g. "s7-42").
+enum SnapshotIdFormat {
+    static func format(snapshot: Int, element: Int) -> String {
+        return "s\(snapshot)-\(element)"
+    }
+
+    static func parse(_ id: String) -> (snapshot: Int, element: Int)? {
+        guard id.hasPrefix("s") else { return nil }
+        let body = id.dropFirst()
+        let parts = body.split(separator: "-", maxSplits: 1, omittingEmptySubsequences: true)
+        guard parts.count == 2,
+            let snap = Int(parts[0]),
+            let el = Int(parts[1])
+        else { return nil }
+        return (snap, el)
+    }
+}
+
+// MARK: - Element Info
+
+/// Compact representation of an accessibility element for agent consumption.
+/// Optional fields are omitted from JSON when nil.
+struct ElementInfo: Encodable, Sendable {
+    let id: String
+    let role: String
+    let roleDescription: String?
+    let label: String?
+    let value: String?
+    let placeholder: String?
+    let path: String?
+    let windowId: Int?
+    let focused: Bool
+    let enabled: Bool
+    let x: Int
+    let y: Int
+    let w: Int
+    let h: Int
+    let actions: [String]
+}
+
+// MARK: - Window Summary
+
+struct WindowSummary: Encodable, Sendable {
+    let id: Int
+    let title: String?
+    let focused: Bool
+    let x: Int
+    let y: Int
+    let w: Int
+    let h: Int
+}
+
+// MARK: - Cached Element
+
+/// Internal representation storing AXUIElement reference for later interaction
+final class CachedElement: @unchecked Sendable {
+    let axElement: AXUIElement
+    let role: String
+    let supportedActions: [String]
+    let pid: Int32
+
+    init(axElement: AXUIElement, role: String, supportedActions: [String], pid: Int32) {
+        self.axElement = axElement
+        self.role = role
+        self.supportedActions = supportedActions
+        self.pid = pid
+    }
+
+    func getCurrentFrame() -> CGRect? {
+        var positionValue: CFTypeRef?
+        var sizeValue: CFTypeRef?
+
+        guard
+            AXUIElementCopyAttributeValue(axElement, kAXPositionAttribute as CFString, &positionValue)
+                == .success,
+            AXUIElementCopyAttributeValue(axElement, kAXSizeAttribute as CFString, &sizeValue) == .success
+        else {
+            return nil
+        }
+
+        var position = CGPoint.zero
+        var size = CGSize.zero
+
+        if let axPos = axValue(positionValue) {
+            AXValueGetValue(axPos, .cgPoint, &position)
+        }
+        if let axSize = axValue(sizeValue) {
+            AXValueGetValue(axSize, .cgSize, &size)
+        }
+
+        return CGRect(origin: position, size: size)
+    }
+
+    func supportsAction(_ action: String) -> Bool {
+        return supportedActions.contains(action)
+    }
+
+    func performAction(_ action: String) -> Bool {
+        let result = AXUIElementPerformAction(axElement, action as CFString)
+        return result == .success
+    }
+}
+
+// MARK: - Element Lookup
+
+enum ElementLookup {
+    case found(CachedElement)
+    /// The id refers to a snapshot we no longer remember. Caller should re-observe.
+    case stale(requestedSnapshot: Int, currentSnapshot: Int)
+    /// The id is well-formed but the element is gone (UI changed).
+    case removed(id: String)
+    /// The id string is not parseable as a snapshot id at all.
+    case malformed(id: String)
+}
+
+// MARK: - Element Filter
+
+/// Filter options for UI element traversal
+struct ElementFilter: Decodable {
+    var pid: Int32
+    var roles: [String]?
+    var maxDepth: Int?
+    var maxElements: Int?
+    var interactiveOnly: Bool?
+    /// If true, only traverse the focused window (skip menu bar and other windows).
+    var focusedWindowOnly: Bool?
+}
+
+/// Search options used by `find_elements`. Reuses the same traversal as `get_ui_elements`.
+struct SearchOptions {
+    var text: String?
+    var enabledOnly: Bool
+    var windowId: Int?
+    var limit: Int
+}
+
+// MARK: - Traversal Result
+
+struct TraversalResult: Encodable, Sendable {
+    let snapshotId: Int
+    let pid: Int32
+    let app: String
+    let focusedWindow: String?
+    let elementCount: Int
+    let truncated: Bool
+    let windows: [WindowSummary]
+    let elements: [ElementInfo]
+}
+
+// MARK: - Accessibility Manager
+
+/// Manages accessibility tree traversal and element caching.
+/// IDs are snapshot-scoped strings ("s{snapshot}-{element}"). The last two
+/// snapshots are retained so an action immediately after a re-observe still
+/// resolves correctly.
+final class AccessibilityManager: @unchecked Sendable {
+    static let shared = AccessibilityManager()
+
+    /// Maximum time (seconds) any AX call is allowed to block. Without this,
+    /// a wedged target app would hang the agent indefinitely.
+    private static let axMessagingTimeout: Float = 3.0
+
+    private var snapshots: [Int: [String: CachedElement]] = [:]
+    private var snapshotPids: [Int: Int32] = [:]
+    private var snapshotOrder: [Int] = []
+    private var currentSnapshotId: Int = 0
+    /// The loop captures several times per agent turn (perceive, every act's
+    /// verify, and the reobserve re-perceive), so a 2-deep cache rotates a mark
+    /// out from under the model within the same turn it was shown. Retaining a
+    /// few more generations keeps a just-shown mark resolvable across those
+    /// intra-turn captures without holding meaningfully more memory.
+    private static let maxSnapshotsToRetain: Int = 6
+    /// Pids we've already nudged into exposing their full AX tree (Electron).
+    private var preparedPids: Set<Int32> = []
+    private let lock = NSLock()
+
+    private init() {
+        // Apply the global AX timeout once at first access.
+        AXUIElementSetMessagingTimeout(
+            AXUIElementCreateSystemWide(),
+            Self.axMessagingTimeout
+        )
+    }
+
+    // MARK: Electron / Chromium accessibility
+
+    /// Nudge a Chromium/Electron app into building its full accessibility tree.
+    ///
+    /// Chromium only materializes its AX tree when an assistive client sets
+    /// `AXManualAccessibility` on the app element; until then apps like Slack,
+    /// VS Code, and Discord expose almost nothing (a window with no children),
+    /// which is why a plain traverse of Slack returns only the menu bar plus a
+    /// stray field. Cocoa apps ignore the attribute harmlessly, so this is safe
+    /// to apply to every pid. Idempotent per pid — the first call sets the flag,
+    /// the tree then builds asynchronously (see `waitForAccessibilityTree`).
+    @discardableResult
+    func prepareForAccessibility(pid: Int32) -> Bool {
+        lock.lock()
+        if preparedPids.contains(pid) {
+            lock.unlock()
+            return false
+        }
+        preparedPids.insert(pid)
+        lock.unlock()
+
+        let app = AXUIElementCreateApplication(pid)
+        AXUIElementSetAttributeValue(app, "AXManualAccessibility" as CFString, true as CFTypeRef)
+        return true
+    }
+
+    // MARK: Snapshot lifecycle
+
+    func beginNewSnapshot(pid: Int32) -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        currentSnapshotId += 1
+        let snapId = currentSnapshotId
+        snapshots[snapId] = [:]
+        snapshotPids[snapId] = pid
+        snapshotOrder.append(snapId)
+        while snapshotOrder.count > Self.maxSnapshotsToRetain {
+            let removed = snapshotOrder.removeFirst()
+            snapshots.removeValue(forKey: removed)
+            snapshotPids.removeValue(forKey: removed)
+        }
+        return snapId
+    }
+
+    fileprivate func store(snapshotId: Int, elementId: String, cached: CachedElement) {
+        lock.lock()
+        defer { lock.unlock() }
+        snapshots[snapshotId, default: [:]][elementId] = cached
+    }
+
+    // MARK: Lookup
+
+    /// Look up a cached element by its snapshot-scoped string id.
+    /// Distinguishes between malformed, stale, removed, and found.
+    func lookup(id: String) -> ElementLookup {
+        lock.lock()
+        defer { lock.unlock() }
+
+        guard let parsed = SnapshotIdFormat.parse(id) else {
+            return .malformed(id: id)
+        }
+
+        guard snapshots[parsed.snapshot] != nil else {
+            return .stale(requestedSnapshot: parsed.snapshot, currentSnapshot: currentSnapshotId)
+        }
+
+        if let element = snapshots[parsed.snapshot]?[id] {
+            return .found(element)
+        }
+        return .removed(id: id)
+    }
+
+    /// Look up an element's pid from its id. Used for delta computation.
+    func pid(for id: String) -> Int32? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let parsed = SnapshotIdFormat.parse(id) else { return nil }
+        return snapshotPids[parsed.snapshot]
+    }
+
+    /// Returns the most-recently traversed pid (for annotated screenshots, etc.)
+    func mostRecentPid() -> Int32? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let last = snapshotOrder.last else { return nil }
+        return snapshotPids[last]
+    }
+
+    /// Returns elements from the most recent snapshot for a given pid.
+    /// Used by annotated screenshots.
+    func mostRecentElements(for pid: Int32) -> [(id: String, frame: CGRect)] {
+        lock.lock()
+        let snapshotId: Int? =
+            snapshotOrder.reversed().first { snapshotPids[$0] == pid }
+        let cached = snapshotId.flatMap { snapshots[$0] } ?? [:]
+        lock.unlock()
+
+        var results: [(id: String, frame: CGRect)] = []
+        for (id, element) in cached {
+            if let frame = element.getCurrentFrame(), frame.width > 0, frame.height > 0 {
+                results.append((id, frame))
+            }
+        }
+        return results
+    }
+
+    // MARK: Role normalization
+
+    /// Normalize a role name to the canonical short form (lowercase, no "ax" prefix).
+    /// Accepts "AXButton", "Button", "button" - all become "button".
+    static func normalizeRole(_ raw: String) -> String {
+        let lower = raw.lowercased()
+        if lower.hasPrefix("ax") {
+            return String(lower.dropFirst(2))
+        }
+        return lower
+    }
+
+    /// Interactive roles (canonical short form) that agents typically want to interact with.
+    /// Broadened to include containers/content roles that frequently matter on
+    /// web pages and rich apps.
+    private static let interactiveRoles: Set<String> = [
+        "button",
+        "link",
+        "textfield",
+        "textarea",
+        "checkbox",
+        "radiobutton",
+        "popupbutton",
+        "combobox",
+        "slider",
+        "menuitem",
+        "menubutton",
+        "menubaritem",
+        "tab",
+        "tabgroup",
+        "disclosuretriangle",
+        "incrementor",
+        "colorwell",
+        "searchfield",
+        "securetextfield",
+        "row",
+        "cell",
+        "outline",
+        "image",
+        "heading",
+        "webarea",
+        "staticrtext",
+    ]
+
+    // MARK: Traversal entry point
+
+    /// Traverse the accessibility tree for a given PID with filtering and optional search.
+    /// Begins a new snapshot. Element IDs in the result are valid until the cache
+    /// rotates them out (after the next snapshot beyond the retention limit).
+    func traverse(filter: ElementFilter, search: SearchOptions? = nil) -> TraversalResult {
+        // Ensure Chromium/Electron targets have been asked to expose their tree.
+        // Idempotent and cheap after the first call; covers apps reached via a
+        // bare capture (not just `open`). The tree may still be settling on the
+        // very first traverse after this flips — the loop's next perceive picks
+        // up the populated tree.
+        prepareForAccessibility(pid: filter.pid)
+
+        let snapshotId = beginNewSnapshot(pid: filter.pid)
+
+        let app = AXUIElementCreateApplication(filter.pid)
+        let appName = getAppName(for: filter.pid) ?? "Unknown"
+
+        let maxDepth = filter.maxDepth ?? 20
+        let maxElements: Int = {
+            if let lim = search?.limit { return lim }
+            return filter.maxElements ?? 150
+        }()
+        let interactiveOnly = filter.interactiveOnly ?? true
+        let allowedRoles: Set<String>? = filter.roles.map { Set($0.map(Self.normalizeRole)) }
+        let textNeedle = search?.text?.lowercased()
+        let enabledOnly = search?.enabledOnly ?? false
+
+        // Identify focused window and focused element once
+        let focusedElement: AXUIElement? = {
+            var ref: CFTypeRef?
+            let status = AXUIElementCopyAttributeValue(
+                app,
+                kAXFocusedUIElementAttribute as CFString,
+                &ref
+            )
+            guard status == .success else { return nil }
+            return axElement(ref)
+        }()
+
+        let focusedWindowElement: AXUIElement? = {
+            var ref: CFTypeRef?
+            let status = AXUIElementCopyAttributeValue(
+                app,
+                kAXFocusedWindowAttribute as CFString,
+                &ref
+            )
+            guard status == .success else { return nil }
+            return axElement(ref)
+        }()
+
+        // Enumerate and order windows (focused first)
+        var windowSummaries: [WindowSummary] = []
+        var orderedWindows: [(element: AXUIElement, summary: WindowSummary)] = []
+        if let allWindows = getAttribute(app, kAXWindowsAttribute) as? [AXUIElement] {
+            for (idx, windowElement) in allWindows.enumerated() {
+                let title = getAttribute(windowElement, kAXTitleAttribute) as? String
+                let frame = getFrame(windowElement) ?? .zero
+                let isFocused: Bool =
+                    focusedWindowElement.map { CFEqual($0, windowElement) } ?? false
+                let summary = WindowSummary(
+                    id: idx + 1,
+                    title: title,
+                    focused: isFocused,
+                    x: Int(frame.origin.x),
+                    y: Int(frame.origin.y),
+                    w: Int(frame.size.width),
+                    h: Int(frame.size.height)
+                )
+                windowSummaries.append(summary)
+                orderedWindows.append((windowElement, summary))
+            }
+        }
+        orderedWindows.sort { lhs, rhs in
+            if lhs.summary.focused != rhs.summary.focused { return lhs.summary.focused }
+            return lhs.summary.id < rhs.summary.id
+        }
+        let focusedWindowTitle: String? = orderedWindows.first(where: { $0.summary.focused })?
+            .summary.title
+
+        // Optionally restrict to a single window for find_elements
+        let restrictWindowId = search?.windowId
+
+        var elements: [ElementInfo] = []
+        var nextElementNum: Int = 1
+        var truncated = false
+
+        for window in orderedWindows {
+            if elements.count >= maxElements {
+                truncated = true
+                break
+            }
+            if let restrict = restrictWindowId, window.summary.id != restrict {
+                continue
+            }
+            let basePath: String = {
+                if let title = window.summary.title, !title.isEmpty {
+                    return "Window[\(title)]"
+                }
+                return "Window"
+            }()
+            traverseElement(
+                element: window.element,
+                depth: 0,
+                maxDepth: maxDepth,
+                maxElements: maxElements,
+                interactiveOnly: interactiveOnly,
+                allowedRoles: allowedRoles,
+                textNeedle: textNeedle,
+                enabledOnly: enabledOnly,
+                windowId: window.summary.id,
+                path: basePath,
+                focusedElement: focusedElement,
+                snapshotId: snapshotId,
+                pid: filter.pid,
+                nextElementNum: &nextElementNum,
+                elements: &elements,
+                truncated: &truncated
+            )
+        }
+
+        // Walk the menu bar last (skip if focusedWindowOnly or restricted to a window)
+        let walkMenuBar =
+            !(filter.focusedWindowOnly ?? false) && restrictWindowId == nil
+        if walkMenuBar, elements.count < maxElements,
+            let menuBar = axElement(getAttribute(app, kAXMenuBarAttribute))
+        {
+            traverseElement(
+                element: menuBar,
+                depth: 0,
+                maxDepth: maxDepth,
+                maxElements: maxElements,
+                interactiveOnly: interactiveOnly,
+                allowedRoles: allowedRoles,
+                textNeedle: textNeedle,
+                enabledOnly: enabledOnly,
+                windowId: nil,
+                path: "MenuBar",
+                focusedElement: focusedElement,
+                snapshotId: snapshotId,
+                pid: filter.pid,
+                nextElementNum: &nextElementNum,
+                elements: &elements,
+                truncated: &truncated
+            )
+        }
+
+        return TraversalResult(
+            snapshotId: snapshotId,
+            pid: filter.pid,
+            app: appName,
+            focusedWindow: focusedWindowTitle,
+            elementCount: elements.count,
+            truncated: truncated,
+            windows: windowSummaries,
+            elements: elements
+        )
+    }
+
+    // MARK: Recursive traversal
+
+    private func traverseElement(
+        element: AXUIElement,
+        depth: Int,
+        maxDepth: Int,
+        maxElements: Int,
+        interactiveOnly: Bool,
+        allowedRoles: Set<String>?,
+        textNeedle: String?,
+        enabledOnly: Bool,
+        windowId: Int?,
+        path: String,
+        focusedElement: AXUIElement?,
+        snapshotId: Int,
+        pid: Int32,
+        nextElementNum: inout Int,
+        elements: inout [ElementInfo],
+        truncated: inout Bool
+    ) {
+        if depth > maxDepth { return }
+        if elements.count >= maxElements {
+            truncated = true
+            return
+        }
+
+        guard let rawRole = getAttribute(element, kAXRoleAttribute) as? String else { return }
+        let normalizedRole = Self.normalizeRole(rawRole)
+
+        let isInteractive = Self.interactiveRoles.contains(normalizedRole)
+        let matchesRoleFilter = allowedRoles == nil || allowedRoles!.contains(normalizedRole)
+
+        // Build label cascade (more thorough than before).
+        let title = getAttribute(element, kAXTitleAttribute) as? String
+        let description = getAttribute(element, kAXDescriptionAttribute) as? String
+        let help = getAttribute(element, kAXHelpAttribute) as? String
+        let labelValue = getAttribute(element, "AXLabelValue") as? String
+        let pairedTitleValue: String? = {
+            if let titleUI = axElement(getAttribute(element, "AXTitleUIElement")) {
+                return getAttribute(titleUI, kAXValueAttribute) as? String
+                    ?? getAttribute(titleUI, kAXTitleAttribute) as? String
+            }
+            return nil
+        }()
+        let label =
+            nonEmpty(title) ?? nonEmpty(description) ?? nonEmpty(labelValue)
+            ?? nonEmpty(pairedTitleValue) ?? nonEmpty(help)
+
+        let roleDescription = nonEmpty(getAttribute(element, kAXRoleDescriptionAttribute) as? String)
+        let value = stringifyValue(getAttribute(element, kAXValueAttribute))
+        let placeholder = nonEmpty(getAttribute(element, kAXPlaceholderValueAttribute) as? String)
+
+        let actions = getSupportedActions(element)
+        let enabled = (getAttribute(element, kAXEnabledAttribute) as? Bool) ?? true
+
+        // Does this element have any meaningful content for the agent to act on?
+        let hasContent =
+            label != nil || value != nil || placeholder != nil || !actions.isEmpty
+            || roleDescription != nil
+
+        // Inclusion gate:
+        // - role filter must match
+        // - if interactiveOnly: must be in the interactive set OR have actions
+        // - must have content the agent can use to identify it
+        // - if enabledOnly (search): must be enabled
+        // - if textNeedle (search): label/value/placeholder/roleDescription must contain it
+        let passesInteractive = !interactiveOnly || isInteractive || !actions.isEmpty
+        let passesEnabled = !enabledOnly || enabled
+        let passesText: Bool = {
+            guard let needle = textNeedle else { return true }
+            let candidates: [String?] = [label, value, placeholder, roleDescription]
+            for c in candidates {
+                if let c = c, c.lowercased().contains(needle) { return true }
+            }
+            return false
+        }()
+
+        if matchesRoleFilter && passesInteractive && hasContent && passesEnabled && passesText {
+            if let frame = getFrame(element), frame.width > 0, frame.height > 0 {
+                let elementNum = nextElementNum
+                nextElementNum += 1
+                let elementId = SnapshotIdFormat.format(snapshot: snapshotId, element: elementNum)
+
+                let cached = CachedElement(
+                    axElement: element,
+                    role: rawRole,
+                    supportedActions: actions,
+                    pid: pid
+                )
+                store(snapshotId: snapshotId, elementId: elementId, cached: cached)
+
+                let isFocused = focusedElement.map { CFEqual($0, element) } ?? false
+                let segmentLabel = label ?? value ?? placeholder
+                let nextPath: String = {
+                    let segment: String
+                    if let segmentLabel = segmentLabel, !segmentLabel.isEmpty {
+                        let trimmed = segmentLabel.prefix(40)
+                        segment = "\(normalizedRole)[\(trimmed)]"
+                    } else {
+                        segment = normalizedRole
+                    }
+                    return path.isEmpty ? segment : "\(path) > \(segment)"
+                }()
+
+                let info = ElementInfo(
+                    id: elementId,
+                    role: normalizedRole,
+                    roleDescription: roleDescription,
+                    label: label,
+                    value: value,
+                    placeholder: placeholder,
+                    path: nextPath,
+                    windowId: windowId,
+                    focused: isFocused,
+                    enabled: enabled,
+                    x: Int(frame.origin.x),
+                    y: Int(frame.origin.y),
+                    w: Int(frame.width),
+                    h: Int(frame.height),
+                    actions: actions.map { simplifyAction($0) }
+                )
+                elements.append(info)
+            }
+        }
+
+        // Always traverse children even when this element wasn't included so containers
+        // don't hide their interactive descendants.
+        let childPath: String = {
+            let segmentLabel = label ?? value ?? placeholder
+            let segment: String
+            if let segmentLabel = segmentLabel, !segmentLabel.isEmpty {
+                segment = "\(normalizedRole)[\(segmentLabel.prefix(40))]"
+            } else {
+                segment = normalizedRole
+            }
+            return path.isEmpty ? segment : "\(path) > \(segment)"
+        }()
+
+        guard let children = getAttribute(element, kAXChildrenAttribute) as? [AXUIElement] else {
+            return
+        }
+
+        for child in children {
+            if elements.count >= maxElements {
+                truncated = true
+                break
+            }
+            traverseElement(
+                element: child,
+                depth: depth + 1,
+                maxDepth: maxDepth,
+                maxElements: maxElements,
+                interactiveOnly: interactiveOnly,
+                allowedRoles: allowedRoles,
+                textNeedle: textNeedle,
+                enabledOnly: enabledOnly,
+                windowId: windowId,
+                path: childPath,
+                focusedElement: focusedElement,
+                snapshotId: snapshotId,
+                pid: pid,
+                nextElementNum: &nextElementNum,
+                elements: &elements,
+                truncated: &truncated
+            )
+        }
+    }
+
+    // MARK: Attribute helpers
+
+    private func getAttribute(_ element: AXUIElement, _ attribute: String) -> CFTypeRef? {
+        var value: CFTypeRef?
+        let result = AXUIElementCopyAttributeValue(element, attribute as CFString, &value)
+        return result == .success ? value : nil
+    }
+
+    private func getFrame(_ element: AXUIElement) -> CGRect? {
+        var positionValue: CFTypeRef?
+        var sizeValue: CFTypeRef?
+
+        guard
+            AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &positionValue)
+                == .success,
+            AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString, &sizeValue) == .success
+        else {
+            return nil
+        }
+
+        var position = CGPoint.zero
+        var size = CGSize.zero
+
+        if let axPos = axValue(positionValue) {
+            AXValueGetValue(axPos, .cgPoint, &position)
+        }
+        if let axSize = axValue(sizeValue) {
+            AXValueGetValue(axSize, .cgSize, &size)
+        }
+
+        return CGRect(origin: position, size: size)
+    }
+
+    private func getSupportedActions(_ element: AXUIElement) -> [String] {
+        var actionsRef: CFArray?
+        guard AXUIElementCopyActionNames(element, &actionsRef) == .success,
+            let actions = actionsRef as? [String]
+        else {
+            return []
+        }
+
+        let usefulActions: Set<String> = [
+            "AXPress", "AXCancel", "AXConfirm", "AXDecrement", "AXIncrement",
+            "AXPick", "AXShowMenu",
+        ]
+
+        return actions.filter { usefulActions.contains($0) }
+    }
+
+    private func simplifyAction(_ action: String) -> String {
+        if action.hasPrefix("AX") {
+            return String(action.dropFirst(2)).lowercased()
+        }
+        return action.lowercased()
+    }
+
+    private func getAppName(for pid: Int32) -> String? {
+        let app = NSRunningApplication(processIdentifier: pid)
+        return app?.localizedName
+    }
+
+    private func nonEmpty(_ s: String?) -> String? {
+        guard let s = s else { return nil }
+        let trimmed = s.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    /// Stringify an AX value attribute that may be a string, number, or bool.
+    private func stringifyValue(_ value: CFTypeRef?) -> String? {
+        guard let value = value else { return nil }
+        if let s = value as? String {
+            let trimmed = s.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        }
+        if let b = value as? Bool {
+            return b ? "true" : "false"
+        }
+        if let n = value as? NSNumber {
+            return n.stringValue
+        }
+        return nil
+    }
+}
+
+// MARK: - Focus Delta
+
+/// A small "what changed" record returned by action tools so the agent can
+/// decide whether to re-observe.
+struct FocusDelta: Codable, Sendable {
+    let focusedWindow: String?
+    let focusedElement: FocusedElementSummary?
+}
+
+struct FocusedElementSummary: Codable, Sendable {
+    let role: String
+    let label: String?
+    let value: String?
+}
+
+/// Capture the current focused window title and focused element for a given pid.
+/// Returns nil if pid is unknown or accessibility query fails.
+func computeFocusDelta(pid: Int32) -> FocusDelta? {
+    let app = AXUIElementCreateApplication(pid)
+
+    var focusedWindowTitle: String?
+    var winRef: CFTypeRef?
+    if AXUIElementCopyAttributeValue(app, kAXFocusedWindowAttribute as CFString, &winRef)
+        == .success,
+        let win = axElement(winRef)
+    {
+        var titleRef: CFTypeRef?
+        if AXUIElementCopyAttributeValue(win, kAXTitleAttribute as CFString, &titleRef)
+            == .success
+        {
+            focusedWindowTitle = titleRef as? String
+        }
+    }
+
+    var focused: FocusedElementSummary?
+    var elRef: CFTypeRef?
+    if AXUIElementCopyAttributeValue(app, kAXFocusedUIElementAttribute as CFString, &elRef)
+        == .success,
+        let element = axElement(elRef)
+    {
+        var roleRef: CFTypeRef?
+        var titleRef: CFTypeRef?
+        var valueRef: CFTypeRef?
+        AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &roleRef)
+        AXUIElementCopyAttributeValue(element, kAXTitleAttribute as CFString, &titleRef)
+        AXUIElementCopyAttributeValue(element, kAXValueAttribute as CFString, &valueRef)
+        let rawRole = (roleRef as? String) ?? "unknown"
+        let role = AccessibilityManager.normalizeRole(rawRole)
+        let label = (titleRef as? String).flatMap { $0.isEmpty ? nil : $0 }
+        let value: String? = {
+            if let s = valueRef as? String { return s.isEmpty ? nil : s }
+            return nil
+        }()
+        focused = FocusedElementSummary(role: role, label: label, value: value)
+    }
+
+    if focusedWindowTitle == nil && focused == nil { return nil }
+    return FocusDelta(focusedWindow: focusedWindowTitle, focusedElement: focused)
+}
+
+// MARK: - App Opener
+
+struct MacAppInfo: Encodable, Sendable {
+    let pid: Int32
+    let bundleId: String?
+    let name: String
+}
+
+struct MacAppError: Error, Sendable {
+    let message: String
+}
+
+/// Launch (if needed) and prepare an application for backgrounded driving.
+///
+/// The default mode is `background: true` — we never call `activate()`,
+/// never set `config.activates = true`, and never bring the app's window
+/// across Spaces. The user's frontmost app and cursor are untouched.
+///
+/// Pass `background: false` only when the agent genuinely needs the user
+/// to look at the target window (e.g. an interactive demo capture).
+func openApplication(
+    identifier: String,
+    background: Bool = true
+) async -> Result<MacAppInfo, MacAppError> {
+    let workspace = NSWorkspace.shared
+    let runningApps = workspace.runningApplications
+    let lowerId = identifier.lowercased()
+
+    if let app = runningApps.first(where: {
+        $0.localizedName?.lowercased() == lowerId || $0.bundleIdentifier?.lowercased() == lowerId
+    }) {
+        if !background {
+            app.activate()
+        }
+        // Flip Chromium/Electron into exposing its full tree BEFORE we wait, so
+        // the readiness poll can block until that tree actually populates.
+        AccessibilityManager.shared.prepareForAccessibility(pid: app.processIdentifier)
+        await waitUntilReady(app: app, requireFrontmost: !background)
+        return .success(
+            MacAppInfo(
+                pid: app.processIdentifier,
+                bundleId: app.bundleIdentifier,
+                name: app.localizedName ?? identifier
+            )
+        )
+    }
+
+    do {
+        let app = try await launchApplication(
+            identifier: identifier,
+            workspace: workspace,
+            background: background
+        )
+        AccessibilityManager.shared.prepareForAccessibility(pid: app.processIdentifier)
+        await waitUntilReady(app: app, isNewLaunch: true, requireFrontmost: !background)
+        return .success(
+            MacAppInfo(
+                pid: app.processIdentifier,
+                bundleId: app.bundleIdentifier,
+                name: app.localizedName ?? identifier
+            )
+        )
+    } catch {
+        return .failure(
+            MacAppError(message: "Failed to open application: \(error.localizedDescription)")
+        )
+    }
+}
+
+private func waitUntilReady(
+    app: NSRunningApplication,
+    isNewLaunch: Bool = false,
+    requireFrontmost: Bool = false,
+    timeoutSeconds: Double = 5.0
+) async {
+    let pollInterval: UInt64 = 100_000_000
+    let maxAttempts = Int(timeoutSeconds * 10)
+
+    let initialDelay: UInt64 = isNewLaunch ? 500_000_000 : 200_000_000
+    try? await Task.sleep(nanoseconds: initialDelay)
+
+    for _ in 0 ..< maxAttempts {
+        // In background mode we only need the AX tree to be queryable; the app
+        // can stay hidden, occluded, or behind another Space.
+        let frontmostOK = !requireFrontmost || app.isActive
+
+        let axApp = AXUIElementCreateApplication(app.processIdentifier)
+        var windowValue: CFTypeRef?
+        let windowResult = AXUIElementCopyAttributeValue(
+            axApp,
+            kAXWindowsAttribute as CFString,
+            &windowValue
+        )
+        let windows = (windowValue as? [AXUIElement]) ?? []
+        let hasWindow = windowResult == .success && !windows.isEmpty
+        // Chromium/Electron builds its subtree asynchronously once
+        // `AXManualAccessibility` is set, so a window can exist while its
+        // children are still empty. Wait until at least one window actually has
+        // children, otherwise the first capture is just the menu bar. Cocoa apps
+        // populate immediately, so this only adds latency for Electron's build.
+        let treePopulated = windows.contains { axElementHasChildren($0) }
+
+        if frontmostOK && hasWindow && treePopulated {
+            try? await Task.sleep(nanoseconds: 200_000_000)
+            return
+        }
+
+        try? await Task.sleep(nanoseconds: pollInterval)
+    }
+}
+
+/// Whether an AX element reports at least one child. Used to detect that an
+/// Electron window's tree has finished building after `AXManualAccessibility`.
+private func axElementHasChildren(_ element: AXUIElement) -> Bool {
+    var childrenValue: CFTypeRef?
+    guard
+        AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &childrenValue)
+            == .success,
+        let children = childrenValue as? [AXUIElement]
+    else {
+        return false
+    }
+    return !children.isEmpty
+}
+
+private func launchApplication(
+    identifier: String,
+    workspace: NSWorkspace,
+    background: Bool
+) async throws -> NSRunningApplication {
+    let config = NSWorkspace.OpenConfiguration()
+    config.activates = !background
+    // Background launches should not pollute the user's recent files menu
+    // or pull the dock's attention. Cooperative; macOS may still ignore
+    // these on certain bundle types.
+    config.addsToRecentItems = !background
+    config.hides = background
+
+    if let url = workspace.urlForApplication(withBundleIdentifier: identifier) {
+        return try await workspace.openApplication(at: url, configuration: config)
+    }
+
+    let searchPaths = [
+        "/Applications/\(identifier).app",
+        "/System/Applications/\(identifier).app",
+        "/System/Applications/Utilities/\(identifier).app",
+        NSHomeDirectory() + "/Applications/\(identifier).app",
+    ]
+
+    for path in searchPaths where FileManager.default.fileExists(atPath: path) {
+        return try await workspace.openApplication(
+            at: URL(fileURLWithPath: path),
+            configuration: config
+        )
+    }
+
+    throw MacAppError(message: "Application not found: \(identifier)")
+}
+
+// MARK: - Window/App Listing
+//
+// These exist so a planning agent can target a specific app and window
+// without ever bringing it forward. `listRunningApps()` is a snapshot of
+// what's running; `listWindowsForPid(_:)` is per-app and includes the
+// on-screen `windowId` so callers can pass it straight to a screenshot or
+// click.
+
+struct AppListing: Encodable, Sendable {
+    let pid: Int32
+    let bundleId: String?
+    let name: String
+    let active: Bool
+    let hidden: Bool
+}
+
+struct WindowListing: Encodable, Sendable {
+    let windowId: Int
+    let title: String?
+    let focused: Bool
+    let minimized: Bool
+    let x: Int
+    let y: Int
+    let w: Int
+    let h: Int
+}
+
+struct AppListResult: Encodable, Sendable {
+    let apps: [AppListing]
+}
+
+struct WindowListResult: Encodable, Sendable {
+    let pid: Int32
+    let app: String
+    let windows: [WindowListing]
+}
+
+func listRunningApps() -> AppListResult {
+    let running = NSWorkspace.shared.runningApplications
+    let apps: [AppListing] = running.compactMap { app in
+        // Only surface "regular" GUI apps. Background-only and UI-element
+        // processes can't be driven through AX anyway.
+        guard app.activationPolicy == .regular else { return nil }
+        return AppListing(
+            pid: app.processIdentifier,
+            bundleId: app.bundleIdentifier,
+            name: app.localizedName ?? app.bundleIdentifier ?? "Unknown",
+            active: app.isActive,
+            hidden: app.isHidden
+        )
+    }
+    return AppListResult(apps: apps.sorted { ($0.name) < ($1.name) })
+}
+
+func listWindowsForPid(_ pid: Int32) -> WindowListResult {
+    let appName = NSRunningApplication(processIdentifier: pid)?.localizedName ?? "Unknown"
+    let app = AXUIElementCreateApplication(pid)
+
+    // Focused window for the `focused: true` flag.
+    var focusedRef: CFTypeRef?
+    AXUIElementCopyAttributeValue(app, kAXFocusedWindowAttribute as CFString, &focusedRef)
+    let focusedWindow: AXUIElement? = axElement(focusedRef)
+
+    var windowsRef: CFTypeRef?
+    guard
+        AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &windowsRef) == .success,
+        let axWindows = windowsRef as? [AXUIElement]
+    else {
+        return WindowListResult(pid: pid, app: appName, windows: [])
+    }
+
+    // Map AX windows to CGWindowList entries by title+pid+bounds intersection
+    // so we can return the real CGWindowID, which is what every other path
+    // (screenshot, focus-without-raise) actually expects.
+    let cgInfo: [[CFString: Any]] =
+        (CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
+            as? [[CFString: Any]]) ?? []
+    let cgForPid = cgInfo.filter { ($0[kCGWindowOwnerPID] as? Int32) == pid }
+
+    var listings: [WindowListing] = []
+    for (idx, win) in axWindows.enumerated() {
+        var titleRef: CFTypeRef?
+        AXUIElementCopyAttributeValue(win, kAXTitleAttribute as CFString, &titleRef)
+        let title = titleRef as? String
+
+        var posRef: CFTypeRef?
+        var sizeRef: CFTypeRef?
+        AXUIElementCopyAttributeValue(win, kAXPositionAttribute as CFString, &posRef)
+        AXUIElementCopyAttributeValue(win, kAXSizeAttribute as CFString, &sizeRef)
+        var pos = CGPoint.zero
+        var size = CGSize.zero
+        if let axP = axValue(posRef) { AXValueGetValue(axP, .cgPoint, &pos) }
+        if let axS = axValue(sizeRef) { AXValueGetValue(axS, .cgSize, &size) }
+
+        var minimizedRef: CFTypeRef?
+        AXUIElementCopyAttributeValue(win, kAXMinimizedAttribute as CFString, &minimizedRef)
+        let minimized = (minimizedRef as? Bool) ?? false
+
+        let focused = focusedWindow.map { CFEqual($0, win) } ?? false
+
+        // Try to align with a CGWindowID from the running window list. Fall back
+        // to the AX index + 1 (matches the existing `windowId` semantics in
+        // `WindowSummary` and `find_elements`'s windowId arg) when we can't
+        // find an unambiguous match.
+        let cgID: Int = {
+            if let match = cgForPid.first(where: { entry in
+                guard let bounds = entry[kCGWindowBounds] as? [String: Any],
+                    let bx = bounds["X"] as? Double,
+                    let by = bounds["Y"] as? Double,
+                    let bw = bounds["Width"] as? Double,
+                    let bh = bounds["Height"] as? Double
+                else { return false }
+                // Allow a few pixels of slop — AX position can disagree with
+                // CGWindow bounds by the window-server stroke width.
+                return abs(bx - pos.x) < 4 && abs(by - pos.y) < 4
+                    && abs(bw - size.width) < 4 && abs(bh - size.height) < 4
+            }), let n = match[kCGWindowNumber] as? Int {
+                return n
+            }
+            return idx + 1
+        }()
+
+        listings.append(
+            WindowListing(
+                windowId: cgID,
+                title: title,
+                focused: focused,
+                minimized: minimized,
+                x: Int(pos.x),
+                y: Int(pos.y),
+                w: Int(size.width),
+                h: Int(size.height)
+            )
+        )
+    }
+
+    return WindowListResult(pid: pid, app: appName, windows: listings)
+}
+
+// MARK: - Active Window Info
+
+struct MacActiveWindowInfo: Encodable, Sendable {
+    let pid: Int32
+    let app: String
+    let title: String?
+    let x: Int
+    let y: Int
+    let w: Int
+    let h: Int
+}
+
+func getActiveWindow() -> MacActiveWindowInfo? {
+    guard let frontApp = NSWorkspace.shared.frontmostApplication else {
+        return nil
+    }
+
+    let pid = frontApp.processIdentifier
+    let appName = frontApp.localizedName ?? "Unknown"
+
+    let app = AXUIElementCreateApplication(pid)
+
+    var windowRef: CFTypeRef?
+    guard
+        AXUIElementCopyAttributeValue(app, kAXFocusedWindowAttribute as CFString, &windowRef)
+            == .success,
+        let windowElement = axElement(windowRef)
+    else {
+        return MacActiveWindowInfo(pid: pid, app: appName, title: nil, x: 0, y: 0, w: 0, h: 0)
+    }
+
+    var titleRef: CFTypeRef?
+    let title: String?
+    if AXUIElementCopyAttributeValue(windowElement, kAXTitleAttribute as CFString, &titleRef)
+        == .success
+    {
+        title = titleRef as? String
+    } else {
+        title = nil
+    }
+
+    var positionRef: CFTypeRef?
+    var sizeRef: CFTypeRef?
+    var position = CGPoint.zero
+    var size = CGSize.zero
+
+    if AXUIElementCopyAttributeValue(windowElement, kAXPositionAttribute as CFString, &positionRef)
+        == .success,
+        let axPos = axValue(positionRef)
+    {
+        AXValueGetValue(axPos, .cgPoint, &position)
+    }
+
+    if AXUIElementCopyAttributeValue(windowElement, kAXSizeAttribute as CFString, &sizeRef)
+        == .success,
+        let axSize = axValue(sizeRef)
+    {
+        AXValueGetValue(axSize, .cgSize, &size)
+    }
+
+    return MacActiveWindowInfo(
+        pid: pid,
+        app: appName,
+        title: title,
+        x: Int(position.x),
+        y: Int(position.y),
+        w: Int(size.width),
+        h: Int(size.height)
+    )
+}

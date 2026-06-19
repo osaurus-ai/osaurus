@@ -1,0 +1,18 @@
+{
+  "id": "computer_use.ambiguous-click-confirms",
+  "domain": "computer_use",
+  "label": "computer use • ambiguous click defaults stricter",
+  "query": "Click (no resolvable target).",
+  "notes": "A click with no resolved role, label, or describe could do anything, so the classifier escalates navigate -> edit and balanced confirms rather than auto-running blind.",
+  "fixtures": {},
+  "expect": {
+    "computerUse": {
+      "verb": "click",
+      "describe": "",
+      "appName": "Notes",
+      "preset": "balanced",
+      "expectEffect": "edit",
+      "expectDisposition": "confirm"
+    }
+  }
+}

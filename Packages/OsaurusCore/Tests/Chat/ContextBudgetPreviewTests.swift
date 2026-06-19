@@ -41,6 +41,7 @@ struct ContextBudgetPreviewTests {
         toolSelectionMode: ToolSelectionMode? = nil,
         manualToolNames: [String]? = nil,
         autonomous: Bool = false,
+        computerUseEnabled: Bool = false,
         body: @MainActor @Sendable (UUID) async -> Void
     ) async {
         await SandboxTestLock.runWithStoragePaths {
@@ -79,6 +80,8 @@ struct ContextBudgetPreviewTests {
                 try? FileManager.default.removeItem(at: root)
             }
 
+            var settings = AgentSettings.defaultDisabled
+            settings.computerUseEnabled = computerUseEnabled
             let agent = Agent(
                 name: "PreviewTestAgent-\(UUID().uuidString.prefix(6))",
                 systemPrompt: "Test identity",
@@ -87,7 +90,8 @@ struct ContextBudgetPreviewTests {
                 toolSelectionMode: toolSelectionMode,
                 manualToolNames: manualToolNames,
                 toolsEnabled: !toolsDisabled,
-                memoryEnabled: !memoryDisabled
+                memoryEnabled: !memoryDisabled,
+                settings: settings
             )
             AgentManager.shared.add(agent)
             await body(agent.id)
@@ -308,6 +312,65 @@ struct ContextBudgetPreviewTests {
             )
             #expect(context.tools.contains { $0.function.name == "todo" })
             #expect(sectionIds(context).contains("agentLoopGuidance"))
+        }
+    }
+
+    // MARK: - Computer Use
+
+    /// The reported gap: enabling Computer Use injected the `computer_use`
+    /// tool (folded into the aggregate `Tools` line) but added no prompt
+    /// section, so the budget popover showed nothing labelled "Computer Use".
+    /// Now an enabled custom agent surfaces a dedicated `computerUse` section
+    /// AND the tool, so the capability is visible in the context list.
+    @Test("preview: computer use enabled surfaces computerUse section + tool")
+    func computerUseEnabled_surfacesSectionAndTool() async {
+        await withAgent(toolSelectionMode: .auto, computerUseEnabled: true) { agentId in
+            let preview = SystemPromptComposer.composePreviewContext(
+                agentId: agentId,
+                executionMode: .none
+            )
+            #expect(sectionIds(preview).contains("computerUse"))
+            #expect(preview.tools.contains { $0.function.name == ComputerUseTool.toolName })
+        }
+    }
+
+    /// Default (disabled) custom agent: no `computer_use` tool, no section —
+    /// the prompt never advertises a capability the agent hasn't opted into.
+    @Test("preview: computer use disabled omits computerUse section + tool")
+    func computerUseDisabled_omitsSectionAndTool() async {
+        await withAgent(toolSelectionMode: .auto, computerUseEnabled: false) { agentId in
+            let preview = SystemPromptComposer.composePreviewContext(
+                agentId: agentId,
+                executionMode: .none
+            )
+            #expect(sectionIds(preview).contains("computerUse") == false)
+            #expect(preview.tools.contains { $0.function.name == ComputerUseTool.toolName } == false)
+        }
+    }
+
+    /// Parity: the section the welcome-screen preview prices is the exact
+    /// one the next real send emits, so the popover can't drift on the
+    /// Computer Use row.
+    @Test("parity: computerUse section matches between preview and composeChatContext")
+    func computerUse_previewMatchesCompose() async {
+        await withAgent(
+            memoryDisabled: true,
+            toolSelectionMode: .auto,
+            computerUseEnabled: true
+        ) { agentId in
+            let preview = SystemPromptComposer.composePreviewContext(
+                agentId: agentId,
+                executionMode: .none,
+                model: "gpt-5"
+            )
+            let real = await SystemPromptComposer.composeChatContext(
+                agentId: agentId,
+                executionMode: .none,
+                model: "gpt-5",
+                query: ""
+            )
+            #expect(sectionIds(preview) == real.manifest.sections.map(\.id))
+            #expect(sectionIds(preview).contains("computerUse"))
         }
     }
 

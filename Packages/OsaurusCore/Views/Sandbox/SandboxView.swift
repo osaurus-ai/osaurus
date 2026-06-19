@@ -7,6 +7,7 @@
 //  and sandbox plugin management (library, import, install) into a single tab.
 //
 
+import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -26,6 +27,9 @@ struct SandboxView: View {
     @State private var showRemoveConfirm = false
     @State private var diagResults: [SandboxManager.DiagnosticResult]?
     @State private var isRunningDiag = false
+    @State private var provisioningReport: SandboxProvisioningReport?
+    @State private var isRunningProvisioningPreflight = false
+    @State private var copiedProvisioningReport = false
     @State private var refreshTask: Task<Void, Never>?
 
     @State private var showProvisionSheet = false
@@ -75,9 +79,11 @@ struct SandboxView: View {
             // The header + content now appear immediately on first frame.
             hasAppeared = true
             needsBridgeMigrationRestart = SandboxBridgeMigrationFlag.needsRestart
+            runProvisioningPreflight()
         }
         .onChange(of: sandboxState.status) { _, _ in
             needsBridgeMigrationRestart = SandboxBridgeMigrationFlag.needsRestart
+            runProvisioningPreflight()
         }
         .onDisappear { stopRefreshLoop() }
         .sheet(isPresented: $showProvisionSheet) {
@@ -133,6 +139,7 @@ private extension SandboxView {
                     if needsBridgeMigrationRestart {
                         bridgeMigrationBanner
                     }
+                    provisioningPreflightCard
                     statusDashboard
                     // Surfaced only while the post-start verifyPlugins
                     // step is active. Self-hides when verify finishes,
@@ -245,34 +252,42 @@ private extension SandboxView {
         if sandboxState.isProvisioning {
             provisioningProgressView
         } else {
-            SettingsEmptyState(
-                icon: "shippingbox",
-                title: L("Set Up Sandbox"),
-                subtitle: L("Run isolated Linux containers for agent plugins and autonomous execution."),
-                examples: [
-                    .init(
-                        icon: "puzzlepiece.extension",
-                        title: L("Sandbox Plugins"),
-                        description: L("Install tools that run inside the VM")
-                    ),
-                    .init(
-                        icon: "terminal",
-                        title: L("Autonomous Exec"),
-                        description: L("Agents run shell commands safely")
-                    ),
-                    .init(
-                        icon: "lock.shield",
-                        title: L("Full Isolation"),
-                        description: L("Separate filesystem per agent")
-                    ),
-                ],
-                primaryAction: .init(
-                    title: L("Set Up Sandbox"),
-                    icon: "shippingbox",
-                    handler: { showProvisionSheet = true }
-                ),
-                hasAppeared: hasAppeared
-            )
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    SettingsEmptyState(
+                        icon: "shippingbox",
+                        title: L("Set Up Sandbox"),
+                        subtitle: L("Run isolated Linux containers for agent plugins and autonomous execution."),
+                        examples: [
+                            .init(
+                                icon: "puzzlepiece.extension",
+                                title: L("Sandbox Plugins"),
+                                description: L("Install tools that run inside the VM")
+                            ),
+                            .init(
+                                icon: "terminal",
+                                title: L("Autonomous Exec"),
+                                description: L("Agents run shell commands safely")
+                            ),
+                            .init(
+                                icon: "lock.shield",
+                                title: L("Full Isolation"),
+                                description: L("Separate filesystem per agent")
+                            ),
+                        ],
+                        primaryAction: .init(
+                            title: L("Set Up Sandbox"),
+                            icon: "shippingbox",
+                            handler: { showProvisionSheet = true }
+                        ),
+                        hasAppeared: hasAppeared
+                    )
+                    .frame(minHeight: 430)
+
+                    provisioningPreflightCard
+                }
+                .padding(24)
+            }
         }
     }
 
@@ -281,6 +296,282 @@ private extension SandboxView {
             provisionError: provisionError,
             onRetry: performProvision
         )
+    }
+}
+
+// MARK: - Provisioning Preflight
+
+private extension SandboxView {
+
+    var provisioningPreflightCard: some View {
+        sectionCard(title: "Provisioning Preflight", icon: "checklist") {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .center, spacing: 10) {
+                    if let report = provisioningReport {
+                        readinessPill(report.overallReadiness)
+                        Text(preflightSummary(report))
+                            .font(.system(size: 11))
+                            .foregroundColor(theme.secondaryText)
+                            .lineLimit(2)
+                    } else {
+                        readinessPill(.unproven)
+                        Text(
+                            "Run preflight to inspect host paths, permissions, and repair suggestions.",
+                            bundle: .module
+                        )
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.secondaryText)
+                        .lineLimit(2)
+                    }
+
+                    Spacer(minLength: 12)
+
+                    Button(action: runProvisioningPreflight) {
+                        HStack(spacing: 6) {
+                            if isRunningProvisioningPreflight {
+                                ProgressView()
+                                    .controlSize(.small)
+                                    .scaleEffect(0.7)
+                                    .frame(width: 12, height: 12)
+                            } else {
+                                Image(systemName: "arrow.clockwise")
+                                    .font(.system(size: 11, weight: .semibold))
+                            }
+                            Text(isRunningProvisioningPreflight ? "Checking" : "Run", bundle: .module)
+                                .font(.system(size: 11, weight: .semibold))
+                        }
+                        .foregroundColor(theme.primaryText)
+                        .padding(.horizontal, 10)
+                        .frame(height: 28)
+                        .background(
+                            RoundedRectangle(cornerRadius: 7)
+                                .fill(theme.inputBackground)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 7)
+                                        .stroke(theme.inputBorder, lineWidth: 1)
+                                )
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(isRunningProvisioningPreflight)
+
+                    Button(action: copyProvisioningReportJSON) {
+                        Label {
+                            Text(copiedProvisioningReport ? "Copied" : "Copy JSON", bundle: .module)
+                        } icon: {
+                            Image(systemName: "doc.on.doc")
+                        }
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(theme.primaryText)
+                        .padding(.horizontal, 10)
+                        .frame(height: 28)
+                        .background(
+                            RoundedRectangle(cornerRadius: 7)
+                                .fill(theme.inputBackground)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 7)
+                                        .stroke(theme.inputBorder, lineWidth: 1)
+                                )
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(provisioningReport == nil)
+                    .localizedHelp("Copy support JSON report")
+                }
+
+                if let report = provisioningReport {
+                    preflightPathList(report)
+                    preflightFindingsList(report)
+                }
+            }
+        }
+    }
+
+    func readinessPill(_ readiness: SandboxProvisioningReadiness) -> some View {
+        HStack(spacing: 6) {
+            Circle()
+                .fill(preflightColor(readiness))
+                .frame(width: 7, height: 7)
+            Text(readiness.label)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(preflightColor(readiness))
+        }
+        .padding(.horizontal, 9)
+        .frame(height: 24)
+        .background(
+            Capsule()
+                .fill(preflightColor(readiness).opacity(0.10))
+                .overlay(Capsule().stroke(preflightColor(readiness).opacity(0.30), lineWidth: 1))
+        )
+    }
+
+    func preflightPathList(_ report: SandboxProvisioningReport) -> some View {
+        let ids: [SandboxProvisioningLocationID] = [
+            .root,
+            .containerWorkspace,
+            .temporaryDirectory,
+            .cacheDirectory,
+        ]
+        let rows = ids.compactMap { id in report.locations.first { $0.id == id } }
+
+        return VStack(spacing: 0) {
+            ForEach(rows) { location in
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Image(systemName: preflightLocationIcon(location.status))
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(preflightLocationColor(location.status))
+                        .frame(width: 14)
+                    Text(location.title)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(theme.tertiaryText)
+                        .frame(width: 130, alignment: .leading)
+                    Text(location.path)
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundColor(theme.secondaryText)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .textSelection(.enabled)
+                    Spacer(minLength: 8)
+                    Text(location.status.rawValue)
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .foregroundColor(preflightLocationColor(location.status))
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+            }
+        }
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(theme.inputBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(theme.inputBorder, lineWidth: 1)
+                )
+        )
+    }
+
+    func preflightFindingsList(_ report: SandboxProvisioningReport) -> some View {
+        let actionable = report.findings
+            .filter { $0.severity == .blocked || $0.severity == .warning || $0.status == .unproven }
+        let visible = Array(actionable.prefix(4))
+        let hiddenCount = max(0, actionable.count - visible.count)
+
+        return VStack(alignment: .leading, spacing: 8) {
+            if visible.isEmpty {
+                HStack(spacing: 8) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(theme.successColor)
+                    Text("No blocking host storage issues found.", bundle: .module)
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.secondaryText)
+                }
+            } else {
+                ForEach(visible) { finding in
+                    preflightFindingRow(finding)
+                }
+                if hiddenCount > 0 {
+                    Text("+\(hiddenCount) more findings in copied report", bundle: .module)
+                        .font(.system(size: 10))
+                        .foregroundColor(theme.tertiaryText)
+                }
+            }
+        }
+    }
+
+    func preflightFindingRow(_ finding: SandboxProvisioningFinding) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: preflightFindingIcon(finding))
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(preflightFindingColor(finding))
+                .frame(width: 14)
+
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(finding.title)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(theme.primaryText)
+                    Text(finding.code.rawValue)
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .foregroundColor(theme.tertiaryText)
+                        .lineLimit(1)
+                }
+                Text(finding.detail)
+                    .font(.system(size: 10))
+                    .foregroundColor(theme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(finding.repairSuggestion)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(preflightFindingColor(finding))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+            }
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(preflightFindingColor(finding).opacity(0.08))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(preflightFindingColor(finding).opacity(0.18), lineWidth: 1)
+                )
+        )
+    }
+
+    func preflightSummary(_ report: SandboxProvisioningReport) -> String {
+        switch report.overallReadiness {
+        case .ready:
+            return "Host paths and permissions are ready for sandbox tooling."
+        case .needsSetup:
+            return "\(report.warningFindings.count) setup finding(s) need attention before tools are fully ready."
+        case .blocked:
+            return "\(report.blockingFindings.count) blocking finding(s) must be fixed before provisioning."
+        case .unproven:
+            return "One or more checks could not be proven; copy the report for support or CI proof."
+        }
+    }
+
+    func preflightColor(_ readiness: SandboxProvisioningReadiness) -> Color {
+        switch readiness {
+        case .ready: theme.successColor
+        case .needsSetup: theme.warningColor
+        case .blocked: theme.errorColor
+        case .unproven: theme.infoColor
+        }
+    }
+
+    func preflightLocationColor(_ status: SandboxProvisioningLocationStatus) -> Color {
+        switch status {
+        case .ready: theme.successColor
+        case .missing, .unproven: theme.warningColor
+        case .wrongType, .notWritable, .notReadable, .emptyFile: theme.errorColor
+        }
+    }
+
+    func preflightLocationIcon(_ status: SandboxProvisioningLocationStatus) -> String {
+        switch status {
+        case .ready: "checkmark.circle.fill"
+        case .missing, .unproven: "exclamationmark.triangle.fill"
+        case .wrongType, .notWritable, .notReadable, .emptyFile: "xmark.octagon.fill"
+        }
+    }
+
+    func preflightFindingColor(_ finding: SandboxProvisioningFinding) -> Color {
+        switch finding.severity {
+        case .ok: theme.successColor
+        case .info: theme.infoColor
+        case .warning: theme.warningColor
+        case .blocked: theme.errorColor
+        }
+    }
+
+    func preflightFindingIcon(_ finding: SandboxProvisioningFinding) -> String {
+        switch finding.severity {
+        case .ok: "checkmark.circle.fill"
+        case .info: "info.circle.fill"
+        case .warning: "exclamationmark.triangle.fill"
+        case .blocked: "xmark.octagon.fill"
+        }
     }
 }
 
@@ -881,8 +1172,10 @@ private extension SandboxView {
             do {
                 try await SandboxManager.shared.provision()
                 refreshInfo()
+                runProvisioningPreflight()
             } catch {
                 provisionError = error.localizedDescription
+                runProvisioningPreflight()
             }
         }
     }
@@ -893,8 +1186,10 @@ private extension SandboxView {
             do {
                 try await SandboxManager.shared.startContainer()
                 refreshInfo()
+                runProvisioningPreflight()
             } catch {
                 actionError = error.localizedDescription
+                runProvisioningPreflight()
             }
         }
     }
@@ -907,8 +1202,10 @@ private extension SandboxView {
                 // `stopContainer` itself clears `State.shared.containerInfo`
                 // so the dashboard tiles go blank on stop without needing
                 // a manual assignment here.
+                runProvisioningPreflight()
             } catch {
                 actionError = error.localizedDescription
+                runProvisioningPreflight()
             }
         }
     }
@@ -919,8 +1216,10 @@ private extension SandboxView {
             do {
                 try await SandboxManager.shared.resetContainer()
                 refreshInfo()
+                runProvisioningPreflight()
             } catch {
                 actionError = error.localizedDescription
+                runProvisioningPreflight()
             }
         }
     }
@@ -932,8 +1231,10 @@ private extension SandboxView {
                 try await SandboxManager.shared.removeContainer()
                 // `removeContainer` → `stopContainer` clears the published
                 // metrics, so no manual reset needed here.
+                runProvisioningPreflight()
             } catch {
                 actionError = error.localizedDescription
+                runProvisioningPreflight()
             }
         }
     }
@@ -944,6 +1245,7 @@ private extension SandboxView {
         Task {
             try? await SandboxManager.shared.resetContainer()
             refreshInfo()
+            runProvisioningPreflight()
         }
     }
 
@@ -952,6 +1254,41 @@ private extension SandboxView {
         saving.autoStart = pendingConfig.autoStart
         SandboxConfigurationStore.save(saving)
         config = saving
+        runProvisioningPreflight()
+    }
+
+    func runProvisioningPreflight() {
+        guard !isRunningProvisioningPreflight else { return }
+        isRunningProvisioningPreflight = true
+        Task {
+            let report = await Task.detached(priority: .userInitiated) {
+                SandboxProvisioningDiagnostics.makeReport()
+            }.value
+            await MainActor.run {
+                provisioningReport = report
+                isRunningProvisioningPreflight = false
+                copiedProvisioningReport = false
+            }
+        }
+    }
+
+    func copyProvisioningReportJSON() {
+        guard let report = provisioningReport else { return }
+        let reportText = (try? report.jsonString()) ?? report.plainTextReport
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(reportText, forType: .string)
+
+        withAnimation(.easeInOut(duration: 0.2)) {
+            copiedProvisioningReport = true
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2))
+            if !Task.isCancelled {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    copiedProvisioningReport = false
+                }
+            }
+        }
     }
 
     func refreshInfo() {

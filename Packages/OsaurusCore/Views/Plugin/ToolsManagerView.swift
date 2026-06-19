@@ -36,6 +36,10 @@ struct ToolsManagerView: View {
     /// Precomputed once per refresh so tool rows never call
     /// `ToolRegistry.availability(forTool:)` during SwiftUI layout.
     @State private var availabilityCache: [String: ToolAvailability] = [:]
+    @State private var exposureDiagnostic: ToolExposureDiagnostic?
+    @State private var exposureSourceFilter: ToolExposureSourceFilter = .all
+    @State private var exposureStateFilter: ToolExposureStateFilter = .all
+    @State private var exposureExportError: String?
 
     // Cached filtered results
     @State private var installedPluginsWithTools: [(plugin: PluginState, tools: [ToolRegistry.ToolEntry])] = []
@@ -105,6 +109,23 @@ struct ToolsManagerView: View {
             remoteProviderCount = providerManager.configuration.providers.count
             reload()
         }
+        .alert(
+            Text("Export Failed", bundle: .module),
+            isPresented: Binding(
+                get: { exposureExportError != nil },
+                set: { if !$0 { exposureExportError = nil } }
+            )
+        ) {
+            Button(role: .cancel) {
+                exposureExportError = nil
+            } label: {
+                Text("OK", bundle: .module)
+            }
+        } message: {
+            if let error = exposureExportError {
+                Text(error)
+            }
+        }
     }
 
     // MARK: - Header Bar
@@ -161,6 +182,22 @@ struct ToolsManagerView: View {
                 let plugins = installedPluginsWithTools
                 let remoteTools = remoteProviderTools
                 let runtimeTools = runtimeManagedToolEntries
+                let exposureRows = filteredExposureRows
+
+                if let exposureDiagnostic {
+                    ToolExposureControlCenter(
+                        diagnostic: exposureDiagnostic,
+                        rows: exposureRows,
+                        sourceFilter: $exposureSourceFilter,
+                        stateFilter: $exposureStateFilter,
+                        toolEntriesByName: Dictionary(
+                            uniqueKeysWithValues: toolEntries.map { ($0.name, $0) }
+                        ),
+                        policyInfoCache: policyInfoCache,
+                        onExport: exportExposureReport,
+                        onChange: { reload() }
+                    )
+                }
 
                 if runtimeTools.isEmpty && plugins.isEmpty && remoteTools.isEmpty {
                     emptyState(
@@ -395,6 +432,17 @@ struct ToolsManagerView: View {
             }
         }
         pluginsWithMissingPermissionsCount = permissionCount
+
+        exposureDiagnostic = await ToolIndexService.shared.exposureSnapshot()
+    }
+
+    private var filteredExposureRows: [ToolExposureDiagnostic.Row] {
+        guard let exposureDiagnostic else { return [] }
+        return exposureDiagnostic.filteredRows(
+            query: searchText,
+            source: exposureSourceFilter.source,
+            state: exposureStateFilter.state
+        )
     }
 
     private func runtimeBadge(for entry: ToolRegistry.ToolEntry) -> String {
@@ -420,6 +468,22 @@ struct ToolsManagerView: View {
         Task { await updateFilteredLists() }
     }
 
+    private func exportExposureReport() {
+        guard let exposureDiagnostic else { return }
+        let report = exposureDiagnostic.reporterSafeMarkdown(rows: filteredExposureRows)
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.plainText]
+        panel.nameFieldStringValue = "osaurus-tool-exposure-report.md"
+        Task { @MainActor in
+            guard await panel.beginModal() == .OK, let url = panel.url else { return }
+            do {
+                try report.write(to: url, atomically: true, encoding: .utf8)
+            } catch {
+                exposureExportError = error.localizedDescription
+            }
+        }
+    }
+
     /// Honour one-shot navigation requests routed through
     /// `ManagementStateManager.pendingToolsSubTab` (e.g. the Claude plugin
     /// install summary deep-linking to the Remote MCP tab after OAuth or
@@ -441,6 +505,409 @@ private func cachedAvailability(
     for entry: ToolRegistry.ToolEntry
 ) -> ToolAvailability {
     cache[entry.name] ?? ToolRegistry.shared.availability(forTool: entry.name)
+}
+
+// MARK: - Tool Exposure Control Center
+
+private enum ToolExposureSourceFilter: String, CaseIterable, Identifiable {
+    case all
+    case builtIn
+    case runtime
+    case plugin
+    case mcpProvider
+    case sandboxPlugin
+    case native
+    case unknown
+
+    var id: String { rawValue }
+
+    var source: ToolExposureSource? {
+        switch self {
+        case .all:
+            return nil
+        case .builtIn:
+            return .builtIn
+        case .runtime:
+            return .runtime
+        case .plugin:
+            return .plugin
+        case .mcpProvider:
+            return .mcpProvider
+        case .sandboxPlugin:
+            return .sandboxPlugin
+        case .native:
+            return .native
+        case .unknown:
+            return .unknown
+        }
+    }
+
+    var title: String {
+        source?.displayLabel ?? "All Sources"
+    }
+}
+
+private enum ToolExposureStateFilter: String, CaseIterable, Identifiable {
+    case all
+    case exposed
+    case loadable
+    case hidden
+    case disabled
+    case blocked
+    case unavailable
+
+    var id: String { rawValue }
+
+    var state: ToolExposureState? {
+        switch self {
+        case .all:
+            return nil
+        case .exposed:
+            return .exposed
+        case .loadable:
+            return .loadable
+        case .hidden:
+            return .hidden
+        case .disabled:
+            return .disabled
+        case .blocked:
+            return .blocked
+        case .unavailable:
+            return .unavailable
+        }
+    }
+
+    var title: String {
+        state?.displayLabel ?? "All States"
+    }
+}
+
+private struct ToolExposureControlCenter: View {
+    @Environment(\.theme) private var theme
+
+    let diagnostic: ToolExposureDiagnostic
+    let rows: [ToolExposureDiagnostic.Row]
+    @Binding var sourceFilter: ToolExposureSourceFilter
+    @Binding var stateFilter: ToolExposureStateFilter
+    let toolEntriesByName: [String: ToolRegistry.ToolEntry]
+    let policyInfoCache: [String: ToolRegistry.ToolPolicyInfo]
+    let onExport: () -> Void
+    let onChange: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top, spacing: 12) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(theme.accentColor.opacity(0.12))
+                    Image(systemName: "slider.horizontal.3")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundColor(theme.accentColor)
+                }
+                .frame(width: 40, height: 40)
+
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text("Tool Exposure Control Center", bundle: .module)
+                            .font(.system(size: 15, weight: .semibold, design: .rounded))
+                            .foregroundColor(theme.primaryText)
+
+                        Text("\(rows.count)/\(diagnostic.rows.count)", bundle: .module)
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(theme.secondaryText)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(Capsule().fill(theme.tertiaryBackground))
+                    }
+
+                    HStack(spacing: 6) {
+                        exposureCountBadge(.exposed, icon: "eye")
+                        exposureCountBadge(.loadable, icon: "arrow.down.circle")
+                        exposureCountBadge(.hidden, icon: "eye.slash")
+                        exposureCountBadge(.disabled, icon: "power")
+                        exposureCountBadge(.blocked, icon: "lock")
+                    }
+                }
+
+                Spacer()
+
+                HStack(spacing: 8) {
+                    ExposureFilterMenu(
+                        icon: "square.grid.2x2",
+                        title: sourceFilter.title,
+                        options: ToolExposureSourceFilter.allCases,
+                        selection: $sourceFilter
+                    )
+
+                    ExposureFilterMenu(
+                        icon: "line.3.horizontal.decrease.circle",
+                        title: stateFilter.title,
+                        options: ToolExposureStateFilter.allCases,
+                        selection: $stateFilter
+                    )
+
+                    Button(action: onExport) {
+                        Image(systemName: "square.and.arrow.up")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(theme.primaryText)
+                            .frame(width: 30, height: 28)
+                            .background(
+                                RoundedRectangle(cornerRadius: 7)
+                                    .fill(theme.tertiaryBackground)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 7)
+                                            .stroke(theme.inputBorder, lineWidth: 1)
+                                    )
+                            )
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .help(Text("Export reporter-safe exposure report", bundle: .module))
+                }
+            }
+
+            if rows.isEmpty {
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundColor(theme.tertiaryText)
+                    Text("No exposure rows match the current filters", bundle: .module)
+                        .font(.system(size: 12))
+                        .foregroundColor(theme.secondaryText)
+                    Spacer()
+                }
+                .padding(12)
+                .background(RoundedRectangle(cornerRadius: 8).fill(theme.tertiaryBackground.opacity(0.5)))
+            } else {
+                VStack(spacing: 8) {
+                    ForEach(rows) { row in
+                        ToolExposureRowView(
+                            row: row,
+                            entry: toolEntriesByName[row.toolName],
+                            policyInfo: policyInfoCache[row.toolName],
+                            onChange: onChange
+                        )
+                    }
+                }
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity)
+        .background(HoverableCardBackground())
+    }
+
+    private func exposureCountBadge(_ state: ToolExposureState, icon: String) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: icon)
+                .font(.system(size: 9, weight: .semibold))
+            Text("\(diagnostic.stateCounts[state, default: 0]) \(state.displayLabel)", bundle: .module)
+                .font(.system(size: 10, weight: .medium))
+        }
+        .foregroundColor(color(for: state))
+        .padding(.horizontal, 7)
+        .padding(.vertical, 4)
+        .background(Capsule().fill(color(for: state).opacity(0.12)))
+    }
+
+    private func color(for state: ToolExposureState) -> Color {
+        switch state {
+        case .exposed:
+            return theme.successColor
+        case .loadable:
+            return theme.accentColor
+        case .hidden:
+            return theme.warningColor
+        case .disabled:
+            return theme.secondaryText
+        case .blocked, .unavailable:
+            return theme.errorColor
+        }
+    }
+}
+
+private protocol ToolExposureFilterOption: Identifiable, Hashable {
+    var title: String { get }
+}
+
+extension ToolExposureSourceFilter: ToolExposureFilterOption {}
+extension ToolExposureStateFilter: ToolExposureFilterOption {}
+
+private struct ExposureFilterMenu<Option: ToolExposureFilterOption>: View {
+    @Environment(\.theme) private var theme
+
+    let icon: String
+    let title: String
+    let options: [Option]
+    @Binding var selection: Option
+
+    var body: some View {
+        Menu {
+            ForEach(options, id: \.self) { option in
+                Button {
+                    selection = option
+                } label: {
+                    HStack {
+                        if option == selection {
+                            Image(systemName: "checkmark")
+                        }
+                        Text(LocalizedStringKey(option.title), bundle: .module)
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: icon)
+                    .font(.system(size: 10, weight: .semibold))
+                Text(LocalizedStringKey(title), bundle: .module)
+                    .font(.system(size: 11, weight: .medium))
+                    .lineLimit(1)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 8, weight: .semibold))
+            }
+            .foregroundColor(theme.primaryText)
+            .padding(.horizontal, 9)
+            .frame(height: 28)
+            .background(
+                RoundedRectangle(cornerRadius: 7)
+                    .fill(theme.tertiaryBackground)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 7)
+                            .stroke(theme.inputBorder, lineWidth: 1)
+                    )
+            )
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+    }
+}
+
+private struct ToolExposureRowView: View {
+    @Environment(\.theme) private var theme
+
+    let row: ToolExposureDiagnostic.Row
+    let entry: ToolRegistry.ToolEntry?
+    let policyInfo: ToolRegistry.ToolPolicyInfo?
+    let onChange: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(stateColor.opacity(0.1))
+                Image(systemName: iconName)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(stateColor)
+            }
+            .frame(width: 28, height: 28)
+
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 5) {
+                    Text(verbatim: row.toolName)
+                        .font(.system(size: 13, weight: .medium, design: .rounded))
+                        .foregroundColor(theme.primaryText)
+                        .lineLimit(1)
+
+                    ExposurePill(label: row.source.displayLabel, color: theme.accentColor)
+                    ExposurePill(label: row.state.displayLabel, color: stateColor)
+                }
+
+                if !row.description.isEmpty {
+                    Text(verbatim: row.description)
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.secondaryText)
+                        .lineLimit(1)
+                }
+
+                HStack(spacing: 6) {
+                    ToolAvailabilityBadge(availability: row.availability)
+                    Text(row.availability.displayDetail)
+                        .font(.system(size: 10))
+                        .foregroundColor(theme.tertiaryText)
+                        .lineLimit(1)
+                }
+
+                HStack(spacing: 6) {
+                    exposureReasonText
+                    Text("tokens \(row.tokenEstimate)", bundle: .module)
+                        .font(.system(size: 10))
+                        .foregroundColor(theme.tertiaryText)
+                }
+            }
+
+            Spacer()
+
+            if let policyInfo {
+                ToolPolicyMenu(
+                    toolName: row.toolName,
+                    info: policyInfo,
+                    onChange: onChange
+                )
+            }
+
+            if row.allowsGlobalEnablementChange, let entry {
+                ToolEnableToggle(entry: entry, onChange: onChange)
+            }
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(theme.tertiaryBackground.opacity(0.5))
+        )
+    }
+
+    private var exposureReasonText: some View {
+        let indexStatus = row.indexedForSearch ? "indexed" : "not indexed"
+        let searchStatus = row.searchableByCapabilitiesDiscover ? "discoverable" : "not discoverable"
+        let reasons = row.searchReasonCodes.map(\.rawValue).joined(separator: ", ")
+        return Text("\(indexStatus) / \(searchStatus) / \(reasons)", bundle: .module)
+            .font(.system(size: 10))
+            .foregroundColor(theme.tertiaryText)
+            .lineLimit(1)
+    }
+
+    private var iconName: String {
+        switch row.state {
+        case .exposed:
+            return "eye"
+        case .loadable:
+            return "arrow.down.circle"
+        case .hidden:
+            return "eye.slash"
+        case .disabled:
+            return "power"
+        case .blocked:
+            return "lock"
+        case .unavailable:
+            return "exclamationmark.triangle"
+        }
+    }
+
+    private var stateColor: Color {
+        switch row.state {
+        case .exposed:
+            return theme.successColor
+        case .loadable:
+            return theme.accentColor
+        case .hidden:
+            return theme.warningColor
+        case .disabled:
+            return theme.secondaryText
+        case .blocked, .unavailable:
+            return theme.errorColor
+        }
+    }
+}
+
+private struct ExposurePill: View {
+    let label: String
+    let color: Color
+
+    var body: some View {
+        Text(LocalizedStringKey(label), bundle: .module)
+            .font(.system(size: 9, weight: .semibold))
+            .foregroundColor(color)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Capsule().fill(color.opacity(0.12)))
+    }
 }
 
 // MARK: - Sandbox Plugins Tab

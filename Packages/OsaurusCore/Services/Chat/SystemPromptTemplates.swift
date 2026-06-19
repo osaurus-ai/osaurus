@@ -501,6 +501,21 @@ public enum SystemPromptTemplates {
         - When encountering unexpected state (unfamiliar files, unknown processes), investigate before removing anything.
         """
 
+    /// Computer Use grounding. Rendered only when the `computer_use` tool
+    /// actually resolves into the schema (custom-agent opt-in via
+    /// `computerUseEnabled`), so the prompt never advertises desktop
+    /// automation the model can't invoke. Mirrors the tool's own contract:
+    /// one whole-task `goal`, AX-first perception, and the read-auto /
+    /// edit-confirm autonomy gate — stated plainly, not coerced.
+    public static let computerUseGuidance = """
+        ## Computer use
+
+        - You can operate macOS apps for the user with `computer_use` — it drives a real app from the on-screen accessibility tree (clicking, typing, reading on-screen text), falling back to a screenshot only when an element can't be resolved.
+        - Describe the WHOLE task in a single `goal`. It runs a self-contained sub-agent that perceives, acts, and verifies each step on its own and returns a summary — do not try to script individual clicks from here.
+        - Reads and navigation run automatically; edits and anything consequential pause for the user to approve. Write the goal plainly and let that gate handle confirmation — don't ask the user for permission yourself first.
+        - Use it for desktop UI automation (filling a form, navigating an app, extracting on-screen content), NOT for shell, files, or web requests — those have dedicated tools.
+        """
+
     // MARK: - Soul
 
     /// Renders the SOUL section — agent-authored, sandbox-only identity
