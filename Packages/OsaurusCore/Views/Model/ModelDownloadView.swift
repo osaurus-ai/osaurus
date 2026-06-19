@@ -1450,7 +1450,14 @@ struct ModelDownloadView: View {
             // A superseded task must not touch the snapshot or the handle —
             // the task that cancelled it now owns both.
             guard !Task.isCancelled else { return }
-            gridListsSnapshot = lists
+            // Animate the data swap itself. The list is computed off-main and
+            // lands in a later render pass than the synchronous `gridChangeToken`
+            // change, so the token-driven `.gridDiffAnimation` never coincides
+            // with the actual mutation. Driving the mosaic here — at the moment
+            // membership changes — restores it for search / sort / filter / tab.
+            withAnimation(GridDiff.spring) {
+                gridListsSnapshot = lists
+            }
             gridListsRefreshTask = nil
         }
     }
