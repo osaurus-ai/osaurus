@@ -144,7 +144,9 @@ public enum ThemeLibraryManagementService {
 
         return grouped.compactMap { fingerprint, members -> ThemeDuplicateGroup? in
             guard members.count > 1 else { return nil }
-            let sorted = members.sorted { $0.metadata.name.localizedCaseInsensitiveCompare($1.metadata.name) == .orderedAscending }
+            let sorted = members.sorted {
+                $0.metadata.name.localizedCaseInsensitiveCompare($1.metadata.name) == .orderedAscending
+            }
             return ThemeDuplicateGroup(
                 id: fingerprint,
                 members: sorted.map {
@@ -157,7 +159,8 @@ public enum ThemeLibraryManagementService {
             )
         }
         .sorted { lhs, rhs in
-            (lhs.members.first?.name ?? "").localizedCaseInsensitiveCompare(rhs.members.first?.name ?? "") == .orderedAscending
+            (lhs.members.first?.name ?? "").localizedCaseInsensitiveCompare(rhs.members.first?.name ?? "")
+                == .orderedAscending
         }
     }
 
@@ -255,7 +258,7 @@ public enum ThemeLibraryManagementService {
             ("colors.codeBlockBackground", colors.codeBlockBackground),
             ("colors.shadowColor", colors.shadowColor),
             ("colors.selectionColor", colors.selectionColor),
-            ("colors.cursorColor", colors.cursorColor)
+            ("colors.cursorColor", colors.cursorColor),
         ]
 
         required.forEach { validateHex($0.1, field: $0.0, issues: &issues) }
@@ -275,25 +278,47 @@ public enum ThemeLibraryManagementService {
         case .gradient:
             let colors = background.gradientColors ?? []
             if colors.count < 2 {
-                issues.append(.init(severity: .error, field: "background.gradientColors", message: "Gradient backgrounds need at least two colors."))
+                issues.append(
+                    .init(
+                        severity: .error,
+                        field: "background.gradientColors",
+                        message: "Gradient backgrounds need at least two colors."
+                    )
+                )
             }
             for (index, color) in colors.enumerated() {
                 validateHex(color, field: "background.gradientColors[\(index)]", issues: &issues)
             }
         case .image:
             guard let imageData = background.imageData, !imageData.isEmpty else {
-                issues.append(.init(severity: .error, field: "background.imageData", message: "Image backgrounds need image data."))
+                issues.append(
+                    .init(
+                        severity: .error,
+                        field: "background.imageData",
+                        message: "Image backgrounds need image data."
+                    )
+                )
                 break
             }
             guard let data = Data(base64Encoded: imageData) else {
-                issues.append(.init(severity: .error, field: "background.imageData", message: "Image data is not valid base64."))
+                issues.append(
+                    .init(severity: .error, field: "background.imageData", message: "Image data is not valid base64.")
+                )
                 break
             }
             if data.count > ThemesAPIClient.maxBodyBytes {
-                issues.append(.init(severity: .warning, field: "background.imageData", message: "Image data may exceed the share upload limit."))
+                issues.append(
+                    .init(
+                        severity: .warning,
+                        field: "background.imageData",
+                        message: "Image data may exceed the share upload limit."
+                    )
+                )
             }
             if NSImage(data: data) == nil {
-                issues.append(.init(severity: .error, field: "background.imageData", message: "Image data could not be decoded."))
+                issues.append(
+                    .init(severity: .error, field: "background.imageData", message: "Image data could not be decoded.")
+                )
             }
         }
 
@@ -375,17 +400,27 @@ public enum ThemeLibraryManagementService {
 
     private static func validateLibrary(_ theme: CustomTheme, issues: inout [ThemeValidationIssue]) {
         if theme.isBuiltIn, theme.library != nil {
-            issues.append(.init(severity: .warning, field: "library", message: "Built-in themes ignore library provenance."))
+            issues.append(
+                .init(severity: .warning, field: "library", message: "Built-in themes ignore library provenance.")
+            )
         }
 
         guard let library = theme.library else { return }
         if library.source == .shared {
             guard let hash = library.remoteHash, ThemeShareService.isValidHash(hash) else {
-                issues.append(.init(severity: .warning, field: "library.remoteHash", message: "Shared theme is missing a valid remote ID."))
+                issues.append(
+                    .init(
+                        severity: .warning,
+                        field: "library.remoteHash",
+                        message: "Shared theme is missing a valid remote ID."
+                    )
+                )
                 return
             }
             if let remoteURL = library.remoteURL, URL(string: remoteURL) == nil {
-                issues.append(.init(severity: .warning, field: "library.remoteURL", message: "Shared theme URL is invalid."))
+                issues.append(
+                    .init(severity: .warning, field: "library.remoteURL", message: "Shared theme URL is invalid.")
+                )
             }
         }
     }
@@ -418,7 +453,13 @@ public enum ThemeLibraryManagementService {
         issues: inout [ThemeValidationIssue]
     ) {
         guard range.contains(value), value.isFinite else {
-            issues.append(.init(severity: .error, field: field, message: "Value must be between \(range.lowerBound) and \(range.upperBound)."))
+            issues.append(
+                .init(
+                    severity: .error,
+                    field: field,
+                    message: "Value must be between \(range.lowerBound) and \(range.upperBound)."
+                )
+            )
             return
         }
     }

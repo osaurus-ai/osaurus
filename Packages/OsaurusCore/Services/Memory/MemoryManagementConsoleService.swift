@@ -267,7 +267,8 @@ public struct MemoryManagementConsoleService: Sendable {
             let row = try transcriptVectorKey(id: transcriptId, db: db)
             let changed = try deleteTranscriptTurn(id: transcriptId, db: db)
             if let row, changed {
-                let vectorId = TextSimilarity
+                let vectorId =
+                    TextSimilarity
                     .deterministicUUID(from: "transcript:\(row.conversationId):\(row.chunkIndex)")
                     .uuidString
                 await MemorySearchService.shared.removeDocument(id: vectorId, agentId: row.agentId)
@@ -786,7 +787,8 @@ public struct MemoryManagementConsoleService: Sendable {
         let normalized = String(
             query.lowercased().unicodeScalars.map { allowed.contains($0) ? Character($0) : " " }
         )
-        let terms = normalized
+        let terms =
+            normalized
             .split(whereSeparator: { $0.isWhitespace })
             .map(String.init)
             .filter { $0.count >= 2 && !stopWords.contains($0) }

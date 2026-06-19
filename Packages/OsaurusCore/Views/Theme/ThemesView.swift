@@ -507,11 +507,31 @@ struct ThemesView: View {
             columns: [GridItem(.adaptive(minimum: 132, maximum: 180), spacing: 10)],
             spacing: 10
         ) {
-            libraryStatTile("Local", count: librarySummary.localCount, icon: "paintbrush.pointed", color: theme.accentColor)
-            libraryStatTile("Imported", count: librarySummary.importedCount, icon: "tray.and.arrow.down", color: theme.infoColor)
+            libraryStatTile(
+                "Local",
+                count: librarySummary.localCount,
+                icon: "paintbrush.pointed",
+                color: theme.accentColor
+            )
+            libraryStatTile(
+                "Imported",
+                count: librarySummary.importedCount,
+                icon: "tray.and.arrow.down",
+                color: theme.infoColor
+            )
             libraryStatTile("Shared", count: librarySummary.sharedCount, icon: "link", color: theme.successColor)
-            libraryStatTile("Issues", count: librarySummary.validationErrorCount + librarySummary.validationWarningCount, icon: "exclamationmark.triangle", color: issueStatColor)
-            libraryStatTile("Duplicate Sets", count: librarySummary.duplicateGroupCount, icon: "doc.on.doc", color: duplicateGroups.isEmpty ? theme.tertiaryText : theme.warningColor)
+            libraryStatTile(
+                "Issues",
+                count: librarySummary.validationErrorCount + librarySummary.validationWarningCount,
+                icon: "exclamationmark.triangle",
+                color: issueStatColor
+            )
+            libraryStatTile(
+                "Duplicate Sets",
+                count: librarySummary.duplicateGroupCount,
+                icon: "doc.on.doc",
+                color: duplicateGroups.isEmpty ? theme.tertiaryText : theme.warningColor
+            )
         }
     }
 
@@ -727,7 +747,8 @@ struct ThemesView: View {
             fromByteCount: Int64(previewCacheHealth.totalCostLimit),
             countStyle: .file
         )
-        return "\(previewCacheHealth.cachedEntryCount) images, \(cost) tracked of \(limit), \(previewCacheHealth.inFlightDecodeCount) decoding, \(previewCacheHealth.failedDecodeCount) failed decodes"
+        return
+            "\(previewCacheHealth.cachedEntryCount) images, \(cost) tracked of \(limit), \(previewCacheHealth.inFlightDecodeCount) decoding, \(previewCacheHealth.failedDecodeCount) failed decodes"
     }
 
     private func showToast(_ message: String, type: SimpleToastType = .success) {

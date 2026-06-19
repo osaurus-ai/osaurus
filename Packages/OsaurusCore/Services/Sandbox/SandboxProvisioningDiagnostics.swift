@@ -274,7 +274,8 @@ public enum SandboxProvisioningDiagnostics {
                     status: .passed,
                     title: "Custom sandbox root is active",
                     detail: "Diagnostics are using \(OsaurusPaths.root().standardizedFileURL.path).",
-                    repairSuggestion: "Unset OSAURUS_TEST_ROOT or clear OsaurusPaths.overrideRoot to return to the default root.",
+                    repairSuggestion:
+                        "Unset OSAURUS_TEST_ROOT or clear OsaurusPaths.overrideRoot to return to the default root.",
                     locationID: .root,
                     path: OsaurusPaths.root().standardizedFileURL.path
                 )
@@ -288,7 +289,8 @@ public enum SandboxProvisioningDiagnostics {
                     severity: .blocked,
                     status: .failed,
                     title: "macOS version does not support sandbox provisioning",
-                    detail: "The sandbox requires macOS 26 or later; this host reports macOS \(operatingSystemMajorVersion).",
+                    detail:
+                        "The sandbox requires macOS 26 or later; this host reports macOS \(operatingSystemMajorVersion).",
                     repairSuggestion: "Run Osaurus sandbox provisioning on macOS 26 or later.",
                     locationID: nil,
                     path: nil
@@ -351,7 +353,8 @@ public enum SandboxProvisioningDiagnostics {
                     status: .missing,
                     title: "Sandbox setup has not completed",
                     detail: "The setupComplete flag is false, so tool and agent startup still require provisioning.",
-                    repairSuggestion: "Use Set Up Sandbox from the Sandbox tab and rerun this preflight after it finishes.",
+                    repairSuggestion:
+                        "Use Set Up Sandbox from the Sandbox tab and rerun this preflight after it finishes.",
                     locationID: .configFile,
                     path: configuration.path
                 )
@@ -788,10 +791,11 @@ public enum SandboxProvisioningDiagnostics {
                     title: "Not enough free disk space for cold provisioning",
                     detail:
                         "Container root volume has \(SandboxProvisioningReport.formatBytesForDiagnostics(free)) free; cold provisioning expects at least \(SandboxProvisioningReport.formatBytesForDiagnostics(minimumColdProvisionFreeBytes)).",
-                    repairSuggestion: "Free disk space on the volume that contains \(containerRoot.path), then rerun preflight.",
+                    repairSuggestion:
+                        "Free disk space on the volume that contains \(containerRoot.path), then rerun preflight.",
                     locationID: .containerRoot,
                     path: containerRoot.path
-                ),
+                )
             ]
         }
 
@@ -805,7 +809,7 @@ public enum SandboxProvisioningDiagnostics {
                 repairSuggestion: "Check available disk space manually before cold provisioning.",
                 locationID: .containerRoot,
                 path: containerRoot.path
-            ),
+            )
         ]
     }
 
