@@ -82,8 +82,9 @@ class SystemMonitorService: ObservableObject {
         refreshStorageUsage()
     }
 
-    /// Round to one decimal place — the precision shown in the UI.
-    private static func rounded(_ value: Double) -> Double {
+    /// Round to one decimal place — the precision shown in the UI. `nonisolated`
+    /// so the off-main storage refresh can reuse it (pure arithmetic, no state).
+    private nonisolated static func rounded(_ value: Double) -> Double {
         (value * 10).rounded() / 10
     }
 
