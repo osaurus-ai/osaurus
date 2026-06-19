@@ -42,13 +42,59 @@ extension View {
     /// container (e.g. `LazyVGrid`). The animation fires whenever
     /// `token` changes — so build a token that captures every input
     /// affecting the visible set.
-    func gridDiffAnimation<T: Equatable>(token: T) -> some View {
-        self.animation(GridDiff.spring, value: token)
+    ///
+    /// Pass `visibleCount` on large grids to gate the animation: a change
+    /// that adds/removes more than `maxAnimatedDelta` cells applies
+    /// instantly instead of animating. Animating a wholesale swap (e.g.
+    /// clearing a search to reveal the full catalog) forces SwiftUI to
+    /// build, measure, and transition every newly inserted cell inside one
+    /// spring transaction on the main thread, which has hung large grids
+    /// for seconds. Omit `visibleCount` to always animate (fine for small
+    /// grids whose worst-case swap is cheap).
+    func gridDiffAnimation<T: Equatable>(
+        token: T,
+        visibleCount: Int? = nil,
+        maxAnimatedDelta: Int = 24
+    ) -> some View {
+        modifier(
+            GridDiffAnimationModifier(
+                token: token,
+                visibleCount: visibleCount,
+                maxAnimatedDelta: maxAnimatedDelta
+            )
+        )
     }
 
     /// Asymmetric scale + fade transition for individual grid cells.
     /// Apply on each cell inside the `ForEach`.
     func gridDiffCell() -> some View {
         self.transition(GridDiff.cellTransition)
+    }
+}
+
+/// Applies the mosaic spring on `token` changes, but suppresses it when the
+/// visible set jumps by more than `maxAnimatedDelta` cells. `lastCount` trails
+/// `visibleCount` by one update, so the body that reacts to a token change
+/// still sees the pre-change count and can size the delta correctly.
+private struct GridDiffAnimationModifier<T: Equatable>: ViewModifier {
+    let token: T
+    let visibleCount: Int?
+    let maxAnimatedDelta: Int
+    @State private var lastCount: Int?
+
+    func body(content: Content) -> some View {
+        let animate: Bool
+        if let visibleCount, let lastCount {
+            animate = abs(visibleCount - lastCount) <= maxAnimatedDelta
+        } else {
+            // No count provided, or first render: animate as before.
+            animate = true
+        }
+
+        return
+            content
+            .animation(animate ? GridDiff.spring : nil, value: token)
+            .onChange(of: visibleCount ?? 0) { _, newValue in lastCount = newValue }
+            .onAppear { if lastCount == nil { lastCount = visibleCount } }
     }
 }

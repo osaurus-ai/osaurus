@@ -670,7 +670,7 @@ struct ModelDownloadView: View {
                     .gridDiffCell()
             }
         }
-        .gridDiffAnimation(token: gridChangeToken)
+        .gridDiffAnimation(token: gridChangeToken, visibleCount: models.count)
     }
 
     /// Single-row, horizontally scrolling strip of curated top picks shown
