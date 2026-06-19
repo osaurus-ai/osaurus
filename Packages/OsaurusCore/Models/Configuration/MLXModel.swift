@@ -276,7 +276,30 @@ struct MLXModel: Identifiable, Codable {
 
     /// Approximate download timestamp based on directory creation/modification time
     /// Newer downloads should have more recent dates.
+    ///
+    /// Hits the same id-keyed process cache as `isDownloaded` (invalidated on
+    /// `.localModelsChanged`). Read straight from SwiftUI body getters, the
+    /// underlying `resourceValues` stat is enough to trip the main-thread hang
+    /// watchdog on a cold or slow disk when the Models grid renders many rows.
     var downloadedAt: Date? {
+        // Bypass the shared cache for pinned (`rootDirectory`) and external
+        // (`bundleDirectory`) bundles so a same-id Osaurus entry can't shadow
+        // their on-disk timestamp — mirrors `isDownloaded`.
+        let usesSharedCache = rootDirectory == nil && bundleDirectory == nil
+        if usesSharedCache {
+            let cached = MLXModelDownloadCache.cachedDate(for: id)
+            if cached.hit { return cached.value }
+        }
+        let value = computeDownloadedAtFromDisk()
+        if usesSharedCache {
+            MLXModelDownloadCache.setDate(value, for: id)
+        }
+        return value
+    }
+
+    /// Direct disk stat used by `downloadedAt`. Exposed so callers needing a
+    /// freshness guarantee can bypass the cache.
+    func computeDownloadedAtFromDisk() -> Date? {
         let directory = localDirectory
         let values = try? directory.resourceValues(forKeys: [
             .creationDateKey, .contentModificationDateKey,
