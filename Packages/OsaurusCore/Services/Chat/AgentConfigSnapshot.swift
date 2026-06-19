@@ -33,6 +33,13 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
     /// `requestToolsDisabled` to `capture(...)` (e.g. `ChatView`).
     public let toolsDisabled: Bool
 
+    /// The session-global `ChatConfiguration.disableTools` switch in
+    /// isolation (the `requestToolsDisabled` the caller folded in), kept
+    /// separable from the per-agent Tools toggle. This is an absolute
+    /// kill-switch: unlike the per-agent toggle, sandbox mode does NOT
+    /// override it (see `SystemPromptComposer.resolveEffectiveToolsOff`).
+    public let globalToolsDisabled: Bool
+
     /// Mirrors `AgentManager.effectiveMemoryDisabled` (folds in the
     /// global `MemoryConfiguration.enabled` switch).
     public let memoryDisabled: Bool
@@ -99,6 +106,7 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
     public init(
         agentId: UUID,
         toolsDisabled: Bool,
+        globalToolsDisabled: Bool = false,
         memoryDisabled: Bool,
         autonomousConfig: AutonomousExecConfig?,
         toolMode: ToolSelectionMode,
@@ -114,6 +122,7 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
     ) {
         self.agentId = agentId
         self.toolsDisabled = toolsDisabled
+        self.globalToolsDisabled = globalToolsDisabled
         self.memoryDisabled = memoryDisabled
         self.autonomousConfig = autonomousConfig
         self.toolMode = toolMode
@@ -151,6 +160,7 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
         return AgentConfigSnapshot(
             agentId: agentId,
             toolsDisabled: requestToolsDisabled || !caps.toolsEnabled,
+            globalToolsDisabled: requestToolsDisabled,
             memoryDisabled: !caps.memoryEnabled,
             autonomousConfig: mgr.effectiveAutonomousExec(for: agentId),
             toolMode: mgr.effectiveToolSelectionMode(for: agentId),
