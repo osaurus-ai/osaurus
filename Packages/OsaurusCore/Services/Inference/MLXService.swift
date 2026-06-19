@@ -317,6 +317,15 @@ actor MLXService: ToolCapableService {
             return false
         }
 
+        // VibeThinker-3B is a qwen2 reasoning fine-tune. Its chat_template is the
+        // standard Qwen2.5 Hermes tool template, so format detection would mark it
+        // tool-capable — but in practice it reasons at length and then wraps the
+        // (otherwise-correct) call in a hallucinated `<assemble>` tag instead of
+        // `<tool_call>`, so nothing parses. Treat it as text/reasoning-only.
+        if combined.contains("vibethinker") {
+            return false
+        }
+
         if ModelFamilyNames.isStepFamily(modelName) || ModelFamilyNames.isStepFamily(modelId) {
             // Step 3.7 tool parsing/template selection is owned by the pinned
             // vMLX runtime. Do not block request preflight on large external

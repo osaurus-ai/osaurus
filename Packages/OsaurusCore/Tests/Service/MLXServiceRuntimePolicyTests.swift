@@ -205,6 +205,40 @@ struct MLXServiceRuntimePolicyTests {
         )
     }
 
+    @Test func vibeThinkerIsTreatedAsToolUnsupported() {
+        // VibeThinker carries the standard Qwen2.5 Hermes tool template (so format
+        // detection would call it tool-capable), but the reasoning fine-tune wraps
+        // calls in a hallucinated `<assemble>` tag and never parses. It is gated to
+        // text/reasoning-only regardless of quant variant.
+        for id in [
+            "OsaurusAI/VibeThinker-3B-MXFP8",
+            "OsaurusAI/VibeThinker-3B-MXFP4",
+            "OsaurusAI/VibeThinker-3B-JANG_4M",
+        ] {
+            #expect(
+                MLXService.supportsLocalToolCalling(
+                    modelName: "vibethinker-3b", modelId: id) == false)
+        }
+        // A real Qwen2.5 (same qwen2 model_type) stays tool-capable.
+        #expect(
+            MLXService.supportsLocalToolCalling(
+                modelName: "qwen2.5-3b-instruct", modelId: "mlx-community/Qwen2.5-3B-Instruct")
+                == true)
+    }
+
+    @Test func policyRejectsVibeThinkerToolsInsteadOfHallucinatingAssembleTag() {
+        #expect(throws: MLXService.RuntimePolicyError.self) {
+            try MLXService.validateRuntimePolicy(
+                modelName: "vibethinker-3b-mxfp8",
+                modelId: "OsaurusAI/VibeThinker-3B-MXFP8",
+                messages: [ChatMessage(role: "user", content: "What's the weather in London?")],
+                parameters: GenerationParameters(temperature: nil, maxTokens: 16),
+                tools: [Self.lineCountTool()],
+                runtime: VMLXServerRuntimeSettings()
+            )
+        }
+    }
+
     @Test func stepToolSupportDoesNotRequireBundleMetadataPreflight() {
         #expect(
             MLXService.supportsLocalToolCalling(
