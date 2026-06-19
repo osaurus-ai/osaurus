@@ -2159,22 +2159,25 @@ struct MLXBatchAdapterTests {
         #expect(!ModelFamilyNames.isLagunaFamily("qwen3.6-35b-a3b"))
     }
 
-    @Test func makeGenerateParameters_appliesLagunaLoopDefaults() {
-        // Laguna with no caller penalty → recipe default 1.15 + 256 window.
+    @Test func makeGenerateParameters_lagunaUsesStandardDefaults() {
+        // The forced Laguna rep-penalty 1.15 / window 256 special-case was removed:
+        // it was compensating for the missing-BOS chat bug (fixed in vmlx by restoring
+        // lagunaMinimal's literal 〈|EOS|〉 emit), and was triggering the rep-penalty
+        // TokenRing crash. Laguna now uses the same defaults as any other model.
         let laguna = ModelRuntime.makeGenerateParameters(
             temperature: 1.0, maxTokens: 64, topP: 1.0, repetitionPenalty: nil,
             modelName: "JANGQ-AI/Laguna-M.1-JANG_2L")
-        #expect(laguna.repetitionPenalty == 1.15)
-        #expect(laguna.repetitionContextSize == 256)
+        #expect(laguna.repetitionPenalty == nil)
+        #expect(laguna.repetitionContextSize == 20)
 
-        // A caller-supplied penalty still wins; window stays the laguna 256.
+        // A caller-supplied penalty still flows through unchanged.
         let lagunaOverride = ModelRuntime.makeGenerateParameters(
             temperature: 1.0, maxTokens: 64, topP: 1.0, repetitionPenalty: 1.05,
             modelName: "Laguna-M.1-JANG_1L")
         #expect(lagunaOverride.repetitionPenalty == 1.05)
-        #expect(lagunaOverride.repetitionContextSize == 256)
+        #expect(lagunaOverride.repetitionContextSize == 20)
 
-        // Non-laguna is unchanged: no injected penalty, default 20 window.
+        // Non-laguna is identical: no injected penalty, default 20 window.
         let other = ModelRuntime.makeGenerateParameters(
             temperature: 1.0, maxTokens: 64, topP: 1.0, repetitionPenalty: nil,
             modelName: "qwen3.6-35b-a3b-mxfp4")
