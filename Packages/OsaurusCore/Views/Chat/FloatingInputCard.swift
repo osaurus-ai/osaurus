@@ -194,6 +194,7 @@ struct FloatingInputCard: View {
     @State private var isDragOver = false
     @State private var showModelPicker = false
     @State private var showModelOptionsPicker = false
+    @State private var showImageSizePicker = false
     @State private var showContextBreakdown = false
     @State private var contextHoverTask: Task<Void, Never>?
     @State private var showBalanceBreakdown = false
@@ -216,6 +217,11 @@ struct FloatingInputCard: View {
     @State private var hasDetectedSpeechThisTurn: Bool = false
 
     @State private var showMicPermissionAlert: Bool = false
+
+    /// Negative-prompt editor (image models). A button raises a themed alert;
+    /// the draft buffers edits so Cancel can discard them.
+    @State private var showNegativePromptAlert: Bool = false
+    @State private var negativePromptDraft: String = ""
 
     /// Tracks last voice activity time for silence timeout
     @State private var lastVoiceActivityTime: Date = Date()
@@ -655,6 +661,18 @@ struct FloatingInputCard: View {
                     }
                 },
                 secondaryButton: .cancel("Cancel")
+            )
+            .themedAlert(
+                "Negative prompt",
+                isPresented: $showNegativePromptAlert,
+                message: "Describe what to keep out of the image.",
+                accessory: negativePromptAccessory,
+                buttons: [
+                    .cancel(L("Cancel")),
+                    .primary(L("Save")) {
+                        imageComposerSettings.negativePrompt = negativePromptDraft
+                    },
+                ]
             )
             .task {
                 // log full voice state once the view has settled (deferred to avoid type-checker load in body)
@@ -1511,42 +1529,56 @@ extension FloatingInputCard {
                 modelSelectorChip
             }
 
-            thinkingToggleChip
+            // Image-generation models have no thinking, sandbox, folder or
+            // token-budget semantics — those chips would all be inert. Swap
+            // the whole row for the image config controls instead so they sit
+            // right beside the model that owns them.
+            if isImageComposerActive {
+                imageComposerChips
+                Spacer()
+                // The negative prompt sits where the token meter normally would,
+                // as a compact button that opens a themed editor on tap.
+                if imageCapabilities?.negativePrompt == true {
+                    negativePromptButton
+                }
+            } else {
+                thinkingToggleChip
 
-            if autoSpeakAssistant {
-                autoSpeakToggleChip
+                if autoSpeakAssistant {
+                    autoSpeakToggleChip
+                }
+
+                if hasNonThinkingOptions {
+                    modelOptionsSelectorChip
+                }
+
+                // Sandbox toggle: visible whenever the sandbox is available on
+                // this system. Mutual exclusion with the folder backend is
+                // enforced inside `toggleSandbox()` (it clears the active
+                // folder before enabling sandbox), not by hiding the chip —
+                // that way the user can always see and switch backends.
+                if isSandboxAvailable {
+                    sandboxToggleChip
+                }
+
+                // Clipboard chip (visible when there's something new on the clipboard and monitoring is enabled)
+                if AppConfiguration.shared.chatConfig.enableClipboardMonitoring && clipboardService.hasNewContent {
+                    clipboardToggleChip
+                }
+
+                // Folder context selector: always available so the user can
+                // point any chat at a working directory. Mutual exclusion with
+                // sandbox is enforced inside the selection handlers (they
+                // disable autonomous exec before opening the picker).
+                folderContextChip
+
+                Spacer()
+
+                // Right-aligned "meta" cluster: balance + token usage read as one
+                // quiet status group (the balance escalates to an amber CTA when
+                // it runs low). Controls live on the left; status lives here.
+                metaCluster
             }
-
-            if hasNonThinkingOptions {
-                modelOptionsSelectorChip
-            }
-
-            // Sandbox toggle: visible whenever the sandbox is available on
-            // this system. Mutual exclusion with the folder backend is
-            // enforced inside `toggleSandbox()` (it clears the active
-            // folder before enabling sandbox), not by hiding the chip —
-            // that way the user can always see and switch backends.
-            if isSandboxAvailable {
-                sandboxToggleChip
-            }
-
-            // Clipboard chip (visible when there's something new on the clipboard and monitoring is enabled)
-            if AppConfiguration.shared.chatConfig.enableClipboardMonitoring && clipboardService.hasNewContent {
-                clipboardToggleChip
-            }
-
-            // Folder context selector: always available so the user can
-            // point any chat at a working directory. Mutual exclusion with
-            // sandbox is enforced inside the selection handlers (they
-            // disable autonomous exec before opening the picker).
-            folderContextChip
-
-            Spacer()
-
-            // Right-aligned "meta" cluster: balance + token usage read as one
-            // quiet status group (the balance escalates to an amber CTA when
-            // it runs low). Controls live on the left; status lives here.
-            metaCluster
         }
     }
 
@@ -2836,11 +2868,6 @@ extension FloatingInputCard {
                 .padding(.top, hasChipRow ? 6 : 10)
                 .padding(.bottom, 6)
 
-            if isImageComposerActive {
-                imageComposerControls
-                    .padding(.horizontal, 12)
-                    .padding(.bottom, 6)
-            }
 
             buttonBar
                 .padding(.horizontal, 12)
@@ -3233,33 +3260,6 @@ extension FloatingInputCard {
 
     // MARK: - Image Composer Controls
 
-    private var imageComposerModeText: String {
-        if imageCapabilities?.imageEdit == true { return L("Edit") }
-        return L("Generate")
-    }
-
-    private var imageSizeBinding: Binding<String> {
-        Binding(
-            get: { "\(imageComposerSettings.width)x\(imageComposerSettings.height)" },
-            set: { value in
-                let parts = value.split(separator: "x")
-                guard parts.count == 2,
-                    let width = Int(parts[0]),
-                    let height = Int(parts[1])
-                else { return }
-                imageComposerSettings.width = width
-                imageComposerSettings.height = height
-            }
-        )
-    }
-
-    private var negativePrompt: Binding<String> {
-        Binding(
-            get: { imageComposerSettings.negativePrompt },
-            set: { imageComposerSettings.negativePrompt = $0 }
-        )
-    }
-
     private var seedText: Binding<String> {
         Binding(
             get: { imageComposerSettings.seed },
@@ -3267,80 +3267,317 @@ extension FloatingInputCard {
         )
     }
 
-    private var imageComposerControls: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Label(imageComposerModeText, systemImage: "photo")
-                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .semibold))
-                    .foregroundColor(theme.secondaryText)
-                    .lineLimit(1)
-
-                Picker("", selection: imageSizeBinding) {
-                    Text("512", bundle: .module).tag("512x512")
-                    Text("768", bundle: .module).tag("768x768")
-                    Text("1024", bundle: .module).tag("1024x1024")
-                }
-                .labelsHidden()
-                .pickerStyle(.segmented)
-                .frame(width: 170)
-                .localizedHelp("Output image size")
-
-                Stepper(value: $imageComposerSettings.steps, in: 1...50, step: 1) {
-                    Text("\(imageComposerSettings.steps) steps")
-                        .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-                        .foregroundColor(theme.secondaryText)
-                        .frame(minWidth: 62, alignment: .leading)
-                }
-                .controlSize(.small)
-                .localizedHelp("Denoising steps")
-
-                LabeledContent {
-                    TextField("", value: $imageComposerSettings.guidance, format: .number.precision(.fractionLength(1)))
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 48)
-                } label: {
-                    Text("CFG", bundle: .module)
-                        .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .medium))
-                        .foregroundColor(theme.tertiaryText)
-                }
-                .localizedHelp("Classifier-free guidance")
-
-                TextField("Seed", text: seedText)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 92)
-                    .localizedHelp("Optional numeric seed")
-
-                if imageCapabilities?.imageEdit == true {
-                    LabeledContent {
-                        TextField("", value: $imageComposerSettings.strength, format: .number.precision(.fractionLength(2)))
-                            .textFieldStyle(.roundedBorder)
-                            .frame(width: 50)
-                    } label: {
-                        Text("Strength", bundle: .module)
-                            .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .medium))
-                            .foregroundColor(theme.tertiaryText)
-                    }
-                    .localizedHelp("How strongly the prompt changes the source image")
-                }
-            }
-
-            if imageCapabilities?.negativePrompt == true {
-                TextField("Negative prompt", text: negativePrompt)
-                    .textFieldStyle(.roundedBorder)
-                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .regular))
-                    .localizedHelp("Terms to avoid during image generation")
+    /// Inline image config chips that ride in the selector row beside the model
+    /// chip (the model owns these settings, and the row's normal chips are inert
+    /// for image models).
+    private var imageComposerChips: some View {
+        HStack(spacing: 6) {
+            sizeSelector
+            stepsChip
+            cfgChip
+            seedChip
+            if imageCapabilities?.imageEdit == true {
+                strengthChip
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(theme.secondaryBackground.opacity(0.45))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .strokeBorder(theme.primaryBorder.opacity(0.25), lineWidth: 0.5)
-        )
+    }
+
+    /// Shared pill backing so every composer control reads as one family of
+    /// chips instead of clashing system `.roundedBorder` / `.segmented` chrome.
+    private var chipBackground: some View {
+        Capsule()
+            .fill(theme.secondaryBackground.opacity(0.6))
+            .overlay(Capsule().strokeBorder(theme.primaryBorder.opacity(0.4), lineWidth: 0.5))
+    }
+
+    /// A selectable output resolution with a one-line explanation of its
+    /// speed / detail trade-off (bare pixel numbers don't tell the user what
+    /// they're choosing).
+    private struct ImageSizeOption: Identifiable {
+        let dimension: Int
+        let title: String
+        let detail: String
+        var id: Int { dimension }
+    }
+
+    private var imageSizeOptions: [ImageSizeOption] {
+        [
+            ImageSizeOption(
+                dimension: 512, title: L("512 × 512"),
+                detail: L("Fast drafts. Lowest detail, quickest to render.")),
+            ImageSizeOption(
+                dimension: 768, title: L("768 × 768"),
+                detail: L("Balanced. Good detail at a moderate speed.")),
+            ImageSizeOption(
+                dimension: 1024, title: L("1024 × 1024"),
+                detail: L("Sharpest. The size most models are trained for, but slowest.")),
+        ]
+    }
+
+    private var selectedSizeLabel: String {
+        let w = imageComposerSettings.width
+        let h = imageComposerSettings.height
+        return w == h ? "\(w)px" : "\(w)×\(h)"
+    }
+
+    /// Output size as a dropdown chip: the label alone ("768px") is ambiguous,
+    /// so the popover spells out what each resolution means.
+    private var sizeSelector: some View {
+        SelectorChip(isActive: showImageSizePicker) {
+            showImageSizePicker.toggle()
+        } content: {
+            HStack(spacing: 5) {
+                Image(systemName: "aspectratio")
+                    .font(theme.font(size: CGFloat(theme.captionSize) - 2, weight: .medium))
+                    .foregroundColor(theme.tertiaryText)
+                Text(selectedSizeLabel)
+                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+                    .monospacedDigit()
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(theme.font(size: CGFloat(theme.captionSize) - 3, weight: .semibold))
+                    .foregroundColor(theme.tertiaryText)
+            }
+        }
+        .popover(isPresented: $showImageSizePicker, arrowEdge: .top) {
+            imageSizePopover
+        }
+        .localizedHelp("Output image size")
+    }
+
+    private var imageSizePopover: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text("Image size", bundle: .module)
+                .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .semibold))
+                .foregroundColor(theme.tertiaryText)
+                .padding(.horizontal, 12)
+                .padding(.top, 12)
+                .padding(.bottom, 4)
+
+            ForEach(imageSizeOptions) { option in
+                let isSelected =
+                    imageComposerSettings.width == option.dimension
+                    && imageComposerSettings.height == option.dimension
+                Button {
+                    imageComposerSettings.width = option.dimension
+                    imageComposerSettings.height = option.dimension
+                    showImageSizePicker = false
+                } label: {
+                    HStack(alignment: .top, spacing: 9) {
+                        Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                            .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                            .foregroundColor(isSelected ? theme.accentColor : theme.tertiaryText)
+                            .padding(.top, 1)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(option.title)
+                                .font(
+                                    theme.font(
+                                        size: CGFloat(theme.captionSize), weight: .semibold)
+                                )
+                                .foregroundColor(theme.primaryText)
+                            Text(option.detail)
+                                .font(theme.font(size: CGFloat(theme.captionSize) - 2))
+                                .foregroundColor(theme.secondaryText)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(isSelected ? theme.accentColor.opacity(0.08) : .clear)
+                    )
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .pointingHandCursor()
+                .padding(.horizontal, 6)
+            }
+        }
+        .padding(.bottom, 8)
+        .frame(width: 252)
+        .popoverCard()
+    }
+
+    private func stepperButton(_ systemName: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(theme.font(size: CGFloat(theme.captionSize) - 2, weight: .bold))
+                .foregroundColor(theme.secondaryText)
+                .frame(width: 14, height: 14)
+        }
+        .buttonStyle(.plain)
+        .pointingHandCursor()
+    }
+
+    private var stepsChip: some View {
+        HStack(spacing: 6) {
+            stepperButton("minus") {
+                imageComposerSettings.steps = max(1, imageComposerSettings.steps - 1)
+            }
+            HStack(spacing: 3) {
+                Text("\(imageComposerSettings.steps)")
+                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+                    .monospacedDigit()
+                Text("steps", bundle: .module)
+                    .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .medium))
+                    .foregroundColor(theme.tertiaryText)
+            }
+            stepperButton("plus") {
+                imageComposerSettings.steps = min(50, imageComposerSettings.steps + 1)
+            }
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 5)
+        .background(chipBackground)
+        .localizedHelp("Denoising steps")
+    }
+
+    private var cfgChip: some View {
+        HStack(spacing: 5) {
+            Text("CFG", bundle: .module)
+                .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .medium))
+                .foregroundColor(theme.tertiaryText)
+            TextField(
+                "", value: $imageComposerSettings.guidance,
+                format: .number.precision(.fractionLength(1))
+            )
+            .textFieldStyle(.plain)
+            .multilineTextAlignment(.trailing)
+            .frame(width: 28)
+            .font(theme.font(size: CGFloat(theme.captionSize), weight: .semibold))
+            .foregroundColor(theme.primaryText)
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 5)
+        .background(chipBackground)
+        .localizedHelp("Classifier-free guidance")
+    }
+
+    private var seedChip: some View {
+        HStack(spacing: 5) {
+            Image(systemName: "number")
+                .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .medium))
+                .foregroundColor(theme.tertiaryText)
+            TextField("Seed", text: seedText)
+                .textFieldStyle(.plain)
+                .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                .foregroundColor(theme.primaryText)
+                // Hug the content so the chip starts compact and grows as the
+                // seed is typed, with a small floor so the placeholder fits.
+                .fixedSize()
+                .frame(minWidth: 34)
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 5)
+        .background(chipBackground)
+        .localizedHelp("Optional numeric seed")
+    }
+
+    private var strengthChip: some View {
+        HStack(spacing: 5) {
+            Text("Strength", bundle: .module)
+                .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .medium))
+                .foregroundColor(theme.tertiaryText)
+            TextField(
+                "", value: $imageComposerSettings.strength,
+                format: .number.precision(.fractionLength(2))
+            )
+            .textFieldStyle(.plain)
+            .multilineTextAlignment(.trailing)
+            .frame(width: 32)
+            .font(theme.font(size: CGFloat(theme.captionSize), weight: .semibold))
+            .foregroundColor(theme.primaryText)
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 5)
+        .background(chipBackground)
+        .localizedHelp("How strongly the prompt changes the source image")
+    }
+
+    /// Chip-styled button that opens the negative-prompt editor. Shows the
+    /// current value (when set) or a call to add one.
+    private var negativePromptButton: some View {
+        let value = imageComposerSettings.negativePrompt.trimmingCharacters(
+            in: .whitespacesAndNewlines)
+        let hasValue = !value.isEmpty
+        return Button {
+            negativePromptDraft = imageComposerSettings.negativePrompt
+            showNegativePromptAlert = true
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: hasValue ? "minus.circle.fill" : "minus.circle")
+                    .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .medium))
+                    .foregroundColor(hasValue ? theme.accentColor : theme.tertiaryText)
+                Text(hasValue ? value : L("Add a negative prompt"))
+                    .font(
+                        theme.font(
+                            size: CGFloat(theme.captionSize), weight: hasValue ? .medium : .regular)
+                    )
+                    .foregroundColor(hasValue ? theme.secondaryText : theme.tertiaryText)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            .padding(.horizontal, 9)
+            .padding(.vertical, 5)
+            .background(chipBackground)
+        }
+        .buttonStyle(.plain)
+        .pointingHandCursor()
+        .localizedHelp("Terms to avoid during image generation")
+    }
+
+    /// Multiline editor rendered as the negative-prompt alert's accessory.
+    /// Wrapped in its own view so it can own a `@FocusState` that resolves in
+    /// the alert host's hierarchy (where the accessory actually renders).
+    private var negativePromptAccessory: AnyView {
+        AnyView(NegativePromptEditor(text: $negativePromptDraft))
+    }
+
+    /// Self-contained editor for the negative-prompt alert. Owns its focus so
+    /// the field is focused on present, and shows a subtle border that picks up
+    /// the accent while focused.
+    private struct NegativePromptEditor: View {
+        @Environment(\.theme) private var theme
+        @Binding var text: String
+        @FocusState private var focused: Bool
+
+        var body: some View {
+            TextField(
+                text: $text,
+                prompt: Text("e.g. blurry, low quality, extra fingers", bundle: .module),
+                axis: .vertical
+            ) {
+                Text("Negative prompt", bundle: .module)
+            }
+            .textFieldStyle(.plain)
+            .lineLimit(3, reservesSpace: true)
+            .font(theme.font(size: CGFloat(theme.bodySize)))
+            .foregroundColor(theme.primaryText)
+            .focused($focused)
+            .padding(10)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(theme.secondaryBackground.opacity(0.6))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(
+                        focused ? theme.accentColor.opacity(0.8) : theme.primaryBorder.opacity(0.6),
+                        lineWidth: focused ? 1.5 : 1
+                    )
+            )
+            .animation(.easeOut(duration: 0.15), value: focused)
+            .onAppear {
+                // Defer so the alert's present animation settles before the
+                // field grabs focus (otherwise the focus can be dropped).
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                    focused = true
+                }
+            }
+        }
     }
 
     private var textInputArea: some View {
