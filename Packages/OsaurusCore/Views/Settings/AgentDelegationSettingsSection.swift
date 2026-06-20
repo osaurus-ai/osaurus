@@ -205,7 +205,7 @@ struct AgentDelegationSettingsSection: View {
                 }
             }
             .labelsHidden()
-            .frame(maxWidth: 280)
+            .frame(maxWidth: 280, alignment: .leading)
         }
     }
 
@@ -221,7 +221,7 @@ struct AgentDelegationSettingsSection: View {
                 }
             }
             .labelsHidden()
-            .frame(maxWidth: 280)
+            .frame(maxWidth: 280, alignment: .leading)
         }
     }
 
