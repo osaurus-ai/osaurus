@@ -115,3 +115,128 @@ func runAgent(name, query):
 5. e2e matrix (per SUBAGENT_ORCHESTRATION_STATUS.md §5) extended: cloud/local
    orchestrator × {generic call_agent, aliased tool} × {local, remote subagent
    model}, handoff-then-multiturn coherence, RAM.
+
+---
+
+# 8. Operational lifecycle, progress & nuances (read before building the runner)
+
+A subagent job is a **state machine** with explicit load/unload boundaries. Every
+phase must emit a progress event (so the UI never looks frozen during a model
+swap) and every failure path must restore the orchestrator. Phases below unify the
+text (`AgentToolLoop`) and image (`vMLXFlux`) jobs.
+
+## 8.1 Phase timeline (load → start → run → done → unload → restore)
+
+| # | Phase (event id) | Owner | What happens | Can fail with |
+|---|------------------|-------|--------------|---------------|
+| 1 | `received` | tool dispatch | parse args, resolve agent/job | bad args |
+| 2 | `resolving_model` | resolver | resolve subagent model; **reject stale/incomplete/wrong-kind BEFORE touching residency** (no pointless eviction) | model missing/incomplete |
+| 3 | `permission` | permission policy | ask/deny/always; prompt shows the *resolved* model + allows switch | denied |
+| 4 | `waiting_for_chat_idle` | `InferenceLoadCoordinator.waitForChatIdle` | wait for the orchestrator's in-flight generation to fully drain | chat-busy timeout |
+| 5 | `unloading_chat_models` | `ChatResidencyHandoff` | unload resident orchestrator model(s) — **local orchestrator only** | — |
+| 6 | `loading_subagent` | `ModelRuntime.load` / engine load | weight dequant + kernel compile under `MetalGate("load:<m>")`; **model-fit RAM refusal happens here** | won't-fit refusal |
+| 7 | `running` | `AgentToolLoop` (text) / `ImageGenerationService` (image) | the job; sub-indicators below | loop/engine error, cancel, budget |
+| 8 | `unloading_subagent` | runtime | unload per load policy (`unload_after_job` / `keep_warm_when_safe` / `strict_single_job`) | — |
+| 9 | `restoring_chat_models` | `ChatResidencyHandoff.restore` | `ModelRuntime.preload` the orchestrator back | reload failure (surface, do not swallow) |
+| 10 | `done` / `failed` / `cancelled` | tool dispatch | return compact digest (text) or artifact (image) | — |
+
+**Invariants:**
+- Phases 5 & 9 are paired: if 5 ran, 9 MUST run on every exit (success, error,
+  cancel) — the orchestrator is never left unloaded. (Implemented in
+  `LocalTextDelegateTool` via restore on both the success and `catch` paths.)
+- Cloud orchestrator → phases 4,5,9 are no-ops (nothing resident; lease empty).
+- Same-model subagent (agent uses the orchestrator's model) → no swap; skip 5/6/8/9.
+- Never unload during an active generation (phase 4 gates this) — tearing down a
+  KV/SSM cache mid-eval is the `MTLCommandBuffer addCompletedHandler` / SSM-cache
+  crash class (task #34); `MetalGate`'s `load:<m>` exclusive owner is the backstop.
+
+## 8.2 Cache processing across the handoff
+
+- **Orchestrator KV cache + in-RAM prefix cache are dropped on unload (phase 5).**
+  After reload (phase 9) the orchestrator resumes with a **cold cache**: the next
+  turn re-prefills the conversation prefix → higher TTFT on the resume turn. This
+  is expected; surface it (the resume turn shows prefill progress, not a hang).
+- **L2 block-disk cache (`cache.blockDisk`) can survive the unload** (it is
+  disk-backed, keyed by prefix hash). If enabled, the resume turn can hit the
+  stored K,V for the unchanged prefix and skip a full re-prefill — the main
+  mitigation for handoff latency. Recommend documenting "enable block-disk cache
+  for snappier resume after a subagent job."
+- **Prefix-cache correctness:** the resume prefix is the SAME conversation, so the
+  prefix hash matches → safe reuse. Do not reuse across different models (each
+  model's K,V is its own; the handoff swaps models, so the subagent never reads the
+  orchestrator's cache and vice-versa).
+- The **subagent's** cache is ephemeral: created on load, discarded on unload
+  (bounded run). With `keep_warm_when_safe`, the subagent stays resident and keeps
+  its prefix cache for back-to-back jobs (only when RAM allows).
+- Must wait for chat idle (phase 4) so no cache-store eval is in flight when we
+  unload — see invariant above.
+
+## 8.3 Tokenizer & template nuances
+
+- **Each model owns its tokenizer + chat template.** The handoff swaps models, so
+  the active tokenizer/template swaps too. The subagent renders `systemPrompt +
+  query` with the **subagent's** template and tokenizes with the **subagent's**
+  tokenizer; the orchestrator does likewise for the returned digest.
+- The digest crossing the boundary is **plain text** — re-tokenized by whoever
+  reads it. No token-id is shared across models (correct; token ids are
+  model-specific).
+- **Template correctness is per-model and load-bearing** (lessons from the
+  Laguna/Qwen3 work): a fallback/minimal chat template must emit its own BOS
+  (`applyChatTemplate` tokenizes with `add_special_tokens=false`), and tool-call
+  format is detected from the model's own template (`ParserResolution.toolCall` →
+  `.json`/`.xmlFunction`). If the subagent uses tools, its tool-format detection
+  applies independently of the orchestrator's.
+- A subagent that's a heavy reasoner (e.g. VibeThinker-class) needs an adequate
+  token budget or it consumes the budget in `<think>` and returns no digest —
+  budgets (§6) must account for thinking.
+- Re-entrancy: a subagent must not call `call_agent` (mirror
+  `LocalTextDelegateContext.isActive`), or tokenizer/model thrash compounds.
+
+## 8.4 Image generation/edit process (vMLXFlux) — phases & indicators
+
+The image job is engine-specific (not an `AgentToolLoop` text run) but rides the
+SAME phase 4/5/9 handoff and the same progress center.
+
+1. **load image model** (phase 6) — `MetalGate("image")` exclusive; weight load.
+2. **text-encode** the prompt (CLIP/T5 text encoder → conditioning embeddings).
+3. **edit only:** VAE-encode the source image → latents (requires the resolved
+   source artifact/path; resolve & read AFTER permission, never before).
+4. **denoise loop** — N steps; **each step is one MLX eval**. The **step counter
+   (k / N)** is the primary progress indicator; emit a frame per step (this is the
+   prefill-progress-frame pattern — block-diffusion emitting no frames was the
+   frozen-counter bug, task #39).
+5. **VAE-decode** latents → pixels — a heavy terminal eval; the `MetalGate("image")`
+   lease is held across it (don't release on the last `.step` event).
+6. **write artifact** (path/id) → unload (phase 8).
+7. result is an **artifact**, surfaced as an image card (UI: image chips,
+   copy/save-with-reveal toasts) — not a text digest.
+
+Indicators to surface: phase label (`encoding` / `denoising k/N` / `decoding`),
+elapsed, the resolved image model, and whether a chat model was unloaded/restored.
+
+## 8.5 Progress status surface (so load/unload/run is visible)
+
+- `NativeImageJobProgressCenter.post(...)` already emits phase events tagged with
+  `session_id` / `assistant_turn_id` / `tool_call_id` → the chat progress row. The
+  generic `call_agent` runner should post the SAME-shaped events for text jobs:
+  `waiting_for_chat_idle` → `unloading_chat_models` → `loading_subagent` →
+  `running (iteration k)` → `unloading_subagent` → `restoring_chat_models` → `done`.
+- The user must SEE the swap: "Unloading chat model… / Loading sparky… / Running… /
+  Reloading chat model…", not a frozen turn. This is a hard requirement of the
+  handoff — a multi-second model swap with no indicator reads as a hang.
+- Tool-call json must not leak into visible content during a subagent's tool use
+  (the remote UI commit "strip leaked tool-call json from assistant display content"
+  handles the orchestrator side; the subagent's loop already consumes its own tool
+  calls).
+
+## 8.6 What to verify for each nuance (extends STATUS §5 matrix)
+- Resume coherence: after handoff+reload, orchestrator multiturn is coherent and
+  the resume turn's prefill (cold vs L2-warm) is correct — run with block-disk
+  cache ON and OFF.
+- Tokenizer/template: subagent on a DIFFERENT family than the orchestrator
+  (e.g. local qwen3 orchestrator → gemma subagent) returns a clean digest; tools
+  on the subagent parse correctly.
+- Image: step counter advances (no frozen counter), edit reads the right source,
+  artifact renders, MetalGate never overlaps (no SIGABRT) during a job that also
+  triggers a model load.
+- Progress: every phase emits an event; UI shows the swap; no frozen turn.

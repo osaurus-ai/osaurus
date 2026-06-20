@@ -1,5 +1,13 @@
 # Subagent Orchestration — Team Spec, Wiring & Usage
 
+
+"> ⚠️ UPDATED DIRECTION (2026-06-20): this feature is generalizing into a single
+> configurable **`call_agent`** primitive (a "portable subagent machine" over Agent
+> personas). The flows below (`local_delegate`, `image_*`) become the first concrete
+> cases. Canonical design + operational lifecycle/cache/tokenizer/image/progress
+> nuances: **SUBAGENT_PORTABLE_DESIGN.md**. Status/TODO: SUBAGENT_ORCHESTRATION_STATUS.md.
+
+
 Audience: osaurus contributors. Companion to
 [`SUBAGENT_ORCHESTRATION_STATUS.md`](SUBAGENT_ORCHESTRATION_STATUS.md) (status +
 test matrix) and [`NATIVE_SWIFT_IMAGE_AGENT_JOB_FLOW.md`](NATIVE_SWIFT_IMAGE_AGENT_JOB_FLOW.md)

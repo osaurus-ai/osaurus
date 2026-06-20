@@ -1,5 +1,13 @@
 # Native Swift image agent job flow
 
+
+"> ⚠️ UPDATED DIRECTION (2026-06-20): this feature is generalizing into a single
+> configurable **`call_agent`** primitive (a "portable subagent machine" over Agent
+> personas). The flows below (`local_delegate`, `image_*`) become the first concrete
+> cases. Canonical design + operational lifecycle/cache/tokenizer/image/progress
+> nuances: **SUBAGENT_PORTABLE_DESIGN.md**. Status/TODO: SUBAGENT_ORCHESTRATION_STATUS.md.
+
+
 Status: `PARTIAL - SOURCE WIRED, E2E PROOF MISSING`
 
 Branch: `feat/image-generation-vmlxflux`

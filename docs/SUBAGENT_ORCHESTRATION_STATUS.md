@@ -8,6 +8,31 @@ with model handoff when the orchestrator is a local model.
 
 ---
 
+## ⚠️ CHANGE OF PLANS (2026-06-20) — generalize to a portable subagent machine
+
+The plan evolved from three hardcoded tools (`local_delegate`, `image_generate`,
+`image_edit`) to ONE general, user-configurable primitive: **`call_agent(name,
+query)`** — "a portable subagent machine: input → output, aliased behind a
+tool-call name," piggybacking on the existing **Agent personas** (`AgentManager`).
+Users configure a named agent ("sparky") with its own local/remote model, prompt,
+and tools; the orchestrator calls it by alias. Canonical design:
+[`SUBAGENT_PORTABLE_DESIGN.md`](SUBAGENT_PORTABLE_DESIGN.md). Operational lifecycle,
+cache/tokenizer/image nuances, and progress indicators are documented there too.
+
+What this means for the work below:
+- The `local_delegate` + image coordinators we built are NOT thrown away — they
+  become the FIRST concrete cases of `call_agent` and contribute the reusable
+  parts (`ChatResidencyHandoff`, `AgentToolLoop` runner, the per-job coordinators).
+- New work re-targets to: a shared `AgentSubagentRunner` (extract
+  `LocalTextDelegateTool`'s body), the `call_agent` tool over Agent personas, and
+  auto-generated alias tools. Image gen/edit stay engine-specific but ride the
+  same handoff + progress surface.
+- Nothing about the model-handoff contract changes — local orchestrator unloads,
+  subagent runs, orchestrator reloads; cloud orchestrator stays resident.
+
+---
+
+
 ## 0. Build & verified state (2026-06-20)
 
 - **Branch builds GREEN** on current main: synced (`AgentToolLoop`, Computer Use
