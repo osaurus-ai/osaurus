@@ -4,6 +4,15 @@ Status: `PARTIAL - SOURCE WIRED, E2E PROOF MISSING`
 
 Branch: `feat/image-generation-vmlxflux`
 
+Local model storage verified 2026-06-18:
+
+- `~/.mlxstudio/models` is a symlink to `/Users/eric/models`, so existing
+  Osaurus and vmlx-swift model discovery paths still resolve.
+- `/Users/eric/models/JANGQ-AI` contains Laguna and MiniMax local chat bundles.
+- `/Users/eric/models/OsaurusAI` contains VibeThinker and Gemma local chat
+  bundles.
+- `/Users/eric/models/image` contains the 13 local mflux image bundles.
+
 This document records the next Osaurus agent-delegation requirements:
 
 - the main chat agent should be able to ask local native Swift image
@@ -97,7 +106,7 @@ cloud providers directly operate local tools.
 
 ## Existing Image State
 
-Already proven on this branch:
+Source/runtime evidence currently recorded on this branch:
 
 - Native image models are cataloged through `/images/models`.
 - `ImageGenerationService` owns the only `vMLXFlux` import and exposes
@@ -222,7 +231,7 @@ Local chat model:
 
 ## Cloud Cost Saver Local Text Delegate
 
-Status: `DESIGN/HANDOFF - NOT IMPLEMENTED`
+Status: `SOURCE-WIRED - LIVE E2E MISSING`
 
 This is a sibling flow to image jobs. It lets a cloud/API chat model ask a
 local downloaded chat-capable model to do bounded helper work, especially coding
@@ -527,7 +536,10 @@ Failure rules:
 4. Add `NativeImageJobTool` and register it as a compact built-in tool, gated by
    image feature availability and agent/tool settings.
 5. Add `LocalDelegateCoordinator` and `LocalDelegateTool`, gated by
-   cloud-to-local delegation settings and permission policy.
+   cloud-to-local delegation settings and permission policy. Source status:
+   `local_delegate` now exists as a bounded text-only `AgentToolLoop` child
+   tool; richer child tool use remains blocked until the separate
+   `localTextDelegateToolUse` permission flow is implemented.
 6. Add settings storage/UI for default local delegate model, default image
    generate/edit models, load policy, budgets, sharing policy, and per-job
    permission defaults.
@@ -602,9 +614,9 @@ uname -a > "$IMAGE_AGENT_PROOF_ROOT/uname.txt"
 
 | Row | Status | Command | Required evidence | Current blocker |
 | --- | --- | --- | --- | --- |
-| Source image UI wiring contract | GREEN | `scripts/live-proof/assert-image-ui-wiring.sh` | stdout copied to proof root | None for source contract; still not UI click proof |
-| SwiftPM build | GREEN | `swift build --package-path Packages/OsaurusCore` | exit 0 log | Local and remote build have passed |
-| Native image coordinator tests | GREEN on `erics-m5-max.local`, BLOCKED local | `swift test --package-path Packages/OsaurusCore --filter NativeImageJobCoordinatorTests` | 7/7 Swift Testing output | Local machine has package-wide `no such module 'Testing'`; remote host passes |
+| Source image UI wiring contract | SOURCE-WIRED, RERUN PENDING | `scripts/live-proof/assert-image-ui-wiring.sh` | stdout copied to proof root | Not rerun in the current proof pass; still not UI click proof |
+| SwiftPM build | GREEN | `swift build --package-path Packages/OsaurusCore` | exit 0 log | Fresh local build passed on 2026-06-18 after strict resolver/prompt changes |
+| Native image coordinator tests | BLOCKED local | `swift test --package-path Packages/OsaurusCore --filter NativeImageJobCoordinatorTests` | Swift Testing output for all focused tests | Local machine has package-wide `no such module 'Testing'`; compatible-host rerun pending after latest resolver changes |
 | Keychain-free Release app build | RED | `scripts/live-proof/build-keychain-free-osaurus.sh "$IMAGE_AGENT_PROOF_ROOT/DerivedData"` | built `osaurus.app` path, xcodebuild log, ad-hoc codesign log | Not rerun after agent tool/residency commits |
 | Foreground SwiftUI launch | RED | `scripts/live-proof/open-keychain-free-osaurus.sh "$APP" "$IMAGE_AGENT_PROOF_ROOT/ui"` | app PID/window screenshot/log | Manual foreground click-through pending |
 | Headless app/server launch | RED | `scripts/live-proof/launch-keychain-free-osaurus.sh "$APP" "$IMAGE_AGENT_PROOF_ROOT/server"` | pid, app log, `/health` response | Needs current app build |
@@ -613,15 +625,16 @@ uname -a > "$IMAGE_AGENT_PROOF_ROOT/uname.txt"
 
 | Row | Status | How to test | Required evidence | Current blocker |
 | --- | --- | --- | --- | --- |
-| Agent Delegation settings save/load | SOURCE-GREEN, LIVE-RED | Open Settings, toggle master delegation, cloud text delegate, image delegate, choose local text delegate, image gen model, image edit model, load policies, budgets, and permission defaults; quit/relaunch; confirm same values | `~/.osaurus/config/agent-delegation.json` from test root plus before/after screenshots | Source tests cover persistence/decode; no live UI persistence proof |
+| Agent Delegation settings save/load | SOURCE-WIRED, LIVE-RED | Open Settings, toggle master delegation, cloud text delegate, image delegate, choose local text delegate, image gen model, image edit model, load policies, budgets, and permission defaults; quit/relaunch; confirm same values | `~/.osaurus/config/agent-delegation.json` from test root plus before/after screenshots | Focused tests did not execute on this host; no live UI persistence proof |
 | Delegation off removes image tools from prompt/tool payload | SOURCE-WIRED, LIVE-RED | Turn master delegation off, start chat, inspect outgoing tool schemas/context budget | outbound request/tool schema log, context-budget screenshot | Source tests cover `ToolRegistry.alwaysLoadedSpecs`; no live provider payload proof |
 | Image delegation off blocks capability reload/stale execution | SOURCE-WIRED, LIVE-RED | Master on, image delegation off; ask model to load/call `image_generate` | disabled availability detail, rejected stale call envelope | Source tests cover registry/spec/direct execution; no live agent-loop proof |
-| Downloaded-model picker filtering | SOURCE-GREEN, LIVE-RED | Confirm local text picker shows chat-capable downloaded models only, image gen picker shows text-to-image models only, image edit picker shows edit-capable models only | screenshots plus `/images/models` JSON | Needs live app |
+| Downloaded-model picker filtering | SOURCE-WIRED, LIVE-RED | Confirm local text picker shows chat-capable downloaded models only, image gen picker shows text-to-image models only, image edit picker shows edit-capable models only | screenshots plus `/images/models` JSON | Needs live app |
 | Permission `deny` for image generate | SOURCE-WIRED, LIVE-RED | Set image generate permission to `deny`; ask cloud/local chat to create an image | tool result envelope shows rejected, no image model load in logs | No live agent-loop run |
 | Permission `ask` for image generate | SOURCE-WIRED, LIVE-RED | Set image generate permission to `ask`; trigger tool; approve once | prompt screenshot, resulting job, saved policy state if "always allow" chosen | Prompt UI not live-proven |
 | Permission `always_allow` for image generate | SOURCE-WIRED, LIVE-RED | Set image generate permission to `always_allow`; trigger two jobs | second job starts without prompt, logs identify selected model | No repeated live proof |
 | Permission `deny` / `ask` / `always_allow` for image edit | SOURCE-WIRED, LIVE-RED | Repeat the three image-generate permission rows using a real source image artifact | prompt/result screenshots, no dangling tool call | No live edit agent-loop proof |
-| Permission `deny` / `ask` / `always_allow` for local text delegate | DESIGN-ONLY | Repeat with `local_delegate` once implemented | prompt/result screenshots, local delegate logs | Local text delegate tool/coordinator not implemented |
+| Permission `deny` / `ask` / `always_allow` for local text delegate | SOURCE-WIRED, LIVE-RED | Repeat with `local_delegate` | prompt/result screenshots, local delegate logs | Source tool enforces deny/ask/always_allow; no live app permission proof |
+| Permission prompt resolved-model display | SOURCE-WIRED, LIVE-RED | Omit model args and trigger `image_generate`, `image_edit`, and `local_delegate` with `ask` permissions | screenshots showing resolved model and load policy before approval | Source enriches prompt arguments; no live prompt screenshot |
 | Permission model override in prompt | SETTINGS-SOURCE-WIRED, LIVE-RED | In the permission sheet, switch from default image model to another compatible downloaded model before approving | screenshot and final tool payload selected model | Prompt model override not proven |
 
 ### Image Agent E2E Flows
@@ -642,11 +655,11 @@ uname -a > "$IMAGE_AGENT_PROOF_ROOT/uname.txt"
 
 | Row | Status | Flow | Required evidence | Current blocker |
 | --- | --- | --- | --- | --- |
-| Cloud chat -> local coding delegate -> compact result -> final cloud answer | BLOCKED | Cloud model posts bounded local text job; local model returns compact result | transcript, token counts, delegate model load/unload log | `LocalDelegateCoordinator` and tool not implemented |
-| Local delegate model picker and settings | SOURCE-WIRED, TOOL-BLOCKED | Pick downloaded chat model in Agent Delegation settings | settings JSON/screenshots | Tool execution path missing |
-| Local delegate tool permissions | BLOCKED | Prove deny/ask/always_allow and scoped local tool permissions | permission prompt screenshots, result envelopes | Tool/coordinator not implemented |
-| Local delegate budget enforcement | BLOCKED | Exceed token/turn/time/tool budgets and verify typed refusal/stop | result envelopes and logs | Tool/coordinator not implemented |
-| Cloud token-cost comparison | BLOCKED | Run same coding task with and without local delegate, record cloud input/output tokens | billing/token logs, prompts, final answers | Local delegate missing |
+| Cloud chat -> local coding delegate -> compact result -> final cloud answer | SOURCE-WIRED, LIVE-RED | Cloud model posts bounded local text job; local model returns compact result | transcript, token counts, delegate model load/unload log | `local_delegate` source exists; no live cloud agent-loop proof |
+| Local delegate model picker and settings | SOURCE-WIRED, LIVE-RED | Pick downloaded chat model in Agent Delegation settings | settings JSON/screenshots | Source settings exist; no live UI persistence screenshot |
+| Local delegate tool permissions | SOURCE-WIRED, LIVE-RED | Prove deny/ask/always_allow and scoped local tool permissions | permission prompt screenshots, result envelopes | Source deny/ask/always_allow exists; no live app proof; child tool-use scope intentionally refused |
+| Local delegate budget enforcement | SOURCE-WIRED, LIVE-RED | Exceed token/turn/time/tool budgets and verify typed refusal/stop | result envelopes and logs | Source turn/token/time budgets exist; no live delegate proof |
+| Cloud token-cost comparison | RED | Run same coding task with and without local delegate, record cloud input/output tokens | billing/token logs, prompts, final answers | No live cloud comparison proof |
 
 ### Privacy, Prompt, Tool, And Artifact Stability
 
@@ -691,7 +704,11 @@ Each completed live row should save:
 - Native image API and manual composer wiring exist.
 - Model catalog and capability metadata are exposed.
 - `ImageGenerationService` serializes image generation through `MetalGate`.
-- Prior image API stress proof passed on `erics-m5-max.local`.
+- Local model roots were verified on 2026-06-18 after the move to
+  `/Users/eric/models`; `~/.mlxstudio/models` points at that root, and the
+  JANGQ-AI, OsaurusAI, and image bundle folders are present.
+- Historical prior image API stress proof exists from earlier runs, but it was not
+  rerun after the latest strict resolver and permission prompt changes.
 - Agent delegation settings now have source-wired configuration, JSON
   persistence, compatible downloaded-model candidate filtering, and a Settings
   card for default local text/image models, load policy, sharing policy,
@@ -705,9 +722,10 @@ Each completed live row should save:
 - `ImageGenerationService.unload()` now exposes explicit image-model release
   for agent-triggered low-RAM jobs.
 - `NativeImageJobCoordinator` now resolves requested/configured/first-ready
-  local image generation models, records progress phases, runs generation
-  through `ImageGenerationService`, and unloads image weights after agent jobs
-  unless manual-panel keep-warm policy is selected.
+  local image generation models, rejects missing/incomplete/wrong-kind requested
+  or configured selections before residency changes, records progress phases,
+  runs generation through `ImageGenerationService`, and unloads image weights
+  after agent jobs unless manual-panel keep-warm policy is selected.
 - The default `agent_single_residency` image policy now snapshots resident
   local `ModelRuntime` chat models, waits for local chat generation to go idle,
   unloads those chat models before the image job, unloads image weights after
@@ -723,41 +741,62 @@ Each completed live row should save:
   generated image paths plus progress metadata. `image_edit` accepts one to four
   explicit local source image paths and rejects unsupported extensions,
   non-file paths, and files above 80 MB.
+- `image_generate`, `image_edit`, and `local_delegate` now resolve the selected
+  default/requested model before `ask` permission prompts and pass the resolved
+  model plus load policy in the permission argument JSON. This is source-wired
+  only until a live permission sheet screenshot proves the UI surface.
 - `NativeImageToolArtifactBridge` promotes successful image tool output paths
   into existing `SharedArtifact` chat artifacts. `ContentBlock` treats
   `image_generate` / `image_edit` enriched results as artifact-card capable,
   so the model should not need to call `share_artifact` for the generated image.
+- `local_delegate` is registered as a compact built-in tool and is filtered out
+  unless both the Agent Delegation master toggle and cloud text delegation
+  toggle are enabled. Its model resolver uses
+  `ModelManager.findInstalledModel(named:)` rather than hardcoded paths or
+  model lists.
+- `local_delegate` runs a bounded, context-isolated text-only child loop through
+  `AgentToolLoop`, returns a compact `local_text_delegate_result` envelope, and
+  unloads the delegate model after completion/failure under
+  `unload_after_job` and `strict_single_job_residency`.
+- `local_delegate` rejects parent local-model calls by default; this source
+  slice is for cloud/API parent models delegating bounded text work to a local
+  downloaded helper.
+- `local_delegate` intentionally rejects child tool calls in this source slice;
+  no file/shell/tool access is granted through local text delegation until the
+  separate `localTextDelegateToolUse` permission flow is implemented and proven.
 - Local source verification on 2026-06-18: `swift build --package-path
-  Packages/OsaurusCore` passed after these changes. Local `swift test
+  Packages/OsaurusCore` passed after the strict resolver and resolved-model
+  permission prompt changes. `git diff --check` also passed. Local `swift test
   --package-path Packages/OsaurusCore --filter NativeImageJobCoordinatorTests`
-  remained blocked by the existing package-wide `no such module 'Testing'`
-  failure before test execution.
-- Remote proof on `erics-m5-max.local` from fresh clone
+  and `swift test --package-path Packages/OsaurusCore --filter
+  AgentDelegationToolAvailabilityTests` remain blocked by the existing
+  package-wide `no such module 'Testing'` failure before focused test execution.
+- Historical remote proof on `erics-m5-max.local` from fresh clone
   `/tmp/osaurus-agent-image-proof-a47b88d4` at commit `a47b88d4`: `swift build
   --package-path Packages/OsaurusCore` passed, and `swift test --package-path
   Packages/OsaurusCore --filter NativeImageJobCoordinatorTests` ran 4 tests in
   `NativeImageJobCoordinatorTests` and passed.
-- Remote proof on `erics-m5-max.local` from the same fresh clone after reset to
+- Historical remote proof on `erics-m5-max.local` from the same fresh clone after reset to
   commit `89971b42`: `swift build --package-path Packages/OsaurusCore` passed,
   and `swift test --package-path Packages/OsaurusCore --filter
   NativeImageJobCoordinatorTests` ran 5 tests in `NativeImageJobCoordinatorTests`
   and passed. This proves the source-wired coordinator/model-resolver path for
   generation and edit model selection; it is not live chat-agent e2e proof.
-- Remote proof on `erics-m5-max.local` from the same fresh clone after reset to
+- Historical remote proof on `erics-m5-max.local` from the same fresh clone after reset to
   commit `d6147aa4`: `swift build --package-path Packages/OsaurusCore` passed,
   and `swift test --package-path Packages/OsaurusCore --filter
   NativeImageJobCoordinatorTests` ran 6 tests in `NativeImageJobCoordinatorTests`
   and passed. This proves source buildability and the policy gate that enables
   chat-model eviction only for `agent_single_residency`; it is not live
   unload/generate/reload RAM proof.
-- Remote proof on `erics-m5-max.local` from the same fresh clone after reset to
+- Historical remote proof on `erics-m5-max.local` from the same fresh clone after reset to
   commit `36934a98`: `swift build --package-path Packages/OsaurusCore` passed,
   and `swift test --package-path Packages/OsaurusCore --filter
   NativeImageJobCoordinatorTests` ran 7 tests in `NativeImageJobCoordinatorTests`
   and passed. This proves source buildability and progress payload metadata for
   `session_id`, `assistant_turn_id`, and `tool_call_id`; it is not visible chat
   UI proof.
-- Remote proof on `erics-m5-max.local` from the same fresh clone after reset to
+- Historical remote proof on `erics-m5-max.local` from the same fresh clone after reset to
   commit `1d544118`: `swift test --package-path Packages/OsaurusCore --filter
   AgentDelegationConfigurationStoreTests` ran 4 tests and passed; `swift test
   --package-path Packages/OsaurusCore --filter
@@ -785,8 +824,9 @@ Each completed live row should save:
 - Image edit now has a source-wired main-agent tool, but no live source-image
   artifact e2e proof has run through the actual agent loop.
 - Local SwiftPM test execution is blocked on this host by a global `Testing`
-  module import failure in existing tests; the same filtered tests passed on
-  `erics-m5-max.local`.
+  module import failure in existing tests. The new `local_delegate` and strict
+  image model resolver focused tests have not yet run on a Swift
+  Testing-capable host.
 - Agent Delegation Settings now own source-wired tool availability for image
   delegation, but no live Settings UI screenshot or outbound provider payload
   capture has proven the toggle behavior in the running app.
@@ -797,7 +837,10 @@ Each completed live row should save:
 - No cloud-chat-model -> local image tool e2e proof.
 - No image-edit agent loop proof with real source image artifact.
 - No cloud-chat-model -> local text delegate e2e proof.
+- No cloud-chat-model -> local text delegate live proof, despite source wiring.
 - No runtime permission prompt or ask/deny/always-allow live proof exists for
   spawned image or text jobs.
+- No live proof yet shows the resolved default model appearing in the permission
+  prompt before approval.
 - No agent-triggered RAM-safety preflight/refusal proof.
 - No progress UI proof for the agent-triggered path.

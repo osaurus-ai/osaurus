@@ -216,6 +216,9 @@ enum NativeImageChatResidencyPolicy {
 
 enum NativeImageJobCoordinatorError: Error, CustomStringConvertible {
     case noReadyModel(kind: AgentDelegationModelKind)
+    case selectedModelUnavailable(model: String, kind: AgentDelegationModelKind)
+    case selectedModelIncomplete(model: String, reasons: [String])
+    case selectedModelWrongKind(model: String, expected: AgentDelegationModelKind)
     case requestFailed(String)
     case cancelled
 
@@ -223,6 +226,13 @@ enum NativeImageJobCoordinatorError: Error, CustomStringConvertible {
         switch self {
         case .noReadyModel(let kind):
             return "no ready local model configured or installed for \(kind.rawValue)"
+        case .selectedModelUnavailable(let model, let kind):
+            return "selected local image model '\(model)' is not installed for \(kind.rawValue)"
+        case .selectedModelIncomplete(let model, let reasons):
+            let suffix = reasons.isEmpty ? "" : ": \(reasons.joined(separator: ", "))"
+            return "selected local image model '\(model)' is incomplete\(suffix)"
+        case .selectedModelWrongKind(let model, let expected):
+            return "selected local image model '\(model)' is not compatible with \(expected.rawValue)"
         case .requestFailed(let message):
             return message
         case .cancelled:
@@ -239,10 +249,10 @@ enum NativeImageJobModelResolver {
         kind: AgentDelegationModelKind
     ) throws -> String {
         if let requested = normalizedID(requested) {
-            return requested
+            return try requireReadyModel(requested, available: available, kind: kind)
         }
         if let configured = normalizedID(configured) {
-            return configured
+            return try requireReadyModel(configured, available: available, kind: kind)
         }
         if let candidate = available.first(where: { isReady($0, for: kind) }) {
             return candidate.id
@@ -266,6 +276,27 @@ enum NativeImageJobModelResolver {
         case .localTextDelegate:
             return false
         }
+    }
+
+    private static func requireReadyModel(
+        _ id: String,
+        available: [ImageModelInfo],
+        kind: AgentDelegationModelKind
+    ) throws -> String {
+        guard let model = available.first(where: { matches($0, id: id) }) else {
+            throw NativeImageJobCoordinatorError.selectedModelUnavailable(model: id, kind: kind)
+        }
+        guard model.ready else {
+            throw NativeImageJobCoordinatorError.selectedModelIncomplete(model: id, reasons: model.blockedReasons)
+        }
+        guard isReady(model, for: kind) else {
+            throw NativeImageJobCoordinatorError.selectedModelWrongKind(model: id, expected: kind)
+        }
+        return model.id
+    }
+
+    private static func matches(_ model: ImageModelInfo, id: String) -> Bool {
+        model.id == id || model.canonicalName == id || model.displayName == id
     }
 }
 

@@ -1,261 +1,160 @@
-# Agent Delegation Settings Implementation Plan
+# Agent Delegation Runtime Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add the persisted settings and model-candidate resolution needed before Osaurus can safely run cloud-to-local text delegation or agent-triggered native image jobs.
+**Goal:** Keep Agent Delegation settings, native image jobs, and cloud-to-local text delegation cohesive without recursive worker processes or prompt-forced behavior.
 
-**Architecture:** Introduce a small `AgentDelegationConfiguration` model with explicit permission, load, sharing, and budget fields. Persist it under `~/.osaurus/config/agent-delegation.json` using the same snapshot/store pattern as the privacy filter, and add `ModelPickerItem` helpers that resolve downloaded local text, image generation, and image edit candidates without injecting catalogs into prompts.
+**Architecture:** Settings and downloaded-model picker filtering are already source-wired. Runtime delegation now uses two modular surfaces: `image_generate` / `image_edit` route through `NativeImageJobCoordinator`, while `local_delegate` is a bounded text-only child loop built on `AgentToolLoop`, modeled after `sandbox_reduce`.
 
-**Tech Stack:** Swift 6.2, Swift Testing, OsaurusCore internal models, existing `ModelPickerItem` and `ImageModelCapabilities`.
+**Tech Stack:** Swift 6.2, Swift Testing, OsaurusCore `AgentToolLoop`, local MLX model discovery through `ModelManager.findInstalledModel`, native image bundles through `ImageGenerationService`.
 
 ---
 
-### Task 1: Configuration Model
+## Current Source Status
+
+- [x] `AgentDelegationConfiguration` stores master enablement, cloud text delegation, image delegation, default local text/image models, load policies, sharing policy, permission defaults, and budgets.
+- [x] `AgentDelegationConfigurationStore` persists settings under `~/.osaurus/config/agent-delegation.json`.
+- [x] `AgentDelegationSettingsSection` exposes the settings UI and filters picker rows through downloaded-model candidate helpers.
+- [x] `image_generate` and `image_edit` are built-in tools, gated by `agentDelegationEnabled && imageDelegationEnabled`.
+- [x] `NativeImageJobCoordinator` resolves requested/configured/default image models only when the selected bundle is installed, ready, and compatible with the requested job kind; stale, incomplete, and wrong-kind selections fail before chat-model unload.
+- [x] `image_generate`, `image_edit`, and `local_delegate` enrich approval prompt arguments with the resolved local model and load policy before the user sees an `ask` permission sheet.
+- [x] `local_delegate` is registered as a built-in tool, gated by `agentDelegationEnabled && cloudTextDelegationEnabled`.
+- [x] `local_delegate` resolves only installed local chat models via `ModelManager.findInstalledModel(named:)`, so the `~/.mlxstudio/models -> ~/models` symlink and moved `~/models/JANGQ-AI`, `~/models/OsaurusAI`, and `~/models/image` roots remain the source of truth.
+- [x] `local_delegate` returns a compact result envelope only; it does not replay the child transcript back to the parent cloud model.
+- [x] `local_delegate` unloads the delegate model after the job for `.unloadAfterJob` and `.strictSingleJobResidency`.
+- [x] `local_delegate` is text-only in this slice. It refuses child tool calls instead of silently granting local file/shell/tool access. Tool-using local delegates require the separate `localTextDelegateToolUse` permission flow.
+
+## Verification Status
+
+- [x] `swift build --package-path Packages/OsaurusCore` passed locally on 2026-06-18 after the stricter image resolver and resolved-model permission prompt changes.
+- [x] `git diff --check` passed locally on 2026-06-18 after the same changes.
+- [x] Local model roots were inspected on 2026-06-18:
+  - `~/.mlxstudio/models` is a symlink to `/Users/eric/models`.
+  - `/Users/eric/models/JANGQ-AI` contains Laguna and MiniMax folders.
+  - `/Users/eric/models/OsaurusAI` contains VibeThinker and Gemma folders.
+  - `/Users/eric/models/image` contains 13 mflux image bundles.
+- [ ] `swift test --package-path Packages/OsaurusCore --filter AgentDelegationToolAvailabilityTests` is blocked locally by the existing package-wide `no such module 'Testing'` toolchain failure before focused tests execute.
+- [ ] `swift test --package-path Packages/OsaurusCore --filter NativeImageJobCoordinatorTests` is blocked locally by the same package-wide `no such module 'Testing'` failure before focused tests execute.
+- [ ] Swift Testing proof on a compatible host has not yet been rerun for the new `local_delegate` and strict image resolver tests.
+- [ ] Foreground app/UI proof has not yet shown cloud chat selecting and calling `local_delegate`.
+- [ ] Foreground app/UI proof has not yet shown local image generation/edit delegation from real chat turns.
+
+## Next Tasks
+
+### Task 1: Focused Tests On A Swift Testing-Capable Host
 
 **Files:**
-- Create: `Packages/OsaurusCore/Models/AgentDelegation/AgentDelegationConfiguration.swift`
-- Test: `Packages/OsaurusCore/Tests/AgentDelegation/AgentDelegationConfigurationTests.swift`
+- Test: `Packages/OsaurusCore/Tests/AgentDelegation/AgentDelegationToolAvailabilityTests.swift`
+- Test: `Packages/OsaurusCore/Tests/AgentDelegation/NativeImageJobCoordinatorTests.swift`
+- Source: `Packages/OsaurusCore/Tools/LocalTextDelegateTool.swift`
+- Source: `Packages/OsaurusCore/Tools/NativeImageTools.swift`
+- Source: `Packages/OsaurusCore/Services/AgentDelegation/NativeImageJobCoordinator.swift`
+- Source: `Packages/OsaurusCore/Tools/ToolRegistry.swift`
 
-- [ ] **Step 1: Write the failing tests**
+- [ ] **Step 1: Sync or pull this branch on a Swift Testing-capable checkout**
 
-Add tests that assert defaults, clamping, and JSON round-trip:
+Expected: the checkout is on `feat/image-generation-vmlxflux` at the commit being proven, and `swift --version` exposes the `Testing` module.
 
-```swift
-import Foundation
-import Testing
-@testable import OsaurusCore
-
-@Suite("Agent delegation configuration")
-struct AgentDelegationConfigurationTests {
-    @Test("defaults are low RAM and ask-first")
-    func defaultsAreSafe() {
-        let config = AgentDelegationConfiguration.default
-        #expect(config.cloudTextDelegationEnabled == false)
-        #expect(config.textDelegateLoadPolicy == .unloadAfterJob)
-        #expect(config.imageJobLoadPolicy == .agentSingleResidency)
-        #expect(config.permissionDefaults.localTextDelegate == .ask)
-        #expect(config.permissionDefaults.imageGenerate == .ask)
-        #expect(config.permissionDefaults.imageEdit == .ask)
-        #expect(config.budgets.maxDelegateTokens == 2048)
-        #expect(config.budgets.maxDelegateTurns == 1)
-        #expect(config.budgets.maxToolCalls == 0)
-        #expect(config.budgets.maxElapsedSeconds == 120)
-    }
-
-    @Test("budget normalization clamps invalid values")
-    func budgetNormalizationClampsInvalidValues() {
-        let raw = AgentDelegationBudgets(
-            maxDelegateTokens: -10,
-            maxDelegateTurns: 0,
-            maxToolCalls: -1,
-            maxElapsedSeconds: 0
-        )
-        #expect(raw.normalized.maxDelegateTokens == 256)
-        #expect(raw.normalized.maxDelegateTurns == 1)
-        #expect(raw.normalized.maxToolCalls == 0)
-        #expect(raw.normalized.maxElapsedSeconds == 15)
-    }
-
-    @Test("configuration round trips stable raw values")
-    func configurationRoundTrip() throws {
-        let config = AgentDelegationConfiguration(
-            cloudTextDelegationEnabled: true,
-            defaultLocalTextDelegateModelId: "local-chat",
-            defaultImageGenerationModelId: "flux-schnell",
-            defaultImageEditModelId: "qwen-image-edit",
-            textDelegateLoadPolicy: .keepWarmWhenSafe,
-            imageJobLoadPolicy: .manualPanelKeepsImageLoaded,
-            sharingPolicy: .askBeforeExpandedSharing,
-            permissionDefaults: AgentDelegationPermissionDefaults(
-                localTextDelegate: .alwaysAllow,
-                localTextDelegateToolUse: .deny,
-                imageGenerate: .ask,
-                imageEdit: .alwaysAllow
-            ),
-            budgets: AgentDelegationBudgets(
-                maxDelegateTokens: 4096,
-                maxDelegateTurns: 2,
-                maxToolCalls: 3,
-                maxElapsedSeconds: 240
-            )
-        )
-
-        let data = try JSONEncoder().encode(config)
-        let decoded = try JSONDecoder().decode(AgentDelegationConfiguration.self, from: data)
-
-        #expect(decoded == config)
-        #expect(decoded.permissionDefaults.localTextDelegate.rawValue == "always_allow")
-        #expect(decoded.textDelegateLoadPolicy.rawValue == "keep_warm_when_safe")
-    }
-}
-```
-
-- [ ] **Step 2: Run the focused tests and verify they fail**
+- [ ] **Step 2: Run focused Agent Delegation tests**
 
 Run:
 
 ```bash
-swift test --package-path Packages/OsaurusCore --filter AgentDelegationConfigurationTests
+OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1 swift test --package-path Packages/OsaurusCore --filter AgentDelegationToolAvailabilityTests
+OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1 swift test --package-path Packages/OsaurusCore --filter NativeImageJobCoordinatorTests
 ```
 
-Expected: compile failure because the `AgentDelegationConfiguration` types do not exist.
+Expected: tests compile and pass, including the `local_delegate` schema gating, stale direct execution, missing configured local text model, strict requested/configured image model resolution, and wrong-kind/incomplete image model refusal rows.
 
-- [ ] **Step 3: Add the configuration model**
-
-Create `AgentDelegationConfiguration.swift` with the enums, defaults, and normalization used by the tests.
-
-- [ ] **Step 4: Run the focused tests and verify they pass**
-
-Run:
-
-```bash
-swift test --package-path Packages/OsaurusCore --filter AgentDelegationConfigurationTests
-```
-
-Expected: all `AgentDelegationConfigurationTests` pass.
-
-### Task 2: Persistent Store
+### Task 2: Live App Tool-Schema Proof
 
 **Files:**
-- Create: `Packages/OsaurusCore/Models/AgentDelegation/AgentDelegationConfigurationStore.swift`
-- Test: `Packages/OsaurusCore/Tests/AgentDelegation/AgentDelegationConfigurationStoreTests.swift`
+- Source: `Packages/OsaurusCore/Tools/ToolRegistry.swift`
+- Source: `Packages/OsaurusCore/Services/Chat/SystemPromptComposer.swift`
+- Runtime docs: `docs/NATIVE_SWIFT_IMAGE_AGENT_JOB_FLOW.md`
 
-- [ ] **Step 1: Write the failing store tests**
+- [ ] **Step 1: Build keychain-free app**
 
-Add tests for missing-file defaults, save/load, snapshot cache, and test override cleanup.
+Run the branch's existing live-proof build script and save logs under a dated proof root.
 
-- [ ] **Step 2: Run the focused tests and verify they fail**
+- [ ] **Step 2: Toggle Agent Delegation off and inspect outgoing tools**
 
-Run:
+Expected: `local_delegate`, `image_generate`, and `image_edit` are absent from the outgoing schema.
 
-```bash
-swift test --package-path Packages/OsaurusCore --filter AgentDelegationConfigurationStoreTests
-```
+- [ ] **Step 3: Toggle master + cloud text delegation on and inspect outgoing tools**
 
-Expected: compile failure because the store does not exist.
+Expected: `local_delegate` is present without injecting a downloaded-model catalog into the prompt.
 
-- [ ] **Step 3: Add `AgentDelegationConfigurationStore`**
+- [ ] **Step 4: Toggle image delegation on and inspect outgoing tools**
 
-Mirror the `PrivacyFilterStore` shape: `setOverrideDirectory(_:)`, `load()`, `save(_:)`, `snapshot()`, `invalidateSnapshot()`, and a main-thread `.agentDelegationConfigurationChanged` notification.
+Expected: `image_generate` and `image_edit` are present only when image delegation is enabled.
 
-- [ ] **Step 4: Run the focused tests and verify they pass**
-
-Run:
-
-```bash
-swift test --package-path Packages/OsaurusCore --filter AgentDelegationConfigurationStoreTests
-```
-
-Expected: all store tests pass.
-
-### Task 3: Model Candidate Resolution
+### Task 3: Live Cloud-To-Local Text Delegate Proof
 
 **Files:**
-- Modify: `Packages/OsaurusCore/Models/Configuration/ModelPickerItem.swift`
-- Test: `Packages/OsaurusCore/Tests/Model/AgentDelegationModelPickerTests.swift`
+- Source: `Packages/OsaurusCore/Tools/LocalTextDelegateTool.swift`
+- Source: `Packages/OsaurusCore/Services/Chat/AgentToolLoop.swift`
 
-- [ ] **Step 1: Write failing candidate tests**
+- [ ] **Step 1: Select a cloud/API chat model and a downloaded local delegate model**
 
-Add tests that prove local text delegates come only from local chat-capable items, generation defaults come only from ready text-to-image models, edit defaults come only from ready image-edit models, and configured missing ids return `nil`.
+Use one installed local chat model from the Settings picker, such as a VibeThinker or Laguna bundle that resolves through `ModelManager.findInstalledModel`.
 
-- [ ] **Step 2: Run the focused tests and verify they fail**
+- [ ] **Step 2: Ask the cloud model for a bounded helper task**
 
-Run:
+Expected: the cloud model calls `local_delegate` with a compact `task` and optional compact `context`.
 
-```bash
-swift test --package-path Packages/OsaurusCore --filter AgentDelegationModelPickerTests
-```
+- [ ] **Step 3: Verify the result envelope**
 
-Expected: compile failure because the helper methods do not exist.
+Expected: the tool result contains `kind=local_text_delegate_result`, selected local model, summary, iterations, elapsed time, residency status, and unload status.
 
-- [ ] **Step 3: Add `ModelPickerItem` candidate helpers**
+- [ ] **Step 4: Verify no local transcript replay**
 
-Add internal helpers:
+Expected: the parent cloud model receives only the compact result envelope, not the child message history.
 
-```swift
-var isLocalTextDelegateCandidate: Bool
-var isImageGenerationDelegateCandidate: Bool
-var isImageEditDelegateCandidate: Bool
-```
-
-Add array helpers:
-
-```swift
-var localTextDelegateCandidates: [ModelPickerItem]
-var imageGenerationDelegateCandidates: [ModelPickerItem]
-var imageEditDelegateCandidates: [ModelPickerItem]
-func agentDelegationCandidate(id: String?, kind: AgentDelegationModelKind) -> ModelPickerItem?
-func defaultAgentDelegationCandidate(kind: AgentDelegationModelKind) -> ModelPickerItem?
-```
-
-- [ ] **Step 4: Run the focused tests and verify they pass**
-
-Run:
-
-```bash
-swift test --package-path Packages/OsaurusCore --filter AgentDelegationModelPickerTests
-```
-
-Expected: all model picker candidate tests pass.
-
-### Task 4: Settings UI Scaffolding
+### Task 4: Permission And RAM Proof
 
 **Files:**
-- Create: `Packages/OsaurusCore/Views/Settings/AgentDelegationSettingsSection.swift`
-- Modify: `Packages/OsaurusCore/Views/Settings/ConfigurationView.swift`
+- Source: `Packages/OsaurusCore/Tools/LocalTextDelegateTool.swift`
+- Source: `Packages/OsaurusCore/Tools/NativeImageTools.swift`
+- Source: `Packages/OsaurusCore/Services/AgentDelegation/NativeImageJobCoordinator.swift`
 
-- [ ] **Step 1: Add a settings section view**
+- [ ] **Step 1: Prove `deny`, `ask`, and `always_allow` for `local_delegate`**
 
-The view should bind to `AgentDelegationConfiguration`, show toggles/pickers for the new persisted fields, and filter picker options through the Task 3 helpers.
+Expected: deny returns a rejected envelope with no local model load; ask prompts with the resolved local text model visible; always_allow runs without prompting.
 
-- [ ] **Step 2: Mount the section in `ConfigurationView`**
+- [ ] **Step 2: Prove delegate unload behavior**
 
-Load `AgentDelegationConfigurationStore.snapshot()` into state, pass `coreModelPickerItems`, and save on changes.
+Expected: `.unloadAfterJob` and `.strictSingleJobResidency` unload the delegate model after completion or failure; `.keepWarmWhenSafe` does not unload in this source slice.
 
-- [ ] **Step 3: Build OsaurusCore**
+- [ ] **Step 3: Prove image job unload/restore with real local chat residency**
 
-Run:
+Expected: local chat model unloads before image generation/edit and restores or warm-loads after image job under `agent_single_residency`.
 
-```bash
-swift build --package-path Packages/OsaurusCore
-```
+- [ ] **Step 4: Prove stale and wrong-kind image model settings fail early**
 
-Expected: build succeeds.
+Expected: missing, incomplete, and edit-vs-generate mismatched model selections return typed unavailable errors before local chat residency is changed.
 
-### Task 5: Verification And Docs
+### Task 5: Future Tool-Using Delegate Slice
 
 **Files:**
-- Modify: `docs/NATIVE_SWIFT_IMAGE_AGENT_JOB_FLOW.md`
+- Source: `Packages/OsaurusCore/Tools/LocalTextDelegateTool.swift`
+- Source: `Packages/OsaurusCore/Tools/SandboxReduceTool.swift`
 
-- [ ] **Step 1: Mark the settings slice as source-wired**
+- [ ] **Step 1: Add tests before enabling any child tools**
 
-Update current status to say the persisted settings/model-resolution slice is implemented, while the runtime coordinators and live e2e flows remain blocked.
+Tests must prove that child file/shell/tool access stays absent unless `localTextDelegateToolUse` policy allows it.
 
-- [ ] **Step 2: Run focused tests and diff check**
+- [ ] **Step 2: Add a restricted allowlist**
 
-Run:
+The first safe allowlist should be read-only and explicit. Do not expose full `ToolRegistry` access to the child delegate.
 
-```bash
-swift test --package-path Packages/OsaurusCore --filter AgentDelegation
-swift test --package-path Packages/OsaurusCore --filter AgentDelegationModelPickerTests
-git diff --check
-```
+- [ ] **Step 3: Add permission UI proof**
 
-Expected: focused tests pass and `git diff --check` is silent.
+The permission prompt must name the child tool scope and selected local model before any child tool access is granted.
 
-- [ ] **Step 3: Commit**
+## Non-Negotiables
 
-Run:
-
-```bash
-git add docs/superpowers/plans/2026-06-18-agent-delegation-settings.md Packages/OsaurusCore/Models/AgentDelegation Packages/OsaurusCore/Tests/AgentDelegation Packages/OsaurusCore/Tests/Model/AgentDelegationModelPickerTests.swift Packages/OsaurusCore/Models/Configuration/ModelPickerItem.swift Packages/OsaurusCore/Views/Settings/AgentDelegationSettingsSection.swift Packages/OsaurusCore/Views/Settings/ConfigurationView.swift docs/NATIVE_SWIFT_IMAGE_AGENT_JOB_FLOW.md
-git commit -m "Add agent delegation settings scaffolding"
-```
-
-Expected: one focused commit with settings, tests, and docs.
-
-## Self-Review
-
-- Spec coverage: covers persisted local text/image defaults, ask/deny/always-allow policy values, load policy, budgets, sharing policy, downloaded-model candidate filtering, and status documentation.
-- Remaining gaps: no `local_delegate` tool, no `image_job` tool, no coordinator, no unload/restore, no permission sheet, and no live e2e proof. Those belong in the next implementation plan.
-- Placeholder scan: no deferred implementation markers are used in this plan.
+- Do not add prompt coercion, forced reasoning markers, parser masking, sampler overrides, or hidden RAM guards to make a row look successful.
+- Do not spawn Python, shell, or recursive local LLM worker processes for this flow.
+- Do not hardcode the moved model directories into runtime decisions. Resolve through the existing downloaded-model catalog and symlink-aware discovery.
+- Do not mark app/UI behavior `GREEN` until the exact running app proof exists with logs, screenshots/transcripts, model ids, and resident-model state.

@@ -190,6 +190,7 @@ final class ToolRegistry: ObservableObject {
             RenderChartTool(),
             // Native local image generation. Tool body enforces the separate
             // Agent Delegation permission defaults and low-RAM unload policy.
+            LocalTextDelegateTool(),
             NativeImageGenerateTool(),
             NativeImageEditTool(),
             // Agent DB feature (spec §6). The system prompt composer
@@ -1246,6 +1247,7 @@ final class ToolRegistry: ObservableObject {
         Self.folderToolNames.union(builtInSandboxToolNames)
     }
 
+    static let agentDelegationTextToolNames: Set<String> = ["local_delegate"]
     static let agentDelegationImageToolNames: Set<String> = ["image_generate", "image_edit"]
 
     /// Read-only snapshot of the built-in sandbox tool names. Exposed so the
@@ -1300,6 +1302,9 @@ final class ToolRegistry: ObservableObject {
     private func agentDelegationExcludedToolNames() -> Set<String> {
         let config = AgentDelegationConfigurationStore.snapshot()
         var excluded: Set<String> = []
+        if !config.localTextDelegationActive {
+            excluded.formUnion(Self.agentDelegationTextToolNames)
+        }
         if !config.imageDelegationActive {
             excluded.formUnion(Self.agentDelegationImageToolNames)
         }

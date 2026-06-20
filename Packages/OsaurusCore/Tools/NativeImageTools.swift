@@ -68,13 +68,36 @@ public final class NativeImageGenerateTool: OsaurusTool, @unchecked Sendable {
                 retryable: false
             )
         }
-        if let denied = await permissionDenialIfNeeded(config: config, argumentsJSON: argumentsJSON) {
+        let requestedModel = optionalStringValue(args["model"])
+        let model: String
+        do {
+            model = try await Self.resolveModel(
+                requested: requestedModel,
+                configured: config.defaultImageGenerationModelId,
+                kind: .imageGeneration
+            )
+        } catch {
+            return ToolEnvelope.failure(
+                kind: .unavailable,
+                message: String(describing: error),
+                tool: name,
+                retryable: false
+            )
+        }
+        let approvalJSON = AgentDelegationApprovalArguments.enrichedJSON(
+            from: argumentsJSON,
+            values: [
+                "resolved_model": model,
+                "image_job_load_policy": config.imageJobLoadPolicy.rawValue,
+            ]
+        )
+        if let denied = await permissionDenialIfNeeded(config: config, argumentsJSON: approvalJSON) {
             return denied
         }
 
         let request = NativeImageGenerateJobRequest(
             prompt: prompt,
-            model: optionalStringValue(args["model"]),
+            model: model,
             negativePrompt: optionalStringValue(args["negative_prompt"]),
             width: optionalIntValue(args["width"]).map(Self.clampedDimension),
             height: optionalIntValue(args["height"]).map(Self.clampedDimension),
@@ -179,6 +202,20 @@ public final class NativeImageGenerateTool: OsaurusTool, @unchecked Sendable {
         let rounded = (bounded / 16) * 16
         return max(256, rounded)
     }
+
+    private static func resolveModel(
+        requested: String?,
+        configured: String?,
+        kind: AgentDelegationModelKind
+    ) async throws -> String {
+        let models = try await ImageGenerationService.shared.availableModels()
+        return try NativeImageJobModelResolver.resolve(
+            requested: requested,
+            configured: configured,
+            available: models,
+            kind: kind
+        )
+    }
 }
 
 public final class NativeImageEditTool: OsaurusTool, @unchecked Sendable {
@@ -244,7 +281,30 @@ public final class NativeImageEditTool: OsaurusTool, @unchecked Sendable {
                 retryable: false
             )
         }
-        if let denied = await permissionDenialIfNeeded(config: config, argumentsJSON: argumentsJSON) {
+        let requestedModel = optionalStringValue(args["model"])
+        let model: String
+        do {
+            model = try await Self.resolveModel(
+                requested: requestedModel,
+                configured: config.defaultImageEditModelId,
+                kind: .imageEdit
+            )
+        } catch {
+            return ToolEnvelope.failure(
+                kind: .unavailable,
+                message: String(describing: error),
+                tool: name,
+                retryable: false
+            )
+        }
+        let approvalJSON = AgentDelegationApprovalArguments.enrichedJSON(
+            from: argumentsJSON,
+            values: [
+                "resolved_model": model,
+                "image_job_load_policy": config.imageJobLoadPolicy.rawValue,
+            ]
+        )
+        if let denied = await permissionDenialIfNeeded(config: config, argumentsJSON: approvalJSON) {
             return denied
         }
 
@@ -264,7 +324,7 @@ public final class NativeImageEditTool: OsaurusTool, @unchecked Sendable {
 
         let request = NativeImageEditJobRequest(
             prompt: prompt,
-            model: optionalStringValue(args["model"]),
+            model: model,
             sourceImages: sources,
             negativePrompt: optionalStringValue(args["negative_prompt"]),
             width: optionalIntValue(args["width"]).map(Self.clampedDimension),
@@ -391,6 +451,20 @@ public final class NativeImageEditTool: OsaurusTool, @unchecked Sendable {
         let bounded = min(1024, max(256, value))
         let rounded = (bounded / 16) * 16
         return max(256, rounded)
+    }
+
+    private static func resolveModel(
+        requested: String?,
+        configured: String?,
+        kind: AgentDelegationModelKind
+    ) async throws -> String {
+        let models = try await ImageGenerationService.shared.availableModels()
+        return try NativeImageJobModelResolver.resolve(
+            requested: requested,
+            configured: configured,
+            available: models,
+            kind: kind
+        )
     }
 }
 

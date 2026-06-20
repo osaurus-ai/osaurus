@@ -11,7 +11,8 @@ import Testing
 struct NativeImageJobCoordinatorTests {
     @Test func resolverPrefersExplicitRequestedModel() throws {
         let available = [
-            imageModel(id: "default-model", ready: true, textToImage: true)
+            imageModel(id: "default-model", ready: true, textToImage: true),
+            imageModel(id: "explicit-model", ready: true, textToImage: true),
         ]
 
         let resolved = try NativeImageJobModelResolver.resolve(
@@ -26,7 +27,8 @@ struct NativeImageJobCoordinatorTests {
 
     @Test func resolverUsesConfiguredDefaultBeforeScanningAvailableModels() throws {
         let available = [
-            imageModel(id: "first-ready", ready: true, textToImage: true)
+            imageModel(id: "first-ready", ready: true, textToImage: true),
+            imageModel(id: "configured-model", ready: true, textToImage: true),
         ]
 
         let resolved = try NativeImageJobModelResolver.resolve(
@@ -37,6 +39,53 @@ struct NativeImageJobCoordinatorTests {
         )
 
         #expect(resolved == "configured-model")
+    }
+
+    @Test func resolverRejectsUnavailableRequestedModel() {
+        let available = [
+            imageModel(id: "default-model", ready: true, textToImage: true)
+        ]
+
+        #expect(throws: NativeImageJobCoordinatorError.self) {
+            _ = try NativeImageJobModelResolver.resolve(
+                requested: "missing-model",
+                configured: "default-model",
+                available: available,
+                kind: .imageGeneration
+            )
+        }
+    }
+
+    @Test func resolverRejectsIncompleteConfiguredModel() {
+        let available = [
+            imageModel(id: "configured-model", ready: false, textToImage: true),
+            imageModel(id: "fallback-ready", ready: true, textToImage: true),
+        ]
+
+        #expect(throws: NativeImageJobCoordinatorError.self) {
+            _ = try NativeImageJobModelResolver.resolve(
+                requested: nil,
+                configured: "configured-model",
+                available: available,
+                kind: .imageGeneration
+            )
+        }
+    }
+
+    @Test func resolverRejectsWrongKindConfiguredModel() {
+        let available = [
+            imageModel(id: "configured-edit", ready: true, textToImage: false, imageEdit: true),
+            imageModel(id: "fallback-ready", ready: true, textToImage: true),
+        ]
+
+        #expect(throws: NativeImageJobCoordinatorError.self) {
+            _ = try NativeImageJobModelResolver.resolve(
+                requested: nil,
+                configured: "configured-edit",
+                available: available,
+                kind: .imageGeneration
+            )
+        }
     }
 
     @Test func resolverSkipsIncompleteAndWrongCapabilityModels() throws {
