@@ -15,7 +15,12 @@ struct ModelDetailView: View, Identifiable {
 
     @ObservedObject private var modelManager = ModelManager.shared
     @ObservedObject private var themeManager = ThemeManager.shared
-    @ObservedObject private var systemMonitor = SystemMonitorService.shared
+    // Non-observing: this view only reads `totalMemoryGB` (total physical RAM,
+    // a runtime constant). Observing via `@ObservedObject` would re-render the
+    // whole detail view on every 2s CPU/memory monitor tick for no change in
+    // output — the same hang-prone churn fixed in the onboarding Configure-AI
+    // tree. A plain reference reads the constant without subscribing.
+    private let systemMonitor = SystemMonitorService.shared
     @Environment(\.dismiss) private var dismiss
 
     /// Use computed property to always get the current theme from ThemeManager
