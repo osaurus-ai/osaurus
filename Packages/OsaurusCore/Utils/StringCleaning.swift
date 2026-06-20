@@ -45,6 +45,80 @@ public enum StringCleaning {
         return result
     }
 
+    /// Strips leaked agent-action JSON blocks that some models emit as plain
+    /// text instead of a structured tool call — e.g. a ReAct
+    /// `{"action": "share_artifact", "action_input": {...}}` block or an
+    /// OpenAI-style `{"name": "...", "arguments": {...}}`. Only a balanced
+    /// `{...}` span that actually parses as JSON and carries tool-call-shaped
+    /// keys is removed, so ordinary JSON the user asked to see is left intact.
+    /// Display-only: the raw `content` is untouched for round-tripping.
+    public static func stripLeakedActionJSON(_ content: String) -> String {
+        // Cheap guard: only do the work when a tool-call-shaped key is present.
+        guard content.contains("\"action\"") || content.contains("\"arguments\"") else {
+            return content
+        }
+
+        let chars = Array(content)
+        var output: [Character] = []
+        output.reserveCapacity(chars.count)
+        var i = 0
+        while i < chars.count {
+            if chars[i] == "{",
+                let end = matchingBraceIndex(chars, start: i),
+                isLeakedToolCallJSON(String(chars[i...end]))
+            {
+                i = end + 1
+                continue
+            }
+            output.append(chars[i])
+            i += 1
+        }
+        return String(output).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Index of the `}` that closes the `{` at `start`, respecting string
+    /// literals so braces inside JSON string values don't miscount. Returns
+    /// nil if the block never closes.
+    private static func matchingBraceIndex(_ chars: [Character], start: Int) -> Int? {
+        var depth = 0
+        var inString = false
+        var escaped = false
+        var i = start
+        while i < chars.count {
+            let c = chars[i]
+            if inString {
+                if escaped { escaped = false } else if c == "\\" { escaped = true } else if c == "\"" {
+                    inString = false
+                }
+            } else if c == "\"" {
+                inString = true
+            } else if c == "{" {
+                depth += 1
+            } else if c == "}" {
+                depth -= 1
+                if depth == 0 { return i }
+            }
+            i += 1
+        }
+        return nil
+    }
+
+    /// True when `block` parses as a JSON object that looks like a leaked tool
+    /// call: a ReAct `action` + `action_input`, or a `name` + `arguments` /
+    /// `parameters` pair.
+    private static func isLeakedToolCallJSON(_ block: String) -> Bool {
+        guard let data = block.data(using: .utf8),
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return false }
+        if object["action"] != nil, object["action_input"] != nil || object["action_inputs"] != nil {
+            return true
+        }
+        if object["name"] != nil, object["arguments"] != nil || object["parameters"] != nil {
+            return true
+        }
+        return false
+    }
+
     /// Strips Gemini thought-signature markers from assistant text meant for display.
     ///
     /// We keep the raw content intact for Gemini round-tripping, but any UI-facing
