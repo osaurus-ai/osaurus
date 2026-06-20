@@ -134,6 +134,17 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// (`SandboxManager.checkAvailability` fails or setup is
         /// incomplete) — same semantics as `requirePlugins`.
         public let sandbox: SandboxFixture?
+        /// Custom agents to pre-register in the isolated config store before a
+        /// `default_agent` case runs (and delete afterwards). The
+        /// schedule-create cases name an `agent_id`; without a real agent at
+        /// that id the consolidated `osaurus_schedule` create returns a typed
+        /// not-found error, and a small model can retry against it until it
+        /// hits the iteration cap. Seeding a matching custom agent lets create
+        /// SUCCEED, so the case proves the happy path (correct frequency
+        /// mapping + a real schedule) instead of an error-retry loop. Each
+        /// `id` must be a valid UUID; seeding the exact id the query references
+        /// is the point. Other domains ignore this field.
+        public let seedAgents: [SeedAgent]?
 
         public init(
             requirePlugins: [String]? = nil,
@@ -143,7 +154,8 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             ensureToolsDisabled: [String]? = nil,
             workspaceFiles: [WorkspaceFile]? = nil,
             agentCapabilities: AgentCapabilitiesFixture? = nil,
-            sandbox: SandboxFixture? = nil
+            sandbox: SandboxFixture? = nil,
+            seedAgents: [SeedAgent]? = nil
         ) {
             self.requirePlugins = requirePlugins
             self.seedMethods = seedMethods
@@ -153,6 +165,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.workspaceFiles = workspaceFiles
             self.agentCapabilities = agentCapabilities
             self.sandbox = sandbox
+            self.seedAgents = seedAgents
         }
     }
 
@@ -314,6 +327,20 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         }
     }
 
+    /// A custom agent to pre-register for a `default_agent` case. `id` must be
+    /// a valid UUID (the create cases reference it as `agent_id`); `name` is
+    /// the display name. The runner seeds it via `AgentStore.save` and removes
+    /// it after the case.
+    public struct SeedAgent: Sendable, Codable {
+        public let id: String
+        public let name: String
+
+        public init(id: String, name: String) {
+            self.id = id
+            self.name = name
+        }
+    }
+
     /// What we score against. All sub-fields are optional so a case can
     /// scope its assertions narrowly. An empty `Expectations` is valid
     /// — it acts as a smoke-test that just records the case without
@@ -369,6 +396,13 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// actually drive Computer Use", with no real Accessibility / Screen
         /// Recording and no flaky on-screen UI.
         public let computerUseLoop: ComputerUseLoopExpectations?
+        /// Behaviour expectation for `domain == "default_agent"` cases. Drives
+        /// `DefaultAgentConfigurationEvaluator` (the multi-turn loop pinned to
+        /// the built-in Default configuration agent) and scores deterministic
+        /// transcript assertions — which `osaurus_*` tool the model calls,
+        /// the arguments it passes (`argsMustContain`), and which tools it must
+        /// NOT touch — plus an optional LLM-judge rubric.
+        public let defaultAgent: DefaultAgentExpectations?
 
         public init(
             schema: SchemaExpectations? = nil,
@@ -382,7 +416,8 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             capabilityClaims: CapabilityClaimsExpectations? = nil,
             agentLoop: AgentLoopExpectations? = nil,
             computerUse: ComputerUseExpectations? = nil,
-            computerUseLoop: ComputerUseLoopExpectations? = nil
+            computerUseLoop: ComputerUseLoopExpectations? = nil,
+            defaultAgent: DefaultAgentExpectations? = nil
         ) {
             self.schema = schema
             self.toolEnvelope = toolEnvelope
@@ -396,6 +431,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.agentLoop = agentLoop
             self.computerUse = computerUse
             self.computerUseLoop = computerUseLoop
+            self.defaultAgent = defaultAgent
         }
     }
 
@@ -721,6 +757,71 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             public init(skill: String, beforeTools: [String]) {
                 self.skill = skill
                 self.beforeTools = beforeTools
+            }
+        }
+    }
+
+    /// Expectation for `domain == "default_agent"` cases. The runner drives
+    /// the multi-turn agent loop pinned to the built-in Default
+    /// (configuration) agent via `DefaultAgentConfigurationEvaluator`, then
+    /// scores:
+    ///   1. **Deterministic** transcript checks — `mustCallTools` /
+    ///      `mustNotCallTools` and per-call `argsMustContain` argument
+    ///      assertions (e.g. `osaurus_provider` was called with
+    ///      `action: add` and `provider: anthropic`).
+    ///   2. **LLM judge** — every `rubric` condition (if any) graded against
+    ///      the final assistant text.
+    /// A case passes only when every present layer passes. `rubric` is
+    /// optional so a pure tool-contract case (no natural-language grading)
+    /// can omit it.
+    public struct DefaultAgentExpectations: Sendable, Codable {
+        /// Natural-language conditions the final answer must satisfy, graded
+        /// by the LLM judge. Omit for a pure tool-contract case.
+        public let rubric: [String]?
+        /// Tool names that MUST be called somewhere in the loop.
+        public let mustCallTools: [String]?
+        /// Tool names that must NOT be called anywhere in the loop — used to
+        /// pin isolation (the Default agent must never reach
+        /// `capabilities_discover` / `capabilities_load`, or folder / sandbox /
+        /// db / memory tools) and out-of-scope honesty.
+        public let mustNotCallTools: [String]?
+        /// Per-call argument assertions. Each matcher requires AT LEAST ONE
+        /// call to its `tool` whose parsed arguments satisfy every
+        /// key→substring pair — robust to whitespace and key order because
+        /// the runner parses the arguments JSON rather than substring-matching
+        /// the raw string. The canonical way to pin the chosen `action` and
+        /// the salient fields of a consolidated configure write.
+        public let argsMustContain: [ToolArgsMatcher]?
+        /// Cap on model round-trips. nil → evaluator default.
+        public let maxIterations: Int?
+
+        public init(
+            rubric: [String]? = nil,
+            mustCallTools: [String]? = nil,
+            mustNotCallTools: [String]? = nil,
+            argsMustContain: [ToolArgsMatcher]? = nil,
+            maxIterations: Int? = nil
+        ) {
+            self.rubric = rubric
+            self.mustCallTools = mustCallTools
+            self.mustNotCallTools = mustNotCallTools
+            self.argsMustContain = argsMustContain
+            self.maxIterations = maxIterations
+        }
+
+        /// One per-call argument assertion: at least one call to `tool` whose
+        /// parsed arguments contain every `(key, valueSubstring)` pair in
+        /// `args`. The value match is a case-insensitive substring over the
+        /// stringified argument value, so `{"action": "add"}` matches whether
+        /// the model emitted `add` or `ADD`, and `{"provider": "anthropic"}`
+        /// matches a value of `anthropic`.
+        public struct ToolArgsMatcher: Sendable, Codable {
+            public let tool: String
+            public let args: [String: String]
+
+            public init(tool: String, args: [String: String]) {
+                self.tool = tool
+                self.args = args
             }
         }
     }

@@ -2,9 +2,10 @@
 //  PluginConfigurationDomain.swift
 //  osaurus
 //
-//  Default-agent configure tools for Osaurus plugins (central registry):
-//   - osaurus_plugin_install
-//   - osaurus_plugin_uninstall
+//  Default-agent configure tool for Osaurus plugins (central registry).
+//  One tool, `osaurus_plugin`, fans out across two actions:
+//   - install
+//   - uninstall
 //
 //  Secrets are intentionally NOT entered through the chat. If an
 //  install reports `needs_secrets`, the tool surfaces that signal to
@@ -30,34 +31,37 @@ enum PluginConfigurationDomain {
             "uninstall the search plugin",
         ],
         tools: [
-            OsaurusPluginInstallTool(),
-            OsaurusPluginUninstallTool(),
+            OsaurusPluginTool()
         ],
         writeToolNames: [
-            "osaurus_plugin_install",
-            "osaurus_plugin_uninstall",
+            "osaurus_plugin"
         ]
     )
 }
 
-// MARK: - osaurus_plugin_install
+// MARK: - osaurus_plugin
 
-public final class OsaurusPluginInstallTool: OsaurusTool, PermissionedTool, @unchecked Sendable {
-    public let name = "osaurus_plugin_install"
+public final class OsaurusPluginTool: OsaurusTool, PermissionedTool, @unchecked Sendable {
+    public let name = "osaurus_plugin"
     public let description =
-        "Install a plugin from the central registry by `plugin_id` (e.g. `osaurus.weather`). "
-        + "If the plugin needs secrets, the response carries `needs_secrets: true` — direct the user "
-        + "to the Plugin Secrets sheet; never accept secrets as tool arguments."
+        "Manage plugins from the central registry. `action`: install (needs `plugin_id`, e.g. "
+        + "`osaurus.weather`; if it needs secrets the response carries `needs_secrets: true` — send the user "
+        + "to the Plugin Secrets sheet, never accept secrets as arguments), uninstall (needs `plugin_id`)."
     public let parameters: JSONValue? = .object([
         "type": .string("object"),
         "additionalProperties": .bool(false),
         "properties": .object([
+            "action": .object([
+                "type": .string("string"),
+                "enum": .array([.string("install"), .string("uninstall")]),
+                "description": .string("Operation to perform."),
+            ]),
             "plugin_id": .object([
                 "type": .string("string"),
                 "description": .string("Registry plugin id, e.g. `osaurus.weather`."),
-            ])
+            ]),
         ]),
-        "required": .array([.string("plugin_id")]),
+        "required": .array([.string("action")]),
     ])
 
     public var requirements: [String] { [ConfigurationToolBase.requirement] }
@@ -71,6 +75,17 @@ public final class OsaurusPluginInstallTool: OsaurusTool, PermissionedTool, @unc
         }
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
         guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
+        let actionReq = requireAction(args, allowed: ["install", "uninstall"])
+        guard case .value(let action) = actionReq else { return actionReq.failureEnvelope ?? "" }
+
+        switch action {
+        case "install": return await handleInstall(args)
+        case "uninstall": return await handleUninstall(args)
+        default: return actionReq.failureEnvelope ?? ""
+        }
+    }
+
+    private func handleInstall(_ args: [String: Any]) async -> String {
         let req = requireString(args, "plugin_id", expected: "registry plugin id", tool: name)
         guard case .value(let pluginId) = req else { return req.failureEnvelope ?? "" }
 
@@ -86,9 +101,7 @@ public final class OsaurusPluginInstallTool: OsaurusTool, PermissionedTool, @unc
         }
 
         // Inspect the freshly loaded manifest for required secrets the user
-        // hasn't supplied yet. Secrets never travel through chat — we only
-        // surface the signal + labels so the model can route the user to the
-        // Plugin Secrets sheet.
+        // hasn't supplied yet. Secrets never travel through chat.
         let missingSecretLabels: [String] = await MainActor.run {
             guard
                 let loaded = PluginManager.shared.plugins
@@ -130,31 +143,8 @@ public final class OsaurusPluginInstallTool: OsaurusTool, PermissionedTool, @unc
         }
         return ToolEnvelope.success(tool: name, result: result)
     }
-}
 
-// MARK: - osaurus_plugin_uninstall
-
-public final class OsaurusPluginUninstallTool: OsaurusTool, PermissionedTool, @unchecked Sendable {
-    public let name = "osaurus_plugin_uninstall"
-    public let description = "Uninstall a plugin by `plugin_id` and clean up its keychain secrets."
-    public let parameters: JSONValue? = .object([
-        "type": .string("object"),
-        "additionalProperties": .bool(false),
-        "properties": .object(["plugin_id": .object(["type": .string("string")])]),
-        "required": .array([.string("plugin_id")]),
-    ])
-
-    public var requirements: [String] { [ConfigurationToolBase.requirement] }
-    var defaultPermissionPolicy: ToolPermissionPolicy { ConfigurationToolBase.defaultPolicy }
-
-    public init() {}
-
-    public func execute(argumentsJSON: String) async throws -> String {
-        if let gate = ConfigurationToolBase.defaultAgentGateFailure(tool: name) {
-            return gate
-        }
-        let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
-        guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
+    private func handleUninstall(_ args: [String: Any]) async -> String {
         let req = requireString(args, "plugin_id", expected: "installed plugin id", tool: name)
         guard case .value(let pluginId) = req else { return req.failureEnvelope ?? "" }
 

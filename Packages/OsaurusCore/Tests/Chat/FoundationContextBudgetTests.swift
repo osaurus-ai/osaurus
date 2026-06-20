@@ -181,4 +181,67 @@ struct FoundationContextBudgetTests {
             "Minimal tiny-tool surface is \(total) tokens — if it no longer leaves half the 4K window, the tiny-tool-mode feasibility claim in foundation-context-probe.md must be re-derived."
         )
     }
+
+    // MARK: - Consolidated Default-agent configure surface (WS4)
+
+    /// Live-compose the Default (configuration) agent's surface — the
+    /// simplified `DefaultAgentSystemPromptBuilder` prompt plus the
+    /// consolidated `osaurus_*` configure tool schemas the composer resolves
+    /// for `Agent.defaultId` — and price it with the same `TokenEstimator`
+    /// the budget pipeline uses. The consolidated write set is computed from
+    /// the live domain registry, so the built-in domains are registered first
+    /// (idempotent).
+    private func measuredDefaultAgentSurfaceTokens() async -> (
+        prompt: Int, tools: Int, toolCount: Int
+    ) {
+        await SandboxTestLock.runWithStoragePaths {
+            await DynamicCatalogTestLock.shared.run {
+                ConfigurationDomainBootstrap.registerBuiltIns()
+                let ctx = await SystemPromptComposer.composeChatContext(
+                    agentId: Agent.defaultId,
+                    executionMode: .none,
+                    model: "qwen3-8b"
+                )
+                let toolTokens = ToolRegistry.shared.totalEstimatedTokens(for: ctx.tools)
+                let promptTokens = TokenEstimator.estimate(ctx.prompt)
+                return (promptTokens, toolTokens, ctx.tools.count)
+            }
+        }
+    }
+
+    @Test("consolidated Default-agent configure surface budget (4K go/no-go + fits 8K)")
+    func defaultAgentConfigureSurfaceBudget() async {
+        let (promptTokens, toolTokens, toolCount) = await measuredDefaultAgentSurfaceTokens()
+        let total = promptTokens + toolTokens
+        let tiny = ContextSizeResolver.tinyCeiling  // 4096 (macOS 26.x)
+        let small = ContextSizeResolver.smallCeiling  // 8192 (macOS 27+)
+        let tinyHeadroom = tiny - total
+        let smallHeadroom = small - total
+        // 4096 go/no-go: does the surface leave >25% of a 4K window for the
+        // user message + multi-turn growth + response reservation?
+        let fitsTinyWithHeadroom = total < (tiny * 3) / 4
+
+        print(
+            "[W4] Default-agent configure surface: prompt=\(promptTokens) + tools=\(toolTokens) "
+                + "(\(toolCount) tools) = \(total) tokens\n"
+                + "      4K (macOS 26.x .tiny): headroom=\(tinyHeadroom) "
+                + "(\(tinyHeadroom * 100 / tiny)%) → go/no-go fitsWithHeadroom=\(fitsTinyWithHeadroom)\n"
+                + "      8K (macOS 27+ .small): headroom=\(smallHeadroom) "
+                + "(\(smallHeadroom * 100 / small)%)"
+        )
+
+        // The consolidated surface is the carve-out target: it MUST fit the
+        // 8192 window (macOS 27+, where `.small` auto-enables tools) with real
+        // conversation headroom (>25% free). If this regresses, the Default
+        // agent can't host its own tools even where the window allows it.
+        #expect(
+            total < (small * 3) / 4,
+            "Consolidated Default-agent surface is \(total) tokens — it no longer leaves 25% of an 8K window for the conversation; re-derive the consolidation or the 8192 go decision."
+        )
+
+        // The .tiny (4096) tools-off policy is unchanged regardless of this
+        // measurement; the number above is the documented 4096 go/no-go input,
+        // not a gate that forces tools on.
+        #expect(ContextSizeClass.tiny.disablesTools)
+    }
 }

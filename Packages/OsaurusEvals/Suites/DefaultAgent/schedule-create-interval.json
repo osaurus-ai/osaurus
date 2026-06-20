@@ -1,0 +1,22 @@
+{
+  "id": "default_agent.schedule-create-interval",
+  "domain": "default_agent",
+  "label": "default agent • create an interval schedule (every N minutes)",
+  "query": "Set up a schedule that runs agent e3a7c1d4-5b29-4f80-9a6e-1c8d2f5b3079 every 15 minutes to check my inbox.",
+  "notes": "action 'create' with frequency 'every_n_minutes' (frequency_value=15). A custom agent is seeded at the referenced id so create SUCCEEDS (a real interval schedule) instead of looping on a not-found agent — the agent is torn down after the case. The selection assertion pins action + the every_n_minutes frequency enum, proving the model maps a minute interval onto the interval mode rather than cron.",
+  "fixtures": {
+    "seedAgents": [
+      { "id": "e3a7c1d4-5b29-4f80-9a6e-1c8d2f5b3079", "name": "Eval Reporter Agent" }
+    ]
+  },
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": ["osaurus_schedule"],
+      "mustNotCallTools": ["capabilities_discover", "capabilities_load"],
+      "argsMustContain": [
+        { "tool": "osaurus_schedule", "args": { "action": "create", "frequency": "every_n_minutes" } }
+      ],
+      "maxIterations": 4
+    }
+  }
+}

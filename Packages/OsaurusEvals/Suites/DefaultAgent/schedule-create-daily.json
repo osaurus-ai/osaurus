@@ -1,0 +1,22 @@
+{
+  "id": "default_agent.schedule-create-daily",
+  "domain": "default_agent",
+  "label": "default agent • create a daily schedule",
+  "query": "Create a daily schedule named \"Morning Brief\" for the agent e3a7c1d4-5b29-4f80-9a6e-1c8d2f5b3079 at 08:00 that summarizes my unread news.",
+  "notes": "action 'create' with frequency 'daily' (+ name, instructions, agent_id, frequency_time_of_day). A custom agent is seeded at the referenced id so create SUCCEEDS (the happy path: correct daily mapping + a real schedule) rather than looping on a not-found agent — the agent is torn down after the case. The selection assertion pins action + the daily frequency enum.",
+  "fixtures": {
+    "seedAgents": [
+      { "id": "e3a7c1d4-5b29-4f80-9a6e-1c8d2f5b3079", "name": "Eval Reporter Agent" }
+    ]
+  },
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": ["osaurus_schedule"],
+      "mustNotCallTools": ["capabilities_discover", "capabilities_load"],
+      "argsMustContain": [
+        { "tool": "osaurus_schedule", "args": { "action": "create", "frequency": "daily" } }
+      ],
+      "maxIterations": 4
+    }
+  }
+}

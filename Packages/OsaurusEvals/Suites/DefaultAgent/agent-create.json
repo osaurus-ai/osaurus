@@ -1,0 +1,18 @@
+{
+  "id": "default_agent.agent-create",
+  "domain": "default_agent",
+  "label": "default agent • create a custom agent",
+  "query": "Create a new custom agent named \"Researcher\" that specializes in web research and concise summaries.",
+  "notes": "action 'create' (needs name). Under the isolated config root the new agent lands in the throwaway temp store. This is the exact write whose persistence regression started this work — the selection assertion pins action 'create' on osaurus_agent.",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": ["osaurus_agent"],
+      "mustNotCallTools": ["capabilities_discover", "capabilities_load"],
+      "argsMustContain": [
+        { "tool": "osaurus_agent", "args": { "action": "create", "name": "Researcher" } }
+      ],
+      "maxIterations": 4
+    }
+  }
+}

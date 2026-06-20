@@ -1,0 +1,17 @@
+{
+  "id": "default_agent.capabilities-no-search",
+  "domain": "default_agent",
+  "label": "default agent • answer \"what can you configure\" without capability search",
+  "query": "What kinds of things can you help me configure in Osaurus?",
+  "notes": "The Default agent's system prompt already lists its configurable domains, so a capability question is answerable from context with zero tool calls — and definitely without capabilities_discover/load (which it doesn't carry). Pins the no-capability-search contract on the most tempting prompt for it.",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "rubric": [
+        "Describes the Osaurus configuration areas it can help with (e.g. providers, models, MCP servers, plugins, schedules, agents) rather than refusing or deflecting."
+      ],
+      "mustNotCallTools": ["capabilities_discover", "capabilities_load"],
+      "maxIterations": 3
+    }
+  }
+}

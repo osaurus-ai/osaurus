@@ -138,11 +138,60 @@ public enum EvalBootstrap {
         for plan: EvalBootstrapPlan
     ) -> URL? {
         guard plan.usesIsolatedSearchStorage else { return nil }
+        return isolateRootWithExternalModelsManifest(symlinkTools: plan.loadInstalledPlugins)
+    }
+
+    /// Isolate **configuration** storage for the `default_agent` domain.
+    ///
+    /// Default-agent eval cases drive the real multi-turn loop, which
+    /// EXECUTES the consolidated configure write tools (`osaurus_agent`,
+    /// `osaurus_provider`, `osaurus_mcp`, `osaurus_schedule`, …) through the
+    /// live `ToolRegistry`. Run unguarded, an `osaurus_agent create` would
+    /// add a junk agent to the developer's real `~/.osaurus`, an
+    /// `osaurus_schedule create` would register a schedule that later fires,
+    /// and so on. Isolating the root to a fresh temp dir keeps the real
+    /// config pristine — every executed write lands in the throwaway root —
+    /// while the external-models manifest symlink keeps the local MLX run
+    /// model resolvable (Foundation needs no manifest).
+    ///
+    /// Must run AFTER `configureIsolatedSearchStorageIfNeeded` so a mixed
+    /// suite that also loads plugins keeps that path's `Tools` symlink: when
+    /// the root is already isolated this only installs the credential-sheet
+    /// bypass and returns nil (no double-isolation).
+    ///
+    /// `MODEL` must be local MLX or `foundation`; a remote run/judge model
+    /// would need provider credentials that live in the (now-isolated, empty)
+    /// config root. That matches the plan's local-MLX + Foundation matrix.
+    @discardableResult
+    public static func configureIsolatedConfigStorageIfNeeded(isolate: Bool) -> URL? {
+        guard isolate else { return nil }
+
+        // `osaurus_provider` add / set_credentials open an AppKit credential
+        // sheet via `ProviderCredentialPromptService`. A headless eval run
+        // has no UI loop to dismiss it, so resolve every request as
+        // `.cancelled`: the model's tool CALL (what the matrix scores) is
+        // still recorded, and nothing is written to Keychain. Production code
+        // leaves this hook nil; the eval CLI process is torn down after the
+        // run, so the override never leaks into a real session.
+        ProviderCredentialPromptService.bypassUI = { _ in .cancelled }
+
+        return isolateRootWithExternalModelsManifest(symlinkTools: false)
+    }
+
+    /// Shared isolation primitive: create a fresh temp root, symlink the real
+    /// external-models manifest in (so HF-cache / LM-Studio MLX models stay
+    /// resolvable), optionally symlink the real `Tools` dir (plugin
+    /// discovery), point `OsaurusPaths.root` at it, and seed the DEBUG
+    /// storage key. Returns the temp root, or nil when the root is ALREADY
+    /// overridden — the first isolation owns the symlinks; a second caller
+    /// must not clobber them with a fresh (symlink-less) root.
+    private static func isolateRootWithExternalModelsManifest(symlinkTools: Bool) -> URL? {
+        guard OsaurusPaths.overrideRoot == nil else { return nil }
 
         // Resolve the REAL plugin install dir before overriding the root —
         // `OsaurusPaths.tools()` is `root()/Tools`, so we have to capture it
         // while `root()` still points at `~/.osaurus`.
-        let realToolsDir = plan.loadInstalledPlugins ? OsaurusPaths.tools() : nil
+        let realToolsDir = symlinkTools ? OsaurusPaths.tools() : nil
 
         // Same capture-before-override rule for the external-models manifest
         // (`root()/cache/external-models.json`): the id -> absolute bundle-path
@@ -151,8 +200,8 @@ public enum EvalBootstrap {
         // eval whose `--model` lives only in `~/.cache/huggingface/hub` (e.g.
         // `mlx-community/Qwen3-4B-4bit`) is reachable ONLY through this manifest;
         // under the isolated temp root it is absent, so an LLM run on the
-        // isolated path (CapabilityClaims) would route the model to `.none` and
-        // error every case with `modelNotFound`.
+        // isolated path (CapabilityClaims / default_agent) would route the
+        // model to `.none` and error every case with `modelNotFound`.
         let realExternalModelsManifest = OsaurusPaths.externalModelsManifestFile()
 
         let root = FileManager.default.temporaryDirectory
@@ -300,6 +349,13 @@ public extension EvalSuite {
             methods: needsMethods,
             skills: needsSkills
         )
+    }
+
+    /// True when any selected case targets the `default_agent` domain, which
+    /// executes real configure write tools and therefore needs config-storage
+    /// isolation (see `EvalBootstrap.configureIsolatedConfigStorageIfNeeded`).
+    func selectedCasesIncludeDefaultAgent(filter: String?) -> Bool {
+        selectedCases(filter: filter).contains { $0.domain == "default_agent" }
     }
 
     private func selectedCases(filter: String?) -> [EvalCase] {

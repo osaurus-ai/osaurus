@@ -151,7 +151,11 @@ public final class OsaurusListTool: OsaurusTool, @unchecked Sendable {
         "properties": .object([
             "scope": .object([
                 "type": .string("string"),
-                "description": .string("One of: agents, models, providers, mcp, plugins, schedules."),
+                "enum": .array([
+                    .string("agents"), .string("models"), .string("providers"),
+                    .string("mcp"), .string("plugins"), .string("schedules"),
+                ]),
+                "description": .string("Configuration scope to list."),
             ]),
             "filter": .object([
                 "type": .string("string"),
@@ -331,7 +335,14 @@ public final class OsaurusDescribeTool: OsaurusTool, @unchecked Sendable {
         "type": .string("object"),
         "additionalProperties": .bool(false),
         "properties": .object([
-            "scope": .object(["type": .string("string")]),
+            "scope": .object([
+                "type": .string("string"),
+                "enum": .array([
+                    .string("agents"), .string("models"), .string("providers"),
+                    .string("mcp"), .string("plugins"), .string("schedules"),
+                ]),
+                "description": .string("Configuration scope of the item."),
+            ]),
             "id": .object(["type": .string("string")]),
         ]),
         "required": .array([.string("scope"), .string("id")]),

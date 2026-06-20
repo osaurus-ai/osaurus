@@ -104,6 +104,13 @@ struct OsaurusEvalsCLI {
             preference: opts.pluginBootstrapPreference
         )
         _ = EvalBootstrap.configureIsolatedSearchStorageIfNeeded(for: bootstrapPlan)
+        // Default-agent cases EXECUTE real configure write tools; isolate the
+        // config root (after the search-isolation call so a mixed suite keeps
+        // its plugin `Tools` symlink) so writes never touch the real
+        // `~/.osaurus`. No-op for suites without `default_agent` cases.
+        _ = EvalBootstrap.configureIsolatedConfigStorageIfNeeded(
+            isolate: suite.selectedCasesIncludeDefaultAgent(filter: opts.filter)
+        )
         let startupWatchdog =
             bootstrapPlan.requiresWork
             ? makeStartupWatchdog(options: opts, suite: suite)

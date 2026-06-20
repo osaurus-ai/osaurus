@@ -68,6 +68,15 @@ public struct CapabilityClaimsTranscript: Sendable, Codable {
     /// Non-nil when the loop aborted (model not routable, engine threw).
     /// `finalText` is empty in that case.
     public let error: String?
+    /// Token-weighted mean decode speed (tokens/sec) across the run's
+    /// model steps, read from each step's authoritative
+    /// `usage.tokens_per_second`. nil for remote/non-streaming engines
+    /// that don't report it (and on a run that produced no scored answer
+    /// step). Surfaced so the eval report records token/s per AGENTS.md.
+    public let decodeTokensPerSecond: Double?
+    /// Total generated tokens summed across the run's model steps. nil
+    /// when no step reported a completion-token count.
+    public let completionTokens: Int?
 
     public init(
         toolCalls: [ToolInvocation],
@@ -76,7 +85,9 @@ public struct CapabilityClaimsTranscript: Sendable, Codable {
         hitIterationCap: Bool,
         systemPrompt: String,
         loadedToolNames: [String],
-        error: String?
+        error: String?,
+        decodeTokensPerSecond: Double? = nil,
+        completionTokens: Int? = nil
     ) {
         self.toolCalls = toolCalls
         self.finalText = finalText
@@ -85,6 +96,8 @@ public struct CapabilityClaimsTranscript: Sendable, Codable {
         self.systemPrompt = systemPrompt
         self.loadedToolNames = loadedToolNames
         self.error = error
+        self.decodeTokensPerSecond = decodeTokensPerSecond
+        self.completionTokens = completionTokens
     }
 }
 
@@ -127,7 +140,9 @@ public enum CapabilityClaimsEvaluator {
         query: String,
         agentId: UUID? = nil,
         maxIterations: Int = 6,
-        model: String? = nil
+        model: String? = nil,
+        toolExecutionTimeout: TimeInterval? = nil,
+        autoApproveToolPrompts: Bool = false
     ) async -> CapabilityClaimsTranscript {
         let resolvedAgentId = agentId ?? AgentManager.shared.activeAgent.id
         let resolvedModel =
@@ -143,6 +158,14 @@ public enum CapabilityClaimsEvaluator {
         var firstTurnPrompt = ""
         var iterations = 0
         var hitCap = false
+        // Decode speed, token-weighted across model steps so a long final
+        // answer dominates a 2-token tool-call turn (same weighting as the
+        // agent-loop evaluator). Only the no-tool answer step carries an
+        // authoritative `tokens_per_second`; tool-call turns report 0 and
+        // contribute nothing. Recorded so every generation row has token/s.
+        var decodeTpsWeightedSum = 0.0
+        var decodeTpsTokenWeight = 0
+        var completionTokensTotal = 0
         // Stable per-run session id so the engine's content-addressed KV
         // grouping sees one coherent conversation instead of N anonymous
         // requests.
@@ -193,6 +216,14 @@ public enum CapabilityClaimsEvaluator {
                     )
 
                     let response = try await engine.completeChat(request: request)
+                    // Fold this step's authoritative runtime stats into the
+                    // token-weighted decode-speed accumulators.
+                    let usage = response.usage
+                    if let tps = usage.tokens_per_second, tps > 0, usage.completion_tokens > 0 {
+                        decodeTpsWeightedSum += tps * Double(usage.completion_tokens)
+                        decodeTpsTokenWeight += usage.completion_tokens
+                    }
+                    completionTokensTotal += max(0, usage.completion_tokens)
                     guard let choice = response.choices.first else {
                         finalText = ""
                         break
@@ -224,19 +255,21 @@ public enum CapabilityClaimsEvaluator {
                         toolCalls.append(
                             .init(name: call.function.name, arguments: call.function.arguments)
                         )
-                        let toolResult: String
-                        do {
-                            toolResult = try await ToolRegistry.shared.execute(
-                                name: call.function.name,
-                                argumentsJSON: call.function.arguments
-                            )
-                        } catch {
-                            toolResult = ToolEnvelope.failure(
-                                kind: .unavailable,
-                                message: "Tool execution failed: \(error.localizedDescription)",
-                                tool: call.function.name
-                            )
-                        }
+                        // Headless harness: there is no [Allow] button, so a
+                        // configure WRITE tool's `.ask` policy would otherwise
+                        // suspend forever on `ToolPermissionPromptService`. Bind
+                        // the same approval bypass `AgentLoopEvaluator` uses
+                        // (production surfaces keep the `false` default). Binding
+                        // here means the unstructured task `executeTool` spawns
+                        // inherits the task-local (a detached task would not).
+                        let toolResult = await ChatExecutionContext.$autoApproveToolPrompts
+                            .withValue(autoApproveToolPrompts) {
+                                await executeTool(
+                                    name: call.function.name,
+                                    argumentsJSON: call.function.arguments,
+                                    timeout: toolExecutionTimeout
+                                )
+                            }
                         history.append(
                             ChatMessage(
                                 role: "tool",
@@ -270,7 +303,11 @@ public enum CapabilityClaimsEvaluator {
                 hitIterationCap: false,
                 systemPrompt: firstTurnPrompt,
                 loadedToolNames: loadedToolNames,
-                error: error.localizedDescription
+                error: error.localizedDescription,
+                decodeTokensPerSecond: decodeTpsTokenWeight > 0
+                    ? decodeTpsWeightedSum / Double(decodeTpsTokenWeight)
+                    : nil,
+                completionTokens: completionTokensTotal > 0 ? completionTokensTotal : nil
             )
         }
 
@@ -281,8 +318,85 @@ public enum CapabilityClaimsEvaluator {
             hitIterationCap: result.cap,
             systemPrompt: result.prompt,
             loadedToolNames: result.loaded,
-            error: result.err
+            error: result.err,
+            decodeTokensPerSecond: decodeTpsTokenWeight > 0
+                ? decodeTpsWeightedSum / Double(decodeTpsTokenWeight)
+                : nil,
+            completionTokens: completionTokensTotal > 0 ? completionTokensTotal : nil
         )
+    }
+
+    /// Execute one tool call through `ToolRegistry`, optionally bounding it
+    /// with a wall-clock `timeout`.
+    ///
+    /// The `default_agent` lane drives REAL configure tools, a few of which
+    /// reach live services (the Hugging Face metadata probe behind
+    /// `osaurus_model` download, the plugin registry, an MCP connect). With
+    /// no network — or a slow one — those awaits can stall the whole suite.
+    /// The tool CALL is already recorded on the transcript BEFORE this runs,
+    /// so the deterministic `argsMustContain` / `mustCallTools` checks score
+    /// the model's selection regardless of how execution resolves; bounding
+    /// execution only protects multi-turn liveness. On timeout we feed the
+    /// model a typed `executionError` envelope (mirroring a real tool
+    /// failure) so the loop continues instead of hanging. `capability_claims`
+    /// passes `nil` and keeps the original unbounded behavior.
+    private static func executeTool(
+        name: String,
+        argumentsJSON: String,
+        timeout: TimeInterval?
+    ) async -> String {
+        func runOnce() async -> String {
+            do {
+                return try await ToolRegistry.shared.execute(
+                    name: name,
+                    argumentsJSON: argumentsJSON
+                )
+            } catch {
+                return ToolEnvelope.failure(
+                    kind: .unavailable,
+                    message: "Tool execution failed: \(error.localizedDescription)",
+                    tool: name
+                )
+            }
+        }
+
+        guard let timeout, timeout > 0 else {
+            return await runOnce()
+        }
+
+        let timedOutMarker = "\u{0}__osaurus_eval_tool_timeout__"
+
+        // `withTaskGroup` is the wrong tool here: structured concurrency awaits
+        // EVERY child before the group returns, and `cancelAll()` only *signals*
+        // cancellation. A tool stuck on a non-cancellable suspension (a UI
+        // continuation, a network read with no deadline) ignores the signal, so
+        // the group — and the whole eval — hangs even after the timeout fires.
+        // Instead, run the work in an UNSTRUCTURED `Task` (which still inherits
+        // our task-locals, including the `.ask` auto-approve) and race it against
+        // a timer via a resume-once latch. On timeout we resume with the marker
+        // and ABANDON the work task; it may keep running in the background until
+        // it finishes or the process exits, but it can never wedge the loop.
+        let latch = SingleResume<String>()
+        let work = Task { latch.resume(await runOnce()) }
+        let timer = Task {
+            try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
+            latch.resume(timedOutMarker)
+        }
+        let result = await latch.value
+        timer.cancel()
+        if result == timedOutMarker {
+            // Best-effort: ask the abandoned work to stop; it may not honor it.
+            work.cancel()
+            return ToolEnvelope.failure(
+                kind: .executionError,
+                message:
+                    "Tool `\(name)` did not return within \(Int(timeout))s and was abandoned by the "
+                    + "eval harness (likely a live-service call). The tool call itself was recorded.",
+                tool: name,
+                retryable: false
+            )
+        }
+        return result
     }
 
     /// Grade `finalText` against each rubric `condition` with a single
@@ -545,5 +659,52 @@ public enum CapabilityClaimsEvaluator {
             index += 1
         }
         return nil
+    }
+}
+
+// MARK: - One-shot async latch
+
+/// A thread-safe, resume-once async value used to race a tool execution
+/// against a timeout without the structured-concurrency "await all
+/// children" trap. The first `resume(_:)` wins; later calls are no-ops, so
+/// whichever of the work task or the timer fires first decides the result
+/// and the loser is simply abandoned. `value` suspends until the first
+/// resume (or returns immediately if it already happened).
+final class SingleResume<T: Sendable>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var resumed = false
+    private var stored: T?
+    private var continuation: CheckedContinuation<T, Never>?
+
+    var value: T {
+        get async {
+            await withCheckedContinuation { (cont: CheckedContinuation<T, Never>) in
+                lock.lock()
+                if let stored {
+                    lock.unlock()
+                    cont.resume(returning: stored)
+                } else {
+                    continuation = cont
+                    lock.unlock()
+                }
+            }
+        }
+    }
+
+    func resume(_ value: T) {
+        lock.lock()
+        if resumed {
+            lock.unlock()
+            return
+        }
+        resumed = true
+        if let cont = continuation {
+            continuation = nil
+            lock.unlock()
+            cont.resume(returning: value)
+        } else {
+            stored = value
+            lock.unlock()
+        }
     }
 }

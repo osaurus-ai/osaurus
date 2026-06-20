@@ -1,0 +1,18 @@
+{
+  "id": "default_agent.schedule-enable",
+  "domain": "default_agent",
+  "label": "default agent • pause (disable) a schedule",
+  "query": "Pause my schedule 6c1e9a47-3b80-4d52-8f96-2a0d7c4e51b8.",
+  "notes": "\"Pause\" maps directly to action 'disable' on the consolidated osaurus_schedule tool (a first-class action alongside enable, so the model never has to discover the 'enable' + enabled:false idiom). Unknown id → typed not-found error. The selection assertion pins the 'disable' action, not the literal UUID (small models mis-transcribe ids).",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": ["osaurus_schedule"],
+      "mustNotCallTools": ["capabilities_discover", "capabilities_load"],
+      "argsMustContain": [
+        { "tool": "osaurus_schedule", "args": { "action": "disable" } }
+      ],
+      "maxIterations": 4
+    }
+  }
+}

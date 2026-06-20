@@ -1943,15 +1943,17 @@ public struct SystemPromptComposer: Sendable {
             byName.removeValue(forKey: ComputerUseTool.toolName)
         }
 
-        // Phase C default-agent surface:
-        //   * For the Default agent, hard-restrict to the 8-tool baseline
-        //     (3 reads + 2 discovery + 3 agent-loop). Writes are NOT in
-        //     the turn-1 schema — they enter only via `capabilities_load`,
-        //     which `additionalToolNames` carries above.
+        // Default-agent configure surface:
+        //   * For the Default agent, hard-restrict to the consolidated
+        //     configure surface (`osaurus_status` / `osaurus_list` /
+        //     `osaurus_describe` reads + the per-domain `osaurus_*` write
+        //     tools) plus the agent-loop tools. The writes load DIRECTLY —
+        //     the Default agent does not use `capabilities_discover` /
+        //     `capabilities_load`. `additionalToolNames` still unions in so a
+        //     custom-agent-style mid-session load never gets stripped here.
         //   * For every other agent, strip the configure tools wholesale.
-        //     Even if a registration path leaks `osaurus_provider_add`
-        //     into the schema, the strip filter keeps the model from
-        //     seeing it.
+        //     Even if a registration path leaks `osaurus_provider` into the
+        //     schema, the strip filter keeps the model from seeing it.
         if snapshot.agentId == Agent.defaultId {
             let allowed = ToolRegistry.defaultAgentAllowedToolNames
                 .union(additionalToolNames)

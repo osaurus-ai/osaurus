@@ -751,4 +751,115 @@ public enum OsaurusPaths {
         }
     }
 
+    // MARK: - Legacy Personas -> agents migration
+
+    /// Result of the one-time legacy `Personas` -> `agents` agent-JSON
+    /// consolidation. Surfaced for tests; callers can ignore it.
+    public enum LegacyPersonasMigrationResult: Equatable {
+        case legacyDirectoryAbsent
+        case migrated(moved: Int, conflicts: Int)
+    }
+
+    /// Consolidates stranded agent records from the legacy `Personas/`
+    /// directory into the canonical `agents/` directory.
+    ///
+    /// Agent JSON historically resolved through
+    /// `resolvePath(new: agents(), legacy: "Personas")`, which only reads the
+    /// legacy directory while `agents/` does **not** exist. The first time any
+    /// feature creates `agents/` (a per-agent Database directory
+    /// `agents/<uuid>/`, or the `agents/avatars` folder), resolution flips to
+    /// `agents/` and every record still under `Personas/` silently disappears
+    /// from the list. This moves those records so the flip can never strand
+    /// them again.
+    ///
+    /// Idempotent and conflict-safe: a `<uuid>.json` that already exists in
+    /// `agents/` is left untouched and the legacy copy is preserved beside it
+    /// as a `.bak` file (ignored by `AgentStore.loadAll`'s `.json` filter).
+    /// The legacy directory is removed only once it is empty, so unexpected
+    /// non-JSON contents are never discarded.
+    @discardableResult
+    public static func migrateLegacyPersonasIfNeeded(
+        fileManager fm: FileManager = .default
+    ) -> LegacyPersonasMigrationResult {
+        let rootURL = root()
+        // The legacy directory shipped as "Personas". On case-insensitive
+        // volumes (the macOS default) "personas" resolves to the same path;
+        // probe both so a case-sensitive volume is also handled.
+        let legacyDirectory: URL? = ["Personas", "personas"].lazy
+            .map { rootURL.appendingPathComponent($0, isDirectory: true) }
+            .first { candidate in
+                var isDir = ObjCBool(false)
+                return fm.fileExists(atPath: candidate.path, isDirectory: &isDir) && isDir.boolValue
+            }
+        guard let legacy = legacyDirectory else { return .legacyDirectoryAbsent }
+
+        let agentsDir = agents()
+        // Never operate on the canonical directory itself.
+        guard legacy.standardizedFileURL != agentsDir.standardizedFileURL else {
+            return .legacyDirectoryAbsent
+        }
+        ensureExistsSilent(agentsDir)
+
+        var moved = 0
+        var conflicts = 0
+        if let entries = try? fm.contentsOfDirectory(at: legacy, includingPropertiesForKeys: nil) {
+            for entry in entries where entry.pathExtension.lowercased() == "json" {
+                let target = agentsDir.appendingPathComponent(entry.lastPathComponent)
+                if fm.fileExists(atPath: target.path) {
+                    // Keep the canonical copy; preserve the legacy one as a
+                    // non-decodable backup so nothing is lost on a conflict.
+                    let backup = uniqueBackupURL(for: target, fileManager: fm)
+                    do {
+                        try fm.moveItem(at: entry, to: backup)
+                        conflicts += 1
+                    } catch {
+                        print(
+                            "[Osaurus] Personas migration: failed to back up "
+                                + "\(entry.lastPathComponent): \(error)"
+                        )
+                    }
+                } else {
+                    do {
+                        try fm.moveItem(at: entry, to: target)
+                        moved += 1
+                    } catch {
+                        print(
+                            "[Osaurus] Personas migration: failed to move "
+                                + "\(entry.lastPathComponent): \(error)"
+                        )
+                    }
+                }
+            }
+        }
+
+        // Best-effort cleanup: only remove the legacy directory once empty so
+        // we never discard unexpected non-JSON contents.
+        if let remaining = try? fm.contentsOfDirectory(at: legacy, includingPropertiesForKeys: nil),
+            remaining.isEmpty
+        {
+            try? fm.removeItem(at: legacy)
+        }
+
+        if moved > 0 || conflicts > 0 {
+            print(
+                "[Osaurus] Migrated \(moved) agent file(s) from \(legacy.path) into "
+                    + "\(agentsDir.path) (\(conflicts) conflict backup(s) kept)"
+            )
+        }
+        return .migrated(moved: moved, conflicts: conflicts)
+    }
+
+    /// Returns a non-colliding `<name>.bak` URL beside `target`.
+    private static func uniqueBackupURL(for target: URL, fileManager fm: FileManager) -> URL {
+        let directory = target.deletingLastPathComponent()
+        let base = target.lastPathComponent
+        var candidate = directory.appendingPathComponent("\(base).bak")
+        var counter = 1
+        while fm.fileExists(atPath: candidate.path) {
+            candidate = directory.appendingPathComponent("\(base).\(counter).bak")
+            counter += 1
+        }
+        return candidate
+    }
+
 }

@@ -366,9 +366,21 @@ private struct ProviderConnectivityCenterPanel: View {
             }
 
             HStack(spacing: 8) {
-                ProviderConnectivityMetricPill(title: L("Connected"), value: "\(snapshot.connectedCount)", color: theme.successColor)
-                ProviderConnectivityMetricPill(title: L("Attention"), value: "\(snapshot.attentionCount)", color: theme.warningColor)
-                ProviderConnectivityMetricPill(title: L("Models"), value: "\(snapshot.modelCount)", color: theme.accentColor)
+                ProviderConnectivityMetricPill(
+                    title: L("Connected"),
+                    value: "\(snapshot.connectedCount)",
+                    color: theme.successColor
+                )
+                ProviderConnectivityMetricPill(
+                    title: L("Attention"),
+                    value: "\(snapshot.attentionCount)",
+                    color: theme.warningColor
+                )
+                ProviderConnectivityMetricPill(
+                    title: L("Models"),
+                    value: "\(snapshot.modelCount)",
+                    color: theme.accentColor
+                )
                 ProviderConnectivityMetricPill(
                     title: L("Manual models"),
                     value: "\(snapshot.manualModelProviderCount)",
@@ -605,14 +617,14 @@ private struct ProviderCardView: View {
                     Button(
                         action: { showDeleteConfirm = true },
                         label: {
-                        Image(systemName: "trash")
-                            .font(.system(size: 14))
-                            .foregroundColor(theme.errorColor.opacity(0.8))
-                            .frame(width: 32, height: 32)
-                            .background(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .fill(theme.errorColor.opacity(0.1))
-                            )
+                            Image(systemName: "trash")
+                                .font(.system(size: 14))
+                                .foregroundColor(theme.errorColor.opacity(0.8))
+                                .frame(width: 32, height: 32)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .fill(theme.errorColor.opacity(0.1))
+                                )
                         }
                     )
                     .buttonStyle(PlainButtonStyle())

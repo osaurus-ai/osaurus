@@ -1,0 +1,18 @@
+{
+  "id": "default_agent.model-download",
+  "domain": "default_agent",
+  "label": "default agent • download a local MLX model",
+  "query": "Download the MLX model mlx-community/Osaurus-Eval-Fixture-NotReal-4bit.",
+  "notes": "action 'download' with repo_id. The repo id is a non-existent fixture; if classified MLX-compatible by name the background fetch 404s immediately (no real model lands), and the selection assertion matches the emitted call regardless.",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": ["osaurus_model"],
+      "mustNotCallTools": ["capabilities_discover", "capabilities_load"],
+      "argsMustContain": [
+        { "tool": "osaurus_model", "args": { "action": "download", "repo_id": "Osaurus-Eval-Fixture-NotReal-4bit" } }
+      ],
+      "maxIterations": 4
+    }
+  }
+}

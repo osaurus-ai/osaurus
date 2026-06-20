@@ -1,0 +1,18 @@
+{
+  "id": "default_agent.agent-activate",
+  "domain": "default_agent",
+  "label": "default agent • activate (switch to) an agent by id",
+  "query": "Switch to the agent with id 8d3b1f6a-4c20-47e9-b5a1-2f7c9e043d18.",
+  "notes": "action 'activate' with id. Unknown id → typed not-found error (no switch). The selection assertion pins the 'activate' action (not the literal UUID — small models mis-transcribe 32-hex-digit ids; the action is the behavior under test), proving the model maps \"switch to\" onto activate rather than create.",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": ["osaurus_agent"],
+      "mustNotCallTools": ["capabilities_discover", "capabilities_load"],
+      "argsMustContain": [
+        { "tool": "osaurus_agent", "args": { "action": "activate" } }
+      ],
+      "maxIterations": 4
+    }
+  }
+}

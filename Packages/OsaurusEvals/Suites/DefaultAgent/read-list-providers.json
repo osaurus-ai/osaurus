@@ -1,0 +1,18 @@
+{
+  "id": "default_agent.read-list-providers",
+  "domain": "default_agent",
+  "label": "default agent • list providers (scope arg)",
+  "query": "List the cloud LLM providers I currently have configured.",
+  "notes": "Pure read. Pins that the model reaches osaurus_list with scope 'providers' (the scope enum) rather than osaurus_describe or a write tool, and never uses capability search.",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": ["osaurus_list"],
+      "mustNotCallTools": ["capabilities_discover", "capabilities_load"],
+      "argsMustContain": [
+        { "tool": "osaurus_list", "args": { "scope": "providers" } }
+      ],
+      "maxIterations": 3
+    }
+  }
+}

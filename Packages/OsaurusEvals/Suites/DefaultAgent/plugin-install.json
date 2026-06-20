@@ -1,0 +1,18 @@
+{
+  "id": "default_agent.plugin-install",
+  "domain": "default_agent",
+  "label": "default agent • install a plugin by id",
+  "query": "Install the plugin osaurus.eval-fixture-nonexistent from the registry.",
+  "notes": "action 'install' with plugin_id. The id is not in the registry, so the install fails fast with a typed error (no real install / no lingering download); the selection assertion matches the emitted call.",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": ["osaurus_plugin"],
+      "mustNotCallTools": ["capabilities_discover", "capabilities_load"],
+      "argsMustContain": [
+        { "tool": "osaurus_plugin", "args": { "action": "install", "plugin_id": "osaurus.eval-fixture-nonexistent" } }
+      ],
+      "maxIterations": 4
+    }
+  }
+}

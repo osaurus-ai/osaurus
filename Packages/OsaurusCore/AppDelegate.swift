@@ -159,6 +159,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             NSApp.setActivationPolicy(hideDockIcon ? .accessory : .regular)
         }
 
+        // Consolidate any agent records stranded in the legacy `Personas/`
+        // directory into `agents/` before the first agent load. Enabling a
+        // per-agent Database (or writing a custom avatar) creates `agents/`,
+        // which used to flip path resolution away from `Personas/` and make
+        // those agents vanish from Settings. Idempotent + conflict-safe.
+        OsaurusPaths.migrateLegacyPersonasIfNeeded()
+
         // Make MLX C++ errors recoverable instead of process-fatal. Must run
         // before any model load can call into MLX so the first forward pass
         // is already protected. See `MLXErrorRecovery` for the rationale and
@@ -170,9 +177,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         DocumentAdaptersBootstrap.registerBuiltIns()
 
         // Register every default-agent configure-tool domain. This is what
-        // wires `osaurus_provider_add`, `osaurus_model_download`, etc. into
-        // `ToolRegistry` and feeds the system-prompt domain menu. Adding a
-        // new domain is one new file under `Tools/Configuration/` plus one
+        // wires the consolidated `osaurus_provider`, `osaurus_model`, etc.
+        // into `ToolRegistry` and feeds the system-prompt domain menu. Adding
+        // a new domain is one new file under `Tools/Configuration/` plus one
         // register call in `ConfigurationDomainBootstrap`.
         ConfigurationDomainBootstrap.registerBuiltIns()
 

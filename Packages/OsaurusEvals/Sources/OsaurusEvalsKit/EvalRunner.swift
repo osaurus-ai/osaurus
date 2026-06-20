@@ -129,6 +129,7 @@ public enum EvalRunner {
     /// stay telemetry-free instead of carrying a noisy process footprint.
     private static let resourceSampledDomains: Set<String> = [
         "agent_loop", "capability_claims", "computer_use_loop", "capability_search",
+        "default_agent",
     ]
 
     private static func runOne(
@@ -247,6 +248,8 @@ public enum EvalRunner {
             )
         case "capability_claims":
             return await runCapabilityClaimsCase(testCase, modelId: modelId)
+        case "default_agent":
+            return await runDefaultAgentCase(testCase, modelId: modelId)
         case "agent_loop":
             return await runAgentLoopCase(testCase, modelId: modelId)
         case "tools", "streaming", "contract":
@@ -1262,6 +1265,252 @@ public enum EvalRunner {
             modelId: modelId,
             latencyMs: elapsed
         )
+    }
+
+    /// Agent-loop evaluator for `domain == "default_agent"`. Drives the
+    /// multi-turn chat loop PINNED to the built-in Default (configuration)
+    /// agent via `DefaultAgentConfigurationEvaluator`, then scores
+    /// deterministic transcript assertions (`mustCallTools` /
+    /// `mustNotCallTools` / `argsMustContain`) plus an optional LLM-judge
+    /// rubric. Off-CI (token cost).
+    ///
+    /// Tool-requiring cases SKIP on tiny-window models (Apple Foundation on
+    /// macOS 26.x and any ≤4K-token model) because Osaurus auto-disables the
+    /// tool schema there — the documented 4096 go/no-go. Out-of-scope routing
+    /// and honesty cases carry no tool requirement, so they still run on tiny
+    /// models (a tool-less Default agent is exactly their premise).
+    private static func runDefaultAgentCase(
+        _ testCase: EvalCase,
+        modelId: String
+    ) async -> EvalCaseReport {
+        let label = testCase.label ?? testCase.id
+
+        guard let exp = testCase.expect.defaultAgent else {
+            return Self.errored(
+                testCase,
+                label: label,
+                modelId: modelId,
+                note: "missing `expect.defaultAgent`"
+            )
+        }
+
+        // A case that pins a tool call or its arguments can only run where the
+        // tool schema survives composition. Tiny-window models strip it.
+        let requiresTools =
+            !(exp.mustCallTools?.isEmpty ?? true)
+            || !(exp.argsMustContain?.isEmpty ?? true)
+        let window = ContextSizeResolver.resolve(modelId: modelId)
+        if requiresTools && window.sizeClass.disablesTools {
+            return .terminal(
+                id: testCase.id,
+                label: label,
+                domain: testCase.domain,
+                outcome: .skipped,
+                notes: [
+                    "tools auto-disabled for '\(modelId)': context size class "
+                        + "\(window.sizeClass) (≤\(ContextSizeResolver.tinyCeiling)-token window) "
+                        + "strips the tool schema; this case requires a configure tool call "
+                        + "(BLOCKED-by-window)"
+                ],
+                modelId: modelId
+            )
+        }
+
+        let rubric = exp.rubric ?? []
+        let judgeModel = EvalJudgeModel.resolveAndWarnOnce(runModelId: modelId)
+        let started = Date()
+        // Seed any fixture agents so create cases can target a real agent
+        // (and not loop on a not-found id), then tear them down once the run
+        // is done — the seeded agent is only needed during the model loop.
+        let seededAgentIds = await seedDefaultAgentFixtures(testCase.fixtures.seedAgents)
+        let transcript = await DefaultAgentConfigurationEvaluator.run(
+            query: testCase.query,
+            maxIterations: exp.maxIterations ?? 6
+        )
+        await cleanupDefaultAgentFixtures(seededAgentIds)
+
+        var verdicts: [CapabilityClaimsJudgement] = []
+        if transcript.error == nil, !rubric.isEmpty {
+            verdicts = await DefaultAgentConfigurationEvaluator.judge(
+                finalText: transcript.finalText,
+                conditions: rubric,
+                model: judgeModel
+            )
+        }
+        let elapsed = Date().timeIntervalSince(started) * 1000
+
+        if let err = transcript.error {
+            return EvalCaseReport(
+                id: testCase.id,
+                label: label,
+                domain: testCase.domain,
+                query: testCase.query,
+                outcome: .errored,
+                notes: ["agent loop error: \(err)"],
+                modelId: modelId,
+                latencyMs: elapsed
+            )
+        }
+
+        var notes: [String] = []
+        var passed = true
+
+        let calledNames = transcript.toolCalls.map(\.name)
+        let calledSet = Set(calledNames)
+
+        if let must = exp.mustCallTools {
+            let missing = must.filter { !calledSet.contains($0) }
+            if missing.isEmpty {
+                notes.append("mustCallTools ok: [\(must.joined(separator: ","))]")
+            } else {
+                passed = false
+                notes.append("mustCallTools missing: [\(missing.joined(separator: ","))]")
+            }
+        }
+        if let mustNot = exp.mustNotCallTools {
+            let offenders = mustNot.filter { calledSet.contains($0) }
+            if offenders.isEmpty {
+                notes.append("mustNotCallTools ok")
+            } else {
+                passed = false
+                notes.append("mustNotCallTools called: [\(offenders.joined(separator: ","))]")
+            }
+        }
+        if let matchers = exp.argsMustContain {
+            for matcher in matchers {
+                let result = scoreArgsMustContain(matcher: matcher, transcript: transcript)
+                passed = passed && result.passed
+                notes.append(result.note)
+            }
+        }
+
+        // LLM-judge rubric — every condition must pass.
+        for (index, verdict) in verdicts.enumerated() {
+            let condition = index < rubric.count ? rubric[index] : "(condition \(index))"
+            if verdict.pass {
+                notes.append("judge ok: \(condition)")
+            } else {
+                passed = false
+                notes.append("judge FAIL: \(condition) — \(verdict.reason)")
+            }
+        }
+        if !rubric.isEmpty && verdicts.count != rubric.count {
+            passed = false
+            notes.append(
+                "judge produced \(verdicts.count) verdicts for \(rubric.count) conditions"
+            )
+        }
+
+        if transcript.hitIterationCap {
+            notes.append("warning: hit iteration cap (\(transcript.iterations)) — possible loop")
+        }
+        notes.append(
+            "summary: toolCalls=[\(calledNames.joined(separator: ","))] "
+                + "iters=\(transcript.iterations)"
+        )
+        notes.append("final: \(transcript.finalText.replacingOccurrences(of: "\n", with: " "))")
+
+        return EvalCaseReport(
+            id: testCase.id,
+            label: label,
+            domain: testCase.domain,
+            query: testCase.query,
+            outcome: passed ? .passed : .failed,
+            notes: notes,
+            modelId: modelId,
+            latencyMs: elapsed,
+            telemetry: EvalCaseTelemetry(
+                decodeTokensPerSecond: transcript.decodeTokensPerSecond,
+                completionTokens: transcript.completionTokens
+            )
+        )
+    }
+
+    /// Pre-register the case's fixture agents in the isolated store so a
+    /// `default_agent` create case can target a real custom agent. Returns the
+    /// seeded ids (skipping malformed UUIDs) for teardown. Runs on the main
+    /// actor because `AgentStore`/`AgentManager` are main-actor state.
+    @MainActor
+    private static func seedDefaultAgentFixtures(_ seeds: [EvalCase.SeedAgent]?) -> [UUID] {
+        guard let seeds, !seeds.isEmpty else { return [] }
+        var ids: [UUID] = []
+        for seed in seeds {
+            guard let id = UUID(uuidString: seed.id) else { continue }
+            let agent = Agent(
+                id: id,
+                name: seed.name,
+                description: "Seeded by OsaurusEvals; safe to delete."
+            )
+            AgentStore.save(agent)
+            ids.append(id)
+        }
+        if !ids.isEmpty { AgentManager.shared.refresh() }
+        return ids
+    }
+
+    /// Remove fixture agents seeded by `seedDefaultAgentFixtures` (and, via
+    /// `AgentStore.delete`, any schedules they own) so a created schedule
+    /// doesn't leak across cases in the shared isolated root.
+    @MainActor
+    private static func cleanupDefaultAgentFixtures(_ ids: [UUID]) {
+        guard !ids.isEmpty else { return }
+        for id in ids { AgentStore.delete(id: id) }
+        AgentManager.shared.refresh()
+    }
+
+    /// Score one `argsMustContain` matcher: at least one transcript call to
+    /// `matcher.tool` whose parsed arguments satisfy every key→substring pair.
+    /// Parsing the arguments JSON (rather than substring-matching the raw
+    /// string) makes the assertion robust to whitespace and key order; the
+    /// value comparison is a case-insensitive substring so enum/value casing
+    /// from the model doesn't flake the check.
+    private static func scoreArgsMustContain(
+        matcher: EvalCase.DefaultAgentExpectations.ToolArgsMatcher,
+        transcript: CapabilityClaimsTranscript
+    ) -> (passed: Bool, note: String) {
+        let pairs = matcher.args.map { "\($0)=\($1)" }.sorted().joined(separator: ",")
+        let calls = transcript.toolCalls.filter { $0.name == matcher.tool }
+        guard !calls.isEmpty else {
+            return (false, "argsMustContain FAIL: \(matcher.tool) was never called")
+        }
+        for call in calls {
+            guard
+                let data = call.arguments.data(using: .utf8),
+                let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            else { continue }
+            let satisfiesAll = matcher.args.allSatisfy { key, expected in
+                guard let actual = obj[key] else { return false }
+                return argValueString(actual).lowercased().contains(expected.lowercased())
+            }
+            if satisfiesAll {
+                return (true, "argsMustContain ok: \(matcher.tool){\(pairs)}")
+            }
+        }
+        return (false, "argsMustContain FAIL: no \(matcher.tool) call matched {\(pairs)}")
+    }
+
+    /// Flatten one parsed JSON argument value to a string for substring
+    /// matching. Strings pass through; JSON booleans (which decode as
+    /// `NSNumber` backed by `CFBoolean`) render as `true`/`false`; other
+    /// numbers use their canonical string; arrays/objects re-encode to JSON
+    /// so a matcher can probe inside (e.g. a comma-joined id list).
+    private static func argValueString(_ value: Any) -> String {
+        switch value {
+        case let s as String:
+            return s
+        case let n as NSNumber:
+            if CFGetTypeID(n) == CFBooleanGetTypeID() {
+                return n.boolValue ? "true" : "false"
+            }
+            return n.stringValue
+        default:
+            if let data = try? JSONSerialization.data(withJSONObject: value),
+                let s = String(data: data, encoding: .utf8)
+            {
+                return s
+            }
+            return String(describing: value)
+        }
     }
 
     /// Score the skill-first ordering: the first `capabilities_load`

@@ -2,16 +2,17 @@
 //  AgentConfigurationDomain.swift
 //  osaurus
 //
-//  Default-agent configure tools for custom agents:
-//   - osaurus_agent_create
-//   - osaurus_agent_update
-//   - osaurus_agent_delete
-//   - osaurus_agent_activate
+//  Default-agent configure tool for custom agents. One tool,
+//  `osaurus_agent`, fans out across four actions:
+//   - create
+//   - update
+//   - delete
+//   - activate
 //
-//  The default agent itself is *not* self-mutable — those tools refuse
-//  every `id == Agent.defaultId` and every `agent.isBuiltIn == true`.
-//  The user edits the default agent's persona/model/temperature in
-//  Settings → Chat (Phase B).
+//  The default agent itself is *not* self-mutable — create/update/delete
+//  refuse every `id == Agent.defaultId` and every `agent.isBuiltIn == true`
+//  (activate back to the Default agent is allowed). The user edits the
+//  default agent's persona/model/temperature in Settings → Chat.
 //
 
 import Foundation
@@ -38,55 +39,52 @@ enum AgentConfigurationDomain {
             "update the research agent's prompt",
         ],
         tools: [
-            OsaurusAgentCreateTool(),
-            OsaurusAgentUpdateTool(),
-            OsaurusAgentDeleteTool(),
-            OsaurusAgentActivateTool(),
+            OsaurusAgentTool()
         ],
         writeToolNames: [
-            "osaurus_agent_create",
-            "osaurus_agent_update",
-            "osaurus_agent_delete",
-            "osaurus_agent_activate",
+            "osaurus_agent"
         ]
     )
 }
 
-// MARK: - osaurus_agent_create
+// MARK: - osaurus_agent
 
-public final class OsaurusAgentCreateTool: OsaurusTool, PermissionedTool, @unchecked Sendable {
-    public let name = "osaurus_agent_create"
+public final class OsaurusAgentTool: OsaurusTool, PermissionedTool, @unchecked Sendable {
+    public let name = "osaurus_agent"
     public let description =
-        "Create a new custom agent (persona). Requires `name`. Optional `description`, `system_prompt`, "
-        + "`default_model`, `temperature` (0..2), `max_tokens`. The default agent cannot be created — "
-        + "users edit it in Settings → Chat."
+        "Manage custom agents (personas). `action`: create (needs `name`; optional `description`, "
+        + "`system_prompt`, `default_model`, `temperature` 0..2, `max_tokens`), update (needs `id`; other "
+        + "fields patch), delete (needs `id`), activate (needs `id`; switching back to the Default agent is "
+        + "allowed). The Default agent is edited in Settings → Chat, not here."
     public let parameters: JSONValue? = .object([
         "type": .string("object"),
         "additionalProperties": .bool(false),
         "properties": .object([
+            "action": .object([
+                "type": .string("string"),
+                "enum": .array([
+                    .string("create"), .string("update"), .string("delete"), .string("activate"),
+                ]),
+                "description": .string("Operation to perform."),
+            ]),
+            "id": .object([
+                "type": .string("string"),
+                "description": .string("Agent UUID. Required for update / delete / activate."),
+            ]),
             "name": .object([
                 "type": .string("string"),
-                "description": .string("Display name for the new agent."),
+                "description": .string("Display name. Required for create."),
             ]),
             "description": .object(["type": .string("string")]),
-            "system_prompt": .object([
-                "type": .string("string"),
-                "description": .string("Persona prompt. Optional."),
-            ]),
+            "system_prompt": .object(["type": .string("string")]),
             "default_model": .object([
                 "type": .string("string"),
-                "description": .string("Installed local model id or connected cloud model id. Optional."),
+                "description": .string("Installed local model id or connected cloud model id."),
             ]),
-            "temperature": .object([
-                "type": .string("number"),
-                "description": .string("0..2. Optional."),
-            ]),
-            "max_tokens": .object([
-                "type": .string("integer"),
-                "description": .string("Max tokens per response. Optional."),
-            ]),
+            "temperature": .object(["type": .string("number")]),
+            "max_tokens": .object(["type": .string("integer")]),
         ]),
-        "required": .array([.string("name")]),
+        "required": .array([.string("action")]),
     ])
 
     public var requirements: [String] { [ConfigurationToolBase.requirement] }
@@ -98,16 +96,22 @@ public final class OsaurusAgentCreateTool: OsaurusTool, PermissionedTool, @unche
         if let gate = ConfigurationToolBase.defaultAgentGateFailure(tool: name) {
             return gate
         }
-
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
         guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
+        let actionReq = requireAction(args, allowed: ["create", "update", "delete", "activate"])
+        guard case .value(let action) = actionReq else { return actionReq.failureEnvelope ?? "" }
 
-        let nameReq = requireString(
-            args,
-            "name",
-            expected: "non-empty display name",
-            tool: name
-        )
+        switch action {
+        case "create": return await handleCreate(args)
+        case "update": return await handleUpdate(args)
+        case "delete": return await handleDelete(args)
+        case "activate": return await handleActivate(args)
+        default: return actionReq.failureEnvelope ?? ""
+        }
+    }
+
+    private func handleCreate(_ args: [String: Any]) async -> String {
+        let nameReq = requireString(args, "name", expected: "non-empty display name", tool: name)
         guard case .value(let agentName) = nameReq else { return nameReq.failureEnvelope ?? "" }
 
         let description = (args["description"] as? String) ?? ""
@@ -139,47 +143,13 @@ public final class OsaurusAgentCreateTool: OsaurusTool, PermissionedTool, @unche
                 "status": "created",
                 "next_steps": [
                     "call osaurus_describe({scope: 'agents', id: '\(agent.id.uuidString)'}) to see effective settings",
-                    "call osaurus_agent_activate({id: '\(agent.id.uuidString)'}) to switch to it",
+                    "call osaurus_agent({action: 'activate', id: '\(agent.id.uuidString)'}) to switch to it",
                 ],
             ]
         )
     }
-}
 
-// MARK: - osaurus_agent_update
-
-public final class OsaurusAgentUpdateTool: OsaurusTool, PermissionedTool, @unchecked Sendable {
-    public let name = "osaurus_agent_update"
-    public let description =
-        "Patch an existing custom agent. Requires `id`. All other fields optional; "
-        + "absent = unchanged. Refuses the default agent and any built-in (edit those in Settings)."
-    public let parameters: JSONValue? = .object([
-        "type": .string("object"),
-        "additionalProperties": .bool(false),
-        "properties": .object([
-            "id": .object(["type": .string("string")]),
-            "name": .object(["type": .string("string")]),
-            "description": .object(["type": .string("string")]),
-            "system_prompt": .object(["type": .string("string")]),
-            "default_model": .object(["type": .string("string")]),
-            "temperature": .object(["type": .string("number")]),
-            "max_tokens": .object(["type": .string("integer")]),
-        ]),
-        "required": .array([.string("id")]),
-    ])
-
-    public var requirements: [String] { [ConfigurationToolBase.requirement] }
-    var defaultPermissionPolicy: ToolPermissionPolicy { ConfigurationToolBase.defaultPolicy }
-
-    public init() {}
-
-    public func execute(argumentsJSON: String) async throws -> String {
-        if let gate = ConfigurationToolBase.defaultAgentGateFailure(tool: name) {
-            return gate
-        }
-        let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
-        guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
-
+    private func handleUpdate(_ args: [String: Any]) async -> String {
         let idReq = requireString(args, "id", expected: "UUID of an existing custom agent", tool: name)
         guard case .value(let idStr) = idReq else { return idReq.failureEnvelope ?? "" }
         guard let id = UUID(uuidString: idStr) else {
@@ -192,7 +162,21 @@ public final class OsaurusAgentUpdateTool: OsaurusTool, PermissionedTool, @unche
             )
         }
 
-        let result: String = await MainActor.run {
+        // Extract patch values into Sendable locals before the @MainActor hop;
+        // capturing the raw `args` dictionary there trips the concurrency checker.
+        let newName = args["name"] as? String
+        let newDescription = args["description"] as? String
+        let newSystemPrompt = args["system_prompt"] as? String
+        let defaultModelProvided = args.keys.contains("default_model")
+        let newDefaultModel = args["default_model"] as? String
+        let newTemperature: Float? = {
+            if let v = args["temperature"] as? Double { return Float(v) }
+            if let v = args["temperature"] as? NSNumber { return v.floatValue }
+            return nil
+        }()
+        let newMaxTokens = coerceInt(args["max_tokens"])
+
+        return await MainActor.run {
             guard var agent = AgentManager.shared.agent(for: id) else {
                 return ToolEnvelope.failure(
                     kind: .invalidArgs,
@@ -210,18 +194,12 @@ public final class OsaurusAgentUpdateTool: OsaurusTool, PermissionedTool, @unche
                 )
             }
 
-            if let v = args["name"] as? String { agent.name = v }
-            if let v = args["description"] as? String { agent.description = v }
-            if let v = args["system_prompt"] as? String { agent.systemPrompt = v }
-            if args.keys.contains("default_model") {
-                agent.defaultModel = args["default_model"] as? String
-            }
-            if let v = args["temperature"] as? Double {
-                agent.temperature = Float(v)
-            } else if let v = args["temperature"] as? NSNumber {
-                agent.temperature = v.floatValue
-            }
-            if let v = coerceInt(args["max_tokens"]) { agent.maxTokens = v }
+            if let v = newName { agent.name = v }
+            if let v = newDescription { agent.description = v }
+            if let v = newSystemPrompt { agent.systemPrompt = v }
+            if defaultModelProvided { agent.defaultModel = newDefaultModel }
+            if let v = newTemperature { agent.temperature = v }
+            if let v = newMaxTokens { agent.maxTokens = v }
 
             AgentManager.shared.update(agent)
             return ToolEnvelope.success(
@@ -229,44 +207,13 @@ public final class OsaurusAgentUpdateTool: OsaurusTool, PermissionedTool, @unche
                 result: ["agent_id": agent.id.uuidString, "status": "updated"]
             )
         }
-        return result
     }
-}
 
-// MARK: - osaurus_agent_delete
-
-public final class OsaurusAgentDeleteTool: OsaurusTool, PermissionedTool, @unchecked Sendable {
-    public let name = "osaurus_agent_delete"
-    public let description =
-        "Delete a custom agent by `id`. Refuses the default agent and any built-in. "
-        + "Removes its persisted record; the user is responsible for any cleanup of agent-owned data."
-    public let parameters: JSONValue? = .object([
-        "type": .string("object"),
-        "additionalProperties": .bool(false),
-        "properties": .object(["id": .object(["type": .string("string")])]),
-        "required": .array([.string("id")]),
-    ])
-
-    public var requirements: [String] { [ConfigurationToolBase.requirement] }
-    var defaultPermissionPolicy: ToolPermissionPolicy { ConfigurationToolBase.defaultPolicy }
-
-    public init() {}
-
-    public func execute(argumentsJSON: String) async throws -> String {
-        if let gate = ConfigurationToolBase.defaultAgentGateFailure(tool: name) {
-            return gate
-        }
-        let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
-        guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
-
+    private func handleDelete(_ args: [String: Any]) async -> String {
         let idReq = requireString(args, "id", expected: "UUID of an existing custom agent", tool: name)
         guard case .value(let idStr) = idReq else { return idReq.failureEnvelope ?? "" }
         guard let id = UUID(uuidString: idStr) else {
-            return ToolEnvelope.failure(
-                kind: .invalidArgs,
-                message: "`id` must be a valid UUID.",
-                tool: name
-            )
+            return ToolEnvelope.failure(kind: .invalidArgs, message: "`id` must be a valid UUID.", tool: name)
         }
 
         if id == Agent.defaultId {
@@ -303,41 +250,12 @@ public final class OsaurusAgentDeleteTool: OsaurusTool, PermissionedTool, @unche
         ]
         return ToolEnvelope.success(tool: name, result: resultPayload)
     }
-}
 
-// MARK: - osaurus_agent_activate
-
-public final class OsaurusAgentActivateTool: OsaurusTool, PermissionedTool, @unchecked Sendable {
-    public let name = "osaurus_agent_activate"
-    public let description =
-        "Switch the active agent to `id`. Switching back to the Default agent is allowed."
-    public let parameters: JSONValue? = .object([
-        "type": .string("object"),
-        "additionalProperties": .bool(false),
-        "properties": .object(["id": .object(["type": .string("string")])]),
-        "required": .array([.string("id")]),
-    ])
-
-    public var requirements: [String] { [ConfigurationToolBase.requirement] }
-    var defaultPermissionPolicy: ToolPermissionPolicy { ConfigurationToolBase.defaultPolicy }
-
-    public init() {}
-
-    public func execute(argumentsJSON: String) async throws -> String {
-        if let gate = ConfigurationToolBase.defaultAgentGateFailure(tool: name) {
-            return gate
-        }
-        let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
-        guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
-
+    private func handleActivate(_ args: [String: Any]) async -> String {
         let idReq = requireString(args, "id", expected: "UUID of an existing agent", tool: name)
         guard case .value(let idStr) = idReq else { return idReq.failureEnvelope ?? "" }
         guard let id = UUID(uuidString: idStr) else {
-            return ToolEnvelope.failure(
-                kind: .invalidArgs,
-                message: "`id` must be a valid UUID.",
-                tool: name
-            )
+            return ToolEnvelope.failure(kind: .invalidArgs, message: "`id` must be a valid UUID.", tool: name)
         }
 
         let switched: Bool = await MainActor.run {

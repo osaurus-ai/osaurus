@@ -95,7 +95,8 @@ final class ModelDownloadService: ObservableObject {
         filePath: String? = nil
     ) -> DownloadAlertInfo {
         let lower = rawError.lowercased()
-        let isCompatibilityPreflight = lower.contains("compatibility preflight")
+        let isCompatibilityPreflight =
+            lower.contains("compatibility preflight")
             || lower.contains("unsupported local model type")
             || lower.contains("speculative decoding")
         let title: String

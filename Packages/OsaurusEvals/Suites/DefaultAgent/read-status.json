@@ -1,0 +1,18 @@
+{
+  "id": "default_agent.read-status",
+  "domain": "default_agent",
+  "label": "default agent • read overall status",
+  "query": "Give me a quick overview of my Osaurus setup — what's connected and what models I have.",
+  "notes": "Read-only. The grounded move is a single osaurus_status call, then a plain-language summary. Must never reach for capability search (the configure tools load directly for the Default agent).",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "rubric": [
+        "Summarizes the Osaurus setup (providers / models / status) from the tool result rather than refusing or asking the user to look it up themselves."
+      ],
+      "mustCallTools": ["osaurus_status"],
+      "mustNotCallTools": ["capabilities_discover", "capabilities_load"],
+      "maxIterations": 4
+    }
+  }
+}

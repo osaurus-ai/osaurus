@@ -1,0 +1,18 @@
+{
+  "id": "default_agent.provider-remove",
+  "domain": "default_agent",
+  "label": "default agent • remove a provider by id",
+  "query": "Remove the cloud provider with id 1b6f3d92-7a04-4e85-9c31-2d8f5a0b7e64.",
+  "notes": "action 'remove' with the supplied id. The id does not exist in the isolated store, so the tool returns a typed not-found error (no mutation); the selection assertion matches the call the model emits first.",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": ["osaurus_provider"],
+      "mustNotCallTools": ["capabilities_discover", "capabilities_load"],
+      "argsMustContain": [
+        { "tool": "osaurus_provider", "args": { "action": "remove" } }
+      ],
+      "maxIterations": 4
+    }
+  }
+}

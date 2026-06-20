@@ -1,0 +1,18 @@
+{
+  "id": "default_agent.schedule-update",
+  "domain": "default_agent",
+  "label": "default agent • update a schedule's time",
+  "query": "Change my schedule 9b4f2a61-7d05-4c38-8e1a-0f6c3d9b27e5 to run at 07:00 instead.",
+  "notes": "action 'update' with id (+ a daily time patch). Unknown id → typed not-found error (no mutation). The selection assertion pins the 'update' action (not the literal UUID — small models mis-transcribe ids), distinguishing a patch from create.",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": ["osaurus_schedule"],
+      "mustNotCallTools": ["capabilities_discover", "capabilities_load"],
+      "argsMustContain": [
+        { "tool": "osaurus_schedule", "args": { "action": "update" } }
+      ],
+      "maxIterations": 4
+    }
+  }
+}

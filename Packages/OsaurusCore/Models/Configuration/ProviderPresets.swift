@@ -414,11 +414,11 @@ public enum ProviderPreset: String, CaseIterable, Identifiable, Sendable {
 
     // MARK: - Matching
 
-    /// Best-effort lookup keyed by the legacy `RemoteProviderType`. Used only
-    /// by the deprecated `provider_type` argument on `osaurus_provider_add`
-    /// — picks the unambiguous preset for distinctive types and `nil` for
-    /// `.openaiLegacy` (shared by xAI, DeepSeek, Venice, OpenRouter, Ollama,
-    /// and custom) so the caller can fall back to `.custom`.
+    /// Best-effort lookup keyed by `RemoteProviderType` (used by the credential
+    /// prompt service to pick a preset for an existing provider) — picks the
+    /// unambiguous preset for distinctive types and `nil` for `.openaiLegacy`
+    /// (shared by xAI, DeepSeek, Venice, OpenRouter, Ollama, and custom) so the
+    /// caller can fall back to `.custom`.
     static func preferred(for providerType: RemoteProviderType) -> ProviderPreset? {
         switch providerType {
         case .anthropic: return .anthropic

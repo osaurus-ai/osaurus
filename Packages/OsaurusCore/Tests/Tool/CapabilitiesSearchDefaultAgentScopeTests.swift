@@ -2,44 +2,20 @@
 //  CapabilitiesSearchDefaultAgentScopeTests.swift
 //  OsaurusCoreTests
 //
-//  Default-agent scoping for `capabilities_discover` and the
-//  composer-level schema gate that complements it:
+//  Composer-level schema scope for the Default (configuration) agent.
 //
-//   * Search results from the default agent never carry method/skill
-//     hits — the tools-only fast path skips those lanes entirely.
-//   * `composeChatContext` with `Agent.defaultId` keeps the fixed
-//     baseline schema regardless of query — no non-baseline tool can
-//     leak into the default-agent schema.
+//  The Default agent no longer reaches capability search at all — it loads
+//  its consolidated configure tools DIRECTLY. So the contract worth pinning
+//  here is the composed schema itself: regardless of what the user asks,
+//  `composeChatContext(agentId: Agent.defaultId)` resolves exactly the
+//  consolidated configure surface + agent-loop tools, and never the
+//  capability-search gateway or any non-baseline tool.
 //
 
 import Foundation
 import Testing
 
 @testable import OsaurusCore
-
-@Suite(.serialized)
-struct CapabilitiesSearchDefaultAgentScopeTests {
-
-    @Test
-    func defaultAgent_searchReturnsOnlyConfigureWrites() async throws {
-        let tool = CapabilitiesDiscoverTool()
-        let result = try await ChatExecutionContext.$currentAgentId.withValue(Agent.defaultId) {
-            try await tool.execute(
-                argumentsJSON: "{\"queries\": [\"add provider\", \"download model\"]}"
-            )
-        }
-        // Either we get hits or we get the no-match envelope — both are
-        // valid for source-only tests (the catalog state depends on
-        // whether ConfigurationDomainBootstrap has run). What we care
-        // about is that no method/ or skill/ hit ever shows up.
-        #expect(!result.contains("[method]"))
-        #expect(!result.contains("[skill]"))
-        let methodPrefix = "method/"
-        let skillPrefix = "skill/"
-        #expect(!result.contains(methodPrefix))
-        #expect(!result.contains(skillPrefix))
-    }
-}
 
 @Suite(.serialized)
 @MainActor
@@ -67,5 +43,25 @@ struct DefaultAgentSchemaScopeTests {
                 "non-baseline tool \(name) leaked into default-agent schema"
             )
         }
+    }
+
+    /// End-to-end through `composeChatContext`: the consolidated writes load
+    /// directly, and the capability-search gateway is never present for the
+    /// Default agent (it stays available to custom agents).
+    @Test
+    func defaultAgent_loadsConsolidatedWritesDirectlyNotViaSearch() async {
+        Self.ensureBootstrapped()
+        let context = await SystemPromptComposer.composeChatContext(
+            agentId: Agent.defaultId,
+            executionMode: .none,
+            query: "connect my Anthropic account and download a small model"
+        )
+        let names = Set(context.tools.map { $0.function.name })
+        // Consolidated writes are present without any discover/load step.
+        #expect(names.contains("osaurus_provider"))
+        #expect(names.contains("osaurus_model"))
+        // The capability-search gateway is absent.
+        #expect(!names.contains("capabilities_discover"))
+        #expect(!names.contains("capabilities_load"))
     }
 }

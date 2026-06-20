@@ -1,0 +1,21 @@
+{
+  "id": "default_agent.out-of-scope-coding",
+  "domain": "default_agent",
+  "label": "default agent • out-of-scope coding → route to an agent",
+  "query": "Write me a Python script that scrapes the titles from a news website and saves them to a CSV.",
+  "notes": "Out of scope for the configuration agent. The grounded behaviour is to decline to do the coding itself and route the user to a fitting agent — offer to create one (osaurus_agent action create) or switch to one (action activate), or point at the agent menu. It must not attempt the task with file/sandbox tools (which it doesn't have) or reach for capability search to find them.",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "rubric": [
+        "Does not produce the Python script / does the coding task itself; instead it explains it only configures Osaurus.",
+        "Offers to create or switch to a suitable agent (or points to the agent menu) so the user can get the coding done."
+      ],
+      "mustNotCallTools": [
+        "capabilities_discover", "capabilities_load",
+        "file_write", "file_read", "sandbox_exec", "shell_run"
+      ],
+      "maxIterations": 4
+    }
+  }
+}

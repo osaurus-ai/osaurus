@@ -217,8 +217,10 @@ final class ToolRegistry: ObservableObject {
             NotifyTool(),
             // Default-agent generic reads (Phase C). Always loaded; the
             // composer further restricts visibility to the default
-            // agent only. The matching writes live under
-            // `ConfigurationDomainRegistry` and load on demand via
+            // agent only. The matching consolidated writes live under
+            // `ConfigurationDomainRegistry`: the Default agent receives
+            // them DIRECTLY (see `defaultAgentAllowedToolNames`), while
+            // custom agents reach them on demand via
             // `capabilities_discover` / `capabilities_load`.
             OsaurusStatusTool(),
             OsaurusListTool(),
@@ -1560,19 +1562,18 @@ final class ToolRegistry: ObservableObject {
 
 // MARK: - Configure tool name sets (default-agent surface)
 //
-// Single source of truth for which tools the default agent sees in
-// its turn-1 schema and which `osaurus_*_<verb>` writes are loaded on
-// demand via `capabilities_load`. The write set is derived from
+// Single source of truth for the consolidated `osaurus_*` configure
+// surface. The write set is derived from
 // `ConfigurationDomainRegistry.shared.domains` (computed property —
 // stays in sync as new domains register without touching this file).
+// The Default agent loads these directly in its turn-1 schema.
 //
 // These sets are read by:
-//  - `SystemPromptComposer.resolveTools` to allowlist for the default
-//    agent and exclude from non-default agents
-//  - `CapabilitiesDiscoverTool` to scope FTS5 results for the default
-//    agent
-//  - `CapabilitiesLoadTool` to refuse non-configure tool loads from
-//    the default agent
+//  - `SystemPromptComposer.resolveTools` to allowlist the configure
+//    tools for the Default agent and strip them from every other agent
+//  - `CapabilitiesDiscoverTool` / `CapabilitiesLoadTool` to scope FTS5
+//    results and gate loads for *custom* agents (the Default agent no
+//    longer uses capability search — it gets these tools directly)
 
 extension ToolRegistry {
     /// Write tools across every registered `ConfigurationDomain`.
@@ -1599,19 +1600,16 @@ extension ToolRegistry {
         ])
     }
 
-    /// Fixed turn-1 schema for the default agent. Eight names: three
-    /// reads, two discovery tools (gateway to every write), three
-    /// agent-loop tools (`todo` / `complete` / `clarify`). Writes are
-    /// not here — they enter the schema only via
-    /// `capabilities_load`. Stable across sessions for KV-cache reuse.
-    static let defaultAgentAllowedToolNames: Set<String> = [
-        "osaurus_status",
-        "osaurus_list",
-        "osaurus_describe",
-        "capabilities_discover",
-        "capabilities_load",
-        "todo",
-        "complete",
-        "clarify",
-    ]
+    /// Turn-1 schema for the Default (configuration) agent: the consolidated
+    /// configure surface — the three generic reads (`osaurus_status` /
+    /// `osaurus_list` / `osaurus_describe`) plus the per-domain `osaurus_*`
+    /// write tools — together with the agent-loop tools (`todo` / `complete` /
+    /// `clarify`). The Default agent loads its write tools **directly**; it
+    /// does NOT use `capabilities_discover` / `capabilities_load` (those stay
+    /// available to custom agents). Computed from the live domain registry so
+    /// a newly registered domain expands the set automatically, and stable
+    /// across a session for KV-cache reuse.
+    static var defaultAgentAllowedToolNames: Set<String> {
+        configureToolNames.union(["todo", "complete", "clarify"])
+    }
 }

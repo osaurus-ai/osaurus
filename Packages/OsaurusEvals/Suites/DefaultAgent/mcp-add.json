@@ -1,0 +1,18 @@
+{
+  "id": "default_agent.mcp-add",
+  "domain": "default_agent",
+  "label": "default agent • add an HTTP MCP server",
+  "query": "Add a remote MCP tool server named \"Acme Tools\" at https://mcp.acme.example/sse.",
+  "notes": "action 'add' with name + url. Under the isolated config root this registers an ephemeral MCP entry (thrown away with the temp root). The selection assertion pins the action and the url field.",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": ["osaurus_mcp"],
+      "mustNotCallTools": ["capabilities_discover", "capabilities_load"],
+      "argsMustContain": [
+        { "tool": "osaurus_mcp", "args": { "action": "add", "url": "mcp.acme.example" } }
+      ],
+      "maxIterations": 4
+    }
+  }
+}

@@ -83,13 +83,21 @@ struct EvalCompatTests {
     @Test func foldsMultipleContributionsOfOneModel() {
         let c1 = matrix([
             column(
-                model: "mlx-community/Qwen3-4B-4bit", passed: 8, scored: 10, decode: 60, peakRamMb: 5200,
+                model: "mlx-community/Qwen3-4B-4bit",
+                passed: 8,
+                scored: 10,
+                decode: 60,
+                peakRamMb: 5200,
                 env: env(chip: "Apple M1 Pro", ramMb: 16384, catalog: "cafe")
             )
         ])
         let c2 = matrix([
             column(
-                model: "mlx-community/Qwen3-4B-4bit", passed: 9, scored: 10, decode: 95, peakRamMb: 4800,
+                model: "mlx-community/Qwen3-4B-4bit",
+                passed: 9,
+                scored: 10,
+                decode: 95,
+                peakRamMb: 4800,
                 env: env(chip: "Apple M3 Max", ramMb: 65536, catalog: "cafe")
             )
         ])
@@ -111,8 +119,12 @@ struct EvalCompatTests {
     }
 
     @Test func mixedCatalogHashesMarkNotComparable() {
-        let c1 = matrix([column(model: "m", passed: 5, scored: 10, env: env(chip: "Apple M1", ramMb: 8192, catalog: "aaaa"))])
-        let c2 = matrix([column(model: "m", passed: 5, scored: 10, env: env(chip: "Apple M1", ramMb: 8192, catalog: "bbbb"))])
+        let c1 = matrix([
+            column(model: "m", passed: 5, scored: 10, env: env(chip: "Apple M1", ramMb: 8192, catalog: "aaaa"))
+        ])
+        let c2 = matrix([
+            column(model: "m", passed: 5, scored: 10, env: env(chip: "Apple M1", ramMb: 8192, catalog: "bbbb"))
+        ])
         let m = EvalCompatBuilder.build(from: [c1, c2]).models[0]
         #expect(m.catalogHashes.count == 2)
         #expect(m.comparable == false)
@@ -120,7 +132,12 @@ struct EvalCompatTests {
 
     @Test func selfJudgedContributionRaisesCaveat() {
         let c = matrix([
-            column(model: "m", passed: 5, scored: 10, env: env(chip: "Apple M1", ramMb: 8192, catalog: "aaaa", judge: "self-judge"))
+            column(
+                model: "m",
+                passed: 5,
+                scored: 10,
+                env: env(chip: "Apple M1", ramMb: 8192, catalog: "aaaa", judge: "self-judge")
+            )
         ])
         let m = EvalCompatBuilder.build(from: [c]).models[0]
         #expect(m.hasSelfJudged)
@@ -143,7 +160,9 @@ struct EvalCompatTests {
         ])
         try partial.toJSON().write(to: dir.appendingPathComponent("partial-env.json"))
         // Fully valid.
-        let good = matrix([column(model: "m", passed: 1, scored: 1, env: env(chip: "Apple M1", ramMb: 8192, catalog: "aaaa"))])
+        let good = matrix([
+            column(model: "m", passed: 1, scored: 1, env: env(chip: "Apple M1", ramMb: 8192, catalog: "aaaa"))
+        ])
         try good.toJSON().write(to: dir.appendingPathComponent("good.json"))
 
         let problems = EvalCompatBuilder.validate(in: dir)
@@ -160,7 +179,9 @@ struct EvalCompatTests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         // A contribution matrix.
-        let m = matrix([column(model: "a", passed: 1, scored: 1, env: env(chip: "Apple M1", ramMb: 8192, catalog: "aaaa"))])
+        let m = matrix([
+            column(model: "a", passed: 1, scored: 1, env: env(chip: "Apple M1", ramMb: 8192, catalog: "aaaa"))
+        ])
         try m.toJSON().write(to: dir.appendingPathComponent("contribution.json"))
         // A raw report (folded into a single-report matrix).
         let report = EvalReport(
@@ -168,8 +189,13 @@ struct EvalCompatTests {
             startedAt: "2026-06-19T00:00:00Z",
             cases: [
                 EvalCaseReport(
-                    id: "c1", label: "c1", domain: "agent_loop", outcome: .passed,
-                    notes: [], modelId: "b", latencyMs: nil
+                    id: "c1",
+                    label: "c1",
+                    domain: "agent_loop",
+                    outcome: .passed,
+                    notes: [],
+                    modelId: "b",
+                    latencyMs: nil
                 )
             ]
         )

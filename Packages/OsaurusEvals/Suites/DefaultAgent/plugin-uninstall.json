@@ -1,0 +1,18 @@
+{
+  "id": "default_agent.plugin-uninstall",
+  "domain": "default_agent",
+  "label": "default agent • uninstall a plugin by id",
+  "query": "Uninstall the plugin osaurus.eval-fixture-nonexistent.",
+  "notes": "action 'uninstall' with plugin_id. Not installed → typed error (no mutation); the selection assertion matches the emitted call.",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": ["osaurus_plugin"],
+      "mustNotCallTools": ["capabilities_discover", "capabilities_load"],
+      "argsMustContain": [
+        { "tool": "osaurus_plugin", "args": { "action": "uninstall", "plugin_id": "osaurus.eval-fixture-nonexistent" } }
+      ],
+      "maxIterations": 4
+    }
+  }
+}

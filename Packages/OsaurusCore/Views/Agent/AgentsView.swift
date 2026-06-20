@@ -5236,6 +5236,7 @@ struct AgentDetailView: View {
             agentAddress: current.agentAddress,
             autonomousExec: current.autonomousExec,
             pluginInstructions: effectivePluginInstructions,
+            bonjourEnabled: current.bonjourEnabled,
             toolSelectionMode: current.toolSelectionMode,
             manualToolNames: current.manualToolNames,
             manualSkillNames: current.manualSkillNames,
@@ -5271,7 +5272,8 @@ struct AgentDetailView: View {
                 selfSchedulingEnabled: selfSchedulingEnabled,
                 computerUseEnabled: computerUseEnabled,
                 computerUseCeiling: computerUseEnabled ? computerUseCeiling : nil
-            )
+            ),
+            order: current.order
         )
 
         agentManager.update(updated)

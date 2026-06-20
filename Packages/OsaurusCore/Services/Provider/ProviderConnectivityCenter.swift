@@ -153,7 +153,8 @@ public enum ProviderConnectivityCenter {
         )
         let severity = diagnostics.rows.map(\.severity).max(by: severityLessThan) ?? .info
         let status = status(for: provider, state: state, highestSeverity: severity)
-        let firstActionableRow = diagnostics.rows.first { $0.severity == .blocked }
+        let firstActionableRow =
+            diagnostics.rows.first { $0.severity == .blocked }
             ?? diagnostics.rows.first { $0.severity == .warning }
         let summaryRow = firstActionableRow ?? diagnostics.rows.first { $0.id == "connection" }
 

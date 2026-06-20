@@ -217,13 +217,19 @@ struct MLXServiceRuntimePolicyTests {
         ] {
             #expect(
                 MLXService.supportsLocalToolCalling(
-                    modelName: "vibethinker-3b", modelId: id) == false)
+                    modelName: "vibethinker-3b",
+                    modelId: id
+                ) == false
+            )
         }
         // A real Qwen2.5 (same qwen2 model_type) stays tool-capable.
         #expect(
             MLXService.supportsLocalToolCalling(
-                modelName: "qwen2.5-3b-instruct", modelId: "mlx-community/Qwen2.5-3B-Instruct")
-                == true)
+                modelName: "qwen2.5-3b-instruct",
+                modelId: "mlx-community/Qwen2.5-3B-Instruct"
+            )
+                == true
+        )
     }
 
     @Test func policyRejectsVibeThinkerToolsInsteadOfHallucinatingAssembleTag() {

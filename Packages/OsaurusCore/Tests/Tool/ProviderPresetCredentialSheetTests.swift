@@ -3,7 +3,7 @@
 //  OsaurusCoreTests
 //
 //  Pins down the preset-as-single-source-of-truth contract that the
-//  chat-driven `osaurus_provider_add` tool relies on:
+//  chat-driven `osaurus_provider` tool (action `add`) relies on:
 //
 //   * `ProviderCredentialRequest(preset:)` derives the right
 //     `providerType` and `instructions` from each preset, so OpenRouter
@@ -321,40 +321,60 @@ struct ProviderPresetCredentialSheetTests {
     // MARK: - Tool schema contract
 
     @Test
-    func providerAddTool_marksProviderAsRequiredAlongsideName() {
-        // The schema must match the runtime behavior: `execute` errors when
-        // neither `provider` nor `provider_type` is supplied, so the schema
-        // had been lying to the model. Lock the contract here so it can't
-        // silently drift back to `name`-only.
-        let tool = OsaurusProviderAddTool()
+    func providerTool_schemaRequiresOnlyActionWithEnumsAndNoProviderType() {
+        // The consolidated tool marks only `action` required at the schema
+        // level; per-action required fields (`name` + `provider` for add) are
+        // validated at runtime and returned as typed errors. The schema must
+        // therefore (a) require exactly `action`, (b) expose `action` and
+        // `provider` as real JSON-Schema enums, and (c) NOT carry the
+        // deprecated `provider_type` property at all.
+        let tool = OsaurusProviderTool()
         guard case .object(let schema) = tool.parameters else {
-            Issue.record("provider_add schema must be an object")
+            Issue.record("osaurus_provider schema must be an object")
             return
         }
         guard case .array(let required) = schema["required"] else {
-            Issue.record("provider_add schema must declare a `required` array")
+            Issue.record("osaurus_provider schema must declare a `required` array")
             return
         }
-        let names: [String] = required.compactMap { value in
+        let requiredNames: [String] = required.compactMap { value in
             if case .string(let s) = value { return s }
             return nil
         }
-        #expect(names.contains("name"))
-        #expect(names.contains("provider"))
-        // `provider_type` is the deprecated alias — it must NOT be required.
-        #expect(names.contains("provider_type") == false)
+        #expect(requiredNames == ["action"])
+
+        guard case .object(let props) = schema["properties"] else {
+            Issue.record("osaurus_provider schema must declare `properties`")
+            return
+        }
+        // `provider_type` is gone entirely.
+        #expect(props["provider_type"] == nil)
+        // `action` is an enum of the four operations.
+        if case .object(let action) = props["action"], case .array(let actionEnum) = action["enum"] {
+            let vals = actionEnum.compactMap { if case .string(let s) = $0 { return s } else { return nil } }
+            #expect(Set(vals) == ["add", "update", "remove", "set_credentials"])
+        } else {
+            Issue.record("`action` must be a string enum")
+        }
+        // `provider` is an enum sourced from the canonical ids.
+        if case .object(let provider) = props["provider"], case .array(let provEnum) = provider["enum"] {
+            let vals = provEnum.compactMap { if case .string(let s) = $0 { return s } else { return nil } }
+            #expect(Set(vals) == Set(ProviderToolShared.canonicalIds))
+        } else {
+            Issue.record("`provider` must be a string enum")
+        }
     }
 
     // MARK: - Azure deployments → manualModelIds
 
     @Test
     func parseManualModelIds_singleEntryYieldsOneId() {
-        #expect(OsaurusProviderAddTool.parseManualModelIds("gpt-4o") == ["gpt-4o"])
+        #expect(OsaurusProviderTool.parseManualModelIds("gpt-4o") == ["gpt-4o"])
     }
 
     @Test
     func parseManualModelIds_commaAndNewlineSeparated() {
-        let parsed = OsaurusProviderAddTool.parseManualModelIds(
+        let parsed = OsaurusProviderTool.parseManualModelIds(
             "gpt-4o, gpt-4o-mini\nprod-chat"
         )
         #expect(parsed == ["gpt-4o", "gpt-4o-mini", "prod-chat"])
@@ -365,7 +385,7 @@ struct ProviderPresetCredentialSheetTests {
         // Matches `RemoteProviderEditSheet.parseManualModelIds` — the first
         // spelling wins so chat-driven Azure providers persist identically
         // to those configured via Settings.
-        let parsed = OsaurusProviderAddTool.parseManualModelIds(
+        let parsed = OsaurusProviderTool.parseManualModelIds(
             "GPT-4o, gpt-4o,  gpt-4o "
         )
         #expect(parsed == ["GPT-4o"])
@@ -373,8 +393,8 @@ struct ProviderPresetCredentialSheetTests {
 
     @Test
     func parseManualModelIds_emptyAndWhitespaceCollapseToEmptyArray() {
-        #expect(OsaurusProviderAddTool.parseManualModelIds("") == [])
-        #expect(OsaurusProviderAddTool.parseManualModelIds(" , \n , ") == [])
+        #expect(OsaurusProviderTool.parseManualModelIds("") == [])
+        #expect(OsaurusProviderTool.parseManualModelIds(" , \n , ") == [])
     }
 
     @Test
@@ -397,7 +417,7 @@ struct ProviderPresetCredentialSheetTests {
         // `.openaiLegacy` providers pass through unknown extra fields as
         // custom headers, so the reserved keys must stay opaque or Azure
         // would leak its endpoint into the headers map.
-        #expect(OsaurusProviderAddTool.reservedExtraKeys.contains("host"))
-        #expect(OsaurusProviderAddTool.reservedExtraKeys.contains("deployment"))
+        #expect(OsaurusProviderTool.reservedExtraKeys.contains("host"))
+        #expect(OsaurusProviderTool.reservedExtraKeys.contains("deployment"))
     }
 }

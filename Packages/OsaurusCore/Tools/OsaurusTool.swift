@@ -187,6 +187,39 @@ extension OsaurusTool {
         return .value(s)
     }
 
+    /// Require an `action` enum argument and validate it against `allowed`.
+    /// Returns the normalized (lower-cased) action or a typed failure that
+    /// names the allowed set so the model can self-correct. The backbone of
+    /// the consolidated per-domain configure tools (`osaurus_provider`,
+    /// `osaurus_model`, …), where one tool fans out across several verbs.
+    func requireAction(
+        _ args: [String: Any],
+        allowed: [String]
+    ) -> ArgumentRequirement<String> {
+        let list = allowed.joined(separator: ", ")
+        guard let raw = args["action"] else {
+            return .failure(missingArg("action", expected: "one of: \(list)", tool: name))
+        }
+        guard let s = raw as? String else {
+            return .failure(
+                wrongType("action", expected: "one of: \(list)", gotType: "a JSON string", raw: raw, tool: name)
+            )
+        }
+        let normalized = s.lowercased()
+        guard allowed.contains(normalized) else {
+            return .failure(
+                ToolEnvelope.failure(
+                    kind: .invalidArgs,
+                    message: "`action` must be one of: \(list). Got `\(s)`.",
+                    field: "action",
+                    expected: "one of: \(list)",
+                    tool: name
+                )
+            )
+        }
+        return .value(normalized)
+    }
+
     // MARK: - Failure helpers (private)
 
     private func missingArg(_ key: String, expected: String, tool: String?) -> String {

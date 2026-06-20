@@ -1,0 +1,18 @@
+{
+  "id": "default_agent.provider-add-openrouter",
+  "domain": "default_agent",
+  "label": "default agent • connect OpenRouter (OAuth provider)",
+  "query": "Connect OpenRouter so I can use its models.",
+  "notes": "Second provider-enum value, distinct from the Anthropic case, to prove the provider enum carries more than one option. action 'add', provider 'openrouter'. Credential/OAuth flow is bypassed in eval (cancelled); the tool CALL is what's scored.",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": ["osaurus_provider"],
+      "mustNotCallTools": ["capabilities_discover", "capabilities_load"],
+      "argsMustContain": [
+        { "tool": "osaurus_provider", "args": { "action": "add", "provider": "openrouter" } }
+      ],
+      "maxIterations": 4
+    }
+  }
+}
