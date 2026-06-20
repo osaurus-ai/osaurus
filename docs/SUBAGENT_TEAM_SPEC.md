@@ -1,7 +1,7 @@
 # Subagent Orchestration — Team Spec, Wiring & Usage
 
 
-"> ⚠️ UPDATED DIRECTION (2026-06-20): this feature is generalizing into a single
+> ⚠️ UPDATED DIRECTION (2026-06-20): this feature is generalizing into a single
 > configurable **`call_agent`** primitive (a "portable subagent machine" over Agent
 > personas). The flows below (`local_delegate`, `image_*`) become the first concrete
 > cases. Canonical design + operational lifecycle/cache/tokenizer/image/progress
