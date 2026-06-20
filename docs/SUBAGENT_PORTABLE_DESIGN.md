@@ -1,7 +1,7 @@
-# Portable Subagent Machine — `call_agent` Design
+# Spawn — Portable Process-Spawning Framework
 
 > Direction (team, 2026-06-20): "create a portable subagent machine. subagent is
-> input → output, aliased behind a tool-call name. `call_agent('sparky', 'do x')`,
+> input → output, aliased behind a tool-call name. `spawn('sparky', 'do x')`,
 > and the user configures sparky with specific local/remote model settings.
 > Piggyback on the agents system. → general sub-process spawning modules."
 
@@ -10,12 +10,51 @@ configurable primitive. Almost everything needed already exists.
 
 ---
 
+
+## 0. Name, feature flag & scope (2026-06-20)
+
+**Name:** the primitive is **`spawn(name, input)`** — "spawn a bounded process
+behind an alias." (`invoke` was the alternative; `spawn` chosen because this
+generalizes to MANY process kinds, not just chat agents.) Working name.
+
+**Feature flag — DEFAULT OFF, PER AGENT (tpae):** spawning is gated two ways and
+both must be on:
+1. A **global** Agent Delegation / Spawn enable (`agentDelegationEnabled`, exists).
+2. A **per-agent `spawnable` flag** (new `Agent` field, default `false`). A persona
+   is reachable via `spawn` ONLY when its owner explicitly marks it spawnable — a
+   model can never reach arbitrary local models, only ones the user opted in.
+
+**Scope — many kinds of process spawning:** `spawn` is a general process-spawning
+framework, not only text agents. Each KIND registers a runner that shares the same
+lifecycle (handoff + progress + permission + budgets) but produces its own result:
+
+| Kind | Runner | Returns | Status |
+|------|--------|---------|--------|
+| text/coding agent | `AgentToolLoop` on the persona's model | text digest | built (as `local_delegate`) |
+| image generate | `ImageGenerationService` (vMLXFlux) | artifact | built |
+| image edit | `ImageGenerationService` (vMLXFlux) | artifact | built |
+| **privacy loop** | local model, sensitive-in → result-only | scrubbed result | future |
+| code exec / browser / … | their own runner | their result | future |
+
+Design the dispatch around a **`Spawnable` kind protocol** (resolve model →
+[handoff] → run → result), so new kinds plug in without touching the orchestrator
+or the handoff/progress machinery.
+
+**Privacy loop (future, tpae):** a kind where a LOCAL model performs sensitive
+work and returns ONLY the result — the coordinator (especially a cloud
+orchestrator) never sees the sensitive input or transcript. The **spawn boundary
+becomes a privacy boundary**: sensitive context stays local-only, and the digest
+that crosses back is result-only/scrubbed. Builds on the existing
+`PrivacyFilterPipeline` + the `compact_result_only` sharing policy.
+
+---
+
 ## 1. The machine
 
 A subagent is just **input → output behind an alias**:
 
 ```
-call_agent(name: "sparky", query: "user wants to add an MCP config")
+spawn(name: "sparky", query: "user wants to add an MCP config")
   → resolve persona "sparky"  (AgentManager — already user-configurable)
   → resolve its model         (local OR remote/provider)
   → [if local model & local orchestrator] ChatResidencyHandoff: unload orchestrator
@@ -41,6 +80,7 @@ carries exactly what a subagent needs:
 | tool policy | `Agent.toolSelectionMode` + `manualToolNames` + `toolsEnabled` |
 | temperature | `Agent.temperature` |
 | identity | `Agent.id` |
+| **spawnable (opt-in)** | **`Agent.spawnable` — NEW field, default `false`** |
 
 So "user configures sparky with specific local/remote model settings" = **the
 existing Agent editor**. No new config store — a subagent *is* an Agent persona
@@ -48,10 +88,10 @@ marked callable.
 
 ## 3. Surfacing — two shapes, both cheap
 
-1. **Generic:** one `call_agent` tool with `name` constrained to an enum of the
+1. **Generic:** one `spawn` tool with `name` constrained to an enum of the
    user's callable agents, plus a free `query`. The model picks the agent.
 2. **Aliased:** auto-generate a named tool per callable agent —
-   `configure_osaurus(query)` is sugar for `call_agent("configure_osaurus", query)`.
+   `configure_osaurus(query)` is sugar for `spawn("configure_osaurus", query)`.
    Eric's "alias behind a tool-call name." Lets users *pre-configure and inject as
    context*: each alias appears in the schema with the agent's description.
 
@@ -65,10 +105,10 @@ as a thin schema-generation layer over the same dispatch.
 | Bounded loop runner | ✅ `AgentToolLoop.run` |
 | Local-orchestrator handoff (unload→load→reload) | ✅ `ChatResidencyHandoff` (this branch) |
 | Per-persona model/prompt/tools | ✅ `Agent` + `AgentManager` |
-| Compact-result envelope + budgets + permission | ✅ `LocalTextDelegateTool` (becomes a special case of `call_agent`) |
+| Compact-result envelope + budgets + permission | ✅ `LocalTextDelegateTool` (becomes a special case of `spawn`) |
 | Model-fit RAM refusal | ✅ inside `ModelRuntime.load` |
-| **`call_agent` tool + persona→loop dispatch** | 🔴 new (small — wires the above together) |
-| **"callable" flag + alias-tool schema generation** | 🔴 new |
+| **`spawn` tool + persona→loop dispatch** | 🔴 new (small — wires the above together) |
+| **per-agent `spawnable` flag (default off) + alias-tool schema gen** | 🔴 new |
 | **Handoff for remote vs local vs same-model** | 🟡 generalize the 3 cases (local→handoff, remote→none, same-model→none) |
 
 ## 5. The runner (generalize `LocalTextDelegateTool`)
@@ -91,7 +131,7 @@ func runAgent(name, query):
     return compactEnvelope(result)
 ```
 
-- `local_delegate` = `call_agent` against an implicit "default local delegate"
+- `local_delegate` = `spawn` against an implicit "default local delegate"
   persona; keep it as an alias for back-compat.
 - **Image gen/edit stay specific** (they're a different engine — vMLXFlux, not an
   AgentToolLoop text run) but route through the *same* handoff
@@ -100,20 +140,20 @@ func runAgent(name, query):
 
 ## 6. Safety / contracts (unchanged, reused)
 - Single-residency handoff + `ModelRuntime` load-refusal = RAM safety.
-- Re-entrancy guard: a subagent cannot call `call_agent` (mirror
+- Re-entrancy guard: a subagent cannot call `spawn` (mirror
   `LocalTextDelegateContext.isActive`).
 - Permission: per-callable-agent ask/deny/always (extend AgentDelegation
   permission defaults, keyed by agent or job kind).
 - Budgets: tokens/turns/elapsed from AgentDelegation settings.
 
 ## 7. Build order
-1. `call_agent` tool + `AgentSubagentRunner` (generalize `LocalTextDelegateTool`'s
+1. `spawn` tool + `AgentSubagentRunner` (generalize `LocalTextDelegateTool`'s
    body; both call it). Generic enum-of-agents surface.
-2. Mark agents "callable"; generate alias tools (`configure_osaurus`, `sparky`).
+2. Add the per-agent `spawnable` flag (default off); generate alias tools (`configure_osaurus`, `sparky`).
 3. Generalize the handoff cases (local/remote/same-model).
 4. Permission + budgets per callable agent.
 5. e2e matrix (per SUBAGENT_ORCHESTRATION_STATUS.md §5) extended: cloud/local
-   orchestrator × {generic call_agent, aliased tool} × {local, remote subagent
+   orchestrator × {generic spawn, aliased tool} × {local, remote subagent
    model}, handoff-then-multiturn coherence, RAM.
 
 ---
@@ -189,7 +229,7 @@ text (`AgentToolLoop`) and image (`vMLXFlux`) jobs.
 - A subagent that's a heavy reasoner (e.g. VibeThinker-class) needs an adequate
   token budget or it consumes the budget in `<think>` and returns no digest —
   budgets (§6) must account for thinking.
-- Re-entrancy: a subagent must not call `call_agent` (mirror
+- Re-entrancy: a subagent must not call `spawn` (mirror
   `LocalTextDelegateContext.isActive`), or tokenizer/model thrash compounds.
 
 ## 8.4 Image generation/edit process (vMLXFlux) — phases & indicators
@@ -218,7 +258,7 @@ elapsed, the resolved image model, and whether a chat model was unloaded/restore
 
 - `NativeImageJobProgressCenter.post(...)` already emits phase events tagged with
   `session_id` / `assistant_turn_id` / `tool_call_id` → the chat progress row. The
-  generic `call_agent` runner should post the SAME-shaped events for text jobs:
+  generic `spawn` runner should post the SAME-shaped events for text jobs:
   `waiting_for_chat_idle` → `unloading_chat_models` → `loading_subagent` →
   `running (iteration k)` → `unloading_subagent` → `restoring_chat_models` → `done`.
 - The user must SEE the swap: "Unloading chat model… / Loading sparky… / Running… /
