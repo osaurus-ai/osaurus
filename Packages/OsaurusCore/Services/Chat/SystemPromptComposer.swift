@@ -2102,6 +2102,42 @@ public struct SystemPromptComposer: Sendable {
         )
     }
 
+    /// Prepend a frozen screen-context block (already rendered by
+    /// `ScreenContextSnapshot.render()`, tags and all) to the latest user
+    /// message. Placed on the user turn — not the system prompt — for two
+    /// reasons that mirror `injectMemoryPrefix`:
+    ///   1. the system prefix stays byte-stable so the paged KV cache reuses
+    ///      the conversation prefix, and
+    ///   2. the Privacy Filter only scans the latest user turn
+    ///      (`latestUserTurnSegments()`) and skips `system`, so riding on the
+    ///      user message is what actually routes the snapshot through PII
+    ///      scrubbing before a cloud send.
+    /// No-op when the block is nil/blank, no user message exists, or the
+    /// latest user message is multimodal (we leave `contentParts`-bearing
+    /// messages alone to avoid silently dropping images).
+    static func injectScreenContextPrefix(
+        _ block: String?,
+        into messages: inout [ChatMessage]
+    ) {
+        guard let block,
+            case let trimmed = block.trimmingCharacters(in: .whitespacesAndNewlines),
+            !trimmed.isEmpty,
+            let idx = messages.lastIndex(where: { $0.role == "user" })
+        else { return }
+
+        let existing = messages[idx]
+        guard existing.contentParts == nil else { return }
+
+        let original = existing.content ?? ""
+        let prefixed = original.isEmpty ? trimmed : "\(trimmed)\n\n\(original)"
+        messages[idx] = ChatMessage(
+            role: existing.role,
+            content: prefixed,
+            tool_calls: existing.tool_calls,
+            tool_call_id: existing.tool_call_id
+        )
+    }
+
     /// Merge `content` into the message list's system role. When `prepend`
     /// is true the content lands at the top of an existing system message;
     /// false appends to the bottom. With no existing system message, a new

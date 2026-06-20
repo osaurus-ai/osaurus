@@ -4,6 +4,91 @@
     "" : {
       "shouldTranslate" : false
     },
+    "Screen context" : {
+      "comment" : "Title of the screen-context card in Computer Use settings.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bildschirmkontext"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "屏幕上下文"
+          }
+        }
+      }
+    },
+    "Share screen context with chat" : {
+      "comment" : "Toggle label that opts in to injecting frozen screen context into chat.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bildschirmkontext mit dem Chat teilen"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "与聊天共享屏幕上下文"
+          }
+        }
+      }
+    },
+    "The Privacy Filter scrubs this before it reaches a cloud model." : {
+      "comment" : "Privacy note shown under the screen-context preview when the Privacy Filter is on.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Der Datenschutzfilter bereinigt dies, bevor es ein Cloud-Modell erreicht."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "隐私过滤器会在其到达云端模型之前清理这些内容。"
+          }
+        }
+      }
+    },
+    "~%d items would be masked before cloud send." : {
+      "comment" : "Privacy note: plural count of spans the Privacy Filter would mask before a cloud send.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "~%d Elemente würden vor dem Senden an die Cloud maskiert."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在发送到云端之前，约 %d 项将被屏蔽。"
+          }
+        }
+      }
+    },
+    "~1 item would be masked before cloud send." : {
+      "comment" : "Privacy note: singular count of the span the Privacy Filter would mask before a cloud send.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "~1 Element würde vor dem Senden an die Cloud maskiert."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在发送到云端之前，约 1 项将被屏蔽。"
+          }
+        }
+      }
+    },
     " — %@" : {
       "localizations" : {
         "de" : {

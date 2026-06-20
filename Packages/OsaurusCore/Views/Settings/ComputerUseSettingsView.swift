@@ -17,10 +17,20 @@ struct ComputerUseSettingsView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
     @ObservedObject private var permissionService = SystemPermissionService.shared
     @ObservedObject private var cloudVisionConsent = CloudVisionConsent.shared
+    @ObservedObject private var screenContext = ScreenContextSettings.shared
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
     @State private var hasAppeared = false
+
+    /// Live screen-context preview state for the Screen context card. The
+    /// snapshot is captured on demand (Refresh) so the user can see exactly
+    /// what a new conversation would freeze and share.
+    @State private var screenPreview: ScreenContextSnapshot?
+    @State private var isLoadingScreenPreview = false
+    /// Number of PII spans the Privacy Filter would mask in the preview, when
+    /// the filter is enabled and its model is loaded. nil = not computed.
+    @State private var screenMaskedCount: Int?
 
     /// The editable autonomy policy, loaded from `ComputerUsePolicyStore` on
     /// appear and persisted on every change.
@@ -45,6 +55,7 @@ struct ComputerUseSettingsView: View {
                     setupCard
                     enableCard
                     consentCard
+                    screenContextCard
                     policyCard
                     advancedCard
                 }
@@ -62,6 +73,9 @@ struct ComputerUseSettingsView: View {
             permissionService.startPeriodicRefresh(interval: 2.0)
             withAnimation(.easeOut(duration: 0.25).delay(0.05)) {
                 hasAppeared = true
+            }
+            if screenContext.injectionEnabled, isAccessibilityGranted {
+                refreshScreenPreview()
             }
         }
         .onDisappear {
@@ -243,6 +257,180 @@ struct ComputerUseSettingsView: View {
                 .foregroundColor(theme.secondaryText)
                 .fixedSize(horizontal: false, vertical: true)
         }
+    }
+
+    // MARK: - Screen context card
+
+    private var screenContextCard: some View {
+        infoCard(icon: "rectangle.on.rectangle.angled", title: L("Screen context")) {
+            VStack(alignment: .leading, spacing: 14) {
+                bodyText(
+                    "Give the assistant ambient awareness of what you're working on. When on, Osaurus freezes a quick snapshot of your open windows and the field you're focused on at the start of each chat, and shares it as background context. It's built from on-screen text only — no screenshots — and is scrubbed by the Privacy Filter before it reaches a cloud model."
+                )
+
+                screenContextToggleRow
+
+                if screenContext.injectionEnabled {
+                    screenPreviewSection
+                }
+            }
+        }
+    }
+
+    private var screenContextToggleRow: some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(L("Share screen context with chat"))
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(theme.primaryText)
+                hintText(
+                    "Off by default. Requires Accessibility. Frozen when each conversation starts."
+                )
+            }
+            Spacer(minLength: 12)
+            Toggle(
+                "",
+                isOn: Binding(
+                    get: { screenContext.injectionEnabled },
+                    set: { setScreenContextEnabled($0) }
+                )
+            )
+            .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
+            .labelsHidden()
+        }
+        .padding(12)
+        .surface(cornerRadius: 10, fill: theme.inputBackground, stroke: theme.inputBorder)
+    }
+
+    @ViewBuilder
+    private var screenPreviewSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                sectionTitle(L("Preview"))
+                Spacer()
+                Button(action: { refreshScreenPreview() }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 11))
+                        Text(L("Refresh"))
+                            .font(.system(size: 12, weight: .medium))
+                    }
+                    .foregroundColor(theme.secondaryText)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .surface(cornerRadius: 6, fill: theme.tertiaryBackground, stroke: theme.inputBorder)
+                }
+                .buttonStyle(PlainButtonStyle())
+                .disabled(!isAccessibilityGranted || isLoadingScreenPreview)
+            }
+
+            if !isAccessibilityGranted {
+                hintText("Grant Accessibility above to preview what would be shared.")
+            } else if isLoadingScreenPreview {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    hintText("Reading the screen…")
+                }
+            } else if let preview = screenPreview {
+                let text = preview.render()
+                if text.isEmpty {
+                    hintText("Nothing shareable detected on screen right now.")
+                } else {
+                    ScrollView {
+                        Text(text)
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundColor(theme.secondaryText)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(10)
+                    }
+                    .frame(maxHeight: 220)
+                    .surface(cornerRadius: 8, fill: theme.inputBackground, stroke: theme.inputBorder)
+
+                    privacyNote
+                }
+            } else {
+                hintText("Tap Refresh to see what would be shared.")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var privacyNote: some View {
+        if PrivacyFilterStore.snapshot().enabled {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "lock.shield")
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.successColor)
+                    .padding(.top, 1)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(L("The Privacy Filter scrubs this before it reaches a cloud model."))
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let count = screenMaskedCount, count > 0 {
+                        Text(maskedCountText(count))
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(theme.warningColor)
+                    }
+                }
+            }
+        } else {
+            hintText(
+                "Local models receive this as-is. Turn on the Privacy Filter to scrub it before cloud sends."
+            )
+        }
+    }
+
+    private func maskedCountText(_ count: Int) -> String {
+        count == 1
+            ? L("~1 item would be masked before cloud send.")
+            : String(format: L("~%d items would be masked before cloud send."), count)
+    }
+
+    private func setScreenContextEnabled(_ enabled: Bool) {
+        screenContext.setEnabled(enabled)
+        if enabled {
+            refreshScreenPreview()
+        } else {
+            screenPreview = nil
+            screenMaskedCount = nil
+        }
+    }
+
+    private func refreshScreenPreview() {
+        guard isAccessibilityGranted else {
+            screenPreview = nil
+            screenMaskedCount = nil
+            return
+        }
+        isLoadingScreenPreview = true
+        screenMaskedCount = nil
+        Task { @MainActor in
+            let snapshot = await ScreenContextDistiller.captureForChat()
+            screenPreview = snapshot
+            isLoadingScreenPreview = false
+            await computeMaskedCount(for: snapshot.render())
+        }
+    }
+
+    /// Best-effort count of spans the Privacy Filter would mask, shown so the
+    /// user can gauge exposure. Only runs when the filter is enabled and its
+    /// on-device model is already loaded — never blocks the preview on a model
+    /// load.
+    private func computeMaskedCount(for text: String) async {
+        let config = PrivacyFilterStore.snapshot()
+        guard config.enabled, !text.isEmpty, PrivacyFilterEngine.shared.isLoaded else {
+            screenMaskedCount = nil
+            return
+        }
+        let map = RedactionMap(conversationID: UUID())
+        let detected = try? await PrivacyFilterEngine.shared.detect(
+            in: text,
+            map: map,
+            skipCodeBlocks: config.skipCodeBlocks
+        )
+        screenMaskedCount = detected?.count
     }
 
     // MARK: - Autonomy card
