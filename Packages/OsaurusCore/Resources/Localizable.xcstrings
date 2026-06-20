@@ -1552,6 +1552,28 @@
         }
       }
     },
+    "%lld images, %@ tracked of %@, %lld decoding, %lld failed decodes" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$lld Bilder, %2$@ verfolgt von %3$@, %4$lld Dekodierung, %5$lld fehlgeschlagene Dekodierung"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$lld images, %2$@ tracked of %3$@, %4$lld decoding, %5$lld failed decodes"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$lld 张图片，%2$@ 跟踪 %3$@，%4$lld 解码，%5$lld 解码失败"
+          }
+        }
+      }
+    },
     "%lld items installed" : {
       "comment" : "Auto-extracted format-string key (Apple String.LocalizationValue canonical form).",
       "extractionState" : "manual",
@@ -19181,6 +19203,23 @@
         }
       }
     },
+    "Duplicate Sets" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Doppelte Sätze"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重复集"
+          }
+        }
+      }
+    },
     "Duplicated as \"%@\"" : {
       "comment" : "Auto-extracted format-string key (Apple String.LocalizationValue canonical form).",
       "extractionState" : "manual",
@@ -19201,6 +19240,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "已复制为“%@”"
+          }
+        }
+      }
+    },
+    "Duplicates" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Doppelte"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重复"
           }
         }
       }
@@ -28320,6 +28376,23 @@
         }
       }
     },
+    "Issues" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Probleme"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "问题"
+          }
+        }
+      }
+    },
     "It does the work, not just the talking" : {
       "localizations" : {
         "de" : {
@@ -33512,6 +33585,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "需要权限"
+          }
+        }
+      }
+    },
+    "Needs Review" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wird überprüft"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "需要审核"
           }
         }
       }
@@ -53070,6 +53160,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "分享…"
+          }
+        }
+      }
+    },
+    "Shared" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Geteilt"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "共享"
           }
         }
       }

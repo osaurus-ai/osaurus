@@ -748,7 +748,9 @@ struct ThemesView: View {
             countStyle: .file
         )
         return
-            "\(previewCacheHealth.cachedEntryCount) images, \(cost) tracked of \(limit), \(previewCacheHealth.inFlightDecodeCount) decoding, \(previewCacheHealth.failedDecodeCount) failed decodes"
+            L(
+                "\(previewCacheHealth.cachedEntryCount) images, \(cost) tracked of \(limit), \(previewCacheHealth.inFlightDecodeCount) decoding, \(previewCacheHealth.failedDecodeCount) failed decodes"
+            )
     }
 
     private func showToast(_ message: String, type: SimpleToastType = .success) {
