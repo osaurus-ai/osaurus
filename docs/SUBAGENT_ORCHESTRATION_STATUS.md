@@ -89,6 +89,32 @@ spawnable in `spawnableAgentNames`.
 restored). The concurrent-residency SIGABRT is gone. (Engine-side cache-store
 GPU-gate hardening for non-`unload` churn paths remains open as the #34 edge.)
 
+### Matrix run 2 (2026-06-20, headless `/agents/default/run`, rebuilt app)
+
+| # | Test | Result |
+|---|------|--------|
+| 1 | **Same-model inline** — spawn "Echo" (`qwen3-4b` == orchestrator). `needsHandoff=false` (no *other* model resident), runs inline on the resident model. | ✅ PASS — returned "pineapple", no extra load, only `qwen3-4b` resident, no crash. |
+| 2 | **Permission deny gate** — `permissionDefaults.localTextDelegate=deny`, spawn Sparky. | ✅ PASS — `SpawnTool` returned the `.rejected` "denied by Agent Delegation permission settings" envelope; no subagent loaded; orchestrator relayed it. |
+| 3 | **Re-entrancy guard** — a spawned subagent cannot itself spawn. | ✅ PASS (by construction) — `AgentSubagentRunner` passes `tools: nil` (subagent has no tools), `executeTool` rejects all tool use, and `SpawnTool.execute` early-returns `.rejected` when `LocalTextDelegateContext.isActive`. Triple-guarded; not reachable in v1. |
+| 4 | **Coherence across handoff** — state a fact, spawn a different-model agent (full unload/reload handoff), then require recall of the fact. | ✅ PASS (single-call variant) — orchestrator recalled BOTH Sparky's reply ("Hi") AND "teal" after the reload; coherent, no garbage, no crash. |
+
+### ⚠️ Separate crash found (NOT spawn) — `capabilities_discover` embedding SIGSEGV
+
+The 3-call multi-turn variant of test 4 surfaced a **different** crash: the
+orchestrator chose the built-in **`capabilities_discover`** tool
+(`Tools/CapabilityTools.swift`, semantic tool search) instead of spawning
+directly. Its embedding pass — `Model2VecStaticEmbeddingPipeline.embedOne` →
+`mlx_eval` → `Reduce::eval_gpu` → `setComputePipelineState` → `objc_msgSend` —
+**SIGSEGV**'d on a freed Metal pipeline state (use-after-free / concurrent-GPU
+resource race). Same *family* as the #34 cache-store race: another GPU-using
+subsystem (Model2Vec embeddings behind capability discovery) not serialized
+against whatever freed the Metal resources (model eviction / `Memory.clearCache`).
+**Orthogonal to spawn** — a pre-existing capability-discovery/embedding path — but
+a real multi-tool-session liability; harden alongside #34. osaurus already has an
+embedding gate (`MetalSafeEmbedder`/`enterEmbedding`), so the fix is likely
+routing capability discovery's embed through it and/or gating the freeing path.
+Flagged for Eric; not fixed autonomously per directive.
+
 ---
 
 
