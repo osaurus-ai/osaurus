@@ -36,8 +36,19 @@ public enum StorageOnDiskPosture: Sendable, Equatable {
 public actor StorageMigrationCoordinator {
     public static let shared = StorageMigrationCoordinator()
 
-    private let log = Logger(subsystem: "ai.osaurus", category: "storage.migrate")
+    /// One logger for the whole coordinator. `static` so `nonisolated static`
+    /// helpers (`resolveLaunchMode`, `convertOffActor`) can use it too.
+    private static let log = Logger(subsystem: "ai.osaurus", category: "storage.migrate")
     private var didConvergeThisLaunch = false
+
+    /// Tail of the convergence chain: each `converge(to:)` links its work after
+    /// this task and replaces it, so concurrent calls (e.g. launch convergence
+    /// racing a Settings toggle) run one-at-a-time. Actor reentrancy lets a
+    /// second `converge` enter while the first is suspended at an `await`, so
+    /// the boolean `StorageMutationGate` alone can't serialize the
+    /// quiesce -> convert -> reopen section. Starts completed so the first call
+    /// proceeds immediately.
+    private var convergeTail: Task<Void, Never> = Task {}
 
     public struct Report: Sendable {
         public var mode: StorageEncryptionMode
@@ -47,8 +58,14 @@ public actor StorageMigrationCoordinator {
         public var locked: [String] = []
         /// Labels that errored for other reasons (corruption, IO).
         public var failed: [String] = []
+        /// Labels skipped this run because there wasn't enough free disk space
+        /// to safely write the temp copy the converter needs. Left untouched
+        /// on disk (still openable via detection-first) and retried next launch.
+        public var skipped: [String] = []
 
-        public var isFullyConverged: Bool { locked.isEmpty && failed.isEmpty }
+        public var isFullyConverged: Bool {
+            locked.isEmpty && failed.isEmpty && skipped.isEmpty
+        }
     }
 
     private init() {}
@@ -62,22 +79,49 @@ public actor StorageMigrationCoordinator {
         if didConvergeThisLaunch { return }
         didConvergeThisLaunch = true
 
+        // Rollout kill-switch: leave on-disk files exactly as they are. Stores
+        // still open via detection-first opening; only the automatic format
+        // migration is suppressed. No code rollback needed to disable it.
+        if RuntimeEnvironment.storageConvergenceDisabled {
+            Self.log.notice(
+                "convergence: disabled via OSAURUS_DISABLE_STORAGE_CONVERGENCE; leaving storage as-is"
+            )
+            PersistenceHealth.shared.recordInfo(
+                key: "storage_convergence",
+                message: "disabled via kill-switch"
+            )
+            return
+        }
+
         let mode = Self.resolveLaunchMode()
         let report = await converge(to: mode)
 
         if report.converted > 0 {
-            log.info("convergence: converted \(report.converted) store(s) to \(mode.rawValue, privacy: .public)")
+            Self.log.info("convergence: converted \(report.converted) store(s) to \(mode.rawValue, privacy: .public)")
         }
         if !report.locked.isEmpty {
-            log.error(
+            Self.log.error(
                 "convergence: \(report.locked.count) store(s) locked (key unavailable): \(report.locked.joined(separator: ", "), privacy: .public)"
             )
         }
         if !report.failed.isEmpty {
-            log.error(
+            Self.log.error(
                 "convergence: \(report.failed.count) store(s) failed: \(report.failed.joined(separator: ", "), privacy: .public)"
             )
         }
+        if !report.skipped.isEmpty {
+            Self.log.error(
+                "convergence: \(report.skipped.count) store(s) skipped (insufficient disk space): \(report.skipped.joined(separator: ", "), privacy: .public)"
+            )
+        }
+
+        // Fleet observability: a compact, non-degraded per-launch summary in
+        // `/health` so the rollout can be monitored across users.
+        PersistenceHealth.shared.recordInfo(
+            key: "storage_convergence",
+            message:
+                "mode=\(mode.rawValue) converted=\(report.converted) matching=\(report.alreadyMatching) locked=\(report.locked.count) failed=\(report.failed.count) skipped=\(report.skipped.count)"
+        )
     }
 
     // MARK: - Settings toggle
@@ -93,10 +137,30 @@ public actor StorageMigrationCoordinator {
 
     // MARK: - Core convergence
 
-    /// Convert every catalog database whose detected format differs from
-    /// `mode`. Databases already in the target format are left untouched.
+    /// Converge on-disk storage to `mode`, serialized against any other
+    /// in-flight convergence. The actual work runs in `performConverge(to:)`;
+    /// this wrapper chains it after `convergeTail` so two callers never run the
+    /// quiesce/convert/reopen dance at the same time. `performConverge` is
+    /// idempotent and detection-first, so a duplicate request is a cheap no-op
+    /// and an opposite-direction toggle simply applies after the one ahead of
+    /// it finishes.
     @discardableResult
     public func converge(to mode: StorageEncryptionMode) async -> Report {
+        let predecessor = convergeTail
+        let work = Task { () -> Report in
+            await predecessor.value
+            return await self.performConverge(to: mode)
+        }
+        // Replace the tail synchronously (no `await` before this point) so the
+        // chain order matches call order even under actor reentrancy.
+        convergeTail = Task { _ = await work.value }
+        return await work.value
+    }
+
+    /// Convert every catalog database whose detected format differs from
+    /// `mode`. Databases already in the target format are left untouched.
+    /// Always invoked through `converge(to:)` so runs are serialized.
+    private func performConverge(to mode: StorageEncryptionMode) async -> Report {
         var report = Report(mode: mode)
 
         let dbTargets = StorageDatabaseCatalog.databaseTargets()
@@ -140,9 +204,18 @@ public actor StorageMigrationCoordinator {
         let openHandles = OsaurusDatabaseHandle.allOpenHandles
         for handle in openHandles { handle.closer() }
 
+        // Plugin and per-agent DBs are intentionally not registered as
+        // maintenance handles, so they won't be in `allOpenHandles`. Close
+        // their live connections explicitly before the swap — otherwise the
+        // converter would `replaceItemAt`/`removeSidecars` underneath an open
+        // fd and corrupt that store. Both reopen lazily after the gate clears.
+        AgentDatabaseStore.shared.closeAll()
+        PluginDatabase.closeAllOpen()
+
         let outcome = await Self.convertOffActor(targets: dbTargets, mode: mode, key: key)
         report.converted = outcome.converted
         report.failed = outcome.failed
+        report.skipped = outcome.skipped
         report.alreadyMatching += outcome.matched
 
         await MainActor.run { StorageMutationGate.shared.endMutating() }
@@ -198,7 +271,26 @@ public actor StorageMigrationCoordinator {
         let target: StorageEncryptionMode
         switch detectOnDiskPosture() {
         case .encrypted, .mixed:
-            target = FileVaultStatus.isEnabled() ? .plaintext : .encrypted
+            if FileVaultStatus.isEnabled() {
+                target = .plaintext
+                Self.log.notice(
+                    "launch: existing encrypted install will converge to plaintext (FileVault on)"
+                )
+            } else {
+                // FileVault off: keep it encrypted rather than strip the data's
+                // only at-rest protection. The user stays on the legacy
+                // key-dependent posture until they enable FileVault and
+                // re-toggle (or change it in Settings); record a non-degraded
+                // info note so the fleet prevalence is observable.
+                target = .encrypted
+                Self.log.notice(
+                    "launch: existing encrypted install kept encrypted (FileVault off); not migrating to plaintext"
+                )
+                PersistenceHealth.shared.recordInfo(
+                    key: "storage_posture",
+                    message: "kept encrypted at rest (FileVault off)"
+                )
+            }
         case .empty, .plaintext:
             target = .plaintext
         }
@@ -266,15 +358,28 @@ public actor StorageMigrationCoordinator {
         targets: [StorageDatabaseCatalog.DatabaseTarget],
         mode: StorageEncryptionMode,
         key: SymmetricKey
-    ) async -> (converted: Int, failed: [String], matched: Int) {
+    ) async -> (converted: Int, failed: [String], matched: Int, skipped: [String]) {
         await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .utility).async {
                 var converted = 0
                 var failed: [String] = []
                 var matched = 0
+                var skipped: [String] = []
                 for target in targets {
                     guard needsConversion(path: target.path, to: mode) else {
                         matched += 1
+                        continue
+                    }
+                    // Pre-flight free space: the converter writes a full temp
+                    // copy before the atomic swap, so a large DB transiently
+                    // needs ~2x its size. Skip (leave as-is, retry next launch)
+                    // rather than start an export that would fail mid-write on a
+                    // nearly-full disk.
+                    guard hasRoomToConvert(path: target.path) else {
+                        skipped.append(target.label)
+                        Self.log.error(
+                            "convergence: skipping \(target.label, privacy: .public) — insufficient free disk space for a safe conversion"
+                        )
                         continue
                     }
                     do {
@@ -292,8 +397,29 @@ public actor StorageMigrationCoordinator {
                 // Attachment blobs (AES-GCM, not SQLCipher) ride along with the
                 // databases so the whole tree matches the chosen posture.
                 convergeBlobs(to: mode, key: key)
-                continuation.resume(returning: (converted, failed, matched))
+                continuation.resume(returning: (converted, failed, matched, skipped))
             }
         }
+    }
+
+    /// True when there is enough free space to safely convert the database at
+    /// `path` (which needs room for a full temp copy plus headroom). Unknown
+    /// sizes or capacities never block — the converter still fails safe if an
+    /// export runs out of room, leaving the original intact.
+    static func hasRoomToConvert(path: String) -> Bool {
+        let fm = FileManager.default
+        guard let size = (try? fm.attributesOfItem(atPath: path)[.size] as? NSNumber)?.int64Value,
+            size > 0
+        else {
+            return true
+        }
+        let dir = URL(fileURLWithPath: path).deletingLastPathComponent()
+        let available = (try? dir.resourceValues(
+            forKeys: [.volumeAvailableCapacityForImportantUsageKey]
+        ))?.volumeAvailableCapacityForImportantUsage
+        guard let available else { return true }
+        // Require 2x the file size (temp copy + original) plus a 64 MiB floor.
+        let needed = size * 2 + 64 * 1024 * 1024
+        return available >= needed
     }
 }

@@ -55,6 +55,43 @@ final class PluginDatabase: @unchecked Sendable {
         close()
     }
 
+    // MARK: - Open-connection registry (quiesce support)
+    //
+    // Plugin DBs are intentionally not `OsaurusDatabaseHandle`s (see `open()`),
+    // so convergence/rotation can't find them to close before they swap or
+    // rekey the on-disk file — and an open fd over a swapped/rekeyed file
+    // corrupts the store. This weak registry lets those paths close every live
+    // plugin connection; each reopens lazily on its next `dbExec`/`dbQuery`.
+    //
+    // Lock ordering: register/deregister run OUTSIDE the per-DB `queue`, and
+    // `closeAllOpen()` drops `registryLock` before touching any DB queue, so no
+    // thread holds both locks at once (no inversion to deadlock on).
+    private static let registryLock = NSLock()
+    nonisolated(unsafe) private static let openInstances = NSHashTable<PluginDatabase>.weakObjects()
+
+    private func registerOpen() {
+        Self.registryLock.lock()
+        Self.openInstances.add(self)
+        Self.registryLock.unlock()
+    }
+
+    private func deregisterOpen() {
+        Self.registryLock.lock()
+        Self.openInstances.remove(self)
+        Self.registryLock.unlock()
+    }
+
+    /// Close every currently-open plugin database. Called by storage
+    /// convergence and key rotation while the mutation gate is held so the
+    /// on-disk file can be swapped/rekeyed with no live fd attached. Each
+    /// plugin reopens lazily on its next SQL call.
+    static func closeAllOpen() {
+        registryLock.lock()
+        let snapshot = openInstances.allObjects
+        registryLock.unlock()
+        for db in snapshot { db.close() }
+    }
+
     // MARK: - Lifecycle
 
     /// Opens an in-memory SQLite database (for tests). **Plaintext** —
@@ -109,9 +146,16 @@ final class PluginDatabase: @unchecked Sendable {
             }
             try configurePragmas()
         }
+        // Registered outside the `queue.sync` above so we never hold the DB
+        // queue and `registryLock` together (see the registry note). Idempotent
+        // when the connection was already open.
+        registerOpen()
     }
 
     func close() {
+        // Deregister before taking the DB queue to preserve the registry lock
+        // ordering. Safe to call when never registered (a no-op remove).
+        deregisterOpen()
         queue.sync {
             guard let connection = db else { return }
             sqlite3_close(connection)

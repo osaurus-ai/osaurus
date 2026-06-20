@@ -123,6 +123,11 @@ public actor StorageRecoveryService {
         let handles = OsaurusDatabaseHandle.allOpenHandles
         for handle in handles { handle.closer() }
 
+        // Close the (unregistered) plugin/agent connections too so the
+        // quarantine move can't run underneath a live fd.
+        AgentDatabaseStore.shared.closeAll()
+        PluginDatabase.closeAllOpen()
+
         let destination = StorageFile.quarantine(path: path, reason: "reset \(store.rawValue)")
         StorageFile.removeSidecars(for: path)
 
