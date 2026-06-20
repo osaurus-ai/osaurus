@@ -128,6 +128,9 @@ struct AgentDelegationConfiguration: Codable, Equatable, Sendable {
     /// (single-residency handoff). Off by default — a cloud orchestrator never
     /// needs this. See LocalDelegateHandoff / ChatResidencyHandoff.
     var localTextDelegationEnabled: Bool
+    /// Names of Agent personas the user has marked spawnable via `spawn`. Empty by
+    /// default → every agent is off until explicitly opted in (per-agent gate).
+    var spawnableAgentNames: [String]
     var imageDelegationEnabled: Bool
     var defaultLocalTextDelegateModelId: String?
     var defaultImageGenerationModelId: String?
@@ -142,6 +145,7 @@ struct AgentDelegationConfiguration: Codable, Equatable, Sendable {
         agentDelegationEnabled: Bool = false,
         cloudTextDelegationEnabled: Bool = false,
         localTextDelegationEnabled: Bool = false,
+        spawnableAgentNames: [String] = [],
         imageDelegationEnabled: Bool = false,
         defaultLocalTextDelegateModelId: String? = nil,
         defaultImageGenerationModelId: String? = nil,
@@ -155,6 +159,7 @@ struct AgentDelegationConfiguration: Codable, Equatable, Sendable {
         self.agentDelegationEnabled = agentDelegationEnabled
         self.cloudTextDelegationEnabled = cloudTextDelegationEnabled
         self.localTextDelegationEnabled = localTextDelegationEnabled
+        self.spawnableAgentNames = spawnableAgentNames
         self.imageDelegationEnabled = imageDelegationEnabled
         self.defaultLocalTextDelegateModelId = defaultLocalTextDelegateModelId
         self.defaultImageGenerationModelId = defaultImageGenerationModelId
@@ -183,6 +188,17 @@ struct AgentDelegationConfiguration: Codable, Equatable, Sendable {
         localTextDelegationActive || localOrchestratorTextHandoffActive
     }
 
+    /// Whether the named Agent persona is reachable via `spawn` (global gate + the
+    /// per-agent opt-in, default off).
+    func isAgentSpawnable(_ name: String) -> Bool {
+        agentDelegationEnabled
+            && spawnableAgentNames.contains { $0.caseInsensitiveCompare(name) == .orderedSame }
+    }
+
+    var anyAgentSpawnable: Bool {
+        agentDelegationEnabled && !spawnableAgentNames.isEmpty
+    }
+
     var imageDelegationActive: Bool {
         agentDelegationEnabled && imageDelegationEnabled
     }
@@ -192,6 +208,7 @@ struct AgentDelegationConfiguration: Codable, Equatable, Sendable {
             agentDelegationEnabled: agentDelegationEnabled,
             cloudTextDelegationEnabled: cloudTextDelegationEnabled,
             localTextDelegationEnabled: localTextDelegationEnabled,
+            spawnableAgentNames: spawnableAgentNames,
             imageDelegationEnabled: imageDelegationEnabled,
             defaultLocalTextDelegateModelId: Self.normalizedModelId(defaultLocalTextDelegateModelId),
             defaultImageGenerationModelId: Self.normalizedModelId(defaultImageGenerationModelId),
@@ -208,6 +225,7 @@ struct AgentDelegationConfiguration: Codable, Equatable, Sendable {
         case agentDelegationEnabled
         case cloudTextDelegationEnabled
         case localTextDelegationEnabled
+        case spawnableAgentNames
         case imageDelegationEnabled
         case defaultLocalTextDelegateModelId
         case defaultImageGenerationModelId
@@ -225,6 +243,7 @@ struct AgentDelegationConfiguration: Codable, Equatable, Sendable {
             agentDelegationEnabled: try container.decodeIfPresent(Bool.self, forKey: .agentDelegationEnabled) ?? false,
             cloudTextDelegationEnabled: try container.decodeIfPresent(Bool.self, forKey: .cloudTextDelegationEnabled) ?? false,
             localTextDelegationEnabled: try container.decodeIfPresent(Bool.self, forKey: .localTextDelegationEnabled) ?? false,
+            spawnableAgentNames: try container.decodeIfPresent([String].self, forKey: .spawnableAgentNames) ?? [],
             imageDelegationEnabled: try container.decodeIfPresent(Bool.self, forKey: .imageDelegationEnabled) ?? false,
             defaultLocalTextDelegateModelId: try container.decodeIfPresent(
                 String.self,

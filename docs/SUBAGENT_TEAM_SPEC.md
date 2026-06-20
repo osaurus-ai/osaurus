@@ -1,172 +1,108 @@
-# Subagent Orchestration — Team Spec, Wiring & Usage
+# Spawn — Team Spec, Wiring & Usage
 
-
-> ⚠️ UPDATED DIRECTION (2026-06-20): generalizing into one configurable primitive
-> **`spawn(name, input)`** (working name; `invoke` alt) — a portable
-> PROCESS-spawning framework over Agent personas, gated by a **per-agent
-> `spawnable` flag, default OFF**. The flows here (`local_delegate`, `image_*`)
-> become the first spawnable KINDS; a local-only **privacy loop** is a planned
-> kind. Canonical design + operational lifecycle/cache/tokenizer/image/progress
-> nuances: **SUBAGENT_PORTABLE_DESIGN.md**. Status/TODO: SUBAGENT_ORCHESTRATION_STATUS.md.
-
-
-Audience: osaurus contributors. Companion to
-[`SUBAGENT_ORCHESTRATION_STATUS.md`](SUBAGENT_ORCHESTRATION_STATUS.md) (status +
-test matrix) and [`NATIVE_SWIFT_IMAGE_AGENT_JOB_FLOW.md`](NATIVE_SWIFT_IMAGE_AGENT_JOB_FLOW.md)
-(image-flow detail). This file is the spec + wiring contract.
+Audience: osaurus contributors. **Canonical design + operational nuances:**
+[`SUBAGENT_PORTABLE_DESIGN.md`](SUBAGENT_PORTABLE_DESIGN.md). **Status/TODO + test
+matrix:** [`SUBAGENT_ORCHESTRATION_STATUS.md`](SUBAGENT_ORCHESTRATION_STATUS.md).
+This file is the spec + wiring contract for the current build.
 
 ---
 
 ## 1. What it is
 
-A chat turn's **orchestrator** model (local OR cloud) can spawn a bounded
-**subagent job** and fold the result back into the turn. Three job kinds:
+A chat turn's **orchestrator** model (local OR cloud) can **`spawn`** a bounded
+subprocess behind an alias and fold its result back into the turn — input → output,
+the orchestrator never sees the subprocess transcript (only the digest/artifact).
 
-| Tool | Subagent | Engine |
-|------|----------|--------|
-| `local_delegate` | local text/coding model (user-assigned) | `AgentToolLoop` on the local model |
-| `image_generate` | local image model | `ImageGenerationService` → vMLXFlux |
-| `image_edit` | local image model | `ImageGenerationService` → vMLXFlux |
+`spawn` is a **general process-spawning framework**, not a fixed set of tools. Each
+**KIND** registers a runner that shares one lifecycle (resolve → [handoff] → run →
+result):
 
-Design follows the shipped primitives — `AgentToolLoop`
-(`Services/Chat/AgentToolLoop.swift`), `sandbox_reduce`
-(`Tools/SandboxReduceTool.swift`, see `docs/REDUCTION_SUBAGENT.md`), and the
-Computer Use Subagent (`ComputerUse/Loop/ComputerUseLoop.swift`, PR #1578). New
-loops are **modular** and reuse `AgentToolLoop`; they do not re-implement a loop.
+| Kind | Runner | Returns | Status |
+|------|--------|---------|--------|
+| text/coding agent | `AgentToolLoop` on a user-configured Agent persona's model | text digest | built (`local_delegate`; generalizing to `spawn`) |
+| image generate | `ImageGenerationService` → vMLXFlux | artifact | built |
+| image edit | `ImageGenerationService` → vMLXFlux | artifact | built |
+| privacy loop | local-only model, sensitive-in → result-only | scrubbed result | planned |
+| code exec / browser / … | their own runner | their result | future |
 
----
+Reuse, don't reinvent: `AgentToolLoop` (`Services/Chat/AgentToolLoop.swift`),
+`sandbox_reduce` (`docs/REDUCTION_SUBAGENT.md`), Computer Use Subagent (PR #1578).
 
-## 2. Model handoff contract (the core requirement)
+## 2. Gating — DEFAULT OFF, two switches
 
-```
-Orchestrator = LOCAL model:
-  1. orchestrator emits the subagent tool call (job spec)
-  2. Coordinator: snapshot orchestrator (provider + model + gen config + history)
-  3. unload orchestrator model            (MetalGate "load:<m>" exclusive)
-  4. load subagent/task model             (MetalGate "load:<sub>" exclusive)
-  5. run job                              (text: AgentToolLoop / image: vMLXFlux,
-                                           each MetalGate-exclusive)
-  6. unload subagent model
-  7. reload orchestrator model            (same model + defaults, no tricks)
-  8. return compact result → orchestrator continues the turn
+1. **Global:** `AgentDelegationConfiguration.agentDelegationEnabled`.
+2. **Per-agent:** `Agent.spawnable` (default `false`). A persona is reachable via
+   `spawn` ONLY when its owner marks it spawnable. A model can never reach an
+   arbitrary local model — only opted-in agents.
 
-Orchestrator = CLOUD/API model:
-  - skip steps 2–4, 6–7 (orchestrator never resident). Run the local subagent,
-    return the compact result. Privacy filter still applies to cloud calls; the
-    subagent prompt/work stays local.
-```
-
-All handoff toggles + model assignments are user settings (see §5). Defaults
-must be safe for < 24 GB RAM and respect Memory Safety settings.
-
-**Why the handoff is now safe:** main's `MetalGate` (owner-keyed mutual
-exclusion) treats **model load** as an exclusive GPU producer
-(`enterModelLoad`/`exitModelLoad`), so unload→load→reload can never overlap an
-in-flight generation or image eval. This is also the fix for the model-switch
-`SIGABRT` (`MTLCommandBuffer addCompletedHandler` abort, task #34).
-
----
-
-## 3. Components & wiring (file → responsibility → contract)
-
-### Orchestration loop (reuse, don't reinvent)
-- `Services/Chat/AgentToolLoop.swift` — canonical loop driver.
-  - `AgentToolLoop.run(...) -> RunResult` (see `AgentLoopHooks`, `AgentLoopPolicy`,
-    `AgentLoopBudget`). The text subagent runs a **bounded** `AgentToolLoop`
-    (capped iterations/tokens/turns) on the assigned local model.
-  - Mirror `ComputerUseLoop`'s adoption pattern for the new `LocalDelegateLoop`.
-
-### Tools (orchestrator-facing surface)
-- `Tools/NativeImageTools.swift` — `image_generate` / `image_edit`. Args: `prompt`,
-  `negative_prompt?`, `source_artifact_id|source_image_path` (edit), `size?`,
-  `steps?`, `guidance?`, `seed?`, `model:"auto"|<id>`. Resolves the model **before**
-  the permission prompt and before reading edit sources.
-- `Tools/LocalTextDelegateTool.swift` — `local_delegate`. Args: `task`,
-  `mode:coding|analysis|summarize|other`, `context_refs?`, `allowed_tools?`,
-  `max_tokens?`, `max_turns?`, `model?`. Resolves the delegate model before the ask.
-- `Tools/ToolRegistry.swift` — gates `local_delegate` + `image_*` behind the
-  Agent Delegation settings (add/remove from the outbound tool payload).
-- `Tools/AgentDelegationApprovalArguments.swift` — injects resolved job + model
-  facts into the permission-prompt payload.
-
-### Coordinators (own handoff + RAM + permission + result)
-- `Services/AgentDelegation/NativeImageJobCoordinator.swift` — image jobs.
-  Snapshot → unload-if-local → run vMLXFlux → unload → restore. `NativeImageJob
-  ModelResolver` rejects stale/incomplete/wrong-kind models **before** residency
-  is touched.
-- **`LocalDelegateCoordinator` (TODO)** — text peer of the above; owns the
-  orchestrator handoff for `local_delegate`.
-
-### Runtime primitives (reused)
-- `Services/ModelRuntime.swift` — `enterModelLoad`/`exitModelLoad`-wrapped load +
-  the unload path used for handoff.
-- `Services/ModelRuntime/MetalGate.swift` — `enterGeneration` / `enterEmbedding` /
-  `enterModelLoad` / **`enterImageGeneration`** (added on this branch). Every GPU
-  producer acquires an exclusive (or shared same-owner) lane.
-- `Services/ModelRuntime/ImageGenerationService.swift` — the only `vMLXFlux`
-  import; generate/edit/upscale events, held in MetalGate's image lane.
-
-### Config & settings
-- `AgentDelegationConfiguration` — load policy (`agent_single_residency`),
-  per-job permission (`ask`/`deny`/`always_allow`), budgets, model assignments.
-- Settings panel (TODO) — orchestrator model assignment + per-job subagent model
-  assignment + handoff toggles; persisted; see
-  `docs/superpowers/plans/2026-06-18-agent-delegation-settings.md`.
-
----
-
-## 4. Data flow (one image job, local orchestrator)
+## 3. Model-handoff contract
 
 ```
-/v1/chat (local orchestrator) → tool_call image_generate{prompt,…}
-  → ToolRegistry dispatch → NativeImageTools.imageGenerate
-    → resolve model (strict) → permission prompt (resolved model shown)
-    → NativeImageJobCoordinator:
-        snapshot orchestrator → ModelRuntime.unload(orchestrator)
-        → ImageGenerationService.generate (MetalGate.enterImageGeneration)
-            → vMLXFlux event stream → artifact written
-          ImageGenerationService done (exitImageGeneration)
-        → unload image model → ModelRuntime.load(orchestrator)
-    → tool result {artifact_id, model, dims, steps, seed, elapsed, residency}
-  → orchestrator turn continues, chat renders the image card
+Orchestrator = LOCAL model, subagent model is a DIFFERENT local model:
+  wait for chat idle → unload orchestrator → load subagent → run → unload subagent
+  → reload orchestrator → return result. (single-residency)
+Orchestrator = CLOUD/API  → no unload/reload (nothing resident); run subagent, return.
+Subagent model == orchestrator model → no swap; run in place.
+Subagent model is REMOTE → run remote; no local handoff.
 ```
 
-`local_delegate` is the same shape with `AgentToolLoop` in place of
-`ImageGenerationService`, returning a text digest instead of an artifact.
+Safe because main's owner-keyed `MetalGate` makes **model load** an exclusive GPU
+producer (`enterModelLoad`/`exitModelLoad`) — unload→load→reload never overlaps an
+in-flight generation/eval (also the fix for the model-switch SIGABRT, task #34).
+RAM safety = single-residency + `ModelRuntime.load`'s model-fit refusal +
+restore-on-failure (orchestrator never left unloaded).
 
----
+## 4. Components & wiring (current)
 
-## 5. Usage
+### Dispatch / runner
+- **`Tools/SpawnTool.swift`** — the `spawn(agent, input)` tool. Resolves the named
+  Agent persona, checks both gates, resolves the model, and runs it. (Being built.)
+- **`Services/AgentDelegation/AgentSubagentRunner.swift`** — shared bounded runner:
+  resolve model → `ChatResidencyHandoff` (if local handoff) → `AgentToolLoop.run`
+  with the persona's prompt/model/tools → compact envelope. Both `spawn` and
+  `local_delegate` call it. (Being built — extracted from `LocalTextDelegateTool`.)
+- `Services/AgentDelegation/ChatResidencyHandoff.swift` — wait-idle → unload
+  resident chat models → reload. The reusable handoff core.
+- `Services/Chat/AgentToolLoop.swift` — the bounded loop driver (reused).
 
-### As an end user
-- Assign the **orchestrator model** (the main chat model) in settings.
-- Assign **subagent models**: a local text/coding model, and image gen/edit
-  models. Toggle whether a local orchestrator should unload/reload around jobs
-  (cloud orchestrators ignore this).
-- Set per-job permission: ask / deny / always-allow. The prompt shows the
-  resolved target model and lets you switch models before approving.
+### Image kinds (engine-specific, same handoff/progress)
+- `Tools/NativeImageTools.swift` — `image_generate` / `image_edit`.
+- `Services/AgentDelegation/NativeImageJobCoordinator.swift` — image handoff +
+  vMLXFlux + progress; `NativeImageJobModelResolver` (strict, pre-residency).
+- `Services/ModelRuntime/ImageGenerationService.swift` — the only `vMLXFlux` import,
+  held in `MetalGate("image")`.
 
-### As a model (tool schema)
-- The orchestrator sees `local_delegate`, `image_generate`, `image_edit` only
-  when enabled in settings. `model:"auto"` picks the user-assigned model; an
-  explicit id overrides. A short catalog error is returned if no compatible
-  local model is installed.
+### Personas / config / runtime (reused, existing)
+- `Models/Agent/Agent.swift` + `Managers/AgentManager.swift` — persona name/model
+  (local or remote)/prompt/tool-policy; `effectiveModel(for:)`. **New: `spawnable`.**
+- `Models/AgentDelegation/AgentDelegationConfiguration.swift` — global enable, load
+  policy, permission (ask/deny/always), budgets, the local-handoff toggle.
+- `Services/ModelRuntime.swift` — load/unload/`preload`/`cachedModelSummaries`, the
+  model-fit refusal; `Services/ModelRuntime/MetalGate.swift` — GPU owner-keyed gate.
 
-### As a contributor
-- New subagent kinds = new tool + new coordinator + reuse `AgentToolLoop`. Do not
-  add recursive agents, helper LLMs, or shell workers in a coordinator — it is
-  normal Swift service code that drives one bounded job.
+### Surfacing
+- `Tools/ToolRegistry.swift` — exposes `spawn` (and image tools) only when the gates
+  pass; an `agent` enum of spawnable personas. Optional alias tools
+  (`configure_osaurus(input)` = sugar for `spawn("configure_osaurus", input)`).
 
----
+## 5. Lifecycle & progress (summary; full detail in DESIGN §8)
 
-## 6. Needs (to ship) — see STATUS doc §4–§5 for the full list + test matrix
-- `LocalDelegateCoordinator` + text handoff loop on `AgentToolLoop`.
-- Cloud-orchestrator no-handoff path + the user toggle.
-- Settings panel: orchestrator + per-job model assignment + toggles, persisted.
-- Live permission prompts; progress UI on the agent-triggered path.
-- RAM-safety preflight/refusal for < 24 GB.
-- **Full §5 e2e matrix on the dev app** (none passed yet): local/cloud × {image
-  gen, image edit, text delegate}, handoff-then-multiturn coherence, permission
-  ask/deny/always, settings persistence, multi-job stress, looping/incoherency
-  scan. CI green is not sufficient.
-```
+`received → resolving_model → permission → waiting_for_chat_idle →
+unloading_chat_models → loading_subagent → running → unloading_subagent →
+restoring_chat_models → done`. Every phase emits a progress event so the UI shows
+the swap ("Unloading… / Loading sparky… / Running… / Reloading…"), never a frozen
+turn. Cache: orchestrator KV/prefix dropped on unload (cold resume; L2 block-disk
+survives for a warm resume); per-model tokenizer/template; image jobs surface a
+denoise step counter (k/N). Re-entrancy: a subprocess cannot `spawn`.
+
+## 6. Usage
+
+- **User:** mark an Agent **spawnable** in its editor; it gets its own model
+  (local/remote), prompt, tools. Set per-job permission (ask/deny/always) + the
+  "Local Orchestrator Handoff" toggle + budgets in Agent Delegation settings.
+- **Model:** sees `spawn` (and any alias tools) only when enabled. `spawn("sparky",
+  "do x y z")`. Image: `image_generate` / `image_edit` when enabled.
+- **Contributor:** a new KIND = a runner that implements resolve→[handoff]→run→
+  result; plug into the dispatch. Do NOT add recursive agents, helper LLMs, or
+  shell workers inside a coordinator — it is normal Swift service code driving one
+  bounded job.
