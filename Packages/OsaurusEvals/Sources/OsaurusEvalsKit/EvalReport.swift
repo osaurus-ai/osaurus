@@ -212,13 +212,32 @@ public struct EvalReport: Sendable, Codable {
     /// per-model scoreboards can stack reports without name collisions.
     public let startedAt: String
     public let cases: [EvalCaseReport]
+    /// Run provenance (hardware, OS, Osaurus build, judge, catalog hash).
+    /// nil on reports written before this block existed, and on internal
+    /// constructions that don't attach it; the CLI's `run` path populates
+    /// it so every emitted report JSON is self-describing — the substrate
+    /// crowdsourced model-compatibility contributions are built from.
+    public let environment: RunEnvironment?
 
     public var counts: Counts { Counts(cases: cases) }
 
-    public init(modelId: String, startedAt: String, cases: [EvalCaseReport]) {
+    public init(
+        modelId: String,
+        startedAt: String,
+        cases: [EvalCaseReport],
+        environment: RunEnvironment? = nil
+    ) {
         self.modelId = modelId
         self.startedAt = startedAt
         self.cases = cases
+        self.environment = environment
+    }
+
+    /// Return a copy with `environment` attached — used by the CLI to stamp
+    /// provenance onto the report the runner produced before it is printed
+    /// and written to JSON.
+    public func withEnvironment(_ environment: RunEnvironment) -> EvalReport {
+        EvalReport(modelId: modelId, startedAt: startedAt, cases: cases, environment: environment)
     }
 
     public struct Counts: Sendable, Codable {

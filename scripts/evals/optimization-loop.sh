@@ -34,6 +34,12 @@ set -uo pipefail
 #   LABEL          free-form note recorded in each history row (with RECORD=1),
 #                  e.g. LABEL="qwen tool-call fix".
 #   SNAPSHOT_DIR   where the committed scoreboard lives. Default <repo>/reports.
+#   SKIP_DET       "1" → skip the deterministic (model-independent) suites and
+#                  run only the per-model LLM suites. Used by the crowdsourced
+#                  contribution flow (scripts/evals/contribute.sh): those suites
+#                  validate Osaurus's own parsing and don't vary by the
+#                  contributor's model, so they add nothing to a per-model
+#                  compatibility report. Default off.
 #   OSAURUS_EVALS_SKIP_PREP=1   skip the asset-prep step.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -49,6 +55,7 @@ STRICT="${STRICT:-0}"
 RECORD="${RECORD:-0}"
 LABEL="${LABEL:-}"
 SNAPSHOT_DIR="${SNAPSHOT_DIR:-${REPO_ROOT}/reports}"
+SKIP_DET="${SKIP_DET:-0}"
 
 # Suites that never call an LLM (pure-data validators + the embedder-only
 # capability_search lane) — run ONCE with DET_MODEL.
@@ -118,10 +125,14 @@ run_suite() {
 }
 
 # ── 2. Deterministic suites (once) ───────────────────────────────────────
-log "Deterministic suites (model=${DET_MODEL}):"
-for suite in "${DET_SUITES[@]}"; do
-  run_suite "${DET_MODEL}" "det" "${suite}"
-done
+if [[ "${SKIP_DET}" == "1" ]]; then
+  log "Skipping deterministic suites (SKIP_DET=1)."
+else
+  log "Deterministic suites (model=${DET_MODEL}):"
+  for suite in "${DET_SUITES[@]}"; do
+    run_suite "${DET_MODEL}" "det" "${suite}"
+  done
+fi
 
 # ── 3. LLM suites (per model) ────────────────────────────────────────────
 for model in ${MODELS}; do

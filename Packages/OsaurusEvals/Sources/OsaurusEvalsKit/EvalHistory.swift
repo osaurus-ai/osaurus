@@ -30,6 +30,11 @@ public struct EvalHistoryRow: Codable, Sendable, Equatable {
     public let decodeTokensPerSecond: Double?
     public let ttftMs: Double?
     public let peakPhysFootprintMb: Double?
+    /// Run provenance (hardware, OS, build, judge, catalog hash). Optional so
+    /// pre-existing history lines still decode; populated for runs recorded
+    /// after the provenance block shipped so a crowdsourced trend stays
+    /// attributable to a machine + catalog.
+    public let environment: RunEnvironment?
 
     public init(
         ts: String,
@@ -42,7 +47,8 @@ public struct EvalHistoryRow: Codable, Sendable, Equatable {
         errored: Int,
         decodeTokensPerSecond: Double?,
         ttftMs: Double?,
-        peakPhysFootprintMb: Double?
+        peakPhysFootprintMb: Double?,
+        environment: RunEnvironment? = nil
     ) {
         self.ts = ts
         self.commit = commit
@@ -55,6 +61,7 @@ public struct EvalHistoryRow: Codable, Sendable, Equatable {
         self.decodeTokensPerSecond = decodeTokensPerSecond
         self.ttftMs = ttftMs
         self.peakPhysFootprintMb = peakPhysFootprintMb
+        self.environment = environment
     }
 }
 
@@ -77,7 +84,8 @@ public enum EvalHistory {
                 errored: col.perDomain.values.reduce(0) { $0 + $1.errored },
                 decodeTokensPerSecond: col.meanDecodeTokensPerSecond,
                 ttftMs: col.meanTtftMs,
-                peakPhysFootprintMb: col.peakPhysFootprintMb
+                peakPhysFootprintMb: col.peakPhysFootprintMb,
+                environment: col.environment
             )
         }
     }

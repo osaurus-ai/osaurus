@@ -45,6 +45,9 @@ struct OsaurusEvalsCLI {
             exit(runDiff(Array(args.dropFirst())))
         case "matrix":
             exit(runMatrix(Array(args.dropFirst())))
+        case "compat":
+            // Pure file aggregation over reports/community/* — no model load.
+            exit(runCompat(Array(args.dropFirst())))
         case "--help", "-h":
             printUsage()
             exit(0)
@@ -117,7 +120,7 @@ struct OsaurusEvalsCLI {
             modelIds: EvalRemoteProviderBootstrap.candidateModelIds(runModel: opts.model)
         )
 
-        let report = await EvalRunner.run(
+        let baseReport = await EvalRunner.run(
             suite: suite,
             model: opts.model,
             filter: opts.filter,
@@ -127,6 +130,17 @@ struct OsaurusEvalsCLI {
         )
 
         EvalRemoteProviderBootstrap.teardown(ephemeralProviderIds)
+
+        // Stamp run provenance (hardware, OS, build, judge, catalog hash) so
+        // every emitted report is self-describing — the trustworthy substrate
+        // for crowdsourced model-compatibility contributions. `caseIDs` are the
+        // cases that actually ran (post-filter), matching the report rows.
+        let report = baseReport.withEnvironment(
+            RunEnvironment.current(
+                caseIDs: baseReport.cases.map(\.id),
+                runModel: baseReport.modelId
+            )
+        )
 
         print(report.formatHumanReadable(verbose: opts.verbose))
 
@@ -638,6 +652,7 @@ struct OsaurusEvalsCLI {
                 osaurus-evals diff <baseline> <current> [--out <p>] [--markdown <p>]
                                               [--fail-on-regression]
                 osaurus-evals matrix <reports-dir> [--out <p>] [--markdown <p>]
+                osaurus-evals compat <community-dir> [--out <p>] [--markdown <p>] [--validate]
 
             FLAGS:
                 --suite <dir>         Required. Directory of *.json eval cases

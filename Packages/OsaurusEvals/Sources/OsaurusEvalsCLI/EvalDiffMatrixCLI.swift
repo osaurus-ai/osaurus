@@ -205,6 +205,109 @@ extension OsaurusEvalsCLI {
         return 2
     }
 
+    // MARK: - compat
+
+    static func runCompat(_ args: [String]) -> Int32 {
+        var positional: [String] = []
+        var outPath: String?
+        var markdownPath: String?
+        var validateOnly = false
+
+        var i = 0
+        while i < args.count {
+            let arg = args[i]
+            switch arg {
+            case "--out":
+                guard i + 1 < args.count else { return failCompat("flag --out requires a value") }
+                outPath = args[i + 1]
+                i += 2
+            case "--markdown":
+                guard i + 1 < args.count else { return failCompat("flag --markdown requires a value") }
+                markdownPath = args[i + 1]
+                i += 2
+            case "--validate":
+                validateOnly = true
+                i += 1
+            case "--help", "-h":
+                printCompatUsage()
+                return 0
+            default:
+                if arg.hasPrefix("--") { return failCompat("unknown flag: \(arg)") }
+                positional.append(arg)
+                i += 1
+            }
+        }
+
+        guard positional.count == 1 else {
+            return failCompat("expected <community-dir>, got \(positional.count) positional arg(s)")
+        }
+        let dir = URL(fileURLWithPath: positional[0])
+
+        // --validate is the PR gate: every contribution must decode and carry
+        // the provenance (chip + catalogHash) a trustworthy crowdsourced row
+        // needs. Reports problems and exits 1 without building the leaderboard.
+        if validateOnly {
+            let problems = EvalCompatBuilder.validate(in: dir)
+            if problems.isEmpty {
+                print("[compat] all contributions valid (\(dir.path))")
+                return 0
+            }
+            FileHandle.standardError.write(
+                Data((["[compat] contribution validation failed:"] + problems.map { "  - \($0)" })
+                    .joined(separator: "\n").appending("\n").utf8)
+            )
+            return 1
+        }
+
+        do {
+            let matrices = try EvalCompatBuilder.loadContributions(in: dir)
+            let report = EvalCompatBuilder.build(from: matrices)
+            let worst = report.models.filter { $0.verdict == .broken }.map { CompatibilityReport.shortModel($0.model) }
+            print(
+                "compat: \(report.models.count) model(s) across \(report.contributions) contribution(s)"
+                    + (worst.isEmpty ? "" : "  [broken: \(worst.joined(separator: ", "))]")
+            )
+            if let outPath {
+                try report.toJSON().write(to: URL(fileURLWithPath: outPath))
+                print("\nwrote compatibility JSON to \(outPath)")
+            }
+            if let markdownPath {
+                try Data(report.formatMarkdown().utf8).write(to: URL(fileURLWithPath: markdownPath))
+                print("wrote compatibility Markdown to \(markdownPath)")
+            }
+            return 0
+        } catch {
+            return failCompat(error.localizedDescription)
+        }
+    }
+
+    private static func failCompat(_ message: String) -> Int32 {
+        FileHandle.standardError.write(Data(("compat error: \(message)\n").utf8))
+        printCompatUsage()
+        return 2
+    }
+
+    private static func printCompatUsage() {
+        print(
+            """
+            osaurus-evals compat <community-dir> [flags]
+
+            Fold crowdsourced contribution files (reports/community/*.json — each a
+            matrix carrying a RunEnvironment, the shape `make evals-contribute` writes)
+            into a single model-compatibility leaderboard: per model a works/partial/
+            broken verdict plus hardware coverage (chips, RAM band), worst-case peak
+            RAM, decode-speed range, and a comparability check (same catalog hash?).
+
+            FLAGS:
+                --out <path>        Write the compatibility report as JSON.
+                --markdown <path>   Write COMPATIBILITY.md (the committed leaderboard).
+                --validate          PR gate: verify every contribution decodes and
+                                    carries provenance (chip + catalogHash). Exit 1 on
+                                    any problem; does not build the leaderboard.
+            """
+        )
+    }
+
     private static func printMatrixUsage() {
         print(
             """

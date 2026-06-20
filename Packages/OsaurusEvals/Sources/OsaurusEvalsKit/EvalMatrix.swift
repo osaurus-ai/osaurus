@@ -34,6 +34,32 @@ public struct EvalMatrixModelColumn: Sendable, Codable, Equatable {
     /// Peak-of-peak physical footprint (MB) across telemetered rows —
     /// the headline RAM number the AGENTS.md gate reads.
     public let peakPhysFootprintMb: Double?
+    /// Run provenance for this model's reports (hardware, OS, build, judge,
+    /// catalog hash). nil for older reports; carried through so the history
+    /// log and the crowdsourced compatibility leaderboard stay attributable.
+    public let environment: RunEnvironment?
+
+    public init(
+        modelId: String,
+        startedAt: String?,
+        perDomain: [String: EvalMatrixDomainCell],
+        totalPassed: Int,
+        totalScored: Int,
+        meanDecodeTokensPerSecond: Double?,
+        meanTtftMs: Double?,
+        peakPhysFootprintMb: Double?,
+        environment: RunEnvironment? = nil
+    ) {
+        self.modelId = modelId
+        self.startedAt = startedAt
+        self.perDomain = perDomain
+        self.totalPassed = totalPassed
+        self.totalScored = totalScored
+        self.meanDecodeTokensPerSecond = meanDecodeTokensPerSecond
+        self.meanTtftMs = meanTtftMs
+        self.peakPhysFootprintMb = peakPhysFootprintMb
+        self.environment = environment
+    }
 }
 
 public struct EvalMatrix: Sendable, Codable, Equatable {
@@ -94,6 +120,16 @@ public struct EvalMatrix: Sendable, Codable, Equatable {
                 + models.map { $0.peakPhysFootprintMb.map { String(format: "%.0f", $0) } ?? "—" }
                 .joined(separator: " | ") + " |"
         )
+        let envRows = models.compactMap { col -> String? in
+            guard let env = col.environment else { return nil }
+            return "- `\(shortModel(col.modelId))` — \(env.summary)"
+        }
+        if !envRows.isEmpty {
+            lines.append("")
+            lines.append("## Environment")
+            lines.append("")
+            lines.append(contentsOf: envRows)
+        }
         return lines.joined(separator: "\n") + "\n"
     }
 
@@ -152,6 +188,7 @@ public enum EvalMatrixBuilder {
         // Merge every case for the same model across suite files.
         var byModel: [String: [EvalCaseReport]] = [:]
         var startedByModel: [String: String] = [:]
+        var envByModel: [String: RunEnvironment] = [:]
         for report in reports {
             byModel[report.modelId, default: []].append(contentsOf: report.cases)
             // Keep the earliest startedAt per model as the run stamp.
@@ -159,6 +196,11 @@ public enum EvalMatrixBuilder {
                 startedByModel[report.modelId] = min(existing, report.startedAt)
             } else {
                 startedByModel[report.modelId] = report.startedAt
+            }
+            // First non-nil environment per model wins — a single contribution
+            // (one machine, one run) shares one env across its suite reports.
+            if envByModel[report.modelId] == nil, let env = report.environment {
+                envByModel[report.modelId] = env
             }
         }
         let allDomains = Set(reports.flatMap { $0.cases.map(\.domain) }).sorted()
@@ -187,7 +229,8 @@ public enum EvalMatrixBuilder {
                 totalScored: cases.filter { $0.outcome == .passed || $0.outcome == .failed }.count,
                 meanDecodeTokensPerSecond: decodes.isEmpty ? nil : decodes.reduce(0, +) / Double(decodes.count),
                 meanTtftMs: ttfts.isEmpty ? nil : ttfts.reduce(0, +) / Double(ttfts.count),
-                peakPhysFootprintMb: rams.max()
+                peakPhysFootprintMb: rams.max(),
+                environment: envByModel[modelId]
             )
         }
         return EvalMatrix(

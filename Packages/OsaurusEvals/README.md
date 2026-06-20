@@ -179,6 +179,27 @@ experiments). JSONL appends merge cleanly across maintainers; sort by `ts` for
 the timeline. `osaurus-evals matrix … --history <path> --label <str>` is the
 underlying primitive.
 
+### Crowdsourced model compatibility
+
+Anyone can contribute a model-compatibility result from their own Mac — the
+long tail of models/quants/hardware no single maintainer can cover. Each
+contribution is one conflict-free file under `reports/community/`; a maintainer
+folds them into `reports/COMPATIBILITY.md`. See `reports/community/README.md`.
+
+```bash
+# Contributor: run ONE model on your hardware, then PR the single file it writes.
+MODEL=mlx-community/Qwen3-4B-4bit make evals-contribute
+
+# Maintainer: rebuild the leaderboard (or gate a PR's contributions).
+make evals-compat                 # reports/community/* -> COMPATIBILITY.{md,json}
+VALIDATE=1 make evals-compat      # PR gate: every contribution carries provenance
+```
+
+Every report now carries a `RunEnvironment` provenance block (chip, RAM, macOS,
+Osaurus build/commit, judge, KV regime, and a `catalogHash` that proves two runs
+graded the same case set). `osaurus-evals compat <dir> [--validate]` is the
+underlying primitive.
+
 ### Per-case telemetry
 
 Model-driven rows (`agent_loop`, `capability_claims`, `computer_use_loop`,

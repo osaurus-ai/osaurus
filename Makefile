@@ -10,7 +10,7 @@ WORKSPACE := osaurus.xcworkspace
 DERIVED := build/DerivedData
 XCODEBUILD_FLAGS ?=
 
-.PHONY: help cli app install-cli serve status test ci-test clean bench-setup bench-ingest bench-ingest-chunks bench-run bench evals-prep evals evals-verbose evals-report evals-all evals-all-verbose evals-all-report evals-loop evals-matrix evals-diff
+.PHONY: help cli app install-cli serve status test ci-test clean bench-setup bench-ingest bench-ingest-chunks bench-run bench evals-prep evals evals-verbose evals-report evals-all evals-all-verbose evals-all-report evals-loop evals-matrix evals-diff evals-contribute evals-compat
 
 help:
 	@echo "Targets:"
@@ -33,6 +33,8 @@ help:
 	@echo "  evals-loop          Optimization loop: run all suites per model + scoreboard + diff (MODELS=, BASELINE=, RECORD=1 LABEL= to commit reports/SNAPSHOT+history)"
 	@echo "  evals-matrix        Cross-model scoreboard from a reports dir (DIR=, HISTORY= LABEL= to append a trend row)"
 	@echo "  evals-diff          All-domain before/after diff (BASELINE=, CURRENT=)"
+	@echo "  evals-contribute    Crowdsource: run one model on your Mac -> reports/community/<file>.json (MODEL=)"
+	@echo "  evals-compat        Fold reports/community/* into the COMPATIBILITY.md leaderboard (COMPAT_DIR=)"
 	@echo "  test           Run OsaurusCore package tests via 'swift test'"
 	@echo "  ci-test        Reproduce the CI test-core job locally (xcodebuild + xcbeautify)"
 	@echo "  clean          Remove DerivedData build output"
@@ -273,6 +275,24 @@ evals-diff:
 		$(if $(DIFF_OUT),--out $(DIFF_OUT),) \
 		$(if $(DIFF_MD),--markdown $(DIFF_MD),) \
 		$(if $(STRICT),--fail-on-regression,)
+
+# Crowdsource model compatibility: run the per-model LLM suites for ONE model on
+# your hardware and emit a single contribution file under reports/community/.
+# Export a strong judge key (e.g. XAI_API_KEY) or JUDGE_MODEL to avoid a
+# self-judged (weaker) run. See reports/community/README.md.
+#   MODEL=mlx-community/Qwen3-4B-4bit make evals-contribute
+evals-contribute:
+	@MODEL="$(MODEL)" bash scripts/evals/contribute.sh $(MODEL)
+
+# Fold every contribution under reports/community/ into the committed
+# COMPATIBILITY.{md,json} leaderboard. Run VALIDATE=1 for the PR gate (verify
+# each contribution decodes and carries provenance) without rebuilding.
+#   make evals-compat
+#   VALIDATE=1 make evals-compat
+COMPAT_DIR ?= reports/community
+evals-compat:
+	@swift run --package-path Packages/OsaurusEvals osaurus-evals compat $(COMPAT_DIR) \
+		$(if $(VALIDATE),--validate,--out reports/COMPATIBILITY.json --markdown reports/COMPATIBILITY.md)
 
 ## ── Housekeeping ─────────────────────────────────────────────────
 
