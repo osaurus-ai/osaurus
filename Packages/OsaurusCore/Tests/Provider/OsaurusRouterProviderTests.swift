@@ -222,6 +222,47 @@ struct OsaurusRouterProviderTests {
         #expect(call.function.arguments == #"{"path":"tetris.html","content":"<html></html>"}"#)
     }
 
+    /// The router is streaming-only, so `generateOneShot` (distillation, greetings,
+    /// preflight) drains `streamDeltas` via `collectVisibleText`. The drain must
+    /// return only model text and drop every `\u{FFFE}` hint sentinel
+    /// (reasoning/billing/tool/prefill/stats) so they never pollute the result —
+    /// e.g. the distill JSON the memory pipeline parses.
+    @Test func routerOneShotStream_collectsVisibleTextAndDropsSentinels() async throws {
+        let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
+
+        continuation.yield(StreamingReasoningHint.encode("thinking about the digest"))
+        continuation.yield(#"{"episode":"#)
+        continuation.yield(
+            StreamingBillingHint.encode(
+                RouterBillingSummary(
+                    costMicro: "1234",
+                    status: "completed",
+                    tokenSource: "provider",
+                    inputTokens: 11,
+                    outputTokens: 3
+                )
+            )
+        )
+        continuation.yield(#"{"summary":"hi"}}"#)
+        continuation.yield(StreamingToolHint.encode("search_memory"))
+        continuation.finish()
+
+        let result = try await RemoteProviderService.collectVisibleText(from: stream)
+        #expect(result == #"{"episode":{"summary":"hi"}}"#)
+    }
+
+    /// A stream that carries only sentinels (a reasoning model that never emits
+    /// visible content) collects to empty rather than leaking sentinel text.
+    @Test func routerOneShotStream_sentinelOnlyCollectsEmpty() async throws {
+        let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
+        continuation.yield(StreamingReasoningHint.encode("only thinking, no answer"))
+        continuation.yield(StreamingToolHint.encode("noop"))
+        continuation.finish()
+
+        let result = try await RemoteProviderService.collectVisibleText(from: stream)
+        #expect(result.isEmpty)
+    }
+
     @Test func routerFullChatCompletionBodyWithToolCall_finishesWithInvocation() {
         var state = RemoteProviderService.StreamingState(stopSequences: [], trackContent: false)
         var yielded: [String] = []
