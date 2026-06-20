@@ -1,6 +1,6 @@
 # Eval Matrix
 
-- Generated: 2026-06-19T23:40:09.767Z
+- Generated: 2026-06-20T00:12:24.986Z
 
 | Domain | foundation | Qwen3-4B-4bit | grok-4.3 |
 | --- | --- | --- | --- |

@@ -153,6 +153,32 @@ swift run --package-path Packages/OsaurusEvals osaurus-evals diff <baseline> <cu
 
 `make evals-matrix DIR=…` and `make evals-diff BASELINE=… CURRENT=…` wrap these.
 
+### Recording a run (committed snapshot + history)
+
+Raw per-case reports are **not** committed — they are large, regenerate every
+run, and merge-conflict when several maintainers run evals. Only two small,
+merge-friendly artifacts live in version control (see `reports/README.md`):
+
+- `reports/SNAPSHOT.{md,json}` — the **latest** cross-model scoreboard,
+  overwritten on each recorded run.
+- `reports/history.jsonl` — an **append-only** trend log, one compact row per
+  model per run (totals + decode tok/s · TTFT · peak RAM · commit · label).
+
+```bash
+# Run the loop AND refresh the committed scoreboard + append a trend row:
+RECORD=1 LABEL="qwen tool-call fix" \
+  MODELS="foundation qwen3-4b xai/grok-4.3" make evals-loop
+
+# Then publish just the small committed files:
+git add reports/SNAPSHOT.md reports/SNAPSHOT.json reports/history.jsonl
+git commit -m "evals: record <what changed>"
+```
+
+Without `RECORD=1` nothing under version control changes (use for throwaway
+experiments). JSONL appends merge cleanly across maintainers; sort by `ts` for
+the timeline. `osaurus-evals matrix … --history <path> --label <str>` is the
+underlying primitive.
+
 ### Per-case telemetry
 
 Model-driven rows (`agent_loop`, `capability_claims`, `computer_use_loop`,

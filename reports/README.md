@@ -1,0 +1,79 @@
+# reports/ — committed eval scoreboards
+
+This directory holds the **small, human-readable, merge-friendly** outputs of
+the eval optimization loop. Raw per-case/per-suite report JSONs are **not**
+committed — they are large, regenerate on every run, and cause merge conflicts
+when several maintainers run evals. Only the rolled-up scoreboard and an
+append-only trend log live here.
+
+## What's committed (and why)
+
+| File | What it is | Update model |
+| --- | --- | --- |
+| `SNAPSHOT.md` | Latest cross-model scoreboard (domains × models, pass/scored, perf rollup). | **Overwritten** each recorded run — "the latest snapshot". |
+| `SNAPSHOT.json` | Same scoreboard, machine-readable (`EvalMatrix`). | Overwritten each recorded run. |
+| `history.jsonl` | One compact JSON row **per model per recorded run** (totals + decode tok/s, TTFT, peak RAM, commit, label). | **Append-only** — every run adds lines; never rewrites. |
+| `README.md` | This file. | — |
+
+Everything else under `reports/` is git-ignored (see `.gitignore`): raw
+`*.json` reports, dated run dirs, local baselines kept for `diff`. They stay on
+disk for you to inspect and diff against; they just never get committed.
+
+## Why this layout works for multiple maintainers
+
+- **`SNAPSHOT.*` answers "where are we now?"** It's overwritten, so it always
+  reflects the most recent recorded run. A two-line diff in a PR shows exactly
+  what moved.
+- **`history.jsonl` answers "how did we get here?"** JSONL is append-only, so
+  two maintainers recording runs on different branches produce *additive* diffs
+  that merge cleanly (keep-both) instead of clobbering a shared blob. Sort by
+  `ts` to reconstruct the timeline; filter by `model` or `commit` for a trend.
+
+## Recording a run (the maintainer workflow)
+
+```bash
+# 1. Run the loop (raw artifacts land in build/evals/loop/<stamp>/, git-ignored).
+#    RECORD=1 also refreshes SNAPSHOT.* and appends to history.jsonl.
+RECORD=1 LABEL="qwen tool-call fix" \
+  MODELS="foundation qwen3-4b xai/grok-4.3" \
+  make evals-loop
+
+# 2. Review the two-/few-line diff, then commit just the committed scoreboards.
+git add reports/SNAPSHOT.md reports/SNAPSHOT.json reports/history.jsonl
+git commit -m "evals: record <what changed>"
+```
+
+Without `RECORD=1` the loop only prints the matrix and writes the git-ignored
+run dir — nothing under version control changes (use this for throwaway
+experiments).
+
+## Regenerating / comparing by hand
+
+```bash
+# Rebuild SNAPSHOT + append a history row from any dir of raw reports:
+make evals-matrix DIR=build/evals/loop/latest \
+  MATRIX_OUT=reports/SNAPSHOT.json MATRIX_MD=reports/SNAPSHOT.md
+
+# Per-case before/after diff between two LOCAL run dirs (raw reports needed):
+make evals-diff BASELINE=build/evals/loop/<prev> CURRENT=build/evals/loop/latest
+```
+
+`diff` works on the raw per-case reports, so its inputs are the local
+(git-ignored) run dirs, not the committed snapshot. The committed
+`history.jsonl` is for run-over-run *aggregate* trends.
+
+## `history.jsonl` row schema
+
+```json
+{
+  "ts": "2026-06-20T00:12:24.986Z",   // matrix generatedAt (ISO-8601)
+  "commit": "0052652a",                // tree the run was measured against
+  "label": "qwen tool-call fix",       // free-form run note (optional)
+  "model": "mlx-community/Qwen3-4B-4bit",
+  "passed": 97, "scored": 121,          // scored = passed + failed
+  "skipped": 13, "errored": 0,
+  "decodeTokensPerSecond": 60.4,        // omitted when no telemetry (e.g. remote)
+  "ttftMs": 179.2,
+  "peakPhysFootprintMb": 10711.6
+}
+```

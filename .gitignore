@@ -146,6 +146,17 @@ benchmarks/
 # Generated benchmark/test output
 results/
 
+# Eval scoreboards (see reports/README.md): commit ONLY the rolled-up snapshot
+# + append-only history. Raw per-case/per-suite reports and dated run dirs are
+# large, regenerate every run, and merge-conflict across maintainers, so they
+# stay local. `reports/*` ignores all direct children (incl. run dirs); the
+# negations re-include the four committed files.
+reports/*
+!reports/README.md
+!reports/SNAPSHOT.md
+!reports/SNAPSHOT.json
+!reports/history.jsonl
+
 # Swift test coverage artifacts
 default.profraw
 *.profraw

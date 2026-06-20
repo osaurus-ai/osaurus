@@ -25,6 +25,15 @@ set -uo pipefail
 #   STRICT         "1" → exit non-zero if BASELINE diff finds blocking
 #                  regressions (CI gate). Default off (case failures are
 #                  the signal we measure, not a loop failure).
+#   RECORD         "1" → also refresh reports/SNAPSHOT.{md,json} (the latest
+#                  committed scoreboard) and append one row per model to
+#                  reports/history.jsonl (the append-only trend log), so the
+#                  run is publishable with a tiny diff. Default off: a bare
+#                  run only writes the git-ignored timestamped dir. See
+#                  reports/README.md for the commit workflow.
+#   LABEL          free-form note recorded in each history row (with RECORD=1),
+#                  e.g. LABEL="qwen tool-call fix".
+#   SNAPSHOT_DIR   where the committed scoreboard lives. Default <repo>/reports.
 #   OSAURUS_EVALS_SKIP_PREP=1   skip the asset-prep step.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -37,6 +46,9 @@ LOOP_OUT_ROOT="${LOOP_OUT_ROOT:-${REPO_ROOT}/build/evals/loop}"
 BASELINE="${BASELINE:-}"
 FILTER="${FILTER:-}"
 STRICT="${STRICT:-0}"
+RECORD="${RECORD:-0}"
+LABEL="${LABEL:-}"
+SNAPSHOT_DIR="${SNAPSHOT_DIR:-${REPO_ROOT}/reports}"
 
 # Suites that never call an LLM (pure-data validators + the embedder-only
 # capability_search lane) — run ONCE with DET_MODEL.
@@ -126,6 +138,23 @@ log "Writing cross-model matrix…"
   --out "${OUT}/matrix.json" \
   --markdown "${OUT}/matrix.md" || log "matrix step failed (non-fatal)"
 
+# ── 4b. Record committed snapshot + history (opt-in: RECORD=1) ───────────
+# Refresh the small, committed scoreboard. Raw per-case reports stay in the
+# git-ignored run dir; only SNAPSHOT.{md,json} + the append-only history.jsonl
+# are version-controlled (see reports/README.md). This rebuilds the snapshot
+# from THIS run's reports so the latest committed scoreboard always matches the
+# newest recorded run.
+if [[ "${RECORD}" == "1" ]]; then
+  rec_commit="$(git -C "${REPO_ROOT}" rev-parse --short HEAD 2>/dev/null || true)"
+  log "Recording scoreboard → ${SNAPSHOT_DIR}/SNAPSHOT.{md,json} + history.jsonl"
+  "${BIN}" matrix "${OUT}" \
+    --out "${SNAPSHOT_DIR}/SNAPSHOT.json" \
+    --markdown "${SNAPSHOT_DIR}/SNAPSHOT.md" \
+    --history "${SNAPSHOT_DIR}/history.jsonl" \
+    --commit "${rec_commit}" \
+    --label "${LABEL}" || log "record step failed (non-fatal)"
+fi
+
 # ── 5. Diff vs baseline (optional gate) ──────────────────────────────────
 gate_rc=0
 if [[ -n "${BASELINE}" ]]; then
@@ -148,6 +177,12 @@ log "Done. Artifacts in ${OUT}"
 log "  scoreboard: ${OUT}/matrix.md"
 [[ -n "${BASELINE}" ]] && log "  diff:       ${OUT}/diff.md"
 log "  promote to baseline:  BASELINE=${OUT} bash scripts/evals/optimization-loop.sh"
+if [[ "${RECORD}" == "1" ]]; then
+  log "  recorded:   ${SNAPSHOT_DIR}/SNAPSHOT.md + history.jsonl"
+  log "  publish:    git add reports/SNAPSHOT.md reports/SNAPSHOT.json reports/history.jsonl && git commit"
+else
+  log "  (set RECORD=1 to refresh the committed reports/SNAPSHOT + history.jsonl)"
+fi
 
 if [[ "${STRICT}" == "1" && ${gate_rc} -ne 0 ]]; then
   log "STRICT gate: blocking regression(s) detected (exit 1)."

@@ -30,8 +30,8 @@ help:
 	@echo "  evals-all           Run every suite under Packages/OsaurusEvals/Suites/* (MODEL=, FILTER=)"
 	@echo "  evals-all-verbose   Same as 'evals-all' plus per-case raw LLM response"
 	@echo "  evals-all-report    Same as 'evals-all' but writes per-suite JSON to EVALS_OUT_DIR (build/evals/)"
-	@echo "  evals-loop          Optimization loop: run all suites per model + scoreboard + diff (MODELS=, BASELINE=)"
-	@echo "  evals-matrix        Cross-model scoreboard from a reports dir (DIR=)"
+	@echo "  evals-loop          Optimization loop: run all suites per model + scoreboard + diff (MODELS=, BASELINE=, RECORD=1 LABEL= to commit reports/SNAPSHOT+history)"
+	@echo "  evals-matrix        Cross-model scoreboard from a reports dir (DIR=, HISTORY= LABEL= to append a trend row)"
 	@echo "  evals-diff          All-domain before/after diff (BASELINE=, CURRENT=)"
 	@echo "  test           Run OsaurusCore package tests via 'swift test'"
 	@echo "  ci-test        Reproduce the CI test-core job locally (xcodebuild + xcbeautify)"
@@ -249,16 +249,22 @@ evals-all-report: evals-prep
 # FILTER=, STRICT=).
 #   make evals-loop
 #   make evals-loop MODELS="foundation qwen3-4b xai/grok-4.3" BASELINE=build/evals/loop/<prev>
+#   RECORD=1 LABEL="qwen fix" make evals-loop   # also refresh committed reports/SNAPSHOT + history
 evals-loop:
 	@MODELS="$(MODELS)" BASELINE="$(BASELINE)" FILTER="$(FILTER)" STRICT="$(STRICT)" \
+		RECORD="$(RECORD)" LABEL="$(LABEL)" \
 		bash scripts/evals/optimization-loop.sh
 
-# Cross-model scoreboard from an existing dir of *.json reports.
+# Cross-model scoreboard from an existing dir of *.json reports. Point
+# MATRIX_OUT/MATRIX_MD at reports/SNAPSHOT.{json,md} and HISTORY at
+# reports/history.jsonl to refresh the committed scoreboard by hand.
 #   make evals-matrix DIR=build/evals/loop/latest
 evals-matrix:
 	@swift run --package-path Packages/OsaurusEvals osaurus-evals matrix $(DIR) \
 		$(if $(MATRIX_OUT),--out $(MATRIX_OUT),) \
-		$(if $(MATRIX_MD),--markdown $(MATRIX_MD),)
+		$(if $(MATRIX_MD),--markdown $(MATRIX_MD),) \
+		$(if $(HISTORY),--history $(HISTORY),) \
+		$(if $(LABEL),--label "$(LABEL)",)
 
 # All-domain before/after diff between two report dirs/files.
 #   make evals-diff BASELINE=build/evals/loop/<prev> CURRENT=build/evals/loop/latest

@@ -133,6 +133,9 @@ extension OsaurusEvalsCLI {
         var positional: [String] = []
         var outPath: String?
         var markdownPath: String?
+        var historyPath: String?
+        var label: String?
+        var commit: String?
 
         var i = 0
         while i < args.count {
@@ -145,6 +148,18 @@ extension OsaurusEvalsCLI {
             case "--markdown":
                 guard i + 1 < args.count else { return failMatrix("flag --markdown requires a value") }
                 markdownPath = args[i + 1]
+                i += 2
+            case "--history":
+                guard i + 1 < args.count else { return failMatrix("flag --history requires a value") }
+                historyPath = args[i + 1]
+                i += 2
+            case "--label":
+                guard i + 1 < args.count else { return failMatrix("flag --label requires a value") }
+                label = args[i + 1]
+                i += 2
+            case "--commit":
+                guard i + 1 < args.count else { return failMatrix("flag --commit requires a value") }
+                commit = args[i + 1]
                 i += 2
             case "--help", "-h":
                 printMatrixUsage()
@@ -173,6 +188,11 @@ extension OsaurusEvalsCLI {
                 try Data(matrix.formatMarkdown().utf8).write(to: URL(fileURLWithPath: markdownPath))
                 print("wrote matrix Markdown to \(markdownPath)")
             }
+            if let historyPath {
+                let rows = EvalHistory.rows(from: matrix, commit: commit, label: label)
+                try EvalHistory.append(rows, to: URL(fileURLWithPath: historyPath))
+                print("appended \(rows.count) row(s) to history \(historyPath)")
+            }
             return 0
         } catch {
             return failMatrix(error.localizedDescription)
@@ -194,9 +214,17 @@ extension OsaurusEvalsCLI {
             cross-model scoreboard: domains x models with passed/scored cells, plus a
             per-model perf rollup (decode tok/s, TTFT, peak RAM).
 
+            Point --out/--markdown at reports/SNAPSHOT.{json,md} to refresh the
+            committed "latest snapshot", and --history at reports/history.jsonl to
+            append one append-only row per model (the run-over-run trend log). Raw
+            per-case reports stay local/gitignored; SNAPSHOT + history are committed.
+
             FLAGS:
                 --out <path>        Write the matrix as JSON.
                 --markdown <path>   Write the matrix as Markdown.
+                --history <path>    Append one JSONL row per model (append-only log).
+                --label <str>       Free-form run note recorded in each history row.
+                --commit <sha>      Commit/provenance string recorded in each row.
             """
         )
     }

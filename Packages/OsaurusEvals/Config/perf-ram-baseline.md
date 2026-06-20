@@ -13,8 +13,11 @@ physical footprint stays within the intended low-RAM envelope.
 - **Telemetry source:** in-band `StreamingStatsHint` → `AgentLoopTranscript`
   → `EvalCaseTelemetry`; peak RAM from `PeakMemorySampler` over
   `ProcessMemoryProbe` (eval-process physical footprint).
-- **Raw artifacts:** `reports/perf-baseline-qwen3-4b/*.json` + `matrix.md`
-  (reproducible via `osaurus-evals matrix`).
+- **Artifacts:** the rolled-up scoreboard is committed at
+  `reports/SNAPSHOT.{md,json}` with one append-only row per run in
+  `reports/history.jsonl`; the raw per-case reports this baseline was measured
+  from stay local / git-ignored (reproducible via `osaurus-evals matrix`). See
+  `reports/README.md` for the layout and record/commit workflow.
 
 ## Scope (why a subset, and why it is still honest)
 
@@ -69,8 +72,9 @@ independently of the end-of-step stats.
 
 Full `Suites/AgentLoop` run on the healthy host (memory-only KV, same
 regime as the subset, so the per-case numbers are directly comparable).
-Artifacts: `reports/perf-baseline-qwen3-4b/full-suite/` (the 17-case
-`llm-qwen3-4b-AgentLoop.json` + `matrix.md`/`matrix.json`). Run wall-clock
+Artifacts: the 17-case `llm-qwen3-4b-AgentLoop.json` (local / git-ignored
+under `reports/perf-baseline-qwen3-4b/full-suite/`); its rolled-up scoreboard
+row is recorded in the committed `reports/history.jsonl`. Run wall-clock
 ~16.8 min — dominated by a single `compaction-stress` case (444 s) under the
 memory-only re-prefill penalty.
 
@@ -223,9 +227,13 @@ batch engine or adding per-iteration prefill telemetry as a reuse proxy
 # Full per-model loop on an unloaded host (all suites → matrix → diff):
 make evals-loop
 
-# Just rebuild the scoreboard from saved reports:
-osaurus-evals matrix reports/perf-baseline-qwen3-4b \
-  --markdown reports/perf-baseline-qwen3-4b/matrix.md
+# Record a run: refresh the committed snapshot + append a trend row:
+RECORD=1 LABEL="what changed" make evals-loop
+
+# Or rebuild the committed scoreboard by hand from a local run dir:
+osaurus-evals matrix build/evals/loop/latest \
+  --out reports/SNAPSHOT.json --markdown reports/SNAPSHOT.md \
+  --history reports/history.jsonl --label "what changed"
 ```
 
 To reproduce the memory-only regime used here, force the disk-KV dir
