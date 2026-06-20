@@ -391,7 +391,7 @@ enum ImageActions {
                 let pasteboard = NSPasteboard.general
                 pasteboard.clearContents()
                 pasteboard.setData(data, forType: type)
-                ToastManager.shared.success(L("Image copied"))
+                ToastManager.shared.success(L("Image Copied to Clipboard"))
             }
         }
     }
@@ -405,7 +405,7 @@ enum ImageActions {
             let pasteboard = NSPasteboard.general
             pasteboard.clearContents()
             pasteboard.setData(tiff, forType: .tiff)
-            ToastManager.shared.success(L("Image copied"))
+            ToastManager.shared.success(L("Image Copied to Clipboard"))
         }
     }
 
