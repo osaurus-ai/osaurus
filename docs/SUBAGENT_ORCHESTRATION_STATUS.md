@@ -34,6 +34,63 @@ What this means for the work below:
 
 ---
 
+## 🔬 FIRST LIVE E2E (2026-06-20) — spawn dispatch PROVEN; concurrent-residency crash found + fixed
+
+Drove the real agent-loop path headlessly: `POST /agents/default/run` (the built-in
+tools are injected **only** through the agent-loop path via
+`enrichWithAgentContext`/`composeChatContext`; the strict OpenAI `/v1/chat/completions`
+path passes client tools through unchanged **by design** — so spawn is unreachable
+there, which is why the earlier raw-`/v1/chat` smoke test only ever saw the model
+*hallucinate* a spawn call). Test root `/tmp/osaurus-spawn-test`, orchestrator
+`qwen3-4b-4bit`, a user agent **"Sparky"** (`qwen2.5-3b-instruct-4bit`) marked
+spawnable in `spawnableAgentNames`.
+
+**Proven working:**
+- ✅ Orchestrator emits a **real** `spawn` tool_call over `/agents/default/run`
+  (`osaurus_agent_tool: started/completed name:"spawn"`) — built-in tool injection +
+  gating + `tool_choice:.auto` all correct.
+- ✅ Persona resolution works **once the agent is materialized in `AgentStore`**.
+  Gotcha: `AgentStore.loadAll` decodes with `dateDecodingStrategy = .iso8601`, so an
+  authored agent JSON **must** use ISO-8601 `createdAt`/`updatedAt` strings (numeric
+  seconds silently fail to decode and the agent is dropped → "agent not found").
+
+**Crash found (now fixed) — the concurrent-residency GPU race (the task #34 edge):**
+- The first different-model run **SIGABRT**ed. Crash report: thread 34 = subagent
+  model load (`LLMModelFactory._load → loadWeights → convertToBFloat16 → GPU eval`,
+  correctly under the exclusive `enterModelLoad` gate) racing thread 21 =
+  `mlx::core::save_safetensors` (the resident orchestrator's **KV-cache disk store**,
+  vendored `MLXLMCommon/KVCache.swift:1434`; SSM peer `SSMCompanionDiskStore.swift:103`)
+  → Metal `"A command encoder is already encoding to this command buffer"`. Two GPU
+  command encoders on MLX's shared stream at once.
+- **Two defects:**
+  1. **osaurus (FIXED):** `SpawnTool` gated `needsHandoff` on `parentChatModel()`
+     *name resolution*, which returns **nil** on `/agents/{id}/run` (no active-agent
+     default model) → `needsHandoff=false` → the subagent loaded **concurrently** with
+     the still-resident orchestrator. Fix: gate on **actual residency** —
+     `ModelRuntime.shared.cachedModelSummaries()`; if the subagent is local and ANY
+     *other* chat model is resident, run the single-residency handoff
+     (`ChatResidencyHandoff.unloadResidentChatModels`). `unload` ends with
+     `Stream.gpu.synchronize()` + `Memory.clearCache()`, a full GPU barrier that
+     drains the in-flight KV-cache store **before** the subagent loads. (SpawnTool.swift)
+  2. **vmlx (LATENT, task #34):** the KV-cache / SSM disk-store `save_safetensors`
+     eval is **not** serialized against the exclusive model-load gate. The osaurus
+     handoff masks it for spawn (unload's `synchronize()` drains it), but any
+     model-churn path that loads model B while model A is still flushing its cache —
+     without an `unload` barrier between — can still hit this. Proper engine fix:
+     route the cache-store eval through the same GPU serialization (or have
+     model-load wait for pending cache-stores). Tracked as #34.
+
+**Re-test status: ✅ CONFIRMED PASS** (rebuilt app, commit `e3e765f3`). Same
+`/agents/default/run` run with the residency fix: orchestrator `qwen3-4b` →
+`spawn("Sparky")` → single-residency handoff (unload orchestrator → load+run
+`qwen2.5-3b` → unload → reload orchestrator) → digest relayed
+("Unit testing matters because it ensures individual components…") → `finish:stop`.
+**No crash; only `qwen3-4b` resident at end** (subagent cleaned up, orchestrator
+restored). The concurrent-residency SIGABRT is gone. (Engine-side cache-store
+GPU-gate hardening for non-`unload` churn paths remains open as the #34 edge.)
+
+---
+
 
 ## 0. Build & verified state (2026-06-20)
 

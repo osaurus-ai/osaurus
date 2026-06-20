@@ -91,15 +91,26 @@ public final class SpawnTool: OsaurusTool, @unchecked Sendable {
         }
 
         let isLocalModel = ModelManager.findInstalledModel(named: modelName) != nil
-        let orchestratorModel = await parentChatModel()
-        let orchestratorIsLocal =
-            orchestratorModel.flatMap { ModelManager.findInstalledModel(named: $0) } != nil
-        let sameAsOrchestrator =
-            orchestratorModel?.caseInsensitiveCompare(modelName) == .orderedSame
 
-        // Residency handoff: only when swapping between two DIFFERENT local models.
+        // Decide the residency handoff from ACTUAL GPU residency, not from a
+        // best-effort name lookup of the orchestrator. Running a second local
+        // model's GPU work (weight load/convert/generate) while ANOTHER chat
+        // model is still resident races on MLX's shared Metal command stream —
+        // the resident model's KV-cache disk store (`save_safetensors`) vs the
+        // subagent load's compute encoder — and SIGABRTs ("A command encoder is
+        // already encoding to this command buffer"). That is the model-churn
+        // disk-store edge. The old `parentChatModel()` name lookup returned nil
+        // on the `/agents/{id}/run` path (no active-agent default model), so
+        // `needsHandoff` was false and the subagent loaded concurrently with the
+        // still-resident orchestrator → crash. Gate on residency instead: if the
+        // subagent is local and ANY other chat model is resident, unload it first
+        // (single-residency handoff) so only one model touches the GPU at a time.
         var lease = ChatResidencyLease.empty
-        let needsHandoff = isLocalModel && orchestratorIsLocal && !sameAsOrchestrator
+        let residentChatModels = await ModelRuntime.shared.cachedModelSummaries().map(\.name)
+        let otherResidentModels = residentChatModels.filter {
+            $0.caseInsensitiveCompare(modelName) != .orderedSame
+        }
+        let needsHandoff = isLocalModel && !otherResidentModels.isEmpty
         if needsHandoff {
             guard config.localOrchestratorTextHandoffActive else {
                 return ToolEnvelope.failure(
@@ -217,12 +228,5 @@ public final class SpawnTool: OsaurusTool, @unchecked Sendable {
         if !sys.isEmpty { msgs.append(ChatMessage(role: "system", content: sys)) }
         msgs.append(ChatMessage(role: "user", content: input))
         return msgs
-    }
-
-    private func parentChatModel() async -> String? {
-        await MainActor.run {
-            let agentId = AgentManager.shared.activeAgentId
-            return AgentManager.shared.effectiveModel(for: agentId) ?? ChatConfigurationStore.load().defaultModel
-        }
     }
 }
