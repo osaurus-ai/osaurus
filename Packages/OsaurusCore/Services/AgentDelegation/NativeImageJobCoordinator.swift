@@ -187,6 +187,14 @@ struct NativeImageJobResult: Sendable, Equatable {
             "job_id": jobID,
             "model": model,
             "status": NativeImageJobPhase.completed.rawValue,
+            // The result auto-renders as an image card in the chat, so the
+            // model must not re-share it. Without this, models call
+            // `share_artifact` on the generated path, which fails on the
+            // sandbox path restriction and produces a misleading error note.
+            "already_displayed": true,
+            "display_note":
+                "The generated image is already shown to the user in the chat. "
+                + "Do NOT call share_artifact for it — just briefly confirm the image was created.",
             "unloaded_after_job": unloadedAfterJob,
             "unloaded_chat_models": unloadedChatModels,
             "restored_chat_models": restoredChatModels,

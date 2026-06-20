@@ -54,7 +54,9 @@ enum ContentBlockKind: Equatable {
     /// Footer row appended to every completed assistant turn.
     /// Replaces the hover-revealed copy/regenerate buttons that used to live in the header,
     /// so moving the mouse over the assistant transcript no longer triggers per-row reconfigures.
-    case assistantActions(turnId: UUID)
+    /// `imageOnly` marks an image-generation result (content is just the rendered
+    /// image), so Insights and Read-aloud — which have nothing to act on — are hidden.
+    case assistantActions(turnId: UUID, imageOnly: Bool)
     /// Shown when the Osaurus Router billed a turn that produced no visible
     /// text (and no reasoning/tools). Surfaces the charge honestly with a Retry
     /// affordance instead of silently dropping the turn. `costMicro` is the raw
@@ -111,8 +113,8 @@ enum ContentBlockKind: Equatable {
         case let (.chart(lSpec), .chart(rSpec)):
             return lSpec == rSpec
 
-        case let (.assistantActions(lId), .assistantActions(rId)):
-            return lId == rId
+        case let (.assistantActions(lId, lImageOnly), .assistantActions(rId, rImageOnly)):
+            return lId == rId && lImageOnly == rImageOnly
 
         case let (
             .emptyResponseNotice(lId, lTokens, lCost, lStatus),
@@ -294,11 +296,11 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
         return ContentBlock(id: "spacer-\(afterTurnId.uuidString)", turnId: turnId, kind: .groupSpacer, position: .only)
     }
 
-    static func assistantActions(turnId: UUID, position: BlockPosition) -> ContentBlock {
+    static func assistantActions(turnId: UUID, imageOnly: Bool, position: BlockPosition) -> ContentBlock {
         ContentBlock(
             id: "actions-\(turnId.uuidString)",
             turnId: turnId,
-            kind: .assistantActions(turnId: turnId),
+            kind: .assistantActions(turnId: turnId, imageOnly: imageOnly),
             position: position
         )
     }
@@ -562,7 +564,16 @@ extension ContentBlock {
             if !isStreaming && turn.role == .assistant && isLastInGroup,
                 hasVisibleContent || hasRenderableThinking || !(turn.toolCalls ?? []).isEmpty
             {
-                turnBlocks.append(.assistantActions(turnId: turn.id, position: .last))
+                // An image-generation reply renders as just the produced image, so
+                // Insights (no request log) and Read-aloud (nothing to speak) are
+                // hidden — only Copy and Regenerate stay.
+                let imageOnly =
+                    hasVisibleContent && !hasRenderableThinking
+                    && (turn.toolCalls ?? []).isEmpty
+                    && Self.isImageOnlyContent(turn.visibleContent)
+                turnBlocks.append(
+                    .assistantActions(turnId: turn.id, imageOnly: imageOnly, position: .last)
+                )
             }
 
             blocks.append(contentsOf: assignPositions(to: turnBlocks))
@@ -788,6 +799,27 @@ extension ContentBlock {
 
     static func isAgentLoopToolName(_ name: String) -> Bool {
         agentLoopToolNames.contains(name)
+    }
+
+    /// True when the trimmed content is nothing but one or more standalone
+    /// markdown images — the shape an image-generation reply takes. Used to
+    /// drop the Insights / Read-aloud footer actions, which have nothing to
+    /// act on for a pure-image turn.
+    private static let standaloneImageLineRegex = try? NSRegularExpression(
+        pattern: #"^!\[[^\]]*\]\([^)]+\)$"#
+    )
+
+    static func isImageOnlyContent(_ content: String) -> Bool {
+        guard let regex = standaloneImageLineRegex else { return false }
+        let lines = content
+            .split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        guard !lines.isEmpty else { return false }
+        return lines.allSatisfy { line in
+            let range = NSRange(line.startIndex..<line.endIndex, in: line)
+            return regex.firstMatch(in: line, range: range) != nil
+        }
     }
 
     private static func assignPositions(to blocks: [ContentBlock]) -> [ContentBlock] {

@@ -5269,6 +5269,18 @@ extension ChatView {
     /// Copy a turn's thinking + content to the clipboard
     private func copyTurnContent(turnId: UUID) {
         guard let turn = session.turns.first(where: { $0.id == turnId }) else { return }
+
+        // Image-generation replies are just the rendered image — copy the actual
+        // image to the clipboard instead of the raw `![](file://…)` markdown.
+        if !turn.contentIsBlank, !turn.hasRenderableThinking,
+            ContentBlock.isImageOnlyContent(turn.visibleContent),
+            let imageURL = Self.firstLocalImageURL(in: turn.visibleContent)
+        {
+            // Reads the file and writes to the pasteboard off the main thread.
+            ImageActions.copyImageFileToClipboard(at: imageURL)
+            return
+        }
+
         var textToCopy = ""
         if turn.hasRenderableThinking {
             textToCopy += turn.thinking
@@ -5280,6 +5292,22 @@ extension ChatView {
         guard !textToCopy.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(textToCopy, forType: .string)
+    }
+
+    /// Extracts the first local file URL from a standalone `![](…)` image line.
+    private static func firstLocalImageURL(in content: String) -> URL? {
+        guard
+            let regex = try? NSRegularExpression(pattern: #"!\[[^\]]*\]\(([^)]+)\)"#)
+        else { return nil }
+        let range = NSRange(content.startIndex..<content.endIndex, in: content)
+        guard let match = regex.firstMatch(in: content, range: range),
+            match.numberOfRanges > 1,
+            let urlRange = Range(match.range(at: 1), in: content)
+        else { return nil }
+        let urlString = content[urlRange].trimmingCharacters(in: .whitespaces)
+        let url = URL(string: urlString)
+        if url?.isFileURL == true { return url }
+        return nil
     }
 
     /// Stable callback for regenerate action - prevents closure recreation

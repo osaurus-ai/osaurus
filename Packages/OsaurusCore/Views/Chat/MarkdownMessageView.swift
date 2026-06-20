@@ -362,7 +362,10 @@ func groupBlocksIntoSegments(_ blocks: [MessageBlock]) -> [ContentSegment] {
         case .image(let url, let altText):
             // Images are the only blocks that break text groups (can't be attributed text)
             flushTextGroup()
-            let spacing = imageSpacing
+            // A leading/only image (e.g. a generated-image reply) shouldn't carry
+            // top spacing — match the other block kinds and only space it from
+            // preceding content.
+            let spacing: CGFloat = segments.isEmpty ? 0 : imageSpacing
             segments.append(
                 ContentSegment(
                     id: "image-\(segmentIndex)",

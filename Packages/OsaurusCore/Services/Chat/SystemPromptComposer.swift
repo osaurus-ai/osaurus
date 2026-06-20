@@ -8,6 +8,9 @@
 //
 
 import Foundation
+import os
+
+private let toolResolveLog = Logger(subsystem: "ai.osaurus", category: "ToolResolve")
 
 // MARK: - SystemPromptComposer
 
@@ -1232,6 +1235,34 @@ public struct SystemPromptComposer: Sendable {
             )
         }
 
+        // Native image generation/editing are built-in tools, so they never
+        // show up in the dynamic-tool walk above. When the user has enabled
+        // Image Jobs, surface them as their own group so the model is told
+        // outright that it can create/edit images — otherwise the compacted
+        // baseline skeleton is the only hint and small models reach for the
+        // search tool instead.
+        if AgentDelegationConfigurationStore.snapshot().imageDelegationActive {
+            let imageCaps =
+                ToolRegistry.shared.listTools()
+                .filter { ToolRegistry.agentDelegationImageToolNames.contains($0.name) }
+                .sorted { $0.name < $1.name }
+                .map {
+                    SystemPromptTemplates.ManifestCapability(
+                        name: $0.name,
+                        description: $0.description
+                    )
+                }
+            if !imageCaps.isEmpty {
+                groups.append(
+                    SystemPromptTemplates.ManifestPluginGroup(
+                        pluginDisplay: "Image Generation",
+                        skills: [],
+                        tools: imageCaps
+                    )
+                )
+            }
+        }
+
         // Trailing synthetic group for standalone (non-plugin) skills,
         // alphabetical for byte-stable rendering.
         if !standaloneCaps.isEmpty {
@@ -1981,7 +2012,18 @@ public struct SystemPromptComposer: Sendable {
             byName = byName.filter { allowed.contains($0.key) }
         }
 
-        return canonicalToolOrder(Array(byName.values))
+        let resolved = canonicalToolOrder(Array(byName.values))
+
+        // Debug aid for the image-delegation tool surfacing: confirms whether
+        // `image_generate` actually reached the model's schema and what the
+        // delegation gate evaluated to at compose time.
+        let imageActive = AgentDelegationConfigurationStore.snapshot().imageDelegationActive
+        let hasImageGenerate = resolved.contains { $0.function.name == "image_generate" }
+        toolResolveLog.debug(
+            "resolveTools agent=\(snapshot.agentId.uuidString, privacy: .public) imageDelegationActive=\(imageActive, privacy: .public) image_generate_in_schema=\(hasImageGenerate, privacy: .public) toolCount=\(resolved.count, privacy: .public)"
+        )
+
+        return resolved
     }
 
     /// Stable order:

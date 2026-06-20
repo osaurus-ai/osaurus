@@ -11,8 +11,9 @@ public final class NativeImageGenerateTool: OsaurusTool, @unchecked Sendable {
     public let name = "image_generate"
     public let description =
         "Generate an image using the user's local native image model. Use this when the user asks "
-        + "to create, render, draw, or generate an image. The result returns saved image paths and "
-        + "the native job progress log. Do not use for editing an existing image."
+        + "to create, render, draw, or generate an image. The generated image is automatically shown "
+        + "to the user in the chat — do not call share_artifact on the result. The result returns saved "
+        + "image paths and the native job progress log. Do not use for editing an existing image."
 
     public let parameters: JSONValue? = .object([
         "type": .string("object"),
@@ -223,7 +224,8 @@ public final class NativeImageEditTool: OsaurusTool, @unchecked Sendable {
     public let description =
         "Edit one or more existing local images using the user's local native image edit model. "
         + "Use this only when the user asks to transform an existing image and you have explicit "
-        + "local source image paths from prior artifacts or attachments."
+        + "local source image paths from prior artifacts or attachments. The edited image is "
+        + "automatically shown to the user in the chat — do not call share_artifact on the result."
 
     public let parameters: JSONValue? = .object([
         "type": .string("object"),

@@ -496,6 +496,11 @@ final class NativeAssistantActionsView: NSView {
     private var currentTheme: (any ThemeProtocol)?
     private var speakWidthConstraint: NSLayoutConstraint?
     private var speakLeadingConstraint: NSLayoutConstraint?
+    private var insightsWidthConstraint: NSLayoutConstraint?
+    private var insightsLeadingConstraint: NSLayoutConstraint?
+    /// Image-generation turns render as just the produced image, so Insights
+    /// (no request log) and Read-aloud (nothing to speak) collapse away.
+    private var hideSecondaryActions = false
 
     override init(frame: NSRect) {
         let copyControl = HeaderCircleActionControl(action: {})
@@ -546,6 +551,16 @@ final class NativeAssistantActionsView: NSView {
         self.speakLeadingConstraint = speakLeading
         self.speakWidthConstraint = speakWidth
 
+        // Insights collapses (leading + width → 0) for image-only turns so the
+        // row tightens to just Copy / Regenerate.
+        let insightsLeading = insightsButton.leadingAnchor.constraint(
+            equalTo: regenerateButton.trailingAnchor,
+            constant: 4
+        )
+        let insightsWidth = insightsButton.widthAnchor.constraint(equalToConstant: size)
+        self.insightsLeadingConstraint = insightsLeading
+        self.insightsWidthConstraint = insightsWidth
+
         NSLayoutConstraint.activate([
             copyButton.leadingAnchor.constraint(equalTo: leadingAnchor),
             copyButton.centerYAnchor.constraint(equalTo: centerYAnchor),
@@ -557,9 +572,9 @@ final class NativeAssistantActionsView: NSView {
             regenerateButton.widthAnchor.constraint(equalToConstant: size),
             regenerateButton.heightAnchor.constraint(equalToConstant: size),
 
-            insightsButton.leadingAnchor.constraint(equalTo: regenerateButton.trailingAnchor, constant: 4),
+            insightsLeading,
             insightsButton.centerYAnchor.constraint(equalTo: centerYAnchor),
-            insightsButton.widthAnchor.constraint(equalToConstant: size),
+            insightsWidth,
             insightsButton.heightAnchor.constraint(equalToConstant: size),
 
             // Speaker follows Insights and carries the trailing pin. When it's
@@ -607,11 +622,13 @@ final class NativeAssistantActionsView: NSView {
     func configure(
         turnId: UUID,
         theme: any ThemeProtocol,
+        hideSecondaryActions: Bool,
         onCopy: ((UUID) -> Void)?,
         onRegenerate: ((UUID) -> Void)?,
         onSpeak: ((UUID) -> Void)?
     ) {
         self.turnId = turnId
+        self.hideSecondaryActions = hideSecondaryActions
         self.onCopy = onCopy
         self.onRegenerate = onRegenerate
         self.onSpeak = onSpeak
@@ -640,8 +657,16 @@ final class NativeAssistantActionsView: NSView {
             theme: theme,
             iconTint: nil
         )
+        applyInsightsVisibility()
         applyTTSVisibility()
         refreshSpeakIcon()
+    }
+
+    private func applyInsightsVisibility() {
+        let visible = !hideSecondaryActions
+        insightsButton.isHidden = !visible
+        insightsWidthConstraint?.constant = visible ? 28 : 0
+        insightsLeadingConstraint?.constant = visible ? 4 : 0
     }
 
     /// Opens the Settings → Insights tab, focused on the request/response log
@@ -707,7 +732,7 @@ final class NativeAssistantActionsView: NSView {
         let toolDriven =
             TTSService.shared.playingMessageId == turnId
             && TTSService.shared.activeSpeakCallId != nil
-        let visible = enabled && !toolDriven
+        let visible = enabled && !toolDriven && !hideSecondaryActions
         speakButton.isHidden = !visible
         speakWidthConstraint?.constant = visible ? 28 : 0
         speakLeadingConstraint?.constant = visible ? 4 : 0
@@ -1543,8 +1568,13 @@ final class NativeMessageCellView: NSTableCellView {
                 sameKind: sameKind
             )
 
-        case let .assistantActions(turnId):
-            configureAsAssistantActions(turnId: turnId, context: context, sameKind: sameKind)
+        case let .assistantActions(turnId, imageOnly):
+            configureAsAssistantActions(
+                turnId: turnId,
+                imageOnly: imageOnly,
+                context: context,
+                sameKind: sameKind
+            )
 
         case let .emptyResponseNotice(turnId, outputTokens, costMicro, _):
             configureAsEmptyResponseNotice(
@@ -2232,6 +2262,7 @@ final class NativeMessageCellView: NSTableCellView {
 
     private func configureAsAssistantActions(
         turnId: UUID,
+        imageOnly: Bool,
         context: CellRenderingContext,
         sameKind: Bool
     ) {
@@ -2252,6 +2283,7 @@ final class NativeMessageCellView: NSTableCellView {
         nativeAssistantActionsView?.configure(
             turnId: turnId,
             theme: context.theme,
+            hideSecondaryActions: imageOnly,
             onCopy: context.onCopy,
             onRegenerate: context.onRegenerate,
             onSpeak: context.onSpeak
