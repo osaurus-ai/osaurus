@@ -346,18 +346,82 @@ enum ImageActions {
 
         panel.begin { response in
             guard response == .OK, let url = panel.url,
-                let tiffData = image.tiffRepresentation,
-                let bitmap = NSBitmapImageRep(data: tiffData),
-                let pngData = bitmap.representation(using: .png, properties: [:])
+                let tiffData = image.tiffRepresentation
             else { return }
-            try? pngData.write(to: url)
+            // Encode + write off the main thread so the disk I/O never blocks
+            // the UI, then surface a "Reveal in Finder" toast on success.
+            Task { @MainActor in
+                let saved = await encodeAndWritePNG(tiff: tiffData, to: url)
+                guard saved else {
+                    NSSound.beep()
+                    return
+                }
+                ToastManager.shared.action(
+                    L("Image saved"),
+                    message: url.lastPathComponent,
+                    action: .revealInFinder(url),
+                    buttonTitle: L("Reveal in Finder")
+                )
+            }
         }
     }
 
     static func copyImageToClipboard(_ image: NSImage) {
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.writeObjects([image])
+        // Pull the (cheap) Sendable TIFF on the main actor, then hand it to a
+        // detached task so the pasteboard serialization never blocks the UI.
+        let tiff = image.tiffRepresentation
+        Task.detached(priority: .userInitiated) {
+            await writeImageDataToPasteboard(tiff: tiff)
+        }
+    }
+
+    /// Reads an image file off the main thread and copies its bytes to the
+    /// clipboard. Avoids decoding the image into an `NSImage` and re-encoding
+    /// it, so nothing heavy touches the main thread for a file-backed image.
+    static func copyImageFileToClipboard(at url: URL) {
+        Task.detached(priority: .userInitiated) {
+            let data = try? Data(contentsOf: url)
+            let type: NSPasteboard.PasteboardType =
+                url.pathExtension.lowercased() == "png" ? .png : .tiff
+            await MainActor.run {
+                guard let data else {
+                    NSSound.beep()
+                    return
+                }
+                let pasteboard = NSPasteboard.general
+                pasteboard.clearContents()
+                pasteboard.setData(data, forType: type)
+                ToastManager.shared.success(L("Image copied"))
+            }
+        }
+    }
+
+    private static func writeImageDataToPasteboard(tiff: Data?) async {
+        await MainActor.run {
+            guard let tiff else {
+                NSSound.beep()
+                return
+            }
+            let pasteboard = NSPasteboard.general
+            pasteboard.clearContents()
+            pasteboard.setData(tiff, forType: .tiff)
+            ToastManager.shared.success(L("Image copied"))
+        }
+    }
+
+    /// Encodes TIFF data to PNG and writes it to `url` on a background queue.
+    private static func encodeAndWritePNG(tiff: Data, to url: URL) async -> Bool {
+        await Task.detached(priority: .userInitiated) {
+            guard let bitmap = NSBitmapImageRep(data: tiff),
+                let pngData = bitmap.representation(using: .png, properties: [:])
+            else { return false }
+            do {
+                try pngData.write(to: url)
+                return true
+            } catch {
+                return false
+            }
+        }.value
     }
 }
 

@@ -5266,12 +5266,8 @@ extension ChatView {
             ContentBlock.isImageOnlyContent(turn.visibleContent),
             let imageURL = Self.firstLocalImageURL(in: turn.visibleContent)
         {
-            DispatchQueue.global(qos: .userInitiated).async {
-                guard let image = NSImage(contentsOf: imageURL) else { return }
-                DispatchQueue.main.async {
-                    ImageActions.copyImageToClipboard(image)
-                }
-            }
+            // Reads the file and writes to the pasteboard off the main thread.
+            ImageActions.copyImageFileToClipboard(at: imageURL)
             return
         }
 
