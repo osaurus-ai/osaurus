@@ -1,0 +1,25 @@
+{
+  "domains" : [
+    "agent_loop"
+  ],
+  "generatedAt" : "2026-06-19T19:40:46.700Z",
+  "models" : [
+    {
+      "meanDecodeTokensPerSecond" : 57.705999999999996,
+      "meanTtftMs" : 1243.3235347270966,
+      "modelId" : "mlx-community/Qwen3-4B-4bit",
+      "peakPhysFootprintMb" : 4540.753158569336,
+      "perDomain" : {
+        "agent_loop" : {
+          "errored" : 0,
+          "passed" : 2,
+          "scored" : 4,
+          "skipped" : 0
+        }
+      },
+      "startedAt" : "2026-06-19T19:22:35Z",
+      "totalPassed" : 2,
+      "totalScored" : 4
+    }
+  ]
+}

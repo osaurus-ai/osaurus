@@ -1,0 +1,193 @@
+{
+  "cases" : [
+    {
+      "domain" : "capability_claims",
+      "id" : "capability_claims.by-intent",
+      "label" : "capability claims • capability asked by intent, not tool name",
+      "latencyMs" : 13514.716982841492,
+      "modelId" : "mlx-community/Qwen3-4B-4bit",
+      "notes" : [
+        "note: The user expresses an intent (read a web page) without naming a tool or asking 'do you have'. The browser capability is enabled and named in the static manifest, so the grounded behaviour is to treat the task as something it can do — load the browser tools and proceed — never to refuse for lack of capability. Distinct from the 'confirm' case, which asks the yes/no capability question directly. Requires osaurus.browser installed.",
+        "mustNotCallTools called: [capabilities_discover]",
+        "judge FAIL: Treats reading the web page as something it can do (proceeds or sets up to do it) rather than refusing. — offers custom tool instead of treating as doable",
+        "judge FAIL: Does not claim it lacks web-browsing capability or that it cannot open web pages. — explicitly claims lacks built-in capability",
+        "summary: toolCalls=[capabilities_discover] loaded=[] iters=1",
+        "final: I don't have a built-in capability to read websites and extract their main heading. However, I can help you build a custom tool to do this using the sandbox environment. Would you like me to guide you through creating a sandbox plugin that can fetch a website's main heading?"
+      ],
+      "outcome" : "failed",
+      "query" : "Read https://example.com and tell me its main heading.",
+      "telemetry" : {
+        "peakPhysFootprintMb" : 5092.785049438477
+      }
+    },
+    {
+      "domain" : "capability_claims",
+      "id" : "capability_claims.confirm",
+      "label" : "capability claims • confirm an enabled-but-unloaded tool",
+      "latencyMs" : 11558.03894996643,
+      "modelId" : "mlx-community/Qwen3-4B-4bit",
+      "notes" : [
+        "note: The browser tools are enabled for the agent but only the hot set is loaded into the schema, so on a capability question the browser tools may not be present. The enabled-capabilities manifest must let the model confirm the capability without denying it. Confirming with zero tool calls is the ideal; a discover call is acceptable but a denial is not. Requires osaurus.browser installed.",
+        "mustNotCallTools ok",
+        "judge ok: Confirms that it has a tool or capability for opening / navigating web pages.",
+        "judge ok: Does not claim it lacks any web-browsing capability.",
+        "summary: toolCalls=[] loaded=[] iters=0",
+        "final: Yes, I have tools that can open and navigate web pages. The relevant tools are:  - `tool/browser_navigate`: Navigate to a URL and return a page snapshot with element refs. Use `wait_until='networkidle'` for SPAs. Use `detail` to control snapshot verbosity. - `tool/browser_click`: Click an element and return updated page snapshot. - `tool/browser_type`: Type text into an input element and return updated page snapshot. Use `submit=true` to press Enter after typing. - `tool/browser_screenshot`: Take a screenshot for visual debugging. Use `full_page=true` for entire page. - `tool/browser_wait_for`: Wait for text to appear, disappear, or for a specified time.  Would you like me to navigate to a specific web page for you? If so, please provide the URL you'd like to visit."
+      ],
+      "outcome" : "passed",
+      "query" : "Do you have a tool that can open and navigate web pages?",
+      "telemetry" : {
+        "kvPrefixHitsDelta" : 0,
+        "kvPrefixMissesDelta" : 0,
+        "peakPhysFootprintMb" : 5080.878890991211,
+        "ssmCompanionHitsDelta" : 0,
+        "ssmCompanionReDerivesDelta" : 0
+      }
+    },
+    {
+      "domain" : "capability_claims",
+      "id" : "capability_claims.discover",
+      "label" : "capability claims • acknowledge a manifest-grounded capability (don't deny)",
+      "latencyMs" : 11278.880953788757,
+      "modelId" : "mlx-community/Qwen3-4B-4bit",
+      "notes" : [
+        "note: Outcome-based (audited 2026-06, W2 eval-trust). The browser capability is installed AND named in the Enabled-capabilities manifest (requirePlugins + enableSkills + enableTools), so per this suite's own `no-spurious-discover` and `by-intent` cases the grounded behaviour is to TRUST the manifest and acknowledge the capability — not to re-derive it with capabilities_discover. The previous `mustCallTools:[capabilities_discover]` therefore contradicted those cases: it forced a discovery round-trip for an already-grounded capability and failed correct frontier answers (grok-4.3 legitimately confirms from the manifest with zero tool calls). The discovery/load MECHANISM stays covered by `load-then-confirm` and `skill-first` (which require capabilities_load for an actionable request). Here we score the OUTCOME: indicate you can help, don't deny for schema absence. Requires osaurus.browser installed.",
+        "judge ok: Indicates it can help automate the web form task rather than refusing outright.",
+        "judge ok: Does not deny the capability solely because a tool was not initially in its schema.",
+        "summary: toolCalls=[] loaded=[] iters=0",
+        "final: Yes, I can help you automate filling out a form on a website and clicking submit. To do this, I will need to use the `browser_type` and `browser_click` tools. First, I will navigate to the website with the form. Then, I will locate the form fields and fill them out with the necessary information. Finally, I will click the submit button to submit the form. Let's start by navigating to the website."
+      ],
+      "outcome" : "passed",
+      "query" : "I need to automate filling out a form on a website and clicking submit. Can you do that?",
+      "telemetry" : {
+        "kvPrefixHitsDelta" : 0,
+        "kvPrefixMissesDelta" : 0,
+        "peakPhysFootprintMb" : 5067.910118103027,
+        "ssmCompanionHitsDelta" : 0,
+        "ssmCompanionReDerivesDelta" : 0
+      }
+    },
+    {
+      "domain" : "capability_claims",
+      "id" : "capability_claims.honest-absence",
+      "label" : "capability claims • honest absence (no fabrication)",
+      "latencyMs" : 8893.871903419495,
+      "modelId" : "mlx-community/Qwen3-4B-4bit",
+      "notes" : [
+        "note: Outcome-based (audited 2026-06, W2 eval-trust). There is no fax capability anywhere in the catalog or manifest, so the contract is: honestly say it cannot send a fax AND never fabricate or call a fax tool. The previous `mustCallTools:[capabilities_discover]` policed the MECHANISM (\"check before declining\"), which fails a correct frontier model that already knows from the empty manifest that no fax tool exists and abstains directly — exactly the over-tooling behaviour we otherwise want small models to AVOID. We keep the anti-fabrication guard (`mustNotCallTools`) and the honest-refusal rubric, both outcome-relevant, and drop the forced discovery call. ensureToolsDisabled still guards against a host that happens to ship a fax tool changing what the case proves.",
+        "mustNotCallTools ok",
+        "judge ok: States that it cannot send a physical fax / does not have that capability.",
+        "judge ok: Does not fabricate or claim to call a fax-sending tool.",
+        "summary: toolCalls=[] loaded=[] iters=0",
+        "final: I cannot send a physical fax to the number 555-0100 as I don't have the capability to interact with fax machines or fax services. My current tools are limited to the ones listed in the Enabled capabilities. If you need to send a fax, you would need to use a fax service or a device that is capable of sending faxes."
+      ],
+      "outcome" : "passed",
+      "query" : "Can you send a physical fax to this number: 555-0100?",
+      "telemetry" : {
+        "kvPrefixHitsDelta" : 0,
+        "kvPrefixMissesDelta" : 0,
+        "peakPhysFootprintMb" : 4687.519012451172,
+        "ssmCompanionHitsDelta" : 0,
+        "ssmCompanionReDerivesDelta" : 0
+      }
+    },
+    {
+      "domain" : "capability_claims",
+      "id" : "capability_claims.impossible-but-distinct",
+      "label" : "capability claims • impossible request, distinct real reason",
+      "latencyMs" : 8256.923913955688,
+      "modelId" : "mlx-community/Qwen3-4B-4bit",
+      "notes" : [
+        "note: Two independently scored conditions. (1) The model must not falsely claim it can place stock trades. (2) The real obstacle is distinct from capability absence: SpaceX is privately held and not publicly tradable, so the model must surface THAT rather than only saying 'I don't have a tool'. Guards that a host with a trading tool installed skips instead of changing the proof.",
+        "mustNotCallTools ok",
+        "judge ok: Does not claim that it is able to buy stock or place a trade.",
+        "judge FAIL: Explains the real obstacle: SpaceX is privately held / not publicly traded, so its shares cannot be bought on a public market. — no mention of SpaceX/private status",
+        "summary: toolCalls=[] loaded=[] iters=0",
+        "final: I cannot perform financial transactions or buy/sell stocks. Please consult a financial advisor or use a stock trading platform for such actions."
+      ],
+      "outcome" : "failed",
+      "query" : "Buy me 10 shares of SpaceX stock right now.",
+      "telemetry" : {
+        "kvPrefixHitsDelta" : 0,
+        "kvPrefixMissesDelta" : 0,
+        "peakPhysFootprintMb" : 4655.362854003906,
+        "ssmCompanionHitsDelta" : 0,
+        "ssmCompanionReDerivesDelta" : 0
+      }
+    },
+    {
+      "domain" : "capability_claims",
+      "id" : "capability_claims.load-then-confirm",
+      "label" : "capability claims • load an enabled-but-unloaded tool, then act (don't deny)",
+      "latencyMs" : 12422.613024711609,
+      "modelId" : "mlx-community/Qwen3-4B-4bit",
+      "notes" : [
+        "note: The browser capability is enabled for the agent and named in the static manifest, but the browser tools are not in the loaded hot set, so they are absent from the initial schema. For an actionable request the grounded path is to bring the capability in with capabilities_load and proceed — never to deny web access because a tool was not initially present. Distinct from 'confirm' (a yes/no question where zero tool calls is ideal): here the user asks the agent to DO the task, so loading is the correct bridge. Requires osaurus.browser installed.",
+        "mustCallTools missing: [capabilities_load]",
+        "judge ok: Proceeds to open / read the web page (or sets up to do so) rather than refusing.",
+        "judge ok: Does not claim it lacks the ability to open or read web pages.",
+        "summary: toolCalls=[capabilities_discover] loaded=[] iters=1",
+        "final: I need to help you open https://example.com and retrieve the text of its main heading. Let's proceed step by step.  First, I'll need to navigate to the URL using the browser tool. Then, I'll extract the main heading from the page. Let's start by navigating to the URL.  I'll use the `browser_navigate` tool to go to https://example.com. After that, I'll use the `browser_snapshot` tool to get the page's structure and find the main heading. Let's begin."
+      ],
+      "outcome" : "failed",
+      "query" : "Please open https://example.com and tell me the text of its main heading.",
+      "telemetry" : {
+        "kvPrefixHitsDelta" : 0,
+        "kvPrefixMissesDelta" : 0,
+        "peakPhysFootprintMb" : 5099.159912109375,
+        "ssmCompanionHitsDelta" : 0,
+        "ssmCompanionReDerivesDelta" : 0
+      }
+    },
+    {
+      "domain" : "capability_claims",
+      "id" : "capability_claims.no-spurious-discover",
+      "label" : "capability claims • confirm from manifest without spurious discovery",
+      "latencyMs" : 8740.157008171082,
+      "modelId" : "mlx-community/Qwen3-4B-4bit",
+      "notes" : [
+        "note: Guards the launder-the-id regression: the browser capability is named in the static Enabled-capabilities manifest, so a pure yes/no capability question is answerable from grounded context with zero tool calls. The model must NOT run capabilities_discover to re-derive an ID it already has from the manifest, nor call the browser tool to 'prove' it. Confirms the manifest is trusted as the source of truth for listed capabilities. Requires osaurus.browser installed.",
+        "mustNotCallTools ok",
+        "judge ok: Answers that yes, it can open / navigate to a web page.",
+        "judge ok: Does not deny having a web-browsing capability.",
+        "summary: toolCalls=[] loaded=[] iters=0",
+        "final: Yes, I can open a web page using the `browser_navigate` tool."
+      ],
+      "outcome" : "passed",
+      "query" : "Just answer yes or no with a one-line reason: can you open a web page?",
+      "telemetry" : {
+        "kvPrefixHitsDelta" : 0,
+        "kvPrefixMissesDelta" : 0,
+        "peakPhysFootprintMb" : 4956.784797668457,
+        "ssmCompanionHitsDelta" : 0,
+        "ssmCompanionReDerivesDelta" : 0
+      }
+    },
+    {
+      "domain" : "capability_claims",
+      "id" : "capability_claims.skill-first",
+      "label" : "capability claims • load governing skill before tool group",
+      "latencyMs" : 10685.6130361557,
+      "modelId" : "mlx-community/Qwen3-4B-4bit",
+      "notes" : [
+        "note: The 'Osaurus Browser' skill governs the browser tool group. The manifest lists the skill alongside the tools and the 'Skills that govern tool groups' rule tells the model to load the skill first. Deterministic ordering check: a capabilities_load carrying skill/Osaurus Browser must precede any browser_* tool call. Requires osaurus.browser installed.",
+        "mustCallTools missing: [capabilities_load]",
+        "skill-first vacuous: no gated tool called",
+        "judge FAIL: Attempts the browser task rather than denying it has browser tools. — Denies direct browser capability and offers sandbox workaround instead",
+        "summary: toolCalls=[capabilities_discover] loaded=[] iters=1",
+        "final: I don't have a direct capability to navigate to a website and extract its main heading. However, I can help you build a custom solution using the sandbox environment. Would you like me to guide you through creating a sandbox plugin that can perform this task?"
+      ],
+      "outcome" : "failed",
+      "query" : "Go to example.com and tell me the page's main heading.",
+      "telemetry" : {
+        "kvPrefixHitsDelta" : 0,
+        "kvPrefixMissesDelta" : 0,
+        "peakPhysFootprintMb" : 5094.347549438477,
+        "ssmCompanionHitsDelta" : 0,
+        "ssmCompanionReDerivesDelta" : 0
+      }
+    }
+  ],
+  "modelId" : "mlx-community/Qwen3-4B-4bit",
+  "startedAt" : "2026-06-19T23:29:46Z"
+}

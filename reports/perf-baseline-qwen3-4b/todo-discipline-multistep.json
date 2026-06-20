@@ -1,0 +1,66 @@
+{
+  "cases" : [
+    {
+      "domain" : "agent_loop",
+      "id" : "agent_loop.todo-discipline-multistep",
+      "label" : "agent loop • todo created up front and updated before complete",
+      "latencyMs" : 59221.90201282501,
+      "modelId" : "mlx-community/Qwen3-4B-4bit",
+      "notes" : [
+        "note: Pins todo discipline on a genuinely multi-step task: the model must create the checklist, and at least one later `todo` call must carry a checked box BEFORE the run completes (`todoUpdatedBeforeComplete`) — making a list once and never updating it fails. The task itself is mechanical so the assertion isolates the discipline, not the editing skill.",
+        "exit ok: finalResponse",
+        "mustCallTools ok: [todo]",
+        "no todo call with a checked box before complete/run end",
+        "file 'alpha.conf' contains 'debug=false'",
+        "file 'beta.conf' contains 'debug=false'",
+        "file 'gamma.conf' contains 'debug=false'",
+        "tool schemas: [todo,complete,clarify,share_artifact,capabilities_discover,capabilities_load,file_edit,file_operation_history,file_read,file_search,file_undo,file_write,shell_run]",
+        "call[0]: todo({\"markdown\":\"- Change `debug` to `false` in `alpha.conf`\\n- Change `debug` to `false` in `beta.conf`\\n- Change `debug` t)",
+        "call[1]: file_edit({\"new_string\":\"debug=false\",\"old_string\":\"debug=true\",\"path\":\"alpha.conf\"})",
+        "call[2]: file_edit({\"new_string\":\"debug=false\",\"old_string\":\"debug=true\",\"path\":\"beta.conf\"})",
+        "call[3]: file_edit({\"new_string\":\"debug=false\",\"old_string\":\"debug=true\",\"path\":\"gamma.conf\"})",
+        "call[4]: file_read({\"path\":\"alpha.conf\"})",
+        "call[5]: file_read({\"path\":\"beta.conf\"})",
+        "call[6]: file_read({\"path\":\"gamma.conf\"})",
+        "call[7]: complete({\"summary\":\"Changed `debug` to `false` in all three config files (`alpha.conf`, `beta.conf`, `gamma.conf`), then verifie)",
+        "summary: toolCalls=[todo,file_edit,file_edit,file_edit,file_read,file_read,file_read,complete] iters=8 exit=finalResponse",
+        "final: Changed `debug` to `false` in all three config files (`alpha.conf`, `beta.conf`, `gamma.conf`), then verified the changes by reading back the files. All files now correctly show `debug=false`."
+      ],
+      "outcome" : "failed",
+      "query" : "Three config files in this folder each have debug=true. Change debug to false in all three, then verify by reading them back. Track your progress with a todo list as you work.",
+      "telemetry" : {
+        "completionTokens" : 0,
+        "peakPhysFootprintMb" : 4540.753158569336,
+        "ttftMs" : 1304.9920797348022
+      },
+      "toolUsage" : [
+        {
+          "calls" : 1,
+          "deduped" : 0,
+          "errors" : 0,
+          "tool" : "complete"
+        },
+        {
+          "calls" : 3,
+          "deduped" : 0,
+          "errors" : 0,
+          "tool" : "file_edit"
+        },
+        {
+          "calls" : 3,
+          "deduped" : 0,
+          "errors" : 0,
+          "tool" : "file_read"
+        },
+        {
+          "calls" : 1,
+          "deduped" : 0,
+          "errors" : 0,
+          "tool" : "todo"
+        }
+      ]
+    }
+  ],
+  "modelId" : "mlx-community/Qwen3-4B-4bit",
+  "startedAt" : "2026-06-19T19:38:50Z"
+}

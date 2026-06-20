@@ -39,6 +39,12 @@ struct OsaurusEvalsCLI {
         case "agent-loop-lab":
             let labExitCode = await runAgentLoopLab(Array(args.dropFirst()))
             await shutdownAndExit(labExitCode)
+        case "diff":
+            // Pure file comparison — no MLX/model load, so a plain exit
+            // (no Metal teardown) is correct and fast.
+            exit(runDiff(Array(args.dropFirst())))
+        case "matrix":
+            exit(runMatrix(Array(args.dropFirst())))
         case "--help", "-h":
             printUsage()
             exit(0)
@@ -629,6 +635,9 @@ struct OsaurusEvalsCLI {
                                               [--threshold <float>] [--report-forensics]
                                               [--startup-timeout <seconds>]
                 osaurus-evals agent-loop-lab --baseline <path> [--suite <dir> ...] [--model <id>]
+                osaurus-evals diff <baseline> <current> [--out <p>] [--markdown <p>]
+                                              [--fail-on-regression]
+                osaurus-evals matrix <reports-dir> [--out <p>] [--markdown <p>]
 
             FLAGS:
                 --suite <dir>         Required. Directory of *.json eval cases

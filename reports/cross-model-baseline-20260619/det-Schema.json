@@ -1,0 +1,57 @@
+{
+  "cases" : [
+    {
+      "domain" : "schema",
+      "id" : "schema.anyof-object-or-null",
+      "label" : "schema • anyOf object|null union accepts an object payload",
+      "modelId" : "mlx-community/Qwen3-4B-4bit",
+      "notes" : [
+        "note: Exercises the anyOf combinator on a non-scalar branch: a property declared `anyOf: [object, null]` must accept an object value through the object branch (first-match dispatch). Complements oneof-string-or-int, which only covers scalar branches."
+      ],
+      "outcome" : "passed"
+    },
+    {
+      "domain" : "schema",
+      "id" : "schema.coerces-stringified-array-to-native",
+      "label" : "schema • stringified array auto-unwrapped to native (browser_do regression)",
+      "modelId" : "mlx-community/Qwen3-4B-4bit",
+      "notes" : [
+
+      ],
+      "outcome" : "passed"
+    },
+    {
+      "domain" : "schema",
+      "id" : "schema.minimum-bound-rejected",
+      "label" : "schema • numeric minimum constraint enforcement",
+      "modelId" : "mlx-community/Qwen3-4B-4bit",
+      "notes" : [
+        "validator: Property 'count' must be >= 1.0 (got 0.0)."
+      ],
+      "outcome" : "passed"
+    },
+    {
+      "domain" : "schema",
+      "id" : "schema.oneof-string-or-int",
+      "label" : "schema • oneOf first-match accepts either branch",
+      "modelId" : "mlx-community/Qwen3-4B-4bit",
+      "notes" : [
+
+      ],
+      "outcome" : "passed"
+    },
+    {
+      "domain" : "schema",
+      "id" : "schema.pattern-reject",
+      "label" : "schema • string pattern mismatch is rejected and names the field",
+      "modelId" : "mlx-community/Qwen3-4B-4bit",
+      "notes" : [
+        "note: Pins the `pattern` (regex) constraint on a string property: a value that fails the regex must be rejected AND the failure must surface the offending field name (`expectField`) so the tool envelope can point the model at `code`.",
+        "validator: Property 'code' does not match required pattern `^[A-Z]{3}$`."
+      ],
+      "outcome" : "passed"
+    }
+  ],
+  "modelId" : "mlx-community/Qwen3-4B-4bit",
+  "startedAt" : "2026-06-19T22:44:37Z"
+}

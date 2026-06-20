@@ -1,0 +1,68 @@
+{
+  "cases" : [
+    {
+      "domain" : "argument_coercion",
+      "id" : "argument_coercion.bool-no",
+      "label" : "coercion • 'no' coerces to false (negative vocabulary)",
+      "modelId" : "mlx-community/Qwen3-4B-4bit",
+      "notes" : [
+        "note: Complements bool-yes ('YES' -> true). 'no' shares the same switch branch as 'false' and '0', so this pins the entire negative vocabulary maps to false rather than being rejected as unknown.",
+        "coerced: bool(false)"
+      ],
+      "outcome" : "passed"
+    },
+    {
+      "domain" : "argument_coercion",
+      "id" : "argument_coercion.bool-rejects-arbitrary-string",
+      "label" : "coercion • bool rejects strings outside the known vocabulary (returns nil)",
+      "modelId" : "mlx-community/Qwen3-4B-4bit",
+      "notes" : [
+        "coerced: nil (matches expectation)"
+      ],
+      "outcome" : "passed"
+    },
+    {
+      "domain" : "argument_coercion",
+      "id" : "argument_coercion.bool-yes",
+      "label" : "coercion • 'YES' coerces to true (case-insensitive vocabulary)",
+      "modelId" : "mlx-community/Qwen3-4B-4bit",
+      "notes" : [
+        "coerced: bool(true)"
+      ],
+      "outcome" : "passed"
+    },
+    {
+      "domain" : "argument_coercion",
+      "id" : "argument_coercion.int-from-string",
+      "label" : "coercion • '42' (a string) coerces to integer 42",
+      "modelId" : "mlx-community/Qwen3-4B-4bit",
+      "notes" : [
+        "coerced: number(42.0)"
+      ],
+      "outcome" : "passed"
+    },
+    {
+      "domain" : "argument_coercion",
+      "id" : "argument_coercion.int-rejects-float-string",
+      "label" : "coercion • a float-shaped string ('3.5') is rejected by int (returns nil)",
+      "modelId" : "mlx-community/Qwen3-4B-4bit",
+      "notes" : [
+        "note: int() accepts integer-encoded strings ('42' -> 42) but must reject a non-integer numeric string rather than silently truncating to 3. Returns nil so the tool surfaces an invalid_args envelope instead of acting on a wrong value.",
+        "coerced: nil (matches expectation)"
+      ],
+      "outcome" : "passed"
+    },
+    {
+      "domain" : "argument_coercion",
+      "id" : "argument_coercion.string-array-from-json-string",
+      "label" : "coercion • '[\"a\",\"b\"]' (a JSON-encoded string) coerces to [\"a\",\"b\"]",
+      "modelId" : "mlx-community/Qwen3-4B-4bit",
+      "notes" : [
+        "coerced: array([OsaurusCore.JSONValue.string(\"a\"), OsaurusCore.JSONValue.string(\"b\")])"
+      ],
+      "outcome" : "passed"
+    }
+  ],
+  "modelId" : "mlx-community/Qwen3-4B-4bit",
+  "startedAt" : "2026-06-19T22:44:34Z"
+}

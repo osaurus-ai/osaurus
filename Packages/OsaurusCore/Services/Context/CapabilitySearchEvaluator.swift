@@ -158,6 +158,28 @@ public enum CapabilitySearchEvaluator {
         let appliedSkillsThreshold = CapabilitySearch.minimumRelevanceScoreSkills
         let started = Date()
 
+        // Mirror the production query-intent abstain gate
+        // (`CapabilitySearch.search`): a pure chit-chat query yields no
+        // candidates, so the eval measures EXACTLY what
+        // `capabilities_discover` does — not a divergent lane-only path.
+        // Health is still snapshotted so registry/index forensics stay
+        // meaningful on an abstained row.
+        if CapabilityQueryIntent.isConversationalAbstain(query) {
+            let health = await CapabilitySearchDiagnostics.snapshot(mode: .full)
+            return CapabilitySearchEvaluation(
+                query: query,
+                toolHits: [],
+                methodHits: [],
+                skillHits: [],
+                registrySize: health.registryToolCount,
+                indexSize: health.indexedToolCount,
+                appliedMinFusedScore: appliedFused,
+                appliedMethodsThreshold: appliedMethodsThreshold,
+                appliedSkillsThreshold: appliedSkillsThreshold,
+                latencyMs: Date().timeIntervalSince(started) * 1000
+            )
+        }
+
         async let toolPair = ToolSearchService.shared.searchHybridWithDiagnostic(
             query: query,
             topK: topK,

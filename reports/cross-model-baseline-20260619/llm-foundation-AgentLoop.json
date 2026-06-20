@@ -1,0 +1,244 @@
+{
+  "cases" : [
+    {
+      "domain" : "agent_loop",
+      "id" : "agent_loop.batch-error-isolation",
+      "label" : "agent loop • one failing call in a batch never aborts its siblings",
+      "modelId" : "foundation",
+      "notes" : [
+        "note: Exercises the production two-phase batch path under partial failure: the ghost.txt slot returns a paired error envelope while its siblings execute and record normally (headless policy, stopOnToolRejection=false), and the run still converges on the right outcome. Pins the 'per-call errors are isolated, never batch-fatal' contract end to end.",
+        "tools auto-disabled for 'foundation': context size class tiny (≤4096-token window) strips the tool schema; agent_loop requires folder tools"
+      ],
+      "outcome" : "skipped",
+      "telemetry" : {
+        "peakPhysFootprintMb" : 10.985176086425781
+      }
+    },
+    {
+      "domain" : "agent_loop",
+      "id" : "agent_loop.capabilities-load-midrun",
+      "label" : "agent loop • capabilities_load mid-run, loaded tool callable same run",
+      "modelId" : "foundation",
+      "notes" : [
+        "note: Pins the deferred-schema policy end to end: capabilities_load drains into the session bookkeeping WITHOUT rewriting the frozen request schema (KV-prefix stability), the result carries the 'callable now' note, and the loaded tool is dispatchable by name in the SAME run. Loading an already-schema-resident tool is deliberate — the load path's behaviour must not depend on the host's registry state.",
+        "tools auto-disabled for 'foundation': context size class tiny (≤4096-token window) strips the tool schema; agent_loop requires folder tools"
+      ],
+      "outcome" : "skipped",
+      "telemetry" : {
+        "peakPhysFootprintMb" : 11.157051086425781
+      }
+    },
+    {
+      "domain" : "agent_loop",
+      "id" : "agent_loop.clarify-on-ambiguity",
+      "label" : "agent loop • clarify intercept ends the run awaiting input",
+      "modelId" : "foundation",
+      "notes" : [
+        "note: Pins the clarify intercept exit (`clarifyRequested`) end to end: a successful clarify call must END the run (endRun through the driver) instead of riding to the iteration cap, and nothing may be written while the question is pending. The instruction is explicit because the behaviour under test is the intercept plumbing, not the model's ambiguity detection (CapabilityClaims covers that).",
+        "tools auto-disabled for 'foundation': context size class tiny (≤4096-token window) strips the tool schema; agent_loop requires folder tools"
+      ],
+      "outcome" : "skipped",
+      "telemetry" : {
+        "peakPhysFootprintMb" : 11.157051086425781
+      }
+    },
+    {
+      "domain" : "agent_loop",
+      "id" : "agent_loop.compaction-stress",
+      "label" : "agent loop • long tool outputs on a small context window",
+      "modelId" : "foundation",
+      "notes" : [
+        "note: Five multi-KB reads against a 24K-token window override force the sticky compaction path mid-run. Five reads matter: the trimmer protects the most recent 3 turn-pairs, so the first two reads must age out and compact while the protected tail still fits the history budget — a smaller window would end the run with the distinct overBudget exit before compaction ever fires (over-budget-hard-overflow pins that separately), and a larger one never compacts. The ERROR lives in log4, and the prompt makes the model externalize per-file findings into assistant turns — the narrated findings (not the compacted tool results) are what survive trimming, which is exactly the behaviour the harness banks on in production.",
+        "tools auto-disabled for 'foundation': context size class tiny (≤4096-token window) strips the tool schema; agent_loop requires folder tools"
+      ],
+      "outcome" : "skipped",
+      "telemetry" : {
+        "peakPhysFootprintMb" : 11.157051086425781
+      }
+    },
+    {
+      "domain" : "agent_loop",
+      "id" : "agent_loop.dedupe-replay-fires",
+      "label" : "agent loop • dedupe replay actually fires on an identical re-read",
+      "modelId" : "foundation",
+      "notes" : [
+        "note: Companion to duplicate-call-avoidance: that case asserts nothing executed twice, this one asserts the dedupe REPLAY mechanism itself fired at least once (wasDeduped in the transcript). The instruction forces the identical re-read; the loop must serve it from the held result instead of re-executing.",
+        "tools auto-disabled for 'foundation': context size class tiny (≤4096-token window) strips the tool schema; agent_loop requires folder tools"
+      ],
+      "outcome" : "skipped",
+      "telemetry" : {
+        "peakPhysFootprintMb" : 11.157051086425781
+      }
+    },
+    {
+      "domain" : "agent_loop",
+      "id" : "agent_loop.duplicate-call-avoidance",
+      "label" : "agent loop • no repeated identical executions",
+      "modelId" : "foundation",
+      "notes" : [
+        "note: Tempts a model into re-reading the same file for each number. The loop's consecutive-identical dedupe replays held results instead of re-executing — replays (wasDeduped) are fine, repeated REAL executions of an identical call fail the case.",
+        "tools auto-disabled for 'foundation': context size class tiny (≤4096-token window) strips the tool schema; agent_loop requires folder tools"
+      ],
+      "outcome" : "skipped",
+      "telemetry" : {
+        "peakPhysFootprintMb" : 11.157051086425781
+      }
+    },
+    {
+      "domain" : "agent_loop",
+      "id" : "agent_loop.edit-file-then-verify",
+      "label" : "agent loop • edit a file then verify the change",
+      "modelId" : "foundation",
+      "notes" : [
+        "note: The canonical write-path smoke: read → edit → re-read. Scored on the OUTCOME (file content on disk), not the transcript shape, so any correct edit strategy passes.",
+        "tools auto-disabled for 'foundation': context size class tiny (≤4096-token window) strips the tool schema; agent_loop requires folder tools"
+      ],
+      "outcome" : "skipped",
+      "telemetry" : {
+        "peakPhysFootprintMb" : 11.157051086425781
+      }
+    },
+    {
+      "domain" : "agent_loop",
+      "id" : "agent_loop.listing-navigation-discipline",
+      "label" : "agent loop • answer a targeted question without browsing the tree",
+      "modelId" : "foundation",
+      "notes" : [
+        "note: The folder tree is already in the system prompt, so the answer needs at most one targeted read. The maxToolCalls cap fails models that list directories or read unrelated files before answering.",
+        "tools auto-disabled for 'foundation': context size class tiny (≤4096-token window) strips the tool schema; agent_loop requires folder tools"
+      ],
+      "outcome" : "skipped",
+      "telemetry" : {
+        "peakPhysFootprintMb" : 11.157051086425781
+      }
+    },
+    {
+      "domain" : "agent_loop",
+      "id" : "agent_loop.over-budget-hard-overflow",
+      "label" : "agent loop • hard context overflow ends the run with overBudget",
+      "modelId" : "foundation",
+      "notes" : [
+        "note: Pins the overBudget exit: with a tiny context window override, even a fully-compacted transcript cannot fit the history budget, so the driver must end the run with the distinct overBudget exit instead of sending a doomed request (or silently truncating). Deterministic — the overflow is detected at message-build time.",
+        "tools auto-disabled for 'foundation': context size class tiny (≤4096-token window) strips the tool schema; agent_loop requires folder tools"
+      ],
+      "outcome" : "skipped",
+      "telemetry" : {
+        "peakPhysFootprintMb" : 11.157051086425781
+      }
+    },
+    {
+      "domain" : "agent_loop",
+      "id" : "agent_loop.parallel-batch-reads",
+      "label" : "agent loop • multi-call batch reads then a combining write",
+      "modelId" : "foundation",
+      "notes" : [
+        "note: Exercises the parallel batch executor (two-phase approval + concurrent dispatch + serial model-order post-processing) that chat/HTTP run when a model emits several tool calls in one step. A model that ignores the batching instruction still passes the outcome assertions serially — the batch path is exercised opportunistically, which is exactly how production hits it.",
+        "tools auto-disabled for 'foundation': context size class tiny (≤4096-token window) strips the tool schema; agent_loop requires folder tools"
+      ],
+      "outcome" : "skipped",
+      "telemetry" : {
+        "peakPhysFootprintMb" : 11.157051086425781
+      }
+    },
+    {
+      "domain" : "agent_loop",
+      "id" : "agent_loop.recover-from-failing-command",
+      "label" : "agent loop • recover from a failing command",
+      "modelId" : "foundation",
+      "notes" : [
+        "note: The script fails because config.txt is missing. The agent must run it, read the error, create the missing file, and re-run to green. Scored on the post-run exit code, so any correct recovery passes.",
+        "tools auto-disabled for 'foundation': context size class tiny (≤4096-token window) strips the tool schema; agent_loop requires folder tools"
+      ],
+      "outcome" : "skipped",
+      "telemetry" : {
+        "peakPhysFootprintMb" : 11.157051086425781
+      }
+    },
+    {
+      "domain" : "agent_loop",
+      "id" : "agent_loop.rejection-stops-run",
+      "label" : "agent loop • chat rejection policy stops the run on a tool error",
+      "modelId" : "foundation",
+      "notes" : [
+        "note: Pins the chat surface's `stopOnToolRejection: true` policy: the first error envelope (file_read on a nonexistent path) ends the run with exit=toolRejected instead of looping. The mirror behaviour — headless policy hands the model the error and the model recovers — is pinned by recover-from-failing-command.json (stopOnToolRejection defaults to false there).",
+        "tools auto-disabled for 'foundation': context size class tiny (≤4096-token window) strips the tool schema; agent_loop requires folder tools"
+      ],
+      "outcome" : "skipped",
+      "telemetry" : {
+        "peakPhysFootprintMb" : 11.157051086425781
+      }
+    },
+    {
+      "domain" : "agent_loop",
+      "id" : "agent_loop.repeated-call-nudge",
+      "label" : "agent loop • repeated identical exec call arms the stuck-loop nudge",
+      "modelId" : "foundation",
+      "notes" : [
+        "note: Pins that the harness's strongest stuck signal actually fires: shell_run is exec-like so identical calls re-execute by design (no dedupe), and the third identical call must arm the repeated-call nudge, which the driver stages as a notice on the following step. Asserts the notice text landed — independent of whether the model obeyed it.",
+        "tools auto-disabled for 'foundation': context size class tiny (≤4096-token window) strips the tool schema; agent_loop requires folder tools"
+      ],
+      "outcome" : "skipped",
+      "telemetry" : {
+        "peakPhysFootprintMb" : 11.157051086425781
+      }
+    },
+    {
+      "domain" : "agent_loop",
+      "id" : "agent_loop.search-then-multi-file-edit",
+      "label" : "agent loop • search then edit across multiple files",
+      "modelId" : "foundation",
+      "notes" : [
+        "note: Forces a search-before-edit workflow across more than one file. Scored on disk state: the old name must be gone from BOTH files and the new name present. The iteration budget is deliberately roomy — each file needs TWO edits (import + call site) and small models burn steps recovering from relative-path mistakes; budget pressure is wrap-up-on-budget's job, not this case's.",
+        "tools auto-disabled for 'foundation': context size class tiny (≤4096-token window) strips the tool schema; agent_loop requires folder tools"
+      ],
+      "outcome" : "skipped",
+      "telemetry" : {
+        "peakPhysFootprintMb" : 11.157051086425781
+      }
+    },
+    {
+      "domain" : "agent_loop",
+      "id" : "agent_loop.todo-discipline-multistep",
+      "label" : "agent loop • todo created up front and updated before complete",
+      "modelId" : "foundation",
+      "notes" : [
+        "note: Pins todo discipline on a genuinely multi-step task: the model must create the checklist, and at least one later `todo` call must carry a checked box BEFORE the run completes (`todoUpdatedBeforeComplete`) — making a list once and never updating it fails. The task itself is mechanical so the assertion isolates the discipline, not the editing skill.",
+        "tools auto-disabled for 'foundation': context size class tiny (≤4096-token window) strips the tool schema; agent_loop requires folder tools"
+      ],
+      "outcome" : "skipped",
+      "telemetry" : {
+        "peakPhysFootprintMb" : 11.157051086425781
+      }
+    },
+    {
+      "domain" : "agent_loop",
+      "id" : "agent_loop.wrap-up-on-budget",
+      "label" : "agent loop • wrap up before the iteration budget runs out",
+      "modelId" : "foundation",
+      "notes" : [
+        "note: Open-ended exploration on a deliberately tight iteration budget. The driver's budget-warning notice fires when 3 iterations remain; a model that heeds it produces a final response (exit=finalResponse) instead of being cut off at the cap. iterationCapReached fails the case.",
+        "tools auto-disabled for 'foundation': context size class tiny (≤4096-token window) strips the tool schema; agent_loop requires folder tools"
+      ],
+      "outcome" : "skipped",
+      "telemetry" : {
+        "peakPhysFootprintMb" : 11.157051086425781
+      }
+    },
+    {
+      "domain" : "agent_loop",
+      "id" : "agent_loop.write-new-file",
+      "label" : "agent loop • create a new file from scratch",
+      "modelId" : "foundation",
+      "notes" : [
+        "note: Bare file-creation case in an empty workspace. Pins that the model can produce a file at a specific path with specified content without an existing file to anchor on. The clean path: no tool call may return an error envelope.",
+        "tools auto-disabled for 'foundation': context size class tiny (≤4096-token window) strips the tool schema; agent_loop requires folder tools"
+      ],
+      "outcome" : "skipped",
+      "telemetry" : {
+        "peakPhysFootprintMb" : 11.157051086425781
+      }
+    }
+  ],
+  "modelId" : "foundation",
+  "startedAt" : "2026-06-19T22:44:38Z"
+}

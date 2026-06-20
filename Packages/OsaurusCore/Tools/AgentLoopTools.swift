@@ -250,8 +250,10 @@ private let kMaxClarifyOptionLength = 80
 public final class ClarifyTool: OsaurusTool, @unchecked Sendable {
     public let name = "clarify"
     public let description =
-        "Ask the user a single critical question when the task is ambiguous in a way that would "
-        + "lead to the wrong result if you guessed. The conversation pauses; the user's next "
+        "Ask the user a single critical question ONLY when the task is genuinely under-specified "
+        + "— a required input is missing or contradictory and guessing wrong would change the "
+        + "result. A fully specified task, even a large multi-step one, is NOT ambiguous: plan it "
+        + "and start. The conversation pauses; the user's next "
         + "message becomes your answer. For minor preferences or recoverable choices, pick a "
         + "sensible default and proceed instead of pausing. When the answer is one of a finite "
         + "set (≤6 short choices), pass them as `options` so the user can pick with a tap "

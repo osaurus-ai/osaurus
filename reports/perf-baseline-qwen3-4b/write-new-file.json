@@ -1,0 +1,41 @@
+{
+  "cases" : [
+    {
+      "domain" : "agent_loop",
+      "id" : "agent_loop.write-new-file",
+      "label" : "agent loop • create a new file from scratch",
+      "latencyMs" : 14979.966044425964,
+      "modelId" : "mlx-community/Qwen3-4B-4bit",
+      "notes" : [
+        "note: Bare file-creation case in an empty workspace. Pins that the model can produce a file at a specific path with specified content without an existing file to anchor on. The clean path: no tool call may return an error envelope.",
+        "exit ok: finalResponse",
+        "mustCallTools ok: [file_write]",
+        "noToolErrors ok",
+        "file 'TODO.md' contains 'write tests'",
+        "file 'TODO.md' contains 'update docs'",
+        "file 'TODO.md' contains 'tag release'",
+        "summary: toolCalls=[file_write] iters=2 exit=finalResponse",
+        "final: I have created a file named `TODO.md` in this folder with a markdown checklist containing the three unchecked items: 'write tests', 'update docs', and 'tag release'. The file was created successfully."
+      ],
+      "outcome" : "passed",
+      "query" : "Create a file named TODO.md in this folder containing a markdown checklist with exactly these three unchecked items: 'write tests', 'update docs', 'tag release'.",
+      "telemetry" : {
+        "completionTokens" : 42,
+        "decodeTokensPerSecond" : 57.53660000000001,
+        "peakPhysFootprintMb" : 4247.174987792969,
+        "prefillTokensPerSecond" : 502.2199,
+        "ttftMs" : 1229.071021080017
+      },
+      "toolUsage" : [
+        {
+          "calls" : 1,
+          "deduped" : 0,
+          "errors" : 0,
+          "tool" : "file_write"
+        }
+      ]
+    }
+  ],
+  "modelId" : "mlx-community/Qwen3-4B-4bit",
+  "startedAt" : "2026-06-19T19:22:35Z"
+}

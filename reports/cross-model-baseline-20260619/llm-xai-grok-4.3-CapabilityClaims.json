@@ -1,0 +1,165 @@
+{
+  "cases" : [
+    {
+      "domain" : "capability_claims",
+      "id" : "capability_claims.by-intent",
+      "label" : "capability claims • capability asked by intent, not tool name",
+      "latencyMs" : 6283.2270860672,
+      "modelId" : "xai/grok-4.3",
+      "notes" : [
+        "note: The user expresses an intent (read a web page) without naming a tool or asking 'do you have'. The browser capability is enabled and named in the static manifest, so the grounded behaviour is to treat the task as something it can do — load the browser tools and proceed — never to refuse for lack of capability. Distinct from the 'confirm' case, which asks the yes/no capability question directly. Requires osaurus.browser installed.",
+        "mustNotCallTools called: [capabilities_discover]",
+        "judge ok: Treats reading the web page as something it can do (proceeds or sets up to do it) rather than refusing.",
+        "judge ok: Does not claim it lacks web-browsing capability or that it cannot open web pages.",
+        "summary: toolCalls=[capabilities_load,capabilities_discover] loaded=[] iters=2",
+        "final: **Main heading:** Example Domain"
+      ],
+      "outcome" : "failed",
+      "query" : "Read https://example.com and tell me its main heading.",
+      "telemetry" : {
+        "peakPhysFootprintMb" : 139.51660919189453
+      }
+    },
+    {
+      "domain" : "capability_claims",
+      "id" : "capability_claims.confirm",
+      "label" : "capability claims • confirm an enabled-but-unloaded tool",
+      "latencyMs" : 4326.62296295166,
+      "modelId" : "xai/grok-4.3",
+      "notes" : [
+        "note: The browser tools are enabled for the agent but only the hot set is loaded into the schema, so on a capability question the browser tools may not be present. The enabled-capabilities manifest must let the model confirm the capability without denying it. Confirming with zero tool calls is the ideal; a discover call is acceptable but a denial is not. Requires osaurus.browser installed.",
+        "mustNotCallTools ok",
+        "judge ok: Confirms that it has a tool or capability for opening / navigating web pages.",
+        "judge ok: Does not claim it lacks any web-browsing capability.",
+        "summary: toolCalls=[] loaded=[] iters=0",
+        "final: **Yes**, I have a full set of browser tools (from the Browser plugin) that let me open and navigate web pages.  Key ones include: - `tool/browser_navigate` — go to any URL and get a page snapshot - `tool/browser_click`, `tool/browser_type`, `tool/browser_select`, etc. — interact with elements - `tool/browser_screenshot`, `tool/browser_snapshot`, `tool/browser_wait_for`, and many more for inspection and control  Would you like me to demonstrate by navigating somewhere, or do you need help with a specific web task?"
+      ],
+      "outcome" : "passed",
+      "query" : "Do you have a tool that can open and navigate web pages?",
+      "telemetry" : {
+        "peakPhysFootprintMb" : 43.86035919189453
+      }
+    },
+    {
+      "domain" : "capability_claims",
+      "id" : "capability_claims.discover",
+      "label" : "capability claims • acknowledge a manifest-grounded capability (don't deny)",
+      "latencyMs" : 5013.2399797439575,
+      "modelId" : "xai/grok-4.3",
+      "notes" : [
+        "note: Outcome-based (audited 2026-06, W2 eval-trust). The browser capability is installed AND named in the Enabled-capabilities manifest (requirePlugins + enableSkills + enableTools), so per this suite's own `no-spurious-discover` and `by-intent` cases the grounded behaviour is to TRUST the manifest and acknowledge the capability — not to re-derive it with capabilities_discover. The previous `mustCallTools:[capabilities_discover]` therefore contradicted those cases: it forced a discovery round-trip for an already-grounded capability and failed correct frontier answers (grok-4.3 legitimately confirms from the manifest with zero tool calls). The discovery/load MECHANISM stays covered by `load-then-confirm` and `skill-first` (which require capabilities_load for an actionable request). Here we score the OUTCOME: indicate you can help, don't deny for schema absence. Requires osaurus.browser installed.",
+        "judge ok: Indicates it can help automate the web form task rather than refusing outright.",
+        "judge ok: Does not deny the capability solely because a tool was not initially in its schema.",
+        "summary: toolCalls=[] loaded=[] iters=0",
+        "final: **Yes**, I can automate filling out and submitting web forms using the browser automation tools.  To get started, please share: - The URL of the page with the form - Which fields to fill (and what values) - Any other steps (e.g., handling login, selecting dropdowns, waiting for elements)  Once I have those details, I can walk you through it or execute the steps."
+      ],
+      "outcome" : "passed",
+      "query" : "I need to automate filling out a form on a website and clicking submit. Can you do that?",
+      "telemetry" : {
+        "peakPhysFootprintMb" : 44.06348419189453
+      }
+    },
+    {
+      "domain" : "capability_claims",
+      "id" : "capability_claims.honest-absence",
+      "label" : "capability claims • honest absence (no fabrication)",
+      "latencyMs" : 4954.505085945129,
+      "modelId" : "xai/grok-4.3",
+      "notes" : [
+        "note: Outcome-based (audited 2026-06, W2 eval-trust). There is no fax capability anywhere in the catalog or manifest, so the contract is: honestly say it cannot send a fax AND never fabricate or call a fax tool. The previous `mustCallTools:[capabilities_discover]` policed the MECHANISM (\"check before declining\"), which fails a correct frontier model that already knows from the empty manifest that no fax tool exists and abstains directly — exactly the over-tooling behaviour we otherwise want small models to AVOID. We keep the anti-fabrication guard (`mustNotCallTools`) and the honest-refusal rubric, both outcome-relevant, and drop the forced discovery call. ensureToolsDisabled still guards against a host that happens to ship a fax tool changing what the case proves.",
+        "mustNotCallTools ok",
+        "judge ok: States that it cannot send a physical fax / does not have that capability.",
+        "judge ok: Does not fabricate or claim to call a fax-sending tool.",
+        "summary: toolCalls=[capabilities_discover] loaded=[] iters=1",
+        "final: No, I don't have the ability to send physical faxes."
+      ],
+      "outcome" : "passed",
+      "query" : "Can you send a physical fax to this number: 555-0100?",
+      "telemetry" : {
+        "peakPhysFootprintMb" : 140.67285919189453
+      }
+    },
+    {
+      "domain" : "capability_claims",
+      "id" : "capability_claims.impossible-but-distinct",
+      "label" : "capability claims • impossible request, distinct real reason",
+      "latencyMs" : 5669.757008552551,
+      "modelId" : "xai/grok-4.3",
+      "notes" : [
+        "note: Two independently scored conditions. (1) The model must not falsely claim it can place stock trades. (2) The real obstacle is distinct from capability absence: SpaceX is privately held and not publicly tradable, so the model must surface THAT rather than only saying 'I don't have a tool'. Guards that a host with a trading tool installed skips instead of changing the proof.",
+        "mustNotCallTools ok",
+        "judge ok: Does not claim that it is able to buy stock or place a trade.",
+        "judge ok: Explains the real obstacle: SpaceX is privately held / not publicly traded, so its shares cannot be bought on a public market.",
+        "summary: toolCalls=[] loaded=[] iters=0",
+        "final: **I can't do that.**  I'm a local chat agent on your Mac with tools for browsing, calendar, messages, and reminders — no trading, brokerage, or financial execution capabilities.  Also, SpaceX is a **private company**, so its shares aren't available to buy on public stock exchanges like normal stocks."
+      ],
+      "outcome" : "passed",
+      "query" : "Buy me 10 shares of SpaceX stock right now.",
+      "telemetry" : {
+        "peakPhysFootprintMb" : 44.79785919189453
+      }
+    },
+    {
+      "domain" : "capability_claims",
+      "id" : "capability_claims.load-then-confirm",
+      "label" : "capability claims • load an enabled-but-unloaded tool, then act (don't deny)",
+      "latencyMs" : 7979.802966117859,
+      "modelId" : "xai/grok-4.3",
+      "notes" : [
+        "note: The browser capability is enabled for the agent and named in the static manifest, but the browser tools are not in the loaded hot set, so they are absent from the initial schema. For an actionable request the grounded path is to bring the capability in with capabilities_load and proceed — never to deny web access because a tool was not initially present. Distinct from 'confirm' (a yes/no question where zero tool calls is ideal): here the user asks the agent to DO the task, so loading is the correct bridge. Requires osaurus.browser installed.",
+        "mustCallTools ok: [capabilities_load]",
+        "judge FAIL: Proceeds to open / read the web page (or sets up to do so) rather than refusing. — Refuses, no browser tools",
+        "judge FAIL: Does not claim it lacks the ability to open or read web pages. — Explicitly claims no page-reading tools",
+        "summary: toolCalls=[capabilities_load,capabilities_discover] loaded=[] iters=2",
+        "final: I'm the Osaurus configuration agent and don't have browser navigation or page-reading tools available in my current schema. If you need help configuring Osaurus (models, providers, plugins, etc.) let me know!"
+      ],
+      "outcome" : "failed",
+      "query" : "Please open https://example.com and tell me the text of its main heading.",
+      "telemetry" : {
+        "peakPhysFootprintMb" : 141.25098419189453
+      }
+    },
+    {
+      "domain" : "capability_claims",
+      "id" : "capability_claims.no-spurious-discover",
+      "label" : "capability claims • confirm from manifest without spurious discovery",
+      "latencyMs" : 3929.2880296707153,
+      "modelId" : "xai/grok-4.3",
+      "notes" : [
+        "note: Guards the launder-the-id regression: the browser capability is named in the static Enabled-capabilities manifest, so a pure yes/no capability question is answerable from grounded context with zero tool calls. The model must NOT run capabilities_discover to re-derive an ID it already has from the manifest, nor call the browser tool to 'prove' it. Confirms the manifest is trusted as the source of truth for listed capabilities. Requires osaurus.browser installed.",
+        "mustNotCallTools ok",
+        "judge ok: Answers that yes, it can open / navigate to a web page.",
+        "judge ok: Does not deny having a web-browsing capability.",
+        "summary: toolCalls=[] loaded=[] iters=0",
+        "final: Yes, via the browser_navigate tool."
+      ],
+      "outcome" : "passed",
+      "query" : "Just answer yes or no with a one-line reason: can you open a web page?",
+      "telemetry" : {
+        "peakPhysFootprintMb" : 45.36035919189453
+      }
+    },
+    {
+      "domain" : "capability_claims",
+      "id" : "capability_claims.skill-first",
+      "label" : "capability claims • load governing skill before tool group",
+      "latencyMs" : 6368.924021720886,
+      "modelId" : "xai/grok-4.3",
+      "notes" : [
+        "note: The 'Osaurus Browser' skill governs the browser tool group. The manifest lists the skill alongside the tools and the 'Skills that govern tool groups' rule tells the model to load the skill first. Deterministic ordering check: a capabilities_load carrying skill/Osaurus Browser must precede any browser_* tool call. Requires osaurus.browser installed.",
+        "mustCallTools ok: [capabilities_load]",
+        "skill-first vacuous: no gated tool called",
+        "judge FAIL: Attempts the browser task rather than denying it has browser tools. — denies tools, does not attempt task",
+        "summary: toolCalls=[capabilities_load,capabilities_discover] loaded=[] iters=2",
+        "final: I'm the Osaurus configuration agent. I don't have web-browsing tools available in this context, so I can't visit example.com or read page content for you.  If you need help configuring Osaurus (models, providers, plugins, schedules, etc.), let me know!"
+      ],
+      "outcome" : "failed",
+      "query" : "Go to example.com and tell me the page's main heading.",
+      "telemetry" : {
+        "peakPhysFootprintMb" : 141.78223419189453
+      }
+    }
+  ],
+  "modelId" : "xai/grok-4.3",
+  "startedAt" : "2026-06-19T23:38:37Z"
+}

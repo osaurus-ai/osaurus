@@ -1,0 +1,2057 @@
+{
+  "cases" : [
+    {
+      "capabilitySearch" : {
+        "appliedMethodsThreshold" : 0.25,
+        "appliedMinFusedScore" : 0.02,
+        "appliedSkillsThreshold" : 0.25,
+        "indexSize" : 61,
+        "latencyMs" : 0.5370378494262695,
+        "methodHits" : [
+
+        ],
+        "query" : "thanks, that's perfect",
+        "registrySize" : 62,
+        "skillHits" : [
+
+        ],
+        "toolHits" : [
+
+        ]
+      },
+      "domain" : "capability_search",
+      "id" : "capability_search.abstain-greeting",
+      "label" : "capability search • abstain on chit-chat",
+      "latencyMs" : 0.5370378494262695,
+      "modelId" : "foundation",
+      "notes" : [
+        "note: FIXED + PROMOTED 2026-06-19 (W3): a pure closing pleasantry must surface zero capabilities. RRF saturation made this unreachable by threshold alone (see capability-search-sweep.md), so the resolution is the pre-RRF query-intent gate (`CapabilityQueryIntent.isConversationalAbstain`) wired into both `CapabilitySearch.search` and `CapabilitySearchEvaluator.evaluate` — every content token here is a pleasantry, so all lanes short-circuit to empty and `maxAccepted=0` holds. High-precision by design: a single capability token (e.g. 'browser') keeps a real request out of the abstain bucket, so `browser-prefix` recall is unaffected. Enforced in recall_floors.json.",
+        "tools abstain matcher (no expected names)",
+        "maxAccepted ok: 0 ≤ 0",
+        "summary: tools raw=0 accepted=0 | methods raw=0 accepted=0 | skills raw=0 accepted=0 | registry=62 index=61 minFusedScore=0.020 methodsThreshold=0.250 skillsThreshold=0.250"
+      ],
+      "outcome" : "passed",
+      "query" : "thanks, that's perfect",
+      "telemetry" : {
+        "peakPhysFootprintMb" : 138.61024475097656
+      }
+    },
+    {
+      "capabilitySearch" : {
+        "appliedMethodsThreshold" : 0.25,
+        "appliedMinFusedScore" : 0.02,
+        "appliedSkillsThreshold" : 0.25,
+        "indexSize" : 61,
+        "latencyMs" : 13.765096664428711,
+        "methodHits" : [
+
+        ],
+        "query" : "browser",
+        "registrySize" : 62,
+        "skillHits" : [
+          {
+            "acceptedByThreshold" : true,
+            "embedScore" : 0.3167426,
+            "fusedScore" : 0.3167426,
+            "name" : "Osaurus Browser"
+          }
+        ],
+        "toolHits" : [
+          {
+            "acceptedByThreshold" : true,
+            "bm25Score" : 0.8866954,
+            "embedScore" : 0.50539005,
+            "fusedScore" : 0.032522473,
+            "name" : "browser_open_login"
+          },
+          {
+            "acceptedByThreshold" : true,
+            "bm25Score" : 0.94111216,
+            "embedScore" : 0.49639234,
+            "fusedScore" : 0.032522473,
+            "name" : "browser_reset_session"
+          },
+          {
+            "acceptedByThreshold" : true,
+            "bm25Score" : 0.8820007,
+            "embedScore" : 0.3772421,
+            "fusedScore" : 0.03079839,
+            "name" : "browser_click"
+          },
+          {
+            "acceptedByThreshold" : true,
+            "bm25Score" : 0.8375348,
+            "embedScore" : 0.40166253,
+            "fusedScore" : 0.030776516,
+            "name" : "browser_cookies"
+          },
+          {
+            "acceptedByThreshold" : true,
+            "bm25Score" : 0.8103007,
+            "embedScore" : 0.44664726,
+            "fusedScore" : 0.030158732,
+            "name" : "browser_screenshot"
+          },
+          {
+            "acceptedByThreshold" : true,
+            "bm25Score" : 0.8375348,
+            "embedScore" : 0.38585585,
+            "fusedScore" : 0.030090498,
+            "name" : "browser_set_viewport"
+          },
+          {
+            "acceptedByThreshold" : true,
+            "bm25Score" : 0.8666632,
+            "embedScore" : 0.36433336,
+            "fusedScore" : 0.030090498,
+            "name" : "browser_hover"
+          },
+          {
+            "acceptedByThreshold" : true,
+            "bm25Score" : 0.8820007,
+            "embedScore" : 0.29818714,
+            "fusedScore" : 0.028782895,
+            "name" : "browser_scroll"
+          },
+          {
+            "acceptedByThreshold" : true,
+            "bm25Score" : 0.8375348,
+            "embedScore" : 0.3261069,
+            "fusedScore" : 0.028624002,
+            "name" : "browser_select"
+          },
+          {
+            "acceptedByThreshold" : true,
+            "bm25Score" : 0.772616,
+            "embedScore" : 0.35124156,
+            "fusedScore" : 0.027973395,
+            "name" : "browser_execute_script"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 0.660059,
+            "embedScore" : 0.38409576,
+            "fusedScore" : 0.027651515,
+            "name" : "browser_console_messages"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 0.7382808,
+            "embedScore" : 0.35195252,
+            "fusedScore" : 0.027619049,
+            "name" : "browser_type"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 0.772616,
+            "embedScore" : 0.32722425,
+            "fusedScore" : 0.027587518,
+            "name" : "browser_network_requests"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 0.68736935,
+            "embedScore" : 0.35216534,
+            "fusedScore" : 0.027479768,
+            "name" : "browser_set_user_agent"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 0.79733723,
+            "embedScore" : 0.2703188,
+            "fusedScore" : 0.02707152,
+            "name" : "browser_press_key"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 0.68736935,
+            "embedScore" : 0.3150127,
+            "fusedScore" : 0.026491228,
+            "name" : "browser_navigate"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 0.6780182,
+            "embedScore" : 0.32309538,
+            "fusedScore" : 0.026171742,
+            "name" : "browser_snapshot"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 0.6780182,
+            "embedScore" : 0.25430438,
+            "fusedScore" : 0.025641026,
+            "name" : "browser_handle_dialog"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 0.82369274,
+            "fusedScore" : 0.014492754,
+            "name" : "browser_wait_for"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 0.74787617,
+            "fusedScore" : 0.013513514,
+            "name" : "browser_do"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.23546274,
+            "fusedScore" : 0,
+            "name" : "render_chart"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.24716325,
+            "fusedScore" : 0,
+            "name" : "db_define_view"
+          }
+        ]
+      },
+      "domain" : "capability_search",
+      "id" : "capability_search.browser-prefix",
+      "label" : "capability search • browser prefix",
+      "latencyMs" : 13.765096664428711,
+      "modelId" : "foundation",
+      "notes" : [
+        "tools matched 8/5: [browser_reset_session,browser_open_login,browser_screenshot,browser_set_viewport,browser_cookies,browser_click,browser_hover,browser_execute_script]",
+        "summary: tools raw=22 accepted=10 | methods raw=0 accepted=0 | skills raw=1 accepted=1 | registry=62 index=61 minFusedScore=0.020 methodsThreshold=0.250 skillsThreshold=0.250"
+      ],
+      "outcome" : "passed",
+      "query" : "browser",
+      "telemetry" : {
+        "peakPhysFootprintMb" : 138.73524475097656
+      }
+    },
+    {
+      "domain" : "capability_search",
+      "id" : "capability_search.extract-webpage-natural",
+      "label" : "capability search • extract webpage contents (natural language)",
+      "modelId" : "foundation",
+      "notes" : [
+        "missing plugins: osaurus.fetch, osaurus.search"
+      ],
+      "outcome" : "skipped",
+      "telemetry" : {
+        "peakPhysFootprintMb" : 139.40714263916016
+      }
+    },
+    {
+      "capabilitySearch" : {
+        "appliedMethodsThreshold" : 0.25,
+        "appliedMinFusedScore" : 0.02,
+        "appliedSkillsThreshold" : 0.25,
+        "indexSize" : 61,
+        "latencyMs" : 0.42307376861572266,
+        "methodHits" : [
+
+        ],
+        "query" : "thanks, that's perfect",
+        "registrySize" : 62,
+        "skillHits" : [
+
+        ],
+        "toolHits" : [
+
+        ]
+      },
+      "domain" : "capability_search",
+      "id" : "capability_search.method-abstain",
+      "label" : "capability search • method • abstain on chit-chat",
+      "latencyMs" : 0.42307376861572266,
+      "modelId" : "foundation",
+      "notes" : [
+        "note: Symmetric with `capability_search.abstain-greeting` on the tools lane. FIXED + PROMOTED 2026-06-19 (W3): RRF saturation (max ≈ 0.0328 with k=60) capped the abstain-vs-recall gap to ~0.001, so no fused/cosine floor could separate this from real recall. The resolution is the pre-RRF query-intent gate (`CapabilityQueryIntent.isConversationalAbstain`), which short-circuits 'thanks, that's perfect' before any lane runs — methods lane returns empty, `maxAccepted=0` holds. Now enforced in recall_floors.json.",
+        "methods abstain matcher (no expected names)",
+        "maxAccepted ok: 0 ≤ 0",
+        "summary: tools raw=0 accepted=0 | methods raw=0 accepted=0 | skills raw=0 accepted=0 | registry=62 index=61 minFusedScore=0.020 methodsThreshold=0.250 skillsThreshold=0.250"
+      ],
+      "outcome" : "passed",
+      "query" : "thanks, that's perfect",
+      "telemetry" : {
+        "peakPhysFootprintMb" : 139.40714263916016
+      }
+    },
+    {
+      "capabilitySearch" : {
+        "appliedMethodsThreshold" : 0.25,
+        "appliedMinFusedScore" : 0.02,
+        "appliedSkillsThreshold" : 0.25,
+        "indexSize" : 61,
+        "latencyMs" : 9.08207893371582,
+        "methodHits" : [
+          {
+            "acceptedByThreshold" : true,
+            "embedScore" : 0.45103267,
+            "fusedScore" : 0.45103267,
+            "name" : "summarize_pdf"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.08341562,
+            "fusedScore" : 0.08341562,
+            "name" : "translate_text"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.072974175,
+            "fusedScore" : 0.072974175,
+            "name" : "fetch_stock_price"
+          }
+        ],
+        "query" : "summarize this PDF for me",
+        "registrySize" : 62,
+        "skillHits" : [
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.029033596,
+            "fusedScore" : 0.029033596,
+            "name" : "Osaurus Browser"
+          }
+        ],
+        "toolHits" : [
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 4.8212996,
+            "fusedScore" : 0.016393442,
+            "name" : "osaurus_status"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 2.3595064,
+            "embedScore" : 0.21176898,
+            "fusedScore" : 0.016129032,
+            "name" : "share_artifact"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 2.254263,
+            "embedScore" : 0.10864873,
+            "fusedScore" : 0.015873017,
+            "name" : "search_memory"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 2.1903698,
+            "fusedScore" : 0.015625,
+            "name" : "browser_lock"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 1.9918246,
+            "fusedScore" : 0.015384615,
+            "name" : "browser_open_login"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 1.6254991,
+            "embedScore" : 0.14096442,
+            "fusedScore" : 0.015151516,
+            "name" : "speak"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 1.5560911,
+            "fusedScore" : 0.014925373,
+            "name" : "db_create_table"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 1.4287369,
+            "fusedScore" : 0.014705882,
+            "name" : "db_list_views"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 1.3461571,
+            "embedScore" : 0.12652941,
+            "fusedScore" : 0.014492754,
+            "name" : "db_schema"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 1.2609966,
+            "fusedScore" : 0.014285714,
+            "name" : "browser_wait_for"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 1.1411704,
+            "embedScore" : 0.10445887,
+            "fusedScore" : 0.014084507,
+            "name" : "browser_screenshot"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 1.1171772,
+            "fusedScore" : 0.013888889,
+            "name" : "osaurus_describe"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 1.1142973,
+            "fusedScore" : 0.01369863,
+            "name" : "browser_reset_session"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 1.0081795,
+            "fusedScore" : 0.013513514,
+            "name" : "schedule_next_run"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 0.965229,
+            "fusedScore" : 0.013333334,
+            "name" : "search_events"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 0.9327878,
+            "fusedScore" : 0.013157895,
+            "name" : "browser_set_viewport"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 0.9096762,
+            "fusedScore" : 0.012987013,
+            "name" : "todo"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 0.8880185,
+            "fusedScore" : 0.012820513,
+            "name" : "browser_press_key"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 0.8604858,
+            "fusedScore" : 0.012658228,
+            "name" : "browser_execute_script"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 0.76554394,
+            "embedScore" : 0.14895338,
+            "fusedScore" : 0.0125,
+            "name" : "browser_navigate"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.10497476,
+            "fusedScore" : 0,
+            "name" : "db_run_view"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.12828276,
+            "fusedScore" : 0,
+            "name" : "get_lists"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.104722895,
+            "fusedScore" : 0,
+            "name" : "create_reminder"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.13612458,
+            "fusedScore" : 0,
+            "name" : "db_alter_table"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.16423257,
+            "fusedScore" : 0,
+            "name" : "notify"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.14900292,
+            "fusedScore" : 0,
+            "name" : "search_reminders"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.14970204,
+            "fusedScore" : 0,
+            "name" : "db_query"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.21738549,
+            "fusedScore" : 0,
+            "name" : "render_chart"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.1972679,
+            "fusedScore" : 0,
+            "name" : "complete"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.13196933,
+            "fusedScore" : 0,
+            "name" : "read_messages"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.122931615,
+            "fusedScore" : 0,
+            "name" : "browser_select"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.112817645,
+            "fusedScore" : 0,
+            "name" : "browser_hover"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.12858373,
+            "fusedScore" : 0,
+            "name" : "browser_scroll"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.1645686,
+            "fusedScore" : 0,
+            "name" : "db_define_view"
+          }
+        ]
+      },
+      "domain" : "capability_search",
+      "id" : "capability_search.method-lexical-name",
+      "label" : "capability search • method • lexical name match",
+      "latencyMs" : 9.08207893371582,
+      "modelId" : "foundation",
+      "notes" : [
+        "note: Probes the BM25-would-help class on the methods lane: query contains 'PDF' and 'summarize' as plain English while the seeded method's id is the snake_case literal `eval-summarize-pdf` and its name carries the `summarize_pdf` token. Pure embedding (potion-base-4M) frequently undershoots when the strongest signal is a snake_case identifier match — a BM25 mirror would lift this case.",
+        "methods matched 1/1: [summarize_pdf]",
+        "summary: tools raw=34 accepted=0 | methods raw=3 accepted=1 | skills raw=1 accepted=0 | registry=62 index=61 minFusedScore=0.020 methodsThreshold=0.250 skillsThreshold=0.250"
+      ],
+      "outcome" : "passed",
+      "query" : "summarize this PDF for me",
+      "telemetry" : {
+        "peakPhysFootprintMb" : 139.43839263916016
+      }
+    },
+    {
+      "capabilitySearch" : {
+        "appliedMethodsThreshold" : 0.25,
+        "appliedMinFusedScore" : 0.02,
+        "appliedSkillsThreshold" : 0.25,
+        "indexSize" : 61,
+        "latencyMs" : 10.426998138427734,
+        "methodHits" : [
+          {
+            "acceptedByThreshold" : true,
+            "embedScore" : 0.35784662,
+            "fusedScore" : 0.35784662,
+            "name" : "summarize_pdf"
+          },
+          {
+            "acceptedByThreshold" : true,
+            "embedScore" : 0.31493068,
+            "fusedScore" : 0.31493068,
+            "name" : "redact_pdf_pii"
+          },
+          {
+            "acceptedByThreshold" : true,
+            "embedScore" : 0.30806452,
+            "fusedScore" : 0.30806452,
+            "name" : "extract_pdf_tables"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.018882979,
+            "fusedScore" : 0.018882979,
+            "name" : "fetch_stock_price"
+          }
+        ],
+        "query" : "I have a PDF I need to work with",
+        "registrySize" : 62,
+        "skillHits" : [
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.15470463,
+            "fusedScore" : 0.15470463,
+            "name" : "Osaurus Browser"
+          }
+        ],
+        "toolHits" : [
+          {
+            "acceptedByThreshold" : true,
+            "bm25Score" : 1.5226448,
+            "embedScore" : 0.32154477,
+            "fusedScore" : 0.03028233,
+            "name" : "share_artifact"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 5.037135,
+            "fusedScore" : 0.016393442,
+            "name" : "todo"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 3.8305633,
+            "fusedScore" : 0.016129032,
+            "name" : "db_list_views"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.27312794,
+            "fusedScore" : 0.016129032,
+            "name" : "render_chart"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 3.5420055,
+            "embedScore" : 0.15461339,
+            "fusedScore" : 0.015873017,
+            "name" : "notify"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 3.393776,
+            "embedScore" : 0.17506675,
+            "fusedScore" : 0.015625,
+            "name" : "db_upsert"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 3.2566953,
+            "fusedScore" : 0.015384615,
+            "name" : "complete"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 3.137786,
+            "embedScore" : 0.1557377,
+            "fusedScore" : 0.015151516,
+            "name" : "db_execute"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 3.0758195,
+            "embedScore" : 0.218018,
+            "fusedScore" : 0.014925373,
+            "name" : "db_define_view"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 2.8781714,
+            "embedScore" : 0.1696508,
+            "fusedScore" : 0.014705882,
+            "name" : "browser_snapshot"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 2.4456449,
+            "fusedScore" : 0.014492754,
+            "name" : "db_schema"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 1.909516,
+            "fusedScore" : 0.014285714,
+            "name" : "browser_navigate"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 1.6603807,
+            "embedScore" : 0.18662857,
+            "fusedScore" : 0.014084507,
+            "name" : "db_alter_table"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 1.3217295,
+            "fusedScore" : 0.01369863,
+            "name" : "browser_do"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 1.2967312,
+            "embedScore" : 0.1566244,
+            "fusedScore" : 0.013513514,
+            "name" : "db_create_table"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 1.2445489,
+            "fusedScore" : 0.013333334,
+            "name" : "schedule_next_run"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 1.2331977,
+            "fusedScore" : 0.013157895,
+            "name" : "browser_reset_session"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 0.86397207,
+            "fusedScore" : 0.012987013,
+            "name" : "clarify"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 0.52134204,
+            "fusedScore" : 0.012820513,
+            "name" : "browser_set_user_agent"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 0.5085122,
+            "fusedScore" : 0.012658228,
+            "name" : "send_message"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 0.4908268,
+            "fusedScore" : 0.0125,
+            "name" : "open_reminder"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.1897069,
+            "fusedScore" : 0,
+            "name" : "browser_set_viewport"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.234726,
+            "fusedScore" : 0,
+            "name" : "osaurus_list"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.21802016,
+            "fusedScore" : 0,
+            "name" : "browser_screenshot"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.17906165,
+            "fusedScore" : 0,
+            "name" : "db_migrate"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.16723901,
+            "fusedScore" : 0,
+            "name" : "open_event"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.20095332,
+            "fusedScore" : 0,
+            "name" : "osaurus_status"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.19414666,
+            "fusedScore" : 0,
+            "name" : "db_query"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.16657157,
+            "fusedScore" : 0,
+            "name" : "osaurus_describe"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.20088647,
+            "fusedScore" : 0,
+            "name" : "get_events"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.16058595,
+            "fusedScore" : 0,
+            "name" : "create_event"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.15762892,
+            "fusedScore" : 0,
+            "name" : "search_events"
+          }
+        ]
+      },
+      "domain" : "capability_search",
+      "id" : "capability_search.method-multi-match",
+      "label" : "capability search • method • multi-match ranking",
+      "latencyMs" : 10.426998138427734,
+      "modelId" : "foundation",
+      "notes" : [
+        "note: Probes ranking quality: three PDF-related methods are seeded and the broad query should surface at least two of them. A single-hit pass means the embedder picked one PDF method and dropped the others; we want to see whether the lane preserves multiple related candidates above the acceptance floor.",
+        "methods matched 3/2: [summarize_pdf,extract_pdf_tables,redact_pdf_pii]",
+        "summary: tools raw=32 accepted=1 | methods raw=4 accepted=3 | skills raw=1 accepted=0 | registry=62 index=61 minFusedScore=0.020 methodsThreshold=0.250 skillsThreshold=0.250"
+      ],
+      "outcome" : "passed",
+      "query" : "I have a PDF I need to work with",
+      "telemetry" : {
+        "peakPhysFootprintMb" : 139.51651763916016
+      }
+    },
+    {
+      "capabilitySearch" : {
+        "appliedMethodsThreshold" : 0.25,
+        "appliedMinFusedScore" : 0.02,
+        "appliedSkillsThreshold" : 0.25,
+        "indexSize" : 61,
+        "latencyMs" : 9.163975715637207,
+        "methodHits" : [
+          {
+            "acceptedByThreshold" : true,
+            "embedScore" : 0.28136855,
+            "fusedScore" : 0.28136855,
+            "name" : "plot_data"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.1027385,
+            "fusedScore" : 0.1027385,
+            "name" : "translate_text"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.08215186,
+            "fusedScore" : 0.08215186,
+            "name" : "deploy_app"
+          }
+        ],
+        "query" : "make a chart from this data",
+        "registrySize" : 62,
+        "skillHits" : [
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.12089483,
+            "fusedScore" : 0.12089483,
+            "name" : "Osaurus Browser"
+          }
+        ],
+        "toolHits" : [
+          {
+            "acceptedByThreshold" : true,
+            "bm25Score" : 9.154916,
+            "embedScore" : 0.62194335,
+            "fusedScore" : 0.032786883,
+            "name" : "render_chart"
+          },
+          {
+            "acceptedByThreshold" : true,
+            "bm25Score" : 1.7037106,
+            "embedScore" : 0.32668978,
+            "fusedScore" : 0.029709507,
+            "name" : "share_artifact"
+          },
+          {
+            "acceptedByThreshold" : true,
+            "bm25Score" : 1.8061758,
+            "embedScore" : 0.3066536,
+            "fusedScore" : 0.029211087,
+            "name" : "db_define_view"
+          },
+          {
+            "acceptedByThreshold" : true,
+            "bm25Score" : 1.3461571,
+            "embedScore" : 0.28678453,
+            "fusedScore" : 0.027650649,
+            "name" : "db_schema"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.32984734,
+            "fusedScore" : 0.016129032,
+            "name" : "browser_screenshot"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 3.8789167,
+            "fusedScore" : 0.016129032,
+            "name" : "db_delete"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.32700878,
+            "fusedScore" : 0.015873017,
+            "name" : "browser_set_viewport"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 3.6869428,
+            "embedScore" : 0.24133399,
+            "fusedScore" : 0.015873017,
+            "name" : "db_create_table"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 3.2251158,
+            "fusedScore" : 0.015625,
+            "name" : "osaurus_status"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.31984943,
+            "fusedScore" : 0.015384615,
+            "name" : "browser_navigate"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 2.8686242,
+            "fusedScore" : 0.015384615,
+            "name" : "browser_reset_session"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 2.8478208,
+            "fusedScore" : 0.015151516,
+            "name" : "browser_open_login"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.3193163,
+            "fusedScore" : 0.015151516,
+            "name" : "browser_select"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 2.812141,
+            "fusedScore" : 0.014925373,
+            "name" : "read_messages"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.30622745,
+            "fusedScore" : 0.014705882,
+            "name" : "db_run_view"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 2.7623727,
+            "fusedScore" : 0.014705882,
+            "name" : "get_unread_messages"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 2.63772,
+            "fusedScore" : 0.014492754,
+            "name" : "db_drop_view"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.27951875,
+            "fusedScore" : 0.014285714,
+            "name" : "browser_scroll"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.2795042,
+            "fusedScore" : 0.014084507,
+            "name" : "browser_cookies"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.26264378,
+            "fusedScore" : 0.013888889,
+            "name" : "get_events"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 1.6254998,
+            "fusedScore" : 0.013888889,
+            "name" : "speak"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.2572293,
+            "fusedScore" : 0.01369863,
+            "name" : "browser_network_requests"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 1.6008368,
+            "fusedScore" : 0.01369863,
+            "name" : "browser_do"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 1.4833349,
+            "fusedScore" : 0.013513514,
+            "name" : "browser_lock"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.2567734,
+            "fusedScore" : 0.013513514,
+            "name" : "db_alter_table"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.25459853,
+            "fusedScore" : 0.013333334,
+            "name" : "todo"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 1.4287384,
+            "fusedScore" : 0.013333334,
+            "name" : "db_list_views"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 1.245383,
+            "fusedScore" : 0.012987013,
+            "name" : "search_memory"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 1.0081806,
+            "fusedScore" : 0.012820513,
+            "name" : "schedule_next_run"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 1.4989246e-06,
+            "fusedScore" : 0.012658228,
+            "name" : "create_reminder"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 1.4709107e-06,
+            "fusedScore" : 0.0125,
+            "name" : "create_event"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.24854359,
+            "fusedScore" : 0,
+            "name" : "browser_hover"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.23479944,
+            "fusedScore" : 0,
+            "name" : "db_migrate"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.22722411,
+            "fusedScore" : 0,
+            "name" : "db_insert"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.24659282,
+            "fusedScore" : 0,
+            "name" : "browser_snapshot"
+          }
+        ]
+      },
+      "domain" : "capability_search",
+      "id" : "capability_search.method-paraphrase",
+      "label" : "capability search • method • paraphrase / synonym bridge",
+      "latencyMs" : 9.163975715637207,
+      "modelId" : "foundation",
+      "notes" : [
+        "note: Probes the embed-still-needed class on the methods lane: the user's phrasing ('make a chart') shares no surface tokens with the method name `plot_data` or its description ('Render a graph from tabular numbers'). BM25 cannot bridge the synonym gap — only the embedder can. If this case fails, BM25 isn't the right fix; the description audit (or a richer triggerText set) is.",
+        "methods matched 1/1: [plot_data]",
+        "summary: tools raw=35 accepted=4 | methods raw=3 accepted=1 | skills raw=1 accepted=0 | registry=62 index=61 minFusedScore=0.020 methodsThreshold=0.250 skillsThreshold=0.250"
+      ],
+      "outcome" : "passed",
+      "query" : "make a chart from this data",
+      "telemetry" : {
+        "peakPhysFootprintMb" : 139.56339263916016
+      }
+    },
+    {
+      "capabilitySearch" : {
+        "appliedMethodsThreshold" : 0.25,
+        "appliedMinFusedScore" : 0.02,
+        "appliedSkillsThreshold" : 0.25,
+        "indexSize" : 61,
+        "latencyMs" : 10.830998420715332,
+        "methodHits" : [
+
+        ],
+        "query" : "run shell script",
+        "registrySize" : 62,
+        "skillHits" : [
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.19272007,
+            "fusedScore" : 0.19272007,
+            "name" : "Osaurus Browser"
+          }
+        ],
+        "toolHits" : [
+          {
+            "acceptedByThreshold" : true,
+            "bm25Score" : 4.5108624,
+            "embedScore" : 0.5862839,
+            "fusedScore" : 0.032786883,
+            "name" : "browser_execute_script"
+          },
+          {
+            "acceptedByThreshold" : true,
+            "bm25Score" : 1.9141057,
+            "embedScore" : 0.26617777,
+            "fusedScore" : 0.029877368,
+            "name" : "schedule_next_run"
+          },
+          {
+            "acceptedByThreshold" : true,
+            "bm25Score" : 1.9528316,
+            "embedScore" : 0.26105365,
+            "fusedScore" : 0.029513888,
+            "name" : "db_migrate"
+          },
+          {
+            "acceptedByThreshold" : true,
+            "bm25Score" : 1.4263482,
+            "embedScore" : 0.26329833,
+            "fusedScore" : 0.028790388,
+            "name" : "db_define_view"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 2.6021347,
+            "fusedScore" : 0.016129032,
+            "name" : "db_run_view"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.3595485,
+            "fusedScore" : 0.016129032,
+            "name" : "share_artifact"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 2.3680542,
+            "fusedScore" : 0.015873017,
+            "name" : "cancel_next_run"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.307552,
+            "fusedScore" : 0.015873017,
+            "name" : "osaurus_status"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.3008082,
+            "fusedScore" : 0.015625,
+            "name" : "browser_cookies"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.298276,
+            "fusedScore" : 0.015384615,
+            "name" : "browser_console_messages"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 1.6736736,
+            "fusedScore" : 0.015151516,
+            "name" : "db_schema"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.2915427,
+            "fusedScore" : 0.015151516,
+            "name" : "db_execute"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 1.6545473,
+            "fusedScore" : 0.014925373,
+            "name" : "db_query"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.2734184,
+            "fusedScore" : 0.014925373,
+            "name" : "render_chart"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.2721035,
+            "fusedScore" : 0.014705882,
+            "name" : "browser_do"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 1.2321326,
+            "fusedScore" : 0.014492754,
+            "name" : "browser_open_login"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.26575,
+            "fusedScore" : 0.014285714,
+            "name" : "browser_type"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.22817492,
+            "fusedScore" : 0,
+            "name" : "todo"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.2277777,
+            "fusedScore" : 0,
+            "name" : "db_insert"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.22653273,
+            "fusedScore" : 0,
+            "name" : "db_alter_table"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.2483336,
+            "fusedScore" : 0,
+            "name" : "browser_handle_dialog"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.238184,
+            "fusedScore" : 0,
+            "name" : "browser_snapshot"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.23856176,
+            "fusedScore" : 0,
+            "name" : "osaurus_describe"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.22559077,
+            "fusedScore" : 0,
+            "name" : "speak"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.23163483,
+            "fusedScore" : 0,
+            "name" : "complete"
+          }
+        ]
+      },
+      "domain" : "capability_search",
+      "id" : "capability_search.shell-execution",
+      "label" : "capability search • run shell script",
+      "latencyMs" : 10.830998420715332,
+      "modelId" : "foundation",
+      "notes" : [
+        "note: Tracking-only by POLICY DECISION (affirmed 2026-06-19, W3). `sandbox_exec` is excluded from the search index by ToolIndexService.syncFromRegistry (runtimeManagedToolNames). The exclusion is correct and stays: runtime-managed tools are auto-exposed by the prompt composer when their owning agent flag is on and have NO capabilities_load carve-out, so surfacing `sandbox_exec` in capability search would advertise a capability the discovery/load path can't action (the model would find it but never be able to load it). We deliberately do NOT index it and do NOT rewrite the case to a different tool (that would change what the case proves) — it stays a documented red, excluded from recall_floors.json on purpose. Resolution would require un-excluding runtime-managed tools from the index, which is a separate product decision outside retrieval tuning.",
+        "tools under floor: matched 0/1 of [sandbox_exec]",
+        "summary: tools raw=25 accepted=4 | methods raw=0 accepted=0 | skills raw=1 accepted=0 | registry=62 index=61 minFusedScore=0.020 methodsThreshold=0.250 skillsThreshold=0.250"
+      ],
+      "outcome" : "failed",
+      "query" : "run shell script",
+      "telemetry" : {
+        "peakPhysFootprintMb" : 139.57901763916016
+      }
+    },
+    {
+      "capabilitySearch" : {
+        "appliedMethodsThreshold" : 0.25,
+        "appliedMinFusedScore" : 0.02,
+        "appliedSkillsThreshold" : 0.25,
+        "indexSize" : 61,
+        "latencyMs" : 0.4609823226928711,
+        "methodHits" : [
+
+        ],
+        "query" : "good morning",
+        "registrySize" : 62,
+        "skillHits" : [
+
+        ],
+        "toolHits" : [
+
+        ]
+      },
+      "domain" : "capability_search",
+      "id" : "capability_search.skill-abstain",
+      "label" : "capability search • skill • abstain on chit-chat",
+      "latencyMs" : 0.4609823226928711,
+      "modelId" : "foundation",
+      "notes" : [
+        "note: Symmetric with `capability_search.abstain-greeting` (tools) and `method-abstain` (methods). All 7 built-in skills enabled so abstain has the full opportunity to mis-match against a realistic catalog. RRF saturation under PR-B will apply to skills the same way it does to tools — if this case fails after PR-B, mark it as known-tracking in `recall_floors.json` rather than tightening the threshold.",
+        "skills abstain matcher (no expected names)",
+        "maxAccepted ok: 0 ≤ 0",
+        "summary: tools raw=0 accepted=0 | methods raw=0 accepted=0 | skills raw=0 accepted=0 | registry=62 index=61 minFusedScore=0.020 methodsThreshold=0.250 skillsThreshold=0.250"
+      ],
+      "outcome" : "passed",
+      "query" : "good morning",
+      "telemetry" : {
+        "peakPhysFootprintMb" : 139.57901763916016
+      }
+    },
+    {
+      "capabilitySearch" : {
+        "appliedMethodsThreshold" : 0.25,
+        "appliedMinFusedScore" : 0.02,
+        "appliedSkillsThreshold" : 0.25,
+        "indexSize" : 61,
+        "latencyMs" : 8.556962013244629,
+        "methodHits" : [
+
+        ],
+        "query" : "help me debug this crash",
+        "registrySize" : 62,
+        "skillHits" : [
+          {
+            "acceptedByThreshold" : true,
+            "embedScore" : 0.6898145,
+            "fusedScore" : 0.6898145,
+            "name" : "Debug Assistant"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.10133261,
+            "fusedScore" : 0.10133261,
+            "name" : "Osaurus Browser"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.09465147,
+            "fusedScore" : 0.09465147,
+            "name" : "Study Tutor"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.07211637,
+            "fusedScore" : 0.07211637,
+            "name" : "Content Summarizer"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.06532208,
+            "fusedScore" : 0.06532208,
+            "name" : "Creative Brainstormer"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.05640681,
+            "fusedScore" : 0.05640681,
+            "name" : "Data Visualizer"
+          }
+        ],
+        "toolHits" : [
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.28524643,
+            "fusedScore" : 0.016393442,
+            "name" : "db_execute"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 8.264583,
+            "fusedScore" : 0.016393442,
+            "name" : "osaurus_status"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.28311527,
+            "fusedScore" : 0.016129032,
+            "name" : "browser_screenshot"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 1.7037094,
+            "embedScore" : 0.1757127,
+            "fusedScore" : 0.016129032,
+            "name" : "share_artifact"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 1.6254991,
+            "fusedScore" : 0.015873017,
+            "name" : "speak"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.27556056,
+            "fusedScore" : 0.015873017,
+            "name" : "send_message"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 1.5194517,
+            "embedScore" : 0.18505996,
+            "fusedScore" : 0.015625,
+            "name" : "browser_open_login"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 1.483334,
+            "fusedScore" : 0.015384615,
+            "name" : "browser_lock"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 1.4287369,
+            "fusedScore" : 0.015151516,
+            "name" : "db_list_views"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 1.3461571,
+            "fusedScore" : 0.014925373,
+            "name" : "db_schema"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 1.2453822,
+            "fusedScore" : 0.014705882,
+            "name" : "search_memory"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 1.1142973,
+            "embedScore" : 0.2064624,
+            "fusedScore" : 0.014492754,
+            "name" : "browser_reset_session"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 1.0537959,
+            "fusedScore" : 0.014285714,
+            "name" : "db_create_table"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 1.0081795,
+            "fusedScore" : 0.014084507,
+            "name" : "schedule_next_run"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.20821868,
+            "fusedScore" : 0,
+            "name" : "db_migrate"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.21081838,
+            "fusedScore" : 0,
+            "name" : "cancel_next_run"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.20144284,
+            "fusedScore" : 0,
+            "name" : "browser_console_messages"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.22132844,
+            "fusedScore" : 0,
+            "name" : "browser_press_key"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.16135523,
+            "fusedScore" : 0,
+            "name" : "browser_handle_dialog"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.19325244,
+            "fusedScore" : 0,
+            "name" : "todo"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.16567384,
+            "fusedScore" : 0,
+            "name" : "db_run_view"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.24743436,
+            "fusedScore" : 0,
+            "name" : "get_unread_messages"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.16629593,
+            "fusedScore" : 0,
+            "name" : "db_drop_view"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.17270012,
+            "fusedScore" : 0,
+            "name" : "notify"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.24475446,
+            "fusedScore" : 0,
+            "name" : "db_delete"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.16136406,
+            "fusedScore" : 0,
+            "name" : "render_chart"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.16728279,
+            "fusedScore" : 0,
+            "name" : "db_restore"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.17046034,
+            "fusedScore" : 0,
+            "name" : "read_messages"
+          }
+        ]
+      },
+      "domain" : "capability_search",
+      "id" : "capability_search.skill-direct-name",
+      "label" : "capability search • skill • direct name match",
+      "latencyMs" : 8.556962013244629,
+      "modelId" : "foundation",
+      "notes" : [
+        "note: Probes the simplest skill recall shape: query carries the skill's category keyword ('debug') as a literal token. The built-in 'Debug Assistant' skill's name + keywords array both contain 'debug' / 'crash', so this should be a near-trivial pass. If even THIS fails, the skill index is dead — useful as a smoke-test before reading the trickier cases. All 7 built-in skills are enabled to keep the catalog realistic.",
+        "skills matched 1/1: [Debug Assistant]",
+        "summary: tools raw=28 accepted=0 | methods raw=0 accepted=0 | skills raw=6 accepted=1 | registry=62 index=61 minFusedScore=0.020 methodsThreshold=0.250 skillsThreshold=0.250"
+      ],
+      "outcome" : "passed",
+      "query" : "help me debug this crash",
+      "telemetry" : {
+        "peakPhysFootprintMb" : 139.62589263916016
+      }
+    },
+    {
+      "capabilitySearch" : {
+        "appliedMethodsThreshold" : 0.25,
+        "appliedMinFusedScore" : 0.02,
+        "appliedSkillsThreshold" : 0.25,
+        "indexSize" : 61,
+        "latencyMs" : 9.057998657226562,
+        "methodHits" : [
+
+        ],
+        "query" : "help me prioritize my tasks",
+        "registrySize" : 62,
+        "skillHits" : [
+          {
+            "acceptedByThreshold" : true,
+            "embedScore" : 0.5487419,
+            "fusedScore" : 0.5487419,
+            "name" : "Productivity Coach"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.1585605,
+            "fusedScore" : 0.1585605,
+            "name" : "Osaurus Browser"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.13365147,
+            "fusedScore" : 0.13365147,
+            "name" : "Debug Assistant"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.12654208,
+            "fusedScore" : 0.12654208,
+            "name" : "Study Tutor"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.081590295,
+            "fusedScore" : 0.081590295,
+            "name" : "Data Visualizer"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.056586955,
+            "fusedScore" : 0.056586955,
+            "name" : "Creative Brainstormer"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.053542275,
+            "fusedScore" : 0.053542275,
+            "name" : "Content Summarizer"
+          }
+        ],
+        "toolHits" : [
+          {
+            "acceptedByThreshold" : true,
+            "bm25Score" : 6.886566,
+            "embedScore" : 0.26002076,
+            "fusedScore" : 0.031318814,
+            "name" : "osaurus_status"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.40137532,
+            "fusedScore" : 0.016393442,
+            "name" : "get_lists"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.36585736,
+            "fusedScore" : 0.016129032,
+            "name" : "todo"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.3414876,
+            "fusedScore" : 0.015873017,
+            "name" : "open_reminder"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.3326175,
+            "fusedScore" : 0.015625,
+            "name" : "browser_wait_for"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.28587246,
+            "fusedScore" : 0.015384615,
+            "name" : "cancel_next_run"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.27005023,
+            "fusedScore" : 0.015151516,
+            "name" : "schedule_next_run"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.256308,
+            "fusedScore" : 0.014705882,
+            "name" : "browser_reset_session"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.23615345,
+            "fusedScore" : 0,
+            "name" : "db_list_views"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.21621788,
+            "fusedScore" : 0,
+            "name" : "browser_lock"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.2310553,
+            "fusedScore" : 0,
+            "name" : "browser_snapshot"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.2231237,
+            "fusedScore" : 0,
+            "name" : "browser_do"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.2317144,
+            "fusedScore" : 0,
+            "name" : "clarify"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.22142193,
+            "fusedScore" : 0,
+            "name" : "create_reminder"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.21768183,
+            "fusedScore" : 0,
+            "name" : "notify"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.22281522,
+            "fusedScore" : 0,
+            "name" : "osaurus_list"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.24031042,
+            "fusedScore" : 0,
+            "name" : "browser_navigate"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.21753067,
+            "fusedScore" : 0,
+            "name" : "browser_cookies"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.24788648,
+            "fusedScore" : 0,
+            "name" : "get_reminders"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.24894957,
+            "fusedScore" : 0,
+            "name" : "browser_handle_dialog"
+          }
+        ]
+      },
+      "domain" : "capability_search",
+      "id" : "capability_search.skill-keyword-only",
+      "label" : "capability search • skill • keyword-array path",
+      "latencyMs" : 9.057998657226562,
+      "modelId" : "foundation",
+      "notes" : [
+        "note: Exercises the keywords-vs-description branch in `SkillSearchService.buildIndexText` (lines 236-241): the 'Productivity Coach' skill's keywords array carries 'prioritize' and 'tasks' as literal tokens but the description text uses softer phrasing. When `keywords` is non-empty, the index text is `name + keywords.joined(' ')` — description is dropped. Verifies the keyword path is actually contributing signal end-to-end.",
+        "skills matched 1/1: [Productivity Coach]",
+        "summary: tools raw=20 accepted=1 | methods raw=0 accepted=0 | skills raw=7 accepted=1 | registry=62 index=61 minFusedScore=0.020 methodsThreshold=0.250 skillsThreshold=0.250"
+      ],
+      "outcome" : "passed",
+      "query" : "help me prioritize my tasks",
+      "telemetry" : {
+        "peakPhysFootprintMb" : 139.62589263916016
+      }
+    },
+    {
+      "capabilitySearch" : {
+        "appliedMethodsThreshold" : 0.25,
+        "appliedMinFusedScore" : 0.02,
+        "appliedSkillsThreshold" : 0.25,
+        "indexSize" : 61,
+        "latencyMs" : 8.806943893432617,
+        "methodHits" : [
+
+        ],
+        "query" : "give me the gist of this article",
+        "registrySize" : 62,
+        "skillHits" : [
+          {
+            "acceptedByThreshold" : true,
+            "embedScore" : 0.36417347,
+            "fusedScore" : 0.36417347,
+            "name" : "Content Summarizer"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.17417178,
+            "fusedScore" : 0.17417178,
+            "name" : "Study Tutor"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.121903345,
+            "fusedScore" : 0.121903345,
+            "name" : "Debug Assistant"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.11704595,
+            "fusedScore" : 0.11704595,
+            "name" : "Data Visualizer"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.08218385,
+            "fusedScore" : 0.08218385,
+            "name" : "Osaurus Browser"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.044352017,
+            "fusedScore" : 0.044352017,
+            "name" : "Research Analyst"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.020928437,
+            "fusedScore" : 0.020928437,
+            "name" : "Creative Brainstormer"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.0040682517,
+            "fusedScore" : 0.0040682517,
+            "name" : "Productivity Coach"
+          }
+        ],
+        "toolHits" : [
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 6.534585,
+            "fusedScore" : 0.016393442,
+            "name" : "osaurus_status"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 3.019832,
+            "fusedScore" : 0.016129032,
+            "name" : "db_schema"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 2.4997017,
+            "fusedScore" : 0.015873017,
+            "name" : "browser_reset_session"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 2.3639789,
+            "embedScore" : 0.12510265,
+            "fusedScore" : 0.015625,
+            "name" : "db_create_table"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 2.0209804,
+            "fusedScore" : 0.015384615,
+            "name" : "complete"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 1.9696718,
+            "fusedScore" : 0.015151516,
+            "name" : "browser_snapshot"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 1.7944323,
+            "fusedScore" : 0.014925373,
+            "name" : "clarify"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 1.7037107,
+            "embedScore" : 0.19308738,
+            "fusedScore" : 0.014705882,
+            "name" : "share_artifact"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 1.6255008,
+            "fusedScore" : 0.014492754,
+            "name" : "speak"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 1.5194532,
+            "fusedScore" : 0.014285714,
+            "name" : "browser_open_login"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 1.483334,
+            "fusedScore" : 0.014084507,
+            "name" : "browser_lock"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 1.4287369,
+            "fusedScore" : 0.013888889,
+            "name" : "db_list_views"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 1.4263495,
+            "fusedScore" : 0.01369863,
+            "name" : "db_define_view"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 1.2453837,
+            "fusedScore" : 0.013513514,
+            "name" : "search_memory"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 1.0081811,
+            "fusedScore" : 0.013333334,
+            "name" : "schedule_next_run"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 1.6277265e-06,
+            "fusedScore" : 0.013157895,
+            "name" : "browser_handle_dialog"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 1.5456047e-06,
+            "embedScore" : 0.17014481,
+            "fusedScore" : 0.012987013,
+            "name" : "todo"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 1.5369538e-06,
+            "fusedScore" : 0.012820513,
+            "name" : "browser_do"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 1.493846e-06,
+            "fusedScore" : 0.012658228,
+            "name" : "cancel_next_run"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "bm25Score" : 1.453689e-06,
+            "embedScore" : 0.17272222,
+            "fusedScore" : 0.0125,
+            "name" : "browser_set_user_agent"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.13483612,
+            "fusedScore" : 0,
+            "name" : "create_reminder"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.22222787,
+            "fusedScore" : 0,
+            "name" : "render_chart"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.16749856,
+            "fusedScore" : 0,
+            "name" : "get_unread_messages"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.14469662,
+            "fusedScore" : 0,
+            "name" : "read_messages"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.15251753,
+            "fusedScore" : 0,
+            "name" : "browser_type"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.12555532,
+            "fusedScore" : 0,
+            "name" : "open_reminder"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.21396744,
+            "fusedScore" : 0,
+            "name" : "browser_network_requests"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.13572516,
+            "fusedScore" : 0,
+            "name" : "browser_screenshot"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.24221861,
+            "fusedScore" : 0,
+            "name" : "send_message"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.1563259,
+            "fusedScore" : 0,
+            "name" : "search_reminders"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.13931277,
+            "fusedScore" : 0,
+            "name" : "browser_set_viewport"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.14293131,
+            "fusedScore" : 0,
+            "name" : "get_lists"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.15020525,
+            "fusedScore" : 0,
+            "name" : "get_reminders"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.13734335,
+            "fusedScore" : 0,
+            "name" : "browser_press_key"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.12685873,
+            "fusedScore" : 0,
+            "name" : "search_events"
+          },
+          {
+            "acceptedByThreshold" : false,
+            "embedScore" : 0.23318572,
+            "fusedScore" : 0,
+            "name" : "browser_cookies"
+          }
+        ]
+      },
+      "domain" : "capability_search",
+      "id" : "capability_search.skill-paraphrase",
+      "label" : "capability search • skill • paraphrase",
+      "latencyMs" : 8.806943893432617,
+      "modelId" : "foundation",
+      "notes" : [
+        "note: Probes the embed-still-needed class on the skills lane: 'gist' is a synonym of 'summarize' / 'tldr' / 'key-points'. FIXED + PROMOTED 2026-06-19 (W3): the gap was a recall/description gap, not a threshold problem — 'gist' shared no surface tokens with the 'Content Summarizer' skill and sat below the embedder's top hits. Resolution was pure data: enriched the skill's `keywords` array with paraphrase synonyms ('gist', 'overview', 'recap', 'synopsis', 'brief', 'abstract', 'main-points', 'takeaways', 'highlights', 'skim') so `SkillSearchService.buildIndexText` embeds them. Now matches Content Summarizer 1/1 and is enforced at minMatches=1 in recall_floors.json.",
+        "skills matched 1/1: [Content Summarizer]",
+        "summary: tools raw=36 accepted=0 | methods raw=0 accepted=0 | skills raw=8 accepted=1 | registry=62 index=61 minFusedScore=0.020 methodsThreshold=0.250 skillsThreshold=0.250"
+      ],
+      "outcome" : "passed",
+      "query" : "give me the gist of this article",
+      "telemetry" : {
+        "peakPhysFootprintMb" : 139.62589263916016
+      }
+    },
+    {
+      "domain" : "capability_search",
+      "id" : "capability_search.weather-natural",
+      "label" : "capability search • weather (natural language)",
+      "modelId" : "foundation",
+      "notes" : [
+        "missing plugins: osaurus.weather"
+      ],
+      "outcome" : "skipped",
+      "telemetry" : {
+        "peakPhysFootprintMb" : 139.62589263916016
+      }
+    }
+  ],
+  "modelId" : "foundation",
+  "startedAt" : "2026-06-19T22:44:35Z"
+}

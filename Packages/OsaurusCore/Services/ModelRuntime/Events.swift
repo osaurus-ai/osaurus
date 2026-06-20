@@ -41,6 +41,7 @@ enum ModelRuntimeEvent: Sendable {
         tokenCount: Int,
         tokensPerSecond: Double,
         unclosedReasoning: Bool,
-        stopReason: String?
+        stopReason: String?,
+        promptTokensPerSecond: Double
     )
 }

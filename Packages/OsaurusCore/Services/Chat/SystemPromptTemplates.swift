@@ -78,7 +78,7 @@ public enum SystemPromptTemplates {
 
         - `todo(markdown)` — user-visible checklist. For 3+ step tasks, write it before starting, then re-send the full list with each box checked as you finish.
         - `complete(summary)` — once at the very end, never alongside other tools: WHAT you did + HOW you verified. No vague placeholders.
-        - `clarify(question)` — ask one concrete question only when guessing wrong would change the result; otherwise pick a sensible default.
+        - `clarify(question)` — last resort, NOT for big or multi-step tasks. If the request is fully specified, just do the work. Ask one concrete question only when a required input is missing or contradictory and no sensible default exists (or the user explicitly asks you to); otherwise assume a reasonable default, proceed, and note it.
         - `share_artifact(path | content+filename)` — the only way the user sees a file/image/report; the file MUST exist first. Sandbox: save under home, not `/tmp`.
         """
 
@@ -201,7 +201,7 @@ public enum SystemPromptTemplates {
             return """
                 ## Discovering more tools
 
-                Your tool list is a fixed starting set, not exhaustive. The Enabled capabilities list names more to load by id with `capabilities_load`; when something is missing and NOT listed, `capabilities_discover({"query": "<what you need>"})` searches the rest. Do not invent tool names.
+                Your tool list is a fixed starting set, not exhaustive — when a task needs something you don't already have, reach for it before answering from memory or saying you can't. The Enabled capabilities list names more to load by id with `capabilities_load`; when something is missing and NOT listed, `capabilities_discover({"query": "<what you need>"})` searches the rest. Do not invent tool names, and never claim a capability is unavailable without first checking the list and running `capabilities_discover`.
 
                 A missing capability is the start of work, not a dead end. In order: \(numbered). Credentials follow Secret handling; destructive actions follow Risk-aware actions.
                 """

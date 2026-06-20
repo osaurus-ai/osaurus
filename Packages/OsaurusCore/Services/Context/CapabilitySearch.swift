@@ -112,6 +112,13 @@ enum CapabilitySearch {
         topK: Int,
         allowedToolNames: Set<String>? = nil
     ) async -> CapabilitySearchResults {
+        // Query-intent abstain: a pure greeting/closing pleasantry has no
+        // capability to discover, so skip the lanes entirely (see
+        // CapabilityQueryIntent — the pre-RRF gate the cosine-floor sweep
+        // flagged as the correct fix for the abstain class).
+        if CapabilityQueryIntent.isConversationalAbstain(query) {
+            return CapabilitySearchResults(methods: [], tools: [], skills: [])
+        }
         await CapabilitySearchDiagnostics.logSnapshotOnce(
             reason: "CapabilitySearch.searchToolsOnly"
         )
@@ -133,6 +140,14 @@ enum CapabilitySearch {
         let methodsThreshold = minimumRelevanceScoreMethods
         let skillsThreshold = minimumRelevanceScoreSkills
         let fusedCutoff = minimumFusedScore
+
+        // Query-intent abstain: short-circuit pure chit-chat before any
+        // BM25/embed work (see CapabilityQueryIntent). Returns empty so
+        // `capabilities_discover` doesn't surface RRF-saturation noise for
+        // a greeting/thank-you with no capability intent.
+        if CapabilityQueryIntent.isConversationalAbstain(query) {
+            return CapabilitySearchResults(methods: [], tools: [], skills: [])
+        }
 
         // Per-process cheap-path snapshot. First call from this site
         // emits one `CapabilitySearchHealth` line; subsequent calls

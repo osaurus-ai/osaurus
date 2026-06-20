@@ -116,13 +116,102 @@ public enum EvalRunner {
             notes: ["note: \(extra)"] + row.notes,
             modelId: row.modelId,
             latencyMs: row.latencyMs,
-            toolUsage: row.toolUsage
+            toolUsage: row.toolUsage,
+            telemetry: row.telemetry
         )
     }
 
     // MARK: - Per-case
 
+    /// Domains that load MLX (local model or embedder) or call a model,
+    /// so peak-RAM + KV-cache telemetry is meaningful. Deterministic
+    /// pure-data domains (schema, coercion, …) are excluded so their rows
+    /// stay telemetry-free instead of carrying a noisy process footprint.
+    private static let resourceSampledDomains: Set<String> = [
+        "agent_loop", "capability_claims", "computer_use_loop", "capability_search",
+    ]
+
     private static func runOne(
+        _ testCase: EvalCase,
+        modelId: String,
+        thresholdOverride: Float? = nil,
+        embedCosineFloorOverride: Float? = nil
+    ) async -> EvalCaseReport {
+        guard resourceSampledDomains.contains(testCase.domain) else {
+            return await dispatchCase(
+                testCase,
+                modelId: modelId,
+                thresholdOverride: thresholdOverride,
+                embedCosineFloorOverride: embedCosineFloorOverride
+            )
+        }
+        // Wrap model/embedder-driven cases with a peak-RAM sampler and a
+        // before/after KV-cache snapshot. The sampler keeps observing the
+        // physical footprint while the main actor is blocked inside MLX
+        // decode; the KV delta proves prefix reuse across loop iterations.
+        let sampler = PeakMemorySampler.start()
+        let kvBefore = await ModelRuntime.batchDiagnosticsSnapshot()
+        let row = await dispatchCase(
+            testCase,
+            modelId: modelId,
+            thresholdOverride: thresholdOverride,
+            embedCosineFloorOverride: embedCosineFloorOverride
+        )
+        let kvAfter = await ModelRuntime.batchDiagnosticsSnapshot()
+        let peakMb = sampler.stop()
+        return mergeResourceTelemetry(into: row, peakMb: peakMb, kvBefore: kvBefore, kvAfter: kvAfter)
+    }
+
+    /// Fold runner-level resource telemetry (peak RAM + KV-prefix delta)
+    /// into a case row, preserving any generation telemetry the domain
+    /// runner already attached (decode tok/s, TTFT, prefill from the
+    /// agent-loop transcript). KV deltas are only recorded when both
+    /// snapshots exist (a remote-only run has neither).
+    private static func mergeResourceTelemetry(
+        into row: EvalCaseReport,
+        peakMb: Double?,
+        kvBefore: BatchDiagnosticsSnapshot?,
+        kvAfter: BatchDiagnosticsSnapshot?
+    ) -> EvalCaseReport {
+        var hitsDelta: Int?
+        var missesDelta: Int?
+        var ssmHitsDelta: Int?
+        var ssmReDerivesDelta: Int?
+        if let before = kvBefore, let after = kvAfter {
+            hitsDelta = after.prefixHits - before.prefixHits
+            missesDelta = after.prefixMisses - before.prefixMisses
+            ssmHitsDelta = after.ssmCompanionHits - before.ssmCompanionHits
+            ssmReDerivesDelta = after.ssmCompanionReDerives - before.ssmCompanionReDerives
+        }
+        let existing = row.telemetry
+        let merged = EvalCaseTelemetry(
+            decodeTokensPerSecond: existing?.decodeTokensPerSecond,
+            prefillTokensPerSecond: existing?.prefillTokensPerSecond,
+            ttftMs: existing?.ttftMs,
+            completionTokens: existing?.completionTokens,
+            peakPhysFootprintMb: peakMb,
+            kvPrefixHitsDelta: hitsDelta,
+            kvPrefixMissesDelta: missesDelta,
+            ssmCompanionHitsDelta: ssmHitsDelta,
+            ssmCompanionReDerivesDelta: ssmReDerivesDelta
+        )
+        guard !merged.isEmpty else { return row }
+        return EvalCaseReport(
+            id: row.id,
+            label: row.label,
+            domain: row.domain,
+            query: row.query,
+            outcome: row.outcome,
+            capabilitySearch: row.capabilitySearch,
+            notes: row.notes,
+            modelId: row.modelId,
+            latencyMs: row.latencyMs,
+            toolUsage: row.toolUsage,
+            telemetry: merged
+        )
+    }
+
+    private static func dispatchCase(
         _ testCase: EvalCase,
         modelId: String,
         thresholdOverride: Float? = nil,
@@ -1071,7 +1160,7 @@ public enum EvalRunner {
             agentId: resolvedAgentId
         )
 
-        let judgeModel = ProcessInfo.processInfo.environment["JUDGE_MODEL"]
+        let judgeModel = EvalJudgeModel.resolveAndWarnOnce(runModelId: modelId)
         let started = Date()
         let transcript = await CapabilityClaimsEvaluator.run(
             query: testCase.query,

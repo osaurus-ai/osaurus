@@ -1,0 +1,46 @@
+{
+  "cases" : [
+    {
+      "domain" : "streaming_hint",
+      "id" : "streaming_hint.encode-args-with-quotes",
+      "label" : "streaming_hint • encodeArgs round-trips JSON with quotes/newlines intact",
+      "modelId" : "mlx-community/Qwen3-4B-4bit",
+      "notes" : [
+
+      ],
+      "outcome" : "passed"
+    },
+    {
+      "domain" : "streaming_hint",
+      "id" : "streaming_hint.encode-done-roundtrip",
+      "label" : "streaming_hint • encodeDone preserves all four payload fields",
+      "modelId" : "mlx-community/Qwen3-4B-4bit",
+      "notes" : [
+
+      ],
+      "outcome" : "passed"
+    },
+    {
+      "domain" : "streaming_hint",
+      "id" : "streaming_hint.encode-empty-object-args",
+      "label" : "streaming_hint • encodeArgs round-trips an empty-object args fragment",
+      "modelId" : "mlx-community/Qwen3-4B-4bit",
+      "notes" : [
+        "note: A zero-argument tool call (e.g. capabilities_discover) streams its args as '{}'. Pins that the args sentinel encode -> isSentinel -> decodeArgs round-trips the empty-object fragment intact rather than collapsing it to an empty string."
+      ],
+      "outcome" : "passed"
+    },
+    {
+      "domain" : "streaming_hint",
+      "id" : "streaming_hint.encode-roundtrip",
+      "label" : "streaming_hint • encode/decode round-trip on a tool name",
+      "modelId" : "mlx-community/Qwen3-4B-4bit",
+      "notes" : [
+
+      ],
+      "outcome" : "passed"
+    }
+  ],
+  "modelId" : "mlx-community/Qwen3-4B-4bit",
+  "startedAt" : "2026-06-19T22:44:37Z"
+}

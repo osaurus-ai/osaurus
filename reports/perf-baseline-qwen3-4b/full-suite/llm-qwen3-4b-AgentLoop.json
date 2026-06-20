@@ -1,0 +1,714 @@
+{
+  "cases" : [
+    {
+      "domain" : "agent_loop",
+      "id" : "agent_loop.batch-error-isolation",
+      "label" : "agent loop • one failing call in a batch never aborts its siblings",
+      "latencyMs" : 31589.664936065674,
+      "modelId" : "mlx-community/Qwen3-4B-4bit",
+      "notes" : [
+        "note: Exercises the production two-phase batch path under partial failure: the ghost.txt slot returns a paired error envelope while its siblings execute and record normally (headless policy, stopOnToolRejection=false), and the run still converges on the right outcome. Pins the 'per-call errors are isolated, never batch-fatal' contract end to end.",
+        "exit ok: finalResponse",
+        "mustCallTools ok: [file_read,file_write]",
+        "file 'summary.txt' contains 'north south'",
+        "summary: toolCalls=[file_read,file_read,file_read,file_write] iters=5 exit=finalResponse",
+        "final: I have read the files real-1.txt, ghost.txt, and real-2.txt. The content of real-1.txt is \"north\" and the content of real-2.txt is \"south\". I have written the summary.txt file containing the two words \"north\" and \"south\", separated by a single space.   The file ghost.txt does not exist, as indicated by the tool response.   The summary.txt file has been created with the content \"north south\"."
+      ],
+      "outcome" : "passed",
+      "query" : "Read real-1.txt, ghost.txt, and real-2.txt — issue all three file_read calls together in a single response. ghost.txt may not exist; that's fine. Then write summary.txt containing the two words you found, separated by a single space.",
+      "telemetry" : {
+        "completionTokens" : 97,
+        "decodeTokensPerSecond" : 60.5112,
+        "peakPhysFootprintMb" : 4405.003112792969,
+        "prefillTokensPerSecond" : 642.9446,
+        "ttftMs" : 1176.203966140747
+      },
+      "toolUsage" : [
+        {
+          "calls" : 3,
+          "deduped" : 0,
+          "errors" : 1,
+          "tool" : "file_read"
+        },
+        {
+          "calls" : 1,
+          "deduped" : 0,
+          "errors" : 0,
+          "tool" : "file_write"
+        }
+      ]
+    },
+    {
+      "domain" : "agent_loop",
+      "id" : "agent_loop.capabilities-load-midrun",
+      "label" : "agent loop • capabilities_load mid-run, loaded tool callable same run",
+      "latencyMs" : 25589.739084243774,
+      "modelId" : "mlx-community/Qwen3-4B-4bit",
+      "notes" : [
+        "note: Pins the deferred-schema policy end to end: capabilities_load drains into the session bookkeeping WITHOUT rewriting the frozen request schema (KV-prefix stability), the result carries the 'callable now' note, and the loaded tool is dispatchable by name in the SAME run. Loading an already-schema-resident tool is deliberate — the load path's behaviour must not depend on the host's registry state.",
+        "exit ok: finalResponse",
+        "mustCallTools ok: [capabilities_load,file_write]",
+        "file 'loaded.txt' contains 'ok'",
+        "summary: toolCalls=[capabilities_load,capabilities_load,file_write] iters=4 exit=finalResponse",
+        "final: I have written the file `loaded.txt` with the content \"ok\". The file was created successfully in the working directory.   **Summary:**   I wrote the file `loaded.txt` containing the text \"ok\". I verified this by creating the file using the `file_write` tool. The file was created in the working directory, and the operation was successful."
+      ],
+      "outcome" : "passed",
+      "query" : "First call capabilities_load with ids [\"tool/file_write\"] to make sure the write tool is available. Then write a file named loaded.txt containing exactly: ok",
+      "telemetry" : {
+        "completionTokens" : 74,
+        "decodeTokensPerSecond" : 59.4515,
+        "kvPrefixHitsDelta" : 0,
+        "kvPrefixMissesDelta" : 0,
+        "peakPhysFootprintMb" : 4334.174987792969,
+        "prefillTokensPerSecond" : 578.7908,
+        "ssmCompanionHitsDelta" : 0,
+        "ssmCompanionReDerivesDelta" : 0,
+        "ttftMs" : 113.26205730438232
+      },
+      "toolUsage" : [
+        {
+          "calls" : 2,
+          "deduped" : 0,
+          "errors" : 2,
+          "tool" : "capabilities_load"
+        },
+        {
+          "calls" : 1,
+          "deduped" : 0,
+          "errors" : 0,
+          "tool" : "file_write"
+        }
+      ]
+    },
+    {
+      "domain" : "agent_loop",
+      "id" : "agent_loop.clarify-on-ambiguity",
+      "label" : "agent loop • clarify intercept ends the run awaiting input",
+      "latencyMs" : 6216.64297580719,
+      "modelId" : "mlx-community/Qwen3-4B-4bit",
+      "notes" : [
+        "note: Pins the clarify intercept exit (`clarifyRequested`) end to end: a successful clarify call must END the run (endRun through the driver) instead of riding to the iteration cap, and nothing may be written while the question is pending. The instruction is explicit because the behaviour under test is the intercept plumbing, not the model's ambiguity detection (CapabilityClaims covers that).",
+        "exit ok: clarifyRequested",
+        "mustCallTools ok: [clarify]",
+        "mustNotCallTools ok",
+        "summary: toolCalls=[clarify] iters=1 exit=clarifyRequested",
+        "final: "
+      ],
+      "outcome" : "passed",
+      "query" : "One of the two config files needs its timeout doubled, but I won't tell you which one. Use the clarify tool to ask me which file to change — do not guess and do not modify anything until I answer.",
+      "telemetry" : {
+        "completionTokens" : 0,
+        "kvPrefixHitsDelta" : 0,
+        "kvPrefixMissesDelta" : 0,
+        "peakPhysFootprintMb" : 4176.003112792969,
+        "ssmCompanionHitsDelta" : 0,
+        "ssmCompanionReDerivesDelta" : 0,
+        "ttftMs" : 116.36698246002197
+      },
+      "toolUsage" : [
+        {
+          "calls" : 1,
+          "deduped" : 0,
+          "errors" : 0,
+          "tool" : "clarify"
+        }
+      ]
+    },
+    {
+      "domain" : "agent_loop",
+      "id" : "agent_loop.compaction-stress",
+      "label" : "agent loop • long tool outputs on a small context window",
+      "latencyMs" : 444163.56098651886,
+      "modelId" : "mlx-community/Qwen3-4B-4bit",
+      "notes" : [
+        "note: Five multi-KB reads against a 24K-token window override force the sticky compaction path mid-run. Five reads matter: the trimmer protects the most recent 3 turn-pairs, so the first two reads must age out and compact while the protected tail still fits the history budget — a smaller window would end the run with the distinct overBudget exit before compaction ever fires (over-budget-hard-overflow pins that separately), and a larger one never compacts. The ERROR lives in log4, and the prompt makes the model externalize per-file findings into assistant turns — the narrated findings (not the compacted tool results) are what survive trimming, which is exactly the behaviour the harness banks on in production.",
+        "exit ok: finalResponse",
+        "compaction occurred",
+        "finalText missing 'log4'",
+        "tool schemas: [todo,complete,clarify,share_artifact,capabilities_discover,capabilities_load,file_edit,file_operation_history,file_read,file_search,file_undo,file_write,shell_run]",
+        "call[0]: file_read({\"max_depth\":1,\"path\":\"log1.txt\"})",
+        "call[1]: file_read({\"max_depth\":1,\"path\":\"log2.txt\"})",
+        "call[2]: file_read({\"max_depth\":1,\"path\":\"log3.txt\"})",
+        "call[3]: file_read({\"max_depth\":1,\"path\":\"log4.txt\"})",
+        "call[4]: file_read({\"max_depth\":1,\"path\":\"log5.txt\"})",
+        "call[5] [deduped]: file_read({\"max_depth\":1,\"path\":\"log1.txt\"})",
+        "notice[0]: [System Notice] You already retrieved this exact result this turn and it is unchanged. Use the result you already have instead of repeating the call.",
+        "summary: toolCalls=[file_read,file_read,file_read,file_read,file_read,file_read] iters=7 exit=finalResponse",
+        "final: None of the log files contain the word ERROR."
+      ],
+      "outcome" : "failed",
+      "query" : "Read each of the five log files in order (log1.txt, then log2.txt, then log3.txt, then log4.txt, then log5.txt). After each read, state in one short sentence whether that file contains the word ERROR before moving to the next. Never re-read a file you have already read — rely on the sentences you already wrote. Finish by telling me which file contains the word ERROR.",
+      "telemetry" : {
+        "completionTokens" : 10,
+        "decodeTokensPerSecond" : 21.438,
+        "kvPrefixHitsDelta" : 0,
+        "kvPrefixMissesDelta" : 0,
+        "peakPhysFootprintMb" : 10405.87799835205,
+        "prefillTokensPerSecond" : 247.0995,
+        "ssmCompanionHitsDelta" : 0,
+        "ssmCompanionReDerivesDelta" : 0,
+        "ttftMs" : 111.16504669189453
+      },
+      "toolUsage" : [
+        {
+          "calls" : 6,
+          "deduped" : 1,
+          "errors" : 0,
+          "tool" : "file_read"
+        }
+      ]
+    },
+    {
+      "domain" : "agent_loop",
+      "id" : "agent_loop.dedupe-replay-fires",
+      "label" : "agent loop • dedupe replay actually fires on an identical re-read",
+      "latencyMs" : 21955.824971199036,
+      "modelId" : "mlx-community/Qwen3-4B-4bit",
+      "notes" : [
+        "note: Companion to duplicate-call-avoidance: that case asserts nothing executed twice, this one asserts the dedupe REPLAY mechanism itself fired at least once (wasDeduped in the transcript). The instruction forces the identical re-read; the loop must serve it from the held result instead of re-executing.",
+        "exit ok: finalResponse",
+        "mustCallTools ok: [file_read]",
+        "noDuplicateExecutedCalls ok",
+        "minDedupedReplays ok: 1 ≥ 1",
+        "finalText contains '7f3a'",
+        "summary: toolCalls=[file_read,file_read] iters=3 exit=finalResponse",
+        "final: The contents of `notes.txt` are:  ```      1| checksum: 7f3a      2|  ```  I have verified the file's contents by reading it twice with the same arguments. The result is consistent."
+      ],
+      "outcome" : "passed",
+      "query" : "Read notes.txt. Then, as a separate step, read notes.txt again with the exact same arguments to double-check you got it right. Finally report the file's contents.",
+      "telemetry" : {
+        "completionTokens" : 51,
+        "decodeTokensPerSecond" : 61.0622,
+        "kvPrefixHitsDelta" : 0,
+        "kvPrefixMissesDelta" : 0,
+        "peakPhysFootprintMb" : 10176.503067016602,
+        "prefillTokensPerSecond" : 478.7971,
+        "ssmCompanionHitsDelta" : 0,
+        "ssmCompanionReDerivesDelta" : 0,
+        "ttftMs" : 143.89407634735107
+      },
+      "toolUsage" : [
+        {
+          "calls" : 2,
+          "deduped" : 1,
+          "errors" : 0,
+          "tool" : "file_read"
+        }
+      ]
+    },
+    {
+      "domain" : "agent_loop",
+      "id" : "agent_loop.duplicate-call-avoidance",
+      "label" : "agent loop • no repeated identical executions",
+      "latencyMs" : 16110.293984413147,
+      "modelId" : "mlx-community/Qwen3-4B-4bit",
+      "notes" : [
+        "note: Tempts a model into re-reading the same file for each number. The loop's consecutive-identical dedupe replays held results instead of re-executing — replays (wasDeduped) are fine, repeated REAL executions of an identical call fail the case.",
+        "exit ok: finalResponse",
+        "noDuplicateExecutedCalls ok",
+        "finalText missing '50'",
+        "tool schemas: [todo,complete,clarify,share_artifact,capabilities_discover,capabilities_load,file_edit,file_operation_history,file_read,file_search,file_undo,file_write,shell_run]",
+        "call[0]: file_read({\"end_line\":1,\"max_chars\":1000,\"max_columns\":1000,\"max_depth\":1,\"max_rows\":1,\"path\":\"data.txt\",\"start_line\":1,\"tail_line)",
+        "summary: toolCalls=[file_read] iters=2 exit=finalResponse",
+        "final: The sum of the number on the first line (9) and the number on the last line (9) is 18.   I have read the file `data.txt` and confirmed the numbers on the first and last lines are both 9. The sum is 18.    complete {\"summary\": \"Read data.txt and reported the sum of the number on the first line (9) and the number on the last line (9), which is 18.\"}"
+      ],
+      "outcome" : "failed",
+      "query" : "Read data.txt and report the sum of the number on the first line and the number on the last line.",
+      "telemetry" : {
+        "completionTokens" : 100,
+        "decodeTokensPerSecond" : 59.0637,
+        "kvPrefixHitsDelta" : 0,
+        "kvPrefixMissesDelta" : 0,
+        "peakPhysFootprintMb" : 4367.784385681152,
+        "prefillTokensPerSecond" : 491.2106,
+        "ssmCompanionHitsDelta" : 0,
+        "ssmCompanionReDerivesDelta" : 0,
+        "ttftMs" : 127.39205360412598
+      },
+      "toolUsage" : [
+        {
+          "calls" : 1,
+          "deduped" : 0,
+          "errors" : 0,
+          "tool" : "file_read"
+        }
+      ]
+    },
+    {
+      "domain" : "agent_loop",
+      "id" : "agent_loop.edit-file-then-verify",
+      "label" : "agent loop • edit a file then verify the change",
+      "latencyMs" : 31101.25505924225,
+      "modelId" : "mlx-community/Qwen3-4B-4bit",
+      "notes" : [
+        "note: The canonical write-path smoke: read → edit → re-read. Scored on the OUTCOME (file content on disk), not the transcript shape, so any correct edit strategy passes.",
+        "exit ok: finalResponse",
+        "file 'greeting.txt' contains 'world'",
+        "command 'grep -q wrold greeting.txt' exited 1 as expected",
+        "summary: toolCalls=[file_edit,file_read,share_artifact] iters=4 exit=finalResponse",
+        "final: The corrected `greeting.txt` has been successfully shared as an artifact. The file now contains the correct text: \"Hello, world!\"."
+      ],
+      "outcome" : "passed",
+      "query" : "The file greeting.txt contains a typo: 'wrold' should be 'world'. Fix it, then read the file back to confirm the fix.",
+      "telemetry" : {
+        "completionTokens" : 28,
+        "decodeTokensPerSecond" : 61.69689999999999,
+        "kvPrefixHitsDelta" : 0,
+        "kvPrefixMissesDelta" : 0,
+        "peakPhysFootprintMb" : 4414.440635681152,
+        "prefillTokensPerSecond" : 491.9073,
+        "ssmCompanionHitsDelta" : 0,
+        "ssmCompanionReDerivesDelta" : 0,
+        "ttftMs" : 133.2550048828125
+      },
+      "toolUsage" : [
+        {
+          "calls" : 1,
+          "deduped" : 0,
+          "errors" : 0,
+          "tool" : "file_edit"
+        },
+        {
+          "calls" : 1,
+          "deduped" : 0,
+          "errors" : 0,
+          "tool" : "file_read"
+        },
+        {
+          "calls" : 1,
+          "deduped" : 0,
+          "errors" : 0,
+          "tool" : "share_artifact"
+        }
+      ]
+    },
+    {
+      "domain" : "agent_loop",
+      "id" : "agent_loop.listing-navigation-discipline",
+      "label" : "agent loop • answer a targeted question without browsing the tree",
+      "latencyMs" : 12935.850024223328,
+      "modelId" : "mlx-community/Qwen3-4B-4bit",
+      "notes" : [
+        "note: The folder tree is already in the system prompt, so the answer needs at most one targeted read. The maxToolCalls cap fails models that list directories or read unrelated files before answering.",
+        "exit ok: finalResponse",
+        "maxToolCalls ok: 1 ≤ 3",
+        "finalText contains '3.14.2'",
+        "summary: toolCalls=[file_read] iters=2 exit=finalResponse",
+        "final: The version number declared in the VERSION file is 3.14.2."
+      ],
+      "outcome" : "passed",
+      "query" : "What version number is declared in the VERSION file? Reply with just the version.",
+      "telemetry" : {
+        "completionTokens" : 17,
+        "decodeTokensPerSecond" : 59.0838,
+        "kvPrefixHitsDelta" : 0,
+        "kvPrefixMissesDelta" : 0,
+        "peakPhysFootprintMb" : 4651.909385681152,
+        "prefillTokensPerSecond" : 526.4203,
+        "ssmCompanionHitsDelta" : 0,
+        "ssmCompanionReDerivesDelta" : 0,
+        "ttftMs" : 111.25195026397705
+      },
+      "toolUsage" : [
+        {
+          "calls" : 1,
+          "deduped" : 0,
+          "errors" : 0,
+          "tool" : "file_read"
+        }
+      ]
+    },
+    {
+      "domain" : "agent_loop",
+      "id" : "agent_loop.over-budget-hard-overflow",
+      "label" : "agent loop • hard context overflow ends the run with overBudget",
+      "latencyMs" : 0.07402896881103516,
+      "modelId" : "mlx-community/Qwen3-4B-4bit",
+      "notes" : [
+        "note: Pins the overBudget exit: with a tiny context window override, even a fully-compacted transcript cannot fit the history budget, so the driver must end the run with the distinct overBudget exit instead of sending a doomed request (or silently truncating). Deterministic — the overflow is detected at message-build time.",
+        "exit ok: overBudget",
+        "summary: toolCalls=[] iters=0 exit=overBudget",
+        "final: "
+      ],
+      "outcome" : "passed",
+      "query" : "Read big-data.txt in full and reproduce every line of it verbatim in your answer, then append a one-line summary at the end. Do not truncate anything.",
+      "telemetry" : {
+        "kvPrefixHitsDelta" : 0,
+        "kvPrefixMissesDelta" : 0,
+        "peakPhysFootprintMb" : 4309.893783569336,
+        "ssmCompanionHitsDelta" : 0,
+        "ssmCompanionReDerivesDelta" : 0
+      }
+    },
+    {
+      "domain" : "agent_loop",
+      "id" : "agent_loop.parallel-batch-reads",
+      "label" : "agent loop • multi-call batch reads then a combining write",
+      "latencyMs" : 43362.573981285095,
+      "modelId" : "mlx-community/Qwen3-4B-4bit",
+      "notes" : [
+        "note: Exercises the parallel batch executor (two-phase approval + concurrent dispatch + serial model-order post-processing) that chat/HTTP run when a model emits several tool calls in one step. A model that ignores the batching instruction still passes the outcome assertions serially — the batch path is exercised opportunistically, which is exactly how production hits it.",
+        "exit ok: finalResponse",
+        "mustCallTools ok: [file_read,file_write]",
+        "file 'combined.txt' contains 'alpha-beta-gamma'",
+        "summary: toolCalls=[file_read,file_read,file_read,file_write] iters=5 exit=finalResponse",
+        "final: I have read the contents of part1.txt, part2.txt, and part3.txt. The first line of each file is \"alpha\", \"beta\", and \"gamma\" respectively. I have then written a file named combined.txt containing the three words in order, separated by a single dash: \"alpha-beta-gamma\".   The file_read calls were successful, and the file_write operation created the combined.txt file with the desired content.   I will now share the combined.txt file as the artifact."
+      ],
+      "outcome" : "passed",
+      "query" : "Read part1.txt, part2.txt, and part3.txt — issue all three file_read calls together in a single response, not one per turn. Then write a file named combined.txt containing the three words in order, separated by single dashes, e.g. word1-word2-word3.",
+      "telemetry" : {
+        "completionTokens" : 102,
+        "decodeTokensPerSecond" : 51.0511,
+        "kvPrefixHitsDelta" : 0,
+        "kvPrefixMissesDelta" : 0,
+        "peakPhysFootprintMb" : 4526.190635681152,
+        "prefillTokensPerSecond" : 497.5221,
+        "ssmCompanionHitsDelta" : 0,
+        "ssmCompanionReDerivesDelta" : 0,
+        "ttftMs" : 114.34698104858398
+      },
+      "toolUsage" : [
+        {
+          "calls" : 3,
+          "deduped" : 0,
+          "errors" : 0,
+          "tool" : "file_read"
+        },
+        {
+          "calls" : 1,
+          "deduped" : 0,
+          "errors" : 0,
+          "tool" : "file_write"
+        }
+      ]
+    },
+    {
+      "domain" : "agent_loop",
+      "id" : "agent_loop.recover-from-failing-command",
+      "label" : "agent loop • recover from a failing command",
+      "latencyMs" : 37358.79707336426,
+      "modelId" : "mlx-community/Qwen3-4B-4bit",
+      "notes" : [
+        "note: The script fails because config.txt is missing. The agent must run it, read the error, create the missing file, and re-run to green. Scored on the post-run exit code, so any correct recovery passes.",
+        "exit ok: finalResponse",
+        "mustCallTools ok: [shell_run]",
+        "file 'config.txt' contains 'mode=production'",
+        "command 'zsh check.sh' exited 0 as expected",
+        "summary: toolCalls=[shell_run,file_write,shell_run] iters=4 exit=finalResponse",
+        "final: The script `check.sh` has been successfully run, and the exit code is 0, indicating that it executed without errors. The output is \"ok\", which confirms that the script completed successfully after the `config.txt` file was created.   I have verified that the script works as expected now. The task is complete."
+      ],
+      "outcome" : "passed",
+      "query" : "Run the script check.sh in this folder with 'zsh check.sh'. If it fails, figure out why, fix the problem, and re-run it until it succeeds.",
+      "telemetry" : {
+        "completionTokens" : 66,
+        "decodeTokensPerSecond" : 52.8118,
+        "kvPrefixHitsDelta" : 0,
+        "kvPrefixMissesDelta" : 0,
+        "peakPhysFootprintMb" : 4703.659385681152,
+        "prefillTokensPerSecond" : 446.6933,
+        "ssmCompanionHitsDelta" : 0,
+        "ssmCompanionReDerivesDelta" : 0,
+        "ttftMs" : 194.68402862548828
+      },
+      "toolUsage" : [
+        {
+          "calls" : 1,
+          "deduped" : 0,
+          "errors" : 0,
+          "tool" : "file_write"
+        },
+        {
+          "calls" : 2,
+          "deduped" : 0,
+          "errors" : 0,
+          "tool" : "shell_run"
+        }
+      ]
+    },
+    {
+      "domain" : "agent_loop",
+      "id" : "agent_loop.rejection-stops-run",
+      "label" : "agent loop • chat rejection policy stops the run on a tool error",
+      "latencyMs" : 7640.254020690918,
+      "modelId" : "mlx-community/Qwen3-4B-4bit",
+      "notes" : [
+        "note: Pins the chat surface's `stopOnToolRejection: true` policy: the first error envelope (file_read on a nonexistent path) ends the run with exit=toolRejected instead of looping. The mirror behaviour — headless policy hands the model the error and the model recovers — is pinned by recover-from-failing-command.json (stopOnToolRejection defaults to false there).",
+        "exit ok: toolRejected",
+        "mustCallTools ok: [file_read]",
+        "summary: toolCalls=[file_read] iters=1 exit=toolRejected",
+        "final: "
+      ],
+      "outcome" : "passed",
+      "query" : "Use file_read to read the file missing-config.yaml directly — do not list or search the folder first — and report its contents.",
+      "telemetry" : {
+        "completionTokens" : 0,
+        "kvPrefixHitsDelta" : 0,
+        "kvPrefixMissesDelta" : 0,
+        "peakPhysFootprintMb" : 4128.971885681152,
+        "ssmCompanionHitsDelta" : 0,
+        "ssmCompanionReDerivesDelta" : 0,
+        "ttftMs" : 156.12590312957764
+      },
+      "toolUsage" : [
+        {
+          "calls" : 1,
+          "deduped" : 0,
+          "errors" : 1,
+          "tool" : "file_read"
+        }
+      ]
+    },
+    {
+      "domain" : "agent_loop",
+      "id" : "agent_loop.repeated-call-nudge",
+      "label" : "agent loop • repeated identical exec call arms the stuck-loop nudge",
+      "latencyMs" : 33401.05593204498,
+      "modelId" : "mlx-community/Qwen3-4B-4bit",
+      "notes" : [
+        "note: Pins that the harness's strongest stuck signal actually fires: shell_run is exec-like so identical calls re-execute by design (no dedupe), and the third identical call must arm the repeated-call nudge, which the driver stages as a notice on the following step. Asserts the notice text landed — independent of whether the model obeyed it.",
+        "exit ok: finalResponse",
+        "mustCallTools ok: [shell_run]",
+        "notice fired containing 'exact same `shell_run` call'",
+        "finalText contains 'three'",
+        "summary: toolCalls=[shell_run,shell_run,shell_run] iters=4 exit=finalResponse",
+        "final: I have run the `shell_run` command three times, each time executing the command `echo ping`. The output of each command was `ping`, confirming the command was executed successfully.   Here is the summary of what I did and how I verified it: - Ran the command `echo ping` three times using the `shell_run` function. - Each execution returned the output `ping`, which confirms the command was executed correctly.   The count of how many times I ran the command is three."
+      ],
+      "outcome" : "passed",
+      "query" : "Run the shell command `echo ping` exactly three times. Issue one shell_run call per step, with identical arguments every time — do not vary the command. After the third run, tell me how many times you ran it, spelling the count out as a word (write \"three\", not the digit 3).",
+      "telemetry" : {
+        "completionTokens" : 101,
+        "decodeTokensPerSecond" : 49.8255,
+        "kvPrefixHitsDelta" : 0,
+        "kvPrefixMissesDelta" : 0,
+        "peakPhysFootprintMb" : 4378.221885681152,
+        "prefillTokensPerSecond" : 452.2633,
+        "ssmCompanionHitsDelta" : 0,
+        "ssmCompanionReDerivesDelta" : 0,
+        "ttftMs" : 131.34396076202393
+      },
+      "toolUsage" : [
+        {
+          "calls" : 3,
+          "deduped" : 0,
+          "errors" : 0,
+          "tool" : "shell_run"
+        }
+      ]
+    },
+    {
+      "domain" : "agent_loop",
+      "id" : "agent_loop.search-then-multi-file-edit",
+      "label" : "agent loop • search then edit across multiple files",
+      "latencyMs" : 156372.11990356445,
+      "modelId" : "mlx-community/Qwen3-4B-4bit",
+      "notes" : [
+        "note: Forces a search-before-edit workflow across more than one file. Scored on disk state: the old name must be gone from BOTH files and the new name present. The iteration budget is deliberately roomy — each file needs TWO edits (import + call site) and small models burn steps recovering from relative-path mistakes; budget pressure is wrap-up-on-budget's job, not this case's.",
+        "exit ok: finalResponse",
+        "file 'src/client.py' contains 'fetchData'",
+        "file 'src/report.py' contains 'fetchData'",
+        "command 'grep -rq fetchDataV1 src/' exited 0, expected 1",
+        "tool error: file_edit({\"new_string\":\"from api import fetchData\",\"old_string\":\"from api import fetchDataV1\",\"path\":\"client.py\"}) → {\"ok\":false,\"expected\":\"path to an existing file under the working folder\",\"field\":\"path\",\"kind\":\"not_found\",\"message\":\"File not found: client.py. Check the exact path with `file_search(target=\\\"files",
+        "tool error: file_read({\"path\":\"client.py\"}) → {\"ok\":false,\"expected\":\"path to an existing file under the working folder\",\"field\":\"path\",\"kind\":\"not_found\",\"message\":\"File not found: client.py. Check the exact path with `file_search(target=\\\"files",
+        "tool error: file_read({\"path\":\"..\"}) → {\"ok\":false,\"expected\":\"relative path under the working folder\",\"field\":\"path\",\"kind\":\"invalid_args\",\"message\":\"Path '..' is outside the working directory. Use a relative path under the working folder",
+        "tool error: file_read({\"path\":\"../\"}) → {\"ok\":false,\"expected\":\"relative path under the working folder\",\"field\":\"path\",\"kind\":\"invalid_args\",\"message\":\"Path '../' is outside the working directory. Use a relative path under the working folde",
+        "tool schemas: [todo,complete,clarify,share_artifact,capabilities_discover,capabilities_load,file_edit,file_operation_history,file_read,file_search,file_undo,file_write,shell_run]",
+        "call[0]: file_search({\"pattern\":\"fetchDataV1\",\"target\":\"content\"})",
+        "call[1] [error]: file_edit({\"new_string\":\"from api import fetchData\",\"old_string\":\"from api import fetchDataV1\",\"path\":\"client.py\"})",
+        "call[2] [error]: file_read({\"path\":\"client.py\"})",
+        "call[3]: file_search({\"pattern\":\"client.py\",\"target\":\"files\"})",
+        "call[4] [deduped]: file_edit({\"new_string\":\"from api import fetchData\",\"old_string\":\"from api import fetchDataV1\",\"path\":\"client.py\"})",
+        "call[5] [error]: file_read({\"path\":\"..\"})",
+        "call[6] [deduped]: file_read({\"path\":\"..\"})",
+        "call[7] [error]: file_read({\"path\":\"../\"})",
+        "call[8] [deduped]: file_read({\"path\":\"..\"})",
+        "call[9]: file_search({\"pattern\":\"client.py\",\"target\":\"files\"})",
+        "call[10] [deduped]: file_edit({\"new_string\":\"from api import fetchData\",\"old_string\":\"from api import fetchDataV1\",\"path\":\"client.py\"})",
+        "call[11]: file_search({\"pattern\":\"client.py\",\"target\":\"files\"})",
+        "call[12] [deduped]: file_edit({\"new_string\":\"from api import fetchData\",\"old_string\":\"from api import fetchDataV1\",\"path\":\"client.py\"})",
+        "notice[0]: [System Notice] Path not found. Pick a `path` from the most recent listing's entries, or list the parent directory.",
+        "notice[1]: [System Notice] Path not found. Pick a `path` from the most recent listing's entries, or list the parent directory.",
+        "notice[2]: [System Notice] Path not found. Pick a `path` from the most recent listing's entries, or list the parent directory.",
+        "notice[3]: [System Notice] This exact `file_read` call has now failed 2 times with the same error (the result above is a replay — it was NOT re-executed, and re-issuing it",
+        "notice[4]: [System Notice] This exact `file_read` call has now failed 3 times with the same error (the result above is a replay — it was NOT re-executed, and re-issuing it",
+        "notice[5]: [System Notice] You have now made the exact same `file_edit` call with identical arguments 3+ times. Repeating it will not change the outcome — change your appr",
+        "notice[6]: [System Notice] You have now made the exact same `file_edit` call with identical arguments 3+ times. Repeating it will not change the outcome — change your appr",
+        "summary: toolCalls=[file_search,file_edit,file_read,file_search,file_edit,file_read,file_read,file_read,file_read,file_search,file_edit,file_search,file_edit] iters=14 exit=finalResponse",
+        "final: I will now try to find the correct path for \"client.py\" by searching for it again and verifying its location. Let's perform a search to confirm the file's existence and path."
+      ],
+      "outcome" : "failed",
+      "query" : "The function fetchDataV1 has been renamed to fetchData. Find every file that references fetchDataV1 and update all of them to use the new name.",
+      "telemetry" : {
+        "completionTokens" : 38,
+        "decodeTokensPerSecond" : 54.7543,
+        "kvPrefixHitsDelta" : 0,
+        "kvPrefixMissesDelta" : 0,
+        "peakPhysFootprintMb" : 4830.549987792969,
+        "prefillTokensPerSecond" : 406.8709,
+        "ssmCompanionHitsDelta" : 0,
+        "ssmCompanionReDerivesDelta" : 0,
+        "ttftMs" : 176.65505409240723
+      },
+      "toolUsage" : [
+        {
+          "calls" : 4,
+          "deduped" : 3,
+          "errors" : 1,
+          "tool" : "file_edit"
+        },
+        {
+          "calls" : 5,
+          "deduped" : 2,
+          "errors" : 3,
+          "tool" : "file_read"
+        },
+        {
+          "calls" : 4,
+          "deduped" : 0,
+          "errors" : 0,
+          "tool" : "file_search"
+        }
+      ]
+    },
+    {
+      "domain" : "agent_loop",
+      "id" : "agent_loop.todo-discipline-multistep",
+      "label" : "agent loop • todo created up front and updated before complete",
+      "latencyMs" : 84463.86992931366,
+      "modelId" : "mlx-community/Qwen3-4B-4bit",
+      "notes" : [
+        "note: Pins todo discipline on a genuinely multi-step task: the model must create the checklist, and at least one later `todo` call must carry a checked box BEFORE the run completes (`todoUpdatedBeforeComplete`) — making a list once and never updating it fails. The task itself is mechanical so the assertion isolates the discipline, not the editing skill.",
+        "exit ok: finalResponse",
+        "mustCallTools ok: [todo]",
+        "no todo call with a checked box before complete/run end",
+        "file 'alpha.conf' contains 'debug=false'",
+        "file 'beta.conf' contains 'debug=false'",
+        "file 'gamma.conf' contains 'debug=false'",
+        "tool schemas: [todo,complete,clarify,share_artifact,capabilities_discover,capabilities_load,file_edit,file_operation_history,file_read,file_search,file_undo,file_write,shell_run]",
+        "call[0]: todo({\"markdown\":\"- Change debug to false in alpha.conf\\n- Change debug to false in beta.conf\\n- Change debug to false in gam)",
+        "call[1]: file_edit({\"new_string\":\"debug=false\",\"old_string\":\"debug=true\",\"path\":\"alpha.conf\"})",
+        "call[2]: file_edit({\"new_string\":\"debug=false\",\"old_string\":\"debug=true\",\"path\":\"beta.conf\"})",
+        "call[3]: file_edit({\"new_string\":\"debug=false\",\"old_string\":\"debug=true\",\"path\":\"gamma.conf\"})",
+        "call[4]: file_read({\"path\":\"alpha.conf\"})",
+        "call[5]: file_read({\"path\":\"beta.conf\"})",
+        "call[6]: file_read({\"path\":\"gamma.conf\"})",
+        "call[7]: complete({\"summary\":\"Changed debug to false in all three config files (alpha.conf, beta.conf, gamma.conf) and verified the change)",
+        "summary: toolCalls=[todo,file_edit,file_edit,file_edit,file_read,file_read,file_read,complete] iters=8 exit=finalResponse",
+        "final: Changed debug to false in all three config files (alpha.conf, beta.conf, gamma.conf) and verified the changes by reading back the config files. The modifications were confirmed by checking the contents of each file."
+      ],
+      "outcome" : "failed",
+      "query" : "Three config files in this folder each have debug=true. Change debug to false in all three, then verify by reading them back. Track your progress with a todo list as you work.",
+      "telemetry" : {
+        "completionTokens" : 0,
+        "kvPrefixHitsDelta" : 0,
+        "kvPrefixMissesDelta" : 0,
+        "peakPhysFootprintMb" : 4671.612510681152,
+        "ssmCompanionHitsDelta" : 0,
+        "ssmCompanionReDerivesDelta" : 0,
+        "ttftMs" : 147.19998836517334
+      },
+      "toolUsage" : [
+        {
+          "calls" : 1,
+          "deduped" : 0,
+          "errors" : 0,
+          "tool" : "complete"
+        },
+        {
+          "calls" : 3,
+          "deduped" : 0,
+          "errors" : 0,
+          "tool" : "file_edit"
+        },
+        {
+          "calls" : 3,
+          "deduped" : 0,
+          "errors" : 0,
+          "tool" : "file_read"
+        },
+        {
+          "calls" : 1,
+          "deduped" : 0,
+          "errors" : 0,
+          "tool" : "todo"
+        }
+      ]
+    },
+    {
+      "domain" : "agent_loop",
+      "id" : "agent_loop.wrap-up-on-budget",
+      "label" : "agent loop • wrap up before the iteration budget runs out",
+      "latencyMs" : 29268.59402656555,
+      "modelId" : "mlx-community/Qwen3-4B-4bit",
+      "notes" : [
+        "note: Open-ended exploration on a deliberately tight iteration budget. The driver's budget-warning notice fires when 3 iterations remain; a model that heeds it produces a final response (exit=finalResponse) instead of being cut off at the cap. iterationCapReached fails the case.",
+        "exit ok: finalResponse",
+        "judge ok: Summarizes the project as a temperature conversion utility (Celsius/Fahrenheit).",
+        "judge ok: Mentions at least one of the project's files by name.",
+        "summary: toolCalls=[file_read,file_read] iters=3 exit=finalResponse",
+        "final: The project is a simple conversion tool that provides functions to convert temperatures between Celsius and Fahrenheit. The `converter.py` file contains the core functionality with two functions: `celsius_to_fahrenheit` and `fahrenheit_to_celsius`. The `tests/` directory includes a test file `test_converter.py` which likely contains test cases for these functions. The project appears to be a basic implementation for temperature conversion purposes."
+      ],
+      "outcome" : "passed",
+      "query" : "Explore this project and write a one-paragraph summary of what it does, mentioning the files you looked at.",
+      "telemetry" : {
+        "completionTokens" : 84,
+        "decodeTokensPerSecond" : 47.0605,
+        "kvPrefixHitsDelta" : 0,
+        "kvPrefixMissesDelta" : 0,
+        "peakPhysFootprintMb" : 4663.612510681152,
+        "prefillTokensPerSecond" : 399.3991,
+        "ssmCompanionHitsDelta" : 0,
+        "ssmCompanionReDerivesDelta" : 0,
+        "ttftMs" : 215.10004997253418
+      },
+      "toolUsage" : [
+        {
+          "calls" : 2,
+          "deduped" : 0,
+          "errors" : 0,
+          "tool" : "file_read"
+        }
+      ]
+    },
+    {
+      "domain" : "agent_loop",
+      "id" : "agent_loop.write-new-file",
+      "label" : "agent loop • create a new file from scratch",
+      "latencyMs" : 15749.114990234375,
+      "modelId" : "mlx-community/Qwen3-4B-4bit",
+      "notes" : [
+        "note: Bare file-creation case in an empty workspace. Pins that the model can produce a file at a specific path with specified content without an existing file to anchor on. The clean path: no tool call may return an error envelope.",
+        "exit ok: finalResponse",
+        "mustCallTools ok: [file_write]",
+        "noToolErrors ok",
+        "file 'TODO.md' contains 'write tests'",
+        "file 'TODO.md' contains 'update docs'",
+        "file 'TODO.md' contains 'tag release'",
+        "summary: toolCalls=[file_write] iters=2 exit=finalResponse",
+        "final: I have created a file named `TODO.md` in this folder with a markdown checklist containing the three unchecked items: 'write tests', 'update docs', and 'tag release'. The file was created successfully."
+      ],
+      "outcome" : "passed",
+      "query" : "Create a file named TODO.md in this folder containing a markdown checklist with exactly these three unchecked items: 'write tests', 'update docs', 'tag release'.",
+      "telemetry" : {
+        "completionTokens" : 42,
+        "decodeTokensPerSecond" : 58.3223,
+        "kvPrefixHitsDelta" : 0,
+        "kvPrefixMissesDelta" : 0,
+        "peakPhysFootprintMb" : 4378.8625564575195,
+        "prefillTokensPerSecond" : 431.7029,
+        "ssmCompanionHitsDelta" : 0,
+        "ssmCompanionReDerivesDelta" : 0,
+        "ttftMs" : 121.5670108795166
+      },
+      "toolUsage" : [
+        {
+          "calls" : 1,
+          "deduped" : 0,
+          "errors" : 0,
+          "tool" : "file_write"
+        }
+      ]
+    }
+  ],
+  "modelId" : "mlx-community/Qwen3-4B-4bit",
+  "startedAt" : "2026-06-19T21:55:28Z"
+}

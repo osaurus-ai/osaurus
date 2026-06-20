@@ -116,6 +116,56 @@ The lab exits `1` only for blocking regressions: a baseline-passing case that
 no longer passes, or a new case that fails/errors. Existing failures that stay
 red are reported as persistent failures without blocking the comparison.
 
+### Optimization loop (all-domain, cross-model)
+
+The agent-loop lab only diffs `agent_loop` rows. For the full maintainer
+pipeline — measure → scoreboard → diff vs baseline → fix → re-measure across
+*every* domain and model — use the optimization loop:
+
+```bash
+# One command: prep → run all suites per model → cross-model matrix → diff.
+make evals-loop                       # local default: foundation + qwen3-4b
+make evals-loop MODELS="foundation qwen3-4b xai/grok-4.3" \
+                BASELINE=build/evals/loop/<previous-run>   # gate vs a baseline
+```
+
+Each run lands in `build/evals/loop/<timestamp>/` (also symlinked as
+`build/evals/loop/latest`) with:
+
+- `det-<Suite>.json` — deterministic / embedder-only suites, run once.
+- `llm-<label>-<Suite>.json` — per-model LLM + sandbox suites.
+- `matrix.json` / `matrix.md` — cross-model scoreboard (domains × models,
+  `passed/scored` cells, plus a decode tok/s · TTFT · peak-RAM rollup).
+- `diff.json` / `diff.md` — when `BASELINE` is set: all-domain pass→fail /
+  fail→pass classification + decode-tps and peak-RAM movements.
+
+The underlying subcommands are usable directly:
+
+```bash
+# Cross-model scoreboard from any dir of *.json reports.
+swift run --package-path Packages/OsaurusEvals osaurus-evals matrix <reports-dir> \
+  --markdown matrix.md
+
+# All-domain before/after diff (exit 1 on blocking regressions with the flag).
+swift run --package-path Packages/OsaurusEvals osaurus-evals diff <baseline> <current> \
+  --markdown diff.md --fail-on-regression
+```
+
+`make evals-matrix DIR=…` and `make evals-diff BASELINE=… CURRENT=…` wrap these.
+
+### Per-case telemetry
+
+Model-driven rows (`agent_loop`, `capability_claims`, `computer_use_loop`,
+`capability_search`) carry an optional `telemetry` block: token-weighted
+**decode tok/s**, **TTFT ms**, first-step **prefill tok/s** (from the runtime
+stats hint), **peak physical footprint MB** (Activity-Monitor "Memory", the
+value the `AGENTS.md` RAM gate reads — sampled on a timer across the case), and
+the **KV prefix-hit delta** (before/after `ModelRuntime.batchDiagnosticsSnapshot`,
+proving prefix reuse across loop iterations). The human-readable report prints a
+`perf:` line per row and a suite-wide rollup; the matrix aggregates per model.
+Fields are nil when not measurable (remote/non-streaming runs, deterministic
+rows), so a missing metric reads as "not measured", never a zeroed regression.
+
 Startup bootstrap is domain-aware. Suites that require installed native plugins
 load them and rebuild search indices so they mirror the host app. `capability_search`
 suites initialize only the selected tool / method / skill index lanes without
@@ -392,7 +442,9 @@ This package is a **separate Swift package**. CI / Xcode builds run `swift build
 
 ## Future hooks (deliberately stubbed)
 
-- `osaurus-evals diff baseline.json current.json` — regression check against a stored baseline.
-- Per-model scoreboards under `reports/<model>/<date>.json`.
 - Auto-run on new model release (CI workflow listening for HF releases).
 - Domain growth: `Suites/ToolCalling/`, `Suites/SkillInjection/`.
+
+Implemented (see "Optimization loop" above): `osaurus-evals diff` (all-domain
+regression check), cross-model scoreboards (`osaurus-evals matrix`), and the
+one-command `make evals-loop` pipeline.

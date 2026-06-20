@@ -86,7 +86,7 @@ struct GenerationEventMapperTests {
         )
         let events: [Generation] = [.chunk("ok"), .info(info)]
         let out = try await collect(events: events)
-        guard case .completionInfo(let count, let tps, let unclosed, let stopReason) = out.last else {
+        guard case .completionInfo(let count, let tps, let unclosed, let stopReason, _) = out.last else {
             Issue.record("expected completionInfo at end, got \(String(describing: out.last))")
             return
         }
@@ -109,7 +109,7 @@ struct GenerationEventMapperTests {
         )
         let events: [Generation] = [.reasoning("Self-Correction…"), .info(info)]
         let out = try await collect(events: events)
-        guard case .completionInfo(_, _, let unclosed, let stopReason) = out.last else {
+        guard case .completionInfo(_, _, let unclosed, let stopReason, _) = out.last else {
             Issue.record("expected completionInfo at end, got \(String(describing: out.last))")
             return
         }
@@ -133,7 +133,7 @@ struct GenerationEventMapperTests {
             events: [.reasoning("The user is straightforward greeting"), .info(info)],
             modelName: "JANGQ-AI/MiniMax-M2.7-JANGTQ"
         )
-        guard case .completionInfo(_, _, let unclosed, _) = out.last else {
+        guard case .completionInfo(_, _, let unclosed, _, _) = out.last else {
             Issue.record("expected completionInfo at end, got \(String(describing: out.last))")
             return
         }
@@ -291,7 +291,7 @@ struct GenerationEventMapperTests {
             ],
             modelName: "JANGQ-AI/MiniMax-M2.7-JANGTQ"
         )
-        guard case .completionInfo(let count, _, let unclosed, let stopReason) = out.last else {
+        guard case .completionInfo(let count, _, let unclosed, let stopReason, _) = out.last else {
             Issue.record("expected synthesized completionInfo at end, got \(String(describing: out.last))")
             return
         }

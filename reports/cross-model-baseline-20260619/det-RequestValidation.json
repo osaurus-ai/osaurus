@@ -1,0 +1,46 @@
+{
+  "cases" : [
+    {
+      "domain" : "request_validation",
+      "id" : "request_validation.default-accepted",
+      "label" : "request_validation • default request (no n, no response_format) is accepted",
+      "modelId" : "mlx-community/Qwen3-4B-4bit",
+      "notes" : [
+        "accepted (as expected)"
+      ],
+      "outcome" : "passed"
+    },
+    {
+      "domain" : "request_validation",
+      "id" : "request_validation.json-object-accepted",
+      "label" : "request_validation • response_format=json_object is supported",
+      "modelId" : "mlx-community/Qwen3-4B-4bit",
+      "notes" : [
+        "accepted (as expected)"
+      ],
+      "outcome" : "passed"
+    },
+    {
+      "domain" : "request_validation",
+      "id" : "request_validation.json-schema-rejected",
+      "label" : "request_validation • response_format=json_schema rejected (structured outputs not supported)",
+      "modelId" : "mlx-community/Qwen3-4B-4bit",
+      "notes" : [
+        "rejected: response_format type 'json_schema' is not supported. Use 'json_object' for JSON mode."
+      ],
+      "outcome" : "passed"
+    },
+    {
+      "domain" : "request_validation",
+      "id" : "request_validation.n-greater-than-one-rejected",
+      "label" : "request_validation • n>1 rejected with HTTP 400 (no batched completions)",
+      "modelId" : "mlx-community/Qwen3-4B-4bit",
+      "notes" : [
+        "rejected: Parameter 'n' > 1 is not supported. Submit one request per completion."
+      ],
+      "outcome" : "passed"
+    }
+  ],
+  "modelId" : "mlx-community/Qwen3-4B-4bit",
+  "startedAt" : "2026-06-19T22:44:36Z"
+}

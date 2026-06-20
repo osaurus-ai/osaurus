@@ -1,0 +1,58 @@
+{
+  "cases" : [
+    {
+      "domain" : "tool_envelope",
+      "id" : "tool_envelope.failure-invalid-args",
+      "label" : "tool_envelope • invalid_args is the validation-error kind (retryable)",
+      "modelId" : "mlx-community/Qwen3-4B-4bit",
+      "notes" : [
+        "note: The validation-error failure kind. Unlike tool_not_found / rejected / user_denied (terminal), invalid_args defaults to retryable=true: the arguments are malformed but the model can fix them and call again. Pins both the discriminator and that retryable default so a future change can't silently flip it.",
+        "envelope: {\"ok\":false,\"kind\":\"invalid_args\",\"message\":\"Argument `count` must be a positive integer.\",\"retryable\":true,\"tool\":\"render_chart\"}"
+      ],
+      "outcome" : "passed"
+    },
+    {
+      "domain" : "tool_envelope",
+      "id" : "tool_envelope.failure-rejected-nonretryable",
+      "label" : "tool_envelope • a policy rejection is non-retryable",
+      "modelId" : "mlx-community/Qwen3-4B-4bit",
+      "notes" : [
+        "note: Policy refusal — the registry blocked the tool by configuration. Distinct from user_denied (interactive deny) and from the retryable kinds: retryable defaults to false because retrying the same call hits the same policy, so the model must pivot rather than loop.",
+        "envelope: {\"ok\":false,\"kind\":\"rejected\",\"message\":\"Tool `shell_run` is disabled by policy in this session.\",\"retryable\":false,\"tool\":\"shell_run\"}"
+      ],
+      "outcome" : "passed"
+    },
+    {
+      "domain" : "tool_envelope",
+      "id" : "tool_envelope.failure-timeout-retryable",
+      "label" : "tool_envelope • timeout failures default to retryable=true",
+      "modelId" : "mlx-community/Qwen3-4B-4bit",
+      "notes" : [
+        "envelope: {\"ok\":false,\"kind\":\"timeout\",\"message\":\"Tool exceeded the 120s execution budget.\",\"retryable\":true,\"tool\":\"shell\"}"
+      ],
+      "outcome" : "passed"
+    },
+    {
+      "domain" : "tool_envelope",
+      "id" : "tool_envelope.failure-tool-not-found",
+      "label" : "tool_envelope • failure(toolNotFound) carries the right discriminator",
+      "modelId" : "mlx-community/Qwen3-4B-4bit",
+      "notes" : [
+        "envelope: {\"ok\":false,\"kind\":\"tool_not_found\",\"message\":\"Tool 'browse' is not available in this session.\",\"retryable\":false,\"tool\":\"browse\"}"
+      ],
+      "outcome" : "passed"
+    },
+    {
+      "domain" : "tool_envelope",
+      "id" : "tool_envelope.success-text",
+      "label" : "tool_envelope • success(text:) carries ok=true and the tool name",
+      "modelId" : "mlx-community/Qwen3-4B-4bit",
+      "notes" : [
+        "envelope: {\"ok\":true,\"result\":{\"text\":\"Found 3 results.\"},\"tool\":\"search\"}"
+      ],
+      "outcome" : "passed"
+    }
+  ],
+  "modelId" : "mlx-community/Qwen3-4B-4bit",
+  "startedAt" : "2026-06-19T22:44:38Z"
+}

@@ -394,6 +394,17 @@ public actor ModelRuntime {
         await shared.clearAll(quit: true)
     }
 
+    /// Public passthrough to the aggregated `BatchEngine` diagnostics
+    /// (KV prefix hits/misses, disk-L2, SSM companion, paged state). The
+    /// underlying `MLXBatchAdapter`/`Registry` types are internal, so the
+    /// eval harness — which runs in-process and wants a before/after KV
+    /// cache snapshot per case to prove prefix reuse — reads them through
+    /// this accessor rather than reaching into the MLX layer. `nil` when
+    /// no engine is resolved yet (e.g. a remote-only run).
+    public static func batchDiagnosticsSnapshot() async -> BatchDiagnosticsSnapshot? {
+        await MLXBatchAdapter.snapshotDiagnostics()
+    }
+
     /// Cancel the active decode for `name` without evicting the loaded
     /// container. HTTP non-streaming callers use this when the client drops
     /// before any response body can be written; otherwise the server can keep
@@ -2161,14 +2172,16 @@ public actor ModelRuntime {
                         let tokenCount,
                         let tokensPerSecond,
                         let unclosedReasoning,
-                        let stopReason
+                        let stopReason,
+                        let promptTokensPerSecond
                     ) = ev {
                         continuation.yield(
                             StreamingStatsHint.encode(
                                 tokenCount: tokenCount,
                                 tokensPerSecond: tokensPerSecond,
                                 unclosedReasoning: unclosedReasoning,
-                                stopReason: stopReason
+                                stopReason: stopReason,
+                                prefillTokensPerSecond: promptTokensPerSecond
                             )
                         )
                         continue

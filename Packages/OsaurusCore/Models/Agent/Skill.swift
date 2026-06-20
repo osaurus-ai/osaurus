@@ -298,7 +298,11 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
                 version: "1.0.0",
                 author: "Osaurus",
                 category: L("productivity"),
-                keywords: ["summarize", "summary", "tldr", "key-points", "digest", "condense"],
+                keywords: [
+                    "summarize", "summary", "tldr", "key-points", "digest", "condense",
+                    "gist", "overview", "recap", "synopsis", "brief", "abstract",
+                    "main-points", "takeaways", "highlights", "skim", "the-gist",
+                ],
                 enabled: false,
                 instructions: """
                     When summarizing content:

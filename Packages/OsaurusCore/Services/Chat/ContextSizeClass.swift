@@ -4,11 +4,14 @@
 //
 //  Per-model context-window classification used to auto-disable
 //  prompt features that don't fit into very small windows. Apple's
-//  Foundation model has a ~4K window; even before any user message
-//  the always-loaded tool schemas push past it. The system-prompt
-//  composer reads this resolver at compose time and ORs the result
-//  into the agent's effective tools/memory disable flags so we never
-//  ship a request that's already over budget.
+//  Foundation model ships a 4K window on the macOS 26.x baseline (8K on
+//  27.0+ hardware); at 4K, even before any user message the always-loaded
+//  tool schemas push past it. The Foundation window is read live from
+//  `SystemLanguageModel.contextSize` (back-deployed to 26.0) rather than
+//  assumed, so newer hardware with a larger window auto-upgrades from
+//  `.tiny` to `.small`. The system-prompt composer reads this resolver at
+//  compose time and ORs the result into the agent's effective tools/memory
+//  disable flags so we never ship a request that's already over budget.
 //
 
 import Foundation
@@ -164,6 +167,17 @@ public enum ContextSizeResolver {
     /// default covers the common local fleet (8B–12B) with headroom.
     public static let compactParamCeilingBillions: Double = 20
 
+    /// Pure window→class mapping shared by the Foundation probe and the
+    /// MLX `config.json` path. Each ceiling is inclusive (`tinyCeiling`
+    /// itself is `.tiny`; one token past it pivots to `.small`). Kept as a
+    /// standalone function so the boundary policy can be unit-tested without
+    /// an installed model or a Foundation-capable device.
+    public static func sizeClass(forContextLength contextLength: Int) -> ContextSizeClass {
+        if contextLength <= tinyCeiling { return .tiny }
+        if contextLength <= smallCeiling { return .small }
+        return .normal
+    }
+
     /// Resolve the size class for a given model id.
     /// - Parameter modelId: The picker / API model identifier. May
     ///   be `nil` when the chat hasn't picked a model yet (preview
@@ -184,10 +198,18 @@ public enum ContextSizeResolver {
         if trimmed.caseInsensitiveCompare("foundation") == .orderedSame
             || trimmed.caseInsensitiveCompare("default") == .orderedSame
         {
-            // Tiny window already implies compact.
+            // Probe the *real* on-device window rather than assuming 4096.
+            // `FoundationModelService.defaultModelContextSize` reads the
+            // back-deployed `SystemLanguageModel.contextSize` (memoized): 4096 on
+            // the macOS 26.x baseline keeps tools/memory off, but an 8192 window
+            // on 27.0+ hardware reclassifies to `.small`, which turns tools back
+            // on with the compact prompt and memory still off. Falls back to the
+            // tiny ceiling when Foundation is unavailable. Foundation is always a
+            // small on-device model, so it always prefers the compact prompt.
+            let ctx = FoundationModelService.defaultModelContextSize ?? tinyCeiling
             return ContextWindowInfo(
-                sizeClass: .tiny,
-                contextLength: tinyCeiling,
+                sizeClass: sizeClass(forContextLength: ctx),
+                contextLength: ctx,
                 prefersCompactPrompt: true
             )
         }
@@ -200,11 +222,9 @@ public enum ContextSizeResolver {
             let ctx = info.model.contextLength
         else { return .unknown }
 
-        if ctx <= tinyCeiling {
-            return ContextWindowInfo(sizeClass: .tiny, contextLength: ctx, prefersCompactPrompt: true)
-        }
-        if ctx <= smallCeiling {
-            return ContextWindowInfo(sizeClass: .small, contextLength: ctx, prefersCompactPrompt: true)
+        let bucket = sizeClass(forContextLength: ctx)
+        if bucket != .normal {
+            return ContextWindowInfo(sizeClass: bucket, contextLength: ctx, prefersCompactPrompt: true)
         }
         // Large window, local model: prefer compact when the model is small
         // enough that verbose-prompt tokenization isn't worth it. Unknown size

@@ -226,7 +226,7 @@ extension EvalRunner {
             }
         }
 
-        let judgeModel = ProcessInfo.processInfo.environment["JUDGE_MODEL"]
+        let judgeModel = EvalJudgeModel.resolveAndWarnOnce(runModelId: modelId)
         let started = Date()
         let transcript = await AgentLoopEvaluator.run(
             task: testCase.query,
@@ -267,7 +267,8 @@ extension EvalRunner {
                 notes: ["agent loop error: \(err)"],
                 modelId: modelId,
                 latencyMs: latency,
-                toolUsage: toolUsageStats(transcript)
+                toolUsage: toolUsageStats(transcript),
+                telemetry: telemetry(from: transcript)
             )
         }
 
@@ -388,8 +389,23 @@ extension EvalRunner {
             notes: score.notes,
             modelId: modelId,
             latencyMs: latency,
-            toolUsage: toolUsageStats(transcript)
+            toolUsage: toolUsageStats(transcript),
+            telemetry: telemetry(from: transcript)
         )
+    }
+
+    /// Project the agent-loop transcript's generation metrics into the
+    /// report's telemetry block (resource metrics — peak RAM, KV delta —
+    /// are folded in later by `EvalRunner.runOne`). Returns nil when the
+    /// run captured no streaming stats (remote/non-streaming).
+    private static func telemetry(from transcript: AgentLoopTranscript) -> EvalCaseTelemetry? {
+        let t = EvalCaseTelemetry(
+            decodeTokensPerSecond: transcript.decodeTokensPerSecond,
+            prefillTokensPerSecond: transcript.prefillTokensPerSecond,
+            ttftMs: transcript.ttftMs,
+            completionTokens: transcript.completionTokens
+        )
+        return t.isEmpty ? nil : t
     }
 
     // MARK: - Capability fixtures (temp eval agent)

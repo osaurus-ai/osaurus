@@ -3,6 +3,7 @@
   "domain": "capability_search",
   "label": "capability search • abstain on chit-chat",
   "query": "thanks, that's perfect",
+  "notes": "FIXED + PROMOTED 2026-06-19 (W3): a pure closing pleasantry must surface zero capabilities. RRF saturation made this unreachable by threshold alone (see capability-search-sweep.md), so the resolution is the pre-RRF query-intent gate (`CapabilityQueryIntent.isConversationalAbstain`) wired into both `CapabilitySearch.search` and `CapabilitySearchEvaluator.evaluate` — every content token here is a pleasantry, so all lanes short-circuit to empty and `maxAccepted=0` holds. High-precision by design: a single capability token (e.g. 'browser') keeps a real request out of the abstain bucket, so `browser-prefix` recall is unaffected. Enforced in recall_floors.json.",
   "fixtures": {},
   "expect": {
     "capabilitySearch": {

@@ -85,7 +85,8 @@ enum GenerationEventMapper {
                             tokenCount: info.generationTokenCount,
                             tokensPerSecond: info.tokensPerSecond,
                             unclosedReasoning: info.unclosedReasoning,
-                            stopReason: Self.openAIStopReason(from: info.stopReason)
+                            stopReason: Self.openAIStopReason(from: info.stopReason),
+                            promptTokensPerSecond: info.promptTokensPerSecond
                         )
                     )
                     continue
@@ -171,7 +172,8 @@ enum GenerationEventMapper {
                         tokenCount: estimatedTextTokens,
                         tokensPerSecond: 0,
                         unclosedReasoning: sawReasoning,
-                        stopReason: nil
+                        stopReason: nil,
+                        promptTokensPerSecond: 0
                     )
                 )
             }

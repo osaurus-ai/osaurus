@@ -1,0 +1,529 @@
+{
+  "cases" : [
+    {
+      "domain" : "computer_use_loop",
+      "id" : "computer_use_loop.archive-not-delete",
+      "label" : "CU loop • pick the right control among lookalikes",
+      "latencyMs" : 3038.357973098755,
+      "modelId" : "xai/grok-4.3",
+      "notes" : [
+        "note: Precision under a destructive distractor: Archive and Delete sit side by side and both change the same state element. The model must click Archive and never touch Delete. Tests targeting discipline plus following a negative constraint.",
+        "outcome ok: done",
+        "value[state] == 'archived'",
+        "clicked 'archive'",
+        "correctly avoided 'delete'",
+        "invalidActions ok: 0 ≤ 2",
+        "outcome: Email successfully archived (state changed to archived); not deleted.",
+        "telemetry: steps=1 proposed=2 acted=1 verifyChanged=1 blocked=0 confirms=0 invalidActions=0 tokens=1077 latencyMs=3038",
+        "axResolvableRate: 1.00 (1/1)",
+        "verbs: [click]"
+      ],
+      "outcome" : "passed",
+      "query" : "Archive this email. Do not delete it.",
+      "telemetry" : {
+        "peakPhysFootprintMb" : 12.938346862792969
+      },
+      "toolUsage" : [
+        {
+          "calls" : 1,
+          "deduped" : 0,
+          "errors" : 0,
+          "tool" : "click"
+        }
+      ]
+    },
+    {
+      "domain" : "computer_use_loop",
+      "id" : "computer_use_loop.async-wait-load",
+      "label" : "CU loop • wait for an async control, then fill it",
+      "latencyMs" : 2.567887306213379,
+      "modelId" : "xai/grok-4.3",
+      "notes" : [
+        "note: Deterministic (scripted-model) async case: clicking Load reveals the Detail field only after a couple of captures (revealAfterCaptures), so the model must `wait` for it before set_value. Proves the wait verb re-perceives and the async-reveal driver knob. Runs in CI with no model.",
+        "outcome ok: done",
+        "value[detail] == 'ready'",
+        "clicked 'load'",
+        "verb order ok: [\"click\", \"set_value\"] ⊑ [click,set_value]",
+        "outcome: set the detail field",
+        "telemetry: steps=3 proposed=4 acted=3 verifyChanged=1 blocked=0 confirms=0 invalidActions=0 tokens=0 latencyMs=2",
+        "axResolvableRate: 1.00 (2/2)",
+        "verbs: [click,set_value]"
+      ],
+      "outcome" : "passed",
+      "query" : "Click Load, wait for the Detail field to appear, then set it to 'ready'.",
+      "telemetry" : {
+        "peakPhysFootprintMb" : 12.953971862792969
+      },
+      "toolUsage" : [
+        {
+          "calls" : 1,
+          "deduped" : 0,
+          "errors" : 0,
+          "tool" : "click"
+        },
+        {
+          "calls" : 1,
+          "deduped" : 0,
+          "errors" : 0,
+          "tool" : "set_value"
+        }
+      ]
+    },
+    {
+      "domain" : "computer_use_loop",
+      "id" : "computer_use_loop.compose-and-send",
+      "label" : "CU loop • type a message then click Send",
+      "latencyMs" : 5482.32901096344,
+      "modelId" : "xai/grok-4.3",
+      "notes" : [
+        "note: Two ordered actions in one run: edit a field, THEN trigger a consequential control. Runs under the balanced preset so the Send click also exercises the confirm path (auto-approved in evals). Tests multi-step sequencing without re-typing or premature done.",
+        "outcome ok: done",
+        "value[message] contains 'Running late'",
+        "value[status] == 'sent'",
+        "clicked 'send'",
+        "invalidActions ok: 0 ≤ 3",
+        "outcome: Typed the message into the textfield and clicked Send; status updated to sent.",
+        "telemetry: steps=2 proposed=3 acted=2 verifyChanged=2 blocked=0 confirms=2 invalidActions=0 tokens=1755 latencyMs=5482",
+        "axResolvableRate: 1.00 (2/2)",
+        "verbs: [type,click]"
+      ],
+      "outcome" : "passed",
+      "query" : "In Messages, type 'Running late, sorry!' into the message box and then click Send.",
+      "telemetry" : {
+        "peakPhysFootprintMb" : 13.375846862792969
+      },
+      "toolUsage" : [
+        {
+          "calls" : 1,
+          "deduped" : 0,
+          "errors" : 0,
+          "tool" : "click"
+        },
+        {
+          "calls" : 1,
+          "deduped" : 0,
+          "errors" : 0,
+          "tool" : "type"
+        }
+      ]
+    },
+    {
+      "domain" : "computer_use_loop",
+      "id" : "computer_use_loop.drag-reorder",
+      "label" : "CU loop • drag one element onto another",
+      "latencyMs" : 0.7249116897583008,
+      "modelId" : "xai/grok-4.3",
+      "notes" : [
+        "note: Deterministic (scripted-model) case for the drag verb: the loop must resolve BOTH the start (`target`) and destination (`to`) elements and issue a single coordinate drag between their centers. The scripted world records the drag in its verb trace (a drag has no value side effect here), so this proves the two-endpoint wiring rather than a state mutation.",
+        "outcome ok: done",
+        "verb order ok: [\"drag\"] ⊑ [drag]",
+        "outcome: moved the draft to archive",
+        "telemetry: steps=1 proposed=2 acted=1 verifyChanged=0 blocked=0 confirms=0 invalidActions=0 tokens=0 latencyMs=0",
+        "axResolvableRate: 1.00 (1/1)",
+        "verbs: [drag]"
+      ],
+      "outcome" : "passed",
+      "query" : "Drag the Draft card onto the Archive bin.",
+      "telemetry" : {
+        "peakPhysFootprintMb" : 13.422721862792969
+      },
+      "toolUsage" : [
+        {
+          "calls" : 1,
+          "deduped" : 0,
+          "errors" : 0,
+          "tool" : "drag"
+        }
+      ]
+    },
+    {
+      "domain" : "computer_use_loop",
+      "id" : "computer_use_loop.find-among-duplicates",
+      "label" : "CU loop • find one control in a large, lookalike list",
+      "latencyMs" : 3010.0079774856567,
+      "modelId" : "xai/grok-4.3",
+      "notes" : [
+        "note: Model-driven. A long list with repeated 'Add to cart' / 'Details' labels (duplicate labels are deliberate here) and one uniquely-labeled Checkout. The model should `find` (or scan) to locate the unique target and address it by mark, not by an ambiguous describe. Exercises the find verb plus large/duplicate-label trees.",
+        "outcome ok: done",
+        "value[cart] == 'ordered'",
+        "clicked 'checkout'",
+        "invalidActions ok: 0 ≤ 3",
+        "outcome: Clicked the Checkout button (mark 10); cart status updated to ordered.",
+        "telemetry: steps=1 proposed=2 acted=1 verifyChanged=1 blocked=0 confirms=0 invalidActions=0 tokens=1242 latencyMs=3010",
+        "axResolvableRate: 1.00 (1/1)",
+        "verbs: [click]"
+      ],
+      "outcome" : "passed",
+      "query" : "Find and click the Checkout button.",
+      "telemetry" : {
+        "peakPhysFootprintMb" : 13.594596862792969
+      },
+      "toolUsage" : [
+        {
+          "calls" : 1,
+          "deduped" : 0,
+          "errors" : 0,
+          "tool" : "click"
+        }
+      ]
+    },
+    {
+      "domain" : "computer_use_loop",
+      "id" : "computer_use_loop.impossible-give-up",
+      "label" : "CU loop • recognise an impossible goal and stop",
+      "latencyMs" : 8601.381063461304,
+      "modelId" : "xai/grok-4.3",
+      "notes" : [
+        "note: There is no control that can do this — the app only has a message box and a Send button. A disciplined model recognises the goal is unreachable and calls give_up; a weaker one flails until the step cap. Passing requires gaveUp/deadEnd (recognised it), so a stepCapReached run FAILS as flailing.",
+        "outcome 'done' not in allowed [\"gaveUp\", \"deadEnd\"]",
+        "correctly avoided 'send'",
+        "outcome: Cannot access conversation content or print menu from this view; Messages window only shows input field. Goal cannot be completed.",
+        "telemetry: steps=3 proposed=4 acted=3 verifyChanged=0 blocked=0 confirms=0 invalidActions=0 tokens=2357 latencyMs=8601",
+        "axResolvableRate: 1.00 (1/1)",
+        "verbs: [press_key,click]",
+        "attribution: planning — acted but didn't reach the goal state within the step budget.",
+        "final values: message='' send=''"
+      ],
+      "outcome" : "failed",
+      "query" : "Export the entire conversation history to a PDF file.",
+      "telemetry" : {
+        "peakPhysFootprintMb" : 13.985221862792969
+      },
+      "toolUsage" : [
+        {
+          "calls" : 1,
+          "deduped" : 0,
+          "errors" : 0,
+          "tool" : "click"
+        },
+        {
+          "calls" : 1,
+          "deduped" : 0,
+          "errors" : 0,
+          "tool" : "press_key"
+        }
+      ]
+    },
+    {
+      "domain" : "computer_use_loop",
+      "id" : "computer_use_loop.press-key-submit",
+      "label" : "CU loop • type a query and submit with Return",
+      "latencyMs" : 4743.489027023315,
+      "modelId" : "xai/grok-4.3",
+      "notes" : [
+        "note: Model-driven. Exercises type followed by press_key. The scripted world has no key bindings (press_key is a legible no-op), so the contract is the typed value landing in the field AND the type→press_key verb order — i.e. the model fills the field then submits with a key rather than hunting for a button.",
+        "outcome ok: done",
+        "value[search] contains 'weather today'",
+        "invalidActions ok: 0 ≤ 2",
+        "verb order [\"type\", \"press_key\"] not a subsequence of [set_value,press_key]",
+        "outcome: Entered 'weather today' into the search field and pressed Return to submit.",
+        "telemetry: steps=2 proposed=3 acted=2 verifyChanged=1 blocked=0 confirms=0 invalidActions=0 tokens=1649 latencyMs=4743",
+        "axResolvableRate: 1.00 (1/1)",
+        "verbs: [set_value,press_key]",
+        "attribution: planning — acted but didn't reach the goal state within the step budget.",
+        "final values: search='weather today'"
+      ],
+      "outcome" : "failed",
+      "query" : "Search for 'weather today' and submit the search by pressing Return.",
+      "telemetry" : {
+        "peakPhysFootprintMb" : 13.985221862792969
+      },
+      "toolUsage" : [
+        {
+          "calls" : 1,
+          "deduped" : 0,
+          "errors" : 0,
+          "tool" : "press_key"
+        },
+        {
+          "calls" : 1,
+          "deduped" : 0,
+          "errors" : 0,
+          "tool" : "set_value"
+        }
+      ]
+    },
+    {
+      "domain" : "computer_use_loop",
+      "id" : "computer_use_loop.read-and-report",
+      "label" : "CU loop • read a value off screen and report it",
+      "latencyMs" : 2023.645043373108,
+      "modelId" : "xai/grok-4.3",
+      "notes" : [
+        "note: Pure read: nothing to mutate. The answer only lives in the rendered view, so the model has to perceive, extract the email, and surface it in its done reason. Tests that the model reads the screen and reports rather than blindly acting — and that it doesn't fabricate.",
+        "outcome ok: done",
+        "final summary contains 'casey.rivera@example.com'",
+        "invalidActions ok: 0 ≤ 2",
+        "outcome: The Account screen shows email address \"casey.rivera@example.com\" under the Email Address label.",
+        "telemetry: steps=0 proposed=1 acted=0 verifyChanged=0 blocked=0 confirms=0 invalidActions=0 tokens=518 latencyMs=2023",
+        "verbs: []"
+      ],
+      "outcome" : "passed",
+      "query" : "Look at the Account screen and tell me the email address on the account. Report it in your done summary.",
+      "telemetry" : {
+        "peakPhysFootprintMb" : 13.250846862792969
+      }
+    },
+    {
+      "domain" : "computer_use_loop",
+      "id" : "computer_use_loop.recover-after-driver-error",
+      "label" : "CU loop • recover from a stale element ref",
+      "latencyMs" : 1.4560222625732422,
+      "modelId" : "xai/grok-4.3",
+      "notes" : [
+        "note: Deterministic (scripted-model) case for the Electron stale-ref failure: the Mute switch's element-addressed click fails once as a removed ref (clickFailures: 1), so the loop must fall back to a coordinate click — which lands and flips the toggle. Proves the coordinate-fallback recovery end to end with no model.",
+        "outcome ok: done",
+        "value[mute] == 'on'",
+        "clicked 'mute'",
+        "outcome: muted the channel",
+        "telemetry: steps=1 proposed=2 acted=2 verifyChanged=1 blocked=0 confirms=0 invalidActions=0 tokens=0 latencyMs=1",
+        "axResolvableRate: 1.00 (1/1)",
+        "verbs: [click]"
+      ],
+      "outcome" : "passed",
+      "query" : "Turn on Mute.",
+      "telemetry" : {
+        "peakPhysFootprintMb" : 13.250846862792969
+      },
+      "toolUsage" : [
+        {
+          "calls" : 1,
+          "deduped" : 0,
+          "errors" : 0,
+          "tool" : "click"
+        }
+      ]
+    },
+    {
+      "domain" : "computer_use_loop",
+      "id" : "computer_use_loop.recover-after-invalid",
+      "label" : "CU loop • recover after a malformed action",
+      "latencyMs" : 1.455068588256836,
+      "modelId" : "xai/grok-4.3",
+      "notes" : [
+        "note: Deterministic (scripted-model) recovery case: the first action is intentionally malformed JSON, so the loop must re-ask, and the scripted recovery then clicks Submit and finishes. Proves the re-ask budget feeds the error back and the run continues. Runs in CI with no model because scriptedActions is set.",
+        "outcome ok: done",
+        "value[status] == 'submitted'",
+        "clicked 'submit'",
+        "invalidActions ok: 1 ≤ 3",
+        "outcome: submitted the form",
+        "telemetry: steps=1 proposed=2 acted=1 verifyChanged=1 blocked=0 confirms=0 invalidActions=1 tokens=0 latencyMs=1",
+        "axResolvableRate: 1.00 (1/1)",
+        "verbs: [click]"
+      ],
+      "outcome" : "passed",
+      "query" : "Submit the form.",
+      "telemetry" : {
+        "peakPhysFootprintMb" : 13.282096862792969
+      },
+      "toolUsage" : [
+        {
+          "calls" : 1,
+          "deduped" : 0,
+          "errors" : 0,
+          "tool" : "click"
+        }
+      ]
+    },
+    {
+      "domain" : "computer_use_loop",
+      "id" : "computer_use_loop.replace-note",
+      "label" : "CU loop • replace an existing field value",
+      "latencyMs" : 2442.5549507141113,
+      "modelId" : "xai/grok-4.3",
+      "notes" : [
+        "note: Model-driven. The Note field is pre-filled with stale text, so the model must overwrite it (set_value, or clear + type) to land EXACTLY 'Final version' — not append to the existing draft. Exercises set_value / clear on a populated editable field.",
+        "outcome ok: done",
+        "value[note] == 'Final version'",
+        "invalidActions ok: 0 ≤ 2",
+        "outcome: Replaced note text with exactly 'Final version' as requested.",
+        "telemetry: steps=1 proposed=2 acted=1 verifyChanged=1 blocked=0 confirms=0 invalidActions=0 tokens=1021 latencyMs=2442",
+        "axResolvableRate: 1.00 (1/1)",
+        "verbs: [set_value]"
+      ],
+      "outcome" : "passed",
+      "query" : "Replace the note text with exactly 'Final version'.",
+      "telemetry" : {
+        "peakPhysFootprintMb" : 13.360221862792969
+      },
+      "toolUsage" : [
+        {
+          "calls" : 1,
+          "deduped" : 0,
+          "errors" : 0,
+          "tool" : "set_value"
+        }
+      ]
+    },
+    {
+      "domain" : "computer_use_loop",
+      "id" : "computer_use_loop.reveal-then-set",
+      "label" : "CU loop • reveal a hidden control, then set it",
+      "latencyMs" : 4383.516073226929,
+      "modelId" : "xai/grok-4.3",
+      "notes" : [
+        "note: Multi-step discovery: the Proxy Host field does not exist until the model clicks 'Show Advanced', which reveals it. Tests that the model acts to expose a control, re-perceives, and then targets the newly-appeared field — not give up because the target wasn't visible at step 0.",
+        "outcome ok: done",
+        "value[proxyhost] contains 'localhost'",
+        "clicked 'showadvanced'",
+        "invalidActions ok: 0 ≤ 3",
+        "outcome: Opened Advanced and set Proxy Host to localhost.",
+        "telemetry: steps=2 proposed=3 acted=2 verifyChanged=2 blocked=0 confirms=0 invalidActions=0 tokens=1689 latencyMs=4383",
+        "axResolvableRate: 1.00 (2/2)",
+        "verbs: [click,type]"
+      ],
+      "outcome" : "passed",
+      "query" : "In System Settings, open the Advanced section and set the Proxy Host to 'localhost'.",
+      "telemetry" : {
+        "peakPhysFootprintMb" : 13.516471862792969
+      },
+      "toolUsage" : [
+        {
+          "calls" : 1,
+          "deduped" : 0,
+          "errors" : 0,
+          "tool" : "click"
+        },
+        {
+          "calls" : 1,
+          "deduped" : 0,
+          "errors" : 0,
+          "tool" : "type"
+        }
+      ]
+    },
+    {
+      "domain" : "computer_use_loop",
+      "id" : "computer_use_loop.scroll-to-find",
+      "label" : "CU loop • scroll a control into view, then click it",
+      "latencyMs" : 5521.048069000244,
+      "modelId" : "xai/grok-4.3",
+      "notes" : [
+        "note: Model-driven. The Accept button is below the fold (revealOnScroll), so the model must scroll before it can see and click it. Scored on the agreement state plus the scroll→click verb order. Needs a live model (no scriptedActions).",
+        "outcome ok: done",
+        "value[agreement] == 'accepted'",
+        "clicked 'accept'",
+        "invalidActions ok: 0 ≤ 2",
+        "verb order ok: [\"scroll\", \"click\"] ⊑ [scroll,click]",
+        "outcome: Read the agreement (via scrolling) and clicked Accept; status is now accepted.",
+        "telemetry: steps=2 proposed=3 acted=2 verifyChanged=2 blocked=0 confirms=0 invalidActions=0 tokens=1821 latencyMs=5521",
+        "axResolvableRate: 1.00 (2/2)",
+        "verbs: [scroll,click]"
+      ],
+      "outcome" : "passed",
+      "query" : "Read the agreement and click Accept at the bottom.",
+      "telemetry" : {
+        "peakPhysFootprintMb" : 13.625846862792969
+      },
+      "toolUsage" : [
+        {
+          "calls" : 1,
+          "deduped" : 0,
+          "errors" : 0,
+          "tool" : "click"
+        },
+        {
+          "calls" : 1,
+          "deduped" : 0,
+          "errors" : 0,
+          "tool" : "scroll"
+        }
+      ]
+    },
+    {
+      "domain" : "computer_use_loop",
+      "id" : "computer_use_loop.som-escalation-click",
+      "label" : "CU loop • escalate empty AX -> SoM to see and click a custom-drawn control",
+      "latencyMs" : 1.6410350799560547,
+      "modelId" : "xai/grok-4.3",
+      "notes" : [
+        "note: Deterministic (scripted-model) vision-escalation case for the Electron / custom-drawn-UI shape: every actionable control is SoM-only (minTier: som), so a plain AX capture is EMPTY and the loop must climb ax->som (Screen Recording is granted in the scripted driver) before the Send button is visible and addressable. A successful scripted click on the SoM-gated button — flipping status to 'sent' — transitively proves the empty-AX->SoM escalation worked, with no live model.",
+        "outcome ok: done",
+        "value[status] == 'sent'",
+        "clicked 'send'",
+        "outcome: sent the message",
+        "telemetry: steps=1 proposed=2 acted=1 verifyChanged=1 blocked=0 confirms=0 invalidActions=0 tokens=0 latencyMs=1",
+        "axResolvableRate: 1.00 (1/1)",
+        "verbs: [click]"
+      ],
+      "outcome" : "passed",
+      "query" : "Click the Send button.",
+      "telemetry" : {
+        "peakPhysFootprintMb" : 13.641471862792969
+      },
+      "toolUsage" : [
+        {
+          "calls" : 1,
+          "deduped" : 0,
+          "errors" : 0,
+          "tool" : "click"
+        }
+      ]
+    },
+    {
+      "domain" : "computer_use_loop",
+      "id" : "computer_use_loop.toggle-switch",
+      "label" : "CU loop • turn on a settings switch",
+      "latencyMs" : 3870.8020448684692,
+      "modelId" : "xai/grok-4.3",
+      "notes" : [
+        "note: A single toggle: the model must click the switch (not type, not observe forever) and recognise the value flipped to 'on'. Tests the click verb + reading a state change off the verify view.",
+        "outcome ok: done",
+        "value[nightshift] == 'on'",
+        "value[bluetooth] == 'off'",
+        "clicked 'nightshift'",
+        "correctly avoided 'wifi'",
+        "invalidActions ok: 0 ≤ 2",
+        "outcome: Night Shift has been turned on in System Settings.",
+        "telemetry: steps=1 proposed=2 acted=1 verifyChanged=1 blocked=0 confirms=0 invalidActions=0 tokens=1073 latencyMs=3870",
+        "axResolvableRate: 1.00 (1/1)",
+        "verbs: [click]"
+      ],
+      "outcome" : "passed",
+      "query" : "Open System Settings and turn on Night Shift.",
+      "telemetry" : {
+        "peakPhysFootprintMb" : 13.750846862792969
+      },
+      "toolUsage" : [
+        {
+          "calls" : 1,
+          "deduped" : 0,
+          "errors" : 0,
+          "tool" : "click"
+        }
+      ]
+    },
+    {
+      "domain" : "computer_use_loop",
+      "id" : "computer_use_loop.type-into-field",
+      "label" : "CU loop • type text into a titled field",
+      "latencyMs" : 3246.9440698623657,
+      "modelId" : "xai/grok-4.3",
+      "notes" : [
+        "note: Smallest end-to-end CU-loop case: perceive one field, address it by mark, type, verify the value changed, declare done. Floor test for marks + the type verb + a clean done.",
+        "outcome ok: done",
+        "value[title] contains 'hello world'",
+        "invalidActions ok: 0 ≤ 2",
+        "outcome: Typed 'hello world' into the Title textfield.",
+        "telemetry: steps=1 proposed=2 acted=1 verifyChanged=1 blocked=0 confirms=0 invalidActions=0 tokens=1042 latencyMs=3246",
+        "axResolvableRate: 1.00 (1/1)",
+        "verbs: [type]"
+      ],
+      "outcome" : "passed",
+      "query" : "In the Notes app, type the text 'hello world' into the Title field, then finish.",
+      "telemetry" : {
+        "peakPhysFootprintMb" : 13.797721862792969
+      },
+      "toolUsage" : [
+        {
+          "calls" : 1,
+          "deduped" : 0,
+          "errors" : 0,
+          "tool" : "type"
+        }
+      ]
+    }
+  ],
+  "modelId" : "xai/grok-4.3",
+  "startedAt" : "2026-06-19T23:39:22Z"
+}

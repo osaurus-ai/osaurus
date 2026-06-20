@@ -1,0 +1,44 @@
+{
+  "cases" : [
+    {
+      "domain" : "agent_loop",
+      "id" : "agent_loop.edit-file-then-verify",
+      "label" : "agent loop • edit a file then verify the change",
+      "latencyMs" : 22172.75893688202,
+      "modelId" : "mlx-community/Qwen3-4B-4bit",
+      "notes" : [
+        "note: The canonical write-path smoke: read → edit → re-read. Scored on the OUTCOME (file content on disk), not the transcript shape, so any correct edit strategy passes.",
+        "exit ok: finalResponse",
+        "file 'greeting.txt' contains 'world'",
+        "command 'grep -q wrold greeting.txt' exited 1 as expected",
+        "summary: toolCalls=[file_edit,file_read] iters=3 exit=finalResponse",
+        "final: The typo in `greeting.txt` has been fixed, and the file has been read back to confirm the change. The file now contains the correct text: \"Hello, world!\".  I will now share the artifact (the corrected file) with the user."
+      ],
+      "outcome" : "passed",
+      "query" : "The file greeting.txt contains a typo: 'wrold' should be 'world'. Fix it, then read the file back to confirm the fix.",
+      "telemetry" : {
+        "completionTokens" : 53,
+        "decodeTokensPerSecond" : 56.76350000000001,
+        "peakPhysFootprintMb" : 4356.471885681152,
+        "prefillTokensPerSecond" : 505.9766,
+        "ttftMs" : 1212.5920057296753
+      },
+      "toolUsage" : [
+        {
+          "calls" : 1,
+          "deduped" : 0,
+          "errors" : 0,
+          "tool" : "file_edit"
+        },
+        {
+          "calls" : 1,
+          "deduped" : 0,
+          "errors" : 0,
+          "tool" : "file_read"
+        }
+      ]
+    }
+  ],
+  "modelId" : "mlx-community/Qwen3-4B-4bit",
+  "startedAt" : "2026-06-19T19:37:20Z"
+}

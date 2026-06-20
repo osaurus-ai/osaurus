@@ -369,51 +369,180 @@ public enum CapabilityClaimsEvaluator {
         }
     }
 
-    /// Extract `{"verdicts":[{"pass":...,"reason":...}]}` from possibly
-    /// chatty judge output. Scans for the first balanced JSON object so
-    /// a model that wraps the answer in prose or a code fence still
-    /// parses. Returns nil when the count doesn't match the conditions.
-    private static func parseVerdicts(
+    // MARK: - Judge-output parsing (hardened, self-judge friendly)
+
+    /// Extract per-condition verdicts from possibly chatty judge output.
+    ///
+    /// Small self-judging models rarely emit the exact
+    /// `{"verdicts":[...]}` envelope: they wrap it in prose, fence it in
+    /// ```json blocks, return a bare array, put `}` inside a `reason`
+    /// string, or grade only some of the conditions. The old parser
+    /// brace-counted the first `{...}` and blanket-failed the whole case
+    /// on any mismatch, so one stray brace or a short reply zeroed grades
+    /// the judge actually produced. This ladder degrades instead:
+    ///   1. Collect ALL balanced JSON fragments (`{...}` and `[...]`),
+    ///      string-aware so braces inside a `reason` and code fences are
+    ///      ignored.
+    ///   2. Decode each as an envelope, a bare verdict array, or a single
+    ///      verdict object, tolerating boolean-ish values ("yes"/1/"pass").
+    ///   3. Prefer the fragment whose verdict count == `expected`, else the
+    ///      one with the most verdicts (closest to a full grade).
+    ///   4. Index-align to `expected`: extra verdicts are dropped; missing
+    ///      ones become an explicit "not graded" fail, so a judge that
+    ///      returned 2 of 3 verdicts only zeroes the one it skipped.
+    /// Returns nil only when no fragment yields a single usable verdict.
+    nonisolated static func parseVerdicts(
         _ raw: String,
         expected: Int
     ) -> [CapabilityClaimsJudgement]? {
-        guard let objectString = firstJSONObject(in: raw),
-            let data = objectString.data(using: .utf8)
-        else { return nil }
-
-        struct Envelope: Decodable {
-            struct Verdict: Decodable {
-                let pass: Bool
-                let reason: String?
+        guard expected > 0 else { return [] }
+        var best: [RawVerdict]?
+        for fragment in balancedJSONFragments(in: raw) {
+            guard let verdicts = decodeVerdicts(fragment), !verdicts.isEmpty else { continue }
+            if verdicts.count == expected {
+                best = verdicts
+                break
             }
-            let verdicts: [Verdict]
+            if best == nil || verdicts.count > (best?.count ?? 0) {
+                best = verdicts
+            }
         }
-        guard let envelope = try? JSONDecoder().decode(Envelope.self, from: data),
-            envelope.verdicts.count == expected
-        else { return nil }
+        guard let resolved = best else { return nil }
+        return alignVerdicts(resolved, to: expected)
+    }
 
-        return envelope.verdicts.map {
-            CapabilityClaimsJudgement(pass: $0.pass, reason: $0.reason ?? "")
+    /// Tolerant intermediate verdict (post-decode, pre-alignment).
+    private struct RawVerdict {
+        let pass: Bool
+        let reason: String
+    }
+
+    /// Decode one JSON fragment into raw verdicts, accepting the
+    /// `{"verdicts":[...]}` envelope, a bare `[...]` array, or a single
+    /// `{"pass":...}` object.
+    nonisolated private static func decodeVerdicts(_ fragment: String) -> [RawVerdict]? {
+        guard let data = fragment.data(using: .utf8) else { return nil }
+        struct WireVerdict: Decodable {
+            let pass: BoolLike
+            let reason: String?
+        }
+        struct Envelope: Decodable { let verdicts: [WireVerdict] }
+
+        let decoder = JSONDecoder()
+        let map: (WireVerdict) -> RawVerdict = { RawVerdict(pass: $0.pass.value, reason: $0.reason ?? "") }
+
+        if let env = try? decoder.decode(Envelope.self, from: data), !env.verdicts.isEmpty {
+            return env.verdicts.map(map)
+        }
+        if let arr = try? decoder.decode([WireVerdict].self, from: data), !arr.isEmpty {
+            return arr.map(map)
+        }
+        if let single = try? decoder.decode(WireVerdict.self, from: data) {
+            return [map(single)]
+        }
+        return nil
+    }
+
+    /// Tolerant boolean for the `pass` field: accepts JSON booleans,
+    /// 0/1 integers, and common string spellings ("true"/"pass"/"yes").
+    /// Anything else is treated as a fail rather than throwing.
+    private struct BoolLike: Decodable {
+        let value: Bool
+        init(from decoder: Decoder) throws {
+            let container = try decoder.singleValueContainer()
+            if let bool = try? container.decode(Bool.self) {
+                value = bool
+            } else if let int = try? container.decode(Int.self) {
+                value = int != 0
+            } else if let string = try? container.decode(String.self) {
+                switch string.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+                case "true", "pass", "passed", "yes", "y", "1": value = true
+                default: value = false
+                }
+            } else {
+                value = false
+            }
         }
     }
 
-    /// Return the substring of the first balanced `{...}` JSON object in
-    /// `text`, or nil if there isn't one. Brace-counts so nested objects
-    /// (the verdict array) are kept intact.
-    private static func firstJSONObject(in text: String) -> String? {
-        guard let start = text.firstIndex(of: "{") else { return nil }
+    /// Index-align decoded verdicts to the expected condition count: drop
+    /// extras, and mark any shortfall as an explicit ungraded fail.
+    nonisolated private static func alignVerdicts(
+        _ verdicts: [RawVerdict],
+        to expected: Int
+    ) -> [CapabilityClaimsJudgement] {
+        (0 ..< expected).map { index in
+            if index < verdicts.count {
+                return CapabilityClaimsJudgement(
+                    pass: verdicts[index].pass,
+                    reason: verdicts[index].reason
+                )
+            }
+            return CapabilityClaimsJudgement(
+                pass: false,
+                reason:
+                    "judge returned \(verdicts.count) of \(expected) verdicts; "
+                    + "condition \(index + 1) not graded"
+            )
+        }
+    }
+
+    /// Every balanced top-level JSON fragment (`{...}` or `[...]`) in
+    /// `text`, in order. String-aware: braces/brackets and escaped quotes
+    /// inside a JSON string literal are ignored, so a `reason` containing
+    /// `}` or a fenced ```json block doesn't corrupt matching.
+    nonisolated private static func balancedJSONFragments(in text: String) -> [String] {
+        var fragments: [String] = []
+        let characters = Array(text)
+        var index = 0
+        while index < characters.count {
+            let character = characters[index]
+            guard character == "{" || character == "[" else {
+                index += 1
+                continue
+            }
+            if let end = matchedCloseIndex(characters, from: index) {
+                fragments.append(String(characters[index ... end]))
+                index = end + 1
+            } else {
+                index += 1
+            }
+        }
+        return fragments
+    }
+
+    /// Index of the balanced closer for the opener at `start`, or nil if
+    /// the structure never closes. Tracks string state so quoted braces
+    /// don't move the depth counter.
+    nonisolated private static func matchedCloseIndex(
+        _ characters: [Character],
+        from start: Int
+    ) -> Int? {
         var depth = 0
+        var inString = false
+        var escaped = false
         var index = start
-        while index < text.endIndex {
-            let character = text[index]
-            if character == "{" { depth += 1 }
-            if character == "}" {
-                depth -= 1
-                if depth == 0 {
-                    return String(text[start ... index])
+        while index < characters.count {
+            let character = characters[index]
+            if inString {
+                if escaped {
+                    escaped = false
+                } else if character == "\\" {
+                    escaped = true
+                } else if character == "\"" {
+                    inString = false
+                }
+            } else {
+                switch character {
+                case "\"": inString = true
+                case "{", "[": depth += 1
+                case "}", "]":
+                    depth -= 1
+                    if depth == 0 { return index }
+                default: break
                 }
             }
-            index = text.index(after: index)
+            index += 1
         }
         return nil
     }

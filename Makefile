@@ -10,7 +10,7 @@ WORKSPACE := osaurus.xcworkspace
 DERIVED := build/DerivedData
 XCODEBUILD_FLAGS ?=
 
-.PHONY: help cli app install-cli serve status test ci-test clean bench-setup bench-ingest bench-ingest-chunks bench-run bench evals-prep evals evals-verbose evals-report evals-all evals-all-verbose evals-all-report
+.PHONY: help cli app install-cli serve status test ci-test clean bench-setup bench-ingest bench-ingest-chunks bench-run bench evals-prep evals evals-verbose evals-report evals-all evals-all-verbose evals-all-report evals-loop evals-matrix evals-diff
 
 help:
 	@echo "Targets:"
@@ -30,6 +30,9 @@ help:
 	@echo "  evals-all           Run every suite under Packages/OsaurusEvals/Suites/* (MODEL=, FILTER=)"
 	@echo "  evals-all-verbose   Same as 'evals-all' plus per-case raw LLM response"
 	@echo "  evals-all-report    Same as 'evals-all' but writes per-suite JSON to EVALS_OUT_DIR (build/evals/)"
+	@echo "  evals-loop          Optimization loop: run all suites per model + scoreboard + diff (MODELS=, BASELINE=)"
+	@echo "  evals-matrix        Cross-model scoreboard from a reports dir (DIR=)"
+	@echo "  evals-diff          All-domain before/after diff (BASELINE=, CURRENT=)"
 	@echo "  test           Run OsaurusCore package tests via 'swift test'"
 	@echo "  ci-test        Reproduce the CI test-core job locally (xcodebuild + xcbeautify)"
 	@echo "  clean          Remove DerivedData build output"
@@ -238,6 +241,32 @@ evals-all-report: evals-prep
 	echo ""; \
 	echo "Wrote per-suite reports to $(EVALS_OUT_DIR)/"; \
 	exit $$rc
+
+# Optimization-loop backbone: prep → run every suite per model into a
+# timestamped dir → cross-model matrix (scoreboard) → optional diff vs a
+# saved baseline. The maintainer pipeline; see
+# scripts/evals/optimization-loop.sh for env overrides (MODELS=, BASELINE=,
+# FILTER=, STRICT=).
+#   make evals-loop
+#   make evals-loop MODELS="foundation qwen3-4b xai/grok-4.3" BASELINE=build/evals/loop/<prev>
+evals-loop:
+	@MODELS="$(MODELS)" BASELINE="$(BASELINE)" FILTER="$(FILTER)" STRICT="$(STRICT)" \
+		bash scripts/evals/optimization-loop.sh
+
+# Cross-model scoreboard from an existing dir of *.json reports.
+#   make evals-matrix DIR=build/evals/loop/latest
+evals-matrix:
+	@swift run --package-path Packages/OsaurusEvals osaurus-evals matrix $(DIR) \
+		$(if $(MATRIX_OUT),--out $(MATRIX_OUT),) \
+		$(if $(MATRIX_MD),--markdown $(MATRIX_MD),)
+
+# All-domain before/after diff between two report dirs/files.
+#   make evals-diff BASELINE=build/evals/loop/<prev> CURRENT=build/evals/loop/latest
+evals-diff:
+	@swift run --package-path Packages/OsaurusEvals osaurus-evals diff $(BASELINE) $(CURRENT) \
+		$(if $(DIFF_OUT),--out $(DIFF_OUT),) \
+		$(if $(DIFF_MD),--markdown $(DIFF_MD),) \
+		$(if $(STRICT),--fail-on-regression,)
 
 ## ── Housekeeping ─────────────────────────────────────────────────
 

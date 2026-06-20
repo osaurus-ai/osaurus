@@ -75,6 +75,27 @@ public struct AgentLoopTranscript: Sendable, Codable {
     public let compacted: Bool
     /// Non-nil when the loop aborted (engine threw, model unroutable).
     public let error: String?
+    /// Token-weighted mean decode speed (tokens/sec) across every
+    /// streaming model step, from the runtime's authoritative
+    /// `StreamingStatsHint`. `nil` for non-streaming or remote runs that
+    /// never surfaced a stats hint. The headline "how fast does this
+    /// model generate on this Mac" number the optimization loop tracks.
+    public let decodeTokensPerSecond: Double?
+    /// First measured prompt-processing (prefill) speed (tokens/sec), from
+    /// the stats hint's `prefill=` flag. Not strictly the first model step:
+    /// an early step that ends in a tool call throws before emitting its
+    /// end-of-step stats, so the first reading often lands on a later step.
+    /// Drives TTFT on long contexts; KV-prefix reuse shows up as a higher
+    /// value once the prefix is warm.
+    public let prefillTokensPerSecond: Double?
+    /// Time-to-first-token for the first model step, in milliseconds —
+    /// wall clock from request dispatch to the first streamed delta.
+    /// `nil` for non-streaming runs.
+    public let ttftMs: Double?
+    /// Total generated tokens across all model steps (sum of per-step
+    /// stats-hint counts). Pairs with `loopDurationMs` for a run-level
+    /// throughput sanity check.
+    public let completionTokens: Int?
 
     public init(
         toolCalls: [ToolInvocation],
@@ -86,7 +107,11 @@ public struct AgentLoopTranscript: Sendable, Codable {
         loopDurationMs: Double = 0,
         notices: [String] = [],
         compacted: Bool = false,
-        error: String?
+        error: String?,
+        decodeTokensPerSecond: Double? = nil,
+        prefillTokensPerSecond: Double? = nil,
+        ttftMs: Double? = nil,
+        completionTokens: Int? = nil
     ) {
         self.toolCalls = toolCalls
         self.finalText = finalText
@@ -98,6 +123,10 @@ public struct AgentLoopTranscript: Sendable, Codable {
         self.notices = notices
         self.compacted = compacted
         self.error = error
+        self.decodeTokensPerSecond = decodeTokensPerSecond
+        self.prefillTokensPerSecond = prefillTokensPerSecond
+        self.ttftMs = ttftMs
+        self.completionTokens = completionTokens
     }
 }
 
@@ -327,6 +356,18 @@ public enum AgentLoopEvaluator {
         var transcriptCalls: [AgentLoopTranscript.ToolInvocation] = []
         var noticesSeen: [String] = []
         var finalText = ""
+        // Per-run generation telemetry, accumulated across model steps
+        // from the streaming `StreamingStatsHint`. Token-weighted so a
+        // long decode step dominates the mean over a 2-token step. TTFT
+        // and prefill speed are recorded from the FIRST step only (the
+        // cold prefill); later steps reuse the KV prefix and aren't
+        // comparable as a TTFT baseline.
+        var decodeTpsWeightedSum = 0.0
+        var decodeTpsTokenWeight = 0
+        var completionTokensTotal = 0
+        var firstStepTtftMs: Double?
+        var firstStepPrefillTps: Double?
+        var sawAnyModelStep = false
         // Set when a successful `complete` intercept ends the run; the
         // summary becomes the final answer (mirrors the chat surface,
         // where the summary renders as the completion banner).
@@ -354,7 +395,13 @@ public enum AgentLoopEvaluator {
                 loopDurationMs: loopMs,
                 notices: noticesSeen,
                 compacted: watermark.hasCompacted,
-                error: error
+                error: error,
+                decodeTokensPerSecond: decodeTpsTokenWeight > 0
+                    ? decodeTpsWeightedSum / Double(decodeTpsTokenWeight)
+                    : nil,
+                prefillTokensPerSecond: firstStepPrefillTps,
+                ttftMs: firstStepTtftMs,
+                completionTokens: sawAnyModelStep ? completionTokensTotal : nil
             )
         }
 
@@ -517,16 +564,48 @@ public enum AgentLoopEvaluator {
                     // assistant turns can echo `reasoning_content` back to
                     // providers that require it in thinking mode (DeepSeek).
                     var reasoning = ""
+                    let stepStarted = Date()
+                    let isFirstStep = !sawAnyModelStep
+                    sawAnyModelStep = true
                     do {
                         let stream = try await engine.streamChat(
                             request: makeRequest(effective, stream: true)
                         )
                         for try await delta in stream {
+                            // TTFT: first streamed delta of the FIRST step,
+                            // regardless of channel (reasoning / content /
+                            // tool hint all count as "model produced output").
+                            if isFirstStep, firstStepTtftMs == nil {
+                                firstStepTtftMs = Date().timeIntervalSince(stepStarted) * 1000
+                            }
                             if let fragment = StreamingReasoningHint.decode(delta) {
                                 reasoning += fragment
                                 continue
                             }
-                            if StreamingStatsHint.decode(delta) != nil { continue }
+                            if let stats = StreamingStatsHint.decode(delta) {
+                                // Authoritative end-of-step runtime stats:
+                                // token-weight the decode tps, sum tokens,
+                                // and keep the first step's prefill speed.
+                                if stats.tokensPerSecond > 0, stats.tokenCount > 0 {
+                                    decodeTpsWeightedSum += stats.tokensPerSecond * Double(stats.tokenCount)
+                                    decodeTpsTokenWeight += stats.tokenCount
+                                }
+                                completionTokensTotal += max(0, stats.tokenCount)
+                                // Prefill speed: keep the FIRST measured reading
+                                // (the cold prompt-processing pass). Not gated to
+                                // the first model step — an early step that ends
+                                // in a tool call throws `ServiceToolInvocations`
+                                // before emitting its end-of-step stats hint, so
+                                // the first prefill reading often arrives on a
+                                // later step. Take the first positive value seen.
+                                if firstStepPrefillTps == nil,
+                                    let prefill = stats.prefillTokensPerSecond,
+                                    prefill > 0
+                                {
+                                    firstStepPrefillTps = prefill
+                                }
+                                continue
+                            }
                             if StreamingToolHint.isSentinel(delta) { continue }
                             content += delta
                         }

@@ -1,9 +1,9 @@
 {
   "id": "capability_claims.discover",
   "domain": "capability_claims",
-  "label": "capability claims • discover before answering",
+  "label": "capability claims • acknowledge a manifest-grounded capability (don't deny)",
   "query": "I need to automate filling out a form on a website and clicking submit. Can you do that?",
-  "notes": "The capability exists behind the browser plugin but is unlikely to be fully described for this phrasing in the manifest alone, so the grounded path is to run capabilities_discover (and ideally capabilities_load) rather than denying. Scores that the model reaches for discovery instead of answering from schema absence. Requires osaurus.browser installed.",
+  "notes": "Outcome-based (audited 2026-06, W2 eval-trust). The browser capability is installed AND named in the Enabled-capabilities manifest (requirePlugins + enableSkills + enableTools), so per this suite's own `no-spurious-discover` and `by-intent` cases the grounded behaviour is to TRUST the manifest and acknowledge the capability — not to re-derive it with capabilities_discover. The previous `mustCallTools:[capabilities_discover]` therefore contradicted those cases: it forced a discovery round-trip for an already-grounded capability and failed correct frontier answers (grok-4.3 legitimately confirms from the manifest with zero tool calls). The discovery/load MECHANISM stays covered by `load-then-confirm` and `skill-first` (which require capabilities_load for an actionable request). Here we score the OUTCOME: indicate you can help, don't deny for schema absence. Requires osaurus.browser installed.",
   "fixtures": {
     "requirePlugins": ["osaurus.browser"],
     "enableSkills": ["Osaurus Browser"],
@@ -15,7 +15,6 @@
         "Indicates it can help automate the web form task rather than refusing outright.",
         "Does not deny the capability solely because a tool was not initially in its schema."
       ],
-      "mustCallTools": ["capabilities_discover"],
       "maxIterations": 6
     }
   }

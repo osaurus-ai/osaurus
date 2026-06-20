@@ -723,6 +723,21 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
                 )
             )
         }
+        // Idempotent re-load — checked BEFORE the enabled/grant guards. A
+        // tool already in this session's schema (the always-loaded baseline
+        // snapshot or an earlier capabilities_load) is ALREADY callable, so
+        // re-loading it must return success regardless of the current
+        // global-enabled or agent-grant state. Rejecting it here was a
+        // guard-ordering bug: the `isEnabled`/`allowedNames` guards fired
+        // first, so re-loading an already-baseline tool returned
+        // `{"ok":false,"kind":"rejected","message":"… is disabled"}` for a
+        // tool the model could already call — which derails the loop (the
+        // model believes a working capability failed). The early return also
+        // prevents re-buffering, which would re-trigger the deferred-schema
+        // bookkeeping and a redundant "callable now" notice.
+        if await isAlreadyLoadedInSession(toolId) {
+            return .success("Tool '\(toolId)' is already loaded and callable — no action needed.\n")
+        }
         guard isBuiltIn || (allowedNames?.contains(toolId) ?? true) else {
             return .failure(
                 LoadFailure(
@@ -751,14 +766,6 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
                         "Tool '\(toolId)' not found or not registered. availability: \(availability.compactSummary)"
                 )
             )
-        }
-        // No-op re-load: a tool already in this session's schema (always
-        // loaded, or loaded by an earlier capabilities_load) must not
-        // re-enter the buffer — that re-triggers the deferred-schema
-        // bookkeeping and the "callable now" notice for a tool the model
-        // could already call.
-        if await isAlreadyLoadedInSession(toolId) {
-            return .success("Tool '\(toolId)' is already loaded and callable — no action needed.\n")
         }
         await CapabilityLoadBuffer.shared.add(spec)
         return .success("Tool '\(toolId)' loaded and available.\n")
