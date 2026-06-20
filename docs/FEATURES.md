@@ -44,7 +44,8 @@ Canonical reference for all Osaurus features, their status, and documentation.
 | VAD Mode                         | Stable    | "Voice Input"      | VOICE_INPUT.md                | Services/Voice/VADService.swift, Views/ContentView.swift (VAD controls)                     |
 | Transcription Mode               | Stable    | "Voice Input"      | VOICE_INPUT.md                | Services/Voice/TranscriptionModeService.swift, Views/Voice/TranscriptionOverlayView.swift         |
 | Sandbox                          | macOS 26+ | "Sandbox"          | SANDBOX.md                    | Services/Sandbox/SandboxManager.swift, Tools/BuiltinSandboxTools.swift, Managers/Plugin/SandboxPluginManager.swift, Views/Sandbox/SandboxView.swift |
-| Storage Encryption               | Stable    | -                  | STORAGE.md                    | Identity/StorageKeyManager.swift, Storage/EncryptedSQLiteOpener.swift, Storage/StorageDatabaseCatalog.swift, Storage/StorageMutationGate.swift, Storage/StorageExportService.swift, Storage/EncryptedFileStore.swift, Storage/AttachmentBlobStore.swift, Storage/StorageMaintenance.swift, Views/Settings/StorageSettingsView.swift, SQLCipher/ |
+| Computer Use                     | Experimental | -               | COMPUTER_USE.md               | ComputerUse/ (Tool, Loop, Policy, Perception, Recipes, Driver), Views/Settings/ComputerUseSettingsView.swift, Views/Chat/ComputerUseFeedView.swift |
+| Storage (plaintext default, opt-in encryption) | Stable | -          | STORAGE.md                    | Storage/StorageFileFormat.swift, Storage/StorageEncryptionPolicy.swift, Storage/OsaurusStorageOpener.swift, Storage/StorageMigrationCoordinator.swift, Storage/StorageRecoveryService.swift, Storage/StorageFile.swift, Storage/PersistenceHealth.swift, Identity/StorageKeyManager.swift, Storage/EncryptedSQLiteOpener.swift, Storage/StorageDatabaseCatalog.swift, Storage/StorageMutationGate.swift, Storage/StorageExportService.swift, Storage/EncryptedFileStore.swift, Storage/AttachmentBlobStore.swift, Storage/StorageMaintenance.swift, Views/Settings/StorageSettingsView.swift, SQLCipher/ |
 | CLI                              | Stable    | "CLI Reference"    | (in README)                   | Packages/OsaurusCLI/                                                                  |
 
 ---
@@ -69,7 +70,7 @@ Canonical reference for all Osaurus features, their status, and documentation.
 │  │   ├── WatchersView (Watchers)                                         │
 │  │   ├── ThemesView (Themes)                                             │
 │  │   ├── SandboxView (Sandbox Container & Plugins)                       │
-│  │   ├── StorageSettingsView (Encryption key, backup, key rotation)      │
+│  │   ├── StorageSettingsView (Encryption opt-in, backup, recovery)       │
 │  │   ├── InsightsView (Developer: Insights)                              │
 │  │   ├── ServerView (Developer: Server Explorer)                         │
 │  │   ├── VoiceView (Voice Input & VAD Settings)                          │
@@ -152,6 +153,12 @@ Canonical reference for all Osaurus features, their status, and documentation.
 │  │   ├── PrivacyFilterModelDownloader (HF bundle install + verify)       │
 │  │   ├── PrivacyFilterStore (Synchronous JSON config persistence)        │
 │  │   └── WireTransportProbe (Captures post-scrub bytes for Insights)     │
+│  ├── Computer Use                                                        │
+│  │   ├── ComputerUseTool (computer_use entry tool, nested loop)          │
+│  │   ├── ComputerUseLoop (perceive-decide-gate-act-verify)               │
+│  │   ├── NativeMacDriver (AX / SOM / Vision capture + input)             │
+│  │   ├── CaptureRouter / FrameScrubber / CloudVisionConsent              │
+│  │   └── EffectClassifier + AutonomyPolicy/Gate + AppRecipes             │
 │  └── Utilities                                                           │
 │      ├── InsightsService (Request logging)                               │
 │      ├── HuggingFaceService (Model downloads)                            │
@@ -489,6 +496,7 @@ This command bridge is for external clients connecting to Osaurus. If Server > N
 | Output | `speakEnabled` | Voice | off | `speak` |
 | Memory & Recall | `searchMemoryEnabled` | Memory Recall | off | `search_memory` |
 | Autonomy | `selfSchedulingEnabled` | Self-scheduling | off | `schedule_next_run` / `cancel_next_run` / `notify` + scheduling UI |
+| Autonomy | `computerUseEnabled` | Computer Use | off | `computer_use` entry tool (custom agents only; plus per-agent autonomy ceiling) |
 | Data | `dbEnabled` | Database | off | `db_*` tools + DB tabs |
 | Code Execution | sandbox settings | Autonomous Execution / Plugin Creation / Sandbox Network / Read Secret Files | off | Sandbox capabilities (visible but disabled when the container isn't running) |
 
@@ -1339,6 +1347,49 @@ The post-scrub invariant only re-scans categories whose built-in regex toggle is
 
 ---
 
+### Computer Use
+
+**Purpose:** Let a custom agent operate a macOS app on the user's behalf to accomplish a natural-language goal — working primarily from the **accessibility tree**, with a **screenshot** fallback only when an element can't be resolved. Off by default, enabled **per agent** (custom agents only), with a **safe-by-default autonomy gate** on every action. See [COMPUTER_USE.md](COMPUTER_USE.md) for the full architecture.
+
+**Mental model:** the parent agent calls one tool — `computer_use(goal:)` — exactly once. It spins up a **nested sub-agent** (the `sandbox_reduce` pattern) that runs a `perceive → decide → gate → act → verify` loop and returns a single summary. The model only proposes the next intent (one `agent_action` per step, forced `tool_choice`); the harness owns every deterministic decision. Inner steps never enter the parent transcript — they surface only through the live `ComputerUseFeed` in the chat row.
+
+**Components:**
+
+- `ComputerUse/Tool/ComputerUseTool.swift` — the `computer_use` entry tool (PermissionedTool: Accessibility preflight; stripped from the schema unless `computerUseEnabled`)
+- `ComputerUse/Loop/ComputerUseLoop.swift` — the perceive→decide→gate→act→verify controller (`RunLimits`, `RunOutcome`)
+- `ComputerUse/Model/AgentAction.swift` — the single model-facing `agent_action` envelope (constrained verb enum + schema-validated decode + bounded re-ask)
+- `ComputerUse/Driver/NativeMacDriver.swift` + `Driver/Mac/*` — AX / SOM / Vision capture and synthetic input
+- `ComputerUse/Perception/CaptureRouter.swift`, `FrameScrubber.swift`, `CloudVisionConsent.swift`, `VisionAttachment.swift` — the local-first perception ladder and cloud-vision boundary
+- `ComputerUse/Policy/EffectClassifier.swift`, `AutonomyPolicy.swift`, `ComputerUseGate.swift`, `ComputerUsePolicyStore.swift` — effect classification + strictest-wins autonomy gate
+- `ComputerUse/Recipes/AppRecipe.swift` — per-app effect signals + flow hints
+- `Views/Settings/ComputerUseSettingsView.swift`, `Views/Chat/ComputerUseFeedView.swift` — settings panel + live activity feed
+
+**Effect → disposition (autonomy presets):** every action is classified as `read` / `navigate` / `edit` / `consequential` (the classifier can only ever escalate), then resolved to `allow` / `confirm` / `deny`.
+
+| Preset | navigate | edit | consequential |
+|--------|----------|------|---------------|
+| `read_only` | allow | deny | deny |
+| `cautious` | confirm | confirm | confirm |
+| **`balanced`** (default) | allow | confirm | confirm |
+| `trusted` | allow | allow | confirm |
+| `autonomous` | allow | allow | allow |
+
+`read` is always `allow`. The effective disposition merges **strictest-wins** across the global preset, an optional per-app override (can only add caution), and an optional per-agent **ceiling**. An optional **allowlist** — when set — is checked first and rejects any app not on it (the `open` verb is gated the same way).
+
+**Perception ladder:** `ax` (accessibility tree, no pixels) → `som` (AX tree + annotated screenshot; the default capture mode) → `vision` (screenshot only). Escalation past `ax` needs **Screen Recording**; without it the loop stays AX-only. A frame reaches a **cloud** model only via a route that requires **explicit consent** (off by default) and a `ScrubbedFrame` (on-device Vision OCR + `RegexEntityDetector` masking) — making an unconsented or unscrubbed cloud send unrepresentable in the type system.
+
+**Telemetry:** one coarse, privacy-clean `computer_use_run` event per run (outcome, max tier, bucketed step/confirm counts, ax-resolvable + verify-pass rate buckets, dead-end / block / cloud-vision flags) — no goal text, app names, or per-step detail.
+
+**Storage:**
+
+| Path / key | Purpose |
+|------------|---------|
+| `~/.osaurus/config/computer-use.json` | `AutonomyPolicy` (global preset + per-app overrides + allowlist) via `ComputerUsePolicyStore` |
+| `UserDefaults` `ai.osaurus.computeruse.cloudVisionConsent` | Persisted cloud-vision opt-in (default `false`) |
+| `Agent.settings.computerUseEnabled` / `computerUseCeiling` | Per-agent enablement + autonomy ceiling (in the agent JSON) |
+
+---
+
 ## Documentation Index
 
 | Document                                                       | Purpose                                           |
@@ -1357,6 +1408,7 @@ The post-scrub invariant only re-scans categories whose built-in regex toggle is
 | [MEMORY.md](MEMORY.md)                                         | Memory system and configuration guide            |
 | [PRIVACY_FILTER.md](PRIVACY_FILTER.md)                         | Privacy Filter architecture, detection layers, settings, and verification |
 | [SANDBOX.md](SANDBOX.md)                                       | Sandbox VM and plugin guide                       |
+| [COMPUTER_USE.md](COMPUTER_USE.md)                             | Computer Use harness, autonomy gate, and cloud-vision boundary |
 | [plugins/README.md](plugins/README.md)                         | Creating custom plugins                           |
 | [OpenAI_API_GUIDE.md](OpenAI_API_GUIDE.md)                     | API usage, tool calling, streaming                |
 | [SHARED_CONFIGURATION_GUIDE.md](SHARED_CONFIGURATION_GUIDE.md) | Shared configuration for teams                    |

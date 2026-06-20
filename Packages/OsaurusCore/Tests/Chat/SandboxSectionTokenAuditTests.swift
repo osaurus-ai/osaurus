@@ -143,4 +143,79 @@ struct SandboxSectionTokenAuditTests {
         #expect(state.contains("Configured secrets"))
         #expect(state.contains("Already installed"))
     }
+
+    /// Small local models (<20B) / small-context windows get `compact`
+    /// variants of the heaviest sandbox-mode sections. This pins that compact
+    /// is materially smaller than full AND still carries each section's
+    /// load-bearing facts — so a future edit can't silently un-compact (losing
+    /// the prefill win) or over-trim (dropping a contract the model needs).
+    @Test("compact sandbox-mode sections shrink but keep their contracts")
+    func compactSectionsShrinkButKeepContracts() {
+        func smaller(_ full: String, _ compact: String, label: String) {
+            let f = TokenEstimator.estimate(full)
+            let c = TokenEstimator.estimate(compact)
+            #expect(c < f, "\(label) compact (\(c)) is not smaller than full (\(f))")
+        }
+
+        // Sandbox framing: compact must still name the absolute home path
+        // (models guess `/root` for `cwd` without it) and that internet works.
+        let home = "/workspace/agents/test-home"
+        let fullSandbox = SystemPromptTemplates.sandbox(home: home)
+        let compactSandbox = SystemPromptTemplates.sandbox(home: home, compact: true)
+        smaller(fullSandbox, compactSandbox, label: "sandbox")
+        #expect(compactSandbox.contains(home))
+        #expect(compactSandbox.contains("Internet"))
+        #expect(compactSandbox.contains("sandbox_exec"))
+        #expect(compactSandbox.contains("never `python3 -c`"))
+
+        // Discovery ladder: compact keeps discover/load + the "start of work"
+        // framing + the Secret/Risk pointers.
+        let fullNudge = SystemPromptTemplates.capabilityDiscoveryNudgeSandbox(canCreatePlugins: false)
+        let compactNudge = SystemPromptTemplates.capabilityDiscoveryNudgeSandbox(
+            canCreatePlugins: false,
+            compact: true
+        )
+        smaller(fullNudge, compactNudge, label: "discovery nudge")
+        #expect(compactNudge.contains("capabilities_discover"))
+        #expect(compactNudge.contains("Secret handling"))
+
+        // Secret handling: compact keeps out-of-band collection + env-var read.
+        smaller(
+            SystemPromptTemplates.secretHandlingGuidance,
+            SystemPromptTemplates.secretHandlingGuidanceCompact,
+            label: "secret handling"
+        )
+        #expect(SystemPromptTemplates.secretHandlingGuidanceCompact.contains("sandbox_secret_set"))
+        #expect(SystemPromptTemplates.secretHandlingGuidanceCompact.contains("env var"))
+
+        // Agent loop: compact keeps all four tools.
+        let compactLoop = SystemPromptTemplates.agentLoopGuidanceCompact
+        smaller(SystemPromptTemplates.agentLoopGuidance, compactLoop, label: "agent loop")
+        for tool in ["todo", "complete", "clarify", "share_artifact"] {
+            #expect(compactLoop.contains(tool), "compact agent loop dropped \(tool)")
+        }
+
+        // Grounding (discovery-aware): compact keeps the capability-claim rule.
+        smaller(
+            SystemPromptTemplates.groundingDirectiveFull,
+            SystemPromptTemplates.groundingDirectiveFullCompact,
+            label: "grounding"
+        )
+        #expect(SystemPromptTemplates.groundingDirectiveFullCompact.contains("capabilities_discover"))
+
+        // Self-improvement: compact keeps the SOUL.md contract the existing
+        // audit pins for the full variant.
+        let compactSelf = SystemPromptTemplates.selfImprovementGuidance(
+            canCreatePlugins: false,
+            compact: true
+        )
+        smaller(
+            SystemPromptTemplates.selfImprovementGuidance(canCreatePlugins: false),
+            compactSelf,
+            label: "self-improvement"
+        )
+        #expect(compactSelf.contains("~/SOUL.md"))
+        #expect(compactSelf.contains("sandbox_write_file"))
+        #expect(compactSelf.contains("next session"))
+    }
 }

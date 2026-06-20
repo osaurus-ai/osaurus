@@ -3,7 +3,7 @@
   "domain": "capability_search",
   "label": "capability search • method • abstain on chit-chat",
   "query": "thanks, that's perfect",
-  "notes": "Symmetric with `capability_search.abstain-greeting` on the tools lane. RRF saturation (max ≈ 0.0328 with k=60) caps the abstain-vs-recall gap to ~0.001 — methods/skills face the same ceiling under RRF. If this case fails after PR-B lands, the right fix is the abstain quality floor workstream (pre-RRF gate / query-intent classifier), NOT threshold tuning. Track here as `expect maxAccepted=0` so the recall_floors gate can adopt the same known-tracking pattern.",
+  "notes": "Symmetric with `capability_search.abstain-greeting` on the tools lane. FIXED + PROMOTED 2026-06-19 (W3): RRF saturation (max ≈ 0.0328 with k=60) capped the abstain-vs-recall gap to ~0.001, so no fused/cosine floor could separate this from real recall. The resolution is the pre-RRF query-intent gate (`CapabilityQueryIntent.isConversationalAbstain`), which short-circuits 'thanks, that's perfect' before any lane runs — methods lane returns empty, `maxAccepted=0` holds. Now enforced in recall_floors.json.",
   "fixtures": {
     "seedMethods": [
       {

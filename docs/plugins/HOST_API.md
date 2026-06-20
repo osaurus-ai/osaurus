@@ -179,7 +179,7 @@ The host also emits a one-shot warning per `(plugin, op)` to the unified log whe
 
 ## Storage
 
-Per-plugin SQLite database, encrypted with SQLCipher and lazy-opened on first use. `ATTACH`, `DETACH`, and `LOAD_EXTENSION` are blocked at the SQL guard.
+Per-plugin SQLite database, lazy-opened on first use. It follows the app-wide storage posture — plaintext SQLite by default (protected by macOS FileVault), or SQLCipher-encrypted when the user opts in under **Settings → Storage** (see [STORAGE.md](../STORAGE.md)). Either way the API is identical; `ATTACH`, `DETACH`, and `LOAD_EXTENSION` are blocked at the SQL guard.
 
 **Size cap.** Each plugin's database is capped at **100 MiB** by default (configurable per-context, but not via the plugin API — this is a host-side guard). INSERT / UPDATE statements that would push past the cap fail with `database or disk is full`; the plugin sees a normal SQL error in the response envelope (no host crash). For larger payloads, use shared artifacts via the chat / dispatch flow, not `db_exec`.
 

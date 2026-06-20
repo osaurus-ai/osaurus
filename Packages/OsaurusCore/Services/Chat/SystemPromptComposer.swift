@@ -262,6 +262,27 @@ public struct SystemPromptComposer: Sendable {
         )
         let manifest = comp.manifest()
         debugLog("[Context] \(manifest.debugDescription)")
+
+        // Prefill diagnostics: record the full composition breakdown so the
+        // /tmp log shows where every system-prompt token comes from, plus the
+        // tool-schema token cost and the static-prefix hash (identical hashes
+        // across two fresh chats mean disk-L2 carryover SHOULD hit).
+        if PrefillDebugLog.shared.isEnabled {
+            let window = ContextSizeResolver.resolve(modelId: snapshot.model)
+            let toolTokens = ToolRegistry.shared.totalEstimatedTokens(for: toolset.tools)
+            PrefillDebugLog.shared.log(
+                "==== COMPOSE model=\(snapshot.model) sizeClass=\(window.sizeClass) "
+                    + "ctxLen=\(window.contextLength.map(String.init) ?? "?") "
+                    + "executionMode=\(executionMode) toolCount=\(toolset.tools.count) "
+                    + "toolTokens≈\(toolTokens) "
+                    + "systemPromptTokens≈\(manifest.totalEstimatedTokens) "
+                    + "promptPlusTools≈\(manifest.totalEstimatedTokens + toolTokens) "
+                    + "staticPrefixTokens≈\(manifest.staticPrefixTokens) "
+                    + "staticPrefixHash=\(manifest.staticPrefixHash(tools: toolset.tools).prefix(16))\n"
+                    + manifest.debugDescription
+            )
+        }
+
         emitToolDiagnostics(
             snapshot: snapshot,
             toolset: toolset,
@@ -421,11 +442,42 @@ public struct SystemPromptComposer: Sendable {
     /// is fixed for a session's model) so both the send and preview paths
     /// agree and the result is KV-cache stable.
     private static func soulCap(forModel modelId: String?) -> Int {
-        switch ContextSizeResolver.resolve(modelId: modelId).sizeClass {
+        let window = ContextSizeResolver.resolve(modelId: modelId)
+        switch window.sizeClass {
         case .tiny: return soulTinyMaxBytes
         case .small: return soulSmallMaxBytes
-        case .normal: return soulMaxBytes
+        case .normal:
+            // A large-window model that still prefers the compact prompt
+            // (local, ≤ param ceiling) gets the small budget — a verbose SOUL
+            // is more per-step tokenization cost than it can afford.
+            return window.prefersCompactPrompt ? soulSmallMaxBytes : soulMaxBytes
         }
+    }
+
+    /// Whether tools are suppressed for this compose.
+    ///
+    /// The per-agent "Tools" toggle (Configure tab) is a chat-only kill-switch.
+    /// In sandbox mode the user has already made an explicit execution grant via
+    /// Autonomous Execution (that's what resolves the mode to `.sandbox` in the
+    /// first place), so the sandbox tool surface — and the operational baseline
+    /// the agent loop needs to drive it — stays exposed even when that per-agent
+    /// toggle is off.
+    ///
+    /// Two signals are NOT overridable and win in every mode:
+    ///   - `globalToolsDisabled`: the session-global `ChatConfiguration`
+    ///     "Disable tools" switch, an absolute kill-switch.
+    ///   - `sizeClassDisablesTools`: the small-context auto-disable, a hard
+    ///     capability limit.
+    static func resolveEffectiveToolsOff(
+        toolsDisabled: Bool,
+        globalToolsDisabled: Bool,
+        sizeClassDisablesTools: Bool,
+        executionMode: ExecutionMode
+    ) -> Bool {
+        if globalToolsDisabled || sizeClassDisablesTools { return true }
+        // Global switch is excluded above, so `toolsDisabled` now reflects the
+        // per-agent Tools toggle alone — which sandbox mode overrides.
+        return toolsDisabled && !executionMode.usesSandboxTools
     }
 
     /// Assemble every tool-axis decision for the request: size-class
@@ -449,7 +501,12 @@ public struct SystemPromptComposer: Sendable {
         // creator) cascades correctly without each gate having to know
         // about the size class itself.
         let window = ContextSizeResolver.resolve(modelId: snapshot.model)
-        let effectiveToolsOff = snapshot.toolsDisabled || window.sizeClass.disablesTools
+        let effectiveToolsOff = resolveEffectiveToolsOff(
+            toolsDisabled: snapshot.toolsDisabled,
+            globalToolsDisabled: snapshot.globalToolsDisabled,
+            sizeClassDisablesTools: window.sizeClass.disablesTools,
+            executionMode: executionMode
+        )
         let contextDisable = ContextDisableInfo.from(
             sizeClass: window.sizeClass,
             modelId: snapshot.model,
@@ -511,7 +568,8 @@ public struct SystemPromptComposer: Sendable {
             contextDisable: contextDisable,
             sizeClass: window.sizeClass,
             effectiveToolsOff: effectiveToolsOff,
-            capabilityPromptSectionsEnabled: !isTrivialInput
+            capabilityPromptSectionsEnabled: !isTrivialInput,
+            prefersCompactPrompt: window.prefersCompactPrompt
         )
     }
 
@@ -563,10 +621,15 @@ public struct SystemPromptComposer: Sendable {
             return frozenManifest
         }
         let groups = deriveEnabledManifest(agentId: agentId)
-        let sizeClass = ContextSizeResolver.resolve(modelId: snapshot.model).sizeClass
+        // `prefersCompactPrompt` already folds the small/tiny-window cases
+        // (existing behaviour) and the local-small-model case (large window,
+        // ≤ param ceiling). Compact drops per-capability descriptions + the
+        // worked example — ~14k → <1k tokens here — while keeping every
+        // loadable id, so tool discovery is unaffected.
+        let compact = ContextSizeResolver.resolve(modelId: snapshot.model).prefersCompactPrompt
         let section = SystemPromptTemplates.enabledCapabilitiesManifest(
             groups: groups,
-            compact: sizeClass != .normal
+            compact: compact
         )
         if section != nil {
             let toolCount = groups.reduce(0) { $0 + $1.tools.count }
@@ -594,18 +657,19 @@ public struct SystemPromptComposer: Sendable {
     ///   8. codeStyle                 static, gated on file-edit tools
     ///   9. riskAware                 static, gated on file-mutation tools
     ///  10. secretHandling            static, sandbox-only
-    ///  11. agentLoopGuidance         static, gated on loop tools in schema
-    ///  12. sandbox / folderContext   static framing, mode-specific, gated on tools on
-    ///  13. capabilityNudge           static, gated on capabilities_discover
+    ///  11. computerUse               static, gated on computer_use in schema
+    ///  12. agentLoopGuidance         static, gated on loop tools in schema
+    ///  13. sandbox / folderContext   static framing, mode-specific, gated on tools on
+    ///  14. capabilityNudge           static, gated on capabilities_discover
     ///                                (sandbox: build-ladder variant, canCreatePlugins-aware)
-    ///  14. enabledManifest           static, frozen, gated on capabilities_load
+    ///  15. enabledManifest           static, frozen, gated on capabilities_load
     ///                                (all enabled tools + plugin skills + standalone skills)
-    ///  15. skillsGovern              static body, paired with enabledManifest
-    ///  16. pluginCreator             static, injected when plugin creation is enabled
+    ///  16. skillsGovern              static body, paired with enabledManifest
+    ///  17. pluginCreator             static, injected when plugin creation is enabled
     ///                                (session-constant gate — joins the cached prefix)
-    ///  17. agentDBSchema             dynamic, live schema snapshot (mutates mid-session)
-    ///  18. sandboxState              dynamic, installed packages + secrets (mutate mid-session)
-    ///  19. sandboxUnavailable        dynamic, gated on registrar failure
+    ///  18. agentDBSchema             dynamic, live schema snapshot (mutates mid-session)
+    ///  19. sandboxState              dynamic, installed packages + secrets (mutate mid-session)
+    ///  20. sandboxUnavailable        dynamic, gated on registrar failure
     ///
     /// Statics come before dynamics so the cached prefix
     /// (`PromptManifest.staticPrefixContent`) reaches as far as possible —
@@ -684,7 +748,8 @@ public struct SystemPromptComposer: Sendable {
                     id: "selfImprovement",
                     label: L("Self-Improvement"),
                     content: SystemPromptTemplates.selfImprovementGuidance(
-                        canCreatePlugins: snapshot.canCreatePlugins
+                        canCreatePlugins: snapshot.canCreatePlugins,
+                        compact: toolset.prefersCompactPrompt
                     )
                 )
             )
@@ -729,7 +794,7 @@ public struct SystemPromptComposer: Sendable {
         if !effectiveToolsOff,
             let familyGuidance = ModelFamilyGuidance.guidance(
                 forModelId: snapshot.model,
-                compact: toolset.sizeClass == .small
+                compact: toolset.prefersCompactPrompt
             )
         {
             composer.append(
@@ -756,7 +821,8 @@ public struct SystemPromptComposer: Sendable {
                     id: "grounding",
                     label: L("Grounding"),
                     content: SystemPromptTemplates.groundingDirective(
-                        discoveryAvailable: resolvedNames.contains("capabilities_discover")
+                        discoveryAvailable: resolvedNames.contains("capabilities_discover"),
+                        compact: toolset.prefersCompactPrompt
                     )
                 )
             )
@@ -774,7 +840,9 @@ public struct SystemPromptComposer: Sendable {
                 .static(
                     id: "codeStyle",
                     label: L("Code Style"),
-                    content: SystemPromptTemplates.codeStyleGuidance
+                    content: toolset.prefersCompactPrompt
+                        ? SystemPromptTemplates.codeStyleGuidanceCompact
+                        : SystemPromptTemplates.codeStyleGuidance
                 )
             )
         }
@@ -785,7 +853,9 @@ public struct SystemPromptComposer: Sendable {
                 .static(
                     id: "riskAware",
                     label: L("Risk-Aware Actions"),
-                    content: SystemPromptTemplates.riskAwareGuidance
+                    content: toolset.prefersCompactPrompt
+                        ? SystemPromptTemplates.riskAwareGuidanceCompact
+                        : SystemPromptTemplates.riskAwareGuidance
                 )
             )
         }
@@ -801,7 +871,27 @@ public struct SystemPromptComposer: Sendable {
                 .static(
                     id: "secretHandling",
                     label: L("Secret Handling"),
-                    content: SystemPromptTemplates.secretHandlingGuidance
+                    content: toolset.prefersCompactPrompt
+                        ? SystemPromptTemplates.secretHandlingGuidanceCompact
+                        : SystemPromptTemplates.secretHandlingGuidance
+                )
+            )
+        }
+
+        // Computer Use: rendered only when the `computer_use` tool actually
+        // resolved into the schema. That gate (set in `resolveTools`) is the
+        // single authoritative `computerUseEnabled` check — custom-agent opt-in,
+        // the Default agent never reaches here — so the section can never
+        // advertise desktop automation the model can't invoke. Schema-gated
+        // like codeStyle / riskAware / agentLoopGuidance, so it is
+        // session-constant and KV-cache stable, and it surfaces as its own
+        // context-budget line so an enabled agent can see Computer Use is live.
+        if !effectiveToolsOff, resolvedNames.contains(ComputerUseTool.toolName) {
+            composer.append(
+                .static(
+                    id: "computerUse",
+                    label: L("Computer Use"),
+                    content: SystemPromptTemplates.computerUseGuidance
                 )
             )
         }
@@ -822,7 +912,9 @@ public struct SystemPromptComposer: Sendable {
                 .static(
                     id: "agentLoopGuidance",
                     label: L("Agent Loop"),
-                    content: SystemPromptTemplates.agentLoopGuidance
+                    content: toolset.prefersCompactPrompt
+                        ? SystemPromptTemplates.agentLoopGuidanceCompact
+                        : SystemPromptTemplates.agentLoopGuidance
                 )
             )
         }
@@ -851,7 +943,8 @@ public struct SystemPromptComposer: Sendable {
                     content: SystemPromptTemplates.sandbox(
                         home: sandboxHome,
                         hostReadCombined: executionMode.hostReadContext != nil,
-                        backgroundEnabled: snapshot.autonomousConfig?.backgroundProcessEnabled ?? false
+                        backgroundEnabled: snapshot.autonomousConfig?.backgroundProcessEnabled ?? false,
+                        compact: toolset.prefersCompactPrompt
                     )
                 )
             )
@@ -918,7 +1011,8 @@ public struct SystemPromptComposer: Sendable {
             let nudge =
                 executionMode.usesSandboxTools
                 ? SystemPromptTemplates.capabilityDiscoveryNudgeSandbox(
-                    canCreatePlugins: snapshot.canCreatePlugins
+                    canCreatePlugins: snapshot.canCreatePlugins,
+                    compact: toolset.prefersCompactPrompt
                 )
                 : SystemPromptTemplates.capabilityDiscoveryNudge
             composer.append(
@@ -995,7 +1089,10 @@ public struct SystemPromptComposer: Sendable {
             sandboxAvailable: executionMode.usesSandboxTools || snapshot.autonomousEnabled,
             canCreatePlugins: snapshot.canCreatePlugins
         )
-        if PluginCreatorGate.shouldInject(gateInputs) {
+        // Compact-prompt models drop the ~700-token plugin-creator recipe from
+        // the turn-1 prefix; it stays reachable on demand (the discovery ladder
+        // and self-improvement guidance still reference building plugins).
+        if !toolset.prefersCompactPrompt, PluginCreatorGate.shouldInject(gateInputs) {
             composer.append(
                 .static(
                     id: "pluginCreator",
@@ -1484,7 +1581,12 @@ public struct SystemPromptComposer: Sendable {
         executionMode: ExecutionMode
     ) -> ResolvedToolset {
         let window = ContextSizeResolver.resolve(modelId: snapshot.model)
-        let effectiveToolsOff = snapshot.toolsDisabled || window.sizeClass.disablesTools
+        let effectiveToolsOff = resolveEffectiveToolsOff(
+            toolsDisabled: snapshot.toolsDisabled,
+            globalToolsDisabled: snapshot.globalToolsDisabled,
+            sizeClassDisablesTools: window.sizeClass.disablesTools,
+            executionMode: executionMode
+        )
         let contextDisable = ContextDisableInfo.from(
             sizeClass: window.sizeClass,
             modelId: snapshot.model,
@@ -1520,7 +1622,8 @@ public struct SystemPromptComposer: Sendable {
             contextDisable: contextDisable,
             sizeClass: window.sizeClass,
             effectiveToolsOff: effectiveToolsOff,
-            capabilityPromptSectionsEnabled: true
+            capabilityPromptSectionsEnabled: true,
+            prefersCompactPrompt: window.prefersCompactPrompt
         )
     }
 
@@ -1828,6 +1931,18 @@ public struct SystemPromptComposer: Sendable {
             }
         }
 
+        // Computer Use is an AUTHORITATIVE per-agent gate. Unlike the
+        // lean-by-default built-ins above (which are auto-mode-only and
+        // honour a `capabilities_load` carve-out), `computer_use` is
+        // stripped whenever the flag is off — in BOTH auto and manual mode,
+        // with no `additionalToolNames` bypass. The model can never see the
+        // tool unless the agent explicitly opted in. The Default agent is
+        // additionally excluded by the allowlist filter below, so Computer
+        // Use is a custom-agent-only capability.
+        if !snapshot.computerUseEnabled {
+            byName.removeValue(forKey: ComputerUseTool.toolName)
+        }
+
         // Phase C default-agent surface:
         //   * For the Default agent, hard-restrict to the 8-tool baseline
         //     (3 reads + 2 discovery + 3 agent-loop). Writes are NOT in
@@ -1845,6 +1960,25 @@ public struct SystemPromptComposer: Sendable {
             for name in ToolRegistry.configureToolNames {
                 byName.removeValue(forKey: name)
             }
+        }
+
+        // Sandbox-override surface: when the per-agent Tools toggle is off and
+        // the ONLY reason tools resolved at all is the sandbox execution grant
+        // (see `resolveEffectiveToolsOff` — reaching here past the guard with
+        // `snapshot.toolsDisabled` set means it can't be the global/size-class
+        // path), expose only the sandbox primitives + the agent-loop tools.
+        // The capability-discovery gateway (`capabilities_discover` /
+        // `capabilities_load`) and every per-agent plugin capability are
+        // dropped, so a "chat-only + sandbox" agent runs code and curls live
+        // data itself but can't reach the plugin ecosystem. Any plugin tools a
+        // prior turn loaded into `additionalToolNames` are filtered out too.
+        // The composer's discovery / grounding / nudge sections gate on the
+        // resolved schema, so removing discovery here cascades automatically
+        // (no nudge; the tool-name-free base grounding variant).
+        if snapshot.toolsDisabled, executionMode.usesSandboxTools {
+            let allowed = ToolRegistry.shared.builtInSandboxToolNamesSnapshot
+                .union(Self.agentLoopToolNames)
+            byName = byName.filter { allowed.contains($0.key) }
         }
 
         return canonicalToolOrder(Array(byName.values))

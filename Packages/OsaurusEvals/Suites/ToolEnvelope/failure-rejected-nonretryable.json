@@ -1,0 +1,22 @@
+{
+  "id": "tool_envelope.failure-rejected-nonretryable",
+  "domain": "tool_envelope",
+  "label": "tool_envelope • a policy rejection is non-retryable",
+  "query": "",
+  "notes": "Policy refusal — the registry blocked the tool by configuration. Distinct from user_denied (interactive deny) and from the retryable kinds: retryable defaults to false because retrying the same call hits the same policy, so the model must pivot rather than loop.",
+  "fixtures": {},
+  "expect": {
+    "toolEnvelope": {
+      "builder": "failure",
+      "kind": "rejected",
+      "message": "Tool `shell_run` is disabled by policy in this session.",
+      "tool": "shell_run",
+      "expectKeys": {
+        "ok": false,
+        "kind": "rejected",
+        "tool": "shell_run",
+        "retryable": false
+      }
+    }
+  }
+}

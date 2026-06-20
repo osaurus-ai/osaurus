@@ -353,6 +353,22 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// outcomes (file contents, command exit codes) plus an
         /// optional LLM-judge rubric.
         public let agentLoop: AgentLoopExpectations?
+        /// Decision expectation for `domain == "computer_use"` cases.
+        /// Pure-data: feeds a scripted action + resolution context through
+        /// the harness's `EffectClassifier` and `AutonomyPolicy` and pins
+        /// the resulting effect class + gate disposition. No driver, no
+        /// permissions, no LLM — CI-safe like `schema` / `request_validation`.
+        public let computerUse: ComputerUseExpectations?
+        /// Model-driven expectation for `domain == "computer_use_loop"` cases.
+        /// Unlike `computerUse` (a pure-data gate check), this drives the real
+        /// `ComputerUseLoop` against a deterministic in-memory
+        /// `ScriptedCUDriver`: the chosen model perceives a scripted AX tree,
+        /// proposes `agent_action`s, and the driver mutates state in response.
+        /// The case is scored on the OUTCOME (did the goal state get reached)
+        /// plus the loop's telemetry — the lane for "can a small local model
+        /// actually drive Computer Use", with no real Accessibility / Screen
+        /// Recording and no flaky on-screen UI.
+        public let computerUseLoop: ComputerUseLoopExpectations?
 
         public init(
             schema: SchemaExpectations? = nil,
@@ -364,7 +380,9 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             capabilitySearch: CapabilitySearchExpectations? = nil,
             sandboxDiagnostics: SandboxDiagnosticsExpectations? = nil,
             capabilityClaims: CapabilityClaimsExpectations? = nil,
-            agentLoop: AgentLoopExpectations? = nil
+            agentLoop: AgentLoopExpectations? = nil,
+            computerUse: ComputerUseExpectations? = nil,
+            computerUseLoop: ComputerUseLoopExpectations? = nil
         ) {
             self.schema = schema
             self.toolEnvelope = toolEnvelope
@@ -376,6 +394,8 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.sandboxDiagnostics = sandboxDiagnostics
             self.capabilityClaims = capabilityClaims
             self.agentLoop = agentLoop
+            self.computerUse = computerUse
+            self.computerUseLoop = computerUseLoop
         }
     }
 
@@ -966,6 +986,329 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.responseFormatType = responseFormatType
             self.expectAccept = expectAccept
             self.expectReasonContains = expectReasonContains
+        }
+    }
+
+    /// Expectation for `domain == "computer_use"` cases. Pins the
+    /// Computer Use harness's two deterministic gate inputs end-to-end:
+    ///   1. `EffectClassifier.classify(...)` — how a scripted action +
+    ///      resolution context (resolved role/label, app, optional per-app
+    ///      recipe) is ranked (`read`/`navigate`/`edit`/`consequential`).
+    ///   2. `AutonomyPolicy.disposition(...)` — what the resolved policy
+    ///      (global preset + per-app overrides + optional agent ceiling)
+    ///      does with that effect (`allow`/`confirm`/`deny`), plus the
+    ///      allowlist gate (`isAppAllowed`).
+    /// All inputs are plain data, so the case runs with no driver, no
+    /// permissions, and no model — exactly the lane CI can run on every PR
+    /// to lock the safe-by-default gate against regressions.
+    public struct ComputerUseExpectations: Sendable, Codable {
+        // --- Action under test (mirrors `AgentAction`) ---
+        /// `AgentVerb` raw value: observe, find, click, type, set_value,
+        /// clear, press_key, scroll, open, done, give_up.
+        public let verb: String
+        /// `target.describe` natural-language phrase (optional).
+        public let describe: String?
+        /// `target.mark` (optional; presence makes the target non-empty).
+        public let mark: Int?
+        /// Payload for type / set_value (optional).
+        public let text: String?
+        /// Key name for press_key (optional).
+        public let key: String?
+        /// Modifier names for press_key (optional).
+        public let modifiers: [String]?
+        /// Rationale/narration — scanned for recipient signals (optional).
+        public let note: String?
+
+        // --- Resolution context (what `TargetResolver` would surface) ---
+        /// The resolved element role, e.g. `AXButton` (optional).
+        public let resolvedRole: String?
+        /// The resolved element label, e.g. `Send` (optional).
+        public let resolvedLabel: String?
+        /// The focused app name, e.g. `Safari` (optional).
+        public let appName: String?
+        /// When true, merge `AppRecipes.signals(for: appName)` into the
+        /// classifier (per-app refinements). Default false.
+        public let useRecipes: Bool?
+
+        // --- Policy under test (mirrors `AutonomyPolicy` + ceiling) ---
+        /// `AutonomyPreset` raw value for the global stance. Default
+        /// `balanced` when omitted.
+        public let preset: String?
+        /// Per-app overrides: app name → `AutonomyPreset` raw value.
+        public let perApp: [String: String]?
+        /// App allowlist (normalized-compared). Empty/omitted = allow all.
+        public let allowlist: [String]?
+        /// `AutonomyPreset` raw value to cap the agent at (via
+        /// `AutonomyCeiling.cappedAt`). Omitted = no ceiling.
+        public let ceiling: String?
+
+        // --- Expectations (any subset; an empty set just records) ---
+        /// Expected `EffectClass` raw value from the classifier.
+        public let expectEffect: String?
+        /// Expected `AutonomyDisposition` raw value from the policy.
+        public let expectDisposition: String?
+        /// Expected `isAppAllowed` result for the allowlist gate.
+        public let expectAllowed: Bool?
+
+        public init(
+            verb: String,
+            describe: String? = nil,
+            mark: Int? = nil,
+            text: String? = nil,
+            key: String? = nil,
+            modifiers: [String]? = nil,
+            note: String? = nil,
+            resolvedRole: String? = nil,
+            resolvedLabel: String? = nil,
+            appName: String? = nil,
+            useRecipes: Bool? = nil,
+            preset: String? = nil,
+            perApp: [String: String]? = nil,
+            allowlist: [String]? = nil,
+            ceiling: String? = nil,
+            expectEffect: String? = nil,
+            expectDisposition: String? = nil,
+            expectAllowed: Bool? = nil
+        ) {
+            self.verb = verb
+            self.describe = describe
+            self.mark = mark
+            self.text = text
+            self.key = key
+            self.modifiers = modifiers
+            self.note = note
+            self.resolvedRole = resolvedRole
+            self.resolvedLabel = resolvedLabel
+            self.appName = appName
+            self.useRecipes = useRecipes
+            self.preset = preset
+            self.perApp = perApp
+            self.allowlist = allowlist
+            self.ceiling = ceiling
+            self.expectEffect = expectEffect
+            self.expectDisposition = expectDisposition
+            self.expectAllowed = expectAllowed
+        }
+    }
+
+    /// Expectation for `domain == "computer_use_loop"` cases. Carries BOTH
+    /// the scripted world (`app` + `elements`) the `ScriptedCUDriver` serves
+    /// and the success predicate scored against that world after the real
+    /// `ComputerUseLoop` finishes. The model only ever sees the rendered
+    /// `AgentView` (numbered marks, roles, labels, values) — never the
+    /// element ids or this scene definition.
+    public struct ComputerUseLoopExpectations: Sendable, Codable {
+
+        /// One scripted element in the fake accessibility tree. `role` mirrors
+        /// the compact roles the harness renders (`textfield`, `button`,
+        /// `checkbox`, `switch`, `statictext`). Keep every `label` UNIQUE
+        /// within a scene: the harness matches elements across snapshots by
+        /// `(role|label)` for change detection and resolves `describe`
+        /// targets by label substring, so duplicate labels blur both.
+        public struct SceneElement: Sendable, Codable {
+            /// Harness-internal stable id (never shown to the model). Used by
+            /// the success predicate and the driver's action routing.
+            public let id: String
+            public let role: String
+            public let label: String?
+            public let value: String?
+            public let placeholder: String?
+            /// When true, `type` / `set_value` / `clear` mutate this element's
+            /// value. Non-editable elements reject edits with feedback the
+            /// model can read.
+            public let editable: Bool?
+            /// When true, the element is absent from captures until a click
+            /// effect `reveal`s it — the lever for multi-step flows where a
+            /// control only appears after an earlier action.
+            public let hidden: Bool?
+            /// What a click on this element does (buttons / toggles). Omitted
+            /// for plain fields and static text.
+            public let onClick: ClickEffect?
+            /// Lowest capture tier at which this element is visible: `ax`
+            /// (default), `som`, or `vision`. An element gated to `som`/`vision`
+            /// is INVISIBLE in a plain AX capture — the Electron / custom-drawn
+            /// shape that forces the loop's empty-AX → vision escalation. A scene
+            /// whose actionable controls are all `som`-gated starts empty at AX.
+            public let minTier: String?
+            /// Element-addressed clicks on this element fail as a stale/removed
+            /// ref this many times before succeeding (the signature Electron
+            /// failure). A COORDINATE click (the loop's fallback) always lands,
+            /// so this exercises the coordinate-fallback recovery end to end.
+            public let clickFailures: Int?
+            /// When a click `reveal`s this element, it stays hidden for this many
+            /// further captures (async load) — so the model must `wait`/`observe`
+            /// for it to appear rather than seeing it instantly.
+            public let revealAfterCaptures: Int?
+            /// The element is below the fold: absent until the loop performs a
+            /// `scroll`, then it stays visible. Exercises scroll-to-find.
+            public let revealOnScroll: Bool?
+
+            public init(
+                id: String,
+                role: String,
+                label: String? = nil,
+                value: String? = nil,
+                placeholder: String? = nil,
+                editable: Bool? = nil,
+                hidden: Bool? = nil,
+                onClick: ClickEffect? = nil,
+                minTier: String? = nil,
+                clickFailures: Int? = nil,
+                revealAfterCaptures: Int? = nil,
+                revealOnScroll: Bool? = nil
+            ) {
+                self.id = id
+                self.role = role
+                self.label = label
+                self.value = value
+                self.placeholder = placeholder
+                self.editable = editable
+                self.hidden = hidden
+                self.onClick = onClick
+                self.minTier = minTier
+                self.clickFailures = clickFailures
+                self.revealAfterCaptures = revealAfterCaptures
+                self.revealOnScroll = revealOnScroll
+            }
+        }
+
+        /// The side effects a click produces in the scripted world. All
+        /// optional and applied in order toggle → setValues → reveal.
+        public struct ClickEffect: Sendable, Codable {
+            /// Flip this element's value between `"off"` and `"on"` (the
+            /// checkbox / switch primitive). Initial value should be `"off"`.
+            public let toggle: Bool?
+            /// Set OTHER elements' values (e.g. a Send button stamping a
+            /// status element to `"sent"`).
+            public let setValues: [SetValue]?
+            /// Un-hide element ids (multi-step reveal).
+            public let reveal: [String]?
+
+            public init(
+                toggle: Bool? = nil,
+                setValues: [SetValue]? = nil,
+                reveal: [String]? = nil
+            ) {
+                self.toggle = toggle
+                self.setValues = setValues
+                self.reveal = reveal
+            }
+        }
+
+        public struct SetValue: Sendable, Codable {
+            public let id: String
+            public let value: String
+
+            public init(id: String, value: String) {
+                self.id = id
+                self.value = value
+            }
+        }
+
+        /// A check against one element's FINAL value in the scripted world.
+        /// `equals` is exact (trimmed); `contains` is a case-insensitive
+        /// substring. Provide at most one.
+        public struct ValuePredicate: Sendable, Codable {
+            public let id: String
+            public let contains: String?
+            public let equals: String?
+
+            public init(id: String, contains: String? = nil, equals: String? = nil) {
+                self.id = id
+                self.contains = contains
+                self.equals = equals
+            }
+        }
+
+        /// App name the scene presents (focused on entry, so the model can
+        /// act without `open`).
+        public let app: String
+        /// The scripted accessibility tree, in render order (mark = index+1).
+        public let elements: [SceneElement]
+        /// Productive-step budget. nil → 16. The loop also terminates on the
+        /// invalid-action and dead-end ceilings regardless.
+        public let maxSteps: Int?
+        /// `AutonomyPreset` raw value for the gate. nil → `autonomous`, which
+        /// auto-runs every effect so the case isolates the MODEL's planning
+        /// from gate friction. Set `balanced` (etc.) to also exercise the
+        /// confirm path (the harness auto-approves confirmations in evals).
+        public let preset: String?
+        /// `RunOutcome` short names that count as acceptable
+        /// (`done`/`gaveUp`/`stepCapReached`/`deadEnd`/`interrupted`/`failed`).
+        /// nil → `["done"]` (the model must self-declare success).
+        public let expectOutcome: [String]?
+        /// Final-state value predicates — the substantive "did it work" check.
+        public let successValues: [ValuePredicate]?
+        /// Element ids that must have been clicked at least once during the run.
+        public let successClicked: [String]?
+        /// Element ids that must NOT be clicked — the precision / safety lever
+        /// (e.g. "Archive, do not Delete"). Any click on these fails the case.
+        public let failIfClicked: [String]?
+        /// Case-insensitive substrings the run's terminal summary (the model's
+        /// `done`/`give_up` reason) must contain. The way to score a
+        /// read-and-report scenario whose answer never lands in the tree —
+        /// the model has to surface the value in its closing reason.
+        public let finalSummaryContains: [String]?
+        /// Ceiling on invalid `agent_action` re-asks (the JSON-discipline
+        /// signal). nil → not scored, but always reported.
+        public let maxInvalidActions: Int?
+        /// Step-efficiency floor/ceiling, scored against the loop's productive
+        /// step count. `scoredMaxSteps` catches a model that thrashes its way
+        /// to the goal; `scoredMinSteps` catches a scene that's trivially
+        /// solvable in fewer steps than intended (a scene-design smell). Both
+        /// nil → efficiency is reported but not scored.
+        public let scoredMinSteps: Int?
+        public let scoredMaxSteps: Int?
+        /// Verbs that must appear, IN THIS RELATIVE ORDER, in the executed verb
+        /// trace (subsequence match, not contiguous). Encodes a required plan
+        /// shape, e.g. `["scroll","click"]` (scroll into view, then click) or
+        /// `["click","wait","set_value"]` (reveal, await async, then fill).
+        public let expectVerbsInOrder: [String]?
+        /// Ceiling on total model tokens (prompt + completion, summed across
+        /// every model step) the run may spend. The cost lever for the
+        /// live-model lane — a model that reaches the goal but burns the budget
+        /// to get there fails. `0` for scripted runs (no model call), so this
+        /// is effectively only scored on live cases. nil → reported, not scored.
+        public let scoredMaxModelTokens: Int?
+        /// Optional scripted model: a sequence of `agent_action` arguments-JSON
+        /// strings that DRIVE the loop deterministically in place of a live
+        /// model (via the `AgentStepProvider` seam). Lets failure-recovery and
+        /// gate/verb scenarios run in CI with no model. When present, the model
+        /// is never called; when nil, the case uses the live `modelId`.
+        public let scriptedActions: [String]?
+
+        public init(
+            app: String,
+            elements: [SceneElement],
+            maxSteps: Int? = nil,
+            preset: String? = nil,
+            expectOutcome: [String]? = nil,
+            successValues: [ValuePredicate]? = nil,
+            successClicked: [String]? = nil,
+            failIfClicked: [String]? = nil,
+            finalSummaryContains: [String]? = nil,
+            maxInvalidActions: Int? = nil,
+            scoredMinSteps: Int? = nil,
+            scoredMaxSteps: Int? = nil,
+            expectVerbsInOrder: [String]? = nil,
+            scoredMaxModelTokens: Int? = nil,
+            scriptedActions: [String]? = nil
+        ) {
+            self.app = app
+            self.elements = elements
+            self.maxSteps = maxSteps
+            self.preset = preset
+            self.expectOutcome = expectOutcome
+            self.successValues = successValues
+            self.successClicked = successClicked
+            self.failIfClicked = failIfClicked
+            self.finalSummaryContains = finalSummaryContains
+            self.maxInvalidActions = maxInvalidActions
+            self.scoredMinSteps = scoredMinSteps
+            self.scoredMaxSteps = scoredMaxSteps
+            self.expectVerbsInOrder = expectVerbsInOrder
+            self.scoredMaxModelTokens = scoredMaxModelTokens
+            self.scriptedActions = scriptedActions
         }
     }
 

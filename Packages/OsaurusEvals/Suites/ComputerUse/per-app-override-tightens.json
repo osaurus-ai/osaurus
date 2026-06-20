@@ -1,0 +1,21 @@
+{
+  "id": "computer_use.per-app-override-tightens",
+  "domain": "computer_use",
+  "label": "computer use • per-app override only tightens",
+  "query": "Type into Mail under a trusted global policy with a cautious Mail override.",
+  "notes": "Global trusted would auto-run an edit, but the Mail per-app override (cautious) makes it confirm. Per-app overrides can only add caution, never remove it.",
+  "fixtures": {},
+  "expect": {
+    "computerUse": {
+      "verb": "type",
+      "text": "hello",
+      "resolvedRole": "AXTextField",
+      "resolvedLabel": "To",
+      "appName": "Mail",
+      "preset": "trusted",
+      "perApp": { "Mail": "cautious" },
+      "expectEffect": "edit",
+      "expectDisposition": "confirm"
+    }
+  }
+}

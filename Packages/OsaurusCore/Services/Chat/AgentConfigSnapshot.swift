@@ -33,6 +33,13 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
     /// `requestToolsDisabled` to `capture(...)` (e.g. `ChatView`).
     public let toolsDisabled: Bool
 
+    /// The session-global `ChatConfiguration.disableTools` switch in
+    /// isolation (the `requestToolsDisabled` the caller folded in), kept
+    /// separable from the per-agent Tools toggle. This is an absolute
+    /// kill-switch: unlike the per-agent toggle, sandbox mode does NOT
+    /// override it (see `SystemPromptComposer.resolveEffectiveToolsOff`).
+    public let globalToolsDisabled: Bool
+
     /// Mirrors `AgentManager.effectiveMemoryDisabled` (folds in the
     /// global `MemoryConfiguration.enabled` switch).
     public let memoryDisabled: Bool
@@ -90,9 +97,16 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
     /// stripped from the model-visible schema.
     public let selfSchedulingEnabled: Bool
 
+    /// Per-agent opt-in for the Computer Use feature. Unlike the lean-by-
+    /// default built-in gates above, this is enforced authoritatively in
+    /// `resolveTools` — `computer_use` is stripped in BOTH auto and manual
+    /// mode unless the agent has opted in.
+    public let computerUseEnabled: Bool
+
     public init(
         agentId: UUID,
         toolsDisabled: Bool,
+        globalToolsDisabled: Bool = false,
         memoryDisabled: Bool,
         autonomousConfig: AutonomousExecConfig?,
         toolMode: ToolSelectionMode,
@@ -103,10 +117,12 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
         renderChartEnabled: Bool = false,
         speakEnabled: Bool = false,
         searchMemoryEnabled: Bool = false,
-        selfSchedulingEnabled: Bool = false
+        selfSchedulingEnabled: Bool = false,
+        computerUseEnabled: Bool = false
     ) {
         self.agentId = agentId
         self.toolsDisabled = toolsDisabled
+        self.globalToolsDisabled = globalToolsDisabled
         self.memoryDisabled = memoryDisabled
         self.autonomousConfig = autonomousConfig
         self.toolMode = toolMode
@@ -118,6 +134,7 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
         self.speakEnabled = speakEnabled
         self.searchMemoryEnabled = searchMemoryEnabled
         self.selfSchedulingEnabled = selfSchedulingEnabled
+        self.computerUseEnabled = computerUseEnabled
     }
 
     /// Read every `effective*` field in one MainActor batch.
@@ -143,6 +160,7 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
         return AgentConfigSnapshot(
             agentId: agentId,
             toolsDisabled: requestToolsDisabled || !caps.toolsEnabled,
+            globalToolsDisabled: requestToolsDisabled,
             memoryDisabled: !caps.memoryEnabled,
             autonomousConfig: mgr.effectiveAutonomousExec(for: agentId),
             toolMode: mgr.effectiveToolSelectionMode(for: agentId),
@@ -153,7 +171,8 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
             renderChartEnabled: caps.renderChartEnabled,
             speakEnabled: caps.speakEnabled,
             searchMemoryEnabled: caps.searchMemoryEnabled,
-            selfSchedulingEnabled: caps.selfSchedulingEnabled
+            selfSchedulingEnabled: caps.selfSchedulingEnabled,
+            computerUseEnabled: caps.computerUseEnabled
         )
     }
 }

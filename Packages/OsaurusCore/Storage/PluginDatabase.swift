@@ -102,9 +102,8 @@ final class PluginDatabase: @unchecked Sendable {
 
             OsaurusPaths.ensureExistsSilent(OsaurusPaths.pluginDataDirectory(for: pluginId))
             let path = OsaurusPaths.pluginDatabaseFile(for: pluginId).path
-            let key = try StorageKeyManager.shared.currentKey()
             do {
-                db = try EncryptedSQLiteOpener.open(path: path, key: key)
+                db = try OsaurusStorageOpener.open(path: path)
             } catch let error as EncryptedSQLiteError {
                 throw PluginDatabaseError.failedToOpen(error.localizedDescription)
             }

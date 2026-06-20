@@ -1,0 +1,88 @@
+{
+  "cases": [
+    {
+      "domain": "agent_loop",
+      "id": "agent_loop.edit-file-then-verify",
+      "label": "agent loop edit file",
+      "latencyMs": 1000,
+      "modelId": "foundation",
+      "notes": [],
+      "outcome": "passed",
+      "query": "fix a typo",
+      "toolUsage": [
+        { "calls": 1, "deduped": 0, "errors": 0, "tool": "file_read" },
+        { "calls": 1, "deduped": 0, "errors": 0, "tool": "file_write" },
+        { "calls": 1, "deduped": 0, "errors": 0, "tool": "complete" }
+      ]
+    },
+    {
+      "domain": "agent_loop",
+      "id": "agent_loop.search-then-multi-file-edit",
+      "label": "agent loop search then edit",
+      "latencyMs": 2200,
+      "modelId": "foundation",
+      "notes": [],
+      "outcome": "passed",
+      "query": "rename API calls",
+      "toolUsage": [
+        { "calls": 1, "deduped": 0, "errors": 0, "tool": "file_search" },
+        { "calls": 2, "deduped": 0, "errors": 0, "tool": "file_edit" },
+        { "calls": 1, "deduped": 0, "errors": 0, "tool": "shell_run" },
+        { "calls": 1, "deduped": 0, "errors": 0, "tool": "complete" }
+      ]
+    },
+    {
+      "domain": "agent_loop",
+      "id": "agent_loop.compaction-stress",
+      "label": "agent loop compaction",
+      "latencyMs": 5000,
+      "modelId": "foundation",
+      "notes": [
+        "finalText missing 'log4'"
+      ],
+      "outcome": "failed",
+      "query": "summarize logs",
+      "toolUsage": [
+        { "calls": 1, "deduped": 0, "errors": 0, "tool": "todo" },
+        { "calls": 3, "deduped": 0, "errors": 0, "tool": "file_read" }
+      ]
+    },
+    {
+      "domain": "agent_loop",
+      "id": "agent_loop.legacy-case",
+      "label": "agent loop legacy failure",
+      "latencyMs": 1200,
+      "modelId": "foundation",
+      "notes": [
+        "old known failure"
+      ],
+      "outcome": "failed",
+      "query": "legacy failing task",
+      "toolUsage": [
+        { "calls": 1, "deduped": 0, "errors": 1, "tool": "file_read" }
+      ]
+    },
+    {
+      "domain": "agent_loop",
+      "id": "agent_loop.removed-case",
+      "label": "agent loop removed",
+      "latencyMs": 800,
+      "modelId": "foundation",
+      "notes": [],
+      "outcome": "passed",
+      "query": "removed task"
+    },
+    {
+      "domain": "capability_search",
+      "id": "capability_search.browser-prefix",
+      "label": "ignored non-agent row",
+      "latencyMs": 3,
+      "modelId": "foundation",
+      "notes": [],
+      "outcome": "passed",
+      "query": "browser"
+    }
+  ],
+  "modelId": "foundation",
+  "startedAt": "2026-06-17T00:00:00Z"
+}

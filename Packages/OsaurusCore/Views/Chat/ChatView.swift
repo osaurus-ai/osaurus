@@ -361,6 +361,11 @@ final class ChatSession: ObservableObject {
     nonisolated(unsafe) private var contextEstimateCancellable: AnyCancellable?
 
     init() {
+        // Warm the agent-secret account memo off the main thread before the
+        // first preview compose reads it synchronously — the Keychain
+        // enumeration it performs has otherwise hung the UI on chat open.
+        AgentSecretsKeychain.prewarmAccounts()
+
         let cache = ModelPickerItemCache.shared
         if cache.isLoaded {
             pickerItems = cache.items
@@ -4304,6 +4309,11 @@ struct ChatView: View {
             .themedAlertScope(.chat(windowState.windowId))
             .overlay(ThemedAlertHost(scope: .chat(windowState.windowId)))
             .overlay { promptOverlayLayer }
+            // Computer Use gated-action confirmations. Process-wide queue so
+            // the in-tool loop (which has no ChatSession handle) can park a
+            // request the user resolves; rendered above the input bar like the
+            // other prompt cards.
+            .overlay { ComputerUseConfirmOverlay() }
             .sheet(isPresented: $showTopUpSheet) {
                 CreditsTopUpSheet()
                     .environment(\.theme, theme)

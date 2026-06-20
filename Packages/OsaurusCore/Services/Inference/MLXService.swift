@@ -317,6 +317,15 @@ actor MLXService: ToolCapableService {
             return false
         }
 
+        // VibeThinker-3B is a qwen2 reasoning fine-tune. Its chat_template is the
+        // standard Qwen2.5 Hermes tool template, so format detection would mark it
+        // tool-capable — but in practice it reasons at length and then wraps the
+        // (otherwise-correct) call in a hallucinated `<assemble>` tag instead of
+        // `<tool_call>`, so nothing parses. Treat it as text/reasoning-only.
+        if combined.contains("vibethinker") {
+            return false
+        }
+
         if ModelFamilyNames.isStepFamily(modelName) || ModelFamilyNames.isStepFamily(modelId) {
             // Step 3.7 tool parsing/template selection is owned by the pinned
             // vMLX runtime. Do not block request preflight on large external
@@ -376,7 +385,15 @@ actor MLXService: ToolCapableService {
         else {
             return nil
         }
-        return ToolCallFormat.infer(from: modelType, configData: configData)
+        // `ToolCallFormat.infer` returns nil to mean "no model-specific format —
+        // use the default JSON `<tool_call>{…}</tool_call>` parser" (its
+        // documented contract), NOT "tools unsupported". Base Qwen3
+        // (`model_type == "qwen3"`) has no dedicated infer case and lands here;
+        // folding nil into the default `.json` format keeps the supports-check
+        // from misreading a tool-capable default-format model as unsupported.
+        // Genuinely tool-less families (e.g. gemma3n) are gated by name in
+        // `supportsLocalToolCalling` before this is ever consulted.
+        return ToolCallFormat.infer(from: modelType, configData: configData) ?? .json
     }
 
     private nonisolated static func explicitToolFormat(inJangConfig data: Data) -> ToolCallFormat?? {

@@ -1,0 +1,24 @@
+{
+  "id": "schema.pattern-reject",
+  "domain": "schema",
+  "label": "schema • string pattern mismatch is rejected and names the field",
+  "query": "",
+  "notes": "Pins the `pattern` (regex) constraint on a string property: a value that fails the regex must be rejected AND the failure must surface the offending field name (`expectField`) so the tool envelope can point the model at `code`.",
+  "fixtures": {},
+  "expect": {
+    "schema": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "code": { "type": "string", "pattern": "^[A-Z]{3}$" }
+        },
+        "required": ["code"]
+      },
+      "arguments": {
+        "code": "ab"
+      },
+      "expectValid": false,
+      "expectField": "code"
+    }
+  }
+}

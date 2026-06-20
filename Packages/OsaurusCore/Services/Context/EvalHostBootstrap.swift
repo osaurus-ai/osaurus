@@ -32,6 +32,17 @@ public enum EvalHostBootstrap {
         return ids
     }
 
+    /// Names of the agent-enableable dynamic tools currently in the
+    /// registry (built-ins + loaded plugin tools, minus always-loaded
+    /// internals like `capabilities_discover`). Exposed so the
+    /// OsaurusEvals `capability_claims` runner can seed an isolated eval
+    /// agent's allowlist authoritatively — `ToolRegistry` itself stays
+    /// internal to OsaurusCore. Empty until `loadInstalledPlugins()` (or
+    /// the index bootstrap) has synced the registry.
+    public static func dynamicToolNames() -> [String] {
+        ToolRegistry.shared.listDynamicTools().map(\.name)
+    }
+
     /// Boot every subsystem the chat path's capability search depends on
     /// so an out-of-process eval CLI sees the same indices the host app
     /// does. Mirrors the relevant slice of

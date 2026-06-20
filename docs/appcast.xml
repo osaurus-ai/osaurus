@@ -3,6 +3,89 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.20.5</title>
+            <pubDate>Fri, 19 Jun 2026 13:30:36 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.20.5</sparkle:version>
+            <sparkle:shortVersionString>0.20.5</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.20.5/Osaurus-0.20.5.dmg" length="52842128" type="application/octet-stream" sparkle:edSignature="SJ5ug7RqB/OtiGbUx1W5eQUiOYWAt4GxQBzo/VovPaVXUJsd3U4eyJhWwnmHZtaZSn5BjkifSgKPX/73g3ENCQ=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- fix app hang render path (#1598) by @RaajeevChandran
+- Laguna-M.1 + VibeThinker-3B serving: fix Laguna chat garbage (missing-BOS) + drop rep-penalty special-case (#1593) by @jjang-ai
+- decouple sandbox tools from the agent Tools toggle and compact sandbox prompt sections (#1597) by @RaajeevChandran
+- updated chinese translations (#1596) by @ftzahao
+- Add sandbox provisioning diagnostics (#1588) by @mimeding
+- Add OpenAI-compatible FIM request handling (#1569) by @mimeding
+- Repin vmlx-swift → 14040d24: Gemma nested-object tool-call argument parse fix (#76) (#1592) by @jjang-ai
+- Add tool exposure control center (#1581) by @mimeding
+- Add memory management console (#1582) by @mimeding
+- Add agent loop eval regression lab (#1585) by @mimeding
+- Add theme library management center (#1587) by @mimeding
+- updated chinese translations (#1579) by @ftzahao
+
+## 🚀 Features
+
+- New Feature: Computer Use Subagent (#1578) by @tpae
+
+## 🐛 Bug Fixes
+
+- fixed app hangs (#1595) by @RaajeevChandran
+- anthropic compaction fix (#1594) by @tpae
+- disable settings save buttons until there are unsaved changes (#1590) by @RaajeevChandran
+
+## 🧰 Maintenance
+
+- UI polish after fixes (#1599) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.20.4...0.20.5
+]]></description>
+        </item>
+        <item>
+            <title>0.20.4</title>
+            <pubDate>Thu, 18 Jun 2026 11:50:15 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.20.4</sparkle:version>
+            <sparkle:shortVersionString>0.20.4</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.20.4/Osaurus-0.20.4.dmg" length="51951252" type="application/octet-stream" sparkle:edSignature="HCl0eLo2Ab/1g7lGliv+XWgkcXUjUN6t0Mk1vxxdzFfTFp8SoSMAnsJwQY5pPaTVG00CajlLgbB69mjDTbMjAw=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- improved tool calls and prefill speed for small local models (#1577) by @RaajeevChandran
+- Add MCP Server Hub (#1559) by @mimeding
+- Allow manual provider models during connection tests (#1552) by @mimeding
+- Route sandbox plugin manifests through global proxy (#1549) by @mimeding
+- Route sandbox artifact downloads through global proxy (#1548) by @mimeding
+- Route relay tunnel traffic through global proxy (#1547) by @mimeding
+- Route remote agent invites through global proxy (#1546) by @mimeding
+- Route privacy model downloads through global proxy (#1545) by @mimeding
+- Route router API through global proxy (#1543) by @mimeding
+- Route theme API through global proxy (#1542) by @mimeding
+- Route GitHub skill imports through global proxy (#1544) by @mimeding
+- Route MCP OAuth through global proxy (#1536) by @mimeding
+- Route markdown image downloads through global proxy (#1550) by @mimeding
+- updated chinese translations (#1553) by @ftzahao
+
+## 🐛 Bug Fixes
+
+- resolved crashes and hangs (#1575) by @RaajeevChandran
+- fixed issue with agent deletion (#1564) by @tpae
+- fixed issue with share artifact tool (#1561) by @tpae
+- fixed main thread blocking processes (#1556) by @RaajeevChandran
+
+## 🧰 Maintenance
+
+- added ability to disable osaurus router (#1563) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.20.3...0.20.4
+]]></description>
+        </item>
+        <item>
             <title>0.20.3</title>
             <pubDate>Wed, 17 Jun 2026 00:25:47 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>

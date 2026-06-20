@@ -135,20 +135,56 @@ public enum CapabilitySearchEvaluator {
     /// methods/skills quality gate when sweeping low fused values
     /// like 0.005. Sweeping the embed cutoffs is a separate concern;
     /// expose its own flag if/when needed.
+    /// `embedCosineFloor` is the **tools-lane** embed-cosine quality gate
+    /// applied INSIDE the RRF fusion (`ToolSearchService.searchHybrid`,
+    /// `minEmbedCosine:`). When nil the production constant
+    /// `CapabilitySearch.minimumEmbedCosineForTools` is used so the eval
+    /// measures exactly what `capabilities_discover` does in the chat
+    /// path. A non-nil value (the CLI `--embed-cosine-floor` sweep) lets
+    /// the calibration sweep map abstain/recall accepted-counts to the
+    /// floor without rebuilding — `0` disables the gate to record raw
+    /// pre-gate cosines. Independent of `threshold` (the RRF fused cutoff)
+    /// because the two operate at different stages (per-candidate cosine
+    /// gate vs final fused-score cutoff) and on different scales.
     public static func evaluate(
         query: String,
         topK: Int = 10,
-        threshold: Float? = nil
+        threshold: Float? = nil,
+        embedCosineFloor: Float? = nil
     ) async -> CapabilitySearchEvaluation {
         let appliedFused = threshold ?? CapabilitySearch.minimumFusedScore
+        let appliedEmbedFloor = embedCosineFloor ?? CapabilitySearch.minimumEmbedCosineForTools
         let appliedMethodsThreshold = CapabilitySearch.minimumRelevanceScoreMethods
         let appliedSkillsThreshold = CapabilitySearch.minimumRelevanceScoreSkills
         let started = Date()
 
+        // Mirror the production query-intent abstain gate
+        // (`CapabilitySearch.search`): a pure chit-chat query yields no
+        // candidates, so the eval measures EXACTLY what
+        // `capabilities_discover` does — not a divergent lane-only path.
+        // Health is still snapshotted so registry/index forensics stay
+        // meaningful on an abstained row.
+        if CapabilityQueryIntent.isConversationalAbstain(query) {
+            let health = await CapabilitySearchDiagnostics.snapshot(mode: .full)
+            return CapabilitySearchEvaluation(
+                query: query,
+                toolHits: [],
+                methodHits: [],
+                skillHits: [],
+                registrySize: health.registryToolCount,
+                indexSize: health.indexedToolCount,
+                appliedMinFusedScore: appliedFused,
+                appliedMethodsThreshold: appliedMethodsThreshold,
+                appliedSkillsThreshold: appliedSkillsThreshold,
+                latencyMs: Date().timeIntervalSince(started) * 1000
+            )
+        }
+
         async let toolPair = ToolSearchService.shared.searchHybridWithDiagnostic(
             query: query,
             topK: topK,
-            minFusedScore: appliedFused
+            minFusedScore: appliedFused,
+            minEmbedCosine: appliedEmbedFloor
         )
         async let methodPair = MethodSearchService.shared.searchWithDiagnostic(
             query: query,

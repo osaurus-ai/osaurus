@@ -4,11 +4,14 @@
 //
 //  Per-model context-window classification used to auto-disable
 //  prompt features that don't fit into very small windows. Apple's
-//  Foundation model has a ~4K window; even before any user message
-//  the always-loaded tool schemas push past it. The system-prompt
-//  composer reads this resolver at compose time and ORs the result
-//  into the agent's effective tools/memory disable flags so we never
-//  ship a request that's already over budget.
+//  Foundation model ships a 4K window on the macOS 26.x baseline (8K on
+//  27.0+ hardware); at 4K, even before any user message the always-loaded
+//  tool schemas push past it. The Foundation window is read live from
+//  `SystemLanguageModel.contextSize` (back-deployed to 26.0) rather than
+//  assumed, so newer hardware with a larger window auto-upgrades from
+//  `.tiny` to `.small`. The system-prompt composer reads this resolver at
+//  compose time and ORs the result into the agent's effective tools/memory
+//  disable flags so we never ship a request that's already over budget.
 //
 
 import Foundation
@@ -111,14 +114,31 @@ public struct ContextWindowInfo: Sendable, Equatable {
     public let sizeClass: ContextSizeClass
     public let contextLength: Int?
 
-    public init(sizeClass: ContextSizeClass, contextLength: Int?) {
+    /// Whether the prompt should render in its compact form (ids-only
+    /// manifest, small SOUL budget, compact family guidance, no plugin-creator
+    /// recipe). True for small/tiny windows (existing behaviour) AND for local
+    /// models small enough that the per-step tokenization cost of a verbose
+    /// prompt outweighs the prose — even when their window is large. Kept on
+    /// the SAME resolver as `sizeClass` (not a parallel classifier) but
+    /// DISTINCT from the disable axis: a roomy local 12B prefers compaction
+    /// without losing memory/tools the way `.small`/`.tiny` do. Session-constant
+    /// (derived from the model id) → KV-cache safe.
+    public let prefersCompactPrompt: Bool
+
+    public init(
+        sizeClass: ContextSizeClass,
+        contextLength: Int?,
+        prefersCompactPrompt: Bool = false
+    ) {
         self.sizeClass = sizeClass
         self.contextLength = contextLength
+        self.prefersCompactPrompt = prefersCompactPrompt
     }
 
     /// Conservative default returned when the model id is unknown or
     /// blank — keeps tools and memory enabled so we never hide them
-    /// speculatively before the picker has resolved a model.
+    /// speculatively before the picker has resolved a model. Verbose by
+    /// default (cloud / unresolved models handle a full prompt fine).
     public static let unknown = ContextWindowInfo(sizeClass: .normal, contextLength: nil)
 }
 
@@ -140,6 +160,24 @@ public enum ContextSizeResolver {
     /// Phi-mini, smaller Qwen variants).
     public static let smallCeiling: Int = 8192
 
+    /// Local models at or under this parameter count prefer the compact
+    /// prompt even on a large context window. The bottleneck is prompt-size
+    /// tokenization on the user's own hardware (re-run every agent-loop step),
+    /// so this is a cost/benefit ceiling, not a capability one. Tunable;
+    /// default covers the common local fleet (8B–12B) with headroom.
+    public static let compactParamCeilingBillions: Double = 20
+
+    /// Pure window→class mapping shared by the Foundation probe and the
+    /// MLX `config.json` path. Each ceiling is inclusive (`tinyCeiling`
+    /// itself is `.tiny`; one token past it pivots to `.small`). Kept as a
+    /// standalone function so the boundary policy can be unit-tested without
+    /// an installed model or a Foundation-capable device.
+    public static func sizeClass(forContextLength contextLength: Int) -> ContextSizeClass {
+        if contextLength <= tinyCeiling { return .tiny }
+        if contextLength <= smallCeiling { return .small }
+        return .normal
+    }
+
     /// Resolve the size class for a given model id.
     /// - Parameter modelId: The picker / API model identifier. May
     ///   be `nil` when the chat hasn't picked a model yet (preview
@@ -160,19 +198,44 @@ public enum ContextSizeResolver {
         if trimmed.caseInsensitiveCompare("foundation") == .orderedSame
             || trimmed.caseInsensitiveCompare("default") == .orderedSame
         {
-            return ContextWindowInfo(sizeClass: .tiny, contextLength: tinyCeiling)
+            // Probe the *real* on-device window rather than assuming 4096.
+            // `FoundationModelService.defaultModelContextSize` reads the
+            // back-deployed `SystemLanguageModel.contextSize` (memoized): 4096 on
+            // the macOS 26.x baseline keeps tools/memory off, but an 8192 window
+            // on 27.0+ hardware reclassifies to `.small`, which turns tools back
+            // on with the compact prompt and memory still off. Falls back to the
+            // tiny ceiling when Foundation is unavailable. Foundation is always a
+            // small on-device model, so it always prefers the compact prompt.
+            let ctx = FoundationModelService.defaultModelContextSize ?? tinyCeiling
+            return ContextWindowInfo(
+                sizeClass: sizeClass(forContextLength: ctx),
+                contextLength: ctx,
+                prefersCompactPrompt: true
+            )
         }
 
-        guard let info = ModelInfo.load(modelId: modelId),
+        // Cache-only: `resolve` runs synchronously inside chat view getters
+        // during layout, where `ModelInfo.load`'s cold-miss disk probe has hung
+        // the UI. A cold miss warms the memo off-main and reads as `.unknown`
+        // for this pass; a later render resolves the real window.
+        guard let info = ModelInfo.loadCachedOrWarm(modelId: modelId),
             let ctx = info.model.contextLength
         else { return .unknown }
 
-        if ctx <= tinyCeiling {
-            return ContextWindowInfo(sizeClass: .tiny, contextLength: ctx)
+        let bucket = sizeClass(forContextLength: ctx)
+        if bucket != .normal {
+            return ContextWindowInfo(sizeClass: bucket, contextLength: ctx, prefersCompactPrompt: true)
         }
-        if ctx <= smallCeiling {
-            return ContextWindowInfo(sizeClass: .small, contextLength: ctx)
-        }
-        return ContextWindowInfo(sizeClass: .normal, contextLength: ctx)
+        // Large window, local model: prefer compact when the model is small
+        // enough that verbose-prompt tokenization isn't worth it. Unknown size
+        // on a local model also compacts (the fleet skews small, and compaction
+        // only drops prose — never a capability id or a tool from the schema).
+        let billions = ModelMetadataParser.parameterCountBillions(from: trimmed)
+        let prefersCompact = billions.map { $0 <= compactParamCeilingBillions } ?? true
+        return ContextWindowInfo(
+            sizeClass: .normal,
+            contextLength: ctx,
+            prefersCompactPrompt: prefersCompact
+        )
     }
 }

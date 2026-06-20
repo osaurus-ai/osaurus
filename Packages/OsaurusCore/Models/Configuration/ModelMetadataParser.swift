@@ -49,6 +49,17 @@ enum ModelMetadataParser {
         return result
     }
 
+    /// Parameter count in billions parsed from a repo ID (e.g. "7B" -> 7.0,
+    /// "270M" -> 0.27). Returns `nil` when no size token is present. Pure
+    /// function of the (immutable) repo ID, so it inherits `parameterCount`'s
+    /// memoization.
+    static func parameterCountBillions(from repoId: String) -> Double? {
+        guard let params = parameterCount(from: repoId) else { return nil }
+        let text = params.uppercased()
+        guard let num = Double(text.dropLast()) else { return nil }
+        return text.hasSuffix("M") ? num / 1000.0 : num
+    }
+
     private static func computeParameterCount(from repoId: String) -> String? {
         let text = repoId.lowercased()
         for regex in parameterCountRegexes {

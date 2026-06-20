@@ -1,0 +1,27 @@
+{
+  "id": "computer_use_loop.async-wait-load",
+  "domain": "computer_use_loop",
+  "label": "CU loop • wait for an async control, then fill it",
+  "query": "Click Load, wait for the Detail field to appear, then set it to 'ready'.",
+  "notes": "Deterministic (scripted-model) async case: clicking Load reveals the Detail field only after a couple of captures (revealAfterCaptures), so the model must `wait` for it before set_value. Proves the wait verb re-perceives and the async-reveal driver knob. Runs in CI with no model.",
+  "fixtures": {},
+  "expect": {
+    "computerUseLoop": {
+      "app": "Async",
+      "maxSteps": 10,
+      "elements": [
+        { "id": "load", "role": "button", "label": "Load", "onClick": { "reveal": ["detail"] } },
+        { "id": "detail", "role": "textfield", "label": "Detail", "value": "", "editable": true, "hidden": true, "revealAfterCaptures": 2 }
+      ],
+      "successValues": [{ "id": "detail", "equals": "ready" }],
+      "successClicked": ["load"],
+      "expectVerbsInOrder": ["click", "set_value"],
+      "scriptedActions": [
+        "{\"verb\":\"click\",\"target\":{\"describe\":\"Load\"},\"note\":\"start loading\"}",
+        "{\"verb\":\"wait\",\"seconds\":0,\"note\":\"let the detail load\"}",
+        "{\"verb\":\"set_value\",\"target\":{\"describe\":\"Detail\"},\"text\":\"ready\",\"note\":\"fill the detail\"}",
+        "{\"verb\":\"done\",\"reason\":\"set the detail field\"}"
+      ]
+    }
+  }
+}

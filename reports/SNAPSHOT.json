@@ -1,0 +1,157 @@
+{
+  "domains" : [
+    "agent_loop",
+    "argument_coercion",
+    "capability_claims",
+    "capability_search",
+    "computer_use",
+    "computer_use_loop",
+    "prefix_hash",
+    "request_validation",
+    "sandbox_diagnostics",
+    "schema",
+    "streaming_hint",
+    "tool_envelope"
+  ],
+  "generatedAt" : "2026-06-20T00:12:24.986Z",
+  "models" : [
+    {
+      "modelId" : "foundation",
+      "peakPhysFootprintMb" : 140.78223419189453,
+      "perDomain" : {
+        "agent_loop" : {
+          "errored" : 0,
+          "passed" : 0,
+          "scored" : 0,
+          "skipped" : 58
+        },
+        "capability_claims" : {
+          "errored" : 0,
+          "passed" : 0,
+          "scored" : 6,
+          "skipped" : 2
+        },
+        "capability_search" : {
+          "errored" : 0,
+          "passed" : 10,
+          "scored" : 11,
+          "skipped" : 2
+        },
+        "computer_use_loop" : {
+          "errored" : 0,
+          "passed" : 5,
+          "scored" : 5,
+          "skipped" : 11
+        }
+      },
+      "startedAt" : "2026-06-19T22:44:35Z",
+      "totalPassed" : 15,
+      "totalScored" : 22
+    },
+    {
+      "meanDecodeTokensPerSecond" : 60.4324875,
+      "meanTtftMs" : 179.23138629306447,
+      "modelId" : "mlx-community/Qwen3-4B-4bit",
+      "peakPhysFootprintMb" : 10711.56568145752,
+      "perDomain" : {
+        "agent_loop" : {
+          "errored" : 0,
+          "passed" : 27,
+          "scored" : 45,
+          "skipped" : 13
+        },
+        "argument_coercion" : {
+          "errored" : 0,
+          "passed" : 6,
+          "scored" : 6,
+          "skipped" : 0
+        },
+        "capability_claims" : {
+          "errored" : 0,
+          "passed" : 4,
+          "scored" : 8,
+          "skipped" : 0
+        },
+        "computer_use" : {
+          "errored" : 0,
+          "passed" : 16,
+          "scored" : 16,
+          "skipped" : 0
+        },
+        "computer_use_loop" : {
+          "errored" : 0,
+          "passed" : 14,
+          "scored" : 16,
+          "skipped" : 0
+        },
+        "prefix_hash" : {
+          "errored" : 0,
+          "passed" : 4,
+          "scored" : 4,
+          "skipped" : 0
+        },
+        "request_validation" : {
+          "errored" : 0,
+          "passed" : 4,
+          "scored" : 4,
+          "skipped" : 0
+        },
+        "sandbox_diagnostics" : {
+          "errored" : 0,
+          "passed" : 8,
+          "scored" : 8,
+          "skipped" : 0
+        },
+        "schema" : {
+          "errored" : 0,
+          "passed" : 5,
+          "scored" : 5,
+          "skipped" : 0
+        },
+        "streaming_hint" : {
+          "errored" : 0,
+          "passed" : 4,
+          "scored" : 4,
+          "skipped" : 0
+        },
+        "tool_envelope" : {
+          "errored" : 0,
+          "passed" : 5,
+          "scored" : 5,
+          "skipped" : 0
+        }
+      },
+      "startedAt" : "2026-06-19T22:44:34Z",
+      "totalPassed" : 97,
+      "totalScored" : 121
+    },
+    {
+      "meanTtftMs" : 569.8426880619743,
+      "modelId" : "xai/grok-4.3",
+      "peakPhysFootprintMb" : 141.78223419189453,
+      "perDomain" : {
+        "agent_loop" : {
+          "errored" : 0,
+          "passed" : 43,
+          "scored" : 45,
+          "skipped" : 13
+        },
+        "capability_claims" : {
+          "errored" : 0,
+          "passed" : 5,
+          "scored" : 8,
+          "skipped" : 0
+        },
+        "computer_use_loop" : {
+          "errored" : 0,
+          "passed" : 14,
+          "scored" : 16,
+          "skipped" : 0
+        }
+      },
+      "startedAt" : "2026-06-19T23:32:52Z",
+      "totalPassed" : 62,
+      "totalScored" : 69
+    }
+  ]
+}

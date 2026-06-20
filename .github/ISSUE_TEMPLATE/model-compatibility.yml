@@ -1,0 +1,76 @@
+name: Model compatibility report
+description: Share how a model runs with Osaurus's agentic harness on your Mac (crowdsourced compatibility)
+title: "compat: <model> on <chip>"
+labels: [model-compatibility]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Help us crowdsource model compatibility across Macs! The best way to
+        contribute is to run the suite and **open a PR** with a single file —
+        see [`reports/community/README.md`](https://github.com/osaurus-ai/osaurus/blob/main/reports/community/README.md):
+
+        ```bash
+        MODEL=mlx-community/Qwen3-4B-4bit make evals-contribute
+        ```
+
+        That writes `reports/community/<chip>-<model>-<date>.json`. If you'd
+        rather not open a PR, fill out this form and paste the file contents —
+        a maintainer will commit it for you.
+  - type: input
+    id: model
+    attributes:
+      label: Model id
+      placeholder: e.g., mlx-community/Qwen3-4B-4bit
+    validations:
+      required: true
+  - type: input
+    id: chip
+    attributes:
+      label: Chip + RAM
+      placeholder: e.g., Apple M3 Max, 64GB
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      placeholder: e.g., 26.2
+    validations:
+      required: true
+  - type: input
+    id: osaurus
+    attributes:
+      label: Osaurus version / commit
+      placeholder: e.g., v0.5.0 or commit SHA
+    validations:
+      required: true
+  - type: input
+    id: judge
+    attributes:
+      label: Judge model (for LLM-judged suites)
+      placeholder: e.g., xai/grok-4.3, or "self-judge" if none was set
+  - type: dropdown
+    id: verdict
+    attributes:
+      label: Your verdict
+      description: How well did it run through the agentic loop?
+      options:
+        - works (runs cleanly)
+        - partial (runs, but with errors or low pass-rate)
+        - broken (errors out / never produces a usable answer)
+    validations:
+      required: true
+  - type: textarea
+    id: contribution
+    attributes:
+      label: Contribution JSON
+      description: Paste the contents of the reports/community/*.json file produced by `make evals-contribute`.
+      render: json
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: Anything notable — tool-call quirks, reasoning leaks, RAM pressure, crashes, KV regime used, etc.

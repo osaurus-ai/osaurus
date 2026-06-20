@@ -187,7 +187,7 @@ The next sections walk each one in detail.
 
 ## 3. Per-plugin state
 
-The host gives you a SQLCipher-encrypted SQLite DB scoped to your plugin via `db_exec` and `db_query`. Three tables are enough for a robust Telegram plugin:
+The host gives you a SQLite DB scoped to your plugin via `db_exec` and `db_query` — plaintext by default (FileVault-protected) or SQLCipher-encrypted when the user opts in. Three tables are enough for a robust Telegram plugin:
 
 ```sql
 -- One row per chat we've ever seen. Persistent.
@@ -221,7 +221,7 @@ CREATE TABLE IF NOT EXISTS seen_updates (
 
 Why `UNIQUE(chat_id)` on `active_dispatches`? Because we never want two concurrent agent runs for the same chat — that would race on tool calls and produce out-of-order replies. We enforce single-active-task per chat at the schema level and use `dispatch_interrupt` to handle new messages that arrive while one is in flight (covered in section 6).
 
-The DB is per-plugin and SQLCipher-encrypted with no setup work — `db_exec` opens it on demand on the first call.
+The DB is per-plugin with no setup work — `db_exec` opens it on demand on the first call, in whatever storage posture the user has chosen.
 
 ---
 

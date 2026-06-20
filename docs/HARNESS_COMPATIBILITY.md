@@ -583,14 +583,19 @@ export OPENROUTER_API_KEY=. # openrouter/<model>
 # 2. Optional: fixed judge for cross-model comparability
 export JUDGE_MODEL=xai/grok-4.3   # needs XAI_API_KEY
 
-# 3. Run both suites
-swift run --package-path Packages/OsaurusEvals osaurus-evals run \
-  --suite Packages/OsaurusEvals/Suites/AgentLoopFrontier \
-  --model <prefix>/<model-id> --out build/eval-reports/<model>-frontier.json
-swift run --package-path Packages/OsaurusEvals osaurus-evals run \
-  --suite Packages/OsaurusEvals/Suites/AgentLoop \
-  --model <prefix>/<model-id> --out build/eval-reports/<model>-agentloop.json
+# 3. Run the regression lab against a saved baseline
+scripts/evals/agent-loop-regression-lab.sh \
+  --baseline build/eval-baselines/<model>/agent-loop \
+  --model <prefix>/<model-id> \
+  --out-dir build/eval-reports/<model>-agent-loop-lab
 ```
+
+The lab runs `AgentLoop` and `AgentLoopFrontier` by default, captures raw
+per-suite JSON under `reports/`, and writes `regression-summary.json` plus
+`regression-summary.md`. Use the Markdown summary as the short proof block for
+new rows; keep the JSON paths for failure attribution and later comparisons. To
+compare already-captured reports without rerunning a model, pass `--current
+<path>` alongside `--baseline <path>`.
 
 Keys ride in ephemeral in-memory providers — never written to disk or
 Keychain. New providers need a preset in

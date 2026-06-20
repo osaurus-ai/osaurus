@@ -143,6 +143,26 @@ Providers can be in the following states:
 | **Disabled**     | Gray            | Manually disabled                     |
 | **Error**        | Red             | Connection failed (see error message) |
 
+### Connectivity Center
+
+The Providers screen includes a connectivity center above the provider list.
+It summarizes connected providers, attention items, discovered models, and
+providers that rely on manual model IDs. Use the segmented filter to focus on
+all providers, attention items, connected providers, or disabled providers.
+
+The center also provides:
+
+- a reconnect-all action for enabled providers
+- a safe copyable diagnostics report covering every configured provider
+- inline per-provider reconnect and copy-diagnostics actions
+- expanded diagnostics rows on providers that need attention
+
+Manual model IDs are treated as first-class connectivity evidence for
+OpenAI-compatible and Azure-style providers. If a provider's `/models` endpoint
+is missing or returns a non-OpenAI schema, a configured manual model ID can let
+the connection test and provider connect path proceed without requiring a fake
+model-list endpoint.
+
 ### Troubleshooting Connection Issues
 
 1. **Verify the endpoint** — Check host, port, and base path
@@ -153,11 +173,11 @@ Providers can be in the following states:
 
 ### Provider Diagnostics
 
-Each provider card includes a compact diagnostics section with a copy button.
-The copied report is safe to paste in GitHub or Discord: it lists connection
-state, authentication state, model-discovery path, request format, and global
-proxy state without including API keys, OAuth tokens, request bodies, callback
-URLs, or raw headers.
+Each provider card and the connectivity center include copy buttons. Copied
+reports are safe to paste in GitHub or Discord: they list connection state,
+authentication state, model-discovery path, request format, and global proxy
+state without including API keys, OAuth tokens, request bodies, callback URLs,
+or raw headers.
 
 Useful rows:
 

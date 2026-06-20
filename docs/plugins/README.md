@@ -23,7 +23,7 @@ Plugins are macOS dynamic libraries (`.dylib`) that extend Osaurus with new tool
 Plugins target the **v6 host API surface** (current). Callbacks span:
 
 - **Config** — read/write per-plugin secrets backed by Keychain (`config_get`, `config_set`, `config_delete`)
-- **Storage** — per-plugin SQLite database (encrypted at rest, 100 MiB default cap), `db_exec` / `db_query`
+- **Storage** — per-plugin SQLite database (plaintext by default / FileVault-protected, or SQLCipher when the user opts in; 100 MiB default cap), `db_exec` / `db_query`
 - **Logging** — `log` plus structured `log_structured` (v5) for searchable JSON fields in Insights
 - **Inference** — synchronous and streaming chat completion (`complete`, `complete_stream`, `complete_cancel`) plus embeddings (`embed`), against the same models the main chat uses
 - **Dispatch** — fire-and-forget background tasks (`dispatch`, `task_status`, `dispatch_cancel`, `dispatch_interrupt`, `send_draft`, `list_active_tasks`)

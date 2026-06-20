@@ -86,10 +86,13 @@ final class TTFTTrace: @unchecked Sendable {
         guard let data = block.data(using: .utf8) else { return }
 
         if FileManager.default.fileExists(atPath: Self.path) {
+            // Throwing Swift APIs only: the legacy `write(_:)` raises an
+            // uncatchable ObjC `NSException` on a full disk that kills the
+            // process. A trace writer must never crash its host.
             if let fh = FileHandle(forWritingAtPath: Self.path) {
-                fh.seekToEndOfFile()
-                fh.write(data)
-                fh.closeFile()
+                try? fh.seekToEnd()
+                try? fh.write(contentsOf: data)
+                try? fh.close()
             }
         } else {
             try? data.write(to: URL(fileURLWithPath: Self.path))

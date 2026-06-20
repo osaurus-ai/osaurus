@@ -452,6 +452,8 @@ public struct AgentCapabilities: Sendable, Equatable {
     /// Self-scheduling tools (`schedule_next_run` / `cancel_next_run` /
     /// `notify`) exposed to the model.
     public var selfSchedulingEnabled: Bool
+    /// Computer Use (`computer_use` entry tool) exposed to the model.
+    public var computerUseEnabled: Bool
 
     public init(
         toolsEnabled: Bool,
@@ -460,7 +462,8 @@ public struct AgentCapabilities: Sendable, Equatable {
         renderChartEnabled: Bool,
         speakEnabled: Bool,
         searchMemoryEnabled: Bool,
-        selfSchedulingEnabled: Bool
+        selfSchedulingEnabled: Bool,
+        computerUseEnabled: Bool = false
     ) {
         self.toolsEnabled = toolsEnabled
         self.memoryEnabled = memoryEnabled
@@ -469,6 +472,7 @@ public struct AgentCapabilities: Sendable, Equatable {
         self.speakEnabled = speakEnabled
         self.searchMemoryEnabled = searchMemoryEnabled
         self.selfSchedulingEnabled = selfSchedulingEnabled
+        self.computerUseEnabled = computerUseEnabled
     }
 }
 
@@ -688,6 +692,19 @@ public struct AgentSettings: Codable, Sendable, Equatable {
     /// Default off so a fresh agent never carries the scheduler trio in its
     /// always-loaded schema.
     public var selfSchedulingEnabled: Bool
+    /// Per-agent opt-in for the Computer Use feature (the `computer_use`
+    /// entry tool that drives macOS apps via the accessibility harness).
+    /// Default off; gated authoritatively in `resolveTools` (stripped in
+    /// BOTH auto and manual mode unless enabled). Only available on custom
+    /// agents — the built-in Default agent cannot enable it.
+    public var computerUseEnabled: Bool
+    /// Per-agent autonomy ceiling for Computer Use (PR2). A structured hard
+    /// cap merged strictest-wins on top of the user's global/per-app policy,
+    /// so an agent can be held stricter than the user's default but never
+    /// looser. `nil` means "no ceiling" (the user policy applies as-is).
+    /// This is the spec's "SOUL.md ceiling" expressed as settings rather
+    /// than parsed prose.
+    public var computerUseCeiling: AutonomyCeiling?
 
     public init(
         dbEnabled: Bool,
@@ -698,7 +715,9 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         renderChartEnabled: Bool = false,
         speakEnabled: Bool = false,
         searchMemoryEnabled: Bool = false,
-        selfSchedulingEnabled: Bool = false
+        selfSchedulingEnabled: Bool = false,
+        computerUseEnabled: Bool = false,
+        computerUseCeiling: AutonomyCeiling? = nil
     ) {
         self.dbEnabled = dbEnabled
         self.schedule = schedule
@@ -709,6 +728,8 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         self.speakEnabled = speakEnabled
         self.searchMemoryEnabled = searchMemoryEnabled
         self.selfSchedulingEnabled = selfSchedulingEnabled
+        self.computerUseEnabled = computerUseEnabled
+        self.computerUseCeiling = computerUseCeiling
     }
 
     public init(from decoder: Decoder) throws {
@@ -743,6 +764,13 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         // Default off (consistent with the other built-in tool gates). Existing
         // agents that relied on self-scheduling must re-enable it explicitly.
         selfSchedulingEnabled = try c.decodeIfPresent(Bool.self, forKey: .selfSchedulingEnabled) ?? false
+        // Default off; back-compat for agents that predate the feature.
+        computerUseEnabled = try c.decodeIfPresent(Bool.self, forKey: .computerUseEnabled) ?? false
+        // Optional; absent means no ceiling (user policy applies as-is).
+        computerUseCeiling = try c.decodeIfPresent(
+            AutonomyCeiling.self,
+            forKey: .computerUseCeiling
+        )
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -755,6 +783,8 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         case speakEnabled
         case searchMemoryEnabled
         case selfSchedulingEnabled
+        case computerUseEnabled
+        case computerUseCeiling
         // Read-only legacy key — never encoded after migration.
         case generativeGreetings
     }
@@ -770,6 +800,8 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         try c.encode(speakEnabled, forKey: .speakEnabled)
         try c.encode(searchMemoryEnabled, forKey: .searchMemoryEnabled)
         try c.encode(selfSchedulingEnabled, forKey: .selfSchedulingEnabled)
+        try c.encode(computerUseEnabled, forKey: .computerUseEnabled)
+        try c.encodeIfPresent(computerUseCeiling, forKey: .computerUseCeiling)
     }
 
     /// Default settings for newly created agents (and for back-compat decoding of
@@ -784,7 +816,8 @@ public struct AgentSettings: Codable, Sendable, Equatable {
             renderChartEnabled: false,
             speakEnabled: false,
             searchMemoryEnabled: false,
-            selfSchedulingEnabled: false
+            selfSchedulingEnabled: false,
+            computerUseEnabled: false
         )
     }
 }

@@ -1,0 +1,20 @@
+{
+  "id": "computer_use.trusted-edit-autoruns",
+  "domain": "computer_use",
+  "label": "computer use • trusted auto-runs edits",
+  "query": "Set the document title.",
+  "notes": "Trusted runs edits and only confirms consequential actions, so a benign field edit auto-runs.",
+  "fixtures": {},
+  "expect": {
+    "computerUse": {
+      "verb": "type",
+      "text": "Roadmap",
+      "resolvedRole": "AXTextField",
+      "resolvedLabel": "Title",
+      "appName": "Notes",
+      "preset": "trusted",
+      "expectEffect": "edit",
+      "expectDisposition": "allow"
+    }
+  }
+}

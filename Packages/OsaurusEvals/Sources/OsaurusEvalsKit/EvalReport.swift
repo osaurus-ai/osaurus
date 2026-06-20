@@ -33,6 +33,76 @@ public enum EvalCaseOutcome: String, Sendable, Codable {
     }
 }
 
+/// Per-case generation + resource telemetry — the substrate the
+/// optimization loop's speed/RAM workstream measures against. Every
+/// field is optional so a row that didn't (or couldn't) sample a metric
+/// reads as "no measurement" rather than a zeroed regression: remote
+/// runs have no peak footprint, non-streaming steps have no decode tps,
+/// and the very first case in a process has no meaningful KV delta.
+public struct EvalCaseTelemetry: Sendable, Codable {
+    /// Token-weighted mean decode speed (tokens/sec) across model steps.
+    public let decodeTokensPerSecond: Double?
+    /// First model step's prefill (prompt-processing) speed (tokens/sec).
+    public let prefillTokensPerSecond: Double?
+    /// Time-to-first-token for the first model step, milliseconds.
+    public let ttftMs: Double?
+    /// Total generated tokens across all model steps.
+    public let completionTokens: Int?
+    /// Peak physical footprint (Activity-Monitor "Memory") sampled across
+    /// the case, in megabytes — the value the AGENTS.md RAM gate reads.
+    public let peakPhysFootprintMb: Double?
+    /// KV prefix-cache hits gained during this case (after − before from
+    /// `ModelRuntime.batchDiagnosticsSnapshot`). A positive value on a
+    /// multi-step agent_loop case is the prefix-reuse proof — for
+    /// full-attention models. Stays 0 for hybrid SSM models (Qwen3), whose
+    /// reuse shows up in the SSM-companion counters below; reading KV alone
+    /// for a hybrid model would falsely report "no reuse".
+    public let kvPrefixHitsDelta: Int?
+    /// KV prefix-cache misses gained during this case — pairs with hits
+    /// to show whether later iterations reused or re-prefilled.
+    public let kvPrefixMissesDelta: Int?
+    /// SSM-companion cache hits gained during this case — the cache-reuse
+    /// signal for hybrid SSM models (Qwen-style), where a KV-prefix hit
+    /// alone is not sufficient proof (per AGENTS.md cache-proof rules).
+    public let ssmCompanionHitsDelta: Int?
+    /// SSM-companion re-derivations gained during this case. A re-derive
+    /// is the SSM analog of a cold prefill; rising re-derives with flat
+    /// hits means the companion cache isn't being reused.
+    public let ssmCompanionReDerivesDelta: Int?
+
+    public init(
+        decodeTokensPerSecond: Double? = nil,
+        prefillTokensPerSecond: Double? = nil,
+        ttftMs: Double? = nil,
+        completionTokens: Int? = nil,
+        peakPhysFootprintMb: Double? = nil,
+        kvPrefixHitsDelta: Int? = nil,
+        kvPrefixMissesDelta: Int? = nil,
+        ssmCompanionHitsDelta: Int? = nil,
+        ssmCompanionReDerivesDelta: Int? = nil
+    ) {
+        self.decodeTokensPerSecond = decodeTokensPerSecond
+        self.prefillTokensPerSecond = prefillTokensPerSecond
+        self.ttftMs = ttftMs
+        self.completionTokens = completionTokens
+        self.peakPhysFootprintMb = peakPhysFootprintMb
+        self.kvPrefixHitsDelta = kvPrefixHitsDelta
+        self.kvPrefixMissesDelta = kvPrefixMissesDelta
+        self.ssmCompanionHitsDelta = ssmCompanionHitsDelta
+        self.ssmCompanionReDerivesDelta = ssmCompanionReDerivesDelta
+    }
+
+    /// True when no field carries a measurement — used to avoid emitting
+    /// an all-null telemetry object on deterministic (no-model) rows.
+    public var isEmpty: Bool {
+        decodeTokensPerSecond == nil && prefillTokensPerSecond == nil
+            && ttftMs == nil && completionTokens == nil
+            && peakPhysFootprintMb == nil && kvPrefixHitsDelta == nil
+            && kvPrefixMissesDelta == nil && ssmCompanionHitsDelta == nil
+            && ssmCompanionReDerivesDelta == nil
+    }
+}
+
 /// Per-tool usage counters for one `agent_loop` case — the
 /// tool-discipline scorecard. `calls` counts every processed call
 /// (executed + dedupe replays), `errors` counts error envelopes,
@@ -77,6 +147,11 @@ public struct EvalCaseReport: Sendable, Codable {
     /// domains. Aggregated suite-wide into the console summary so each
     /// model gets a tool-discipline scorecard, not just pass/fail.
     public let toolUsage: [ToolUsageStat]?
+    /// Generation + resource telemetry (decode tok/s, TTFT, prefill
+    /// tok/s, peak RAM, KV prefix-hit delta). nil for deterministic
+    /// (no-model) rows; populated for model-driven domains. The
+    /// optimization loop's speed/RAM scoreboard reads this.
+    public let telemetry: EvalCaseTelemetry?
 
     public init(
         id: String,
@@ -88,7 +163,8 @@ public struct EvalCaseReport: Sendable, Codable {
         notes: [String],
         modelId: String,
         latencyMs: Double?,
-        toolUsage: [ToolUsageStat]? = nil
+        toolUsage: [ToolUsageStat]? = nil,
+        telemetry: EvalCaseTelemetry? = nil
     ) {
         self.id = id
         self.label = label
@@ -100,6 +176,7 @@ public struct EvalCaseReport: Sendable, Codable {
         self.modelId = modelId
         self.latencyMs = latencyMs
         self.toolUsage = toolUsage
+        self.telemetry = (telemetry?.isEmpty ?? true) ? nil : telemetry
     }
 
     /// Build an early-exit row (decode failure, unknown domain, missing
@@ -135,13 +212,32 @@ public struct EvalReport: Sendable, Codable {
     /// per-model scoreboards can stack reports without name collisions.
     public let startedAt: String
     public let cases: [EvalCaseReport]
+    /// Run provenance (hardware, OS, Osaurus build, judge, catalog hash).
+    /// nil on reports written before this block existed, and on internal
+    /// constructions that don't attach it; the CLI's `run` path populates
+    /// it so every emitted report JSON is self-describing — the substrate
+    /// crowdsourced model-compatibility contributions are built from.
+    public let environment: RunEnvironment?
 
     public var counts: Counts { Counts(cases: cases) }
 
-    public init(modelId: String, startedAt: String, cases: [EvalCaseReport]) {
+    public init(
+        modelId: String,
+        startedAt: String,
+        cases: [EvalCaseReport],
+        environment: RunEnvironment? = nil
+    ) {
         self.modelId = modelId
         self.startedAt = startedAt
         self.cases = cases
+        self.environment = environment
+    }
+
+    /// Return a copy with `environment` attached — used by the CLI to stamp
+    /// provenance onto the report the runner produced before it is printed
+    /// and written to JSON.
+    public func withEnvironment(_ environment: RunEnvironment) -> EvalReport {
+        EvalReport(modelId: modelId, startedAt: startedAt, cases: cases, environment: environment)
     }
 
     public struct Counts: Sendable, Codable {
@@ -190,11 +286,18 @@ public struct EvalReport: Sendable, Codable {
             let latencyStr = row.latencyMs.map { String(format: "%5.0fms", $0) } ?? "      —"
             lines.append("[\(row.outcome.badge)] \(row.id)  \(latencyStr)")
             for note in row.notes { lines.append("       · \(note)") }
+            if let telemetryLine = Self.formatTelemetryLine(row.telemetry) {
+                lines.append("       · \(telemetryLine)")
+            }
             if verbose { appendVerboseDiagnostics(for: row, into: &lines) }
         }
         if let usageLines = formatAggregatedToolUsage() {
             lines.append("")
             lines.append(contentsOf: usageLines)
+        }
+        if let perfLines = formatAggregatedTelemetry() {
+            lines.append("")
+            lines.append(contentsOf: perfLines)
         }
         return lines.joined(separator: "\n")
     }
@@ -237,5 +340,77 @@ public struct EvalReport: Sendable, Codable {
         if let query = row.query {
             lines.append("       · query: \"\(query)\"")
         }
+    }
+
+    /// One-line per-case perf annotation (`decode … TTFT … prefill …
+    /// RAM … KV+…`), or nil when the row carried no telemetry. Static so
+    /// the diff/scoreboard surfaces can reuse the exact same formatting.
+    static func formatTelemetryLine(_ t: EvalCaseTelemetry?) -> String? {
+        guard let t, !t.isEmpty else { return nil }
+        var parts: [String] = []
+        if let d = t.decodeTokensPerSecond { parts.append(String(format: "decode %.1f tok/s", d)) }
+        if let ttft = t.ttftMs { parts.append(String(format: "TTFT %.0fms", ttft)) }
+        if let p = t.prefillTokensPerSecond { parts.append(String(format: "prefill %.0f tok/s", p)) }
+        if let ram = t.peakPhysFootprintMb { parts.append(String(format: "peakRAM %.0fMB", ram)) }
+        if let hits = t.kvPrefixHitsDelta {
+            let misses = t.kvPrefixMissesDelta ?? 0
+            parts.append("KV +\(hits)hit/+\(misses)miss")
+        }
+        if let ssmHits = t.ssmCompanionHitsDelta {
+            let red = t.ssmCompanionReDerivesDelta ?? 0
+            parts.append("SSM +\(ssmHits)hit/+\(red)rederive")
+        }
+        if let tokens = t.completionTokens { parts.append("\(tokens) tok") }
+        return parts.isEmpty ? nil : "perf: " + parts.joined(separator: "  ")
+    }
+
+    /// Suite-wide perf rollup across every row that carried telemetry:
+    /// mean decode tok/s, mean TTFT, and the peak-of-peak RAM. nil when
+    /// no row sampled anything (deterministic-only suites print nothing).
+    private func formatAggregatedTelemetry() -> [String]? {
+        let telemetered = cases.compactMap(\.telemetry).filter { !$0.isEmpty }
+        guard !telemetered.isEmpty else { return nil }
+        var lines = ["[perf] (model-driven rows, suite-wide)"]
+        let decodes = telemetered.compactMap(\.decodeTokensPerSecond)
+        if !decodes.isEmpty {
+            let mean = decodes.reduce(0, +) / Double(decodes.count)
+            lines.append(
+                String(
+                    format: "  decode tok/s   mean=%.1f  min=%.1f  max=%.1f  (n=%d)",
+                    mean,
+                    decodes.min() ?? 0,
+                    decodes.max() ?? 0,
+                    decodes.count
+                )
+            )
+        }
+        let ttfts = telemetered.compactMap(\.ttftMs)
+        if !ttfts.isEmpty {
+            let mean = ttfts.reduce(0, +) / Double(ttfts.count)
+            lines.append(
+                String(
+                    format: "  TTFT ms        mean=%.0f  min=%.0f  max=%.0f  (n=%d)",
+                    mean,
+                    ttfts.min() ?? 0,
+                    ttfts.max() ?? 0,
+                    ttfts.count
+                )
+            )
+        }
+        let prefills = telemetered.compactMap(\.prefillTokensPerSecond)
+        if !prefills.isEmpty {
+            let mean = prefills.reduce(0, +) / Double(prefills.count)
+            lines.append(String(format: "  prefill tok/s  mean=%.0f  (n=%d)", mean, prefills.count))
+        }
+        let rams = telemetered.compactMap(\.peakPhysFootprintMb)
+        if !rams.isEmpty {
+            lines.append(String(format: "  peak RAM MB    max=%.0f  (n=%d)", rams.max() ?? 0, rams.count))
+        }
+        let kvHits = telemetered.compactMap(\.kvPrefixHitsDelta).reduce(0, +)
+        let kvMisses = telemetered.compactMap(\.kvPrefixMissesDelta).reduce(0, +)
+        if kvHits != 0 || kvMisses != 0 {
+            lines.append("  KV prefix      +\(kvHits) hits  +\(kvMisses) misses (suite-wide delta)")
+        }
+        return lines
     }
 }

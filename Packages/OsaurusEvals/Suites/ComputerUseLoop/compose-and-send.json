@@ -1,0 +1,26 @@
+{
+  "id": "computer_use_loop.compose-and-send",
+  "domain": "computer_use_loop",
+  "label": "CU loop • type a message then click Send",
+  "query": "In Messages, type 'Running late, sorry!' into the message box and then click Send.",
+  "notes": "Two ordered actions in one run: edit a field, THEN trigger a consequential control. Runs under the balanced preset so the Send click also exercises the confirm path (auto-approved in evals). Tests multi-step sequencing without re-typing or premature done.",
+  "fixtures": {},
+  "expect": {
+    "computerUseLoop": {
+      "app": "Messages",
+      "preset": "balanced",
+      "maxSteps": 12,
+      "elements": [
+        { "id": "message", "role": "textfield", "label": "Message", "value": "", "placeholder": "Type a message", "editable": true },
+        { "id": "send", "role": "button", "label": "Send", "onClick": { "setValues": [{ "id": "status", "value": "sent" }] } },
+        { "id": "status", "role": "statictext", "label": "Delivery Status", "value": "draft" }
+      ],
+      "successValues": [
+        { "id": "message", "contains": "Running late" },
+        { "id": "status", "equals": "sent" }
+      ],
+      "successClicked": ["send"],
+      "maxInvalidActions": 3
+    }
+  }
+}

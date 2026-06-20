@@ -281,12 +281,20 @@ enum StreamingStatsHint: Sendable {
     private static let posixLocale = Locale(identifier: "en_US_POSIX")
     private static let unclosedFlag = "unclosed"
     private static let stopFlagPrefix = "stop="
+    /// Prompt-processing (prefill) speed in tokens/sec, carried as an
+    /// optional flag so older decoders ignore it and the healthy 2-field
+    /// wire is unchanged when absent. Distinct scale from the leading
+    /// decode `tokensPerSecond` — prefill measures how fast the prompt
+    /// (incl. KV-reused prefix) was processed before the first generated
+    /// token, the headline TTFT driver for long-context Mac runs.
+    private static let prefillFlagPrefix = "prefill="
 
     static func encode(
         tokenCount: Int,
         tokensPerSecond: Double,
         unclosedReasoning: Bool = false,
-        stopReason: String? = nil
+        stopReason: String? = nil,
+        prefillTokensPerSecond: Double? = nil
     ) -> String {
         let tps = String(format: "%.4f", locale: posixLocale, tokensPerSecond)
         var flags: [String] = []
@@ -299,6 +307,10 @@ enum StreamingStatsHint: Sendable {
                 flags.append("\(stopFlagPrefix)\(normalized)")
             }
         }
+        if let prefillTokensPerSecond, prefillTokensPerSecond.isFinite, prefillTokensPerSecond > 0 {
+            let pf = String(format: "%.4f", locale: posixLocale, prefillTokensPerSecond)
+            flags.append("\(prefillFlagPrefix)\(pf)")
+        }
         let suffix = flags.isEmpty ? "" : ";\(flags.joined(separator: ","))"
         return "\(statsPrefix)\(tokenCount);\(tps)\(suffix)"
     }
@@ -309,7 +321,8 @@ enum StreamingStatsHint: Sendable {
         tokenCount: Int,
         tokensPerSecond: Double,
         unclosedReasoning: Bool,
-        stopReason: String?
+        stopReason: String?,
+        prefillTokensPerSecond: Double?
     )? {
         guard delta.hasPrefix(statsPrefix) else { return nil }
         let payload = delta.dropFirst(statsPrefix.count)
@@ -329,7 +342,11 @@ enum StreamingStatsHint: Sendable {
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             return value.isEmpty ? nil : value
         }.first
-        return (count, tps, unclosed, stopReason)
+        let prefillTokensPerSecond = flags.compactMap { flag -> Double? in
+            guard flag.hasPrefix(prefillFlagPrefix) else { return nil }
+            return Double(flag.dropFirst(prefillFlagPrefix.count))
+        }.first
+        return (count, tps, unclosed, stopReason, prefillTokensPerSecond)
     }
 }
 

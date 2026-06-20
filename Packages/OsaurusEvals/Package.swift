@@ -44,7 +44,10 @@ let package = Package(
             dependencies: [
                 "OsaurusEvalsKit"
             ],
-            path: "Tests/OsaurusEvalsKitTests"
+            path: "Tests/OsaurusEvalsKitTests",
+            resources: [
+                .copy("Fixtures")
+            ]
         ),
     ]
 )

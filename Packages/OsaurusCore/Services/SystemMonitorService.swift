@@ -56,15 +56,36 @@ class SystemMonitorService: ObservableObject {
     }
 
     private func updateResourceUsage() {
-        cpuUsage = getCPUUsage()
+        // Round to the precision we actually display (one decimal) so sub-pixel
+        // jitter on an otherwise-idle machine doesn't count as a change.
+        let cpu = Self.rounded(getCPUUsage())
         let memInfo = getMemoryUsage()
-        memoryUsage = memInfo.percentage
-        totalMemoryGB = memInfo.totalGB
-        usedMemoryGB = memInfo.usedGB
-        appMemoryMB = getAppMemoryMB()
+        let memPct = Self.rounded(memInfo.percentage)
+        let totalGB = Self.rounded(memInfo.totalGB)
+        let usedGB = Self.rounded(memInfo.usedGB)
+        let appMem = Self.rounded(getAppMemoryMB())
+
+        // Publish only when a displayed value actually changed. Assigning an
+        // @Published property always fires objectWillChange — even with an
+        // identical value — which re-renders every observing SwiftUI subtree
+        // (the theme-heavy SystemResourceMonitor among them) on every 2s tick.
+        // Guarding each assignment collapses idle ticks to zero re-renders,
+        // removing a steady main-thread render cost seen in app-hang sampling.
+        if cpuUsage != cpu { cpuUsage = cpu }
+        if memoryUsage != memPct { memoryUsage = memPct }
+        if totalMemoryGB != totalGB { totalMemoryGB = totalGB }
+        if usedMemoryGB != usedGB { usedMemoryGB = usedGB }
+        if appMemoryMB != appMem { appMemoryMB = appMem }
+
         // Storage capacity is queried off the main actor (see refreshStorageUsage):
         // the volume-capacity API can block the caller for seconds.
         refreshStorageUsage()
+    }
+
+    /// Round to one decimal place — the precision shown in the UI. `nonisolated`
+    /// so the off-main storage refresh can reuse it (pure arithmetic, no state).
+    private nonisolated static func rounded(_ value: Double) -> Double {
+        (value * 10).rounded() / 10
     }
 
     /// Update the path used for storage monitoring (when user selects a custom models directory)
@@ -201,10 +222,12 @@ class SystemMonitorService: ObservableObject {
             let gb = 1024.0 * 1024.0 * 1024.0
             let freeBytes = OsaurusPaths.volumeFreeBytes(forPath: path) ?? 0
             let totalBytes = OsaurusPaths.volumeTotalBytes(forPath: path) ?? 0
+            let available = Self.rounded(Double(freeBytes) / gb)
+            let total = Self.rounded(Double(totalBytes) / gb)
             await MainActor.run { [weak self] in
                 guard let self else { return }
-                self.availableStorageGB = Double(freeBytes) / gb
-                self.totalStorageGB = Double(totalBytes) / gb
+                if self.availableStorageGB != available { self.availableStorageGB = available }
+                if self.totalStorageGB != total { self.totalStorageGB = total }
                 self.isRefreshingStorage = false
             }
         }

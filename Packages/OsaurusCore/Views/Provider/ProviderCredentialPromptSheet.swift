@@ -685,8 +685,7 @@ struct ProviderCredentialPromptSheet: View {
         let host = trimmed(extraFieldValue(for: "host"))
         let deployment = trimmed(extraFieldValue(for: "deployment"))
         let effectiveHost = host.isEmpty ? defaults.host : host
-        let deploymentModelIds =
-            deployment
+        let deploymentModelIds = deployment
             .split(whereSeparator: { $0 == "\n" || $0 == "," })
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }

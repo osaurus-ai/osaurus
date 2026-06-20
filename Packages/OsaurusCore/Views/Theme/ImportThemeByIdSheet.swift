@@ -14,6 +14,7 @@ import SwiftUI
 struct ImportThemeByIdSheet: View {
     @Environment(\.theme) private var theme
     @Environment(\.dismiss) private var dismiss
+    @ObservedObject private var themeManager = ThemeManager.shared
 
     /// Optional pre-supplied input. When non-empty (e.g. set from a deep link)
     /// the sheet starts directly in the importing phase.
@@ -49,6 +50,13 @@ struct ImportThemeByIdSheet: View {
         ThemeShareService.parseHash(from: input) != nil
     }
 
+    private var diagnostics: ThemeImportDiagnostics {
+        ThemeLibraryManagementService.diagnoseImportInput(
+            input,
+            installedThemes: themeManager.installedThemes
+        )
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             header
@@ -66,7 +74,7 @@ struct ImportThemeByIdSheet: View {
 
             footer
         }
-        .frame(width: 520, height: 360)
+        .frame(width: 520, height: 430)
         .background(theme.cardBackground)
         .onAppear { applyInitialInput() }
     }
@@ -165,6 +173,10 @@ struct ImportThemeByIdSheet: View {
                 .foregroundColor(theme.warningColor)
             }
 
+            if !input.isEmpty {
+                diagnosticsView(diagnostics)
+            }
+
             HStack(spacing: 6) {
                 Image(systemName: "info.circle")
                     .font(.system(size: 10))
@@ -240,6 +252,74 @@ struct ImportThemeByIdSheet: View {
                 .font(.system(size: 11))
                 .foregroundColor(theme.warningColor)
             }
+
+            if !input.isEmpty {
+                diagnosticsView(diagnostics)
+            }
+        }
+    }
+
+    private func diagnosticsView(_ diagnostics: ThemeImportDiagnostics) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: diagnostics.canImport ? "checkmark.seal.fill" : "stethoscope")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(diagnostics.canImport ? theme.successColor : theme.secondaryText)
+                Text("Import diagnostics", bundle: .module)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+                Text(LocalizedStringKey(diagnosticKindLabel(diagnostics.kind)), bundle: .module)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(theme.tertiaryBackground))
+            }
+
+            if let hash = diagnostics.normalizedHash {
+                Text(verbatim: hash)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundColor(theme.secondaryText)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+
+                if diagnostics.installedMatches.isEmpty {
+                    Text("No installed theme has this shared ID yet.", bundle: .module)
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.tertiaryText)
+                } else {
+                    Text(
+                        "Already installed as \(diagnostics.installedMatches.map(\.name).joined(separator: ", ")).",
+                        bundle: .module
+                    )
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.warningColor)
+                    .lineLimit(2)
+                }
+            } else {
+                Text("Paste a valid ID or link to see normalized server details.", bundle: .module)
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.tertiaryText)
+            }
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(theme.secondaryBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(theme.primaryBorder.opacity(0.6), lineWidth: 1)
+                )
+        )
+    }
+
+    private func diagnosticKindLabel(_ kind: ThemeImportInputKind) -> String {
+        switch kind {
+        case .empty: return "Waiting"
+        case .rawHash: return "Raw ID"
+        case .deepLink: return "Deep link"
+        case .webURL: return "Web URL"
+        case .invalid: return "Invalid"
         }
     }
 

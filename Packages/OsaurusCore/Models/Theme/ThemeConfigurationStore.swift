@@ -72,8 +72,9 @@ public enum ThemeConfigurationStore {
     static func saveTheme(_ theme: CustomTheme) {
         do {
             try OsaurusPaths.ensureExists(themesDirectoryURL())
-            let data = try encodeTheme(theme)
-            try data.write(to: themeFileURL(for: theme.metadata.id), options: .atomic)
+            let normalizedTheme = normalizedForSave(theme)
+            let data = try encodeTheme(normalizedTheme)
+            try data.write(to: themeFileURL(for: normalizedTheme.metadata.id), options: .atomic)
         } catch {
             print("[Osaurus] Failed to save theme '\(theme.metadata.name)': \(error)")
         }
@@ -101,25 +102,66 @@ public enum ThemeConfigurationStore {
         try data.write(to: url, options: .atomic)
     }
 
-    static func importTheme(from url: URL) throws -> CustomTheme {
+    static func importTheme(from url: URL, libraryInfo: ThemeLibraryInfo? = nil) throws -> CustomTheme {
+        let now = Date()
         var theme = try decodeTheme(from: url)
         theme.metadata.id = UUID()
-        theme.metadata.createdAt = Date()
-        theme.metadata.updatedAt = Date()
+        theme.metadata.createdAt = now
+        theme.metadata.updatedAt = now
         theme.isBuiltIn = false
+        theme.library =
+            libraryInfo
+            ?? ThemeLibraryInfo(
+                source: .imported,
+                importedAt: now,
+                sourceDetail: url.lastPathComponent
+            )
         saveTheme(theme)
         return theme
     }
 
     static func duplicateTheme(_ theme: CustomTheme, newName: String) -> CustomTheme {
+        let now = Date()
         var newTheme = theme
         newTheme.metadata.id = UUID()
         newTheme.metadata.name = newName
-        newTheme.metadata.createdAt = Date()
-        newTheme.metadata.updatedAt = Date()
+        newTheme.metadata.createdAt = now
+        newTheme.metadata.updatedAt = now
         newTheme.isBuiltIn = false
+        newTheme.library = ThemeLibraryInfo(
+            source: .local,
+            importedAt: nil,
+            sharedAt: nil,
+            remoteHash: nil,
+            remoteURL: nil,
+            sourceDetail: "Duplicated from \(theme.metadata.name)"
+        )
         saveTheme(newTheme)
         return newTheme
+    }
+
+    @discardableResult
+    static func markThemeShared(id: UUID, hash: String, serverURL: URL, sharedAt: Date = Date()) -> CustomTheme? {
+        guard var theme = loadTheme(id: id), !theme.isBuiltIn else { return nil }
+
+        var library = theme.library ?? ThemeLibraryInfo(source: .local)
+        library.source = .shared
+        library.sharedAt = sharedAt
+        library.remoteHash = hash.lowercased()
+        library.remoteURL = serverURL.absoluteString
+        theme.library = library
+        theme.metadata.updatedAt = sharedAt
+
+        saveTheme(theme)
+        return theme
+    }
+
+    @discardableResult
+    static func rollbackActiveThemeToDefault() -> UUID? {
+        let previous = loadActiveThemeId()
+        saveActiveThemeId(nil)
+        installBuiltInThemesIfNeeded()
+        return previous
     }
 
     // MARK: - Built-in Themes
@@ -197,5 +239,15 @@ public enum ThemeConfigurationStore {
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         encoder.dateEncodingStrategy = .iso8601
         return try encoder.encode(theme)
+    }
+
+    private static func normalizedForSave(_ theme: CustomTheme) -> CustomTheme {
+        var normalized = theme
+        if normalized.isBuiltIn {
+            normalized.library = nil
+        } else if normalized.library == nil {
+            normalized.library = ThemeLibraryInfo(source: .local)
+        }
+        return normalized
     }
 }

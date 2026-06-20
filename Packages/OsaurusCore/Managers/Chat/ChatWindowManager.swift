@@ -173,7 +173,7 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         // stuck inside a slow Keychain read, that lookup would park the main thread
         // behind it, so only prewarm once the key is already resident. Skipping is
         // safe: the first real window pays the realization cost on demand instead.
-        guard StorageKeyManager.shared.hasCachedKey else { return }
+        guard StorageKeyManager.shared.isStorageReadyForWrites else { return }
         didPrewarmChatView = true
 
         let windowState = ChatWindowState(

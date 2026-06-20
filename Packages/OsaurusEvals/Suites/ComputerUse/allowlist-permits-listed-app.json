@@ -1,0 +1,17 @@
+{
+  "id": "computer_use.allowlist-permits-listed-app",
+  "domain": "computer_use",
+  "label": "computer use • allowlist permits a listed app",
+  "query": "Look at Safari.",
+  "notes": "Allowlist matching is case-insensitive on the normalized app name, so 'Safari' matches a 'safari' entry.",
+  "fixtures": {},
+  "expect": {
+    "computerUse": {
+      "verb": "observe",
+      "appName": "Safari",
+      "preset": "balanced",
+      "allowlist": ["notes", "safari"],
+      "expectAllowed": true
+    }
+  }
+}

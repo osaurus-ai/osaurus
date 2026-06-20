@@ -69,7 +69,11 @@ final class OsaurusRouterAccountService: ObservableObject {
         // Master switch off: never hit `/credits/balance`. This also neutralizes
         // the `didBecomeActive` observer below, which calls straight in here.
         guard OsaurusRouter.isEnabled else { return }
-        guard OsaurusIdentity.exists() else {
+        // Eventually-consistent gate: `exists()` issues a synchronous keychain
+        // query that blocks the main actor for seconds. The memo is updated
+        // in-process on identity install/delete, so the balance refresh never
+        // needs a per-call `SecItemCopyMatching` here.
+        guard OsaurusIdentity.existsCached() else {
             balance = nil
             lastError = OsaurusRouterAPIError.noIdentity.localizedDescription
             return

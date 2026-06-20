@@ -405,6 +405,30 @@ public actor ModelRuntime {
         await cancelActiveGeneration()
     }
 
+    /// Bounded GPU/Metal teardown for out-of-process CLIs (e.g.
+    /// `osaurus-evals`) that load MLX and then exit. Mirrors the host
+    /// app's quit teardown (`AppDelegate.applicationShouldTerminate`
+    /// phase 3): cancel in-flight generations, then `clearAll(quit: true)`
+    /// so a stuck lease can't wedge exit or crash the Metal teardown. The
+    /// caller should follow with `Darwin._exit` to skip the MLX/Metal C++
+    /// static destructors that would otherwise hang at process exit. The
+    /// caller is responsible for bounding this with a deadline.
+    public static func shutdownForOutOfProcessExit() async {
+        await shared.cancelAllGenerations()
+        await shared.clearAll(quit: true)
+    }
+
+    /// Public passthrough to the aggregated `BatchEngine` diagnostics
+    /// (KV prefix hits/misses, disk-L2, SSM companion, paged state). The
+    /// underlying `MLXBatchAdapter`/`Registry` types are internal, so the
+    /// eval harness — which runs in-process and wants a before/after KV
+    /// cache snapshot per case to prove prefix reuse — reads them through
+    /// this accessor rather than reaching into the MLX layer. `nil` when
+    /// no engine is resolved yet (e.g. a remote-only run).
+    public static func batchDiagnosticsSnapshot() async -> BatchDiagnosticsSnapshot? {
+        await MLXBatchAdapter.snapshotDiagnostics()
+    }
+
     /// Cancel the active decode for `name` without evicting the loaded
     /// container. HTTP non-streaming callers use this when the client drops
     /// before any response body can be written; otherwise the server can keep
@@ -1236,6 +1260,24 @@ public actor ModelRuntime {
             "loadContainer: local directory model=\(name, privacy: .public) path=\(localURL.path, privacy: .public)"
         )
 
+        let installedModel =
+            ModelManager.findInstalledMLXModel(named: id)
+            ?? ModelManager.findInstalledMLXModel(named: name)
+        let compatibilityReport = ModelCompatibilityDiagnostics.report(
+            modelId: id,
+            modelName: name,
+            modelTypeHint: installedModel?.modelType,
+            bundleURL: localURL,
+            externalSource: installedModel?.externalSource
+        )
+        try ModelCompatibilityDiagnostics.validateLoadAllowed(
+            compatibilityReport,
+            modelName: name
+        )
+        genLog.info(
+            "loadContainer: compatibility preflight model=\(name, privacy: .public) status=\(compatibilityReport.preflight.status.rawValue, privacy: .public) reason=\(compatibilityReport.preflight.reason.rawValue, privacy: .public)"
+        )
+
         let probe = MLXModel(id: id, name: name, description: "", downloadURL: "")
         let completeVerified = await ModelDownloadService.ensureComplete(for: probe, directory: localURL)
         if !completeVerified {
@@ -1350,14 +1392,28 @@ public actor ModelRuntime {
             genLog.info(
                 "loadContainer: native MTP plan model=\(name, privacy: .public) nativeMTP=\(mtpPlan.loadConfiguration.nativeMTP, privacy: .public) draftStrategy=\(Self.describeDraftStrategy(mtpPlan.draftStrategy), privacy: .public) reason=\(mtpPlan.reason, privacy: .public) status=\(mtpPlan.statusLine ?? "none", privacy: .public) memorySafety=\(mtpPlan.memorySafetySummary, privacy: .public)"
             )
-            let container = try await loadModelContainer(
-                from: localURL,
-                using: tokenizerLoader,
-                configuration: serverSettings.resolvedModelConfiguration(
-                    base: ModelConfiguration(directory: localURL)
-                ),
-                loadConfiguration: mtpPlan.loadConfiguration
-            )
+            // Weight dequantization + kernel compilation drive the Metal
+            // command queue. Hold the GPU gate as an exclusive producer so a
+            // load can't run concurrently with an in-flight generation (or
+            // another load / the embedder) on the shared device — that race
+            // aborts the command buffer mid-flight. Released the moment the
+            // heavy load returns; the metadata checks below are GPU-free.
+            await MetalGate.shared.enterModelLoad(model: name)
+            let container: ModelContainer
+            do {
+                container = try await loadModelContainer(
+                    from: localURL,
+                    using: tokenizerLoader,
+                    configuration: serverSettings.resolvedModelConfiguration(
+                        base: ModelConfiguration(directory: localURL)
+                    ),
+                    loadConfiguration: mtpPlan.loadConfiguration
+                )
+            } catch {
+                await MetalGate.shared.exitModelLoad(model: name)
+                throw error
+            }
+            await MetalGate.shared.exitModelLoad(model: name)
             if Task.isCancelled {
                 container.disableCaching()
                 throw CancellationError()
@@ -2158,14 +2214,16 @@ public actor ModelRuntime {
                         let tokenCount,
                         let tokensPerSecond,
                         let unclosedReasoning,
-                        let stopReason
+                        let stopReason,
+                        let promptTokensPerSecond
                     ) = ev {
                         continuation.yield(
                             StreamingStatsHint.encode(
                                 tokenCount: tokenCount,
                                 tokensPerSecond: tokensPerSecond,
                                 unclosedReasoning: unclosedReasoning,
-                                stopReason: stopReason
+                                stopReason: stopReason,
+                                prefillTokensPerSecond: promptTokensPerSecond
                             )
                         )
                         continue
@@ -2283,8 +2341,18 @@ public actor ModelRuntime {
         stopSequences: [String] = [],
         draftStrategy: MLXLMCommon.DraftStrategy? = nil,
         enableCompiledBatchDecode: Bool = true,
-        prefillStepSize: Int? = nil
+        prefillStepSize: Int? = nil,
+        modelName: String? = nil
     ) -> MLXLMCommon.GenerateParameters {
+        // Laguna no longer needs a forced repetition penalty: the prior 1.15 /
+        // ctx-256 default was masking a vmlx YaRN `_mscale` bug (pinned to 1.0,
+        // stripping the trained ~1.42x q/k scaling) and a chat-template double-BOS
+        // bug. Both are fixed in the engine, so rep=1.0 and rep=1.15 now produce
+        // identical coherent output. Drop the laguna special-case — it also drove
+        // a TokenRing index-out-of-range crash on longer prompts at ctx 256. A
+        // caller-supplied penalty still applies; default is the standard 20 window.
+        let resolvedRepetitionPenalty = repetitionPenalty
+        let resolvedRepetitionContextSize = 20
         var params = MLXLMCommon.GenerateParameters(
             maxTokens: maxTokens,
             enableCompiledBatchDecode: enableCompiledBatchDecode,
@@ -2292,8 +2360,8 @@ public actor ModelRuntime {
             topP: topP,
             topK: topK,
             minP: minP,
-            repetitionPenalty: repetitionPenalty,
-            repetitionContextSize: 20,
+            repetitionPenalty: resolvedRepetitionPenalty,
+            repetitionContextSize: resolvedRepetitionContextSize,
             extraStopStrings: stopSequences
         )
         params.draftStrategy = draftStrategy

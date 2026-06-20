@@ -47,6 +47,43 @@ public struct ThemeMetadata: Codable, Equatable, Sendable {
     }
 }
 
+// MARK: - Theme Library Metadata
+
+/// Where a theme entered the local library. This is intentionally persisted
+/// with custom themes so the library can distinguish hand-authored themes
+/// from file imports and share-link installs after relaunch.
+public enum ThemeLibrarySource: String, Codable, CaseIterable, Sendable {
+    case builtIn
+    case local
+    case imported
+    case shared
+}
+
+public struct ThemeLibraryInfo: Codable, Equatable, Sendable {
+    public var source: ThemeLibrarySource
+    public var importedAt: Date?
+    public var sharedAt: Date?
+    public var remoteHash: String?
+    public var remoteURL: String?
+    public var sourceDetail: String?
+
+    public init(
+        source: ThemeLibrarySource = .local,
+        importedAt: Date? = nil,
+        sharedAt: Date? = nil,
+        remoteHash: String? = nil,
+        remoteURL: String? = nil,
+        sourceDetail: String? = nil
+    ) {
+        self.source = source
+        self.importedAt = importedAt
+        self.sharedAt = sharedAt
+        self.remoteHash = remoteHash
+        self.remoteURL = remoteURL
+        self.sourceDetail = sourceDetail
+    }
+}
+
 // MARK: - Theme Colors
 
 /// All customizable colors in a theme
@@ -258,12 +295,28 @@ public struct ThemeBackground: Codable, Equatable, Sendable {
         ThemeBackground(type: .solid)
     }
 
-    /// Decode base64 image data to NSImage
+    /// Process-wide cache of decoded background images, keyed by their base64
+    /// payload. `CustomizableTheme.backgroundImage` reads `decodedImage()` from
+    /// SwiftUI body getters, so without this every render of a themed surface
+    /// re-ran a full base64 + `NSImage(data:)` decode of a potentially
+    /// wallpaper-sized image on the main thread — enough to trip the app-hang
+    /// watchdog. Keying on the payload means edits (new base64) miss naturally;
+    /// `NSCache` evicts under memory pressure so no manual invalidation is needed.
+    /// `nonisolated(unsafe)` is sound here: `NSCache` performs its own internal
+    /// locking, so concurrent `object(forKey:)` / `setObject(_:forKey:)` from any
+    /// actor is safe despite the type not being `Sendable`.
+    private nonisolated(unsafe) static let decodedImageCache = NSCache<NSString, NSImage>()
+
+    /// Decode base64 image data to NSImage (memoized by payload).
     public func decodedImage() -> NSImage? {
-        guard let imageData = imageData,
-            let data = Data(base64Encoded: imageData)
+        guard let imageData, !imageData.isEmpty else { return nil }
+        let key = imageData as NSString
+        if let cached = Self.decodedImageCache.object(forKey: key) { return cached }
+        guard let data = Data(base64Encoded: imageData),
+            let image = NSImage(data: data)
         else { return nil }
-        return NSImage(data: data)
+        Self.decodedImageCache.setObject(image, forKey: key)
+        return image
     }
 }
 
@@ -613,6 +666,10 @@ public struct CustomTheme: Codable, Equatable, Sendable {
     /// Syntax highlighting theme name (Highlightr). nil = auto (dark/light).
     public var codeHighlightTheme: String?
 
+    /// Optional library provenance. Missing values are treated as local
+    /// custom themes, while built-in presets are always classified as built-in.
+    public var library: ThemeLibraryInfo?
+
     /// Whether this is a built-in theme (cannot be deleted)
     public var isBuiltIn: Bool
     public var isDark: Bool
@@ -628,6 +685,7 @@ public struct CustomTheme: Codable, Equatable, Sendable {
         messages: ThemeMessages = ThemeMessages(),
         borders: ThemeBorders = ThemeBorders(),
         codeHighlightTheme: String? = nil,
+        library: ThemeLibraryInfo? = nil,
         isBuiltIn: Bool = false,
         isDark: Bool = true
     ) {
@@ -641,6 +699,7 @@ public struct CustomTheme: Codable, Equatable, Sendable {
         self.messages = messages
         self.borders = borders
         self.codeHighlightTheme = codeHighlightTheme
+        self.library = library
         self.isBuiltIn = isBuiltIn
         self.isDark = isDark
     }
@@ -658,6 +717,7 @@ public struct CustomTheme: Codable, Equatable, Sendable {
         messages = try container.decodeIfPresent(ThemeMessages.self, forKey: .messages) ?? ThemeMessages()
         borders = try container.decodeIfPresent(ThemeBorders.self, forKey: .borders) ?? ThemeBorders()
         codeHighlightTheme = try container.decodeIfPresent(String.self, forKey: .codeHighlightTheme)
+        library = try container.decodeIfPresent(ThemeLibraryInfo.self, forKey: .library)
         isBuiltIn = try container.decode(Bool.self, forKey: .isBuiltIn)
         isDark = try container.decode(Bool.self, forKey: .isDark)
     }

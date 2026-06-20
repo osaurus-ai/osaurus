@@ -57,6 +57,27 @@ struct SkillEditorSheet: View {
             && !instructions.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    private var editingSkill: Skill? {
+        if case .edit(let skill) = mode { return skill }
+        return nil
+    }
+
+    /// True when an edited skill still differs from what's stored. Create
+    /// mode is always "changed"; the Save button there is gated on
+    /// `canSave` alone.
+    private var hasChanges: Bool {
+        guard let original = editingSkill else { return true }
+        return name.trimmingCharacters(in: .whitespacesAndNewlines) != original.name
+            || description.trimmingCharacters(in: .whitespacesAndNewlines) != original.description
+            || version.trimmingCharacters(in: .whitespacesAndNewlines) != original.version
+            || (author.isEmpty ? nil : author.trimmingCharacters(in: .whitespacesAndNewlines))
+                != original.author
+            || (category.isEmpty ? nil : category.trimmingCharacters(in: .whitespacesAndNewlines))
+                != original.category
+            || instructions.trimmingCharacters(in: .whitespacesAndNewlines) != original.instructions
+            || enabled != original.enabled
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             // Header
@@ -424,7 +445,7 @@ struct SkillEditorSheet: View {
                     saveSkill()
                 }
                 .buttonStyle(SkillPrimaryButtonStyle())
-                .disabled(!canSave)
+                .disabled(!canSave || !hasChanges)
                 .keyboardShortcut(.return, modifiers: .command)
             }
         }
@@ -571,16 +592,21 @@ private struct SkillStyledTextField: View {
 
 private struct SkillPrimaryButtonStyle: ButtonStyle {
     @ObservedObject private var themeManager = ThemeManager.shared
+    @Environment(\.isEnabled) private var isEnabled
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(size: 13, weight: .medium))
-            .foregroundColor(.white)
+            .foregroundColor(isEnabled ? .white : themeManager.currentTheme.tertiaryText)
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
             .background(
                 RoundedRectangle(cornerRadius: 8)
-                    .fill(themeManager.currentTheme.accentColor)
+                    .fill(
+                        isEnabled
+                            ? themeManager.currentTheme.accentColor
+                            : themeManager.currentTheme.tertiaryBackground
+                    )
             )
             .opacity(configuration.isPressed ? 0.8 : 1.0)
     }

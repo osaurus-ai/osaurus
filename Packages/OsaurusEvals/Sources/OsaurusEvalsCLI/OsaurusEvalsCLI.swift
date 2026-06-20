@@ -28,14 +28,58 @@ struct OsaurusEvalsCLI {
 
     static func main() async {
         let args = Array(CommandLine.arguments.dropFirst())
-        guard let first = args.first, first == "run" else {
+        guard let command = args.first else {
             printUsage()
-            exit(args.isEmpty ? 0 : 2)
+            exit(0)
         }
 
+        switch command {
+        case "run":
+            await runCommand(Array(args.dropFirst()))
+        case "agent-loop-lab":
+            let labExitCode = await runAgentLoopLab(Array(args.dropFirst()))
+            await shutdownAndExit(labExitCode)
+        case "diff":
+            // Pure file comparison — no MLX/model load, so a plain exit
+            // (no Metal teardown) is correct and fast.
+            exit(runDiff(Array(args.dropFirst())))
+        case "matrix":
+            exit(runMatrix(Array(args.dropFirst())))
+        case "compat":
+            // Pure file aggregation over reports/community/* — no model load.
+            exit(runCompat(Array(args.dropFirst())))
+        case "--help", "-h":
+            printUsage()
+            exit(0)
+        default:
+            printUsage()
+            exit(2)
+        }
+    }
+
+    /// Tear MLX/Metal down cooperatively (deadline-bounded) and then
+    /// hard-exit, skipping the libc/C++ static destructors that otherwise
+    /// hang the process at ~99% CPU after an MLX-heavy run (the Metal
+    /// global compute-pipeline cache teardown). Mirrors the host app's
+    /// quit path (`AppDelegate.applicationShouldTerminate` phase 3 +
+    /// `applicationWillTerminate`'s `_exit`). The JSON report is already
+    /// flushed to disk by the caller via `Data.write`; we additionally
+    /// flush stdio so a redirected human-readable report isn't lost when
+    /// `_exit` skips the libc buffer flush.
+    static func shutdownAndExit(_ code: Int32) async -> Never {
+        _ = await runWithDeadline(seconds: 8) {
+            await ModelRuntime.shutdownForOutOfProcessExit()
+        }
+        fflush(stdout)
+        fflush(stderr)
+        Darwin._exit(code)
+    }
+
+    @MainActor
+    static func runCommand(_ args: [String]) async {
         let opts: Options
         do {
-            opts = try Options.parse(Array(args.dropFirst()))
+            opts = try Options.parse(args)
         } catch {
             FileHandle.standardError.write(
                 Data(("argument error: \(error.localizedDescription)\n").utf8)
@@ -76,15 +120,27 @@ struct OsaurusEvalsCLI {
             modelIds: EvalRemoteProviderBootstrap.candidateModelIds(runModel: opts.model)
         )
 
-        let report = await EvalRunner.run(
+        let baseReport = await EvalRunner.run(
             suite: suite,
             model: opts.model,
             filter: opts.filter,
             thresholdOverride: opts.threshold,
+            embedCosineFloorOverride: opts.embedCosineFloor,
             bootstrapMode: .alreadyLoaded
         )
 
         EvalRemoteProviderBootstrap.teardown(ephemeralProviderIds)
+
+        // Stamp run provenance (hardware, OS, build, judge, catalog hash) so
+        // every emitted report is self-describing — the trustworthy substrate
+        // for crowdsourced model-compatibility contributions. `caseIDs` are the
+        // cases that actually ran (post-filter), matching the report rows.
+        let report = baseReport.withEnvironment(
+            RunEnvironment.current(
+                caseIDs: baseReport.cases.map(\.id),
+                runModel: baseReport.modelId
+            )
+        )
 
         print(report.formatHumanReadable(verbose: opts.verbose))
 
@@ -145,7 +201,7 @@ struct OsaurusEvalsCLI {
             }
         }
 
-        exit(exitCode)
+        await shutdownAndExit(exitCode)
     }
 
     // MARK: - Floors
@@ -249,9 +305,39 @@ struct OsaurusEvalsCLI {
                         breaches.append("\(caseId): no capability_search snapshot")
                         continue
                     }
-                    let expected = caseDef.expect.capabilitySearch?.expectedTools?.anyOf ?? []
-                    let accepted = Set(cs.toolHits.filter(\.acceptedByThreshold).map(\.name))
-                    matched = expected.filter { accepted.contains($0) }.count
+                    let exp = caseDef.expect.capabilitySearch
+                    // Sum matched-name counts across all three lanes so the
+                    // gate guards methods/skills cases too — not just tools.
+                    // Each case populates one lane's `expected*`, so the sum
+                    // naturally resolves to that lane (mirrors the runner's
+                    // per-lane `scoreAnyOf`). Accepted sets use unique names
+                    // exactly like `runCapabilitySearchCase`'s `acceptedTotal`.
+                    let acceptedTools = Set(cs.toolHits.filter(\.acceptedByThreshold).map(\.name))
+                    let acceptedMethods = Set(cs.methodHits.filter(\.acceptedByThreshold).map(\.name))
+                    let acceptedSkills = Set(cs.skillHits.filter(\.acceptedByThreshold).map(\.name))
+                    let toolExpected = exp?.expectedTools?.anyOf ?? []
+                    let methodExpected = exp?.expectedMethods?.anyOf ?? []
+                    let skillExpected = exp?.expectedSkills?.anyOf ?? []
+                    matched =
+                        toolExpected.filter { acceptedTools.contains($0) }.count
+                        + methodExpected.filter { acceptedMethods.contains($0) }.count
+                        + skillExpected.filter { acceptedSkills.contains($0) }.count
+
+                    // `maxAccepted` cap (abstain-style cases): the gate must
+                    // also fail when a floored case accepts MORE than its
+                    // declared ceiling, not only when recall is too low.
+                    // Source of truth is the case fixture (the floor file
+                    // only carries `minMatches`); mirrors the runner's
+                    // `acceptedTotal` (unique names across all three lanes).
+                    if let cap = exp?.maxAccepted {
+                        let acceptedTotal =
+                            acceptedTools.count + acceptedMethods.count + acceptedSkills.count
+                        if acceptedTotal > cap {
+                            breaches.append(
+                                "\(caseId): accepted \(acceptedTotal), max allowed \(cap)"
+                            )
+                        }
+                    }
                 default:
                     continue
                 }
@@ -423,6 +509,14 @@ struct OsaurusEvalsCLI {
         /// `CapabilitySearchEvaluator.evaluate` doc) — sweeping one
         /// scale into the other silently disables the cosine gate.
         let threshold: Float?
+        /// Capability-search **tools-lane** embed-cosine quality-gate
+        /// sweep value, applied inside RRF fusion
+        /// (`ToolSearchService.searchHybrid(minEmbedCosine:)`). `nil` keeps
+        /// the production `CapabilitySearch.minimumEmbedCosineForTools`;
+        /// `0` disables the gate to record raw pre-gate cosines. Orthogonal
+        /// to `--threshold` (the final fused-score cutoff) — this gates each
+        /// embed candidate's contribution by its cosine BEFORE fusion.
+        let embedCosineFloor: Float?
         /// Print the per-case `(rawHits, acceptedHits, topRawScore)`
         /// H1/H2/H3 forensics block after the human-readable report.
         /// Designed for copy-paste into PR descriptions during the
@@ -452,6 +546,7 @@ struct OsaurusEvalsCLI {
             var out: String?
             var verbose = false
             var threshold: Float?
+            var embedCosineFloor: Float?
             var reportForensics = false
             var floorsPath: String?
             var failOnFloor = false
@@ -481,6 +576,11 @@ struct OsaurusEvalsCLI {
                     let raw = try valueForArg(args, after: i, flag: arg)
                     guard let value = Float(raw) else { throw CLIError.invalidValue(arg, raw) }
                     threshold = value
+                    i += 2
+                case "--embed-cosine-floor":
+                    let raw = try valueForArg(args, after: i, flag: arg)
+                    guard let value = Float(raw) else { throw CLIError.invalidValue(arg, raw) }
+                    embedCosineFloor = value
                     i += 2
                 case "--report-forensics":
                     reportForensics = true
@@ -520,6 +620,7 @@ struct OsaurusEvalsCLI {
                 out: out,
                 verbose: verbose,
                 threshold: threshold,
+                embedCosineFloor: embedCosineFloor,
                 reportForensics: reportForensics,
                 floorsPath: floorsPath,
                 failOnFloor: failOnFloor,
@@ -547,6 +648,11 @@ struct OsaurusEvalsCLI {
                 osaurus-evals run --suite <dir> [--model <id>] [--filter <substr>] [--out <path>]
                                               [--threshold <float>] [--report-forensics]
                                               [--startup-timeout <seconds>]
+                osaurus-evals agent-loop-lab --baseline <path> [--suite <dir> ...] [--model <id>]
+                osaurus-evals diff <baseline> <current> [--out <p>] [--markdown <p>]
+                                              [--fail-on-regression]
+                osaurus-evals matrix <reports-dir> [--out <p>] [--markdown <p>]
+                osaurus-evals compat <community-dir> [--out <p>] [--markdown <p>] [--validate]
 
             FLAGS:
                 --suite <dir>         Required. Directory of *.json eval cases
@@ -575,6 +681,18 @@ struct OsaurusEvalsCLI {
                                       sweep RRF cutoffs (e.g. --threshold
                                       0.020) without rebuilding. No-op for
                                       non-capability_search domains.
+                --embed-cosine-floor <float>
+                                      Override the **tools-lane** embed-cosine
+                                      quality gate applied inside RRF fusion
+                                      (`minEmbedCosine`). Embed candidates
+                                      below this cosine contribute zero to
+                                      fusion, so abstain noise can't rank-fuse
+                                      past the cutoff. `nil` keeps the
+                                      production constant
+                                      (`minimumEmbedCosineForTools`); pass 0 to
+                                      disable the gate and record raw pre-gate
+                                      cosines during a calibration sweep.
+                                      No-op for non-capability_search domains.
                 --report-forensics    Print a per-case `(rawHits, acceptedHits,
                                       topFused)` block tagged with a
                                       H1/H2/H3/H4/H5 hypothesis label. H4 =
@@ -617,6 +735,7 @@ struct OsaurusEvalsCLI {
                 osaurus-evals run --suite Suites/CapabilitySearch --filter browser --out report.json
                 osaurus-evals run --suite Suites/CapabilitySearch --threshold 0.25 --report-forensics
                 osaurus-evals run --suite Suites/CapabilitySearch --fail-on-floor
+                osaurus-evals agent-loop-lab --baseline reports/main-agentloop
             """
         print(usage)
     }

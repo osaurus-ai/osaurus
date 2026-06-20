@@ -1,0 +1,36 @@
+{
+  "id": "computer_use_loop.som-escalation-click",
+  "domain": "computer_use_loop",
+  "label": "CU loop • escalate empty AX -> SoM to see and click a custom-drawn control",
+  "query": "Click the Send button.",
+  "notes": "Deterministic (scripted-model) vision-escalation case for the Electron / custom-drawn-UI shape: every actionable control is SoM-only (minTier: som), so a plain AX capture is EMPTY and the loop must climb ax->som (Screen Recording is granted in the scripted driver) before the Send button is visible and addressable. A successful scripted click on the SoM-gated button — flipping status to 'sent' — transitively proves the empty-AX->SoM escalation worked, with no live model.",
+  "fixtures": {},
+  "expect": {
+    "computerUseLoop": {
+      "app": "Electron",
+      "maxSteps": 8,
+      "elements": [
+        {
+          "id": "send",
+          "role": "button",
+          "label": "Send",
+          "minTier": "som",
+          "onClick": { "setValues": [{ "id": "status", "value": "sent" }] }
+        },
+        {
+          "id": "status",
+          "role": "statictext",
+          "label": "Status",
+          "value": "",
+          "minTier": "som"
+        }
+      ],
+      "successValues": [{ "id": "status", "equals": "sent" }],
+      "successClicked": ["send"],
+      "scriptedActions": [
+        "{\"verb\":\"click\",\"target\":{\"describe\":\"Send\"},\"note\":\"click send\"}",
+        "{\"verb\":\"done\",\"reason\":\"sent the message\"}"
+      ]
+    }
+  }
+}

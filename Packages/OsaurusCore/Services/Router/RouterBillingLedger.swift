@@ -42,9 +42,10 @@ public final class RouterBillingLedger: @unchecked Sendable {
         if database.isOpen { return true }
         if let openState { return openState && database.isOpen }
         // The DEK is non-biometric but can be unreadable before first unlock.
-        // hasCachedKey is true once any core DB has opened (always the case by
-        // the time a router stream runs), and never triggers a prompt.
-        guard StorageKeyManager.shared.hasCachedKey else { return false }
+        // In plaintext mode (the default) no key is needed, so readiness is
+        // always true; in encrypted mode it's true once any core DB has opened
+        // (always the case by the time a router stream runs) and never prompts.
+        guard StorageKeyManager.shared.isStorageReadyForWrites else { return false }
         do {
             try database.open()
             try? database.pruneIfNeeded()

@@ -1,0 +1,20 @@
+{
+  "id": "computer_use.recipe-safari-leave-site",
+  "domain": "computer_use",
+  "label": "computer use • Safari 'Leave Site' escalates via recipe",
+  "query": "Click Leave Site.",
+  "notes": "The app-agnostic vocabulary doesn't know 'Leave Site' (it would stay navigate); the Safari recipe adds it as a consequential signal so balanced confirms.",
+  "fixtures": {},
+  "expect": {
+    "computerUse": {
+      "verb": "click",
+      "resolvedRole": "AXButton",
+      "resolvedLabel": "Leave Site",
+      "appName": "Safari",
+      "useRecipes": true,
+      "preset": "balanced",
+      "expectEffect": "consequential",
+      "expectDisposition": "confirm"
+    }
+  }
+}

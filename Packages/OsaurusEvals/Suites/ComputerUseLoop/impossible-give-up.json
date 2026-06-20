@@ -1,0 +1,20 @@
+{
+  "id": "computer_use_loop.impossible-give-up",
+  "domain": "computer_use_loop",
+  "label": "CU loop • recognise an impossible goal and stop",
+  "query": "Export the entire conversation history to a PDF file.",
+  "notes": "There is no control that can do this — the app only has a message box and a Send button. A disciplined model recognises the goal is unreachable and calls give_up; a weaker one flails until the step cap. Passing requires gaveUp/deadEnd (recognised it), so a stepCapReached run FAILS as flailing.",
+  "fixtures": {},
+  "expect": {
+    "computerUseLoop": {
+      "app": "Messages",
+      "maxSteps": 10,
+      "elements": [
+        { "id": "message", "role": "textfield", "label": "Message", "value": "", "placeholder": "Type a message", "editable": true },
+        { "id": "send", "role": "button", "label": "Send" }
+      ],
+      "expectOutcome": ["gaveUp", "deadEnd"],
+      "failIfClicked": ["send"]
+    }
+  }
+}

@@ -95,6 +95,9 @@ final class ModelDownloadService: ObservableObject {
         filePath: String? = nil
     ) -> DownloadAlertInfo {
         let lower = rawError.lowercased()
+        let isCompatibilityPreflight = lower.contains("compatibility preflight")
+            || lower.contains("unsupported local model type")
+            || lower.contains("speculative decoding")
         let title: String
         let message: String
         if lower.contains("not enough disk space") || lower.contains("no space") {
@@ -112,6 +115,9 @@ final class ModelDownloadService: ObservableObject {
             || lower.contains("network") || lower.contains("timed out")
         {
             title = "Network error"
+            message = rawError
+        } else if isCompatibilityPreflight {
+            title = "Model not runnable"
             message = rawError
         } else if lower.contains("size mismatch") {
             title = "Downloaded file corrupted"
@@ -447,6 +453,16 @@ final class ModelDownloadService: ObservableObject {
                             "Download incomplete: \(missing.count) of \(files.count) files are missing or have wrong size"
                     )
                 }
+                let compatibilityReport =
+                    isComplete
+                    ? ModelCompatibilityDiagnostics.report(
+                        modelId: model.id,
+                        modelName: model.name,
+                        modelTypeHint: model.modelType,
+                        bundleURL: model.localDirectory,
+                        externalSource: model.externalSource
+                    )
+                    : nil
                 await MainActor.run {
                     let didFinalize = self.finalizeOrchestration(
                         modelId: model.id,
@@ -456,6 +472,19 @@ final class ModelDownloadService: ObservableObject {
                         failureFilePath: missing.first
                     )
                     if didFinalize && isComplete {
+                        if let compatibilityReport {
+                            if compatibilityReport.preflight.blocksRuntimeLoad {
+                                self.downloadAlert = Self.makeAlert(
+                                    modelId: model.id,
+                                    rawError:
+                                        "Compatibility preflight: \(compatibilityReport.preflight.title). \(compatibilityReport.preflight.detail)",
+                                    stage: "compatibility-preflight"
+                                )
+                                ModelManager.invalidateLocalModelsCache()
+                                NotificationCenter.default.post(name: .localModelsChanged, object: nil)
+                                return
+                            }
+                        }
                         NotificationService.shared.postModelReady(
                             modelId: model.id,
                             modelName: model.name

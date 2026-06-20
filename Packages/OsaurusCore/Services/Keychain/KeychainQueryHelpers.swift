@@ -34,9 +34,24 @@ enum KeychainQueryHelpers {
     /// `kSecUseAuthenticationUISkip` is still kept on every query, but adding a
     /// matching `LAContext` prevents accidental password/biometric UI if the
     /// system decides the stored item needs an authentication context.
+    ///
+    /// The context is created once and reused. `LAContext.init` performs a
+    /// synchronous XPC round-trip to `coreauthd`, and every Keychain read and
+    /// enumeration builds one — on the main thread that has stalled the UI for
+    /// seconds. A non-interactive context carries no per-query state, so a
+    /// single shared instance is safe to reuse across queries and threads.
     static func nonInteractiveContext() -> LAContext {
+        contextLock.lock()
+        defer { contextLock.unlock() }
+        if let cached = sharedNonInteractiveContext {
+            return cached
+        }
         let context = LAContext()
         context.interactionNotAllowed = true
+        sharedNonInteractiveContext = context
         return context
     }
+
+    private static let contextLock = NSLock()
+    nonisolated(unsafe) private static var sharedNonInteractiveContext: LAContext?
 }

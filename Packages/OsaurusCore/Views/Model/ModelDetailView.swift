@@ -398,10 +398,41 @@ struct ModelDetailView: View, Identifiable {
             ) {
                 DiagnosticFact(label: L("Source"), value: report.source.title)
                 DiagnosticFact(label: L("Bundle"), value: report.localBundle.title)
+                DiagnosticFact(
+                    label: L("Preflight"),
+                    value: report.preflight.status.rawValue.capitalized
+                )
                 if let modelType = report.localBundle.config?.displayModelType {
                     DiagnosticFact(label: L("Model Type"), value: modelType)
                 }
                 DiagnosticFact(label: L("Benchmark proof"), value: report.benchmark.title)
+            }
+
+            if !report.evidence.isEmpty {
+                Divider()
+                    .background(theme.cardBorder)
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Evidence", bundle: .module)
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundColor(theme.tertiaryText)
+                        .textCase(.uppercase)
+
+                    ForEach(Array(report.evidence.prefix(6))) { item in
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Text("\(item.source).\(item.key)")
+                                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                .foregroundColor(theme.tertiaryText)
+                                .lineLimit(1)
+                            Text(item.value)
+                                .font(.system(size: 10))
+                                .foregroundColor(theme.secondaryText)
+                                .lineLimit(2)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Spacer(minLength: 0)
+                        }
+                    }
+                }
             }
 
             if !report.featureHooks.isEmpty {
@@ -438,7 +469,7 @@ struct ModelDetailView: View, Identifiable {
         switch kind {
         case .ready: return theme.successColor
         case .blocked: return theme.errorColor
-        case .needsDownload, .unproven: return theme.warningColor
+        case .partial, .needsDownload, .unproven: return theme.warningColor
         }
     }
 
@@ -446,6 +477,7 @@ struct ModelDetailView: View, Identifiable {
         switch kind {
         case .ready: return "checkmark.shield.fill"
         case .blocked: return "xmark.octagon.fill"
+        case .partial: return "exclamationmark.triangle.fill"
         case .needsDownload: return "arrow.down.circle.fill"
         case .unproven: return "exclamationmark.triangle.fill"
         }

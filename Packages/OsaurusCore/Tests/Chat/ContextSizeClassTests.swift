@@ -28,27 +28,48 @@ struct ContextSizeClassTests {
 
     // MARK: - Foundation aliases
 
-    @Test("foundation canonical id maps to .tiny")
-    func foundationIdIsTiny() {
-        let info = ContextSizeResolver.resolve(modelId: "foundation")
-        #expect(info.sizeClass == .tiny)
-        #expect(info.contextLength == ContextSizeResolver.tinyCeiling)
+    /// Expected Foundation window/class on THIS device. The resolver now
+    /// probes the real `SystemLanguageModel.contextSize` (back-deployed to
+    /// macOS 26.0) instead of hard-coding 4096, so the test derives its
+    /// expectation from the same probe rather than pinning a literal — that
+    /// keeps it green on the 26.x baseline (4096 → `.tiny`) AND on 27.0+
+    /// hardware (8192 → `.small`) while still catching a classification
+    /// regression. The probe falls back to `tinyCeiling` when Foundation is
+    /// unavailable (CI without the model), which lands on `.tiny`.
+    private static var expectedFoundationCtx: Int {
+        FoundationModelService.defaultModelContextSize ?? ContextSizeResolver.tinyCeiling
+    }
+    private static var expectedFoundationClass: ContextSizeClass {
+        ContextSizeResolver.sizeClass(forContextLength: expectedFoundationCtx)
     }
 
-    @Test("default alias maps to .tiny (matches FoundationModelService.handles)")
-    func defaultAliasIsTiny() {
-        #expect(ContextSizeResolver.resolve(modelId: "default").sizeClass == .tiny)
+    @Test("foundation canonical id matches the probed on-device window")
+    func foundationIdMatchesProbe() {
+        let info = ContextSizeResolver.resolve(modelId: "foundation")
+        #expect(info.sizeClass == Self.expectedFoundationClass)
+        #expect(info.contextLength == Self.expectedFoundationCtx)
+        // Foundation always compacts: even at an 8K window it's a small
+        // on-device model where verbose-prompt tokenization isn't worth it.
+        #expect(info.prefersCompactPrompt)
+    }
+
+    @Test("default alias resolves identically to foundation")
+    func defaultAliasMatchesFoundation() {
+        let viaDefault = ContextSizeResolver.resolve(modelId: "default")
+        #expect(viaDefault.sizeClass == Self.expectedFoundationClass)
+        #expect(viaDefault.contextLength == Self.expectedFoundationCtx)
     }
 
     @Test("Foundation matching is case-insensitive")
-    func foundationCasingIsTiny() {
+    func foundationCasingMatches() {
         // Capitalised forms appear in persisted JSON (the migration
         // tests in ModelOverride exercise this exact path). The
         // resolver MUST keep matching them or the auto-disable
         // silently breaks for users who edited the config by hand.
-        #expect(ContextSizeResolver.resolve(modelId: "Foundation").sizeClass == .tiny)
-        #expect(ContextSizeResolver.resolve(modelId: "FOUNDATION").sizeClass == .tiny)
-        #expect(ContextSizeResolver.resolve(modelId: "Default").sizeClass == .tiny)
+        let expected = Self.expectedFoundationClass
+        #expect(ContextSizeResolver.resolve(modelId: "Foundation").sizeClass == expected)
+        #expect(ContextSizeResolver.resolve(modelId: "FOUNDATION").sizeClass == expected)
+        #expect(ContextSizeResolver.resolve(modelId: "Default").sizeClass == expected)
     }
 
     @Test("foundation match wins even if ModelInfo would disagree")
@@ -59,8 +80,8 @@ struct ContextSizeClassTests {
         // ships a folder named "foundation" with a bigger context
         // length, the alias check still wins. Tests the ordering.
         let info = ContextSizeResolver.resolve(modelId: "foundation")
-        #expect(info.sizeClass == .tiny)
-        #expect(info.contextLength == ContextSizeResolver.tinyCeiling)
+        #expect(info.sizeClass == Self.expectedFoundationClass)
+        #expect(info.contextLength == Self.expectedFoundationCtx)
     }
 
     // MARK: - Nil / blank
@@ -129,5 +150,39 @@ struct ContextSizeClassTests {
         // in lock-step.
         #expect(ContextSizeResolver.tinyCeiling == 4096)
         #expect(ContextSizeResolver.smallCeiling == 8192)
+    }
+
+    // MARK: - Pure window→class mapping (device-independent)
+
+    /// Boundary policy for `sizeClass(forContextLength:)` — the helper the
+    /// Foundation probe and the MLX `config.json` path both route through.
+    /// Pins the inclusive ceilings without an installed model so the
+    /// 8192 → `.small` upgrade path (Foundation on 27.0+ hardware) is
+    /// proven even though this device reports a 4096 window.
+    @Test("sizeClass: tiny ceiling and one token past it")
+    func classifyTinyBoundary() {
+        #expect(ContextSizeResolver.sizeClass(forContextLength: 1) == .tiny)
+        #expect(ContextSizeResolver.sizeClass(forContextLength: 4096) == .tiny)
+        #expect(ContextSizeResolver.sizeClass(forContextLength: 4097) == .small)
+    }
+
+    @Test("sizeClass: small ceiling and one token past it")
+    func classifySmallBoundary() {
+        // 8192 is the documented Foundation window on macOS 27.0+ hardware:
+        // it must land on `.small` so tools turn back on (memory stays off).
+        #expect(ContextSizeResolver.sizeClass(forContextLength: 8192) == .small)
+        #expect(ContextSizeResolver.sizeClass(forContextLength: 8193) == .normal)
+        #expect(ContextSizeResolver.sizeClass(forContextLength: 131_072) == .normal)
+    }
+
+    @Test("an 8K Foundation window would enable tools but not memory")
+    func smallFoundationWindowKeepsToolsEnablesMemoryOff() {
+        // Documents the actual product effect of the probe-driven upgrade:
+        // at the 8K window Foundation ships on 27.0+, the size class is
+        // `.small`, whose disable predicates leave tools ON and memory OFF.
+        let small = ContextSizeResolver.sizeClass(forContextLength: 8192)
+        #expect(small == .small)
+        #expect(small.disablesTools == false)
+        #expect(small.disablesMemory)
     }
 }

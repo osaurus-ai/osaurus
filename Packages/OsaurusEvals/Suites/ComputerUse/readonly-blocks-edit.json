@@ -1,0 +1,20 @@
+{
+  "id": "computer_use.readonly-blocks-edit",
+  "domain": "computer_use",
+  "label": "computer use • read-only denies edits",
+  "query": "Type into the note body.",
+  "notes": "The read-only preset explores and navigates freely but refuses any edit outright; the reason is fed back to the model.",
+  "fixtures": {},
+  "expect": {
+    "computerUse": {
+      "verb": "type",
+      "text": "draft",
+      "resolvedRole": "AXTextArea",
+      "resolvedLabel": "Body",
+      "appName": "Notes",
+      "preset": "read_only",
+      "expectEffect": "edit",
+      "expectDisposition": "deny"
+    }
+  }
+}

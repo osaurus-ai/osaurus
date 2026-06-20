@@ -1,6 +1,6 @@
 # Agent DB & Self-Scheduling
 
-Every Osaurus agent can opt into its own private, encrypted SQLite database **and** a single self-scheduled "next run" slot. Together they turn the agent from a stateless chat into something that remembers structured data across runs and wakes itself up to act on it — a journal that can also set its own alarm.
+Every Osaurus agent can opt into its own private SQLite database **and** a single self-scheduled "next run" slot. Together they turn the agent from a stateless chat into something that remembers structured data across runs and wakes itself up to act on it — a journal that can also set its own alarm. Like the rest of Osaurus storage, the agent DB is plaintext by default (protected by FileVault) and follows the app-wide [opt-in encryption posture](STORAGE.md#why-encryption-is-opt-in).
 
 This is distinct from [Memory](MEMORY.md). Memory is a global, app-wide system that distills conversational context across all your chats; Agent DB is **per-agent** structured storage the agent decides on, schemas and queries via dedicated tools. You can run an agent with one, both, or neither.
 
@@ -32,7 +32,7 @@ Each agent carries an `Agent.settings.dbEnabled` flag (see [`Agent.swift`](../Pa
 
 1. **Tabs appear in the detail view.** The agent management screen at [`AgentsView.swift`](../Packages/OsaurusCore/Views/Agent/AgentsView.swift) gains five DB-backed tabs — `Home`, `Schema`, `Data`, `Views`, `Activity` — gated by `DetailTab.allTabsForAgent(_:)`. Turning the flag off snaps back to the `Configure` tab so you never sit on a now-hidden DB tab with stale state.
 2. **The model sees the `db_*` tools.** [`SystemPromptComposer`](../Packages/OsaurusCore/Services/Chat/SystemPromptComposer.swift) strips every `db_*` tool from the resolved tool list when `dbEnabled == false`; with it on, the agent gets the full surface listed in [Tool Reference](#tool-reference).
-3. **The agent gets a fresh, empty SQLCipher database on first write.** The file is lazy-opened on demand — no I/O happens until the agent calls a `db_*` tool.
+3. **The agent gets a fresh, empty database on first write.** The file is lazy-opened on demand — no I/O happens until the agent calls a `db_*` tool. It's created in the app's current storage posture: plaintext by default, or SQLCipher if you opted in.
 
 The scheduler tools (`schedule_next_run` / `cancel_next_run`) are **not** gated on `dbEnabled`. Any agent can self-schedule; the database is a separate capability.
 
@@ -45,7 +45,9 @@ The scheduler tools (`schedule_next_run` / `cancel_next_run`) are **not** gated 
 | Per-agent database  | `~/.osaurus/agents/<uuid>/db.sqlite`              | One per agent, lazy-open |
 | Cross-agent slots   | `~/.osaurus/scheduler.sqlite`                     | Single global file       |
 
-Paths are resolved by [`OsaurusPaths.agentDatabaseFile(for:)`](../Packages/OsaurusCore/Utils/OsaurusPaths.swift) and [`OsaurusPaths.schedulerDatabaseFile()`](../Packages/OsaurusCore/Utils/OsaurusPaths.swift). Both files are opened through [`EncryptedSQLiteOpener`](../Packages/OsaurusCore/Storage/EncryptedSQLiteOpener.swift) with the device-scoped key from [`StorageKeyManager`](../Packages/OsaurusCore/Identity/StorageKeyManager.swift) — the same SQLCipher stack used by chat history, memory, and the rest of the app. See [STORAGE.md](STORAGE.md) for the key-management details.
+Paths are resolved by [`OsaurusPaths.agentDatabaseFile(for:)`](../Packages/OsaurusCore/Utils/OsaurusPaths.swift) and [`OsaurusPaths.schedulerDatabaseFile()`](../Packages/OsaurusCore/Utils/OsaurusPaths.swift). Both files are opened through [`OsaurusStorageOpener`](../Packages/OsaurusCore/Storage/OsaurusStorageOpener.swift), which sniffs each file's header and opens it plaintext (no key) or, when you've opted in to encryption, with the device-scoped SQLCipher key from [`StorageKeyManager`](../Packages/OsaurusCore/Identity/StorageKeyManager.swift) — the same [detection-first stack](STORAGE.md#detection-first-opening) used by chat history, memory, and the rest of the app. See [STORAGE.md](STORAGE.md) for the key-management details.
+
+**Agent bundles.** When an agent is exported or imported as a bundle, its database is always converted to match the host's posture on import (plaintext, or host-key-encrypted), and exported encrypted under the bundle's own key — so importing an agent never mints a storage key on a plaintext install. See [`AgentBundleService`](../Packages/OsaurusCore/Services/AgentBridge/AgentBundleService.swift).
 
 The lazy-open lifecycle and per-agent singleton connection live in [`AgentDatabaseStore`](../Packages/OsaurusCore/Storage/AgentDatabaseStore.swift); the engine itself is [`AgentDatabase`](../Packages/OsaurusCore/Storage/AgentDatabase.swift).
 

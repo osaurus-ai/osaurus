@@ -164,6 +164,49 @@ struct StreamingHintTests {
         #expect(decoded?.stopReason == "length")
     }
 
+    @Test func statsHint_roundTrips_prefillTokensPerSecond() {
+        let encoded = StreamingStatsHint.encode(
+            tokenCount: 128,
+            tokensPerSecond: 60.0,
+            prefillTokensPerSecond: 412.5
+        )
+        #expect(encoded.contains("prefill=412.5"))
+        let decoded = StreamingStatsHint.decode(encoded)
+        #expect(decoded?.tokenCount == 128)
+        #expect(abs((decoded?.tokensPerSecond ?? 0) - 60.0) < 0.0001)
+        #expect(abs((decoded?.prefillTokensPerSecond ?? 0) - 412.5) < 0.01)
+    }
+
+    @Test func statsHint_omitsPrefillFlagWhenAbsentOrNonPositive() {
+        // nil and 0/negative prefill keep the compact 2-field wire so the
+        // healthy bytes are unchanged and old decoders see no new flag.
+        let none = StreamingStatsHint.encode(tokenCount: 5, tokensPerSecond: 10.0)
+        #expect(!none.contains("prefill="))
+        #expect(StreamingStatsHint.decode(none)?.prefillTokensPerSecond == nil)
+        let zero = StreamingStatsHint.encode(
+            tokenCount: 5,
+            tokensPerSecond: 10.0,
+            prefillTokensPerSecond: 0
+        )
+        #expect(!zero.contains("prefill="))
+    }
+
+    @Test func statsHint_decode_recoversPrefillAlongsideOtherFlags() {
+        let payload = "\u{FFFE}stats:10;5.0;unclosed,stop=length,prefill=300.25"
+        let decoded = StreamingStatsHint.decode(payload)
+        #expect(decoded?.unclosedReasoning == true)
+        #expect(decoded?.stopReason == "length")
+        #expect(abs((decoded?.prefillTokensPerSecond ?? 0) - 300.25) < 0.01)
+    }
+
+    @Test func statsHint_legacyWire_hasNilPrefill() {
+        // Wire written by a pre-prefill encoder must decode with nil
+        // prefill (forward/backward-compat across an upgrade straddle).
+        let decoded = StreamingStatsHint.decode("\u{FFFE}stats:128;99.4321")
+        #expect(decoded?.tokenCount == 128)
+        #expect(decoded?.prefillTokensPerSecond == nil)
+    }
+
     // Issue #856 regression: the sentinel must NEVER appear in the
     // visible text of an assistant message. ChatView filters it out
     // before render. Here we lock in the contract that the decoder

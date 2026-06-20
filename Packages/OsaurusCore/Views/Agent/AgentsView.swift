@@ -929,6 +929,13 @@ struct AgentDetailView: View {
     @State private var speakEnabled: Bool = false
     @State private var searchMemoryEnabled: Bool = false
     @State private var selfSchedulingEnabled: Bool = false
+    /// Per-agent opt-in for the Computer Use feature (`computer_use` tool).
+    /// Custom agents only; the Features section shows the toggle and
+    /// `saveAgent` folds it into the persisted `AgentSettings` block.
+    @State private var computerUseEnabled: Bool = false
+    /// Per-agent autonomy ceiling for Computer Use (PR2). `nil` means no
+    /// ceiling. Mirrored from / into `AgentSettings.computerUseCeiling`.
+    @State private var computerUseCeiling: AutonomyCeiling? = nil
     /// Per-agent on/off for the chat empty-state generative greeting.
     /// Default off, like the other capability flags; the agent opts in
     /// from the Features tab. Drives whether the Empty State section
@@ -2872,6 +2879,32 @@ struct AgentDetailView: View {
                         }
                     }
 
+                    // Computer Use is custom-agents-only (the Default agent is
+                    // locked to its baseline). Hidden entirely for the Default
+                    // agent so it never advertises a capability it can't enable.
+                    if agent.id != Agent.defaultId {
+                        featureGroup(
+                            "Computer Use",
+                            description: "Let the agent operate macOS apps for you."
+                        ) {
+                            featureToggleRow(
+                                title: "Computer Use",
+                                subtitle:
+                                    "Give the agent a tool to drive macOS apps via the accessibility tree — clicking, typing, and reading on-screen content. Reads and navigation run automatically; edits and anything consequential pause for your approval.",
+                                isOn: $computerUseEnabled
+                            )
+                            if computerUseEnabled {
+                                computerUseCeilingRow
+                                Text(
+                                    "Requires Accessibility permission. Grant it and review status in Settings > Computer Use.",
+                                    bundle: .module
+                                )
+                                .font(.system(size: 11))
+                                .foregroundColor(theme.tertiaryText)
+                            }
+                        }
+                    }
+
                     featureGroup(
                         "Data",
                         description: "Durable storage for this agent."
@@ -3325,6 +3358,102 @@ struct AgentDetailView: View {
                 )
         )
         .opacity(interactive ? 1 : 0.55)
+    }
+
+    /// Per-agent autonomy ceiling picker for Computer Use. The ceiling caps
+    /// how far this agent can act regardless of the user's global policy
+    /// (strictest-wins), expressed as "at most <preset>" so it reads like the
+    /// global preset picker. "No ceiling" stores nil.
+    private var computerUseCeilingRow: some View {
+        let selectedPreset = computerUseCeiling?.matchingPreset
+        return HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Autonomy ceiling", bundle: .module)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(theme.primaryText)
+                Text(
+                    "Cap how far this agent can act, even when your global policy is more permissive.",
+                    bundle: .module
+                )
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 12)
+            Menu {
+                Button {
+                    computerUseCeiling = nil
+                    debouncedSave()
+                } label: {
+                    if computerUseCeiling == nil {
+                        Label {
+                            Text(L("No ceiling"))
+                        } icon: {
+                            Image(systemName: "checkmark")
+                        }
+                    } else {
+                        Text(L("No ceiling"))
+                    }
+                }
+                Divider()
+                ForEach(AutonomyPreset.allCases) { preset in
+                    let label = String(format: L("At most: %@"), preset.displayLabel)
+                    Button {
+                        computerUseCeiling = AutonomyCeiling.cappedAt(preset)
+                        debouncedSave()
+                    } label: {
+                        if selectedPreset == preset {
+                            Label {
+                                Text(label)
+                            } icon: {
+                                Image(systemName: "checkmark")
+                            }
+                        } else {
+                            Text(label)
+                        }
+                    }
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    Text(ceilingMenuLabel)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(theme.primaryText)
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.system(size: 9))
+                        .foregroundColor(theme.secondaryText)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(theme.tertiaryBackground)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6)
+                                .stroke(theme.inputBorder, lineWidth: 1)
+                        )
+                )
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(theme.inputBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(theme.inputBorder, lineWidth: 1)
+                )
+        )
+    }
+
+    private var ceilingMenuLabel: String {
+        guard let ceiling = computerUseCeiling else { return L("No ceiling") }
+        if let preset = ceiling.matchingPreset {
+            return String(format: L("At most: %@"), preset.displayLabel)
+        }
+        return L("Custom")
     }
 
     /// Labeled subgroup inside the Features section. Renders a small caps
@@ -4932,6 +5061,8 @@ struct AgentDetailView: View {
         speakEnabled = agent.settings.speakEnabled
         searchMemoryEnabled = agent.settings.searchMemoryEnabled
         selfSchedulingEnabled = agent.settings.selfSchedulingEnabled
+        computerUseEnabled = agent.settings.computerUseEnabled
+        computerUseCeiling = agent.settings.computerUseCeiling
         generativeGreetingsEnabled = agent.settings.generativeGreetingsEnabled
         // Hydrate the Personality editor with the resolved default
         // (global persona, falling back to built-in) when the agent has
@@ -5137,7 +5268,9 @@ struct AgentDetailView: View {
                 renderChartEnabled: renderChartEnabled,
                 speakEnabled: speakEnabled,
                 searchMemoryEnabled: searchMemoryEnabled,
-                selfSchedulingEnabled: selfSchedulingEnabled
+                selfSchedulingEnabled: selfSchedulingEnabled,
+                computerUseEnabled: computerUseEnabled,
+                computerUseCeiling: computerUseEnabled ? computerUseCeiling : nil
             )
         )
 

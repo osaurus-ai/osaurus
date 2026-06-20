@@ -526,7 +526,7 @@ final class TerminalDisplayView: NSView {
     /// bezeled NSButton chrome that fights the dark terminal aesthetic.
     private static func makeIconButton(symbol: String, accessibility: String) -> NSButton {
         let btn = NSButton(
-            image: NSImage(systemSymbolName: symbol, accessibilityDescription: accessibility)
+            image: SymbolImageCache.image(symbol, accessibilityDescription: accessibility)
                 ?? NSImage(),
             target: nil,
             action: nil

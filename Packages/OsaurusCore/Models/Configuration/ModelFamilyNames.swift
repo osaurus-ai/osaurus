@@ -47,6 +47,16 @@ enum ModelFamilyNames {
         return lower.hasPrefix("ling-") || lower.contains("/ling-")
     }
 
+    /// Laguna bundles (poolside XS.2 + Mistral-lineage M.1) in repo,
+    /// local-folder, and picker alias forms (`Laguna-M.1-JANG_2L`,
+    /// `JANGQ-AI/Laguna-M.1-JANG_1L`). Both lines need the same serving
+    /// loop hardening (repetition_penalty + a phrase-scale repetition
+    /// window); bare greedy decode rambles post-answer at any precision.
+    /// Strict enough to reject unrelated names like `notlaguna`.
+    static func isLagunaFamily(_ modelId: String) -> Bool {
+        matches(#"(^|/|[\-_])laguna($|[\-_/\.])"#, in: modelId.lowercased())
+    }
+
     /// MiniMax M2/M2.7 bundles are always-reasoning at the template level:
     /// the generation prompt opens `<think>` and the model may complete with
     /// only that rail populated. Treat dash, underscore, dot, and owner/repo

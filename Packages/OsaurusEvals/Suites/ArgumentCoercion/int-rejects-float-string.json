@@ -1,0 +1,15 @@
+{
+  "id": "argument_coercion.int-rejects-float-string",
+  "domain": "argument_coercion",
+  "label": "coercion • a float-shaped string ('3.5') is rejected by int (returns nil)",
+  "query": "",
+  "notes": "int() accepts integer-encoded strings ('42' -> 42) but must reject a non-integer numeric string rather than silently truncating to 3. Returns nil so the tool surfaces an invalid_args envelope instead of acting on a wrong value.",
+  "fixtures": {},
+  "expect": {
+    "argumentCoercion": {
+      "helper": "int",
+      "value": "3.5",
+      "expect": null
+    }
+  }
+}

@@ -32,15 +32,9 @@ let package = Package(
         // separate MLX, inference, tokenizer, template, and transformer pins.
         // Keep this revision pinned until the package-switch gate has
         // live model, cache, parser, API, and UI evidence.
-        //
-        // Bumped to pick up the vendored native mFLUX image engine
-        // (vMLXFlux/vMLXFluxKit/vMLXFluxModels) and the Osaurus image
-        // integration contracts (OSAURUS_IMAGE_OPENAPI.json,
-        // OSAURUS_IMAGE_UI_MANIFEST.json). The whole vMLX stack shares one
-        // MLX runtime so image-gen and LLM eval link a single MLX binary.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "b5df48a1948ec05611cd82da7a6a38b43e1f851f"
+            revision: "d35c0744a4dec6b9a450ed0b2d02ec2010fd5537"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
@@ -178,10 +172,6 @@ let package = Package(
                 .product(name: "MLXLMCommon", package: "vmlx-swift"),
                 .product(name: "MLXEmbedders", package: "vmlx-swift"),
                 .product(name: "VMLXTokenizers", package: "vmlx-swift"),
-                // Native on-device image generation (mFLUX). Umbrella import:
-                // `import vMLXFlux`. Shares the one MLX runtime above; routed
-                // through MetalGate's exclusive image lane (see ImageGenerationService).
-                .product(name: "vMLXFlux", package: "vmlx-swift"),
                 .product(name: "FluidAudio", package: "FluidAudio"),
                 .product(name: "VecturaKit", package: "VecturaKit"),
                 .product(name: "OsaurusRepository", package: "OsaurusRepository"),

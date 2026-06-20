@@ -29,10 +29,17 @@ func debugLog(_ msg: String) {
         guard let data = line.data(using: .utf8) else { return }
         let path = "/tmp/osaurus_debug.log"
         if FileManager.default.fileExists(atPath: path) {
+            // Use the throwing Swift APIs (`seekToEnd`/`write(contentsOf:)`/
+            // `close`), NOT the legacy `seekToEndOfFile()`/`write(_:)`/
+            // `closeFile()`: the legacy variants raise an uncatchable
+            // Objective-C `NSFileHandleOperationException` on a full disk
+            // (`No space left on device`), which `try?` cannot trap and which
+            // terminates the whole process. A debug logger must degrade
+            // silently, never crash its host.
             if let fh = FileHandle(forWritingAtPath: path) {
-                fh.seekToEndOfFile()
-                fh.write(data)
-                fh.closeFile()
+                try? fh.seekToEnd()
+                try? fh.write(contentsOf: data)
+                try? fh.close()
             }
         } else {
             try? data.write(to: URL(fileURLWithPath: path))

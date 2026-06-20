@@ -1,0 +1,25 @@
+{
+  "id": "frontier.ordered-read-before-edit",
+  "domain": "agent_loop",
+  "label": "frontier • read a file before editing it (read -> edit ordering)",
+  "query": "The function in greeting.py returns a typo'd message. Read the file first to see the exact current text, then make a surgical edit so it returns the string \"Hello, world!\" exactly. Do not rewrite the whole file.",
+  "notes": "Read-before-edit discipline pinned via mustCallToolsInOrder [file_read, file_edit]: a grounded surgical edit needs the current bytes first (file_edit's old_string must match what is on disk), so a model that blind-edits without reading fails the ordering. mustNotCallTools forbids the file_write clobber path; the file assertion locks the outcome.",
+  "fixtures": {
+    "workspaceFiles": [
+      {
+        "path": "greeting.py",
+        "contents": "def greet():\n    return \"Helo, wrld!\"\n"
+      }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 8,
+      "mustCallToolsInOrder": ["file_read", "file_edit"],
+      "mustNotCallTools": ["file_write"],
+      "files": [
+        { "path": "greeting.py", "contains": "Hello, world!" }
+      ]
+    }
+  }
+}

@@ -114,9 +114,8 @@ public final class MethodDatabase: @unchecked Sendable {
 
     private func openConnection() throws {
         let path = OsaurusPaths.methodsDatabaseFile().path
-        let key = try StorageKeyManager.shared.currentKey()
         do {
-            db = try EncryptedSQLiteOpener.open(path: path, key: key)
+            db = try OsaurusStorageOpener.open(path: path)
         } catch let error as EncryptedSQLiteError {
             throw MethodDatabaseError.failedToOpen(error.localizedDescription)
         }

@@ -1,0 +1,23 @@
+{
+  "id": "computer_use_loop.scroll-to-find",
+  "domain": "computer_use_loop",
+  "label": "CU loop • scroll a control into view, then click it",
+  "query": "Read the agreement and click Accept at the bottom.",
+  "notes": "Model-driven. The Accept button is below the fold (revealOnScroll), so the model must scroll before it can see and click it. Scored on the agreement state plus the scroll→click verb order. Needs a live model (no scriptedActions).",
+  "fixtures": {},
+  "expect": {
+    "computerUseLoop": {
+      "app": "Agreements",
+      "maxSteps": 10,
+      "elements": [
+        { "id": "title", "role": "statictext", "label": "Terms of Service", "value": "Please review the full agreement." },
+        { "id": "accept", "role": "button", "label": "Accept", "revealOnScroll": true, "onClick": { "setValues": [{ "id": "agreement", "value": "accepted" }] } },
+        { "id": "agreement", "role": "statictext", "label": "Agreement Status", "value": "pending" }
+      ],
+      "successValues": [{ "id": "agreement", "equals": "accepted" }],
+      "successClicked": ["accept"],
+      "expectVerbsInOrder": ["scroll", "click"],
+      "maxInvalidActions": 2
+    }
+  }
+}

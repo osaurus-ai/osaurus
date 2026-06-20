@@ -1,0 +1,20 @@
+{
+  "id": "computer_use_loop.type-into-field",
+  "domain": "computer_use_loop",
+  "label": "CU loop • type text into a titled field",
+  "query": "In the Notes app, type the text 'hello world' into the Title field, then finish.",
+  "notes": "Smallest end-to-end CU-loop case: perceive one field, address it by mark, type, verify the value changed, declare done. Floor test for marks + the type verb + a clean done.",
+  "fixtures": {},
+  "expect": {
+    "computerUseLoop": {
+      "app": "Notes",
+      "maxSteps": 8,
+      "elements": [
+        { "id": "title", "role": "textfield", "label": "Title", "value": "", "placeholder": "Title", "editable": true },
+        { "id": "body", "role": "textview", "label": "Body", "value": "", "placeholder": "Note", "editable": true }
+      ],
+      "successValues": [{ "id": "title", "contains": "hello world" }],
+      "maxInvalidActions": 2
+    }
+  }
+}

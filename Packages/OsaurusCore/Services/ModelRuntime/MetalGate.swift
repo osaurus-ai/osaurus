@@ -2,51 +2,56 @@
 //  MetalGate.swift
 //  osaurus
 //
-//  Process-wide mutual-exclusion gate between MLX *generation* (the LLM,
-//  driven by vmlx-swift's `BatchEngine`) and the EXCLUSIVE external GPU users:
-//  MLX *embedding* (the Model2Vec static-embedding pipeline behind
-//  capability/memory search) and MLX *image generation* (the vMLXFlux engine).
-//  All submit work to the same Metal device on different threads. vmlx
-//  deliberately does NOT lock the `eval` hot path (the C++ scheduler serializes
-//  the BatchEngine's own evals and dropping the Swift lock lets asyncEval/item
-//  overlap for token throughput). But an EXTERNAL caller — the embedder, and
-//  likewise the image engine, each a second MLX graph — evaluating concurrently
-//  with the BatchEngine races on the Metal command buffer and aborts with
-//      -[…] addCompletedHandler:]: unrecognized selector
-//  (observed live: capabilities_discover embedding during an LLM prefill).
+//  Process-wide mutual-exclusion gate across every MLX/Metal *GPU producer*
+//  in the app — LLM generation (vmlx-swift's `BatchEngine`), the Model2Vec
+//  embedder behind capability/memory search, and model loading (weight
+//  dequantization + kernel compilation). All submit work to the same Metal
+//  device on different threads, and two distinct producers driving the Metal
+//  command queue at once race on the command buffer and abort with crashes
+//  like
+//      -[_MTLCommandBuffer addCompletedHandler:]: Completed handler provided after commit call
+//      -[IOGPUMetalCommandBuffer validate]: commit command buffer with uncommitted encoder
+//  or an `EXC_BAD_ACCESS` deep inside `mlx::core::metal::*`. Observed live as a
+//  model load (model switch) overlapping an in-flight generation's GPU tail.
 //
-//  This gate makes generation, embedding, and image generation mutually
-//  exclusive so their GPU work never overlaps. Generation holds the gate for
-//  the FULL stream consumption — vmlx does not `finish()` the stream until
-//  after its end-of-turn cache-store eval, so releasing on stream end (not on
-//  the `.info` event) covers the BatchEngine's async tail too. Image
-//  generation likewise holds the gate across the entire vMLXFlux event-stream
-//  drain, including the terminal VAE decode eval (see ImageGenerationService).
+//  ## Design — mutual exclusion keyed by producer identity
+//
+//  The gate admits work by an opaque *owner* key:
+//    - Acquisitions for the SAME `shared` owner overlap. Generation passes the
+//      model name (`gen:<model>`) as a shared owner, so one model's batched
+//      decode slots — which the `BatchEngine` actor already evaluates on a
+//      single loop thread — keep batching for throughput.
+//    - Every OTHER owner is mutually exclusive: a different model's generation,
+//      an embedder (`embedding`), and a model load (`load:<model>`) each wait
+//      for the current producer to drain before taking the GPU, and block new
+//      work from starting until they finish.
+//    - A waiting foreign owner blocks new same-owner admissions, so a steady
+//      stream of one producer can't starve another (generalizes the old
+//      writer-preference that protected the embedder).
+//
+//  Generation holds the gate for the FULL stream consumption — vmlx does not
+//  `finish()` the stream until after its end-of-turn cache-store eval, so the
+//  caller releases on stream end (not on the `.info` event) to cover the
+//  BatchEngine's async tail too.
 //
 
 import Foundation
 
-//  Implemented as a writer-preferring readers-writer lock:
-//    - Generation = SHARED (reader). Multiple LLM requests may hold it at
-//      once — the BatchEngine evaluates all of its slots on one loop thread,
-//      so they are mutually safe and must keep batching for throughput.
-//    - Embedding / image generation = EXCLUSIVE (writer). Each runs on a
-//      different thread, so it waits for every in-flight generation to drain
-//      and blocks new ones from starting until it finishes. The two writers
-//      also exclude each other (one exclusive holder at a time). Writer
-//      preference keeps a steady stream of generations from starving a writer.
 public actor MetalGate {
     public static let shared = MetalGate()
 
-    /// Number of in-flight generations holding the shared lock.
-    private var activeGenerations = 0
-    /// An exclusive user (embedding or image generation) holds the lock.
-    private var exclusiveActive = false
-    /// Exclusive users waiting to acquire — new generations block while > 0 so
-    /// a writer can't starve.
-    private var exclusiveWaiting = 0
-    /// Condition-variable waiters; woken on every state change, each re-checks
-    /// its own predicate (standard actor condition pattern).
+    /// The producer currently holding the GPU, or `nil` when idle.
+    private var currentOwner: String?
+    /// Whether the current holder permits same-owner overlap.
+    private var currentShared = false
+    /// Active acquisitions under `currentOwner`. Greater than 1 only for
+    /// same-owner shared overlap (a model's batched generation slots).
+    private var activeHolders = 0
+    /// Suspended acquirers grouped by owner, so a foreign waiter can block new
+    /// same-owner admissions and avoid starvation.
+    private var waitingByOwner: [String: Int] = [:]
+    /// Condition-variable waiters; woken on every release, each re-checks its
+    /// own predicate (standard actor condition pattern).
     private var waiters: [CheckedContinuation<Void, Never>] = []
 
     private init() {}
@@ -62,46 +67,90 @@ public actor MetalGate {
         for c in woken { c.resume() }
     }
 
-    // MARK: - Generation (LLM via BatchEngine) — shared
+    private func hasForeignWaiter(_ owner: String) -> Bool {
+        for (key, count) in waitingByOwner where key != owner && count > 0 { return true }
+        return false
+    }
 
-    public func enterGeneration() async {
-        // Yield to any active or waiting exclusive user (writer preference).
-        while exclusiveActive || exclusiveWaiting > 0 {
-            await suspend()
+    private func canAdmit(_ owner: String, shared: Bool) -> Bool {
+        if currentOwner == nil { return true }
+        if shared, currentShared, currentOwner == owner { return !hasForeignWaiter(owner) }
+        return false
+    }
+
+    // MARK: - Core acquire / release
+
+    /// Acquire the GPU gate for `owner`. When `shared` is true, acquisitions for
+    /// the same owner overlap; otherwise the owner is exclusive even against
+    /// itself. Every distinct owner is mutually exclusive.
+    public func acquire(_ owner: String, shared: Bool) async {
+        if !canAdmit(owner, shared: shared) {
+            waitingByOwner[owner, default: 0] += 1
+            repeat {
+                await suspend()
+            } while !canAdmit(owner, shared: shared)
+            let remaining = (waitingByOwner[owner] ?? 1) - 1
+            waitingByOwner[owner] = remaining > 0 ? remaining : nil
         }
-        activeGenerations += 1
-    }
-
-    public func exitGeneration() {
-        activeGenerations = max(0, activeGenerations - 1)
-        if activeGenerations == 0 { wakeAll() }
-    }
-
-    // MARK: - Exclusive users (embedding, image generation)
-
-    /// Acquire the exclusive lock: drain every in-flight generation, exclude
-    /// the other writer, and block new generations until released.
-    private func enterExclusive() async {
-        exclusiveWaiting += 1
-        while exclusiveActive || activeGenerations > 0 {
-            await suspend()
+        if currentOwner == nil {
+            currentOwner = owner
+            currentShared = shared
         }
-        exclusiveWaiting -= 1
-        exclusiveActive = true
+        activeHolders += 1
     }
 
-    private func exitExclusive() {
-        exclusiveActive = false
-        wakeAll()
+    /// Release one acquisition. When the last holder leaves, the gate goes idle
+    /// and all waiters are woken to re-contend.
+    public func release(_ owner: String) {
+        activeHolders = max(0, activeHolders - 1)
+        if activeHolders == 0 {
+            currentOwner = nil
+            currentShared = false
+            wakeAll()
+        }
+    }
+
+    // MARK: - Generation (LLM via BatchEngine) — shared per model
+
+    public func enterGeneration(model: String) async {
+        await acquire("gen:\(model)", shared: true)
+    }
+
+    public func exitGeneration(model: String) {
+        release("gen:\(model)")
     }
 
     // MARK: - Embedding (Model2Vec / capability + memory search) — exclusive
 
-    public func enterEmbedding() async { await enterExclusive() }
-    public func exitEmbedding() { exitExclusive() }
+    public func enterEmbedding() async {
+        await acquire("embedding", shared: false)
+    }
 
-    // MARK: - Image generation (vMLXFlux) — exclusive
+    public func exitEmbedding() {
+        release("embedding")
+    }
 
-    public func enterImageGeneration() async { await enterExclusive() }
-    public func exitImageGeneration() { exitExclusive() }
+    // MARK: - Model load (weight dequant + kernel compile) — exclusive
+
+    public func enterModelLoad(model: String) async {
+        await acquire("load:\(model)", shared: false)
+    }
+
+    public func exitModelLoad(model: String) {
+        release("load:\(model)")
+    }
+
+    // MARK: - Image generation (vMLXFlux engine) — exclusive
+
+    /// The native image engine (vMLXFlux) is a second MLX graph on the same Metal
+    /// device. Like embedding and model load it must not overlap any other GPU
+    /// producer, so it acquires the gate as its own exclusive owner, held across
+    /// the entire vMLXFlux event-stream drain (including the terminal VAE decode).
+    public func enterImageGeneration() async {
+        await acquire("image", shared: false)
+    }
+
+    public func exitImageGeneration() {
+        release("image")
+    }
 }

@@ -33,6 +33,20 @@ public actor EmbeddingService {
 
     private init() {}
 
+    /// Verifies the embedding model is locally available and logs a loud,
+    /// actionable warning if it isn't — so a capability_search / eval run
+    /// doesn't silently build an EMPTY semantic index and report
+    /// unreliable retrieval. Does NOT download (that's the job of
+    /// `scripts/evals/prepare-evals-env.sh` or the memory feature's
+    /// downloader); this is a fast existence probe only.
+    public static func ensureModelPresent() {
+        if VMLXModel2VecEmbedder.locateModelDirectory(modelName: modelName) == nil {
+            logger.warning(
+                "Embedding model '\(modelName, privacy: .public)' not found locally — semantic search will be EMPTY and unreliable. Run `make evals-prep`, set OSAURUS_EMBEDDING_MODEL_DIR, or install minishlab/\(modelName, privacy: .public) in the Hugging Face cache."
+            )
+        }
+    }
+
     /// Generate embeddings for one or more texts.
     public func embed(texts: [String]) async throws -> [[Float]] {
         if !isInitialized {

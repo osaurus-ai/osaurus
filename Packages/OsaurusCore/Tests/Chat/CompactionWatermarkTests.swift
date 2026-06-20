@@ -388,4 +388,105 @@ struct CompactionWatermarkTests {
         #expect(render(a) == render(b))
         #expect(ContextBudgetManager.estimateTokens(for: a) <= mgr.historyBudget)
     }
+
+    // MARK: - Atomic-unit trimming (tool_use / tool_result pairing)
+
+    /// The pairing invariant the Anthropic 400 enforces, checked on a trimmed
+    /// transcript: every assistant turn's requested tool_call ids are answered
+    /// by the contiguous following tool run, and no tool result survives
+    /// without its requesting assistant turn — i.e. no half-pair was orphaned.
+    private func assertNoOrphanedToolPairs(_ messages: [ChatMessage]) {
+        var pendingCallIds = Set<String>()
+        for message in messages {
+            switch message.role.lowercased() {
+            case "assistant":
+                #expect(pendingCallIds.isEmpty)
+                pendingCallIds = Set(message.tool_calls?.map(\.id) ?? [])
+            case "tool":
+                let id = message.tool_call_id ?? ""
+                #expect(pendingCallIds.contains(id))
+                pendingCallIds.remove(id)
+            default:
+                #expect(pendingCallIds.isEmpty)
+            }
+        }
+        #expect(pendingCallIds.isEmpty)
+    }
+
+    @Test func groupIntoUnitsKeepsAssistantWithItsToolResults() {
+        let messages: [ChatMessage] = [
+            userMessage("task"),
+            assistantToolCallMessage(id: "a"),
+            toolResultMessage(id: "a", chars: 10),
+            ChatMessage(role: "assistant", content: "plain answer"),
+            userMessage("follow up"),
+        ]
+
+        let units = ContextBudgetManager.groupIntoUnits(messages)
+
+        #expect(units.count == 4)
+        #expect(units[0].map(\.role) == ["user"])
+        #expect(units[1].map(\.role) == ["assistant", "tool"])
+        #expect(units[2].map(\.role) == ["assistant"])
+        #expect(units[3].map(\.role) == ["user"])
+    }
+
+    @Test func groupIntoUnitsKeepsParallelToolBatchTogether() {
+        let assistant = ChatMessage(
+            role: "assistant",
+            content: nil,
+            tool_calls: [
+                ToolCall(id: "a", type: "function", function: ToolCallFunction(name: "f", arguments: "{}")),
+                ToolCall(id: "b", type: "function", function: ToolCallFunction(name: "g", arguments: "{}")),
+            ],
+            tool_call_id: nil
+        )
+        let messages: [ChatMessage] = [
+            assistant,
+            ChatMessage(role: "tool", content: "A", tool_calls: nil, tool_call_id: "a"),
+            ChatMessage(role: "tool", content: "B", tool_calls: nil, tool_call_id: "b"),
+            userMessage("next"),
+        ]
+
+        let units = ContextBudgetManager.groupIntoUnits(messages)
+
+        #expect(units.count == 2)
+        #expect(units[0].map(\.role) == ["assistant", "tool", "tool"])
+        #expect(units[1].map(\.role) == ["user"])
+    }
+
+    @Test func stickyTrimDropsAssistantToolUnitsAtomically() {
+        // Re-trim across a growing transcript so a range of drop boundaries is
+        // exercised; the pairing invariant must hold at every step. A
+        // per-message dropper would eventually strand an assistant tool_use
+        // without its tool result (or vice-versa) — the orphan that trips the
+        // Anthropic tool_use/tool_result 400.
+        let mgr = makeManager(contextLength: 4_096)
+        let watermark = CompactionWatermark()
+        var messages = scriptedSession(rounds: 6, toolChars: 3_000)
+
+        for round in 6 ..< 28 {
+            let trimmed = mgr.trimMessages(messages, watermark: watermark)
+            #expect(ContextBudgetManager.estimateTokens(for: trimmed) <= mgr.historyBudget)
+            assertNoOrphanedToolPairs(trimmed)
+            messages.append(assistantToolCallMessage(id: "call_\(round)"))
+            messages.append(toolResultMessage(id: "call_\(round)", chars: 3_000))
+        }
+        #expect(watermark.hasCompacted)
+    }
+
+    @Test func statelessTrimDropsAssistantToolUnitsAtomically() {
+        // A long tool-heavy session whose protected tail fits but whose
+        // summarized middle still overflows forces Phase-2 drops; those drops
+        // must remove whole assistant+tool units, never half a pair.
+        let mgr = makeManager(contextLength: 5_400)
+        let messages = scriptedSession(rounds: 40, toolChars: 4_000)
+
+        let trimmed = mgr.trimMessages(messages)
+
+        #expect(ContextBudgetManager.estimateTokens(for: trimmed) <= mgr.historyBudget)
+        // A drop note proves Phase-2 dropping (not just summarization) engaged.
+        #expect(trimmed.contains { $0.content?.hasPrefix("[Note:") ?? false })
+        assertNoOrphanedToolPairs(trimmed)
+    }
 }

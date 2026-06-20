@@ -58,12 +58,11 @@ public actor StorageExportService {
     /// `destination` must be writable and ideally on an
     /// already-encrypted volume (FileVault).
     public func exportPlaintextBackup(to destination: URL) async throws -> ExportSummary {
-        let key: SymmetricKey
-        do {
-            key = try StorageKeyManager.shared.currentKey()
-        } catch {
-            throw StorageExportError.keyUnavailable
-        }
+        // Plaintext-by-default: a key may not exist at all. When it doesn't, we
+        // simply copy the already-plaintext artifacts; only encrypted ones need
+        // the key (and are skipped if it's gone rather than failing the whole
+        // backup).
+        let key = try? StorageKeyManager.shared.currentKey()
 
         let fm = FileManager.default
         do {
@@ -154,6 +153,13 @@ public actor StorageExportService {
     /// is discarded.
     @discardableResult
     public func rotateStorageKey() async throws -> SymmetricKey {
+        // Key rotation only makes sense when at-rest encryption is enabled.
+        // In the default plaintext posture there is no key to rotate.
+        guard StorageEncryptionPolicy.shared.isEncryptionEnabled else {
+            throw StorageExportError.rekeyFailed(
+                "Key rotation is only available when at-rest encryption is enabled"
+            )
+        }
         // Block every other DB-open path while we mutate. Anything
         // that hits `StorageMutationGate.blockingAwaitNotMutating()`
         // (or the async `awaitNotMutating()`) parks until we call
@@ -241,7 +247,7 @@ public actor StorageExportService {
 
     private func exportOneDatabase(
         target: StorageDatabaseCatalog.DatabaseTarget,
-        key: SymmetricKey,
+        key: SymmetricKey?,
         to destination: URL
     ) -> Result<Void, Error> {
         let fm = FileManager.default
@@ -257,6 +263,23 @@ public actor StorageExportService {
             return .failure(error)
         }
         try? fm.removeItem(at: outPath)
+
+        // Detection-first: a plaintext store is just copied; only an encrypted
+        // store needs the key + sqlcipher_export.
+        switch StorageFileFormat.detect(path: target.path) {
+        case .empty:
+            return .success(())
+        case .plaintext:
+            do {
+                try fm.copyItem(atPath: target.path, toPath: outPath.path)
+                return .success(())
+            } catch {
+                return .failure(StorageExportError.writeFailed("copy plaintext \(target.label)"))
+            }
+        case .encrypted:
+            break  // fall through to the SQLCipher export below
+        }
+        guard let key else { return .failure(StorageExportError.keyUnavailable) }
 
         var srcDB: OpaquePointer?
         guard sqlite3_open(target.path, &srcDB) == SQLITE_OK, let src = srcDB else {
@@ -324,8 +347,11 @@ public actor StorageExportService {
 
     // MARK: - Internals: file trees
 
-    private func decryptOSecTree(under url: URL, key: SymmetricKey, into destination: URL) -> Int {
+    private func decryptOSecTree(under url: URL, key: SymmetricKey?, into destination: URL) -> Int {
         let fm = FileManager.default
+        // `.osec` files require the key to decrypt; without it there's nothing
+        // safe to do here (plaintext config is exported by other paths).
+        guard let key else { return 0 }
         guard fm.fileExists(atPath: url.path) else { return 0 }
         guard let enumerator = fm.enumerator(at: url, includingPropertiesForKeys: [.isDirectoryKey]) else {
             return 0
@@ -345,17 +371,27 @@ public actor StorageExportService {
         return count
     }
 
-    private func decryptBlobsDir(_ url: URL, key: SymmetricKey, into destination: URL) -> Int {
+    private func decryptBlobsDir(_ url: URL, key: SymmetricKey?, into destination: URL) -> Int {
         let fm = FileManager.default
         let outDir = destination.appendingPathComponent("blobs", isDirectory: true)
         try? fm.createDirectory(at: outDir, withIntermediateDirectories: true)
         var count = 0
         let entries = (try? fm.contentsOfDirectory(at: url, includingPropertiesForKeys: nil)) ?? []
-        for entry in entries where entry.pathExtension == "osec" {
-            guard let plaintext = try? EncryptedFileStore.read(entry, key: key) else { continue }
-            let dest = outDir.appendingPathComponent(entry.deletingPathExtension().lastPathComponent)
-            try? plaintext.write(to: dest, options: [.atomic])
-            count += 1
+        for entry in entries where !entry.hasDirectoryPath {
+            if entry.pathExtension == "osec" {
+                // Encrypted blob — needs the key to decrypt.
+                guard let key, let plaintext = try? EncryptedFileStore.read(entry, key: key) else {
+                    continue
+                }
+                let dest = outDir.appendingPathComponent(entry.deletingPathExtension().lastPathComponent)
+                try? plaintext.write(to: dest, options: [.atomic])
+                count += 1
+            } else {
+                // Already-plaintext blob — copy as-is.
+                let dest = outDir.appendingPathComponent(entry.lastPathComponent)
+                try? fm.removeItem(at: dest)
+                if (try? fm.copyItem(at: entry, to: dest)) != nil { count += 1 }
+            }
         }
         return count
     }

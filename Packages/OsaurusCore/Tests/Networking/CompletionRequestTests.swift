@@ -35,6 +35,10 @@ struct CompletionRequestTests {
         )
         #expect(req.model == "qwen2.5-coder-1.5b-instruct-4bit")
         #expect(req.prompt.contains("<|fim_prefix|>"))
+        #expect(req.prefix == nil)
+        #expect(req.suffix == nil)
+        #expect(req.middle == nil)
+        #expect(req.unsupportedFIMReason == nil)
         #expect(req.maxTokens == 50)
         #expect(req.resolvedMaxTokens == 50)
         #expect(req.temperature == 0.2)
@@ -64,5 +68,74 @@ struct CompletionRequestTests {
         #expect(req.stop.isEmpty)
         #expect(req.stream == nil)
         #expect(req.temperature == nil)
+    }
+
+    @Test func decodesPrefixAsPromptFallback() throws {
+        let req = try decode(
+            #"""
+            {
+              "model": "m",
+              "prefix": "func f() -> Int {\n    ",
+              "max_tokens": 24
+            }
+            """#
+        )
+        #expect(req.prompt == "func f() -> Int {\n    ")
+        #expect(req.prefix == "func f() -> Int {\n    ")
+        #expect(req.suffix == nil)
+        #expect(req.middle == nil)
+        #expect(req.unsupportedFIMReason == nil)
+    }
+
+    @Test func decodesOpenAIInsertionSuffixAndRejectsUnsupportedSeparateContext() throws {
+        let req = try decode(
+            #"""
+            {
+              "model": "m",
+              "prompt": "func f() -> Int {\n    ",
+              "suffix": "\n}",
+              "max_tokens": 24
+            }
+            """#
+        )
+        #expect(req.prompt == "func f() -> Int {\n    ")
+        #expect(req.suffix == "\n}")
+        let reason = try #require(req.unsupportedFIMReason)
+        #expect(reason.contains("suffix"))
+        #expect(reason.contains("/v1/completions"))
+    }
+
+    @Test func decodesPrefixSuffixMiddleFieldsAndRejectsUnsupportedMiddle() throws {
+        let req = try decode(
+            #"""
+            {
+              "model": "m",
+              "prefix": "before",
+              "suffix": "after",
+              "middle": "existing edit"
+            }
+            """#
+        )
+        #expect(req.prompt == "before")
+        #expect(req.prefix == "before")
+        #expect(req.suffix == "after")
+        #expect(req.middle == "existing edit")
+        let reason = try #require(req.unsupportedFIMReason)
+        #expect(reason.contains("suffix"))
+        #expect(reason.contains("middle"))
+    }
+
+    @Test func emptySuffixDoesNotRejectPlainPrefixCompletion() throws {
+        let req = try decode(
+            #"""
+            {
+              "model": "m",
+              "prefix": "continue from here",
+              "suffix": ""
+            }
+            """#
+        )
+        #expect(req.prompt == "continue from here")
+        #expect(req.unsupportedFIMReason == nil)
     }
 }

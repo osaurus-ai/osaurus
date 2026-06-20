@@ -75,9 +75,9 @@ public final class ThemeShareService {
     public static let shared = ThemeShareService()
 
     /// Deep link constants. Mirrors `osaurus://plugins-install?tool=…`.
-    public static let deepLinkScheme = "osaurus"
-    public static let deepLinkHost = "themes-install"
-    public static let deepLinkHashParam = "hash"
+    public nonisolated static let deepLinkScheme = "osaurus"
+    public nonisolated static let deepLinkHost = "themes-install"
+    public nonisolated static let deepLinkHashParam = "hash"
 
     private let api: ThemesAPIClient
 
@@ -200,7 +200,17 @@ public final class ThemeShareService {
         defer { try? FileManager.default.removeItem(at: tempURL) }
 
         do {
-            let imported = try ThemeConfigurationStore.importTheme(from: tempURL)
+            let serverURL = await api.themeURL(hash: hash)
+            let imported = try ThemeConfigurationStore.importTheme(
+                from: tempURL,
+                libraryInfo: ThemeLibraryInfo(
+                    source: .shared,
+                    importedAt: Date(),
+                    remoteHash: hash,
+                    remoteURL: serverURL.absoluteString,
+                    sourceDetail: "Import by ID"
+                )
+            )
             ThemeManager.shared.refreshInstalledThemes()
             return imported
         } catch {
@@ -211,7 +221,7 @@ public final class ThemeShareService {
     // MARK: - Helpers
 
     /// Build the Osaurus deep link for a content hash.
-    public static func deepLink(for hash: String) -> URL {
+    public nonisolated static func deepLink(for hash: String) -> URL {
         var components = URLComponents()
         components.scheme = deepLinkScheme
         components.host = deepLinkHost
@@ -222,7 +232,7 @@ public final class ThemeShareService {
 
     /// Accepts a 64-char hex hash, an `osaurus://themes-install?hash=…` deep
     /// link, or the public web URL `https://themes.osaurus.ai/themes/<hash>`.
-    public static func parseHash(from input: String) -> String? {
+    public nonisolated static func parseHash(from input: String) -> String? {
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
 
@@ -257,7 +267,7 @@ public final class ThemeShareService {
         return nil
     }
 
-    public static func isValidHash(_ candidate: String) -> Bool {
+    public nonisolated static func isValidHash(_ candidate: String) -> Bool {
         guard candidate.count == 64 else { return false }
         return candidate.allSatisfy { $0.isHexDigit }
     }
@@ -265,7 +275,7 @@ public final class ThemeShareService {
     /// Stable JSON encoding for hashing/deduplication. Strips per-import
     /// fields so the same look from different installations produces the
     /// same SHA-256.
-    public static func canonicalEncode(_ theme: CustomTheme) throws -> Data {
+    public nonisolated static func canonicalEncode(_ theme: CustomTheme) throws -> Data {
         var canonical = theme
         canonical.metadata.id = UUID(
             uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
@@ -273,6 +283,7 @@ public final class ThemeShareService {
         canonical.metadata.createdAt = Date(timeIntervalSince1970: 0)
         canonical.metadata.updatedAt = Date(timeIntervalSince1970: 0)
         canonical.isBuiltIn = false
+        canonical.library = nil
 
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -280,7 +291,7 @@ public final class ThemeShareService {
         return try encoder.encode(canonical)
     }
 
-    private static func sha256Hex(_ data: Data) -> String {
+    private nonisolated static func sha256Hex(_ data: Data) -> String {
         let digest = SHA256.hash(data: data)
         return digest.map { String(format: "%02x", $0) }.joined()
     }

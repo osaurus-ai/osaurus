@@ -1,0 +1,22 @@
+{
+  "id": "tool_envelope.failure-invalid-args",
+  "domain": "tool_envelope",
+  "label": "tool_envelope • invalid_args is the validation-error kind (retryable)",
+  "query": "",
+  "notes": "The validation-error failure kind. Unlike tool_not_found / rejected / user_denied (terminal), invalid_args defaults to retryable=true: the arguments are malformed but the model can fix them and call again. Pins both the discriminator and that retryable default so a future change can't silently flip it.",
+  "fixtures": {},
+  "expect": {
+    "toolEnvelope": {
+      "builder": "failure",
+      "kind": "invalid_args",
+      "message": "Argument `count` must be a positive integer.",
+      "tool": "render_chart",
+      "expectKeys": {
+        "ok": false,
+        "kind": "invalid_args",
+        "tool": "render_chart",
+        "retryable": true
+      }
+    }
+  }
+}

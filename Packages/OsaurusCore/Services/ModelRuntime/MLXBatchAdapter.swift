@@ -970,6 +970,15 @@ struct MLXBatchAdapter {
     ) async throws -> PreparedStream {
         let trace = generation.ttftTrace
         trace?.mark("batch_prepare_start")
+        // Prefill diagnostics: a generation step's clock starts HERE. The
+        // solo-lease acquire below blocks until the PREVIOUS step's producer
+        // task has released — and that release happens only after vmlx's
+        // post-generation disk-cache store. So `LEASE-ACQUIRED waitMs` measures
+        // exactly how long this step waited on the prior step's KV store.
+        let genEnterAt = CFAbsoluteTimeGetCurrent()
+        PrefillDebugLog.shared.log(
+            "==GEN GENERATE-ENTER model=\(modelName) maxBatch=\(maxBatchSize)"
+        )
         let soloLease =
             maxBatchSize == 1
             ? await Registry.shared.acquireSoloLease(for: modelName)
@@ -978,6 +987,11 @@ struct MLXBatchAdapter {
             if let soloLease { await soloLease.release() }
             throw CancellationError()
         }
+        PrefillDebugLog.shared.log(
+            "==GEN LEASE-ACQUIRED model=\(modelName) "
+                + "waitMs=\(Int((CFAbsoluteTimeGetCurrent() - genEnterAt) * 1000)) "
+                + "solo=\(soloLease != nil)"
+        )
 
         // `prepareInput` can run a GPU eval on THIS submit thread before the
         // generation gate is taken below — notably the Nemotron-Omni audio
@@ -989,7 +1003,7 @@ struct MLXBatchAdapter {
         // is a separate, fully-balanced acquire/release from the generation
         // gate below; the brief window between them is eval-free.
         let prepared: PreparedInput
-        await MetalGate.shared.enterGeneration()
+        await MetalGate.shared.enterGeneration(model: modelName)
         do {
             prepared = try await prepareInput(
                 modelName: modelName,
@@ -1001,9 +1015,9 @@ struct MLXBatchAdapter {
                 toolChoice: toolChoice,
                 trace: trace
             )
-            await MetalGate.shared.exitGeneration()
+            await MetalGate.shared.exitGeneration(model: modelName)
         } catch {
-            await MetalGate.shared.exitGeneration()
+            await MetalGate.shared.exitGeneration(model: modelName)
             if let soloLease { await soloLease.release() }
             throw error
         }
@@ -1069,7 +1083,8 @@ struct MLXBatchAdapter {
             stopSequences: stopSequences,
             draftStrategy: effectiveDraftStrategy,
             enableCompiledBatchDecode: effective.compiledBatchDecode,
-            prefillStepSize: runtime.concurrency.prefillStepSize
+            prefillStepSize: runtime.concurrency.prefillStepSize,
+            modelName: modelName
         )
         // Block-diffusion speed/quality budget (DiffusionGemma): server
         // setting, default 16 (seeded by ServerRuntimeSettingsStore).
@@ -1103,6 +1118,38 @@ struct MLXBatchAdapter {
             )
         }
 
+        // Prefill diagnostics: snapshot the cumulative cache counters BEFORE the
+        // step alongside the fully-tokenized prompt size. The matching STEP-STATS
+        // line (from GenerationEventMapper) reports vmlx's actual promptTokenCount;
+        // if it is smaller than tokenizedPrompt here, the KV prefix was reused.
+        if PrefillDebugLog.shared.isEnabled {
+            let before = await MLXBatchAdapter.snapshotDiagnostics()
+            let cacheStr =
+                before.map {
+                    "cacheBefore{prefixHits=\($0.prefixHits) prefixMisses=\($0.prefixMisses) "
+                        + "diskL2Hits=\($0.diskL2Hits) diskL2Misses=\($0.diskL2Misses) "
+                        + "diskL2Stores=\($0.diskL2Stores)}"
+                } ?? "cacheBefore{unavailable}"
+            // Prefix-divergence: how many leading tokens match the previous
+            // step. lcp≈min means this step prefix-extends (reuse possible); a
+            // small lcp means early divergence → cold re-prefill. The tool/role
+            // fields explain WHY a step diverged (e.g. the <tools> block
+            // appearing/disappearing, or the last message flipping role).
+            let (lcp, prevCount) = PrefillDebugLog.shared.recordPromptTokens(
+                prepared.promptTokens,
+                model: modelName
+            )
+            let toolsCount = buildToolsSpec()?.count ?? 0
+            let lastRole = buildChat().last.map { "\($0.role)" } ?? "none"
+            PrefillDebugLog.shared.log(
+                "---- STEP-BEGIN model=\(modelName) "
+                    + "tokenizedPrompt=\(prepared.promptTokens.count) "
+                    + "lcpVsPrev=\(lcp)/\(prevCount) "
+                    + "toolsInSpec=\(toolsCount) toolChoice=\(String(describing: toolChoice)) "
+                    + "lastMsgRole=\(lastRole) \(cacheStr)"
+            )
+        }
+
         // `engine.generate` returns `AsyncStream<Generation>` directly with
         // reasoning + tool-call extraction handled inside vmlx. We re-wrap
         // it so we can attach a producer `Task` for cancellation.
@@ -1125,13 +1172,18 @@ struct MLXBatchAdapter {
         // keep batching; only embedding is exclusive. Released by the producer
         // task once the upstream stream has fully drained, which (per the note
         // above) is AFTER vmlx's post-`.info` cache-store eval.
-        await MetalGate.shared.enterGeneration()
+        await MetalGate.shared.enterGeneration(model: modelName)
         let upstream = await engine.generate(
             input: prepared.input,
             parameters: mlxParams
         )
 
         let (outStream, continuation) = AsyncStream<Generation>.makeStream()
+        // Prefill diagnostics: clock the producer from submit. The upstream
+        // loop drains only AFTER vmlx's post-`.info` disk-cache store, so
+        // `STREAM-DRAINED postSubmitMs` = this step's decode + KV store, and the
+        // lease (which the next step waits on) releases right after.
+        let producerSubmitAt = CFAbsoluteTimeGetCurrent()
         let producerTask = Task<Void, Never> {
             await withTaskCancellationHandler {
                 for await event in upstream {
@@ -1159,17 +1211,26 @@ struct MLXBatchAdapter {
             // unordered future hop, leaving a window where the next solo
             // request could enter `prepareInput` while this one's Metal
             // cache-store was still materializing.
+            PrefillDebugLog.shared.log(
+                "==GEN STREAM-DRAINED model=\(modelName) "
+                    + "postSubmitMs=\(Int((CFAbsoluteTimeGetCurrent() - producerSubmitAt) * 1000)) "
+                    + "(decode + post-gen disk store)"
+            )
             continuation.finish()
             if let soloLease {
                 await soloLease.release()
             }
+            PrefillDebugLog.shared.log(
+                "==GEN LEASE-RELEASED model=\(modelName) "
+                    + "postSubmitMs=\(Int((CFAbsoluteTimeGetCurrent() - producerSubmitAt) * 1000))"
+            )
             // Release the Metal gate's shared lock now that this generation's
             // GPU work (including the post-`.info` cache store) is fully done,
             // letting any waiting embedder run. Paired with the
-            // `enterGeneration()` taken before `engine.generate` above; the
-            // producer task always runs to completion, so the pair always
+            // `enterGeneration(model:)` taken before `engine.generate` above;
+            // the producer task always runs to completion, so the pair always
             // balances.
-            await MetalGate.shared.exitGeneration()
+            await MetalGate.shared.exitGeneration(model: modelName)
         }
 
         continuation.onTermination = { @Sendable _ in

@@ -84,7 +84,9 @@ public enum AgentSecretsKeychain {
             }
         #endif
         if KeychainQueryHelpers.disablesKeychainForProcess { return false }
-        return Keychain.write(service: service, account: account, data: valueData)
+        let didWrite = Keychain.write(service: service, account: account, data: valueData)
+        if didWrite { invalidateAccountsCache() }
+        return didWrite
     }
 
     public static func getSecret(id: String, agentId: UUID) -> String? {
@@ -112,7 +114,9 @@ public enum AgentSecretsKeychain {
             }
         #endif
         if KeychainQueryHelpers.disablesKeychainForProcess { return true }
-        return Keychain.delete(service: service, account: account)
+        let didDelete = Keychain.delete(service: service, account: account)
+        if didDelete { invalidateAccountsCache() }
+        return didDelete
     }
 
     /// Enumerates accounts then fetches each value individually.
@@ -148,6 +152,7 @@ public enum AgentSecretsKeychain {
         for account in allAccounts() where account.hasPrefix(prefix) {
             Keychain.delete(service: service, account: account)
         }
+        invalidateAccountsCache()
     }
 
     // MARK: - Environment Safety
@@ -176,7 +181,27 @@ public enum AgentSecretsKeychain {
         return env
     }
 
+    /// Resolve the account-name memo off the caller's thread so the first
+    /// synchronous `secretIDs` read on a latency-sensitive path (chat-preview
+    /// composition runs on the main actor) finds a warm cache instead of a
+    /// blocking `SecItemCopyMatching` + `LAContext` round-trip.
+    public static func prewarmAccounts() {
+        Task.detached(priority: .utility) {
+            _ = allAccounts()
+        }
+    }
+
     // MARK: - Private
+
+    private static let accountsCacheLock = NSLock()
+    nonisolated(unsafe) private static var cachedAccounts: [String]?
+
+    /// Drop the account-name memo after a mutation so the next read re-queries.
+    private static func invalidateAccountsCache() {
+        accountsCacheLock.lock()
+        cachedAccounts = nil
+        accountsCacheLock.unlock()
+    }
 
     private static func allAccounts() -> [String] {
         #if DEBUG
@@ -185,6 +210,23 @@ public enum AgentSecretsKeychain {
             }
         #endif
         if KeychainQueryHelpers.disablesKeychainForProcess { return [] }
-        return Keychain.allAccounts(service: service)
+
+        accountsCacheLock.lock()
+        let cached = cachedAccounts
+        accountsCacheLock.unlock()
+        if let cached {
+            return cached
+        }
+
+        // `SecItemCopyMatching` takes a process-wide Keychain lock and has hung
+        // the UI when reached from `secretIDs` during chat-preview composition
+        // on the main thread. Account names change only through this type's own
+        // writes, so memoize the enumeration and invalidate it on every
+        // mutation.
+        let accounts = Keychain.allAccounts(service: service)
+        accountsCacheLock.lock()
+        cachedAccounts = accounts
+        accountsCacheLock.unlock()
+        return accounts
     }
 }

@@ -37,6 +37,7 @@ public enum EvalRunner {
         model: ModelSelection,
         filter: String? = nil,
         thresholdOverride: Float? = nil,
+        embedCosineFloorOverride: Float? = nil,
         bootstrapMode: BootstrapMode = .loadInstalledPlugins
     ) async -> EvalReport {
         if bootstrapMode == .loadInstalledPlugins {
@@ -74,7 +75,8 @@ public enum EvalRunner {
                 let row = await runOne(
                     testCase,
                     modelId: modelLabel,
-                    thresholdOverride: thresholdOverride
+                    thresholdOverride: thresholdOverride,
+                    embedCosineFloorOverride: embedCosineFloorOverride
                 )
                 rows.append(annotatedWithCaseNotes(row, from: testCase))
             }
@@ -114,16 +116,106 @@ public enum EvalRunner {
             notes: ["note: \(extra)"] + row.notes,
             modelId: row.modelId,
             latencyMs: row.latencyMs,
-            toolUsage: row.toolUsage
+            toolUsage: row.toolUsage,
+            telemetry: row.telemetry
         )
     }
 
     // MARK: - Per-case
 
+    /// Domains that load MLX (local model or embedder) or call a model,
+    /// so peak-RAM + KV-cache telemetry is meaningful. Deterministic
+    /// pure-data domains (schema, coercion, …) are excluded so their rows
+    /// stay telemetry-free instead of carrying a noisy process footprint.
+    private static let resourceSampledDomains: Set<String> = [
+        "agent_loop", "capability_claims", "computer_use_loop", "capability_search",
+    ]
+
     private static func runOne(
         _ testCase: EvalCase,
         modelId: String,
-        thresholdOverride: Float? = nil
+        thresholdOverride: Float? = nil,
+        embedCosineFloorOverride: Float? = nil
+    ) async -> EvalCaseReport {
+        guard resourceSampledDomains.contains(testCase.domain) else {
+            return await dispatchCase(
+                testCase,
+                modelId: modelId,
+                thresholdOverride: thresholdOverride,
+                embedCosineFloorOverride: embedCosineFloorOverride
+            )
+        }
+        // Wrap model/embedder-driven cases with a peak-RAM sampler and a
+        // before/after KV-cache snapshot. The sampler keeps observing the
+        // physical footprint while the main actor is blocked inside MLX
+        // decode; the KV delta proves prefix reuse across loop iterations.
+        let sampler = PeakMemorySampler.start()
+        let kvBefore = await ModelRuntime.batchDiagnosticsSnapshot()
+        let row = await dispatchCase(
+            testCase,
+            modelId: modelId,
+            thresholdOverride: thresholdOverride,
+            embedCosineFloorOverride: embedCosineFloorOverride
+        )
+        let kvAfter = await ModelRuntime.batchDiagnosticsSnapshot()
+        let peakMb = sampler.stop()
+        return mergeResourceTelemetry(into: row, peakMb: peakMb, kvBefore: kvBefore, kvAfter: kvAfter)
+    }
+
+    /// Fold runner-level resource telemetry (peak RAM + KV-prefix delta)
+    /// into a case row, preserving any generation telemetry the domain
+    /// runner already attached (decode tok/s, TTFT, prefill from the
+    /// agent-loop transcript). KV deltas are only recorded when both
+    /// snapshots exist (a remote-only run has neither).
+    private static func mergeResourceTelemetry(
+        into row: EvalCaseReport,
+        peakMb: Double?,
+        kvBefore: BatchDiagnosticsSnapshot?,
+        kvAfter: BatchDiagnosticsSnapshot?
+    ) -> EvalCaseReport {
+        var hitsDelta: Int?
+        var missesDelta: Int?
+        var ssmHitsDelta: Int?
+        var ssmReDerivesDelta: Int?
+        if let before = kvBefore, let after = kvAfter {
+            hitsDelta = after.prefixHits - before.prefixHits
+            missesDelta = after.prefixMisses - before.prefixMisses
+            ssmHitsDelta = after.ssmCompanionHits - before.ssmCompanionHits
+            ssmReDerivesDelta = after.ssmCompanionReDerives - before.ssmCompanionReDerives
+        }
+        let existing = row.telemetry
+        let merged = EvalCaseTelemetry(
+            decodeTokensPerSecond: existing?.decodeTokensPerSecond,
+            prefillTokensPerSecond: existing?.prefillTokensPerSecond,
+            ttftMs: existing?.ttftMs,
+            completionTokens: existing?.completionTokens,
+            peakPhysFootprintMb: peakMb,
+            kvPrefixHitsDelta: hitsDelta,
+            kvPrefixMissesDelta: missesDelta,
+            ssmCompanionHitsDelta: ssmHitsDelta,
+            ssmCompanionReDerivesDelta: ssmReDerivesDelta
+        )
+        guard !merged.isEmpty else { return row }
+        return EvalCaseReport(
+            id: row.id,
+            label: row.label,
+            domain: row.domain,
+            query: row.query,
+            outcome: row.outcome,
+            capabilitySearch: row.capabilitySearch,
+            notes: row.notes,
+            modelId: row.modelId,
+            latencyMs: row.latencyMs,
+            toolUsage: row.toolUsage,
+            telemetry: merged
+        )
+    }
+
+    private static func dispatchCase(
+        _ testCase: EvalCase,
+        modelId: String,
+        thresholdOverride: Float? = nil,
+        embedCosineFloorOverride: Float? = nil
     ) async -> EvalCaseReport {
         let label = testCase.label ?? testCase.id
 
@@ -142,11 +234,16 @@ public enum EvalRunner {
             return runSandboxDiagnosticsCase(testCase, modelId: modelId)
         case "request_validation":
             return runRequestValidationCase(testCase, modelId: modelId)
+        case "computer_use":
+            return runComputerUseCase(testCase, modelId: modelId)
+        case "computer_use_loop":
+            return await runComputerUseLoopCase(testCase, modelId: modelId)
         case "capability_search":
             return await runCapabilitySearchCase(
                 testCase,
                 modelId: modelId,
-                cliThresholdOverride: thresholdOverride
+                cliThresholdOverride: thresholdOverride,
+                cliEmbedCosineFloorOverride: embedCosineFloorOverride
             )
         case "capability_claims":
             return await runCapabilityClaimsCase(testCase, modelId: modelId)
@@ -654,6 +751,128 @@ public enum EvalRunner {
         )
     }
 
+    // MARK: - Computer Use domain
+
+    /// Pure-data evaluator for `domain == "computer_use"`. Reconstructs a
+    /// scripted `AgentAction` + resolution context, runs it through the
+    /// harness's `EffectClassifier` and `AutonomyPolicy`, and pins the
+    /// resulting effect class, gate disposition, and allowlist decision.
+    /// No driver, no permissions, no model — the gate's safe-by-default
+    /// behaviour locked against regression on every PR.
+    private static func runComputerUseCase(_ testCase: EvalCase, modelId: String) -> EvalCaseReport {
+        let label = testCase.label ?? testCase.id
+        guard let exp = testCase.expect.computerUse else {
+            return Self.errored(
+                testCase,
+                label: label,
+                modelId: modelId,
+                note: "missing `expect.computerUse`"
+            )
+        }
+        guard let verb = AgentVerb(rawValue: exp.verb) else {
+            return Self.errored(
+                testCase,
+                label: label,
+                modelId: modelId,
+                note: "unknown verb '\(exp.verb)' (expected an AgentVerb raw value)"
+            )
+        }
+
+        // 1) Rebuild the action exactly as the loop would hand it to the gate.
+        let target: AgentTarget? = {
+            if exp.mark == nil && (exp.describe?.isEmpty ?? true) { return nil }
+            return AgentTarget(mark: exp.mark, describe: exp.describe)
+        }()
+        let action = AgentAction(
+            verb: verb,
+            target: target,
+            text: exp.text,
+            key: exp.key,
+            modifiers: exp.modifiers ?? [],
+            note: exp.note
+        )
+
+        // 2) Classify the effect, optionally with per-app recipe signals.
+        let recipeSignals =
+            (exp.useRecipes ?? false) ? AppRecipes.signals(for: exp.appName) : RecipeSignals.empty
+        let effect = EffectClassifier.classify(
+            action: action,
+            resolvedRole: exp.resolvedRole,
+            resolvedLabel: exp.resolvedLabel,
+            appName: exp.appName,
+            recipeSignals: recipeSignals
+        )
+
+        // 3) Build the policy and resolve disposition + allowlist gate.
+        let preset = exp.preset.flatMap { AutonomyPreset(rawValue: $0) } ?? .default
+        var perApp: [String: AutonomyPreset] = [:]
+        for (app, raw) in exp.perApp ?? [:] {
+            guard let p = AutonomyPreset(rawValue: raw) else {
+                return Self.errored(
+                    testCase,
+                    label: label,
+                    modelId: modelId,
+                    note: "unknown perApp preset '\(raw)' for app '\(app)'"
+                )
+            }
+            perApp[AutonomyPolicy.normalize(app)] = p
+        }
+        let policy = AutonomyPolicy(
+            globalPreset: preset,
+            perApp: perApp,
+            allowlist: exp.allowlist
+        )
+        let ceiling = exp.ceiling.flatMap { AutonomyPreset(rawValue: $0) }.map {
+            AutonomyCeiling.cappedAt($0)
+        }
+        let allowed = policy.isAppAllowed(exp.appName)
+        let disposition = policy.disposition(for: effect, app: exp.appName, ceiling: ceiling)
+
+        // 4) Score every present expectation; an empty set just records.
+        var notes: [String] = []
+        var passed = true
+
+        if let want = exp.expectEffect {
+            if effect.rawValue == want {
+                notes.append("effect ok: \(effect.rawValue)")
+            } else {
+                passed = false
+                notes.append("effect mismatch: expected \(want), got \(effect.rawValue)")
+            }
+        }
+        if let want = exp.expectDisposition {
+            if disposition.rawValue == want {
+                notes.append("disposition ok: \(disposition.rawValue)")
+            } else {
+                passed = false
+                notes.append("disposition mismatch: expected \(want), got \(disposition.rawValue)")
+            }
+        }
+        if let want = exp.expectAllowed {
+            if allowed == want {
+                notes.append("allowlist ok: allowed=\(allowed)")
+            } else {
+                passed = false
+                notes.append("allowlist mismatch: expected allowed=\(want), got \(allowed)")
+            }
+        }
+        if exp.expectEffect == nil, exp.expectDisposition == nil, exp.expectAllowed == nil {
+            notes.append(
+                "recorded: effect=\(effect.rawValue) disposition=\(disposition.rawValue) "
+                    + "allowed=\(allowed)"
+            )
+        }
+
+        return .terminal(
+            id: testCase.id,
+            label: label,
+            domain: testCase.domain,
+            outcome: passed ? .passed : .failed,
+            notes: notes,
+            modelId: modelId
+        )
+    }
+
     // MARK: - Capability search domain
 
     /// Pure-data evaluator for `domain == "capability_search"`. Drives
@@ -672,7 +891,8 @@ public enum EvalRunner {
     private static func runCapabilitySearchCase(
         _ testCase: EvalCase,
         modelId: String,
-        cliThresholdOverride: Float?
+        cliThresholdOverride: Float?,
+        cliEmbedCosineFloorOverride: Float? = nil
     ) async -> EvalCaseReport {
         let label = testCase.label ?? testCase.id
 
@@ -715,7 +935,8 @@ public enum EvalRunner {
         let observed = await CapabilitySearchEvaluator.evaluate(
             query: testCase.query,
             topK: topK,
-            threshold: threshold
+            threshold: threshold,
+            embedCosineFloor: cliEmbedCosineFloorOverride
         )
 
         await restoreSkillEnabledState(priorSkillState)
@@ -852,10 +1073,62 @@ public enum EvalRunner {
             }
         }
 
-        let resolvedAgentId = AgentManager.shared.activeAgent.id
+        // Capability skip (mirrors the `agent_loop` tiny-context skip and the
+        // `ensureToolsDisabled` skip below): a model whose context size class
+        // auto-disables tool calling — Apple Foundation and any other
+        // ≤4K-token-window model (`ContextSizeClass.tiny`) — cannot satisfy a
+        // case that REQUIRES a tool call, because Osaurus strips the tool
+        // schema at compose time for such models. A `mustCallTools` /
+        // `loadSkillFirst` case would then score a capability-mismatch FAIL
+        // rather than an honest-claims result, so surface it as SKIP. The
+        // abstention cases (no tool requirement — they assert the model does
+        // NOT over-claim a capability it lacks) still run: a tool-less model
+        // is exactly their premise, so they stay meaningful here.
+        let claimsRequiresTools =
+            !(exp.mustCallTools?.isEmpty ?? true) || exp.loadSkillFirst != nil
+        let claimsWindow = ContextSizeResolver.resolve(modelId: modelId)
+        if claimsRequiresTools && claimsWindow.sizeClass.disablesTools {
+            return .terminal(
+                id: testCase.id,
+                label: label,
+                domain: testCase.domain,
+                outcome: .skipped,
+                notes: [
+                    "tools auto-disabled for '\(modelId)': context size class "
+                        + "\(claimsWindow.sizeClass) (≤\(ContextSizeResolver.tinyCeiling)-token "
+                        + "window) strips the tool schema; this case requires a tool call"
+                ],
+                modelId: modelId
+            )
+        }
 
-        // Skip rather than mutate global state when a must-be-absent tool
-        // is actually enabled.
+        // Cases that assert a tool MUST be absent (`ensureToolsDisabled`)
+        // can't be proven against the Default agent's legacy global tool
+        // mode, where `effectiveEnabledToolNames == nil` means "everything
+        // is reachable" — so the gate below would always skip. Stand up an
+        // isolated, fully-enabled auto-mode eval agent whose allowlist is the
+        // live dynamic-tool registry minus the forbidden names; that makes
+        // the absence authoritative (and naturally excludes fictional tools
+        // like send_fax / place_trade) so the case actually runs. The agent
+        // is torn down on every exit path via `defer`. Cases with no
+        // `ensureToolsDisabled` keep using the active agent unchanged.
+        let claimsAbsenceNames = testCase.fixtures.ensureToolsDisabled ?? []
+        let isolatedClaimsAgentId: UUID? =
+            claimsAbsenceNames.isEmpty
+            ? nil
+            : installCapabilityClaimsAgent(excluding: claimsAbsenceNames)
+        defer {
+            if let isolatedClaimsAgentId {
+                removeEvalAgent(isolatedClaimsAgentId)
+            }
+        }
+        let resolvedAgentId = isolatedClaimsAgentId ?? AgentManager.shared.activeAgent.id
+
+        // Skip only when a must-be-absent tool is GENUINELY reachable on the
+        // resolved agent (e.g. a host that really ships a `send_fax` tool) —
+        // that would change what the abstention case proves. With the
+        // isolated agent above the allowlist is non-nil and excludes the
+        // forbidden names, so the well-behaved case proceeds.
         if let mustBeAbsent = testCase.fixtures.ensureToolsDisabled, !mustBeAbsent.isEmpty {
             let enabled = AgentManager.shared.effectiveEnabledToolNames(for: resolvedAgentId)
             // nil = legacy global-enabled mode: everything is reachable,
@@ -887,7 +1160,7 @@ public enum EvalRunner {
             agentId: resolvedAgentId
         )
 
-        let judgeModel = ProcessInfo.processInfo.environment["JUDGE_MODEL"]
+        let judgeModel = EvalJudgeModel.resolveAndWarnOnce(runModelId: modelId)
         let started = Date()
         let transcript = await CapabilityClaimsEvaluator.run(
             query: testCase.query,

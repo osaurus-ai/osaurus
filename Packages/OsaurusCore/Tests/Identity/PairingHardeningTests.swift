@@ -197,7 +197,13 @@ struct MultiAgentValidatorTests {
 struct AgentScopeRejectionTests {
     /// All cases in one test: `AgentIdentityRegistry` is a process-global
     /// singleton, so the scenarios run sequentially against one snapshot.
-    @Test func scopeEnforcement() {
+    /// The HTTP-server test lease serializes this against the server tests
+    /// (including the `/agents/{address}/run` E2E) that read the same
+    /// registry, so a parallel suite can't swap the snapshot mid-assertion.
+    @Test func scopeEnforcement() async {
+        let lease = await HTTPServerTestLock.shared.acquire()
+        defer { Task { await lease.release() } }
+
         let agentA = UUID()
         let agentB = UUID()
         let addrA = "0xaaaa000000000000000000000000000000000001"
@@ -206,6 +212,19 @@ struct AgentScopeRejectionTests {
             addresses: [addrA, addrB],
             indices: [0, 1],
             addressByAgentId: [agentA: addrA, agentB: addrB]
+        )
+
+        // Reverse lookup (address → agent UUID) is what lets
+        // `/agents/{address}/run` accept the crypto address a paired peer
+        // knows; it must round-trip case-insensitively and fail closed on a
+        // mapping it has never seen.
+        #expect(AgentIdentityRegistry.shared.agentId(forAddress: addrA) == agentA)
+        #expect(AgentIdentityRegistry.shared.agentId(forAddress: addrA.uppercased()) == agentA)
+        #expect(AgentIdentityRegistry.shared.agentId(forAddress: addrB) == agentB)
+        #expect(
+            AgentIdentityRegistry.shared.agentId(
+                forAddress: "0xcccc000000000000000000000000000000000003"
+            ) == nil
         )
 
         // No recorded audience (loopback / public route): unrestricted.

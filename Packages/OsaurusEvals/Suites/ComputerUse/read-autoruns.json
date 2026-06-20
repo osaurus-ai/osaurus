@@ -1,0 +1,16 @@
+{
+  "id": "computer_use.read-autoruns",
+  "domain": "computer_use",
+  "label": "computer use • read auto-runs under balanced",
+  "query": "Re-observe the current window.",
+  "notes": "Perception never mutates anything, so a read effect always auto-runs regardless of preset. The floor of the whole gate.",
+  "fixtures": {},
+  "expect": {
+    "computerUse": {
+      "verb": "observe",
+      "preset": "balanced",
+      "expectEffect": "read",
+      "expectDisposition": "allow"
+    }
+  }
+}

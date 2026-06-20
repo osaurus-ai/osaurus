@@ -1,0 +1,19 @@
+{
+  "id": "prefix_hash.system-content-changes-hash",
+  "domain": "prefix_hash",
+  "label": "prefix_hash • changing the system content changes the hash",
+  "query": "",
+  "notes": "Inequality pin. The prefix hash keys the KV-cache prefix, so a different system prompt MUST produce a different hash — otherwise a stale prefix could be reused across a system-content change. Same tool set, different system content, expectEqual=false.",
+  "fixtures": {},
+  "expect": {
+    "prefixHash": {
+      "systemContent": "You are a helpful assistant.",
+      "toolNames": ["search", "browse"],
+      "compareTo": {
+        "systemContent": "You are a terse assistant. Answer in one sentence.",
+        "toolNames": ["search", "browse"]
+      },
+      "expectEqual": false
+    }
+  }
+}

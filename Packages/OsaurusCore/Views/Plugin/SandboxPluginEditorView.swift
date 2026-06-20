@@ -28,18 +28,35 @@ struct SandboxPluginEditorView: View {
     private let onSave: (SandboxPlugin) -> Void
     private let onDismiss: () -> Void
 
+    /// Pristine copies of the editable state, captured at init. Used to
+    /// disable "Save Changes" while an edited plugin still matches what's
+    /// stored.
+    private let originalPlugin: SandboxPlugin
+    private let originalMetadataText: String
+
     init(
         plugin: SandboxPlugin,
         isNew: Bool,
         onSave: @escaping (SandboxPlugin) -> Void,
         onDismiss: @escaping () -> Void
     ) {
+        let serializedMetadata = Self.serializeMetadata(plugin.metadata)
         _plugin = State(initialValue: plugin)
-        _metadataText = State(initialValue: Self.serializeMetadata(plugin.metadata))
+        _metadataText = State(initialValue: serializedMetadata)
         self.isNew = isNew
         self.originalId = plugin.id
+        self.originalPlugin = plugin
+        self.originalMetadataText = serializedMetadata
         self.onSave = onSave
         self.onDismiss = onDismiss
+    }
+
+    /// True when an edited plugin still differs from its stored version.
+    /// New plugins are always "changed" so their button stays gated on the
+    /// name-required check alone.
+    private var hasChanges: Bool {
+        guard !isNew else { return true }
+        return plugin != originalPlugin || metadataText != originalMetadataText
     }
 
     var body: some View {
@@ -132,7 +149,10 @@ private extension SandboxPluginEditorView {
                     }
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(plugin.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(
+                    plugin.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        || !hasChanges
+                )
             }
         }
         .padding(16)

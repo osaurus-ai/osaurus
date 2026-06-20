@@ -215,7 +215,7 @@ final class NativeThinkingView: NSView {
 
         // glyph in the node foreground
         iconView.translatesAutoresizingMaskIntoConstraints = false
-        iconView.image = NSImage(systemSymbolName: "brain", accessibilityDescription: nil)
+        iconView.image = SymbolImageCache.image("brain", accessibilityDescription: nil)
         iconView.contentTintColor = NSColor.labelColor
         iconView.imageScaling = .scaleProportionallyUpOrDown
         iconNode.addSubview(iconView)
@@ -235,7 +235,7 @@ final class NativeThinkingView: NSView {
 
         chevronView.translatesAutoresizingMaskIntoConstraints = false
         chevronView.wantsLayer = true
-        chevronView.image = NSImage(systemSymbolName: "chevron.right", accessibilityDescription: nil)
+        chevronView.image = SymbolImageCache.image("chevron.right", accessibilityDescription: nil)
         chevronView.contentTintColor = .tertiaryLabelColor
         chevronView.imageScaling = .scaleProportionallyUpOrDown
         addSubview(chevronView)

@@ -121,12 +121,15 @@ The composer enforces inline-byte caps before attaching:
 
 Files exceeding the cap show a toast and don't attach.
 
-### Spillover to encrypted blob store
+### Spillover to the blob store
 
 After the user sends a turn, `AttachmentBlobStore.spillIfNeeded`
 walks the attachments and writes inline bytes that exceed the
-modality threshold to `~/.osaurus/blob-store/<hash>` (encrypted by
-the at-rest key from `StorageKeyManager`):
+modality threshold to the content-addressed blob store. The bytes
+follow the app-wide storage posture: plaintext by default (protected
+by FileVault), or AES-GCM-encrypted with the at-rest key from
+`StorageKeyManager` when the user has opted in to encryption (see
+[STORAGE.md](../../../../docs/STORAGE.md)):
 
 | Attachment kind | Spill threshold |
 |---|---|

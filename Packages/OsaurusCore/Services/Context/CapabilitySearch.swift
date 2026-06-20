@@ -78,6 +78,22 @@ enum CapabilitySearch {
     /// never mutates this constant.
     static let minimumFusedScore: Float = 0.020
 
+    /// Embed-cosine quality floor for the **tools** lane, applied INSIDE
+    /// the hybrid fusion (`ToolSearchService.searchHybrid`): an embedding
+    /// candidate scoring below this cosine contributes ZERO to its RRF
+    /// fused score, so a low-similarity abstain-noise tool can no longer
+    /// rank-fuse its way past `minimumFusedScore`. This is the real abstain
+    /// mechanism the `minimumFusedScore` note flagged as a follow-up —
+    /// pure rank-based RRF saturates near `2/(60+1) ≈ 0.0328` and cannot
+    /// separate abstain from recall on rank alone, but gating the embed
+    /// contribution by cosine quality does (BM25-only rank-1 already sits
+    /// below the fused cutoff). Held at the shared-embedder value the
+    /// methods/skills lanes use (`potion-base-4M`, floors 0.25 — same
+    /// cosine scale, abstain noise tops ≈0.18, real recall ≈0.28+).
+    /// Calibrated/verified by the CapabilitySearch sweep recorded in
+    /// `Packages/OsaurusEvals/Config/capability-search-sweep.md`.
+    static let minimumEmbedCosineForTools: Float = 0.25
+
     /// Env var that swaps the inner per-lane search calls for their
     /// diagnostic variants (`searchHybridWithDiagnostic` for tools,
     /// `searchWithDiagnostic` for methods + skills) and emits a single
@@ -96,6 +112,13 @@ enum CapabilitySearch {
         topK: Int,
         allowedToolNames: Set<String>? = nil
     ) async -> CapabilitySearchResults {
+        // Query-intent abstain: a pure greeting/closing pleasantry has no
+        // capability to discover, so skip the lanes entirely (see
+        // CapabilityQueryIntent — the pre-RRF gate the cosine-floor sweep
+        // flagged as the correct fix for the abstain class).
+        if CapabilityQueryIntent.isConversationalAbstain(query) {
+            return CapabilitySearchResults(methods: [], tools: [], skills: [])
+        }
         await CapabilitySearchDiagnostics.logSnapshotOnce(
             reason: "CapabilitySearch.searchToolsOnly"
         )
@@ -103,6 +126,7 @@ enum CapabilitySearch {
             query: query,
             topK: topK,
             minFusedScore: minimumFusedScore,
+            minEmbedCosine: minimumEmbedCosineForTools,
             allowedNames: allowedToolNames
         )
         return CapabilitySearchResults(methods: [], tools: tools, skills: [])
@@ -116,6 +140,14 @@ enum CapabilitySearch {
         let methodsThreshold = minimumRelevanceScoreMethods
         let skillsThreshold = minimumRelevanceScoreSkills
         let fusedCutoff = minimumFusedScore
+
+        // Query-intent abstain: short-circuit pure chit-chat before any
+        // BM25/embed work (see CapabilityQueryIntent). Returns empty so
+        // `capabilities_discover` doesn't surface RRF-saturation noise for
+        // a greeting/thank-you with no capability intent.
+        if CapabilityQueryIntent.isConversationalAbstain(query) {
+            return CapabilitySearchResults(methods: [], tools: [], skills: [])
+        }
 
         // Per-process cheap-path snapshot. First call from this site
         // emits one `CapabilitySearchHealth` line; subsequent calls
@@ -143,6 +175,7 @@ enum CapabilitySearch {
             query: query,
             topK: topK.tools,
             minFusedScore: fusedCutoff,
+            minEmbedCosine: minimumEmbedCosineForTools,
             allowedNames: allowedToolNames
         )
         async let skillHits = SkillSearchService.shared.search(
@@ -186,6 +219,7 @@ enum CapabilitySearch {
             query: query,
             topK: topK.tools,
             minFusedScore: fusedCutoff,
+            minEmbedCosine: minimumEmbedCosineForTools,
             allowedNames: allowedToolNames
         )
         async let skillPair = SkillSearchService.shared.searchWithDiagnostic(
