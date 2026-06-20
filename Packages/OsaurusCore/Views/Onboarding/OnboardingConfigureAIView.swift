@@ -730,7 +730,15 @@ struct ConfigureAIBody: View {
     /// is populated synchronously in `SystemMonitorService.init`, so the
     /// first onboarding frame already has a real value to classify
     /// curated top suggestions against.
-    @ObservedObject private var systemMonitor = SystemMonitorService.shared
+    /// Non-observing on purpose. We only ever read `totalMemoryGB` — total
+    /// physical RAM, a runtime constant populated synchronously in
+    /// `SystemMonitorService.init` (see `body`'s comment below). Observing via
+    /// `@ObservedObject` subscribed this deep onboarding tree to the service's
+    /// 2s CPU/memory publishes, forcing a full re-render every tick. On a
+    /// memory-pressured machine those re-renders were slow enough to trip the
+    /// app-hang watchdog. A plain reference reads the same constant without
+    /// subscribing to publishes that can never change our output.
+    private let systemMonitor = SystemMonitorService.shared
 
     var body: some View {
         OnboardingTwoColumnBody(
