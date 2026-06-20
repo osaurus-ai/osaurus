@@ -2793,7 +2793,10 @@ extension FloatingInputCard {
     /// window and offers a one-tap jump to the model picker so the fix is
     /// obvious.
     private var configContextErrorBanner: some View {
-        let modelName = selectedPickerItem?.displayName ?? selectedModel ?? L("This model")
+        // The banner only renders when `configContextTooSmall` is true, which
+        // requires a non-nil `selectedModel`, so the empty fallback is
+        // unreachable — it just keeps `modelName` non-optional.
+        let modelName = selectedPickerItem?.displayName ?? selectedModel ?? ""
         let ctx = selectedModel.flatMap { ContextSizeResolver.resolve(modelId: $0).contextLength }
         let ctxBlurb = ctx.map { " (~\(formatTokenCount($0)) ctx)" } ?? ""
         return HStack(spacing: 8) {
