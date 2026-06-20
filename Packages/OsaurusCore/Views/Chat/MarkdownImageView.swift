@@ -361,6 +361,92 @@ enum ImageActions {
     }
 }
 
+// MARK: - Native Markdown Image Segment View
+
+/// `NSImageView` used by the AppKit markdown renderer for inline / generated
+/// images. Overlays a download button at the top-right of the *displayed*
+/// image (revealed on hover) so a generated image can be saved without opening
+/// it full screen. The owner positions the button via `setImageRightEdge(_:)`
+/// since the view is full-width while the image is left-aligned and scaled.
+final class MarkdownSegmentImageView: NSImageView {
+    private let downloadButton = NSButton()
+    private var trackingAreaRef: NSTrackingArea?
+    private var rightEdgeConstraint: NSLayoutConstraint?
+
+    private static let buttonSize: CGFloat = 26
+    private static let inset: CGFloat = 8
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        configureDownloadButton()
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    private func configureDownloadButton() {
+        downloadButton.translatesAutoresizingMaskIntoConstraints = false
+        downloadButton.isBordered = false
+        downloadButton.bezelStyle = .regularSquare
+        downloadButton.imagePosition = .imageOnly
+        downloadButton.image = NSImage(
+            systemSymbolName: "arrow.down.to.line", accessibilityDescription: "Save Image"
+        )?.withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 12, weight: .semibold))
+        downloadButton.contentTintColor = .white
+        downloadButton.wantsLayer = true
+        downloadButton.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.55).cgColor
+        downloadButton.layer?.cornerRadius = 6
+        downloadButton.target = self
+        downloadButton.action = #selector(saveImageTapped)
+        downloadButton.isHidden = true
+        downloadButton.toolTip = L("Save Image")
+        addSubview(downloadButton)
+
+        let trailing = downloadButton.trailingAnchor.constraint(
+            equalTo: leadingAnchor, constant: Self.buttonSize)
+        rightEdgeConstraint = trailing
+        NSLayoutConstraint.activate([
+            downloadButton.topAnchor.constraint(equalTo: topAnchor, constant: Self.inset),
+            trailing,
+            downloadButton.widthAnchor.constraint(equalToConstant: Self.buttonSize),
+            downloadButton.heightAnchor.constraint(equalToConstant: Self.buttonSize),
+        ])
+    }
+
+    /// Pin the button `inset` points inside the displayed image's right edge,
+    /// `displayedWidth` measured from the view's left (where the image aligns).
+    func setImageRightEdge(_ displayedWidth: CGFloat) {
+        let target = max(Self.buttonSize + Self.inset, displayedWidth) - Self.inset
+        if let c = rightEdgeConstraint, abs(c.constant - target) > 0.5 {
+            c.constant = target
+        }
+    }
+
+    @objc private func saveImageTapped() {
+        guard let image else { return }
+        ImageActions.saveImageToFile(image)
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let t = trackingAreaRef { removeTrackingArea(t) }
+        let t = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+            owner: self, userInfo: nil
+        )
+        addTrackingArea(t)
+        trackingAreaRef = t
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        downloadButton.isHidden = (image == nil)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        downloadButton.isHidden = true
+    }
+}
+
 // MARK: - Image Load Error
 
 enum ImageLoadError: LocalizedError {
