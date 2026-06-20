@@ -150,6 +150,16 @@ public enum ServerRuntimeSettingsStore {
         cachedSnapshot = nil
     }
 
+    /// Pin the in-memory snapshot for THIS PROCESS ONLY, WITHOUT persisting to
+    /// disk. Unlike `save(_:)`, this never writes `server-runtime.json`, so it
+    /// cannot mutate the user's saved server settings. The eval CLI uses it to
+    /// force a KV-cache regime (e.g. memory-only) for a run so the
+    /// self-declared `OSAURUS_EVALS_KV_REGIME` provenance matches the actual
+    /// runtime instead of silently inheriting the persisted/default config.
+    public nonisolated static func overrideSnapshotInMemory(_ settings: VMLXServerRuntimeSettings) {
+        cachedSnapshot = settings
+    }
+
     public nonisolated static func modelLoadRAMThresholds() -> (soft: Double, hard: Double) {
         let configuration = diskBackedServerConfiguration() ?? .default
         return ServerConfiguration.normalizedModelLoadRAMThresholds(

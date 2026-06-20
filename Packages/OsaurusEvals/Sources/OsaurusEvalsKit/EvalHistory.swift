@@ -30,6 +30,10 @@ public struct EvalHistoryRow: Codable, Sendable, Equatable {
     public let decodeTokensPerSecond: Double?
     public let ttftMs: Double?
     public let peakPhysFootprintMb: Double?
+    /// Mean / peak HOST CPU utilization (%) for this model's model-driven
+    /// rows. Optional so pre-CPU history lines still decode as nil.
+    public let meanCpuPercent: Double?
+    public let peakCpuPercent: Double?
     /// Run provenance (hardware, OS, build, judge, catalog hash). Optional so
     /// pre-existing history lines still decode; populated for runs recorded
     /// after the provenance block shipped so a crowdsourced trend stays
@@ -48,6 +52,8 @@ public struct EvalHistoryRow: Codable, Sendable, Equatable {
         decodeTokensPerSecond: Double?,
         ttftMs: Double?,
         peakPhysFootprintMb: Double?,
+        meanCpuPercent: Double? = nil,
+        peakCpuPercent: Double? = nil,
         environment: RunEnvironment? = nil
     ) {
         self.ts = ts
@@ -61,6 +67,8 @@ public struct EvalHistoryRow: Codable, Sendable, Equatable {
         self.decodeTokensPerSecond = decodeTokensPerSecond
         self.ttftMs = ttftMs
         self.peakPhysFootprintMb = peakPhysFootprintMb
+        self.meanCpuPercent = meanCpuPercent
+        self.peakCpuPercent = peakCpuPercent
         self.environment = environment
     }
 }
@@ -85,6 +93,8 @@ public enum EvalHistory {
                 decodeTokensPerSecond: col.meanDecodeTokensPerSecond,
                 ttftMs: col.meanTtftMs,
                 peakPhysFootprintMb: col.peakPhysFootprintMb,
+                meanCpuPercent: col.meanCpuPercent,
+                peakCpuPercent: col.peakCpuPercent,
                 environment: col.environment
             )
         }

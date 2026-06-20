@@ -34,6 +34,12 @@ public struct EvalMatrixModelColumn: Sendable, Codable, Equatable {
     /// Peak-of-peak physical footprint (MB) across telemetered rows —
     /// the headline RAM number the AGENTS.md gate reads.
     public let peakPhysFootprintMb: Double?
+    /// Mean of per-case mean CPU utilization (%) across telemetered rows —
+    /// sustained HOST overhead during model-driven cases (GPU compute is not
+    /// CPU on Apple silicon).
+    public let meanCpuPercent: Double?
+    /// Peak-of-peak instantaneous CPU utilization (%) across telemetered rows.
+    public let peakCpuPercent: Double?
     /// Run provenance for this model's reports (hardware, OS, build, judge,
     /// catalog hash). nil for older reports; carried through so the history
     /// log and the crowdsourced compatibility leaderboard stay attributable.
@@ -48,6 +54,8 @@ public struct EvalMatrixModelColumn: Sendable, Codable, Equatable {
         meanDecodeTokensPerSecond: Double?,
         meanTtftMs: Double?,
         peakPhysFootprintMb: Double?,
+        meanCpuPercent: Double? = nil,
+        peakCpuPercent: Double? = nil,
         environment: RunEnvironment? = nil
     ) {
         self.modelId = modelId
@@ -58,6 +66,8 @@ public struct EvalMatrixModelColumn: Sendable, Codable, Equatable {
         self.meanDecodeTokensPerSecond = meanDecodeTokensPerSecond
         self.meanTtftMs = meanTtftMs
         self.peakPhysFootprintMb = peakPhysFootprintMb
+        self.meanCpuPercent = meanCpuPercent
+        self.peakCpuPercent = peakCpuPercent
         self.environment = environment
     }
 }
@@ -120,6 +130,16 @@ public struct EvalMatrix: Sendable, Codable, Equatable {
                 + models.map { $0.peakPhysFootprintMb.map { String(format: "%.0f", $0) } ?? "—" }
                 .joined(separator: " | ") + " |"
         )
+        lines.append(
+            "| CPU % (mean) | "
+                + models.map { $0.meanCpuPercent.map { String(format: "%.0f", $0) } ?? "—" }
+                .joined(separator: " | ") + " |"
+        )
+        lines.append(
+            "| CPU % (peak) | "
+                + models.map { $0.peakCpuPercent.map { String(format: "%.0f", $0) } ?? "—" }
+                .joined(separator: " | ") + " |"
+        )
         let envRows = models.compactMap { col -> String? in
             guard let env = col.environment else { return nil }
             return "- `\(shortModel(col.modelId))` — \(env.summary)"
@@ -140,6 +160,7 @@ public struct EvalMatrix: Sendable, Codable, Equatable {
             var perf: [String] = []
             if let d = col.meanDecodeTokensPerSecond { perf.append(String(format: "%.1f tok/s", d)) }
             if let r = col.peakPhysFootprintMb { perf.append(String(format: "%.0fMB", r)) }
+            if let c = col.meanCpuPercent { perf.append(String(format: "%.0f%% CPU", c)) }
             let perfStr = perf.isEmpty ? "" : "  [\(perf.joined(separator: ", "))]"
             lines.append("  \(shortModel(col.modelId)): \(col.totalPassed)/\(col.totalScored)\(perfStr)")
         }
@@ -221,6 +242,7 @@ public enum EvalMatrixBuilder {
             let decodes = telem.compactMap(\.decodeTokensPerSecond)
             let ttfts = telem.compactMap(\.ttftMs)
             let rams = telem.compactMap(\.peakPhysFootprintMb)
+            let cpus = telem.compactMap(\.meanCpuPercent)
             return EvalMatrixModelColumn(
                 modelId: modelId,
                 startedAt: startedByModel[modelId],
@@ -230,6 +252,8 @@ public enum EvalMatrixBuilder {
                 meanDecodeTokensPerSecond: decodes.isEmpty ? nil : decodes.reduce(0, +) / Double(decodes.count),
                 meanTtftMs: ttfts.isEmpty ? nil : ttfts.reduce(0, +) / Double(ttfts.count),
                 peakPhysFootprintMb: rams.max(),
+                meanCpuPercent: cpus.isEmpty ? nil : cpus.reduce(0, +) / Double(cpus.count),
+                peakCpuPercent: telem.compactMap(\.peakCpuPercent).max(),
                 environment: envByModel[modelId]
             )
         }
