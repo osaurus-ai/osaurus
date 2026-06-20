@@ -578,7 +578,7 @@ struct MemoryView: View {
                     let trimmed = ctx.trimmingCharacters(in: .whitespacesAndNewlines)
                     let text =
                         trimmed.isEmpty
-                        ? "(No memory context assembled — memory may be empty or disabled)"
+                        ? L("(No memory context assembled — memory may be empty or disabled)")
                         : trimmed
                     contextPreviewItem = ContextPreviewItem(text: text)
                 }
@@ -665,7 +665,7 @@ struct MemoryView: View {
                                     let trimmed = ctx.trimmingCharacters(in: .whitespacesAndNewlines)
                                     let text =
                                         trimmed.isEmpty
-                                        ? "(No memory context assembled — memory may be empty or disabled)"
+                                        ? L("(No memory context assembled — memory may be empty or disabled)")
                                         : trimmed
                                     contextPreviewItem = ContextPreviewItem(text: text)
                                 }

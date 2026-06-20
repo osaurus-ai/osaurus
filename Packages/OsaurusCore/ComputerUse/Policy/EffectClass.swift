@@ -39,10 +39,10 @@ public enum EffectClass: String, Sendable, Codable, CaseIterable, Comparable {
     /// Human-readable label for confirm cards / activity feeds.
     public var displayLabel: String {
         switch self {
-        case .read: return "Read"
-        case .navigate: return "Navigate"
-        case .edit: return "Edit"
-        case .consequential: return "Consequential"
+        case .read: return L("Read")
+        case .navigate: return L("Navigate")
+        case .edit: return L("Edit")
+        case .consequential: return L("Consequential")
         }
     }
 

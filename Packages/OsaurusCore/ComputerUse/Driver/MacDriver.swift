@@ -381,13 +381,13 @@ public enum MacDriverError: Error, Sendable, Equatable {
     public var message: String {
         switch self {
         case .accessibilityNotGranted:
-            return "Accessibility permission is required to perceive and control apps."
+            return L("Accessibility permission is required to perceive and control apps.")
         case .screenRecordingNotGranted:
-            return "Screen Recording permission is required for screenshot (som/vision) capture."
+            return L("Screen Recording permission is required for screenshot (som/vision) capture.")
         case .appNotFound(let id):
-            return "Application not found: \(id)"
+            return L("Application not found: \(id)")
         case .captureFailed(let m):
-            return "Capture failed: \(m)"
+            return L("Capture failed: \(m)")
         case .other(let m):
             return m
         }

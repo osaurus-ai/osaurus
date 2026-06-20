@@ -15,10 +15,10 @@ public enum SandboxProvisioningReadiness: String, Codable, Sendable {
 
     public var label: String {
         switch self {
-        case .ready: "Ready"
-        case .needsSetup: "Needs setup"
-        case .blocked: "Blocked"
-        case .unproven: "Unproven"
+        case .ready: L("Ready")
+        case .needsSetup: L("Needs setup")
+        case .blocked: L("Blocked")
+        case .unproven: L("Unproven")
         }
     }
 }
@@ -272,10 +272,10 @@ public enum SandboxProvisioningDiagnostics {
                     code: .rootOverrideActive,
                     severity: .info,
                     status: .passed,
-                    title: "Custom sandbox root is active",
-                    detail: "Diagnostics are using \(OsaurusPaths.root().standardizedFileURL.path).",
+                    title: L("Custom sandbox root is active"),
+                    detail: L("Diagnostics are using \(OsaurusPaths.root().standardizedFileURL.path)."),
                     repairSuggestion:
-                        "Unset OSAURUS_TEST_ROOT or clear OsaurusPaths.overrideRoot to return to the default root.",
+                        L("Unset OSAURUS_TEST_ROOT or clear OsaurusPaths.overrideRoot to return to the default root."),
                     locationID: .root,
                     path: OsaurusPaths.root().standardizedFileURL.path
                 )
@@ -288,10 +288,12 @@ public enum SandboxProvisioningDiagnostics {
                     code: .sandboxUnavailable,
                     severity: .blocked,
                     status: .failed,
-                    title: "macOS version does not support sandbox provisioning",
+                    title: L("macOS version does not support sandbox provisioning"),
                     detail:
-                        "The sandbox requires macOS 26 or later; this host reports macOS \(operatingSystemMajorVersion).",
-                    repairSuggestion: "Run Osaurus sandbox provisioning on macOS 26 or later.",
+                        L(
+                            "The sandbox requires macOS 26 or later; this host reports macOS \(operatingSystemMajorVersion)."
+                        ),
+                    repairSuggestion: L("Run Osaurus sandbox provisioning on macOS 26 or later."),
                     locationID: nil,
                     path: nil
                 )
@@ -304,9 +306,9 @@ public enum SandboxProvisioningDiagnostics {
                     code: .unsupportedArchitecture,
                     severity: .blocked,
                     status: .failed,
-                    title: "Apple Silicon is required",
-                    detail: "The sandbox image and Containerization runtime are supported on Apple Silicon.",
-                    repairSuggestion: "Run sandbox provisioning on an Apple Silicon Mac.",
+                    title: L("Apple Silicon is required"),
+                    detail: L("The sandbox image and Containerization runtime are supported on Apple Silicon."),
+                    repairSuggestion: L("Run sandbox provisioning on an Apple Silicon Mac."),
                     locationID: nil,
                     path: nil
                 )
@@ -323,9 +325,9 @@ public enum SandboxProvisioningDiagnostics {
                     code: .configMissing,
                     severity: .info,
                     status: .missing,
-                    title: "Sandbox configuration file is missing",
-                    detail: "Osaurus will use default sandbox settings until a config file is saved.",
-                    repairSuggestion: "Open Sandbox settings or run setup to write \(configuration.path).",
+                    title: L("Sandbox configuration file is missing"),
+                    detail: L("Osaurus will use default sandbox settings until a config file is saved."),
+                    repairSuggestion: L("Open Sandbox settings or run setup to write \(configuration.path)."),
                     locationID: .configFile,
                     path: configuration.path
                 )
@@ -336,9 +338,9 @@ public enum SandboxProvisioningDiagnostics {
                     code: .configInvalid,
                     severity: .warning,
                     status: .failed,
-                    title: "Sandbox configuration could not be decoded",
-                    detail: configuration.error ?? "The config file is invalid JSON or has an incompatible shape.",
-                    repairSuggestion: "Fix or remove \(configuration.path), then save Sandbox settings again.",
+                    title: L("Sandbox configuration could not be decoded"),
+                    detail: configuration.error ?? L("The config file is invalid JSON or has an incompatible shape."),
+                    repairSuggestion: L("Fix or remove \(configuration.path), then save Sandbox settings again."),
                     locationID: .configFile,
                     path: configuration.path
                 )
@@ -351,10 +353,10 @@ public enum SandboxProvisioningDiagnostics {
                     code: .setupIncomplete,
                     severity: .warning,
                     status: .missing,
-                    title: "Sandbox setup has not completed",
-                    detail: "The setupComplete flag is false, so tool and agent startup still require provisioning.",
+                    title: L("Sandbox setup has not completed"),
+                    detail: L("The setupComplete flag is false, so tool and agent startup still require provisioning."),
                     repairSuggestion:
-                        "Use Set Up Sandbox from the Sandbox tab and rerun this preflight after it finishes.",
+                        L("Use Set Up Sandbox from the Sandbox tab and rerun this preflight after it finishes."),
                     locationID: .configFile,
                     path: configuration.path
                 )
@@ -420,7 +422,7 @@ public enum SandboxProvisioningDiagnostics {
         return [
             LocationSpec(
                 id: .root,
-                title: "Osaurus root",
+                title: L("Osaurus root"),
                 url: OsaurusPaths.root(),
                 kind: .directory,
                 stage: .hostStorage,
@@ -431,7 +433,7 @@ public enum SandboxProvisioningDiagnostics {
             ),
             LocationSpec(
                 id: .configDirectory,
-                title: "Configuration directory",
+                title: L("Configuration directory"),
                 url: OsaurusPaths.config(),
                 kind: .directory,
                 stage: .hostStorage,
@@ -442,7 +444,7 @@ public enum SandboxProvisioningDiagnostics {
             ),
             LocationSpec(
                 id: .configFile,
-                title: "Sandbox configuration",
+                title: L("Sandbox configuration"),
                 url: OsaurusPaths.sandboxConfigFile(),
                 kind: .file,
                 stage: .hostStorage,
@@ -453,7 +455,7 @@ public enum SandboxProvisioningDiagnostics {
             ),
             LocationSpec(
                 id: .cacheDirectory,
-                title: "Cache directory",
+                title: L("Cache directory"),
                 url: OsaurusPaths.cache(),
                 kind: .directory,
                 stage: .hostStorage,
@@ -464,7 +466,7 @@ public enum SandboxProvisioningDiagnostics {
             ),
             LocationSpec(
                 id: .temporaryDirectory,
-                title: "Temporary directory",
+                title: L("Temporary directory"),
                 url: FileManager.default.temporaryDirectory,
                 kind: .directory,
                 stage: .hostStorage,
@@ -475,7 +477,7 @@ public enum SandboxProvisioningDiagnostics {
             ),
             LocationSpec(
                 id: .containerRoot,
-                title: "Container root",
+                title: L("Container root"),
                 url: OsaurusPaths.container(),
                 kind: .directory,
                 stage: .provisioningAsset,
@@ -486,7 +488,7 @@ public enum SandboxProvisioningDiagnostics {
             ),
             LocationSpec(
                 id: .containerWorkspace,
-                title: "Workspace mount",
+                title: L("Workspace mount"),
                 url: OsaurusPaths.containerWorkspace(),
                 kind: .directory,
                 stage: .provisioningAsset,
@@ -497,7 +499,7 @@ public enum SandboxProvisioningDiagnostics {
             ),
             LocationSpec(
                 id: .containerAgents,
-                title: "Agent workspace root",
+                title: L("Agent workspace root"),
                 url: OsaurusPaths.containerAgentsDir(),
                 kind: .directory,
                 stage: .provisioningAsset,
@@ -508,7 +510,7 @@ public enum SandboxProvisioningDiagnostics {
             ),
             LocationSpec(
                 id: .containerShared,
-                title: "Shared workspace",
+                title: L("Shared workspace"),
                 url: OsaurusPaths.containerSharedDir(),
                 kind: .directory,
                 stage: .provisioningAsset,
@@ -519,7 +521,7 @@ public enum SandboxProvisioningDiagnostics {
             ),
             LocationSpec(
                 id: .containerKernelDirectory,
-                title: "Kernel asset directory",
+                title: L("Kernel asset directory"),
                 url: OsaurusPaths.containerKernelDir(),
                 kind: .directory,
                 stage: .provisioningAsset,
@@ -530,7 +532,7 @@ public enum SandboxProvisioningDiagnostics {
             ),
             LocationSpec(
                 id: .containerKernelFile,
-                title: "Kernel asset",
+                title: L("Kernel asset"),
                 url: OsaurusPaths.containerKernelFile(),
                 kind: .file,
                 stage: .provisioningAsset,
@@ -541,7 +543,7 @@ public enum SandboxProvisioningDiagnostics {
             ),
             LocationSpec(
                 id: .containerInitFSFile,
-                title: "Init filesystem asset",
+                title: L("Init filesystem asset"),
                 url: OsaurusPaths.containerInitFSFile(),
                 kind: .file,
                 stage: .provisioningAsset,
@@ -552,7 +554,7 @@ public enum SandboxProvisioningDiagnostics {
             ),
             LocationSpec(
                 id: .containerStateDirectory,
-                title: "Container state directory",
+                title: L("Container state directory"),
                 url: containerState,
                 kind: .directory,
                 stage: .runtime,
@@ -563,7 +565,7 @@ public enum SandboxProvisioningDiagnostics {
             ),
             LocationSpec(
                 id: .containerRootFSFile,
-                title: "Warm restart rootfs",
+                title: L("Warm restart rootfs"),
                 url: containerState.appendingPathComponent("rootfs.ext4"),
                 kind: .file,
                 stage: .runtime,
@@ -574,7 +576,7 @@ public enum SandboxProvisioningDiagnostics {
             ),
             LocationSpec(
                 id: .bridgeSocket,
-                title: "Host bridge socket",
+                title: L("Host bridge socket"),
                 url: OsaurusPaths.container().appendingPathComponent("bridge.sock"),
                 kind: .socket,
                 stage: .runtime,
@@ -611,8 +613,8 @@ public enum SandboxProvisioningDiagnostics {
             status = .missing
             detail =
                 parentWritable
-                ? "Path is missing; parent directory is writable."
-                : "Path is missing and no writable parent directory was proven."
+                ? L("Path is missing; parent directory is writable.")
+                : L("Path is missing and no writable parent directory was proven.")
             repair = repairSuggestionForMissing(kind: spec.kind, path: path)
             let severity: SandboxProvisioningFindingSeverity =
                 parentWritable ? spec.missingSeverity : .blocked
@@ -623,9 +625,9 @@ public enum SandboxProvisioningDiagnostics {
                     code: code,
                     severity: severity,
                     status: parentWritable ? .missing : .failed,
-                    title: "\(spec.title) is missing",
+                    title: L("\(spec.title) is missing"),
                     detail: detail,
-                    repairSuggestion: repair ?? "Create or repair \(path).",
+                    repairSuggestion: repair ?? L("Create or repair \(path)."),
                     locationID: spec.id,
                     path: path
                 )
@@ -651,8 +653,8 @@ public enum SandboxProvisioningDiagnostics {
         case .directory:
             guard isDirectory.boolValue else {
                 status = .wrongType
-                detail = "Expected a directory but found a file or other non-directory item."
-                repair = "Move or remove \(path), then create the directory with mkdir -p \"\(path)\"."
+                detail = L("Expected a directory but found a file or other non-directory item.")
+                repair = L("Move or remove \(path), then create the directory with mkdir -p \"\(path)\".")
                 findings.append(wrongTypeFinding(spec: spec, detail: detail, repair: repair, path: path))
                 break
             }
@@ -669,7 +671,7 @@ public enum SandboxProvisioningDiagnostics {
                             code: .locationNotWritable,
                             severity: .blocked,
                             status: .failed,
-                            title: "\(spec.title) is not writable",
+                            title: L("\(spec.title) is not writable"),
                             detail: detail,
                             repairSuggestion: repair ?? permissionRepair(path: path),
                             locationID: spec.id,
@@ -677,17 +679,17 @@ public enum SandboxProvisioningDiagnostics {
                         )
                     )
                 } else {
-                    detail = "Directory exists and accepted a write probe."
+                    detail = L("Directory exists and accepted a write probe.")
                 }
             } else {
                 writable = fm.isWritableFile(atPath: path)
-                detail = "Directory exists."
+                detail = L("Directory exists.")
             }
         case .file:
             guard !isDirectory.boolValue else {
                 status = .wrongType
-                detail = "Expected a file but found a directory."
-                repair = "Move or remove the directory at \(path), then rerun sandbox setup."
+                detail = L("Expected a file but found a directory.")
+                repair = L("Move or remove the directory at \(path), then rerun sandbox setup.")
                 findings.append(wrongTypeFinding(spec: spec, detail: detail, repair: repair, path: path))
                 break
             }
@@ -696,14 +698,14 @@ public enum SandboxProvisioningDiagnostics {
             fileSizeBytes = fileSize(at: url, fileManager: fm)
             if readable == false {
                 status = .notReadable
-                detail = "File exists but is not readable."
+                detail = L("File exists but is not readable.")
                 repair = permissionRepair(path: path)
                 findings.append(
                     finding(
                         code: .locationNotReadable,
                         severity: .blocked,
                         status: .failed,
-                        title: "\(spec.title) is not readable",
+                        title: L("\(spec.title) is not readable"),
                         detail: detail,
                         repairSuggestion: repair ?? permissionRepair(path: path),
                         locationID: spec.id,
@@ -712,14 +714,14 @@ public enum SandboxProvisioningDiagnostics {
                 )
             } else if spec.requiresWritable, writable == false {
                 status = .notWritable
-                detail = "File exists but is not writable."
+                detail = L("File exists but is not writable.")
                 repair = permissionRepair(path: path)
                 findings.append(
                     finding(
                         code: .locationNotWritable,
                         severity: .blocked,
                         status: .failed,
-                        title: "\(spec.title) is not writable",
+                        title: L("\(spec.title) is not writable"),
                         detail: detail,
                         repairSuggestion: repair ?? permissionRepair(path: path),
                         locationID: spec.id,
@@ -728,32 +730,32 @@ public enum SandboxProvisioningDiagnostics {
                 )
             } else if let minimum = spec.minimumFileBytes, (fileSizeBytes ?? 0) < minimum {
                 status = .emptyFile
-                detail = "File exists but is empty or smaller than the minimum expected size."
-                repair = "Remove \(path) and rerun sandbox setup so Osaurus can download a fresh asset."
+                detail = L("File exists but is empty or smaller than the minimum expected size.")
+                repair = L("Remove \(path) and rerun sandbox setup so Osaurus can download a fresh asset.")
                 findings.append(
                     finding(
                         code: .locationEmpty,
                         severity: .blocked,
                         status: .failed,
-                        title: "\(spec.title) is empty",
+                        title: L("\(spec.title) is empty"),
                         detail: detail,
-                        repairSuggestion: repair ?? "Remove \(path) and rerun setup.",
+                        repairSuggestion: repair ?? L("Remove \(path) and rerun setup."),
                         locationID: spec.id,
                         path: path
                     )
                 )
             } else {
-                detail = "File exists and is readable."
+                detail = L("File exists and is readable.")
             }
         case .socket:
             if isDirectory.boolValue {
                 status = .wrongType
-                detail = "Expected a runtime socket but found a directory."
-                repair = "Stop the sandbox, remove \(path), and start the sandbox again."
+                detail = L("Expected a runtime socket but found a directory.")
+                repair = L("Stop the sandbox, remove \(path), and start the sandbox again.")
                 findings.append(wrongTypeFinding(spec: spec, detail: detail, repair: repair, path: path))
             } else {
                 readable = fm.isReadableFile(atPath: path)
-                detail = "Runtime socket path exists."
+                detail = L("Runtime socket path exists.")
             }
         }
 
@@ -788,11 +790,13 @@ public enum SandboxProvisioningDiagnostics {
                     code: .volumeFreeSpaceLow,
                     severity: .blocked,
                     status: .failed,
-                    title: "Not enough free disk space for cold provisioning",
+                    title: L("Not enough free disk space for cold provisioning"),
                     detail:
-                        "Container root volume has \(SandboxProvisioningReport.formatBytesForDiagnostics(free)) free; cold provisioning expects at least \(SandboxProvisioningReport.formatBytesForDiagnostics(minimumColdProvisionFreeBytes)).",
+                        L(
+                            "Container root volume has \(SandboxProvisioningReport.formatBytesForDiagnostics(free)) free; cold provisioning expects at least \(SandboxProvisioningReport.formatBytesForDiagnostics(minimumColdProvisionFreeBytes))."
+                        ),
                     repairSuggestion:
-                        "Free disk space on the volume that contains \(containerRoot.path), then rerun preflight.",
+                        L("Free disk space on the volume that contains \(containerRoot.path), then rerun preflight."),
                     locationID: .containerRoot,
                     path: containerRoot.path
                 )
@@ -804,9 +808,9 @@ public enum SandboxProvisioningDiagnostics {
                 code: .volumeFreeSpaceUnproven,
                 severity: .info,
                 status: .unproven,
-                title: "Free disk space could not be proven",
-                detail: "The preflight could not read volume capacity for \(containerRoot.path).",
-                repairSuggestion: "Check available disk space manually before cold provisioning.",
+                title: L("Free disk space could not be proven"),
+                detail: L("The preflight could not read volume capacity for \(containerRoot.path)."),
+                repairSuggestion: L("Check available disk space manually before cold provisioning."),
                 locationID: .containerRoot,
                 path: containerRoot.path
             )
@@ -912,7 +916,7 @@ public enum SandboxProvisioningDiagnostics {
         locationID: SandboxProvisioningLocationID?,
         path: String?
     ) -> SandboxProvisioningFinding {
-        let idSuffix = locationID?.rawValue ?? "environment"
+        let idSuffix = locationID?.rawValue ?? L("environment")
         return SandboxProvisioningFinding(
             id: "\(code.rawValue):\(idSuffix)",
             code: code,
@@ -936,9 +940,9 @@ public enum SandboxProvisioningDiagnostics {
             code: .locationWrongType,
             severity: .blocked,
             status: .failed,
-            title: "\(spec.title) has the wrong type",
+            title: L("\(spec.title) has the wrong type"),
             detail: detail,
-            repairSuggestion: repair ?? "Remove or move \(path), then rerun sandbox setup.",
+            repairSuggestion: repair ?? L("Remove or move \(path), then rerun sandbox setup."),
             locationID: spec.id,
             path: path
         )
@@ -964,16 +968,18 @@ public enum SandboxProvisioningDiagnostics {
     ) -> String {
         switch kind {
         case .directory:
-            "Create the directory with mkdir -p \"\(path)\" or run Set Up Sandbox to let Osaurus create it."
+            L("Create the directory with mkdir -p \"\(path)\" or run Set Up Sandbox to let Osaurus create it.")
         case .file:
-            "Run Set Up Sandbox so Osaurus can create or download \(path)."
+            L("Run Set Up Sandbox so Osaurus can create or download \(path).")
         case .socket:
-            "Start the sandbox; this runtime socket is created only while the host bridge is running."
+            L("Start the sandbox; this runtime socket is created only while the host bridge is running.")
         }
     }
 
     private static func permissionRepair(path: String) -> String {
-        "Fix ownership or permissions for \(path), then rerun preflight. For user-owned paths, chmod u+rwX \"\(path)\" is usually enough."
+        L(
+            "Fix ownership or permissions for \(path), then rerun preflight. For user-owned paths, chmod u+rwX \"\(path)\" is usually enough."
+        )
     }
 
     private static func nearestExistingDirectory(
@@ -1009,12 +1015,12 @@ public enum SandboxProvisioningDiagnostics {
         do {
             try Data("ok".utf8).write(to: probe, options: .atomic)
             try? fm.removeItem(at: probe)
-            return WriteProbe(passed: true, detail: "Directory exists and accepted a write probe.")
+            return WriteProbe(passed: true, detail: L("Directory exists and accepted a write probe."))
         } catch {
             try? fm.removeItem(at: probe)
             return WriteProbe(
                 passed: false,
-                detail: "Write probe failed: \(error.localizedDescription)"
+                detail: L("Write probe failed: \(error.localizedDescription)")
             )
         }
     }

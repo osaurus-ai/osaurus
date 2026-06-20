@@ -77,11 +77,11 @@ public enum RunOutcome: Sendable, Equatable {
     public var summary: String {
         switch self {
         case .done(let s): return s
-        case .gaveUp(let r): return "Gave up: \(r)"
-        case .stepCapReached: return "Stopped: reached the step limit before finishing."
-        case .deadEnd(let r): return "Stopped: \(r)"
-        case .interrupted: return "Stopped by user."
-        case .failed(let r): return "Failed: \(r)"
+        case .gaveUp(let r): return L("Gave up: \(r)")
+        case .stepCapReached: return L("Stopped: reached the step limit before finishing.")
+        case .deadEnd(let r): return L("Stopped: \(r)")
+        case .interrupted: return L("Stopped by user.")
+        case .failed(let r): return L("Failed: \(r)")
         }
     }
 }

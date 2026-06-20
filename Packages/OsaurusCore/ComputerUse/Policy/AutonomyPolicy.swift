@@ -56,9 +56,9 @@ public enum AutonomyDisposition: String, Sendable, Codable, CaseIterable, Compar
 
     public var displayLabel: String {
         switch self {
-        case .allow: return "Auto-run"
-        case .confirm: return "Ask first"
-        case .deny: return "Block"
+        case .allow: return L("Auto-run")
+        case .confirm: return L("Ask first")
+        case .deny: return L("Block")
         }
     }
 }
@@ -121,21 +121,21 @@ public enum AutonomyPreset: String, Sendable, Codable, CaseIterable, Identifiabl
 
     public var displayLabel: String {
         switch self {
-        case .readOnly: return "Read-only"
-        case .cautious: return "Cautious"
-        case .balanced: return "Balanced"
-        case .trusted: return "Trusted"
-        case .autonomous: return "Autonomous"
+        case .readOnly: return L("Read-only")
+        case .cautious: return L("Cautious")
+        case .balanced: return L("Balanced")
+        case .trusted: return L("Trusted")
+        case .autonomous: return L("Autonomous")
         }
     }
 
     public var detail: String {
         switch self {
-        case .readOnly: return "Look and navigate freely; never edit."
-        case .cautious: return "Ask before every action except reading."
-        case .balanced: return "Reads and navigation run; edits and risky actions ask first."
-        case .trusted: return "Edits run; only sending, deleting, and similar ask first."
-        case .autonomous: return "Everything runs without asking."
+        case .readOnly: return L("Look and navigate freely; never edit.")
+        case .cautious: return L("Ask before every action except reading.")
+        case .balanced: return L("Reads and navigation run; edits and risky actions ask first.")
+        case .trusted: return L("Edits run; only sending, deleting, and similar ask first.")
+        case .autonomous: return L("Everything runs without asking.")
         }
     }
 }
