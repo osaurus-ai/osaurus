@@ -2484,19 +2484,29 @@ struct RuntimePolicySourceTests {
         let afterToolCase = streamWithTools[toolCase.lowerBound...]
 
         #expect(
-            afterToolCase.contains("continuation.finish(")
-                && afterToolCase.contains("throwing: ServiceToolInvocation(")
+            afterToolCase.contains("ServiceToolInvocation(")
                 && afterToolCase.contains("toolName: name")
-                && afterToolCase.contains("jsonArguments: argsJSON"),
-            "The Chat UI must stop the local stream as soon as vMLX emits a parsed tool invocation; otherwise DSV4 can leak pseudo-tool prose after the tool event before Osaurus executes it."
+                && afterToolCase.contains("jsonArguments: argsJSON")
+                && afterToolCase.contains("continuation.finish(throwing: tool)"),
+            "streamWithTools must capture the parsed vMLX tool call (name + args) into the pending ServiceToolInvocation and finish the stream by throwing it so the Chat UI dispatches the tool."
         )
         #expect(
             afterToolCase.contains("return"),
-            "After finishing with the parsed tool invocation, the producer task must return instead of draining post-tool tokens to natural EOS."
+            "After surfacing the parsed tool invocation the producer task must return rather than run on."
+        )
+        // The real no-leak invariant: once a tool call is pending, model text is
+        // gated on `pendingTool == nil` and never yielded, so DSV4 pseudo-tool
+        // prose emitted after the tool event cannot reach the UI/consumer. The
+        // producer keeps draining only to forward the terminal `.completionInfo`
+        // decode stats (tok/s + token count) before throwing — tool-call turns
+        // must not drop their telemetry.
+        #expect(
+            streamWithTools.contains("if pendingTool == nil, !s.isEmpty { continuation.yield(s) }"),
+            "Post-tool model text must be gated on `pendingTool == nil` so pseudo-tool prose is suppressed once a tool call is parsed, even while draining for end-of-step stats."
         )
         #expect(
             !afterToolCase.contains("pendingTools.append"),
-            "The local streaming path must not keep collecting tool invocations after a parsed tool event; batch collection belongs to the non-streaming tool response path."
+            "The local streaming path must not batch-collect tool invocations after a parsed tool event; batch collection belongs to the non-streaming tool response path."
         )
     }
 
