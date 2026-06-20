@@ -1885,7 +1885,7 @@ public struct SystemPromptComposer: Sendable {
         // delegation gate evaluated to at compose time.
         let imageActive = AgentDelegationConfigurationStore.snapshot().imageDelegationActive
         let hasImageGenerate = resolved.contains { $0.function.name == "image_generate" }
-        toolResolveLog.info(
+        toolResolveLog.debug(
             "resolveTools agent=\(snapshot.agentId.uuidString, privacy: .public) imageDelegationActive=\(imageActive, privacy: .public) image_generate_in_schema=\(hasImageGenerate, privacy: .public) toolCount=\(resolved.count, privacy: .public)"
         )
 
