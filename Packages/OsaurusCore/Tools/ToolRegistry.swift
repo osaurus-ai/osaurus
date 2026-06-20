@@ -1321,7 +1321,7 @@ final class ToolRegistry: ObservableObject {
     private func agentDelegationExcludedToolNames() -> Set<String> {
         let config = AgentDelegationConfigurationStore.snapshot()
         var excluded: Set<String> = []
-        if !config.localTextDelegationActive {
+        if !config.textDelegationToolAvailable {
             excluded.formUnion(Self.agentDelegationTextToolNames)
         }
         if !config.imageDelegationActive {

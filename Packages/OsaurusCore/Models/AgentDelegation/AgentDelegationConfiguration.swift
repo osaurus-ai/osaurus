@@ -123,6 +123,11 @@ struct AgentDelegationBudgets: Codable, Equatable, Sendable {
 struct AgentDelegationConfiguration: Codable, Equatable, Sendable {
     var agentDelegationEnabled: Bool
     var cloudTextDelegationEnabled: Bool
+    /// When true, a LOCAL orchestrator chat model may also delegate to a local
+    /// text subagent: the orchestrator is unloaded for the job and reloaded after
+    /// (single-residency handoff). Off by default — a cloud orchestrator never
+    /// needs this. See LocalDelegateHandoff / ChatResidencyHandoff.
+    var localTextDelegationEnabled: Bool
     var imageDelegationEnabled: Bool
     var defaultLocalTextDelegateModelId: String?
     var defaultImageGenerationModelId: String?
@@ -136,6 +141,7 @@ struct AgentDelegationConfiguration: Codable, Equatable, Sendable {
     init(
         agentDelegationEnabled: Bool = false,
         cloudTextDelegationEnabled: Bool = false,
+        localTextDelegationEnabled: Bool = false,
         imageDelegationEnabled: Bool = false,
         defaultLocalTextDelegateModelId: String? = nil,
         defaultImageGenerationModelId: String? = nil,
@@ -148,6 +154,7 @@ struct AgentDelegationConfiguration: Codable, Equatable, Sendable {
     ) {
         self.agentDelegationEnabled = agentDelegationEnabled
         self.cloudTextDelegationEnabled = cloudTextDelegationEnabled
+        self.localTextDelegationEnabled = localTextDelegationEnabled
         self.imageDelegationEnabled = imageDelegationEnabled
         self.defaultLocalTextDelegateModelId = defaultLocalTextDelegateModelId
         self.defaultImageGenerationModelId = defaultImageGenerationModelId
@@ -165,6 +172,17 @@ struct AgentDelegationConfiguration: Codable, Equatable, Sendable {
         agentDelegationEnabled && cloudTextDelegationEnabled
     }
 
+    /// A local orchestrator may hand off to a local text subagent (unload/reload).
+    var localOrchestratorTextHandoffActive: Bool {
+        agentDelegationEnabled && localTextDelegationEnabled
+    }
+
+    /// The `local_delegate` tool is exposed when EITHER a cloud orchestrator may
+    /// delegate, or a local orchestrator may hand off.
+    var textDelegationToolAvailable: Bool {
+        localTextDelegationActive || localOrchestratorTextHandoffActive
+    }
+
     var imageDelegationActive: Bool {
         agentDelegationEnabled && imageDelegationEnabled
     }
@@ -173,6 +191,7 @@ struct AgentDelegationConfiguration: Codable, Equatable, Sendable {
         AgentDelegationConfiguration(
             agentDelegationEnabled: agentDelegationEnabled,
             cloudTextDelegationEnabled: cloudTextDelegationEnabled,
+            localTextDelegationEnabled: localTextDelegationEnabled,
             imageDelegationEnabled: imageDelegationEnabled,
             defaultLocalTextDelegateModelId: Self.normalizedModelId(defaultLocalTextDelegateModelId),
             defaultImageGenerationModelId: Self.normalizedModelId(defaultImageGenerationModelId),
@@ -188,6 +207,7 @@ struct AgentDelegationConfiguration: Codable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey {
         case agentDelegationEnabled
         case cloudTextDelegationEnabled
+        case localTextDelegationEnabled
         case imageDelegationEnabled
         case defaultLocalTextDelegateModelId
         case defaultImageGenerationModelId
@@ -204,6 +224,7 @@ struct AgentDelegationConfiguration: Codable, Equatable, Sendable {
         self.init(
             agentDelegationEnabled: try container.decodeIfPresent(Bool.self, forKey: .agentDelegationEnabled) ?? false,
             cloudTextDelegationEnabled: try container.decodeIfPresent(Bool.self, forKey: .cloudTextDelegationEnabled) ?? false,
+            localTextDelegationEnabled: try container.decodeIfPresent(Bool.self, forKey: .localTextDelegationEnabled) ?? false,
             imageDelegationEnabled: try container.decodeIfPresent(Bool.self, forKey: .imageDelegationEnabled) ?? false,
             defaultLocalTextDelegateModelId: try container.decodeIfPresent(
                 String.self,

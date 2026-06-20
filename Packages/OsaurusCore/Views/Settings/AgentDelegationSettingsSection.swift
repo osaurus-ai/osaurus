@@ -48,6 +48,13 @@ struct AgentDelegationSettingsSection: View {
                             isOn: $configuration.cloudTextDelegationEnabled
                         )
 
+                        SettingsToggle(
+                            title: "Local Orchestrator Handoff",
+                            description:
+                                "When the main chat model is itself local, unload it to run the delegate, then reload it afterward. Off keeps local-to-local delegation disabled to avoid double residency.",
+                            isOn: $configuration.localTextDelegationEnabled
+                        )
+
                         modelPicker(
                             title: "Local Text Delegate",
                             selection: Binding(

@@ -98,7 +98,7 @@ public final class LocalTextDelegateTool: OsaurusTool, @unchecked Sendable {
         guard case .value(let task) = taskReq else { return taskReq.failureEnvelope ?? "" }
 
         let config = AgentDelegationConfigurationStore.snapshot()
-        guard config.localTextDelegationActive else {
+        guard config.textDelegationToolAvailable else {
             return ToolEnvelope.failure(
                 kind: .rejected,
                 message: "Local text delegation is disabled in Agent Delegation settings.",
@@ -136,16 +136,34 @@ public final class LocalTextDelegateTool: OsaurusTool, @unchecked Sendable {
             return denied
         }
 
+        // Local orchestrator handoff: when the parent chat model is itself local,
+        // run the delegate under a single-residency handoff — unload the
+        // orchestrator now, run the delegate, then reload the orchestrator (below).
+        // Off by default (avoids double local residency); opt in via settings.
+        var residencyLease = ChatResidencyLease.empty
         if await parentUsesLocalModel() {
-            return ToolEnvelope.failure(
-                kind: .rejected,
-                message:
-                    "Local-to-local text delegation is disabled by default to avoid double local "
-                    + "model residency. Use the active local chat model directly or switch the parent "
-                    + "chat to a cloud/API provider.",
-                tool: name,
-                retryable: false
-            )
+            guard config.localOrchestratorTextHandoffActive else {
+                return ToolEnvelope.failure(
+                    kind: .rejected,
+                    message:
+                        "Local-to-local text delegation is off. Enable \"Local orchestrator handoff\" "
+                        + "in Agent Delegation settings to let the local chat model unload, run the "
+                        + "delegate, and reload — or switch the parent chat to a cloud/API provider.",
+                    tool: name,
+                    retryable: false
+                )
+            }
+            do {
+                residencyLease = try await ChatResidencyHandoff.unloadResidentChatModels(
+                    maxElapsedSeconds: config.budgets.maxElapsedSeconds)
+            } catch {
+                return ToolEnvelope.failure(
+                    kind: .executionError,
+                    message: "Subagent memory handoff failed: \(error.localizedDescription)",
+                    tool: name,
+                    retryable: true
+                )
+            }
         }
 
         let budgets = config.budgets.normalized
@@ -254,6 +272,7 @@ public final class LocalTextDelegateTool: OsaurusTool, @unchecked Sendable {
             )
         } catch {
             _ = await unloadDelegateIfNeeded(model: model.name, config: config)
+            try? await ChatResidencyHandoff.restore(residencyLease)
             return ToolEnvelope.failure(
                 kind: .executionError,
                 message: "Local delegate failed: \(error.localizedDescription)",
@@ -263,6 +282,9 @@ public final class LocalTextDelegateTool: OsaurusTool, @unchecked Sendable {
         }
 
         let unloadedAfterJob = await unloadDelegateIfNeeded(model: model.name, config: config)
+        // Reload the orchestrator chat model unloaded for this job (no-op for a
+        // cloud orchestrator, where the lease is empty).
+        try? await ChatResidencyHandoff.restore(residencyLease)
         let elapsed = Date().timeIntervalSince(started)
 
         switch runResult.exit {
