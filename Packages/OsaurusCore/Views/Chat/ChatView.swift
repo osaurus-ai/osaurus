@@ -207,6 +207,14 @@ final class ChatSession: ObservableObject {
     private let blockMemoizer = BlockMemoizer()
     private var cachedContext: ComposedContext?
 
+    /// Frozen screen-context snapshot for this session (opt-in Computer Use
+    /// feature). Captured once on the first send and reused unchanged for the
+    /// rest of the session, so it reflects what the user was doing when the
+    /// conversation started. Holds the rendered `[Screen Context]` block (or
+    /// nil when the feature is off or nothing was captured). Cleared on
+    /// `reset()` / `load(from:)`. Not persisted.
+    private var frozenScreenContext: String?
+
     /// Cached welcome/pre-send preview `ComposedContext`, used by
     /// `estimatedContextBreakdown` when no real send context exists yet.
     /// Recomputed by `refreshContextEstimates()` whenever a budget-relevant
@@ -1269,6 +1277,8 @@ final class ChatSession: ObservableObject {
         blockMemoizer.clear()
         cachedContext = nil
         cachedPreviewContext = nil
+        // A new conversation re-freezes its screen context on the next send.
+        frozenScreenContext = nil
         visibleBlocksStore.blocks = []
         visibleBlocksStore.groupHeaderMap = [:]
 
@@ -1564,6 +1574,8 @@ final class ChatSession: ObservableObject {
         blockMemoizer.clear()
         cachedContext = nil
         cachedPreviewContext = nil
+        // A loaded conversation re-freezes its screen context on its next send.
+        frozenScreenContext = nil
         suppressVisibleBlockRebuild = false
         rebuildVisibleBlocks()
 
@@ -2794,6 +2806,22 @@ final class ChatSession: ObservableObject {
                     } else {
                         cachedSession = nil
                     }
+
+                    // Opt-in screen context: freeze a distilled snapshot of
+                    // what the user is doing, once per session on the first
+                    // send, so the assistant has ambient awareness of their
+                    // current task. Reused unchanged for the rest of the
+                    // session and injected onto the latest user message — so it
+                    // flows through the Privacy Filter — in
+                    // `loopHooks.buildMessages` below.
+                    if ScreenContextSettings.shared.injectionEnabled,
+                        self.frozenScreenContext == nil
+                    {
+                        let snapshot = await ScreenContextDistiller.captureForChat()
+                        self.frozenScreenContext = snapshot.render()
+                        guard isRunActive(runId) else { return }
+                    }
+
                     let context = await SystemPromptComposer.composeChatContext(
                         agentId: effectiveAgentId,
                         executionMode: executionMode,
@@ -3486,6 +3514,17 @@ final class ChatSession: ObservableObject {
                             // across turns so the MLX paged KV cache can reuse the
                             // entire conversation prefix.
                             SystemPromptComposer.injectMemoryPrefix(context.memorySection, into: &msgs)
+
+                            // Opt-in: prepend the frozen screen-context snapshot
+                            // to the latest user message (same seam as memory).
+                            // Keeps the system prefix KV-stable and routes the
+                            // snapshot through the Privacy Filter on cloud sends.
+                            if ScreenContextSettings.shared.injectionEnabled {
+                                SystemPromptComposer.injectScreenContextPrefix(
+                                    self.frozenScreenContext,
+                                    into: &msgs
+                                )
+                            }
 
                             let convTokens =
                                 msgs

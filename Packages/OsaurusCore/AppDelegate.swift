@@ -241,6 +241,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // Set up observers for server state changes
         setupObservers()
 
+        // Start tracking the user's most-recently-active (non-Osaurus) app so
+        // the opt-in screen-context snapshot can recover "what they were doing"
+        // even when Osaurus is itself frontmost at send time. Cheap: a single
+        // NSWorkspace activation observer.
+        FrontmostAppTracker.shared.start()
+
         // Set up distributed control listeners (local-only management)
         setupControlNotifications()
 

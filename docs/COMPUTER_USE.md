@@ -185,6 +185,49 @@ images** (`ComputerUseTool.modelAcceptsImages`: local VLM detection / media
 capabilities, or the remote router's advertised vision support) and the
 perception ladder has escalated past `ax`.
 
+## Screen context (chat)
+
+Separate from the `computer_use` tool, **Screen context** gives the assistant
+ambient awareness of what you're doing *without driving anything*. It's a global
+**opt-in** (off by default) under Settings → Computer Use → *Screen context*,
+independent of the per-agent `computer_use` toggle.
+
+When enabled, the **first send** of a chat session **freezes** a distilled,
+text-only snapshot of your screen and reuses it unchanged for the rest of that
+conversation (a new/loaded chat re-freezes on its next send). The snapshot is
+built entirely from the **accessibility tree** — no screenshots — so it can pass
+through the text-based Privacy Filter.
+
+### Smart sampling — `ScreenContextDistiller`
+
+`ComputerUse/Perception/ScreenContextDistiller.swift`. Rather than dumping the
+AX tree, the distiller samples the highest-signal bits, budgeted small:
+
+- **Working app** — the frontmost app, or, when Osaurus is itself frontmost at
+  send time, the most-recently-active non-Osaurus app. `FrontmostAppTracker`
+  records that app from launch (Osaurus excluded by pid / bundle id) so "what
+  you were doing" survives the chat stealing focus.
+- **Activity gist** — one line, e.g. `In Mail — "Re: Project update"; editing
+  text area (draft present)`.
+- **Focused field** — role + label + placeholder + current value (the draft).
+- **Open windows** — app + title + which is frontmost.
+- **On screen** — a ranked, de-duplicated sample of salient labels / values.
+
+`ScreenContextSnapshot.render()` is the single source of truth for the
+`[Screen Context]…[/Screen Context]` block — the same text shown in the settings
+preview and injected into chat.
+
+### Injection + privacy
+
+The block is prepended to the **latest user message**
+(`SystemPromptComposer.injectScreenContextPrefix`, the same seam memory uses),
+not the system prompt. That keeps the system prefix byte-stable for KV reuse
+**and** routes the snapshot through `RemoteProviderService.applyPrivacyOutbound`
+— the Privacy Filter only scans the latest user turn — so PII is scrubbed before
+any cloud send. Local models receive it as-is, matching the rest of the local
+path. The settings card previews the live snapshot (with a Refresh) and, when
+the Privacy Filter is on and loaded, reports how many spans would be masked.
+
 ## Autonomy model
 
 The gate decides `allow` / `confirm` / `deny` for every action by combining a
@@ -257,8 +300,9 @@ Vivaldi / Opera).
 - **Settings → Computer Use** (`Views/Settings/ComputerUseSettingsView.swift`) —
   global preset picker, per-app overrides, app allowlist, the **Cloud vision**
   consent toggle ("Allow scrubbed screenshots to reach a cloud model", off by
-  default), Accessibility / Screen Recording permission rows, and an "Enabling
-  Computer Use" explainer.
+  default), the **Screen context** opt-in + live preview (see above),
+  Accessibility / Screen Recording permission rows, and an "Enabling Computer
+  Use" explainer.
 - **Per-agent** (Agents → Configure → Features) — the `computerUseEnabled`
   toggle and the per-agent autonomy **ceiling** picker. Custom agents only.
 - **Live activity** (`Views/Chat/ComputerUseFeedView.swift`) — the
@@ -288,6 +332,7 @@ sends.
 |------------|---------|
 | `~/.osaurus/config/computer-use.json` | `AutonomyPolicy` (global preset + per-app overrides + allowlist), via `ComputerUsePolicyStore`. |
 | `UserDefaults` `ai.osaurus.computeruse.cloudVisionConsent` | Persisted cloud-vision opt-in (default `false`). |
+| `UserDefaults` `ai.osaurus.computeruse.screenContextInjection` | Persisted screen-context opt-in (default `false`), via `ScreenContextSettings`. |
 | `Agent.settings.computerUseEnabled` / `computerUseCeiling` | Per-agent enablement + autonomy ceiling (in the agent JSON). |
 
 ## Testing & evals
@@ -313,6 +358,7 @@ OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1 OSAURUS_TEST_ROOT=/tmp/osaurus-test make te
 | Driver | `ComputerUse/Driver/MacDriver.swift`, `NativeMacDriver.swift`, `MockMacDriver.swift`, `Driver/Mac/*` |
 | Target resolution | `ComputerUse/Resolver/TargetResolver.swift` |
 | Perception / vision | `ComputerUse/Perception/CaptureRouter.swift`, `CloudVisionConsent.swift`, `FrameScrubber.swift`, `VisionAttachment.swift` |
+| Screen context (chat) | `ComputerUse/Perception/ScreenContextDistiller.swift`, `ScreenContextSnapshot.swift`, `ScreenContextSettings.swift`, `FrontmostAppTracker.swift`, `Services/Chat/SystemPromptComposer.swift` (`injectScreenContextPrefix`) |
 | Policy / gate | `ComputerUse/Policy/EffectClass.swift`, `EffectClassifier.swift`, `AutonomyPolicy.swift`, `Gate.swift`, `ComputerUseGate.swift`, `ComputerUsePolicyStore.swift` |
 | Recipes | `ComputerUse/Recipes/AppRecipe.swift` |
 | Feed / prompts | `ComputerUse/Feed/ComputerUseFeed.swift`, `ComputerUseFeedRegistry.swift`, `ComputerUsePromptQueue.swift` |
