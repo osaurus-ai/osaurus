@@ -21,7 +21,7 @@ struct ResourceSamplerTests {
     /// invariants that always hold so the test can't flake on a busy host.
     private func burnCpu(_ iterations: Int) {
         var sink = 0.0
-        for i in 0..<iterations { sink += Double(i).squareRoot() }
+        for i in 0 ..< iterations { sink += Double(i).squareRoot() }
         // Force the loop to have an observable effect so it isn't elided.
         #expect(sink >= 0)
     }

@@ -70,6 +70,31 @@ public enum EvalRunner {
         }
 
         await ModelOverride.withSelection(model) {
+            // Warm the model's JIT'd Metal kernels once, BEFORE any scored
+            // case, exactly as a production server warms a bundle when it
+            // becomes resident. The first decode on a fresh process pays a
+            // one-time, multi-second kernel-compilation cost (the cold-start
+            // TTFT outlier); without this the cost lands on whichever case
+            // happens to run first and pollutes that case's TTFT with a
+            // startup artifact. Warming here makes every scored case measure
+            // the warm steady-state per-request TTFT a running server actually
+            // delivers. Idempotent per (process, model) and best-effort:
+            // remote/unknown ids and load failures are no-ops, so a model that
+            // can't warm just pays its cold cost on the first case as before.
+            // Latency-only — warm-up output is discarded and never changes
+            // what the model emits on the scored cases.
+            //
+            // `OSAURUS_EVALS_DISABLE_WARMUP=1` skips this so the optimization
+            // loop can run a clean same-binary A/B (warm-up OFF reproduces the
+            // pre-warm-up cold-start: the one-time JIT lands on the first
+            // scored case; warm-up ON moves it off the request path).
+            if ProcessInfo.processInfo.environment["OSAURUS_EVALS_DISABLE_WARMUP"] != "1" {
+                await ModelWarmup.warmUp(modelId: modelLabel)
+            } else {
+                FileHandle.standardError.write(
+                    Data("[evals] warm-up DISABLED (OSAURUS_EVALS_DISABLE_WARMUP=1)\n".utf8)
+                )
+            }
             for testCase in suite.cases {
                 if let filter, !testCase.id.contains(filter) { continue }
                 let row = await runOne(

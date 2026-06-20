@@ -1583,7 +1583,85 @@ public actor ModelRuntime {
             config.enableDiskCache = false
             config.diskCacheDir = nil
         }
+        applyHostAwareDiskCacheCeiling(to: &config, diskCacheDir: diskCacheDir)
         return config
+    }
+
+    /// Bound the L2 disk-cache cap to a fraction of CURRENT free disk so a
+    /// constrained volume can't be driven into disk pressure by the KV cache.
+    ///
+    /// Why: the resolved cap is vmlx's `diskCacheMaxGB` default (10 GB) unless
+    /// the user/profile set one. On a host with tens-of-GB free that 10 GB cap
+    /// can consume most of the volume on big-model agentic runs (see
+    /// `perf-gemma4-12b-mxfp8-baseline.md` Lever 2/5: 9.6 GB written in ~90 s).
+    /// vmlx's own `LOW-SPEC-HOST-GUIDANCE` already recommends host-relative caps
+    /// (4 GB low-spec, 8–16 GB only when > 200 GB free) — this enforces that
+    /// shape automatically.
+    ///
+    /// Invariant: the disk cache may never use more than `freeFraction` of the
+    /// free bytes observed at load. On a healthy host (free ≥ cap / freeFraction,
+    /// i.e. ≥ ~40 GB for the 10 GB default at 0.25) the configured cap is the
+    /// min term and the cap is UNCHANGED → no reuse loss where there's room. If
+    /// even the bounded cap falls below a useful floor, the disk tier is
+    /// disabled rather than left to thrash a near-full volume. Free-space is
+    /// unknowable on some volumes (`volumeFreeBytes == nil`) → leave the
+    /// configured cap as-is rather than guess.
+    private nonisolated static func applyHostAwareDiskCacheCeiling(
+        to config: inout CacheCoordinatorConfig,
+        diskCacheDir: URL?,
+        freeFraction: Double = 0.25,
+        minUsefulGB: Double = 1.0
+    ) {
+        guard config.enableDiskCache, let diskCacheDir,
+            let freeBytes = OsaurusPaths.volumeFreeBytes(forPath: diskCacheDir.path),
+            freeBytes > 0
+        else { return }
+
+        let freeGB = Double(freeBytes) / 1_073_741_824.0
+        let configuredCapGB = Double(config.diskCacheMaxGB)
+        let decision = hostAwareDiskCacheDecision(
+            configuredCapGB: configuredCapGB,
+            freeBytes: freeBytes,
+            freeFraction: freeFraction,
+            minUsefulGB: minUsefulGB
+        )
+
+        if !decision.enabled {
+            genLog.notice(
+                "buildCacheCoordinatorConfig: disabling disk-L2 — only \(String(format: "%.1f", freeGB), privacy: .public) GB free (below host-aware floor of \(String(format: "%.1f", minUsefulGB / freeFraction), privacy: .public) GB)"
+            )
+            config.enableDiskCache = false
+            config.diskCacheDir = nil
+        } else if decision.capGB < configuredCapGB {
+            genLog.notice(
+                "buildCacheCoordinatorConfig: disk-L2 cap \(String(format: "%.1f", configuredCapGB), privacy: .public)→\(String(format: "%.1f", decision.capGB), privacy: .public) GB (host-aware, \(String(format: "%.1f", freeGB), privacy: .public) GB free)"
+            )
+            config.diskCacheMaxGB = Float(decision.capGB)
+        }
+    }
+
+    /// Pure host-aware disk-cap decision (no I/O), extracted so the policy is
+    /// unit-testable. Returns whether the disk tier stays enabled and the
+    /// resulting cap in GB.
+    ///
+    /// - `freeBytes <= 0` (unknown free space) → leave the configured cap as-is.
+    /// - cap is bounded to `freeFraction` of free disk (the cache may never use
+    ///   more than that fraction of what was free at load).
+    /// - if the bounded cap is below `minUsefulGB`, the tier is disabled rather
+    ///   than left to thrash a near-full volume.
+    /// - on a healthy host (free ≥ configuredCap / freeFraction) the configured
+    ///   cap is the min term → returned UNCHANGED (no reuse loss).
+    nonisolated static func hostAwareDiskCacheDecision(
+        configuredCapGB: Double,
+        freeBytes: Int64,
+        freeFraction: Double = 0.25,
+        minUsefulGB: Double = 1.0
+    ) -> (enabled: Bool, capGB: Double) {
+        guard freeBytes > 0 else { return (true, configuredCapGB) }
+        let freeGB = Double(freeBytes) / 1_073_741_824.0
+        let safeCapGB = min(configuredCapGB, freeGB * freeFraction)
+        if safeCapGB < minUsefulGB { return (false, configuredCapGB) }
+        return (true, safeCapGB)
     }
 
     nonisolated static func cacheDiskDirectoryOverride(

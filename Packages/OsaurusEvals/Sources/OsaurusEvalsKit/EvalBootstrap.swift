@@ -310,13 +310,28 @@ public enum EvalBootstrap {
         // (`usePagedCache = prefix.enabled && pagedKV.enabled`). vmlx ships
         // `VMLXPagedKVCacheSettings.enabled = false`, so without this the eval
         // decode never exercises the paged path and the pagedStats prefix-hit
-        // counters stay 0. The resolved memory-safety plan preserves whatever
-        // is set here as long as prefix is on, so this is the supported way to
-        // A/B cross-iteration prefix reuse for a model family where paged-KV is
-        // valid (Gemma 4 full attention).
+        // counters stay 0.
+        //
+        // NOTE: for rotating-window families (e.g. Gemma-4) this knob is a
+        // structural no-op — `BatchEngine` flags the heterogeneous cache
+        // `isPagedIncompatible`, the paged tier is skipped, and the prefix
+        // counter reads 0/0 by design (their reuse lane is disk-L2, not paged).
+        // Still effective for pure full-attention families. Full trace:
+        // `perf-gemma4-12b-mxfp8-baseline.md` Lever 1.
         let pagedRaw = env["OSAURUS_EVALS_PAGED_KV"]?
             .trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard (regimeRaw?.isEmpty == false) || (pagedRaw?.isEmpty == false) else { return }
+        // Bounded disk-L2 cap A/B knob (GB). The disk-L2 lane is Gemma-4's only
+        // reuse lane, but its resolved-default cap is 10 GB — too high for a
+        // host without tens of GB free (Lever 2 wrote 9.6 GB in ~90 s before it
+        // tripped the cap). `DiskCache._evictIfNeededLocked` enforces the cap
+        // SYNCHRONOUSLY after every store, so a low cap (e.g. 2) bounds growth
+        // to ≤ cap + one entry — making a SAFE disk-L2 reuse A/B possible.
+        let diskCapRaw = env["OSAURUS_EVALS_DISK_L2_CAP_GB"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard
+            (regimeRaw?.isEmpty == false) || (pagedRaw?.isEmpty == false)
+                || (diskCapRaw?.isEmpty == false)
+        else { return }
 
         var settings = ServerRuntimeSettingsStore.snapshot()
         let before = settings
@@ -356,6 +371,18 @@ public enum EvalBootstrap {
             notes.append("pagedKV='\(other)' ignored (use on/off)")
         default:
             break
+        }
+
+        if let diskCapRaw, !diskCapRaw.isEmpty {
+            if let capGB = Double(diskCapRaw), capGB > 0 {
+                // `blockDisk.maxSizeGB` flows to `CacheCoordinatorConfig.diskCacheMaxGB`
+                // → `DiskCache.maxSizeBytes`, enforced after every store. Bounds
+                // the disk-L2 lane for a safe reuse A/B on a constrained host.
+                settings.cache.blockDisk.maxSizeGB = capGB
+                notes.append("blockDisk.maxSizeGB=\(capGB)")
+            } else {
+                notes.append("diskL2Cap='\(diskCapRaw)' ignored (use a positive GB number)")
+            }
         }
 
         guard settings != before else {
