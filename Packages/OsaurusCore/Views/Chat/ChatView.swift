@@ -2048,8 +2048,16 @@ final class ChatSession: ObservableObject {
     /// container). When the user has a host folder mounted but sandbox is
     /// off, that wins — folder tools must enter the schema or
     /// `excludedToolNames(.none)` will hide them entirely.
+    /// Folder context to thread into an agent's execution mode. The Default
+    /// (configuration) agent never works against a host folder, so it resolves
+    /// to nil even when a folder is globally active — keeping the budget
+    /// preview and the sent prompt folder-less and consistent.
+    private func activeFolderContext(for agentId: UUID) -> FolderContext? {
+        agentId == Agent.defaultId ? nil : FolderContextService.shared.currentContext
+    }
+
     private func estimatedChatExecutionMode(agentId: UUID) -> ExecutionMode {
-        let folder = FolderContextService.shared.currentContext
+        let folder = activeFolderContext(for: agentId)
         let autonomous = AgentManager.shared.effectiveAutonomousExec(for: agentId)?.enabled == true
         let resolved = ToolRegistry.shared.resolveExecutionMode(
             folderContext: folder,
@@ -2257,7 +2265,7 @@ final class ChatSession: ObservableObject {
             await SandboxToolRegistrar.shared.registerTools(for: agentId)
         }
         return ToolRegistry.shared.resolveExecutionMode(
-            folderContext: FolderContextService.shared.currentContext,
+            folderContext: activeFolderContext(for: agentId),
             autonomousEnabled: autonomous
         )
     }

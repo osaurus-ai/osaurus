@@ -277,6 +277,13 @@ struct FloatingInputCard: View {
         // handles that.
         guard !isContextHardOverflow else { return false }
 
+        // Configuration gate: the Default agent needs the configure tool
+        // schema to do its job, but a too-small context window (e.g.
+        // Foundation at 4K) strips those tools entirely. Block the send and
+        // let the inline notice explain, instead of silently degrading to a
+        // tool-less chat that can't configure anything.
+        guard !configContextTooSmall else { return false }
+
         let hasText = !localText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let hasContent = hasText || !pendingAttachments.isEmpty
         // During streaming, "send" enqueues the payload (handled by the
@@ -383,6 +390,7 @@ struct FloatingInputCard: View {
             if (pickerItems.count > 1
                 || displayContextTokens > 0
                 || isSandboxAvailable
+                || isDefaultConfigAgent
                 || (appConfig.chatConfig.enableClipboardMonitoring && clipboardService.hasNewContent)
                 || showSessionSpend)
                 && !showVoiceOverlay
@@ -455,6 +463,14 @@ struct FloatingInputCard: View {
     var body: some View {
         let _ = ChatPerfTrace.shared.count("body.FloatingInputCard")
         mainContent
+            // Float the configuration-context error ABOVE the card as an
+            // overlay so it never reflows the input/selector layout when it
+            // appears or clears. Anchored to the card's top edge and shifted
+            // fully above it via the `.top` alignment guide.
+            .overlay(alignment: .top) {
+                configContextErrorOverlay
+            }
+            .animation(.easeOut(duration: 0.2), value: configContextTooSmall)
             .onAppear {
                 let isReappear = !localText.isEmpty || voiceInputState != .idle
                 localText = text
@@ -1535,11 +1551,13 @@ extension FloatingInputCard {
             }
 
             // Sandbox toggle: visible whenever the sandbox is available on
-            // this system. Mutual exclusion with the folder backend is
-            // enforced inside `toggleSandbox()` (it clears the active
-            // folder before enabling sandbox), not by hiding the chip —
-            // that way the user can always see and switch backends.
-            if isSandboxAvailable {
+            // this system. Hidden for the Default agent, which is a
+            // configuration-only surface that never runs autonomous exec.
+            // Mutual exclusion with the folder backend is enforced inside
+            // `toggleSandbox()` (it clears the active folder before enabling
+            // sandbox), not by hiding the chip — that way the user can
+            // always see and switch backends.
+            if !isDefaultConfigAgent, isSandboxAvailable {
                 sandboxToggleChip
             }
 
@@ -1548,11 +1566,17 @@ extension FloatingInputCard {
                 clipboardToggleChip
             }
 
-            // Folder context selector: always available so the user can
-            // point any chat at a working directory. Mutual exclusion with
-            // sandbox is enforced inside the selection handlers (they
-            // disable autonomous exec before opening the picker).
-            folderContextChip
+            // Folder context selector: available so the user can point any
+            // chat at a working directory. The Default (configuration) agent
+            // doesn't use a working folder, so it shows a quiet
+            // "Configuration" indicator in place of the picker instead.
+            // Mutual exclusion with sandbox is enforced inside the selection
+            // handlers (they disable autonomous exec before opening the picker).
+            if isDefaultConfigAgent {
+                configurationOnlyChip
+            } else {
+                folderContextChip
+            }
 
             Spacer()
 
@@ -2078,6 +2102,24 @@ extension FloatingInputCard {
 
     private var effectiveAgentId: UUID {
         agentId ?? Agent.defaultId
+    }
+
+    /// The built-in Default ("Osaurus") agent is a configuration-only
+    /// surface: it configures Osaurus and never uses the sandbox or a
+    /// working folder, so we hide those chips and show a quiet
+    /// "Configuration" indicator instead.
+    private var isDefaultConfigAgent: Bool {
+        effectiveAgentId == Agent.defaultId
+    }
+
+    /// Default agent runs Osaurus configuration, which needs the configure
+    /// tool schema. The same resolver the composer uses to strip tools
+    /// (`.tiny` window) decides whether configuration can run at all — so
+    /// when the selected model's window is too small (e.g. Foundation at
+    /// 4K), configuration genuinely can't run and the send is blocked.
+    private var configContextTooSmall: Bool {
+        guard isDefaultConfigAgent, let model = selectedModel else { return false }
+        return ContextSizeResolver.resolve(modelId: model).sizeClass.disablesTools
     }
 
     private var isSandboxAvailable: Bool {
@@ -2695,6 +2737,104 @@ extension FloatingInputCard {
                 }
             }
         }
+    }
+
+    // MARK: - Configuration Indicator Chip
+
+    /// Quiet, non-interactive pill shown for the Default ("Osaurus")
+    /// agent in place of the sandbox/folder chips. It signals that this
+    /// agent's job is to configure Osaurus — it doesn't execute code in a
+    /// sandbox or work against a host folder — so the controls are absent
+    /// by design rather than missing.
+    private var configurationOnlyChip: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "gearshape.fill")
+                .font(theme.font(size: CGFloat(theme.captionSize) - 2))
+                .foregroundColor(theme.accentColor)
+
+            Text("Configuration", bundle: .module)
+                .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                .foregroundColor(theme.secondaryText)
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .background(
+            Capsule()
+                .fill(theme.secondaryBackground.opacity(0.6))
+        )
+        .overlay(
+            Capsule()
+                .strokeBorder(theme.primaryBorder.opacity(0.4), lineWidth: 0.5)
+        )
+        .help(
+            Text(
+                "The Osaurus agent helps you configure Osaurus. It doesn't use the sandbox or a working folder.",
+                bundle: .module
+            )
+        )
+        .accessibilityLabel(Text("Configuration assistant", bundle: .module))
+    }
+
+    /// Floating wrapper for `configContextErrorBanner`: keeps the toast out of
+    /// the layout flow (so it never shifts the card) and lifts it fully above
+    /// the card's top edge with a small gap via the `.top` alignment guide.
+    @ViewBuilder
+    private var configContextErrorOverlay: some View {
+        if configContextTooSmall {
+            configContextErrorBanner
+                .alignmentGuide(.top) { dimensions in dimensions.height + 10 }
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
+        }
+    }
+
+    /// Compact, floating toast shown above the card when the Default agent's
+    /// selected model is too small to run configuration. Names the model +
+    /// window and offers a one-tap jump to the model picker so the fix is
+    /// obvious.
+    private var configContextErrorBanner: some View {
+        let modelName = selectedPickerItem?.displayName ?? selectedModel ?? L("This model")
+        let ctx = selectedModel.flatMap { ContextSizeResolver.resolve(modelId: $0).contextLength }
+        let ctxBlurb = ctx.map { " (~\(formatTokenCount($0)) ctx)" } ?? ""
+        return HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: CGFloat(theme.captionSize)))
+                .foregroundColor(.orange)
+
+            Text(
+                "\(modelName)\(ctxBlurb) is too small to configure Osaurus.",
+                bundle: .module
+            )
+            .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+            .foregroundColor(theme.primaryText)
+            .fixedSize(horizontal: false, vertical: true)
+
+            Button {
+                showModelPicker = true
+            } label: {
+                Text("Choose model", bundle: .module)
+                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .semibold))
+                    .foregroundColor(theme.accentColor)
+            }
+            .buttonStyle(.plain)
+            .pointingHandCursor()
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 9)
+        .background(
+            ZStack {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(.regularMaterial)
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(Color.orange.opacity(0.12))
+            }
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(Color.orange.opacity(0.35), lineWidth: 1)
+        )
+        .shadow(color: Color.black.opacity(0.12), radius: 8, x: 0, y: 3)
+        .frame(maxWidth: 560)
     }
 
     // MARK: - Folder Context Chip
