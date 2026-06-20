@@ -172,6 +172,11 @@ let package = Package(
                 .product(name: "MLXLMCommon", package: "vmlx-swift"),
                 .product(name: "MLXEmbedders", package: "vmlx-swift"),
                 .product(name: "VMLXTokenizers", package: "vmlx-swift"),
+                // Native on-device image generation (mFLUX). Umbrella import
+                // `import vMLXFlux`; shares the one MLX runtime above and is
+                // routed through MetalGate's exclusive image lane (see
+                // ImageGenerationService).
+                .product(name: "vMLXFlux", package: "vmlx-swift"),
                 .product(name: "FluidAudio", package: "FluidAudio"),
                 .product(name: "VecturaKit", package: "VecturaKit"),
                 .product(name: "OsaurusRepository", package: "OsaurusRepository"),
