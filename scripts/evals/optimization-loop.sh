@@ -160,10 +160,15 @@ gate_rc=0
 if [[ -n "${BASELINE}" ]]; then
   if [[ -d "${BASELINE}" ]]; then
     log "Diffing against baseline ${BASELINE}…"
+    # Build the optional gate flag as an array (not an unquoted command
+    # substitution) so it's both word-split-safe — SC2046 — and bash 3.2-safe
+    # via the same `+`-guarded empty-array expansion documented for filter_args.
+    strict_args=()
+    [[ "${STRICT}" == "1" ]] && strict_args=(--fail-on-regression)
     "${BIN}" diff "${BASELINE}" "${OUT}" \
       --out "${OUT}/diff.json" \
       --markdown "${OUT}/diff.md" \
-      $( [[ "${STRICT}" == "1" ]] && printf -- '--fail-on-regression' )
+      ${strict_args[@]+"${strict_args[@]}"}
     gate_rc=$?
   else
     log "WARNING: BASELINE='${BASELINE}' is not a directory; skipping diff."
