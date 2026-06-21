@@ -2511,8 +2511,7 @@ extension FloatingInputCard {
     // MARK: - Clipboard Chip
 
     /// SF Symbol representing the kind of content currently on the clipboard.
-    /// The chip pairs this with the source app, so the type no longer needs a
-    /// text label ("Paste Content From …").
+    /// The chip pairs this icon with a leading "Paste" label and the source app.
     private var clipboardChipIcon: String {
         guard let content = clipboardService.currentContent else {
             return "paperclip"
@@ -2534,10 +2533,21 @@ extension FloatingInputCard {
                 .font(.system(size: CGFloat(theme.captionSize) - 2, weight: .medium))
                 .foregroundColor(theme.accentColor)
 
-            Text(clipboardService.lastSourceApp ?? "Clipboard")
+            // Lead with the action word so the chip reads as "Paste" like its
+            // row-mates ("Sandbox", "Folder"); the source app trails as a quiet
+            // suffix so the "from which app" signal isn't lost.
+            Text("Paste", bundle: .module)
                 .font(theme.font(size: CGFloat(theme.captionSize), weight: .bold))
                 .foregroundColor(theme.accentColor)
                 .lineLimit(1)
+
+            if let source = clipboardService.lastSourceApp {
+                Text(source)
+                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
 
             Image(systemName: "chevron.right")
                 .font(theme.font(size: CGFloat(theme.captionSize) - 4, weight: .bold))
