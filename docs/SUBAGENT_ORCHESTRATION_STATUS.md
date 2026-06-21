@@ -80,8 +80,6 @@ Chat turn (orchestrator: local OR cloud)
 ## Known gaps / follow-ups
 - **Concurrent chat during an image job** returns empty instead of queueing behind the
   single-residency job (should `waitForChatIdle` or return a "busy" envelope).
-- **GAP 5:** `ChatResidencyHandoff.restore` is best-effort `try?` — surface a reload
-  failure instead of silently leaving the orchestrator unloaded.
 - **`capabilities_discover` embedding SIGSEGV** (concurrent-GPU resource race, #34
   family) — open; harden alongside #34.
 - **UI surfaces still to build** (per requirements doc): dedicated image gen/edit
