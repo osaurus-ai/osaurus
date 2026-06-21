@@ -129,6 +129,17 @@ struct AgentDelegationSettingsSection: View {
 
                 SettingsDivider()
 
+                SettingsSubsection(label: "Memory Safety") {
+                    SettingsToggle(
+                        title: "RAM-Safety Preflight",
+                        description:
+                            "Before a spawned image or text job, verify the spawn model fits in memory once the chat model is freed. If it won't fit, refuse the job instead of unloading the chat model and failing to load the spawn model.",
+                        isOn: $configuration.ramSafetyPreflightEnabled
+                    )
+                }
+
+                SettingsDivider()
+
                 SettingsSubsection(label: "Permissions") {
                     VStack(alignment: .leading, spacing: 12) {
                         permissionPicker(

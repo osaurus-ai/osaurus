@@ -309,3 +309,49 @@ Monitor). VL is N/A for the text models; image jobs are the visual axis.
    handoff; mirror `ComputerUseLoop`.
 3. Settings: orchestrator + per-job subagent model assignment + handoff toggles.
 4. Run the §5 matrix on the dev app; fix; document results here.
+
+---
+
+## 7. Gap audit + build increment (2026-06-21)
+
+Parallel read-only audit of the whole feature surface (settings page, lifecycle).
+Reconciles §0/§4 doc claims against actual code; several "NOT DONE" items are now
+built (matrix run 2). Real current state:
+
+### Built (verified)
+- Settings panel: all toggles, 3 default-model pickers (text/image-gen/image-edit),
+  permission pickers, load policies, budgets. Save/persist live → `agent-delegation.json`,
+  survives restart.
+- Prompt/task dispatch (`image_generate`/`image_edit`/`local_delegate`/`spawn`): args
+  forwarded, model override resolved (requested > configured default).
+- Image + text unload→job→reload handoff (`ChatResidencyHandoff` shared core);
+  cancel/failure restores the orchestrator.
+- Local→local text handoff: wired (settings + residency gated). Doc's old "rejected" was stale.
+
+### Gaps found
+1. **Image-model folder scan** — scanned only `<effectiveModelsDir>/image` (default
+   `~/MLXModels/image`), missing manually-placed bundles under `~/models/image/`.
+2. **RAM-safety preflight** — MISSING in both flows (unconditional evict-then-load).
+3. `imageJobLoadPolicy.unloadImageAfterAgentJob` — dead branch (no distinct behavior).
+4. Post-reload KV continuity — in-mem KV destroyed; cold/L2-warm rebuild, no snapshot.
+5. cancel/failure restore is best-effort `try?` (silent if reload fails).
+
+### This increment (built 2026-06-21)
+- **GAP 1 FIXED** — `ImageGenerationService.imageModelsRoot()` now returns the first
+  *populated* candidate among `<modelsDir>/image`, `~/models/image`, legacy
+  `~/.mlxstudio/models/image` (env override still wins). Scan + load stay single-root +
+  consistent; finds `~/models/image` with no env/bookmark.
+- **GAP 2 FIXED (image + config + UI)** — new `ramSafetyPreflightEnabled` config field
+  (default true) + "Memory Safety → RAM-Safety Preflight" settings toggle.
+  `ChatResidencyHandoff.memoryPreflight(requiredBytes:enabled:)`: reclaimable RAM
+  (free+inactive+purgeable) + resident-chat bytes vs spawn-model bytes×1.3 + 3 GB
+  headroom; throws `.insufficientMemory` **before** any unload. Wired into
+  `NativeImageJobCoordinator` generate + edit (model resolved before unload).
+
+### Still TODO (next increments)
+- GAP 2 text path: wire the same preflight into `LocalTextDelegateTool`/`SpawnTool`
+  (needs the delegate model's on-disk size as `requiredBytes`).
+- GAP 3: give `unloadImageAfterAgentJob` a distinct branch (or document the collapse).
+- GAP 5: surface restore failures instead of swallowing `try?`.
+- Live matrix (§5) with a tool-reliable orchestrator (qwen3-4b too weak to emit the
+  image tool call — echoes instead; use a stronger local model or forced tool_choice).

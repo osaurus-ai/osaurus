@@ -64,24 +64,43 @@ public actor ImageGenerationService {
 
     /// Root directory scanned for local image bundles. Resolution order:
     ///   1. `OSAURUS_IMAGE_MODELS_DIR` (explicit override / tests)
-    ///   2. `<effective models dir>/image` — keeps image weights on the same
-    ///      user-chosen, SSD-resident volume as LLM weights (required: USB
-    ///      weights trip the GPU watchdog on the first forward pass).
-    ///   3. `~/.mlxstudio/models/image` — the engine default, used only when
-    ///      the osaurus image dir does not exist yet but a legacy store does.
+    ///   2. first **populated** candidate among:
+    ///        - `<effective models dir>/image` (the user-chosen LLM volume)
+    ///        - `~/models/image` (common manual layout — same SSD volume)
+    ///        - `~/.mlxstudio/models/image` (legacy engine default)
+    ///   3. else `<effective models dir>/image` (where downloads land).
+    ///
+    /// Picking the first *populated* candidate keeps scan + load consistent
+    /// (a single root) while finding manually-placed bundles under
+    /// `~/models/image` without requiring an `OSAURUS_IMAGE_MODELS_DIR` env or
+    /// a custom models-dir bookmark. Image weights must stay on an
+    /// SSD-resident volume (USB weights trip the GPU watchdog on first
+    /// forward); all candidates here are internal-volume paths.
     public static func imageModelsRoot() -> URL {
         let env = ProcessInfo.processInfo.environment
         if let override = env["OSAURUS_IMAGE_MODELS_DIR"], !override.isEmpty {
             return URL(fileURLWithPath: override, isDirectory: true)
         }
+        let fm = FileManager.default
+        func holdsBundles(_ url: URL) -> Bool {
+            guard
+                let items = try? fm.contentsOfDirectory(
+                    at: url,
+                    includingPropertiesForKeys: [.isDirectoryKey],
+                    options: [.skipsHiddenFiles])
+            else { return false }
+            return items.contains {
+                (try? $0.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
+            }
+        }
         let osaurusImageDir = DirectoryPickerService.effectiveModelsDirectory()
             .appendingPathComponent("image", isDirectory: true)
-        let fm = FileManager.default
-        if !fm.fileExists(atPath: osaurusImageDir.path) {
-            let legacy = MLXStudioModelStore.defaultImageRoot
-            if fm.fileExists(atPath: legacy.path) {
-                return legacy
-            }
+        let userModelsImageDir = fm.homeDirectoryForCurrentUser
+            .appendingPathComponent("models", isDirectory: true)
+            .appendingPathComponent("image", isDirectory: true)
+        let legacy = MLXStudioModelStore.defaultImageRoot
+        for candidate in [osaurusImageDir, userModelsImageDir, legacy] where holdsBundles(candidate) {
+            return candidate
         }
         return osaurusImageDir
     }

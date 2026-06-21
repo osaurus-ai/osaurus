@@ -13,6 +13,7 @@
 //  performs for image jobs; `LocalTextDelegateTool` uses it for the text path.
 //
 
+import Darwin
 import Foundation
 
 /// Models unloaded by a handoff, to be reloaded when the job finishes.
@@ -25,11 +26,67 @@ struct ChatResidencyLease: Sendable, Equatable {
 enum ChatResidencyHandoff {
     enum HandoffError: Error, CustomStringConvertible {
         case chatBusy
+        case insufficientMemory(neededGB: Double, availableGB: Double)
         var description: String {
             switch self {
             case .chatBusy:
                 return "local chat generation did not become idle before the subagent memory handoff"
+            case let .insufficientMemory(neededGB, availableGB):
+                return String(
+                    format:
+                        "RAM-safety preflight refused the job: the spawn model needs ~%.1f GB but only ~%.1f GB would be available after freeing the chat model. Use a smaller spawn model, free memory, or disable the RAM-safety preflight in Agent Delegation settings.",
+                    neededGB, availableGB)
             }
+        }
+    }
+
+    /// Reclaimable physical memory (free + inactive + purgeable) in bytes.
+    /// Inactive + purgeable pages are reclaimed under pressure, so they count
+    /// as practically available for a new resident model.
+    static func availableMemoryBytes() -> Int64 {
+        var vmInfo = vm_statistics64()
+        var count = mach_msg_type_number_t(
+            MemoryLayout<vm_statistics64>.size / MemoryLayout<natural_t>.size)
+        let kr = withUnsafeMutablePointer(to: &vmInfo) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                host_statistics64(mach_host_self(), HOST_VM_INFO64, $0, &count)
+            }
+        }
+        guard kr == KERN_SUCCESS else { return 0 }
+        var rawPage: vm_size_t = 0
+        host_page_size(mach_host_self(), &rawPage)
+        let pageSize = Int64(rawPage)
+        return (Int64(vmInfo.free_count) + Int64(vmInfo.inactive_count)
+            + Int64(vmInfo.purgeable_count)) * pageSize
+    }
+
+    /// Refuse-before-evict preflight. With `requiredBytes` (the spawn model's
+    /// on-disk size) and the bytes that unloading the resident chat models will
+    /// free, decide whether the spawn model fits BEFORE anything is unloaded —
+    /// so a too-large job never leaves the user with the orchestrator evicted
+    /// and nothing loaded. `requiredBytes <= 0` or `enabled == false` skips the
+    /// check. Throws `.insufficientMemory` when it won't fit.
+    static func memoryPreflight(
+        requiredBytes: Int64,
+        enabled: Bool,
+        onPhase: (_ phase: String, _ detail: String) -> Void = { _, _ in }
+    ) async throws {
+        guard enabled, requiredBytes > 0 else { return }
+        // Models occupy more resident RAM than their on-disk weights (KV +
+        // activations + framework overhead); inflate the on-disk estimate.
+        let inflation = 1.3
+        let headroom: Int64 = 3 * 1024 * 1024 * 1024  // keep 3 GB for the OS/app
+        let needed = Int64(Double(requiredBytes) * inflation) + headroom
+        let residentChatBytes = await ModelRuntime.shared.cachedModelSummaries()
+            .reduce(Int64(0)) { $0 + $1.bytes }
+        let projected = availableMemoryBytes() + residentChatBytes
+        if projected < needed {
+            let neededGB = Double(needed) / 1_073_741_824
+            let availableGB = Double(projected) / 1_073_741_824
+            onPhase(
+                "ram_preflight_refused",
+                String(format: "need ~%.1f GB, ~%.1f GB available", neededGB, availableGB))
+            throw HandoffError.insufficientMemory(neededGB: neededGB, availableGB: availableGB)
         }
     }
 

@@ -335,17 +335,23 @@ actor NativeImageJobCoordinator {
                 var chatLease = NativeImageChatResidencyLease.empty
                 do {
                     record(NativeImageJobProgress(jobID: jobID, phase: .queued))
-                    chatLease = try await self.prepareChatResidencyIfNeeded(
-                        config: config,
-                        jobID: jobID,
-                        record: record
-                    )
+                    // Resolve the image model BEFORE any unload so the RAM-safety
+                    // preflight can refuse-before-evict (never strand the user
+                    // with the orchestrator unloaded and the image model too big).
                     let models = (try? await imageService.availableModels()) ?? []
                     let model = try NativeImageJobModelResolver.resolve(
                         requested: request.model,
                         configured: config.defaultImageGenerationModelId,
                         available: models,
                         kind: .imageGeneration
+                    )
+                    try await ChatResidencyHandoff.memoryPreflight(
+                        requiredBytes: Int64(models.first { $0.id == model }?.totalBytes ?? 0),
+                        enabled: config.ramSafetyPreflightEnabled)
+                    chatLease = try await self.prepareChatResidencyIfNeeded(
+                        config: config,
+                        jobID: jobID,
+                        record: record
                     )
                     var produced: [GeneratedImage] = []
                     let params = ImageGenerationParameters(
@@ -448,17 +454,21 @@ actor NativeImageJobCoordinator {
                 var chatLease = NativeImageChatResidencyLease.empty
                 do {
                     record(NativeImageJobProgress(jobID: jobID, phase: .queued))
-                    chatLease = try await self.prepareChatResidencyIfNeeded(
-                        config: config,
-                        jobID: jobID,
-                        record: record
-                    )
+                    // Resolve before unload → RAM-safety preflight (refuse-before-evict).
                     let models = (try? await imageService.availableModels()) ?? []
                     let model = try NativeImageJobModelResolver.resolve(
                         requested: request.model,
                         configured: config.defaultImageEditModelId,
                         available: models,
                         kind: .imageEdit
+                    )
+                    try await ChatResidencyHandoff.memoryPreflight(
+                        requiredBytes: Int64(models.first { $0.id == model }?.totalBytes ?? 0),
+                        enabled: config.ramSafetyPreflightEnabled)
+                    chatLease = try await self.prepareChatResidencyIfNeeded(
+                        config: config,
+                        jobID: jobID,
+                        record: record
                     )
                     var produced: [GeneratedImage] = []
                     let params = ImageEditParameters(

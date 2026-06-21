@@ -140,6 +140,11 @@ struct AgentDelegationConfiguration: Codable, Equatable, Sendable {
     var sharingPolicy: AgentDelegationSharingPolicy
     var permissionDefaults: AgentDelegationPermissionDefaults
     var budgets: AgentDelegationBudgets
+    /// When true (default), a subagent/image job runs a refuse-before-evict RAM
+    /// preflight: if the spawn model would not fit once the resident chat model
+    /// is freed, the job is rejected instead of unloading the orchestrator and
+    /// failing to load the spawn model. See `ChatResidencyHandoff.memoryPreflight`.
+    var ramSafetyPreflightEnabled: Bool
 
     init(
         agentDelegationEnabled: Bool = false,
@@ -154,7 +159,8 @@ struct AgentDelegationConfiguration: Codable, Equatable, Sendable {
         imageJobLoadPolicy: AgentDelegationImageLoadPolicy = .agentSingleResidency,
         sharingPolicy: AgentDelegationSharingPolicy = .compactResultOnly,
         permissionDefaults: AgentDelegationPermissionDefaults = AgentDelegationPermissionDefaults(),
-        budgets: AgentDelegationBudgets = AgentDelegationBudgets()
+        budgets: AgentDelegationBudgets = AgentDelegationBudgets(),
+        ramSafetyPreflightEnabled: Bool = true
     ) {
         self.agentDelegationEnabled = agentDelegationEnabled
         self.cloudTextDelegationEnabled = cloudTextDelegationEnabled
@@ -169,6 +175,7 @@ struct AgentDelegationConfiguration: Codable, Equatable, Sendable {
         self.sharingPolicy = sharingPolicy
         self.permissionDefaults = permissionDefaults
         self.budgets = budgets.normalized
+        self.ramSafetyPreflightEnabled = ramSafetyPreflightEnabled
     }
 
     static let `default` = AgentDelegationConfiguration()
@@ -235,6 +242,7 @@ struct AgentDelegationConfiguration: Codable, Equatable, Sendable {
         case sharingPolicy
         case permissionDefaults
         case budgets
+        case ramSafetyPreflightEnabled
     }
 
     init(from decoder: Decoder) throws {
@@ -271,7 +279,9 @@ struct AgentDelegationConfiguration: Codable, Equatable, Sendable {
                 forKey: .permissionDefaults
             ) ?? AgentDelegationPermissionDefaults(),
             budgets: try container.decodeIfPresent(AgentDelegationBudgets.self, forKey: .budgets)
-                ?? AgentDelegationBudgets()
+                ?? AgentDelegationBudgets(),
+            ramSafetyPreflightEnabled: try container.decodeIfPresent(
+                Bool.self, forKey: .ramSafetyPreflightEnabled) ?? true
         )
     }
 
