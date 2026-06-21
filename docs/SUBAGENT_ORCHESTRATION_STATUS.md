@@ -66,7 +66,7 @@ Chat turn (orchestrator: local OR cloud)
 | | Item | Status |
 |---|---|---|
 | A | `image_generate` → handoff → PNG | ✅ PASS |
-| A | `image_edit` round-trip | ⬜ TODO (needs a source-image path the model supplies) |
+| A | `image_edit` round-trip | ✅ PASS — orchestrator `image_edit` → qwen-image-edit load → real 1024² edited PNG (differs from source) |
 | A | cancel/failure mid-job restores orchestrator | ⬜ TODO (code path present) |
 | A | cloud-orchestrator image job (no unload) | ⬜ TODO |
 | B | `local_delegate` / `spawn` coder live run | 🟡 schemas injected; text run 2 passed; image-of-this not re-run |
@@ -124,3 +124,13 @@ Chat turn (orchestrator: local OR cloud)
 `ChatResidencyHandoff.restoreBestEffort` logs a reload failure instead of swallowing
 it (`try?`); wired into SpawnTool + LocalTextDelegateTool restore paths. A
 left-unloaded orchestrator after a failed restore is now diagnosable.
+
+## Update 2026-06-21 — image_edit live-proven; MCP-direct image gap
+Matrix A `image_edit`: PASS. Orchestrator (qwen3-4b, forced tool_choice, source path
+given in the prompt) → `image_edit` → coordinator loaded Qwen-Image-Edit → produced a
+real 1024² RGB PNG distinct from the source. So both `image_generate` and `image_edit`
+fire end-to-end through the orchestrator → coordinator → vMLXFlux handoff.
+Minor gap: a DIRECT `/mcp/call` to `image_generate`/`image_edit` errors "no model
+loaded — call FluxEngine.load first" (the MCP bridge bypasses the coordinator that
+owns the model load/handoff). MCP-direct image tools need a load step or to route
+through the coordinator; the chat/agent-run tool path is correct.
