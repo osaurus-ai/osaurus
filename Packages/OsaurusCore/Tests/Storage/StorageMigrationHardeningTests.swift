@@ -188,7 +188,7 @@ struct StorageMigrationHardeningTests {
             let reports = await withTaskGroup(
                 of: StorageMigrationCoordinator.Report.self
             ) { group -> [StorageMigrationCoordinator.Report] in
-                for _ in 0..<6 {
+                for _ in 0 ..< 6 {
                     group.addTask {
                         await StorageMigrationCoordinator.shared.converge(to: .encrypted)
                     }

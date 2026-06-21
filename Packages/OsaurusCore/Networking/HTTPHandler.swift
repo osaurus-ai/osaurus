@@ -4208,6 +4208,27 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             return
         }
 
+        // Confine agent-scoped keys to their own agent: a key minted by
+        // `/pair` / `/pair-invite` for agent A must not read another agent's
+        // metadata (name, description, effective_model). Mirrors the
+        // `/agents/{id}/run` scope gate. Loopback callers (authedAudience ==
+        // nil) and master-scoped keys are unaffected. Read `stateRef` here on
+        // the event loop, before the detached `runRequestTask`.
+        if let rejection = agentScopeRejection(forAgentId: agentId) {
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(
+                    context: ctx.value,
+                    version: head.version,
+                    status: .forbidden,
+                    headers: headers,
+                    body: #"{"error":"\#(rejection.code)","message":"\#(rejection.message)"}"#
+                )
+            }
+            return
+        }
+
         runRequestTask(priority: .userInitiated) {
             // Built-in agents are not exposed via HTTP — return 404 (not 403)
             // so external clients learn the id is unreachable but cannot

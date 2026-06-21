@@ -749,6 +749,14 @@ struct ChatCompletionRequest: Codable, Sendable {
     /// Osaurus Router can dedupe billing on a re-POST. Not decoded from inbound
     /// OpenAI JSON; forwarded ONLY to the router (in the signed request body).
     var idempotencyKey: String? = nil
+    /// Local-only marker set by a chat session that targets a paired/discovered
+    /// remote Osaurus *agent* (Mode 2). When true the request is routed to the
+    /// remote `/agents/{address}/run` endpoint so the agent runs fully
+    /// server-side (its own model + context + tools) and only text deltas
+    /// stream back. When false an `.osaurus` provider is used as a plain
+    /// OpenAI-compatible inference backend (`/chat/completions`, Mode 1). Not
+    /// decoded from OpenAI JSON and not forwarded to remote providers.
+    var runAsRemoteAgent: Bool = false
 
     /// Resolved max tokens, preferring max_tokens then max_completion_tokens.
     var resolvedMaxTokens: Int? { max_tokens ?? max_completion_tokens }
@@ -790,6 +798,7 @@ struct ChatCompletionRequest: Codable, Sendable {
         copy.samplingParametersAreImplicit = samplingParametersAreImplicit
         copy.isAgentRequest = isAgentRequest
         copy.idempotencyKey = idempotencyKey
+        copy.runAsRemoteAgent = runAsRemoteAgent
         return copy
     }
 
@@ -826,6 +835,7 @@ struct ChatCompletionRequest: Codable, Sendable {
         copy.samplingParametersAreImplicit = samplingParametersAreImplicit
         copy.isAgentRequest = isAgentRequest
         copy.idempotencyKey = idempotencyKey
+        copy.runAsRemoteAgent = runAsRemoteAgent
         return copy
     }
 }

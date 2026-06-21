@@ -414,9 +414,10 @@ public actor StorageMigrationCoordinator {
             return true
         }
         let dir = URL(fileURLWithPath: path).deletingLastPathComponent()
-        let available = (try? dir.resourceValues(
-            forKeys: [.volumeAvailableCapacityForImportantUsageKey]
-        ))?.volumeAvailableCapacityForImportantUsage
+        let available =
+            (try? dir.resourceValues(
+                forKeys: [.volumeAvailableCapacityForImportantUsageKey]
+            ))?.volumeAvailableCapacityForImportantUsage
         guard let available else { return true }
         // Require 2x the file size (temp copy + original) plus a 64 MiB floor.
         let needed = size * 2 + 64 * 1024 * 1024

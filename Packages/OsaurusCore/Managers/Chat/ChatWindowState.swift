@@ -54,6 +54,13 @@ final class ChatWindowState: ObservableObject {
     @Published var selectedDiscoveredAgentProviderId: UUID?
     @Published private(set) var pairedRelayAgents: [PairedRelayAgent] = []
     @Published var selectedRelayAgent: PairedRelayAgent?
+    /// Mode 2 only: the *unprefixed* live effective model id of the selected
+    /// remote agent (e.g. `mlx-community/Qwen3-4B-...`), resolved from
+    /// `GET /agents/{address}` on connect. Used to pin the model chip to the
+    /// agent's own model. `nil` until resolved (or when it can't be resolved),
+    /// in which case the picker falls back to the provider's first chat-capable
+    /// model. Cleared whenever the window leaves remote-agent mode.
+    @Published var pinnedRemoteAgentEffectiveModel: String?
 
     // MARK: - Theme State
 
@@ -228,6 +235,7 @@ final class ChatWindowState: ObservableObject {
         selectedDiscoveredAgent = nil
         selectedDiscoveredAgentProviderId = nil
         selectedRelayAgent = nil
+        pinnedRemoteAgentEffectiveModel = nil
         agentId = newAgentId
         refreshTheme()
         refreshAgentConfig()

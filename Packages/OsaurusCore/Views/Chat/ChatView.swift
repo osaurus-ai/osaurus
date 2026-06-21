@@ -314,6 +314,18 @@ final class ChatSession: ObservableObject {
     /// Weak back-reference to the owning window state (set by ChatWindowState).
     weak var windowState: ChatWindowState?
 
+    /// True when this window is pointed at a paired/discovered remote Osaurus
+    /// *agent* (Mode 2 — "talk to the agent"). The signal is the selected
+    /// relay/discovered agent provider, which is set only by
+    /// `connectToRelayAgent` / `connectToDiscoveredAgent` and cleared by
+    /// `adoptAgent`. Plain model picks (Mode 1 — "use the device" for
+    /// inference) never set it, so an `.osaurus` device model chosen on a local
+    /// agent stays in Mode 1. Drives bare-request composition and `/run`
+    /// routing in `send(...)`.
+    var isRemoteAgentTarget: Bool {
+        windowState?.selectedDiscoveredAgentProviderId != nil
+    }
+
     private var currentTask: Task<Void, Never>?
     private var activeRunId: UUID?
     private var activeRunContext: RunContext?
@@ -491,18 +503,21 @@ final class ChatSession: ObservableObject {
             .sink { [weak self] newModel in
                 guard let self = self, !self.isLoadingModel, let model = newModel else { return }
                 let pid = self.agentId ?? Agent.defaultId
-                AgentManager.shared.updateDefaultModel(for: pid, model: model)
+                // Mode 2 (remote agent run): the model is pinned to the remote
+                // agent's own model. Don't write that pin into the LOCAL agent's
+                // saved default — otherwise selecting a remote agent would
+                // silently overwrite the local agent's preferred model. Mode 1
+                // (plain model picks on a local agent) still persists normally.
+                if self.windowState?.selectedDiscoveredAgentProviderId == nil {
+                    AgentManager.shared.updateDefaultModel(for: pid, model: model)
+                }
 
                 self.loadActiveModelOptions(for: model)
 
-                // Clear pending image attachments when switching to a non-VLM model
-                let newModelSupportsImages: Bool = {
-                    if model.lowercased() == "foundation" { return false }
-                    guard let option = self.pickerItems.first(where: { $0.id == model }) else { return false }
-                    if case .remote = option.source { return true }
-                    return option.isVLM
-                }()
-                if !newModelSupportsImages {
+                // Clear pending image attachments when switching to a non-VLM
+                // model. Computed against the NEW model id, since `@Published`
+                // emits before `selectedModel` updates.
+                if !Self.modelSupportsImages(modelId: model, pickerItems: self.pickerItems) {
                     self.pendingAttachments = []
                 }
 
@@ -680,10 +695,19 @@ final class ChatSession: ObservableObject {
     /// Check if the currently selected model supports images (VLM)
     var selectedModelSupportsImages: Bool {
         guard let model = selectedModel else { return false }
-        if model.lowercased() == "foundation" { return false }
-        if ModelMediaCapabilities.from(modelId: model).supportsImage { return true }
-        guard let option = pickerItems.first(where: { $0.id == model }) else { return false }
-        if case .remote = option.source { return true }
+        return Self.modelSupportsImages(modelId: model, pickerItems: pickerItems)
+    }
+
+    /// Whether `modelId` can accept image input. Remote models are NOT assumed
+    /// vision-capable: a plain remote provider (incl. a Mode 1 `.osaurus`
+    /// device) exposes a flat model list with no capability metadata, so a
+    /// remote item's `isVLM` is false unless the id-based heuristic matched or
+    /// router metadata set it — sending images to a non-VLM remote model just
+    /// gets rejected upstream.
+    static func modelSupportsImages(modelId: String, pickerItems: [ModelPickerItem]) -> Bool {
+        if modelId.lowercased() == "foundation" { return false }
+        if ModelMediaCapabilities.from(modelId: modelId).supportsImage { return true }
+        guard let option = pickerItems.first(where: { $0.id == modelId }) else { return false }
         return option.isVLM
     }
 
@@ -1313,11 +1337,13 @@ final class ChatSession: ObservableObject {
     /// cancellation. The UI uses `loading` to render a skeleton, and both
     /// `idle` and `failed` to render the static fallback.
     func loadGenerativeGreetingIfNeeded(agent: Agent) {
-        guard agent.shouldUseGenerativeGreetings else {
-            generativeGreetingState = .idle
-            generativeGreetingKey = nil
-            generativeGreetingTask?.cancel()
-            generativeGreetingTask = nil
+        // No local greeting generation when the feature is off, or for a
+        // remote-agent chat (Mode 2) — the latter would load a local model
+        // purely for empty-state flavor text and stamp the local persona onto a
+        // remote conversation. The empty state shows the remote agent's
+        // name/avatar and the static greeting instead.
+        guard !isRemoteAgentTarget, agent.shouldUseGenerativeGreetings else {
+            resetGenerativeGreeting()
             return
         }
 
@@ -2822,7 +2848,8 @@ final class ChatSession: ObservableObject {
                     // session and injected onto the latest user message — so it
                     // flows through the Privacy Filter — in
                     // `loopHooks.buildMessages` below.
-                    if ScreenContextSettings.shared.injectionEnabled,
+                    if !isRemoteAgentTarget,
+                        ScreenContextSettings.shared.injectionEnabled,
                         self.frozenScreenContext == nil
                     {
                         let snapshot = await ScreenContextDistiller.captureForChat()
@@ -2845,7 +2872,12 @@ final class ChatSession: ObservableObject {
                     )
                     guard isRunActive(runId) else { return }
 
-                    var sys = context.prompt
+                    // Mode 2 (remote agent run): send NO local system prompt.
+                    // The remote agent composes its own persona/memory/tools on
+                    // the bare conversation server-side, so anything we'd inject
+                    // here (local agent prompt, plugin instructions, one-off
+                    // skill) would leak the caller's context onto the agent.
+                    var sys = isRemoteAgentTarget ? "" : context.prompt
 
                     // Plugin-dispatched tasks (host->dispatch) carry their
                     // source plugin id on the session. Append that plugin's
@@ -2857,7 +2889,8 @@ final class ChatSession: ObservableObject {
                     // dropped on the dispatch path, leaving the model
                     // unaware of plugin-specific contracts (e.g. Telegram's
                     // `[reply_token …]` / `reply` / `reply_typing` flow).
-                    if let pid = sourcePluginId,
+                    if !isRemoteAgentTarget,
+                        let pid = sourcePluginId,
                         let pluginInstructions = PluginInstructionsResolver.instructions(
                             pluginId: pid,
                             agentId: agentId
@@ -2866,10 +2899,12 @@ final class ChatSession: ObservableObject {
                         sys = sys.isEmpty ? pluginInstructions : sys + "\n\n" + pluginInstructions
                     }
 
-                    // Inject one-off skill if the user selected one via slash command
+                    // Inject one-off skill if the user selected one via slash command.
+                    // Consume the pending id either way, but never append in Mode 2
+                    // (the request must stay bare).
                     if let skillId = pendingOneOffSkillId {
                         pendingOneOffSkillId = nil
-                        if let skill = SkillManager.shared.skill(for: skillId) {
+                        if !isRemoteAgentTarget, let skill = SkillManager.shared.skill(for: skillId) {
                             let section = await SkillManager.shared.buildFullInstructions(for: skill)
                             sys += "\n\n## Active Skill: \(skill.name)\n\n\(section)"
                         }
@@ -2877,8 +2912,10 @@ final class ChatSession: ObservableObject {
 
                     // Frozen for the whole run (deferred-schema policy): the
                     // tool schema never changes mid-run, even after
-                    // `capabilities_load` — see the drain block below.
-                    let toolSpecs = context.tools
+                    // `capabilities_load` — see the drain block below. In Mode 2
+                    // we send no tools: the remote agent advertises and executes
+                    // its own tools server-side and only streams text back.
+                    let toolSpecs = isRemoteAgentTarget ? [] : context.tools
                     let isManualTools = liveToolMode == .manual
                     cachedContext = context
 
@@ -3520,14 +3557,22 @@ final class ChatSession: ObservableObject {
                             // Memory now lives on the latest user message instead of
                             // the system prompt — keeps the system prefix byte-stable
                             // across turns so the MLX paged KV cache can reuse the
-                            // entire conversation prefix.
-                            SystemPromptComposer.injectMemoryPrefix(context.memorySection, into: &msgs)
+                            // entire conversation prefix. Skipped in Mode 2: this is
+                            // the *local* agent's memory and must not ride along to
+                            // the remote agent, which applies its own.
+                            if !self.isRemoteAgentTarget {
+                                SystemPromptComposer.injectMemoryPrefix(
+                                    context.memorySection,
+                                    into: &msgs
+                                )
+                            }
 
                             // Opt-in: prepend the frozen screen-context snapshot
                             // to the latest user message (same seam as memory).
                             // Keeps the system prefix KV-stable and routes the
                             // snapshot through the Privacy Filter on cloud sends.
-                            if ScreenContextSettings.shared.injectionEnabled {
+                            // Skipped in Mode 2 (no local context leaves the client).
+                            if !self.isRemoteAgentTarget, ScreenContextSettings.shared.injectionEnabled {
                                 SystemPromptComposer.injectScreenContextPrefix(
                                     self.frozenScreenContext,
                                     into: &msgs
@@ -3594,6 +3639,13 @@ final class ChatSession: ObservableObject {
                                 session_id: self.sessionId?.uuidString
                             )
                             req.samplingParametersAreImplicit = true
+                            // Mode 2 routing signal: tells `RemoteProviderService`
+                            // to target the peer's `/agents/{address}/run`
+                            // endpoint (remote agent runs fully server-side) and
+                            // to send `model: "default"` so the agent's live
+                            // effective model is used. False = Mode 1 (plain
+                            // remote inference via `/chat/completions`).
+                            req.runAsRemoteAgent = self.isRemoteAgentTarget
                             req.modelOptions =
                                 self.activeModelOptions.isEmpty ? nil : self.activeModelOptions
                             req.ttftTrace = ttftTrace
@@ -3843,6 +3895,7 @@ final class ChatSession: ObservableObject {
                                 session_id: sessionId?.uuidString
                             )
                             finalReq.samplingParametersAreImplicit = true
+                            finalReq.runAsRemoteAgent = isRemoteAgentTarget
                             finalReq.modelOptions = activeModelOptions.isEmpty ? nil : activeModelOptions
                             finalReq.turnId = assistantTurn.id
                             // Distinct logical step (the post-cap summarizing
@@ -4057,16 +4110,91 @@ struct ChatView: View {
     /// endpoints, etc.). Since user-configured providers are always
     /// intentional, they should be visible regardless of Bonjour state.
     private var filteredPickerItems: [ModelPickerItem] {
-        if let providerId = windowState.selectedDiscoveredAgentProviderId {
-            // Bonjour agent active: show only that agent's models.
-            return session.pickerItems.filter {
-                if case .remote(_, let id) = $0.source { return id == providerId }
-                return false
-            }
+        guard let providerId = windowState.selectedDiscoveredAgentProviderId else {
+            // No remote agent selected (Mode 1 / local): show everything —
+            // local, foundation, and user-configured remote providers, including
+            // the device's own models so they can be picked for remote inference.
+            return session.pickerItems
         }
-        // No Bonjour agent: show everything — local, foundation, and
-        // user-configured remote providers.
-        return session.pickerItems
+        // Mode 2 (remote agent run): the model is pinned to the agent's own
+        // model — surface ONLY the selected item so the picker can't switch it.
+        // While the pin is still resolving (or the effective model isn't in the
+        // device catalog), fall back to the provider's chat-capable models so
+        // the chip still shows the right device instead of going blank.
+        if let selected = session.selectedModel,
+            let item = session.pickerItems.first(where: { $0.id == selected }),
+            Self.isProviderItem(item, providerId: providerId)
+        {
+            return [item]
+        }
+        return session.pickerItems.filter { Self.isProviderItem($0, providerId: providerId) }
+    }
+
+    /// True when `item` is a remote model served by `providerId`.
+    private static func isProviderItem(_ item: ModelPickerItem, providerId: UUID) -> Bool {
+        if case .remote(_, let id) = item.source { return id == providerId }
+        return false
+    }
+
+    /// The model id with its single provider-name prefix segment removed, e.g.
+    /// `coco/mlx-community/Qwen3-4B` -> `mlx-community/Qwen3-4B`. Mirrors the
+    /// `"<slug>/<modelId>"` prefixing done by `RemoteProviderManager`, so it
+    /// recovers the device-side model id to compare against `effective_model`.
+    private static func unprefixedModelTail(_ id: String) -> String {
+        guard let slash = id.firstIndex(of: "/") else { return id }
+        return String(id[id.index(after: slash)...])
+    }
+
+    /// Text for the pinned model chip (Mode 2). Resolves to the remote agent's
+    /// live effective model when known — cleaned via the matching catalog item,
+    /// else the raw id. While the effective model is still loading (or isn't in
+    /// the device catalog), falls back to the remote agent's name, then
+    /// "Default", so the chip never implies a specific device model that isn't
+    /// the agent's. Returns nil when no remote agent is selected (the chip is
+    /// interactive then and resolves its own label).
+    private var pinnedModelChipLabel: String? {
+        guard let providerId = windowState.selectedDiscoveredAgentProviderId else { return nil }
+        if let effective = windowState.pinnedRemoteAgentEffectiveModel, !effective.isEmpty {
+            if let item = session.pickerItems.first(where: {
+                Self.isProviderItem($0, providerId: providerId)
+                    && Self.unprefixedModelTail($0.id) == effective
+            }) {
+                return item.displayName
+            }
+            return effective
+        }
+        return windowState.selectedDiscoveredAgent?.name
+            ?? windowState.selectedRelayAgent?.name
+            ?? L("Default")
+    }
+
+    /// Resolve and apply the pinned model for a selected remote agent (Mode 2).
+    /// Prefers the agent's live effective model (`pinnedRemoteAgentEffectiveModel`,
+    /// matched against the provider's prefixed picker ids); otherwise keeps an
+    /// already-correct provider selection or falls back to the provider's first
+    /// chat-capable model. Routing only needs the provider to be right — Mode 2
+    /// sends `model: "default"` on the wire, so the agent's live model is always
+    /// what actually runs.
+    @MainActor
+    private func applyRemoteAgentModelPin(providerId: UUID) {
+        let items = session.pickerItems
+        if let effective = windowState.pinnedRemoteAgentEffectiveModel,
+            let item = items.first(where: {
+                Self.isProviderItem($0, providerId: providerId)
+                    && Self.unprefixedModelTail($0.id) == effective
+            })
+        {
+            if session.selectedModel != item.id { session.selectedModel = item.id }
+            return
+        }
+        let currentIsFromProvider =
+            items.first(where: { $0.id == session.selectedModel })
+            .map { Self.isProviderItem($0, providerId: providerId) } ?? false
+        if !currentIsFromProvider,
+            let first = items.filter({ Self.isProviderItem($0, providerId: providerId) }).firstChatCapable
+        {
+            session.selectedModel = first.id
+        }
     }
 
     /// Observed session - needed to properly propagate @Published changes from ChatSession
@@ -4369,7 +4497,9 @@ struct ChatView: View {
                                 queuedSend: $observedSession.queuedSend,
                                 onSendNow: { observedSession.sendNowInterrupting() },
                                 onCancelQueued: { observedSession.cancelQueuedSend() },
-                                onAddCredits: { showTopUpSheet = true }
+                                onAddCredits: { showTopUpSheet = true },
+                                isModelPinned: windowState.selectedDiscoveredAgentProviderId != nil,
+                                pinnedModelLabel: pinnedModelChipLabel
                             )
                             .frame(maxWidth: 1100)
                             .frame(maxWidth: .infinity)
@@ -4488,25 +4618,18 @@ struct ChatView: View {
         .onDisappear {
             cleanupKeyMonitor()
         }
-        .onChange(of: observedSession.pickerItems) { _, newItems in
+        .onChange(of: observedSession.pickerItems) { _, _ in
+            // Remote agent active: (re)apply the pinned model when the device's
+            // models arrive after the async connect. No agent → leave the user's
+            // selection alone.
             guard let providerId = windowState.selectedDiscoveredAgentProviderId else { return }
-            let providerItems = newItems.filter {
-                if case .remote(_, let id) = $0.source { return id == providerId }
-                return false
-            }
-            guard let firstItem = providerItems.firstChatCapable else { return }
-            let currentIsFromProvider =
-                newItems.first(where: { $0.id == session.selectedModel }).map {
-                    if case .remote(_, let id) = $0.source { return id == providerId }
-                    return false
-                } ?? false
-            if !currentIsFromProvider {
-                session.selectedModel = firstItem.id
-            }
+            applyRemoteAgentModelPin(providerId: providerId)
         }
         .onChange(of: windowState.selectedDiscoveredAgentProviderId) { _, providerId in
             guard providerId == nil else { return }
-            // Bonjour agent deselected — restore agent's preferred model
+            // Remote agent deselected — drop the pin and restore the local
+            // agent's preferred model.
+            windowState.pinnedRemoteAgentEffectiveModel = nil
             let agentModel = AgentManager.shared.effectiveModel(for: windowState.agentId)
             if let model = agentModel, session.pickerItems.contains(where: { $0.id == model }) {
                 session.selectedModel = model
@@ -4677,9 +4800,33 @@ struct ChatView: View {
         windowState.selectedRelayAgent = nil
         windowState.selectedDiscoveredAgent = agent
         windowState.selectedDiscoveredAgentProviderId = providerId
+        windowState.pinnedRemoteAgentEffectiveModel = nil
         windowState.refreshPairedRelayAgents()
         session.reset()
-        Task { await session.refreshPickerItems() }
+        pinRemoteAgentModelAfterConnect(providerId: providerId)
+    }
+
+    /// After selecting a remote agent (Mode 2), refresh the picker, resolve the
+    /// agent's live effective model, and pin the chip to it. Survives the async
+    /// connect race: the effective-model fetch runs independently of model
+    /// discovery, and `applyRemoteAgentModelPin` re-runs from `onChange` when
+    /// the device's models arrive.
+    private func pinRemoteAgentModelAfterConnect(providerId: UUID) {
+        let provider = RemoteProviderManager.shared.configuration.providers.first {
+            $0.id == providerId
+        }
+        Task {
+            await session.refreshPickerItems()
+            if let provider {
+                let effective = await RemoteProviderService.fetchOsaurusAgentEffectiveModel(
+                    from: provider
+                )
+                guard windowState.selectedDiscoveredAgentProviderId == providerId else { return }
+                windowState.pinnedRemoteAgentEffectiveModel = effective
+            }
+            guard windowState.selectedDiscoveredAgentProviderId == providerId else { return }
+            applyRemoteAgentModelPin(providerId: providerId)
+        }
     }
 
     private func connectToRelayAgent(_ relay: PairedRelayAgent) {
@@ -4701,8 +4848,9 @@ struct ChatView: View {
         windowState.selectedDiscoveredAgent = nil
         windowState.selectedRelayAgent = relay
         windowState.selectedDiscoveredAgentProviderId = relay.providerId
+        windowState.pinnedRemoteAgentEffectiveModel = nil
         session.reset()
-        Task { await session.refreshPickerItems() }
+        pinRemoteAgentModelAfterConnect(providerId: relay.providerId)
     }
 
     // MARK: - Empty State

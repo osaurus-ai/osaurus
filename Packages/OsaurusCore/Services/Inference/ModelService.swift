@@ -61,6 +61,12 @@ struct GenerationParameters: Sendable {
     /// the same logical request can be deduped server-side and billed once.
     /// Local services and other remotes ignore it.
     let idempotencyKey: String?
+    /// True when the request targets a paired/discovered remote Osaurus *agent*
+    /// (Mode 2). `RemoteProviderService` uses this to route `.osaurus` providers
+    /// to `/agents/{address}/run` (the agent runs fully server-side) rather than
+    /// the plain OpenAI-compatible `/chat/completions` inference path (Mode 1).
+    /// Ignored by local services and non-Osaurus remotes.
+    let runAsRemoteAgent: Bool
 
     init(
         temperature: Float?,
@@ -78,7 +84,8 @@ struct GenerationParameters: Sendable {
         modelOptions: [String: ModelOptionValue] = [:],
         sessionId: String? = nil,
         ttftTrace: TTFTTrace? = nil,
-        idempotencyKey: String? = nil
+        idempotencyKey: String? = nil,
+        runAsRemoteAgent: Bool = false
     ) {
         self.temperature = temperature
         self.maxTokens = maxTokens
@@ -96,6 +103,7 @@ struct GenerationParameters: Sendable {
         self.sessionId = sessionId
         self.ttftTrace = ttftTrace
         self.idempotencyKey = idempotencyKey
+        self.runAsRemoteAgent = runAsRemoteAgent
     }
 }
 
