@@ -622,7 +622,7 @@ struct RuntimePolicySourceTests {
         // plus the Gemma nested-object tool-call argument parse fix
         // (vmlx-swift#76): GemmaFunctionParser now recurses into `{...}` values
         // so object-typed tool parameters arrive as objects, not raw strings.
-        let expectedRuntimeHardenedRevision = "1b7d3ef14e213f09f855667d031535222267eb98"
+        let expectedRuntimeHardenedRevision = "5139e84a41fd74b4f8b909fc8ce8c02bc7db9d52"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
         let appRevision = try Self.vmlxPinRevision(in: appResolved)
