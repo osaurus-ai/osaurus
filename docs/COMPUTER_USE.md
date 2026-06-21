@@ -52,8 +52,9 @@ gate allows the action, and whether the action actually landed.
   authoritatively unless the agent set `computerUseEnabled` (custom agents
   only; the Default agent cannot enable it).
 - **Permissions.** Conforms to `PermissionedTool` and requires **Accessibility**
-  (`SystemPermission.accessibility`). Execution preflights the permission and
-  fails cleanly (`kind: .unavailable`) when it's missing.
+  (`SystemPermission.accessibility`). `ToolRegistry.runPermissionGate` preflights
+  the permission before `execute` runs, failing cleanly (`kind: .unavailable`)
+  when it's missing.
 - **No per-call approval card.** The policy is `.auto`: the **per-action gate**
   (confirm overlay) is the real consent surface, so a per-call approval card
   isn't stacked on top.
@@ -77,22 +78,26 @@ Pure orchestration over the injected `MacDriver` / `ComputerUseGating` / confirm
 surface — no UI and no registry coupling, so it's fully testable with
 `MockMacDriver`.
 
-Each step:
+Each iteration starts with the model's **decision** over the latest `AgentView`,
+then runs only the phases the chosen verb needs:
 
-1. **Perceive** — capture the focused app as an `AgentView`: a numbered list of
-   actionable elements (each with a `mark`), optionally with an annotated
+1. **Perceive** — the focused app is captured as an `AgentView`: a numbered list
+   of actionable elements (each with a `mark`), optionally with an annotated
    screenshot. The view marks elements that changed since the last step with `*`.
+   An initial perceive runs before the loop; afterward perception refreshes
+   inside the verbs that need it (`observe`, and the verify after a mutation).
 2. **Decide** — the model is pinned to the `agent_action` tool with a forced
    `tool_choice` and a strict JSON schema (constrained verb enum). The arguments
    are coerced + validated by `SchemaValidator`; a malformed shape is fed back as
-   a `note` for a bounded re-ask.
-3. **Gate** — the action's effect is classified (see [Autonomy model](#autonomy-model))
-   and evaluated against the policy. The disposition is `allow` (run),
-   `confirm` (pause for the user), or `deny` (refuse, with a reason fed back to
-   the model).
+   a `tool` result for a bounded re-ask.
+3. **Gate** — for `open` and element-addressed verbs the action's effect is
+   classified (see [Autonomy model](#autonomy-model)) and evaluated against the
+   policy: `allow` (run), `confirm` (pause for the user), or `deny` (refuse, with
+   a reason fed back to the model). Pure reads (`observe` / `find` / `wait`) skip
+   the gate.
 4. **Act** — the resolved action is dispatched through the driver.
-5. **Verify** — re-perceive and report the delta so the model can confirm the
-   action worked before moving on.
+5. **Verify** — after an element-addressed mutation the loop re-perceives and
+   reports the delta so the model can confirm the action landed before moving on.
 
 ### Run limits (`RunLimits`)
 
@@ -102,6 +107,9 @@ Each step:
 | `maxConsecutiveInvalid` | 3 | Malformed `agent_action` re-ask budget. |
 | `maxConsecutiveReobserve` | 2 | Re-observe attempts for the same target before it's a dead end. |
 | `maxConsecutiveDeadEnd` | 3 | Consecutive dead ends before the run terminates. |
+| `maxRepeatedActions` | 4 | Identical actions in a row before the run is treated as stalled. |
+| `maxInferenceRetries` | 2 | Retries for a failed inference call before the step errors. |
+| `modelStepTimeoutSeconds` | 90 | Per-step budget for the model's `agent_action` decision. |
 | `wallClockSeconds` | 300 | Wall-clock budget for the whole run. |
 
 ### Outcomes (`RunOutcome`)
@@ -120,12 +128,16 @@ fallback that the `TargetResolver` matches.
 |------|-----------------|-------|
 | `observe` | read | — (fresh look) |
 | `find` | read | `query` and/or `roles` |
+| `wait` | read | — (optional `seconds`, capped) |
 | `click` | navigate | `target` |
+| `double_click` | navigate | `target` |
+| `right_click` | navigate | `target` |
 | `scroll` | navigate | `direction` |
 | `open` | navigate | `app` |
 | `type` | edit | `text` (+ optional `target`, `replace`) |
 | `set_value` | edit | `target` + `text` |
 | `clear` | edit | `target` |
+| `drag` | edit | `target` + `to` |
 | `press_key` | edit | `key` (+ optional `modifiers`) |
 | `done` | read | `reason` (success summary) |
 | `give_up` | read | `reason` (why not) |
@@ -144,13 +156,16 @@ can't carry the step:
 |------|------------------|------------|
 | `ax` | Accessibility tree only, no pixels. Fastest. | Accessibility |
 | `som` | Set-of-mark: AX tree **+** screenshot with element-id numbers drawn on every actionable element. **Default capture mode.** | + Screen Recording |
-| `vision` | Screenshot only (for vision-first models that ground on pixels). | + Screen Recording |
+| `vision` | Un-annotated screenshot for vision-first models that ground on pixels (the AX tree is still gathered for element ids). | + Screen Recording |
 
-`CaptureRouter` decides the next tier. Escalation reasons (`EscalationReason`):
-`targetUnresolved`, `axEmpty` (Electron / custom-drawn UI), `pixelsRequested`
-(a recipe or the model needs the pixels). **Without Screen Recording the router
-stays on `ax`** — there is nothing to escalate to, so the loop must work with
-the AX tree or `give_up`.
+`CaptureRouter` decides the next tier. In production it escalates when a target
+can't be resolved (`targetUnresolved`) or the AX tree comes back empty
+(`axEmpty` — Electron / custom-drawn UI); `nextTier` advances strictly by tier
+and treats the reason as informational. The `EscalationReason` enum also defines
+`pixelsRequested` (a recipe or the model needs the pixels), but that case is
+currently exercised only in tests. **Without Screen Recording the router stays
+on `ax`** — there is nothing to escalate to, so the loop must work with the AX
+tree or `give_up`.
 
 ## Cloud-vision boundary (local-first)
 
@@ -164,11 +179,14 @@ scrubbing:
   relaunch, `UserDefaults` key `ai.osaurus.computeruse.cloudVisionConsent`) and a
   transient this-launch-only grant. Revoke clears both.
 - **`FrameScrubber`** (`ComputerUse/Perception/FrameScrubber.swift`) — the only
-  producer of a `ScrubbedFrame`. It runs Vision OCR over a frame, finds PII with
-  the **same deterministic detectors the Privacy Filter uses**
-  (`RegexEntityDetector`), and paints opaque boxes over the offending regions
-  (or every text region in `.allText` mode) before any frame can leave the
-  device. A `ScrubReport` (counts only) stays on-device for the feed/telemetry.
+  producer of a `ScrubbedFrame`. It runs Vision OCR over a frame and finds PII
+  with the same `RegexEntityDetector` engine the Privacy Filter uses, but with
+  **all built-in detectors** (the parameterless `detect(in:)`) rather than the
+  user's configured Privacy Filter ruleset — so frame scrubbing doesn't honor
+  disabled categories, presets, or custom rules the way outbound text filtering
+  does. It paints opaque boxes over the offending regions (or every text region
+  in `.allText` mode) before any frame can leave the device. A `ScrubReport`
+  (counts only) stays on-device for the feed/telemetry.
 - **`CaptureRouter.cloudRoute(...)`** — accepts **only** a `ScrubbedFrame` and
   returns `nil` unless consent is granted and Screen Recording is on. So the
   harness physically cannot reach `.cloudVision` without both a scrubbed frame
@@ -192,9 +210,10 @@ ambient awareness of what you're doing *without driving anything*. It's a global
 **opt-in** (off by default) under Settings → Computer Use → *Screen context*,
 independent of the per-agent `computer_use` toggle.
 
-When enabled, the **first send** of a chat session **freezes** a distilled,
-text-only snapshot of your screen and reuses it unchanged for the rest of that
-conversation (a new/loaded chat re-freezes on its next send). The snapshot is
+When enabled, a distilled, text-only snapshot of your screen is **frozen** on the
+**first send** of a chat session and reused unchanged for the rest of that
+conversation (a new/loaded chat re-freezes on its next send); the capture may be
+primed slightly earlier but is **locked** at that first send. The snapshot is
 built entirely from the **accessibility tree** — no screenshots — so it can pass
 through the text-based Privacy Filter.
 
@@ -245,9 +264,11 @@ The gate decides `allow` / `confirm` / `deny` for every action by combining a
 | `consequential` | Commits something hard to undo or crossing a trust boundary: send, submit, delete, purchase, share with recipients. |
 
 The classifier starts from the verb's baseline and **escalates** using the
-resolved role + app context, commit verbs (Send/Delete/Purchase), commit
-**with recipients**, the ⌘Return submit chord, ambiguous targets, and per-app
-recipe signals. It can only raise the effect, never lower it.
+resolved role + app context: consequential signals (Send / Delete / Purchase /
+Submit …) escalate on their own, while commit signals (Save / Done / Apply / OK
+…) escalate only when paired with **recipients** — plus the ⌘Return submit
+chord, ambiguous targets, and per-app recipe signals. It can only raise the
+effect, never lower it.
 
 ### Policy stack (strictest-wins)
 
@@ -274,10 +295,11 @@ across three layers:
 
 **Allowlist.** When `AutonomyPolicy.allowlist` is non-empty, **only** those apps
 may be driven — checked *first*, before any disposition. The `open` verb is
-gated the same way: launching/switching to an app classifies as `navigate`,
-runs through `isAppAllowed` + the disposition gate, so an allowlist or a
-read-only/cautious preset can confirm or block an app launch instead of it
-slipping through.
+gated the same way: launching/switching to an app classifies as `navigate` and
+runs through `isAppAllowed` + the navigate disposition. So a non-empty allowlist
+blocks any app not on it, and a `cautious` preset turns an app launch into a
+confirm; under `read_only` / `balanced` / `trusted` / `autonomous`, navigate is
+`allow`, so the launch itself runs once the app clears the allowlist.
 
 ## App recipes
 
@@ -322,7 +344,8 @@ detail**:
 `confirms_bucket`, `ax_resolvable` (`na` / `low` / `med` / `high`),
 `verify_pass`, `had_dead_end`, `had_block`, `cloud_vision_used`.
 
-The full-fidelity `ComputerUseRunMetrics` (per-app / per-tier) stays in-process
+The full-fidelity `ComputerUseRunMetrics` — run-level counters, the highest
+capture tier reached (`maxTier`), and per-`EffectClass` counts — stays in-process
 and feeds the eval harness, which the shipped telemetry intentionally never
 sends.
 

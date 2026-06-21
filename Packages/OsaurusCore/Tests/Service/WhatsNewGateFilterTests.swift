@@ -102,4 +102,19 @@ struct WhatsNewGateFilterTests {
         #expect(release.pages.last?.actionLabel == "Open Credits")
         #expect(release.pages.last?.action == .openCredits)
     }
+
+    @Test
+    func computerUseReleaseOpensSettings() throws {
+        let release = try #require(WhatsNewContent.release(for: "0.20.7"))
+
+        #expect(
+            release.pages.map(\.id) == [
+                "computer-use-0.20.7:summary",
+                "computer-use-0.20.7:safety",
+                "computer-use-0.20.7:privacy",
+            ]
+        )
+        #expect(release.pages.last?.actionLabel == "Open Computer Use settings")
+        #expect(release.pages.last?.action == .openComputerUseSettings)
+    }
 }

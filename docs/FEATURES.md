@@ -1365,6 +1365,7 @@ The post-scrub invariant only re-scans categories whose built-in regex toggle is
 - `ComputerUse/Model/AgentAction.swift` — the single model-facing `agent_action` envelope (constrained verb enum + schema-validated decode + bounded re-ask)
 - `ComputerUse/Driver/NativeMacDriver.swift` + `Driver/Mac/*` — AX / SOM / Vision capture and synthetic input
 - `ComputerUse/Perception/CaptureRouter.swift`, `FrameScrubber.swift`, `CloudVisionConsent.swift`, `VisionAttachment.swift` — the local-first perception ladder and cloud-vision boundary
+- `ComputerUse/Perception/ScreenContextDistiller.swift`, `ScreenContextSnapshot.swift`, `ScreenContextSettings.swift`, `FrontmostAppTracker.swift` + `Services/Chat/SystemPromptComposer.swift` (`injectScreenContextPrefix`) — opt-in frozen **Screen context** injected into chat
 - `ComputerUse/Policy/EffectClassifier.swift`, `AutonomyPolicy.swift`, `ComputerUseGate.swift`, `ComputerUsePolicyStore.swift` — effect classification + strictest-wins autonomy gate
 - `ComputerUse/Recipes/AppRecipe.swift` — per-app effect signals + flow hints
 - `Views/Settings/ComputerUseSettingsView.swift`, `Views/Chat/ComputerUseFeedView.swift` — settings panel + live activity feed
@@ -1381,7 +1382,9 @@ The post-scrub invariant only re-scans categories whose built-in regex toggle is
 
 `read` is always `allow`. The effective disposition merges **strictest-wins** across the global preset, an optional per-app override (can only add caution), and an optional per-agent **ceiling**. An optional **allowlist** — when set — is checked first and rejects any app not on it (the `open` verb is gated the same way).
 
-**Perception ladder:** `ax` (accessibility tree, no pixels) → `som` (AX tree + annotated screenshot; the default capture mode) → `vision` (screenshot only). Escalation past `ax` needs **Screen Recording**; without it the loop stays AX-only. A frame reaches a **cloud** model only via a route that requires **explicit consent** (off by default) and a `ScrubbedFrame` (on-device Vision OCR + `RegexEntityDetector` masking) — making an unconsented or unscrubbed cloud send unrepresentable in the type system.
+**Perception ladder:** `ax` (accessibility tree, no pixels) → `som` (AX tree + annotated screenshot; the default capture mode) → `vision` (un-annotated screenshot; the AX tree is still gathered for ids). Escalation past `ax` needs **Screen Recording**; without it the loop stays AX-only. A frame reaches a **cloud** model only via a route that requires **explicit consent** (off by default) and a `ScrubbedFrame` (on-device Vision OCR + `RegexEntityDetector` masking) — making an unconsented or unscrubbed cloud send unrepresentable in the type system.
+
+**Screen context (chat):** a separate global **opt-in** (off by default, `ScreenContextSettings`), independent of the `computer_use` tool. On the first send of a chat session it **freezes** a distilled, text-only, Accessibility-only snapshot of the working app, focused draft, and open windows, then injects it onto the **latest user turn** (`SystemPromptComposer.injectScreenContextPrefix`, the same seam as memory) so it rides through the Privacy Filter before any cloud send. New code lives under `ComputerUse/Perception/ScreenContext*` + `FrontmostAppTracker`. See [COMPUTER_USE.md](COMPUTER_USE.md#screen-context-chat).
 
 **Telemetry:** one coarse, privacy-clean `computer_use_run` event per run (outcome, max tier, bucketed step/confirm counts, ax-resolvable + verify-pass rate buckets, dead-end / block / cloud-vision flags) — no goal text, app names, or per-step detail.
 
@@ -1391,6 +1394,7 @@ The post-scrub invariant only re-scans categories whose built-in regex toggle is
 |------------|---------|
 | `~/.osaurus/config/computer-use.json` | `AutonomyPolicy` (global preset + per-app overrides + allowlist) via `ComputerUsePolicyStore` |
 | `UserDefaults` `ai.osaurus.computeruse.cloudVisionConsent` | Persisted cloud-vision opt-in (default `false`) |
+| `UserDefaults` `ai.osaurus.computeruse.screenContextInjection` | Persisted screen-context opt-in (default `false`) via `ScreenContextSettings` |
 | `Agent.settings.computerUseEnabled` / `computerUseCeiling` | Per-agent enablement + autonomy ceiling (in the agent JSON) |
 
 ---

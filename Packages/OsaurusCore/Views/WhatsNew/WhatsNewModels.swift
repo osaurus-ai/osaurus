@@ -24,6 +24,8 @@ public enum WhatsNewAction: Hashable, Sendable {
     case exportPlaintextBackup
     /// Open Settings → Privacy (Privacy Filter master switch + custom rules).
     case openPrivacySettings
+    /// Open Settings → Computer Use.
+    case openComputerUseSettings
     /// Open Management → Credits.
     case openCredits
 }
@@ -82,6 +84,7 @@ public enum WhatsNewContent {
     public static let releases: [WhatsNewRelease] = [
         privacyFilter_0_19_0,
         osaurusCloud_0_20_1,
+        computerUse_0_20_7,
     ]
 
     /// First-launch announcement for the Privacy Filter feature.
@@ -145,6 +148,40 @@ public enum WhatsNewContent {
                 systemImage: "bubble.left.and.bubble.right.fill",
                 actionLabel: "Open Credits",
                 action: .openCredits
+            ),
+        ]
+    )
+
+    /// First-launch announcement for Computer Use (experimental).
+    /// Three pages: what it does, the safe-by-default autonomy gate, and the
+    /// local-first perception + opt-in screen context posture. The final CTA
+    /// deep-links to Settings → Computer Use so users can enable it per agent
+    /// and tune autonomy immediately.
+    private static let computerUse_0_20_7 = WhatsNewRelease(
+        version: "0.20.7",
+        pages: [
+            WhatsNewPage(
+                id: "computer-use-0.20.7:summary",
+                title: "Computer Use (experimental)",
+                description:
+                    "Let a custom agent operate a macOS app to reach a goal — fill a form, flip a setting, pull text off the screen. It works primarily from the accessibility tree and only falls back to a screenshot when an element can't be resolved. Off by default; enabled per agent.",
+                systemImage: "macwindow"
+            ),
+            WhatsNewPage(
+                id: "computer-use-0.20.7:safety",
+                title: "Safe by default",
+                description:
+                    "Every action is classified — read, navigate, edit, or consequential — and passes an autonomy gate first. The default balanced preset runs reads and navigation but pauses for your confirmation before edits or anything consequential (send, delete, purchase). Add a per-app or per-agent ceiling, or an allowlist of apps it may touch.",
+                systemImage: "checkmark.shield.fill"
+            ),
+            WhatsNewPage(
+                id: "computer-use-0.20.7:privacy",
+                title: "Local-first and private",
+                description:
+                    "Perception stays on your Mac unless you opt in to Cloud vision — and even then frames are OCR-scrubbed for PII first. You can also opt in to Screen context, which shares a frozen, text-only snapshot of what you're doing with chat and routes it through the Privacy Filter before any cloud send.",
+                systemImage: "lock.fill",
+                actionLabel: "Open Computer Use settings",
+                action: .openComputerUseSettings
             ),
         ]
     )

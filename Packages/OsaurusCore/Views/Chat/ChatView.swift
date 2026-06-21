@@ -4919,6 +4919,8 @@ struct ChatView: View {
                         AppDelegate.shared?.showManagementWindow(initialTab: .storage)
                     case .openPrivacySettings:
                         AppDelegate.shared?.showManagementWindow(initialTab: .privacy)
+                    case .openComputerUseSettings:
+                        AppDelegate.shared?.showManagementWindow(initialTab: .computerUse)
                     case .openCredits:
                         AppDelegate.shared?.showManagementWindow(initialTab: .credits)
                     }
