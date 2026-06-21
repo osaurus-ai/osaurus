@@ -385,8 +385,20 @@ struct ExternalModelLocatorTests {
 
         ExternalModelLocator.testRootsOverride = [(root: hfRoot, source: .huggingFaceCache)]
         ExternalModelLocator.rescan()
-        #expect(FileManager.default.fileExists(atPath: OsaurusPaths.externalModelsManifestFile().path))
+        let manifestFile = OsaurusPaths.externalModelsManifestFile()
+        #expect(FileManager.default.fileExists(atPath: manifestFile.path))
+        let manifestData = try? Data(contentsOf: manifestFile)
+        let manifestJSON =
+            manifestData.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+        let persistedModels = manifestJSON?["models"] as? [[String: Any]]
+        #expect(
+            persistedModels?.contains {
+                $0["id"] as? String == "org/persisted"
+                    && $0["bundlePath"] as? String == snapshot.standardizedFileURL.path
+            } == true
+        )
 
+        ExternalModelLocator.testRootsOverride = []
         ExternalModelLocator.invalidateInMemory()
         let models = ExternalModelLocator.models()
         guard let reloaded = models.first(where: { $0.id == "org/persisted" }) else {
