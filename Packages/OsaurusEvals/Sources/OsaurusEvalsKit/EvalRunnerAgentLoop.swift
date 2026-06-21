@@ -292,6 +292,25 @@ extension EvalRunner {
             score.record(result.passed, note: result.note)
         }
 
+        // 2d. Context-cost ceilings (advisory pins). Estimated input (prompt
+        // + frozen tool schema, summed across model steps) and input+output.
+        // Only scored when the case opts in AND a measurement exists.
+        if let maxPrompt = exp.scoredMaxPromptTokens, let prompt = transcript.promptTokensTotal {
+            score.check(
+                prompt <= maxPrompt,
+                pass: "ctx tokens \(prompt) <= max \(maxPrompt)",
+                fail: "ctx tokens \(prompt) > max \(maxPrompt)"
+            )
+        }
+        if let maxTotal = exp.scoredMaxTotalTokens, let prompt = transcript.promptTokensTotal {
+            let total = prompt + (transcript.completionTokens ?? 0)
+            score.check(
+                total <= maxTotal,
+                pass: "total tokens \(total) <= max \(maxTotal)",
+                fail: "total tokens \(total) > max \(maxTotal)"
+            )
+        }
+
         // 2c. Capability-store outcomes (isolated per-eval-agent stores;
         // must run BEFORE the deferred agent teardown — which is
         // guaranteed, since defers run after this whole function body).
@@ -399,11 +418,20 @@ extension EvalRunner {
     /// are folded in later by `EvalRunner.runOne`). Returns nil when the
     /// run captured no streaming stats (remote/non-streaming).
     private static func telemetry(from transcript: AgentLoopTranscript) -> EvalCaseTelemetry? {
+        // Total = input + output. Only meaningful once we have an input
+        // estimate; completion is 0 on remote/non-streaming runs that never
+        // surfaced a stats hint, which is the existing `completionTokens`
+        // semantic — so the total there is the input estimate alone.
+        let total = transcript.promptTokensTotal.map { $0 + (transcript.completionTokens ?? 0) }
         let t = EvalCaseTelemetry(
             decodeTokensPerSecond: transcript.decodeTokensPerSecond,
             prefillTokensPerSecond: transcript.prefillTokensPerSecond,
             ttftMs: transcript.ttftMs,
-            completionTokens: transcript.completionTokens
+            completionTokens: transcript.completionTokens,
+            promptTokensTotal: transcript.promptTokensTotal,
+            peakContextTokens: transcript.peakContextTokens,
+            totalModelTokens: total,
+            modelSteps: transcript.modelSteps
         )
         return t.isEmpty ? nil : t
     }

@@ -787,30 +787,38 @@ final class ToolRegistry: ObservableObject {
             return raw
         }
 
-        let cap = ToolOutputCaps.universalResult
-        let isEnvelope = ToolEnvelope.isSuccess(raw) || ToolEnvelope.isError(raw)
+        // Lossless formatting compaction at ingest. Runs AFTER the
+        // secret-prompt guard (the marker must reach the chat loop byte-exact)
+        // and BEFORE the cap, so an external pretty-JSON payload that crushes
+        // back under the cap avoids truncation entirely. Meaning-preserving and
+        // deterministic, so the KV-prefix stays byte-stable. See
+        // `ToolOutputCompressor`.
+        let payload = ToolOutputCompressor.compact(raw)
 
-        if raw.count <= cap {
-            return isEnvelope ? raw : ToolEnvelope.success(tool: tool, text: raw)
+        let cap = ToolOutputCaps.universalResult
+        let isEnvelope = ToolEnvelope.isSuccess(payload) || ToolEnvelope.isError(payload)
+
+        if payload.count <= cap {
+            return isEnvelope ? payload : ToolEnvelope.success(tool: tool, text: payload)
         }
 
         // Head-biased: at the registry backstop the front of an oversized
         // payload is what identifies it (the recovery hint rides in the
         // envelope, not the marker).
-        let truncatedContent = HeadTailTruncation.apply(raw, cap: cap, headFraction: 2.0 / 3.0)
+        let truncatedContent = HeadTailTruncation.apply(payload, cap: cap, headFraction: 2.0 / 3.0)
         let hint =
             "Output exceeded the per-call cap and was truncated (head and tail kept). "
             + "Re-run with narrower arguments — filters, `max_results`, line ranges, or "
             + "head/tail options — to retrieve the missing region."
 
-        if ToolEnvelope.isError(raw) {
+        if ToolEnvelope.isError(payload) {
             return ToolEnvelope.failure(
                 kind: .executionError,
                 message: "Tool '\(tool)' failed and its error output exceeded the per-call cap. " + hint,
                 tool: tool,
                 metadata: [
                     "truncated": true,
-                    "original_chars": raw.count,
+                    "original_chars": payload.count,
                     "content": truncatedContent,
                 ]
             )
@@ -820,7 +828,7 @@ final class ToolRegistry: ObservableObject {
             result: [
                 "kind": "truncated_output",
                 "truncated": true,
-                "original_chars": raw.count,
+                "original_chars": payload.count,
                 "content": truncatedContent,
             ] as [String: Any],
             warnings: [hint]

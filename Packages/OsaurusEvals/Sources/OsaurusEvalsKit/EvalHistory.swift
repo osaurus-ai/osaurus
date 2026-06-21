@@ -34,6 +34,12 @@ public struct EvalHistoryRow: Codable, Sendable, Equatable {
     /// rows. Optional so pre-CPU history lines still decode as nil.
     public let meanCpuPercent: Double?
     public let peakCpuPercent: Double?
+    /// Mean estimated context tokens per task (prompt + tool schema) and
+    /// total tokens per task for this model's model-driven rows — the
+    /// context-cost trend the optimization loop tracks across runs. Optional
+    /// so pre-existing history lines still decode.
+    public let meanPromptTokensPerTask: Double?
+    public let meanTotalTokensPerTask: Double?
     /// Run provenance (hardware, OS, build, judge, catalog hash). Optional so
     /// pre-existing history lines still decode; populated for runs recorded
     /// after the provenance block shipped so a crowdsourced trend stays
@@ -54,6 +60,8 @@ public struct EvalHistoryRow: Codable, Sendable, Equatable {
         peakPhysFootprintMb: Double?,
         meanCpuPercent: Double? = nil,
         peakCpuPercent: Double? = nil,
+        meanPromptTokensPerTask: Double? = nil,
+        meanTotalTokensPerTask: Double? = nil,
         environment: RunEnvironment? = nil
     ) {
         self.ts = ts
@@ -69,6 +77,8 @@ public struct EvalHistoryRow: Codable, Sendable, Equatable {
         self.peakPhysFootprintMb = peakPhysFootprintMb
         self.meanCpuPercent = meanCpuPercent
         self.peakCpuPercent = peakCpuPercent
+        self.meanPromptTokensPerTask = meanPromptTokensPerTask
+        self.meanTotalTokensPerTask = meanTotalTokensPerTask
         self.environment = environment
     }
 }
@@ -95,6 +105,8 @@ public enum EvalHistory {
                 peakPhysFootprintMb: col.peakPhysFootprintMb,
                 meanCpuPercent: col.meanCpuPercent,
                 peakCpuPercent: col.peakCpuPercent,
+                meanPromptTokensPerTask: col.meanPromptTokensPerTask,
+                meanTotalTokensPerTask: col.meanTotalTokensPerTask,
                 environment: col.environment
             )
         }

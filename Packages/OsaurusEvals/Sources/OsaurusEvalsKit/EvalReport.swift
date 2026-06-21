@@ -48,6 +48,24 @@ public struct EvalCaseTelemetry: Sendable, Codable {
     public let ttftMs: Double?
     /// Total generated tokens across all model steps.
     public let completionTokens: Int?
+    /// Estimated INPUT (prompt + tool-schema) tokens summed across every
+    /// model step — the context-cost signal the optimization loop drives
+    /// down. Computed deterministically at compose time via `TokenEstimator`
+    /// (chars/4 + per-message overhead), so unlike the runtime-only
+    /// decode/completion counters it is provider-independent and
+    /// reproducible: a local MLX run and a remote frontier run on the same
+    /// case are directly comparable. nil on rows that made no model call.
+    public let promptTokensTotal: Int?
+    /// Largest single-step input estimate — the context-window high-water
+    /// mark (what has to fit the budget at the worst moment of the run).
+    public let peakContextTokens: Int?
+    /// Estimated total model tokens (`promptTokensTotal + completionTokens`).
+    /// nil unless both were measured. The headline cost number; pair it with
+    /// pass rate to read "same answers, fewer tokens".
+    public let totalModelTokens: Int?
+    /// Number of model steps (loop iterations that called the model).
+    /// `promptTokensTotal / modelSteps` is the mean per-step context size.
+    public let modelSteps: Int?
     /// Peak physical footprint (Activity-Monitor "Memory") sampled across
     /// the case, in megabytes — the value the AGENTS.md RAM gate reads.
     public let peakPhysFootprintMb: Double?
@@ -97,6 +115,10 @@ public struct EvalCaseTelemetry: Sendable, Codable {
         prefillTokensPerSecond: Double? = nil,
         ttftMs: Double? = nil,
         completionTokens: Int? = nil,
+        promptTokensTotal: Int? = nil,
+        peakContextTokens: Int? = nil,
+        totalModelTokens: Int? = nil,
+        modelSteps: Int? = nil,
         peakPhysFootprintMb: Double? = nil,
         meanCpuPercent: Double? = nil,
         peakCpuPercent: Double? = nil,
@@ -112,6 +134,10 @@ public struct EvalCaseTelemetry: Sendable, Codable {
         self.prefillTokensPerSecond = prefillTokensPerSecond
         self.ttftMs = ttftMs
         self.completionTokens = completionTokens
+        self.promptTokensTotal = promptTokensTotal
+        self.peakContextTokens = peakContextTokens
+        self.totalModelTokens = totalModelTokens
+        self.modelSteps = modelSteps
         self.peakPhysFootprintMb = peakPhysFootprintMb
         self.meanCpuPercent = meanCpuPercent
         self.peakCpuPercent = peakCpuPercent
@@ -129,6 +155,8 @@ public struct EvalCaseTelemetry: Sendable, Codable {
     public var isEmpty: Bool {
         decodeTokensPerSecond == nil && prefillTokensPerSecond == nil
             && ttftMs == nil && completionTokens == nil
+            && promptTokensTotal == nil && peakContextTokens == nil
+            && totalModelTokens == nil && modelSteps == nil
             && peakPhysFootprintMb == nil && meanCpuPercent == nil
             && peakCpuPercent == nil && kvPrefixHitsDelta == nil
             && kvPrefixMissesDelta == nil && ssmCompanionHitsDelta == nil
@@ -407,6 +435,14 @@ public struct EvalReport: Sendable, Codable {
                 parts.append("L2 +\(l2Hits)hit/+\(stores)store")
             }
         }
+        if let prompt = t.promptTokensTotal {
+            if let steps = t.modelSteps, steps > 0 {
+                parts.append("ctx \(prompt) in/\(steps) step(s)")
+            } else {
+                parts.append("ctx \(prompt) in")
+            }
+        }
+        if let peak = t.peakContextTokens { parts.append("peakCtx \(peak)") }
         if let tokens = t.completionTokens { parts.append("\(tokens) tok") }
         return parts.isEmpty ? nil : "perf: " + parts.joined(separator: "  ")
     }
@@ -448,6 +484,14 @@ public struct EvalReport: Sendable, Codable {
         if !prefills.isEmpty {
             let mean = prefills.reduce(0, +) / Double(prefills.count)
             lines.append(String(format: "  prefill tok/s  mean=%.0f  (n=%d)", mean, prefills.count))
+        }
+        let promptToks = telemetered.compactMap(\.promptTokensTotal)
+        if !promptToks.isEmpty {
+            let mean = promptToks.reduce(0, +) / promptToks.count
+            lines.append(
+                "  ctx tok/task   mean=\(mean)  min=\(promptToks.min() ?? 0)  "
+                    + "max=\(promptToks.max() ?? 0)  (n=\(promptToks.count))"
+            )
         }
         let rams = telemetered.compactMap(\.peakPhysFootprintMb)
         if !rams.isEmpty {

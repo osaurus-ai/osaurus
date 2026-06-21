@@ -615,6 +615,17 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// Per-tool transcript hygiene audits (call-count bounds, error
         /// ceilings, argument substrings). The folder-tool discipline lane.
         public let toolUsageAudit: [ToolUsageAudit]?
+        /// Optional context-cost ceiling: the run FAILS if the estimated
+        /// input (prompt + frozen tool schema, summed across every model
+        /// step) exceeds this. Mirrors `computer_use_loop`'s
+        /// `scoredMaxModelTokens`; nil → reported, not scored. Pin this on a
+        /// case once the optimization loop has established a good value so a
+        /// later prompt/tool regression that re-bloats context fails the case
+        /// instead of silently costing tokens.
+        public let scoredMaxPromptTokens: Int?
+        /// Optional total-cost ceiling (input + output, summed across steps).
+        /// nil → reported, not scored.
+        public let scoredMaxTotalTokens: Int?
 
         public init(
             maxIterations: Int? = nil,
@@ -639,7 +650,9 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             artifactShared: ArtifactSharedAssertion? = nil,
             scheduledRun: ScheduledRunAssertion? = nil,
             dbState: [DbStateAssertion]? = nil,
-            toolUsageAudit: [ToolUsageAudit]? = nil
+            toolUsageAudit: [ToolUsageAudit]? = nil,
+            scoredMaxPromptTokens: Int? = nil,
+            scoredMaxTotalTokens: Int? = nil
         ) {
             self.maxIterations = maxIterations
             self.mustCallTools = mustCallTools
@@ -664,6 +677,8 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.scheduledRun = scheduledRun
             self.dbState = dbState
             self.toolUsageAudit = toolUsageAudit
+            self.scoredMaxPromptTokens = scoredMaxPromptTokens
+            self.scoredMaxTotalTokens = scoredMaxTotalTokens
         }
 
         /// One workspace-file assertion. `path` is relative to the
