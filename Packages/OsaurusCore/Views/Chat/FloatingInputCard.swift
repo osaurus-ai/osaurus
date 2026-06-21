@@ -1589,11 +1589,6 @@ extension FloatingInputCard {
                 sandboxToggleChip
             }
 
-            // Clipboard chip (visible when there's something new on the clipboard and monitoring is enabled)
-            if AppConfiguration.shared.chatConfig.enableClipboardMonitoring && clipboardService.hasNewContent {
-                clipboardToggleChip
-            }
-
             // Folder context selector: available so the user can point any
             // chat at a working directory. The Default (configuration) agent
             // doesn't use a working folder, so it shows a quiet
@@ -1604,6 +1599,15 @@ extension FloatingInputCard {
                 configurationOnlyChip
             } else {
                 folderContextChip
+            }
+
+            // Clipboard / paste chip — last in the left cluster, just to the
+            // right of the folder chip. It only appears when there's new
+            // clipboard content and its width varies with the source app, so
+            // keeping it at the trailing edge lets the Spacer absorb that change
+            // instead of shoving the fixed controls (and the folder chip) around.
+            if AppConfiguration.shared.chatConfig.enableClipboardMonitoring && clipboardService.hasNewContent {
+                clipboardToggleChip
             }
 
             Spacer()
