@@ -2825,7 +2825,24 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             SystemPromptComposer.injectSystemContent(composed.prompt, into: &enriched.messages)
         }
         SystemPromptComposer.injectMemoryPrefix(composed.memorySection, into: &enriched.messages)
-        let mergedTools = await mergeAgentContextTools(composed.tools, clientTools: request.tools)
+        // Agent-run / HTTP orchestrators must get the active AgentDelegation
+        // tools as callable SCHEMAS too. `composeChatContext` only surfaces the
+        // built-in image tools as a prompt-hint capability (not the schema), so
+        // without this an agent-run orchestrator is told it can make images /
+        // delegate but `image_generate`/`image_edit`/`local_delegate`/`spawn`
+        // never reach its `<tools>` block. `specs(forTools:)` returns only the
+        // currently active ones (it applies the same delegation gating), and a
+        // name dedupe keeps composeChatContext's surface authoritative.
+        let delegationSpecs = await MainActor.run {
+            ToolRegistry.shared.specs(forTools: [
+                "image_generate", "image_edit", "local_delegate", "spawn",
+            ])
+        }
+        let composedToolNames = Set(composed.tools.map(\.function.name))
+        let contextToolsWithDelegation =
+            composed.tools + delegationSpecs.filter { !composedToolNames.contains($0.function.name) }
+        let mergedTools = await mergeAgentContextTools(
+            contextToolsWithDelegation, clientTools: request.tools)
         let resolvedToolChoice: ToolChoiceOption? = {
             guard let mergedTools, !mergedTools.isEmpty else { return nil }
             return request.tool_choice ?? .auto
