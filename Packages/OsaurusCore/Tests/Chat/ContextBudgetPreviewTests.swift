@@ -744,3 +744,56 @@ struct ContextBudgetSegmentWidthsTests {
         #expect(zeroTotal == [0, 0, 0])
     }
 }
+
+// MARK: - Screen Context budget row
+
+/// The frozen `[Screen Context]` snapshot rides on the latest user message
+/// (like Memory) and must surface as its own "Screen Context" budget row —
+/// plumbed through `ContextBreakdown.from(..., screenContextTokens:)` and the
+/// live `ContextBudgetTracker`, never silently folded into Conversation.
+@Suite(.serialized)
+@MainActor
+struct ScreenContextBudgetRowTests {
+
+    private func baseManifest() -> PromptManifest {
+        PromptManifest(sections: [
+            .static(id: "platform", label: "Platform", content: "identity")
+        ])
+    }
+
+    @Test("breakdown: screen-context tokens surface as a dedicated context row")
+    func breakdown_addsDedicatedRow() {
+        let bd = ContextBreakdown.from(
+            manifest: baseManifest(),
+            screenContextTokens: 137
+        )
+        #expect(bd.allEntries.first { $0.id == "screenContext" }?.tokens == 137)
+        // Grouped with the other system-context rows (Memory/Tools), not messages.
+        #expect(bd.context.contains { $0.id == "screenContext" })
+        #expect(bd.messages.contains { $0.id == "screenContext" } == false)
+    }
+
+    @Test("breakdown: zero screen-context tokens add no phantom row")
+    func breakdown_zeroOmitsRow() {
+        let bd = ContextBreakdown.from(
+            manifest: baseManifest(),
+            screenContextTokens: 0
+        )
+        #expect(bd.allEntries.contains { $0.id == "screenContext" } == false)
+    }
+
+    /// During streaming the tracker carries the screen-context block as its own
+    /// row; conversation is measured before the prefix is injected, so the two
+    /// never double-count.
+    @Test("tracker: screen-context row stays separate from conversation")
+    func tracker_separateFromConversation() {
+        let tracker = ContextBudgetTracker()
+        tracker.snapshot(manifest: baseManifest(), toolTokens: 0)
+        tracker.updateScreenContext(tokens: 88)
+        tracker.updateConversation(tokens: 200)
+
+        let bd = tracker.activeBreakdown(isActive: true, outputTurn: nil)
+        #expect(bd?.allEntries.first { $0.id == "screenContext" }?.tokens == 88)
+        #expect(bd?.allEntries.first { $0.id == "conversation" }?.tokens == 200)
+    }
+}

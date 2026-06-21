@@ -25,6 +25,12 @@ public final class FrontmostAppTracker: ObservableObject {
     /// been observed since the tracker started.
     public private(set) var lastNonSelfPid: Int32?
 
+    /// Display name of that same app (the working app the screen-context
+    /// snapshot is about), or nil if none has been observed. `@Published` so
+    /// the composer's read-only screen-context chip and the pre-send budget
+    /// preview update live as the user switches foreground apps.
+    @Published public private(set) var lastNonSelfAppName: String?
+
     private var observer: NSObjectProtocol?
     private let selfPid: Int32 = ProcessInfo.processInfo.processIdentifier
     private let selfBundleId: String? = Bundle.main.bundleIdentifier
@@ -57,10 +63,13 @@ public final class FrontmostAppTracker: ObservableObject {
         }
     }
 
-    private func record(_ app: NSRunningApplication?) {
+    /// Internal (not `private`) so unit tests can drive the record path
+    /// deterministically with a chosen `NSRunningApplication`.
+    func record(_ app: NSRunningApplication?) {
         guard let app else { return }
         if app.processIdentifier == selfPid { return }
         if let bundleId = app.bundleIdentifier, bundleId == selfBundleId { return }
         lastNonSelfPid = app.processIdentifier
+        lastNonSelfAppName = app.localizedName ?? app.bundleIdentifier
     }
 }

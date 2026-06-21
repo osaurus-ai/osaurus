@@ -215,6 +215,18 @@ final class ChatSession: ObservableObject {
     /// `reset()` / `load(from:)`. Not persisted.
     private var frozenScreenContext: String?
 
+    /// Estimated token cost of `frozenScreenContext`, surfaced as a dedicated
+    /// "Screen Context" line in the Context Budget popover (mirrors
+    /// `cachedMemoryTokens`). Kept in sync by `refreshScreenContextPreview`
+    /// pre-send and locked alongside the snapshot on the first send so the
+    /// line persists for the rest of the session instead of being dropped.
+    private var cachedScreenContextTokens: Int = 0
+
+    /// True once the first send has locked `frozenScreenContext` for this
+    /// session. Until then the welcome-screen preview may re-capture as the
+    /// user switches foreground apps; afterwards the snapshot is fixed.
+    private var isScreenContextFrozen: Bool = false
+
     /// Cached welcome/pre-send preview `ComposedContext`, used by
     /// `estimatedContextBreakdown` when no real send context exists yet.
     /// Recomputed by `refreshContextEstimates()` whenever a budget-relevant
@@ -366,6 +378,12 @@ final class ChatSession: ObservableObject {
     /// signals a single sandbox toggle emits. See the pipeline in `init()`
     /// for why memory and `SandboxManager.State` are deliberately excluded.
     nonisolated(unsafe) private var contextEstimateCancellable: AnyCancellable?
+
+    /// Separate from `contextEstimateCancellable` because a screen-context
+    /// refresh runs an Accessibility walk — too heavy for the cheap per-signal
+    /// budget pipeline. Re-captures the pre-send preview when the feature is
+    /// toggled or the foreground app changes, until the first send locks it.
+    nonisolated(unsafe) private var screenContextCancellable: AnyCancellable?
 
     init() {
         // Warm the agent-secret account memo off the main thread before the
@@ -548,6 +566,29 @@ final class ChatSession: ObservableObject {
                 Task { @MainActor in self?.refreshPreviewEstimate() }
             }
 
+        // Screen-context preview: re-capture when the user toggles the feature
+        // or switches foreground apps, so the "Screen Context" budget line and
+        // the composer chip stay exact before the first send locks the
+        // snapshot. Kept off the pipeline above because the capture is an
+        // Accessibility walk; debounced harder to coalesce rapid app switches.
+        let screenContextSignals: [AnyPublisher<Void, Never>] = [
+            ScreenContextSettings.shared.$injectionEnabled
+                .map { _ in () }.eraseToAnyPublisher(),
+            FrontmostAppTracker.shared.$lastNonSelfAppName
+                .map { _ in () }.eraseToAnyPublisher(),
+        ]
+        screenContextCancellable = Publishers.MergeMany(screenContextSignals)
+            .debounce(for: .milliseconds(300), scheduler: RunLoop.main)
+            .sink { [weak self] _ in
+                Task { @MainActor in
+                    guard let self, !self.isStreaming, !self.isScreenContextFrozen
+                    else { return }
+                    if await self.refreshScreenContextPreview() {
+                        self.objectWillChange.send()
+                    }
+                }
+            }
+
         // Always reconcile on init: the cache may already be loaded with a
         // snapshot taken before remote providers finished connecting (or
         // before this window's notification observer was registered, in
@@ -583,6 +624,7 @@ final class ChatSession: ObservableObject {
         agentAutoSpeakCancellable = nil
         promptQueueCancellable = nil
         contextEstimateCancellable = nil
+        screenContextCancellable = nil
     }
 
     private func loadActiveModelOptions(for model: String?) {
@@ -887,6 +929,7 @@ final class ChatSession: ObservableObject {
         if let ctx = cachedContext {
             return .from(
                 context: ctx,
+                screenContextTokens: cachedScreenContextTokens,
                 conversationTokens: conversationTokens,
                 inputTokens: inputTokens,
                 outputTokens: outputTokens
@@ -910,6 +953,7 @@ final class ChatSession: ObservableObject {
             manifest: preview.manifest,
             toolTokens: preview.toolTokens,
             memoryTokens: cachedMemoryTokens,
+            screenContextTokens: cachedScreenContextTokens,
             conversationTokens: conversationTokens,
             inputTokens: inputTokens,
             outputTokens: outputTokens
@@ -1279,6 +1323,8 @@ final class ChatSession: ObservableObject {
         cachedPreviewContext = nil
         // A new conversation re-freezes its screen context on the next send.
         frozenScreenContext = nil
+        cachedScreenContextTokens = 0
+        isScreenContextFrozen = false
         visibleBlocksStore.blocks = []
         visibleBlocksStore.groupHeaderMap = [:]
 
@@ -1576,6 +1622,8 @@ final class ChatSession: ObservableObject {
         cachedPreviewContext = nil
         // A loaded conversation re-freezes its screen context on its next send.
         frozenScreenContext = nil
+        cachedScreenContextTokens = 0
+        isScreenContextFrozen = false
         suppressVisibleBlockRebuild = false
         rebuildVisibleBlocks()
 
@@ -1600,6 +1648,50 @@ final class ChatSession: ObservableObject {
         let newTokens = ContextBudgetManager.estimateTokens(for: context)
         guard newTokens != cachedMemoryTokens else { return false }
         cachedMemoryTokens = newTokens
+        return true
+    }
+
+    /// Recompute the cached screen-context token estimate (and, pre-send,
+    /// (re)capture the frozen snapshot) so the Context Budget popover shows a
+    /// "Screen Context" line that matches what the next send will inject.
+    /// Returns `true` when the value changed. Mirrors `refreshMemoryTokens`:
+    /// does NOT emit `objectWillChange` — the caller coalesces the refresh.
+    ///
+    /// Off (or nothing on screen / no Accessibility, which `captureForChat`
+    /// reports as an empty render) ⇒ nothing is injected, so the estimate is
+    /// zeroed and the unlocked preview block is dropped. Once the first send
+    /// has locked the snapshot (`isScreenContextFrozen`), the block is kept and
+    /// only its token count is reconciled.
+    private func refreshScreenContextPreview() async -> Bool {
+        guard ScreenContextSettings.shared.injectionEnabled else {
+            let changed =
+                cachedScreenContextTokens != 0
+                || (!isScreenContextFrozen && frozenScreenContext != nil)
+            cachedScreenContextTokens = 0
+            if !isScreenContextFrozen { frozenScreenContext = nil }
+            return changed
+        }
+
+        if isScreenContextFrozen {
+            let tokens =
+                frozenScreenContext.map {
+                    ContextBudgetManager.estimateTokens(for: $0)
+                } ?? 0
+            guard tokens != cachedScreenContextTokens else { return false }
+            cachedScreenContextTokens = tokens
+            return true
+        }
+
+        // Pre-send: capture the current foreground snapshot. `captureForChat`
+        // returns an empty render when Accessibility is missing or nothing
+        // useful is on screen, which collapses to no budget line.
+        let rendered = await ScreenContextDistiller.captureForChat().render()
+        let block: String? = rendered.isEmpty ? nil : rendered
+        let tokens = block.map { ContextBudgetManager.estimateTokens(for: $0) } ?? 0
+        guard block != frozenScreenContext || tokens != cachedScreenContextTokens
+        else { return false }
+        frozenScreenContext = block
+        cachedScreenContextTokens = tokens
         return true
     }
 
@@ -1667,7 +1759,8 @@ final class ChatSession: ObservableObject {
     private func refreshContextEstimates() async {
         let previewChanged = recomputePreviewContext()
         let memoryChanged = await refreshMemoryTokens()
-        if previewChanged || memoryChanged {
+        let screenChanged = await refreshScreenContextPreview()
+        if previewChanged || memoryChanged || screenChanged {
             objectWillChange.send()
         }
     }
@@ -2823,11 +2916,22 @@ final class ChatSession: ObservableObject {
                     // flows through the Privacy Filter — in
                     // `loopHooks.buildMessages` below.
                     if ScreenContextSettings.shared.injectionEnabled,
-                        self.frozenScreenContext == nil
+                        !self.isScreenContextFrozen
                     {
-                        let snapshot = await ScreenContextDistiller.captureForChat()
-                        self.frozenScreenContext = snapshot.render()
-                        guard isRunActive(runId) else { return }
+                        // A welcome-screen preview may have already captured the
+                        // snapshot (reused as-is to avoid a second Accessibility
+                        // walk); otherwise capture it now.
+                        if self.frozenScreenContext == nil {
+                            let snapshot = await ScreenContextDistiller.captureForChat()
+                            let rendered = snapshot.render()
+                            self.frozenScreenContext = rendered.isEmpty ? nil : rendered
+                            guard isRunActive(runId) else { return }
+                        }
+                        self.cachedScreenContextTokens =
+                            self.frozenScreenContext.map {
+                                ContextBudgetManager.estimateTokens(for: $0)
+                            } ?? 0
+                        self.isScreenContextFrozen = true
                     }
 
                     let context = await SystemPromptComposer.composeChatContext(
@@ -2899,6 +3003,7 @@ final class ChatSession: ObservableObject {
                     }
 
                     budgetTracker.snapshot(context: context)
+                    budgetTracker.updateScreenContext(tokens: cachedScreenContextTokens)
 
                     let effectiveMaxTokensForAgent = AgentManager.shared.effectiveMaxTokens(for: effectiveAgentId)
 
@@ -3517,6 +3622,20 @@ final class ChatSession: ObservableObject {
                                 )
                             }
 
+                            // Conversation tokens are measured BEFORE the memory
+                            // + screen-context prefixes are injected, so each is
+                            // attributed to its own budget row (Memory / Screen
+                            // Context) instead of being double-counted inside the
+                            // Conversation total.
+                            let convTokens =
+                                msgs
+                                .filter { $0.role != "system" }
+                                .reduce(0) { $0 + ContextBudgetManager.estimateTokens(for: $1.content) }
+                            self.budgetTracker.updateConversation(
+                                tokens: convTokens,
+                                finishedOutputTurn: assistantTurn
+                            )
+
                             // Memory now lives on the latest user message instead of
                             // the system prompt — keeps the system prefix byte-stable
                             // across turns so the MLX paged KV cache can reuse the
@@ -3533,15 +3652,6 @@ final class ChatSession: ObservableObject {
                                     into: &msgs
                                 )
                             }
-
-                            let convTokens =
-                                msgs
-                                .filter { $0.role != "system" }
-                                .reduce(0) { $0 + ContextBudgetManager.estimateTokens(for: $1.content) }
-                            self.budgetTracker.updateConversation(
-                                tokens: convTokens,
-                                finishedOutputTurn: assistantTurn
-                            )
                             // `overBudget` (protected first message + tail
                             // alone exceed the budget after every compaction
                             // lever) ends the run with a distinct exit
@@ -4360,6 +4470,7 @@ struct ChatView: View {
                                 agentId: windowState.agentId,
                                 windowId: windowState.windowId,
                                 isCompact: windowState.showSidebar,
+                                isEmptyChat: !observedSession.hasVisibleThreadMessages,
                                 onClearChat: { observedSession.reset() },
                                 onSkillSelected: { skillId in
                                     observedSession.pendingOneOffSkillId = skillId
