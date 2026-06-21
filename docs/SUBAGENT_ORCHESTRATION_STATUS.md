@@ -355,3 +355,19 @@ built (matrix run 2). Real current state:
 - GAP 5: surface restore failures instead of swallowing `try?`.
 - Live matrix (§5) with a tool-reliable orchestrator (qwen3-4b too weak to emit the
   image tool call — echoes instead; use a stronger local model or forced tool_choice).
+
+### Image-job live-trigger blocker (2026-06-21)
+GAP1+GAP2 committed `f9526668` (build green). But §5.A image-job E2E remains
+UN-live-proven because the headless trigger doesn't fire: on `/agents/{id}/run`
+(both custom `Echo` and `default`), qwen3-4b answers in prose ("Let me create the
+image for you") with NO `image_generate` tool_call, even with
+`tool_choice={function:image_generate}` forced. Confirmed: tool is registered
+(`ToolRegistry.swift:195 NativeImageGenerateTool()`), `image_generate` is gated by
+`imageDelegationActive` (true now), and `tool_choice` is plumbed
+(`HTTPHandler.swift:2831,4517,4644`). So the gap is one of: (a) the forced
+`tool_choice` is not rendered into the qwen3 prompt as a hard "must call" directive
+on the agent-run path; (b) image_generate is not injected into THIS run's tool
+payload (custom-agent tool set); (c) qwen3-4b too weak. NEXT: dump the rendered
+agent-run prompt + outbound tool schema to disambiguate, and/or retest with a
+stronger local tool-caller. The image coordinator + GAP2 preflight cannot be
+live-exercised until the trigger fires.
