@@ -90,6 +90,34 @@ enum ChatResidencyHandoff {
         }
     }
 
+    /// Best-effort on-disk size (bytes) of an installed chat model, used as the
+    /// spawn-model `requiredBytes` for the text/spawn RAM preflight. Falls back to
+    /// summing the model directory when the catalog has no size estimate (e.g. a
+    /// manually-placed bundle). Returns 0 when unknown → the preflight is skipped.
+    static func estimatedChatModelBytes(named name: String) -> Int64 {
+        let models = ModelManager.discoverLocalModels()
+        guard let model = models.first(where: { $0.name == name || $0.id == name }) else {
+            return 0
+        }
+        if let bytes = model.totalSizeEstimateBytes { return bytes }
+        return directorySizeBytes(model.localDirectory)
+    }
+
+    private static func directorySizeBytes(_ url: URL) -> Int64 {
+        let fm = FileManager.default
+        guard
+            let enumerator = fm.enumerator(
+                at: url,
+                includingPropertiesForKeys: [.fileSizeKey],
+                options: [.skipsHiddenFiles])
+        else { return 0 }
+        var total: Int64 = 0
+        for case let file as URL in enumerator {
+            total += Int64((try? file.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0)
+        }
+        return total
+    }
+
     /// Wait for chat generation to go idle, then unload every resident chat model
     /// so the subagent/task model is the single resident GPU producer. Returns the
     /// lease of unloaded names (empty when nothing was resident — e.g. a cloud

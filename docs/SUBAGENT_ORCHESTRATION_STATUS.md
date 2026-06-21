@@ -371,3 +371,14 @@ payload (custom-agent tool set); (c) qwen3-4b too weak. NEXT: dump the rendered
 agent-run prompt + outbound tool schema to disambiguate, and/or retest with a
 stronger local tool-caller. The image coordinator + GAP2 preflight cannot be
 live-exercised until the trigger fires.
+
+### Increment 2 (2026-06-21): text/spawn RAM preflight + GAP3 reassessed
+- **GAP 2 text path DONE**: `ChatResidencyHandoff.estimatedChatModelBytes(named:)`
+  (catalog size estimate, dir-size fallback) + `memoryPreflight` now wired into
+  `LocalTextDelegateTool` and `SpawnTool` before their `unloadResidentChatModels`
+  call → refuse-before-evict on the text/spawn handoff too.
+- **GAP 3 REASSESSED — not a bug**: `imageJobLoadPolicy.unloadImageAfterAgentJob`
+  IS implemented (chat-unload iff `agentSingleResidency`; image-unload iff
+  `!manualPanelKeepsImageLoaded` → unloadImageAfterAgentJob = keep chat + unload
+  image). The audit's "dead branch" was a misread; behavior is correct. (Could add
+  a clarifying comment later; no functional change.)

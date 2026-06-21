@@ -123,6 +123,11 @@ public final class SpawnTool: OsaurusTool, @unchecked Sendable {
                 )
             }
             do {
+                // RAM-safety preflight: refuse before evicting the orchestrator if
+                // the spawned agent's model would not fit once it is freed.
+                try await ChatResidencyHandoff.memoryPreflight(
+                    requiredBytes: ChatResidencyHandoff.estimatedChatModelBytes(named: modelName),
+                    enabled: config.ramSafetyPreflightEnabled)
                 lease = try await ChatResidencyHandoff.unloadResidentChatModels(
                     maxElapsedSeconds: config.budgets.maxElapsedSeconds)
             } catch {

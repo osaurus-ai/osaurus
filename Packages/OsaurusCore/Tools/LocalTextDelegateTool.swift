@@ -154,6 +154,11 @@ public final class LocalTextDelegateTool: OsaurusTool, @unchecked Sendable {
                 )
             }
             do {
+                // RAM-safety preflight: refuse before evicting the orchestrator if
+                // the delegate model would not fit once it is freed.
+                try await ChatResidencyHandoff.memoryPreflight(
+                    requiredBytes: ChatResidencyHandoff.estimatedChatModelBytes(named: model.name),
+                    enabled: config.ramSafetyPreflightEnabled)
                 residencyLease = try await ChatResidencyHandoff.unloadResidentChatModels(
                     maxElapsedSeconds: config.budgets.maxElapsedSeconds)
             } catch {
