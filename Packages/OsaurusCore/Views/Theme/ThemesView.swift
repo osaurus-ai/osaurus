@@ -20,8 +20,14 @@ struct IdentifiableTheme: Identifiable {
     }
 }
 
-private enum ThemeLibraryFilter: String, CaseIterable, Identifiable {
+// MARK: - Theme Filter
+
+/// Single source of truth for the gallery's filtering taxonomy. Replaces the
+/// previous dual system (non-interactive stat tiles + a separate chip row with
+/// mismatched names). Counts live on the tabs themselves.
+enum ThemeFilter: String, CaseIterable, Identifiable, Hashable {
     case all
+    case builtIn
     case local
     case imported
     case shared
@@ -33,6 +39,7 @@ private enum ThemeLibraryFilter: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .all: return "All"
+        case .builtIn: return "Built-in"
         case .local: return "Local"
         case .imported: return "Imported"
         case .shared: return "Shared"
@@ -44,12 +51,60 @@ private enum ThemeLibraryFilter: String, CaseIterable, Identifiable {
     var icon: String {
         switch self {
         case .all: return "square.grid.2x2"
+        case .builtIn: return "shippingbox"
         case .local: return "paintbrush.pointed"
         case .imported: return "tray.and.arrow.down"
         case .shared: return "link"
         case .needsReview: return "exclamationmark.triangle"
         case .duplicates: return "doc.on.doc"
         }
+    }
+
+    /// Filters that flag library problems get a warning-styled badge instead
+    /// of a neutral count.
+    var isAttentionFilter: Bool { self == .needsReview || self == .duplicates }
+}
+
+/// Precomputed membership used by `themeMatches`. Built once per data change so
+/// the per-theme predicate never rebuilds sets.
+struct ThemeFilterContext {
+    let needsReviewIDs: Set<UUID>
+    let duplicateIDs: Set<UUID>
+
+    static let empty = ThemeFilterContext(needsReviewIDs: [], duplicateIDs: [])
+}
+
+/// Pure, side-effect-free predicate deciding whether a theme is visible under
+/// the current filter + search. Extracted so the filtering rules are unit
+/// testable and computed exactly once per change rather than inside `body`.
+func themeMatches(
+    _ theme: CustomTheme,
+    filter: ThemeFilter,
+    search: String,
+    context: ThemeFilterContext
+) -> Bool {
+    let trimmed = search.trimmingCharacters(in: .whitespacesAndNewlines)
+    if !trimmed.isEmpty {
+        let matchesName = theme.metadata.name.range(of: trimmed, options: .caseInsensitive) != nil
+        let matchesAuthor = theme.metadata.author.range(of: trimmed, options: .caseInsensitive) != nil
+        if !matchesName && !matchesAuthor { return false }
+    }
+
+    switch filter {
+    case .all:
+        return true
+    case .builtIn:
+        return theme.isBuiltIn
+    case .local:
+        return ThemeLibraryManagementService.source(for: theme) == .local
+    case .imported:
+        return ThemeLibraryManagementService.source(for: theme) == .imported
+    case .shared:
+        return ThemeLibraryManagementService.source(for: theme) == .shared
+    case .needsReview:
+        return context.needsReviewIDs.contains(theme.metadata.id)
+    case .duplicates:
+        return context.duplicateIDs.contains(theme.metadata.id)
     }
 }
 
@@ -79,87 +134,40 @@ struct ThemesView: View {
     /// the theme they just clicked to install.
     @State private var applyAfterImportById = false
 
-    /// Cached partitions of `themeManager.installedThemes`. Recomputed only
-    /// when the publisher fires, not on every parent body redraw, so
-    /// scroll-induced re-evaluations no longer re-sort + re-filter the
-    /// full theme list.
+    // MARK: Filtering / search
+
+    @State private var selectedFilter: ThemeFilter = .all
+    @State private var searchText: String = ""
+    @State private var showLibraryHealth = false
+
+    // MARK: Cached partitions + derived state
+    //
+    // Recomputed only when `ThemeManager` republishes (not on every parent
+    // body redraw), so scroll-induced re-evaluations no longer re-sort,
+    // re-validate, or re-filter the full theme list.
     @State private var installedThemes: [CustomTheme] = []
     @State private var builtInThemes: [CustomTheme] = []
     @State private var customThemes: [CustomTheme] = []
-    @State private var libraryFilter: ThemeLibraryFilter = .all
-    @State private var validationReports: [UUID: ThemeValidationReport] = [:]
-    @State private var duplicateGroups: [ThemeDuplicateGroup] = []
+    @State private var visibleThemes: [CustomTheme] = []
+    @State private var validationByID: [UUID: ThemeValidationReport] = [:]
+    @State private var needsReviewIDs: Set<UUID> = []
+    @State private var duplicateIDs: Set<UUID> = []
     @State private var librarySummary: ThemeLibrarySummary = .empty
+    @State private var filterCounts: [ThemeFilter: Int] = [:]
     @State private var previewCacheHealth: ThemePreviewCacheHealth = .empty
     @State private var showRollbackConfirmation = false
 
+    // MARK: - Body
+
     var body: some View {
         VStack(spacing: 0) {
-            // Header
             headerView
                 .opacity(hasAppeared ? 1 : 0)
                 .offset(y: hasAppeared ? 0 : -10)
                 .animation(.spring(response: 0.4, dampingFraction: 0.8), value: hasAppeared)
 
-            // Content
             ZStack {
-                if isLoading {
-                    loadingView
-                } else if let error = loadError {
-                    errorView(error)
-                } else if installedThemes.isEmpty {
-                    noThemesView
-                } else {
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 24) {
-                            let visibleBuiltInThemes = filteredThemes(builtInThemes)
-                            let visibleCustomThemes = filteredThemes(customThemes)
-
-                            themeLibraryManagementCenter
-                                .transition(.opacity)
-
-                            // Active theme indicator
-                            if let activeTheme = themeManager.activeCustomTheme {
-                                activeThemeSection(activeTheme)
-                                    .transition(.opacity.combined(with: .move(edge: .top)))
-                            }
-
-                            // Built-in themes
-                            if !visibleBuiltInThemes.isEmpty {
-                                themesSection(
-                                    title: L("Built-in Themes"),
-                                    count: visibleBuiltInThemes.count,
-                                    themes: visibleBuiltInThemes
-                                )
-                                .transition(.opacity)
-                            }
-
-                            // Custom themes
-                            if !visibleCustomThemes.isEmpty {
-                                themesSection(
-                                    title: customSectionTitle,
-                                    count: visibleCustomThemes.count,
-                                    themes: visibleCustomThemes
-                                )
-                                .transition(.opacity)
-                            }
-
-                            // Community gallery discovery banner
-                            communityThemesBanner
-                                .transition(.opacity)
-
-                            // Empty state for custom themes
-                            if customThemes.isEmpty && !builtInThemes.isEmpty && libraryFilter == .all {
-                                emptyCustomThemesView
-                            }
-
-                            if libraryFilter != .all && visibleBuiltInThemes.isEmpty && visibleCustomThemes.isEmpty {
-                                emptyFilteredThemesView
-                            }
-                        }
-                        .padding(24)
-                    }
-                }
+                contentView
 
                 if let message = toastMessage {
                     VStack {
@@ -174,6 +182,7 @@ struct ThemesView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(theme.primaryBackground)
+        .environment(\.theme, themeManager.currentTheme)
         .onAppear {
             loadThemes()
             applyPendingThemeInstall()
@@ -236,6 +245,14 @@ struct ThemesView: View {
         .onReceive(themeManager.$installedThemes) { latest in
             refreshPartitions(from: latest)
         }
+        .onChange(of: selectedFilter) { _, _ in
+            withAnimation(theme.animationQuick()) {
+                recomputeVisible()
+            }
+        }
+        .onChange(of: searchText) { _, _ in
+            recomputeVisible()
+        }
         .themedAlert(
             L("Delete Theme"),
             isPresented: Binding(
@@ -277,21 +294,61 @@ struct ThemesView: View {
         )
     }
 
-    // MARK: - Delete Helper
+    // MARK: - Content Switch
 
-    private func performDelete(_ theme: CustomTheme) {
-        let themeName = theme.metadata.name
-        let success = themeManager.deleteTheme(id: theme.metadata.id)
-        if success {
-            print("[Osaurus] Successfully deleted theme: \(themeName)")
-            showToast(L("Deleted \"\(themeName)\""))
+    @ViewBuilder
+    private var contentView: some View {
+        if isLoading {
+            loadingView
+        } else if let error = loadError {
+            errorView(error)
+        } else if installedThemes.isEmpty {
+            noThemesView
         } else {
-            print("[Osaurus] Failed to delete theme: \(themeName)")
+            themeBrowser
         }
-        themeToDelete = nil
     }
 
     // MARK: - Header
+
+    private var showsFilterToolbar: Bool {
+        !isLoading && loadError == nil && !installedThemes.isEmpty
+    }
+
+    @ViewBuilder
+    private var headerView: some View {
+        if showsFilterToolbar {
+            ManagerHeaderWithTabs(
+                title: L("Themes"),
+                subtitle: L("Customize the look and feel of your chat interface"),
+                count: installedThemes.count
+            ) {
+                headerActions
+            } tabsRow: {
+                filterToolbar
+            }
+        } else {
+            ManagerHeaderWithActions(
+                title: L("Themes"),
+                subtitle: L("Customize the look and feel of your chat interface"),
+                count: installedThemes.isEmpty ? nil : installedThemes.count
+            ) {
+                headerActions
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var headerActions: some View {
+        HeaderIconButton("arrow.clockwise", help: "Refresh themes") {
+            loadThemes()
+        }
+        manageMenuButton
+        importMenuButton
+        HeaderPrimaryButton("Create Theme", icon: "plus") {
+            createNewTheme()
+        }
+    }
 
     /// Combined "Import" entry point. A single menu so the header row fits
     /// even on narrow window widths and the two import flavours sit
@@ -345,20 +402,243 @@ struct ThemesView: View {
         .fixedSize()
     }
 
-    private var headerView: some View {
-        ManagerHeaderWithActions(
-            title: L("Themes"),
-            subtitle: L("Customize the look and feel of your chat interface"),
-            count: isLoading || installedThemes.isEmpty ? nil : installedThemes.count
-        ) {
-            HeaderIconButton("arrow.clockwise", help: "Refresh themes") {
-                loadThemes()
+    /// Overflow menu housing the library maintenance tools that used to clutter
+    /// the gallery. Keeps every feature reachable while the default view stays
+    /// clean.
+    private var manageMenuButton: some View {
+        Menu {
+            Button {
+                clearPreviewCache()
+            } label: {
+                Label {
+                    Text("Clear Preview Cache", bundle: .module)
+                } icon: {
+                    Image(systemName: "trash")
+                }
             }
-            importMenuButton
-            HeaderPrimaryButton("Create Theme", icon: "plus") {
-                createNewTheme()
+
+            Button {
+                showRollbackConfirmation = true
+            } label: {
+                Label {
+                    Text("Rollback to Default", bundle: .module)
+                } icon: {
+                    Image(systemName: "arrow.uturn.backward")
+                }
+            }
+            .disabled(themeManager.activeCustomTheme == nil)
+
+            Button {
+                themeManager.forceReinstallBuiltInThemes()
+                loadThemes()
+            } label: {
+                Label {
+                    Text("Reinstall Built-in Themes", bundle: .module)
+                } icon: {
+                    Image(systemName: "arrow.triangle.2.circlepath")
+                }
+            }
+
+            Divider()
+
+            Toggle(isOn: $showLibraryHealth.animation(theme.animationQuick())) {
+                Label {
+                    Text("Library Health", bundle: .module)
+                } icon: {
+                    Image(systemName: "waveform.path.ecg")
+                }
+            }
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(theme.secondaryText)
+                .frame(width: 32, height: 32)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(theme.tertiaryBackground)
+                )
+                .contentShape(RoundedRectangle(cornerRadius: 8))
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help(Text("Manage library", bundle: .module))
+    }
+
+    // MARK: - Filter Toolbar
+
+    private var filterToolbar: some View {
+        HStack(spacing: 12) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(availableFilters) { filter in
+                        filterChip(filter)
+                    }
+                }
+                .padding(.vertical, 2)
+            }
+
+            Spacer(minLength: 12)
+
+            SearchField(text: $searchText, placeholder: "Search themes", width: 220, compact: true)
+        }
+    }
+
+    private func filterChip(_ filter: ThemeFilter) -> some View {
+        let isSelected = selectedFilter == filter
+        let count = filterCounts[filter] ?? 0
+        return Button {
+            withAnimation(theme.animationQuick()) {
+                selectedFilter = filter
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: filter.icon)
+                    .font(.system(size: 11, weight: .semibold))
+                Text(LocalizedStringKey(filter.title), bundle: .module)
+                    .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
+                    .lineLimit(1)
+                filterCountBadge(filter, count: count, isSelected: isSelected)
+            }
+            .foregroundColor(isSelected ? Color.white : theme.secondaryText)
+            .padding(.horizontal, 11)
+            .padding(.vertical, 7)
+            .background(
+                Capsule()
+                    .fill(isSelected ? theme.accentColor : theme.tertiaryBackground)
+                    .overlay(
+                        Capsule()
+                            .stroke(theme.primaryBorder.opacity(isSelected ? 0 : 0.5), lineWidth: 1)
+                    )
+            )
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .fixedSize()
+    }
+
+    @ViewBuilder
+    private func filterCountBadge(_ filter: ThemeFilter, count: Int, isSelected: Bool) -> some View {
+        if count > 0 {
+            if filter.isAttentionFilter {
+                Text(verbatim: "\(count)")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1)
+                    .background(
+                        Capsule()
+                            .fill(isSelected ? Color.white.opacity(0.3) : theme.warningColor)
+                    )
+            } else {
+                Text(verbatim: "\(count)")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(isSelected ? Color.white.opacity(0.85) : theme.tertiaryText)
             }
         }
+    }
+
+    /// Only surface filters that currently have results (All is always shown).
+    /// A theme that just lost its last imported/shared member therefore can't
+    /// strand the user on an empty tab.
+    private func availableFilters(from counts: [ThemeFilter: Int]) -> [ThemeFilter] {
+        // `allCases` is declared in tab order (all, builtIn, local, …), so a
+        // straight filter preserves the layout while dropping empty tabs.
+        ThemeFilter.allCases.filter { $0 == .all || (counts[$0] ?? 0) > 0 }
+    }
+
+    private var availableFilters: [ThemeFilter] {
+        availableFilters(from: filterCounts)
+    }
+
+    // MARK: - Theme Browser
+
+    private var isDefaultBrowsing: Bool {
+        selectedFilter == .all && searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var searchActive: Bool {
+        !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var themeBrowser: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                if showLibraryHealth {
+                    libraryHealthPanel
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                }
+
+                if let activeTheme = themeManager.activeCustomTheme {
+                    activeThemeSection(activeTheme)
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                }
+
+                if isDefaultBrowsing {
+                    defaultBrowsingContent
+                } else {
+                    filteredContent
+                }
+            }
+            .padding(24)
+        }
+    }
+
+    @ViewBuilder
+    private var defaultBrowsingContent: some View {
+        if !builtInThemes.isEmpty {
+            themesSection(
+                title: L("Built-in Themes"),
+                count: builtInThemes.count,
+                themes: builtInThemes
+            )
+            .transition(.opacity)
+        }
+
+        if !customThemes.isEmpty {
+            themesSection(
+                title: L("Custom Themes"),
+                count: customThemes.count,
+                themes: customThemes
+            )
+            .transition(.opacity)
+        } else {
+            firstThemeCTA
+        }
+
+        communityThemesBanner
+            .transition(.opacity)
+    }
+
+    @ViewBuilder
+    private var filteredContent: some View {
+        if visibleThemes.isEmpty {
+            noResultsView
+        } else {
+            themesSection(
+                title: searchActive ? L("Search Results") : sectionTitle(for: selectedFilter),
+                count: visibleThemes.count,
+                subtitle: resultsSubtitle,
+                themes: visibleThemes
+            )
+            .transition(.opacity)
+        }
+    }
+
+    private func sectionTitle(for filter: ThemeFilter) -> String {
+        switch filter {
+        case .all: return L("All Themes")
+        case .builtIn: return L("Built-in Themes")
+        case .local: return L("Local Themes")
+        case .imported: return L("Imported Themes")
+        case .shared: return L("Shared Themes")
+        case .needsReview: return L("Themes Needing Review")
+        case .duplicates: return L("Duplicate Themes")
+        }
+    }
+
+    private var resultsSubtitle: String {
+        L("\(visibleThemes.count) of \(installedThemes.count) themes")
     }
 
     // MARK: - Loading & Error States
@@ -403,7 +683,8 @@ struct ThemesView: View {
                 .buttonStyle(.borderedProminent)
 
                 Button(action: {
-                    themeManager.forceReinstallBuiltInThemes(); loadThemes()
+                    themeManager.forceReinstallBuiltInThemes()
+                    loadThemes()
                 }) {
                     Label {
                         Text("Reinstall Built-ins", bundle: .module)
@@ -437,7 +718,8 @@ struct ThemesView: View {
             }
 
             Button(action: {
-                themeManager.forceReinstallBuiltInThemes(); loadThemes()
+                themeManager.forceReinstallBuiltInThemes()
+                loadThemes()
             }) {
                 Label {
                     Text("Install Built-in Themes", bundle: .module)
@@ -452,118 +734,31 @@ struct ThemesView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    // MARK: - Library Management Center
+    // MARK: - Library Health Panel
 
-    private var themeLibraryManagementCenter: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Theme Library", bundle: .module)
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
-                    Text("Validate, filter, deduplicate, and recover installed themes.", bundle: .module)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.secondaryText)
-                }
+    private var libraryHealthPanel: some View {
+        SettingsSection(title: "Library Health", icon: "waveform.path.ecg") {
+            VStack(alignment: .leading, spacing: 12) {
+                previewCacheHealthRow
 
-                Spacer(minLength: 12)
-
-                HStack(spacing: 8) {
-                    libraryActionButton(
-                        title: "Rollback",
-                        icon: "arrow.uturn.backward",
-                        disabled: themeManager.activeCustomTheme == nil
-                    ) {
-                        showRollbackConfirmation = true
-                    }
-
-                    libraryActionButton(title: "Clear Cache", icon: "trash") {
-                        clearPreviewCache()
-                    }
+                HStack(spacing: 10) {
+                    healthStat(
+                        icon: "exclamationmark.triangle",
+                        title: "Issues",
+                        value: librarySummary.validationErrorCount + librarySummary.validationWarningCount,
+                        color: issueStatColor,
+                        reviewFilter: .needsReview
+                    )
+                    healthStat(
+                        icon: "doc.on.doc",
+                        title: "Duplicate Sets",
+                        value: librarySummary.duplicateGroupCount,
+                        color: librarySummary.duplicateGroupCount == 0 ? theme.tertiaryText : theme.warningColor,
+                        reviewFilter: .duplicates
+                    )
                 }
             }
-
-            libraryStatGrid
-            previewCacheHealthRow
-            libraryFilterBar
-
-            if !duplicateGroups.isEmpty {
-                duplicateOverview
-            }
         }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(theme.secondaryBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(theme.primaryBorder.opacity(0.55), lineWidth: 1)
-                )
-        )
-    }
-
-    private var libraryStatGrid: some View {
-        LazyVGrid(
-            columns: [GridItem(.adaptive(minimum: 132, maximum: 180), spacing: 10)],
-            spacing: 10
-        ) {
-            libraryStatTile(
-                "Local",
-                count: librarySummary.localCount,
-                icon: "paintbrush.pointed",
-                color: theme.accentColor
-            )
-            libraryStatTile(
-                "Imported",
-                count: librarySummary.importedCount,
-                icon: "tray.and.arrow.down",
-                color: theme.infoColor
-            )
-            libraryStatTile("Shared", count: librarySummary.sharedCount, icon: "link", color: theme.successColor)
-            libraryStatTile(
-                "Issues",
-                count: librarySummary.validationErrorCount + librarySummary.validationWarningCount,
-                icon: "exclamationmark.triangle",
-                color: issueStatColor
-            )
-            libraryStatTile(
-                "Duplicate Sets",
-                count: librarySummary.duplicateGroupCount,
-                icon: "doc.on.doc",
-                color: duplicateGroups.isEmpty ? theme.tertiaryText : theme.warningColor
-            )
-        }
-    }
-
-    private func libraryStatTile(_ title: String, count: Int, icon: String, color: Color) -> some View {
-        HStack(spacing: 9) {
-            Image(systemName: icon)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(color)
-                .frame(width: 24, height: 24)
-                .background(Circle().fill(color.opacity(0.14)))
-
-            VStack(alignment: .leading, spacing: 1) {
-                Text("\(count)", bundle: .module)
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-                Text(LocalizedStringKey(title), bundle: .module)
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
-                    .lineLimit(1)
-            }
-
-            Spacer(minLength: 0)
-        }
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(theme.cardBorder.opacity(0.8), lineWidth: 1)
-                )
-        )
     }
 
     private var previewCacheHealthRow: some View {
@@ -602,57 +797,40 @@ struct ThemesView: View {
         .padding(10)
         .background(
             RoundedRectangle(cornerRadius: 8)
-                .fill(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(theme.cardBorder.opacity(0.75), lineWidth: 1)
-                )
+                .fill(theme.secondaryBackground.opacity(0.6))
         )
     }
 
-    private var libraryFilterBar: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(ThemeLibraryFilter.allCases) { filter in
-                    Button {
-                        withAnimation(theme.animationQuick()) {
-                            libraryFilter = filter
-                        }
-                    } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: filter.icon)
-                                .font(.system(size: 11, weight: .semibold))
-                            Text(LocalizedStringKey(filter.title), bundle: .module)
-                                .font(.system(size: 12, weight: .medium))
-                                .lineLimit(1)
-                        }
-                        .foregroundColor(libraryFilter == filter ? Color.white : theme.secondaryText)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 7)
-                        .background(
-                            Capsule()
-                                .fill(libraryFilter == filter ? theme.accentColor : theme.tertiaryBackground)
-                        )
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-        }
-    }
+    private func healthStat(
+        icon: String,
+        title: String,
+        value: Int,
+        color: Color,
+        reviewFilter: ThemeFilter
+    ) -> some View {
+        HStack(spacing: 9) {
+            Image(systemName: icon)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(color)
+                .frame(width: 26, height: 26)
+                .background(Circle().fill(color.opacity(0.14)))
 
-    private var duplicateOverview: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                Image(systemName: "doc.on.doc.fill")
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.warningColor)
-                Text("Duplicate detection", bundle: .module)
-                    .font(.system(size: 12, weight: .semibold))
+            VStack(alignment: .leading, spacing: 1) {
+                Text(verbatim: "\(value)")
+                    .font(.system(size: 16, weight: .semibold))
                     .foregroundColor(theme.primaryText)
-                Spacer()
+                Text(LocalizedStringKey(title), bundle: .module)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 0)
+
+            if value > 0 && (filterCounts[reviewFilter] ?? 0) > 0 {
                 Button {
                     withAnimation(theme.animationQuick()) {
-                        libraryFilter = .duplicates
+                        selectedFilter = reviewFilter
                     }
                 } label: {
                     Text("Review", bundle: .module)
@@ -661,75 +839,13 @@ struct ThemesView: View {
                 }
                 .buttonStyle(.plain)
             }
-
-            ForEach(duplicateGroups.prefix(2)) { group in
-                Text(group.members.map(\.name).joined(separator: "  •  "))
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.secondaryText)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            }
         }
         .padding(10)
+        .frame(maxWidth: .infinity)
         .background(
             RoundedRectangle(cornerRadius: 8)
-                .fill(theme.warningColor.opacity(0.08))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(theme.warningColor.opacity(0.22), lineWidth: 1)
-                )
+                .fill(theme.secondaryBackground.opacity(0.6))
         )
-    }
-
-    private var emptyFilteredThemesView: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "line.3.horizontal.decrease.circle")
-                .font(.system(size: 30))
-                .foregroundColor(theme.tertiaryText)
-            Text("No themes match this filter", bundle: .module)
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(theme.primaryText)
-            Button {
-                withAnimation(theme.animationQuick()) {
-                    libraryFilter = .all
-                }
-            } label: {
-                Text("Show All Themes", bundle: .module)
-                    .font(.system(size: 12, weight: .medium))
-            }
-            .buttonStyle(.bordered)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 36)
-    }
-
-    private func libraryActionButton(
-        title: String,
-        icon: String,
-        disabled: Bool = false,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            HStack(spacing: 6) {
-                Image(systemName: icon)
-                    .font(.system(size: 11, weight: .semibold))
-                Text(LocalizedStringKey(title), bundle: .module)
-                    .font(.system(size: 12, weight: .medium))
-            }
-            .foregroundColor(disabled ? theme.tertiaryText : theme.primaryText)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 7)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(theme.tertiaryBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(theme.inputBorder.opacity(disabled ? 0.35 : 1), lineWidth: 1)
-                    )
-            )
-        }
-        .buttonStyle(.plain)
-        .disabled(disabled)
     }
 
     private var issueStatColor: Color {
@@ -753,206 +869,78 @@ struct ThemesView: View {
             )
     }
 
-    private func showToast(_ message: String, type: SimpleToastType = .success) {
-        withAnimation(theme.springAnimation()) {
-            toastType = type
-            toastMessage = message
-        }
-        let duration: Double = type == .error ? 4.0 : 2.5
-        DispatchQueue.main.asyncAfter(deadline: .now() + duration) {
-            withAnimation(theme.animationQuick()) {
-                toastMessage = nil
-            }
-        }
-    }
-
-    private func loadThemes() {
-        isLoading = true
-        loadError = nil
-
-        // Small delay for visual feedback
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            themeManager.refreshInstalledThemes()
-            refreshPartitions(from: themeManager.installedThemes)
-
-            withAnimation(.easeOut(duration: 0.2)) {
-                isLoading = false
-                if themeManager.installedThemes.isEmpty {
-                    loadError = "No themes could be loaded from disk."
-                }
-            }
-        }
-    }
-
-    private var customSectionTitle: String {
-        switch libraryFilter {
-        case .all: return L("Custom Themes")
-        case .local: return "Local Themes"
-        case .imported: return "Imported Themes"
-        case .shared: return "Shared Themes"
-        case .needsReview: return "Themes Needing Review"
-        case .duplicates: return "Duplicate Themes"
-        }
-    }
-
-    /// Sort once, partition once. Called on initial load and whenever
-    /// `ThemeManager` republishes its installed list.
-    private func refreshPartitions(from themes: [CustomTheme]) {
-        let sorted = themes.sorted { $0.metadata.name < $1.metadata.name }
-        installedThemes = sorted
-        builtInThemes = sorted.filter { $0.isBuiltIn }
-        customThemes = sorted.filter { !$0.isBuiltIn }
-        let reports = ThemeLibraryManagementService.validationReports(for: sorted)
-        let reportMap = Dictionary(uniqueKeysWithValues: reports.map { ($0.themeID, $0) })
-        let duplicates = ThemeLibraryManagementService.duplicateGroups(in: sorted)
-        validationReports = reportMap
-        duplicateGroups = duplicates
-        librarySummary = ThemeLibraryManagementService.summary(
-            for: sorted,
-            reports: reports,
-            duplicateGroups: duplicates
-        )
-        refreshPreviewCacheHealth()
-    }
-
-    private func filteredThemes(_ themes: [CustomTheme]) -> [CustomTheme] {
-        themes.filter(shouldShowTheme(_:))
-    }
-
-    private func shouldShowTheme(_ themeItem: CustomTheme) -> Bool {
-        switch libraryFilter {
-        case .all:
-            return true
-        case .local:
-            return ThemeLibraryManagementService.source(for: themeItem) == .local
-        case .imported:
-            return ThemeLibraryManagementService.source(for: themeItem) == .imported
-        case .shared:
-            return ThemeLibraryManagementService.source(for: themeItem) == .shared
-        case .needsReview:
-            return validationReports[themeItem.metadata.id]?.needsReview == true
-        case .duplicates:
-            return duplicateThemeIDs.contains(themeItem.metadata.id)
-        }
-    }
-
-    private var duplicateThemeIDs: Set<UUID> {
-        Set(duplicateGroups.flatMap { $0.members.map(\.id) })
-    }
-
-    private func duplicateGroupSize(for themeItem: CustomTheme) -> Int {
-        duplicateGroups.first { group in
-            group.members.contains { $0.id == themeItem.metadata.id }
-        }?.count ?? 0
-    }
-
-    private func refreshPreviewCacheHealth() {
-        Task {
-            let snapshot = await ThemePreviewImageCache.shared.healthSnapshot()
-            await MainActor.run {
-                previewCacheHealth = snapshot
-            }
-        }
-    }
-
-    private func clearPreviewCache() {
-        Task {
-            await ThemePreviewImageCache.shared.removeAll()
-            let snapshot = await ThemePreviewImageCache.shared.healthSnapshot()
-            await MainActor.run {
-                previewCacheHealth = snapshot
-                showToast(String(localized: "Preview cache cleared", bundle: .module))
-            }
-        }
-    }
-
-    private func rollbackToDefaultTheme() {
-        ThemeConfigurationStore.rollbackActiveThemeToDefault()
-        themeManager.clearCustomTheme()
-        themeManager.refreshInstalledThemes()
-        refreshPartitions(from: themeManager.installedThemes)
-        showToast(String(localized: "Rolled back to the default theme", bundle: .module))
-    }
-
-    private func markThemeShared(_ themeItem: CustomTheme, outcome: ThemeShareOutcome) {
-        guard !themeItem.isBuiltIn else { return }
-        _ = ThemeConfigurationStore.markThemeShared(
-            id: themeItem.metadata.id,
-            hash: outcome.hash,
-            serverURL: outcome.serverURL
-        )
-        themeManager.refreshInstalledThemes()
-    }
-
     // MARK: - Active Theme Section
 
     private func activeThemeSection(_ activeTheme: CustomTheme) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                HStack(spacing: 8) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 14))
-                        .foregroundColor(theme.successColor)
+        HStack {
+            HStack(spacing: 8) {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 14))
+                    .foregroundColor(theme.successColor)
 
-                    Text("Currently Active", bundle: .module)
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
+                Text("Currently Active", bundle: .module)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
 
-                    Text(activeTheme.metadata.name)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(
-                            Capsule()
-                                .fill(theme.successColor.opacity(0.15))
-                        )
-                }
-
-                Spacer()
-
-                Button(action: {
-                    themeManager.clearCustomTheme()
-                    showToast(L("Reset to default theme"))
-                }) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "arrow.uturn.backward")
-                            .font(.system(size: 10, weight: .semibold))
-                        Text("Reset to Default", bundle: .module)
-                            .font(.system(size: 12, weight: .medium))
-                    }
+                Text(activeTheme.metadata.name)
+                    .font(.system(size: 13, weight: .medium))
                     .foregroundColor(theme.secondaryText)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
                     .background(
                         Capsule()
-                            .fill(theme.tertiaryBackground)
+                            .fill(theme.successColor.opacity(0.15))
                     )
-                }
-                .buttonStyle(PlainButtonStyle())
             }
-            .padding(14)
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(theme.successColor.opacity(0.08))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .stroke(theme.successColor.opacity(0.2), lineWidth: 1)
-                    )
-            )
+
+            Spacer()
+
+            Button(action: {
+                themeManager.clearCustomTheme()
+                showToast(L("Reset to default theme"))
+            }) {
+                HStack(spacing: 4) {
+                    Image(systemName: "arrow.uturn.backward")
+                        .font(.system(size: 10, weight: .semibold))
+                    Text("Reset to Default", bundle: .module)
+                        .font(.system(size: 12, weight: .medium))
+                }
+                .foregroundColor(theme.secondaryText)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(
+                    Capsule()
+                        .fill(theme.tertiaryBackground)
+                )
+            }
+            .buttonStyle(PlainButtonStyle())
         }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(theme.successColor.opacity(0.08))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(theme.successColor.opacity(0.2), lineWidth: 1)
+                )
+        )
     }
 
     // MARK: - Themes Section
 
-    private func themesSection(title: String, count: Int, themes: [CustomTheme]) -> some View {
+    private func themesSection(
+        title: String,
+        count: Int,
+        subtitle: String? = nil,
+        themes: [CustomTheme]
+    ) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 8) {
                 Text(title)
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundColor(theme.primaryText)
 
-                Text("\(count)", bundle: .module)
+                Text(verbatim: "\(count)")
                     .font(.system(size: 11, weight: .medium))
                     .foregroundColor(theme.secondaryText)
                     .padding(.horizontal, 6)
@@ -963,117 +951,88 @@ struct ThemesView: View {
                     )
 
                 Spacer()
+
+                if let subtitle {
+                    Text(verbatim: subtitle)
+                        .font(.system(size: 12))
+                        .foregroundColor(theme.tertiaryText)
+                }
             }
 
             LazyVGrid(
                 columns: [
-                    GridItem(.adaptive(minimum: 280, maximum: 350), spacing: 16)
+                    GridItem(.adaptive(minimum: 280, maximum: 360), spacing: 16)
                 ],
                 spacing: 16
             ) {
                 ForEach(themes, id: \.metadata.id) { themeItem in
-                    let isActive = themeManager.activeCustomTheme?.metadata.id == themeItem.metadata.id
-
-                    ThemePreviewCard(
-                        theme: themeItem,
-                        isActive: isActive,
-                        source: ThemeLibraryManagementService.source(for: themeItem),
-                        validationReport: validationReports[themeItem.metadata.id],
-                        duplicateGroupSize: duplicateGroupSize(for: themeItem),
-                        onApply: {
-                            themeManager.applyCustomTheme(themeItem)
-                            showToast(L("Applied \"\(themeItem.metadata.name)\""))
-                        },
-                        onEdit: { openEditor(for: themeItem) },
-                        onExport: { exportTheme(themeItem) },
-                        onShare: { shareTheme(themeItem) },
-                        onDuplicate: { duplicateTheme(themeItem) },
-                        onDelete: themeItem.isBuiltIn ? nil : { confirmDelete(themeItem) }
-                    )
+                    card(for: themeItem)
                 }
             }
         }
     }
 
-    // MARK: - Empty State
+    private func card(for themeItem: CustomTheme) -> some View {
+        let isActive = themeManager.activeCustomTheme?.metadata.id == themeItem.metadata.id
+        return ThemePreviewCard(
+            theme: themeItem,
+            isActive: isActive,
+            source: ThemeLibraryManagementService.source(for: themeItem),
+            validationReport: validationByID[themeItem.metadata.id],
+            isDuplicate: duplicateIDs.contains(themeItem.metadata.id),
+            onApply: {
+                themeManager.applyCustomTheme(themeItem)
+                showToast(L("Applied \"\(themeItem.metadata.name)\""))
+            },
+            onEdit: { openEditor(for: themeItem) },
+            onExport: { exportTheme(themeItem) },
+            onShare: { shareTheme(themeItem) },
+            onDuplicate: { duplicateTheme(themeItem) },
+            onDelete: themeItem.isBuiltIn ? nil : { confirmDelete(themeItem) }
+        )
+    }
 
-    private var emptyCustomThemesView: some View {
-        VStack(spacing: 20) {
-            // Icon with gradient background
-            ZStack {
-                Circle()
-                    .fill(
-                        LinearGradient(
-                            colors: [theme.accentColor.opacity(0.15), theme.accentColor.opacity(0.05)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                    .frame(width: 80, height: 80)
+    // MARK: - Empty / No-result States
 
-                Image(systemName: "paintbrush.pointed.fill")
-                    .font(.system(size: 32))
-                    .foregroundColor(theme.accentColor)
-            }
-
-            VStack(spacing: 6) {
-                Text("Create Your First Custom Theme", bundle: .module)
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-
-                Text(
-                    "Design a unique look for your chat interface with custom colors, fonts, and effects",
-                    bundle: .module
-                )
-                .font(.system(size: 13))
-                .foregroundColor(theme.secondaryText)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 400)
-            }
-
-            HStack(spacing: 14) {
-                Button(action: { showingImporter = true }) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "square.and.arrow.down")
-                            .font(.system(size: 12, weight: .medium))
-                        Text("Import", bundle: .module)
-                            .font(.system(size: 13, weight: .medium))
-                    }
-                    .foregroundColor(theme.primaryText)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 10)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(theme.tertiaryBackground)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .stroke(theme.inputBorder, lineWidth: 1)
-                            )
-                    )
-                }
-                .buttonStyle(PlainButtonStyle())
-
-                Button(action: createNewTheme) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "plus")
-                            .font(.system(size: 12, weight: .semibold))
-                        Text("Create Theme", bundle: .module)
-                            .font(.system(size: 13, weight: .medium))
-                    }
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 18)
-                    .padding(.vertical, 10)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(theme.accentColor)
-                    )
-                }
-                .buttonStyle(PlainButtonStyle())
-            }
-        }
+    /// Compact first-run call to action shown beneath the built-in grid when
+    /// the user has no custom themes yet. Built-ins stay visible above so a
+    /// fresh user can apply one immediately while being nudged to create.
+    private var firstThemeCTA: some View {
+        SettingsEmptyState(
+            icon: "paintbrush.pointed.fill",
+            title: L("Create Your First Theme"),
+            subtitle: L("Design a unique look for your chat with custom colors, fonts, and backgrounds."),
+            examples: [
+                .init(
+                    icon: "paintpalette.fill",
+                    title: L("Pick a Palette"),
+                    description: L("Colors and accents")
+                ),
+                .init(
+                    icon: "photo.fill",
+                    title: L("Set a Backdrop"),
+                    description: L("Solid, gradient, or image")
+                ),
+                .init(
+                    icon: "sparkles",
+                    title: L("Share It"),
+                    description: L("Publish to the community")
+                ),
+            ],
+            primaryAction: .init(
+                title: L("Create Theme"),
+                icon: "plus",
+                handler: { createNewTheme() }
+            ),
+            secondaryAction: .init(
+                title: L("Import"),
+                icon: "square.and.arrow.down",
+                handler: { showingImporter = true }
+            ),
+            hasAppeared: hasAppeared
+        )
+        .frame(minHeight: 440)
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 48)
-        .padding(.horizontal, 24)
         .background(
             RoundedRectangle(cornerRadius: 16)
                 .fill(theme.secondaryBackground)
@@ -1082,6 +1041,51 @@ struct ThemesView: View {
                         .stroke(theme.primaryBorder.opacity(0.6), lineWidth: 1)
                 )
         )
+    }
+
+    private var noResultsView: some View {
+        VStack(spacing: 14) {
+            Image(systemName: searchActive ? "magnifyingglass" : "line.3.horizontal.decrease.circle")
+                .font(.system(size: 34, weight: .light))
+                .foregroundColor(theme.tertiaryText)
+
+            VStack(spacing: 6) {
+                Text(searchActive ? "No themes found" : "No themes match this filter", bundle: .module)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+
+                Text(verbatim: noResultsSubtitle)
+                    .font(.system(size: 13))
+                    .foregroundColor(theme.secondaryText)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 360)
+            }
+
+            Button {
+                clearFiltersAndSearch()
+            } label: {
+                Text(searchActive ? "Clear Search" : "Show All Themes", bundle: .module)
+                    .font(.system(size: 12, weight: .medium))
+            }
+            .buttonStyle(.bordered)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 48)
+    }
+
+    private var noResultsSubtitle: String {
+        if searchActive {
+            return L("No themes match \"\(searchText)\". Try a different search.")
+        }
+        return L("Nothing here yet for this category.")
+    }
+
+    private func clearFiltersAndSearch() {
+        withAnimation(theme.animationQuick()) {
+            searchText = ""
+            selectedFilter = .all
+            recomputeVisible()
+        }
     }
 
     // MARK: - Community Themes Banner
@@ -1148,7 +1152,172 @@ struct ThemesView: View {
         }
     }
 
+    // MARK: - Data: partitions + filtering
+
+    /// Sort once, validate once, partition once, and precompute every set the
+    /// filter predicate needs. Called on initial load and whenever
+    /// `ThemeManager` republishes its installed list. Everything is computed
+    /// into locals first, then assigned to `@State` in one pass so the active
+    /// filter + visible list never read stale derived state.
+    private func refreshPartitions(from themes: [CustomTheme]) {
+        let sorted = themes.sorted {
+            $0.metadata.name.localizedCaseInsensitiveCompare($1.metadata.name) == .orderedAscending
+        }
+        let built = sorted.filter { $0.isBuiltIn }
+        let custom = sorted.filter { !$0.isBuiltIn }
+
+        let reports = ThemeLibraryManagementService.validationReports(for: sorted)
+        let reportMap = Dictionary(uniqueKeysWithValues: reports.map { ($0.themeID, $0) })
+        let reviewIDs = Set(reports.filter { $0.needsReview }.map { $0.themeID })
+
+        let groups = ThemeLibraryManagementService.duplicateGroups(in: sorted)
+        let dupIDs = Set(groups.flatMap { $0.members.map(\.id) })
+
+        let summary = ThemeLibraryManagementService.summary(
+            for: sorted,
+            reports: reports,
+            duplicateGroups: groups
+        )
+        let counts = computeFilterCounts(sorted, reviewIDs: reviewIDs, duplicateIDs: dupIDs)
+
+        var nextFilter = selectedFilter
+        if !availableFilters(from: counts).contains(nextFilter) {
+            nextFilter = .all
+        }
+
+        let context = ThemeFilterContext(needsReviewIDs: reviewIDs, duplicateIDs: dupIDs)
+        let visible = sorted.filter {
+            themeMatches($0, filter: nextFilter, search: searchText, context: context)
+        }
+
+        installedThemes = sorted
+        builtInThemes = built
+        customThemes = custom
+        validationByID = reportMap
+        needsReviewIDs = reviewIDs
+        duplicateIDs = dupIDs
+        librarySummary = summary
+        filterCounts = counts
+        selectedFilter = nextFilter
+        visibleThemes = visible
+
+        refreshPreviewCacheHealth()
+    }
+
+    private func computeFilterCounts(
+        _ themes: [CustomTheme],
+        reviewIDs: Set<UUID>,
+        duplicateIDs: Set<UUID>
+    ) -> [ThemeFilter: Int] {
+        var counts: [ThemeFilter: Int] = [
+            .all: themes.count,
+            .needsReview: reviewIDs.count,
+            .duplicates: duplicateIDs.count,
+        ]
+        for theme in themes {
+            switch ThemeLibraryManagementService.source(for: theme) {
+            case .builtIn: counts[.builtIn, default: 0] += 1
+            case .local: counts[.local, default: 0] += 1
+            case .imported: counts[.imported, default: 0] += 1
+            case .shared: counts[.shared, default: 0] += 1
+            }
+        }
+        return counts
+    }
+
+    /// Recompute the visible list from already-published caches. Used by the
+    /// filter/search `onChange` handlers (the data set itself is unchanged).
+    private func recomputeVisible() {
+        let context = ThemeFilterContext(needsReviewIDs: needsReviewIDs, duplicateIDs: duplicateIDs)
+        visibleThemes = installedThemes.filter {
+            themeMatches($0, filter: selectedFilter, search: searchText, context: context)
+        }
+    }
+
+    // MARK: - Cache / maintenance
+
+    private func refreshPreviewCacheHealth() {
+        Task {
+            let snapshot = await ThemePreviewImageCache.shared.healthSnapshot()
+            await MainActor.run {
+                previewCacheHealth = snapshot
+            }
+        }
+    }
+
+    private func clearPreviewCache() {
+        Task {
+            await ThemePreviewImageCache.shared.removeAll()
+            let snapshot = await ThemePreviewImageCache.shared.healthSnapshot()
+            await MainActor.run {
+                previewCacheHealth = snapshot
+                showToast(String(localized: "Preview cache cleared", bundle: .module))
+            }
+        }
+    }
+
+    private func rollbackToDefaultTheme() {
+        ThemeConfigurationStore.rollbackActiveThemeToDefault()
+        themeManager.clearCustomTheme()
+        themeManager.refreshInstalledThemes()
+        refreshPartitions(from: themeManager.installedThemes)
+        showToast(String(localized: "Rolled back to the default theme", bundle: .module))
+    }
+
+    private func markThemeShared(_ themeItem: CustomTheme, outcome: ThemeShareOutcome) {
+        guard !themeItem.isBuiltIn else { return }
+        _ = ThemeConfigurationStore.markThemeShared(
+            id: themeItem.metadata.id,
+            hash: outcome.hash,
+            serverURL: outcome.serverURL
+        )
+        themeManager.refreshInstalledThemes()
+    }
+
+    private func loadThemes() {
+        isLoading = true
+        loadError = nil
+
+        // Small delay for visual feedback
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            themeManager.refreshInstalledThemes()
+            refreshPartitions(from: themeManager.installedThemes)
+
+            withAnimation(.easeOut(duration: 0.2)) {
+                isLoading = false
+                if themeManager.installedThemes.isEmpty {
+                    loadError = "No themes could be loaded from disk."
+                }
+            }
+        }
+    }
+
     // MARK: - Actions
+
+    private func performDelete(_ theme: CustomTheme) {
+        let themeName = theme.metadata.name
+        let success = themeManager.deleteTheme(id: theme.metadata.id)
+        if success {
+            print("[Osaurus] Successfully deleted theme: \(themeName)")
+            showToast(L("Deleted \"\(themeName)\""))
+        } else {
+            print("[Osaurus] Failed to delete theme: \(themeName)")
+        }
+        themeToDelete = nil
+    }
+
+    private func showToast(_ message: String, type: SimpleToastType = .success) {
+        withAnimation(theme.springAnimation()) {
+            toastType = type
+            toastMessage = message
+        }
+        let duration: Double = type == .error ? 4.0 : 2.5
+        DispatchQueue.main.asyncAfter(deadline: .now() + duration) {
+            withAnimation(theme.animationQuick()) {
+                toastMessage = nil
+            }
+        }
+    }
 
     private func createNewTheme() {
         var newTheme = CustomTheme.darkDefault
@@ -1258,7 +1427,7 @@ struct ThemePreviewCard: View {
     let isActive: Bool
     let source: ThemeLibrarySource
     let validationReport: ThemeValidationReport?
-    let duplicateGroupSize: Int
+    let isDuplicate: Bool
     let onApply: () -> Void
     let onEdit: () -> Void
     let onExport: () -> Void
@@ -1281,7 +1450,7 @@ struct ThemePreviewCard: View {
         isActive: Bool,
         source: ThemeLibrarySource,
         validationReport: ThemeValidationReport?,
-        duplicateGroupSize: Int,
+        isDuplicate: Bool,
         onApply: @escaping () -> Void,
         onEdit: @escaping () -> Void,
         onExport: @escaping () -> Void,
@@ -1293,7 +1462,7 @@ struct ThemePreviewCard: View {
         self.isActive = isActive
         self.source = source
         self.validationReport = validationReport
-        self.duplicateGroupSize = duplicateGroupSize
+        self.isDuplicate = isDuplicate
         self.onApply = onApply
         self.onEdit = onEdit
         self.onExport = onExport
@@ -1310,16 +1479,16 @@ struct ThemePreviewCard: View {
             cardInfo
         }
         .background(currentTheme.cardBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .clipShape(RoundedRectangle(cornerRadius: 14))
         .overlay(
-            RoundedRectangle(cornerRadius: 12)
+            RoundedRectangle(cornerRadius: 14)
                 .stroke(borderColor, lineWidth: isActive ? 2 : 1)
         )
         // Static shadow (no hover-driven radius/offset). Dynamic shadow
         // forces an offscreen render pass per state change and was a
         // significant scroll cost when `onHover` fires while the cursor
         // crosses cells.
-        .shadow(color: Color.black.opacity(0.08), radius: 6, x: 0, y: 2)
+        .shadow(color: Color.black.opacity(isActive ? 0.12 : 0.07), radius: isActive ? 10 : 6, x: 0, y: isActive ? 4 : 2)
         .onHover { isHovered = $0 }
         .task(id: theme.metadata.id) {
             cachedImage = await ThemePreviewImageCache.shared.image(for: theme)
@@ -1336,21 +1505,42 @@ struct ThemePreviewCard: View {
             cachedImage: cachedImage
         )
         .equatable()
-        .frame(height: 120)
+        .frame(height: 124)
+        .overlay(alignment: .topTrailing) {
+            if isActive {
+                activePill
+            }
+        }
         .contentShape(Rectangle())
         .onTapGesture {
             if !isActive { onApply() }
         }
     }
 
+    private var activePill: some View {
+        HStack(spacing: 3) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 9, weight: .bold))
+            Text("Active", bundle: .module)
+                .font(.system(size: 9, weight: .bold))
+        }
+        .foregroundColor(.white)
+        .padding(.horizontal, 7)
+        .padding(.vertical, 3)
+        .background(Capsule().fill(currentTheme.accentColor))
+        .padding(8)
+    }
+
     private var cardInfo: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
                 titleBlock
                 Spacer(minLength: 8)
                 cardActionMenu
             }
+            badgeRow
             swatchRow
+            applyButton
         }
         .padding(12)
         .background(currentTheme.cardBackground)
@@ -1358,38 +1548,57 @@ struct ThemePreviewCard: View {
 
     private var titleBlock: some View {
         VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 6) {
-                Text(theme.metadata.name)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(currentTheme.primaryText)
-                    .lineLimit(1)
-
-                if isActive {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 12))
-                        .foregroundColor(currentTheme.successColor)
-                }
-
-                if theme.isBuiltIn {
-                    sourceBadge("Built-in", color: currentTheme.secondaryText)
-                } else {
-                    sourceBadge(sourceLabel(source), color: sourceColor(source))
-                }
-
-                if let validationReport, validationReport.needsReview {
-                    validationBadge(validationReport)
-                }
-
-                if duplicateGroupSize > 1 {
-                    sourceBadge("Duplicate", color: currentTheme.warningColor)
-                }
-            }
+            Text(theme.metadata.name)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(currentTheme.primaryText)
+                .lineLimit(1)
 
             Text("by \(theme.metadata.author)", bundle: .module)
                 .font(.system(size: 11))
                 .foregroundColor(currentTheme.tertiaryText)
                 .lineLimit(1)
         }
+    }
+
+    private var badgeRow: some View {
+        HStack(spacing: 6) {
+            if theme.isBuiltIn {
+                sourceBadge("Built-in", color: currentTheme.secondaryText)
+            } else {
+                sourceBadge(sourceLabel(source), color: sourceColor(source))
+            }
+
+            if let validationReport, validationReport.needsReview {
+                validationBadge(validationReport)
+            }
+
+            if isDuplicate {
+                sourceBadge("Duplicate", color: currentTheme.warningColor)
+            }
+
+            Spacer(minLength: 0)
+        }
+    }
+
+    private var applyButton: some View {
+        Button(action: { if !isActive { onApply() } }) {
+            HStack(spacing: 6) {
+                Image(systemName: isActive ? "checkmark.circle.fill" : "paintbrush.fill")
+                    .font(.system(size: 11, weight: .semibold))
+                Text(isActive ? "Active" : "Apply Theme", bundle: .module)
+                    .font(.system(size: 12, weight: .semibold))
+            }
+            .frame(maxWidth: .infinity)
+            .foregroundColor(isActive ? currentTheme.successColor : Color.white)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(isActive ? currentTheme.successColor.opacity(0.14) : currentTheme.accentColor)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 8))
+        }
+        .buttonStyle(.plain)
+        .disabled(isActive)
     }
 
     private var cardActionMenu: some View {
@@ -1607,10 +1816,10 @@ private struct ThemePreviewArt: View, Equatable {
         }
         .clipShape(
             UnevenRoundedRectangle(
-                topLeadingRadius: 12,
+                topLeadingRadius: 14,
                 bottomLeadingRadius: 0,
                 bottomTrailingRadius: 0,
-                topTrailingRadius: 12
+                topTrailingRadius: 14
             )
         )
     }
