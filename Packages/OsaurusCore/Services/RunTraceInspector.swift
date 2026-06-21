@@ -144,6 +144,9 @@ public struct RunTraceInspection: Codable, Sendable, Equatable {
 
     private static func escapeTable(_ value: String) -> String {
         value
+            .replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "|", with: "\\|")
             .replacingOccurrences(of: "\n", with: "<br>")
@@ -328,6 +331,9 @@ public struct RunTraceInspection: Codable, Sendable, Equatable {
 
 public enum RunTraceInspector {
     public struct Options: Sendable, Equatable {
+        public static let minimumPreviewLimit = 40
+        public static let maximumPreviewLimit = 2_000
+
         public let previewLimit: Int
         public let includeInformationalFindings: Bool
         public let sensitiveKeyFragments: [String]
@@ -337,7 +343,7 @@ public enum RunTraceInspector {
             includeInformationalFindings: Bool = true,
             sensitiveKeyFragments: [String] = Self.defaultSensitiveKeyFragments
         ) {
-            self.previewLimit = max(40, previewLimit)
+            self.previewLimit = min(Self.maximumPreviewLimit, max(Self.minimumPreviewLimit, previewLimit))
             self.includeInformationalFindings = includeInformationalFindings
             self.sensitiveKeyFragments = sensitiveKeyFragments.map { $0.lowercased() }
         }
@@ -353,6 +359,10 @@ public enum RunTraceInspector {
             "password",
             "private_key",
             "secret",
+            "access_token",
+            "refresh_token",
+            "id_token",
+            "auth_token",
             "session_token",
             "token",
         ]
@@ -377,10 +387,10 @@ public enum RunTraceInspector {
     ) -> RunTraceInspection {
         do {
             let data = try Data(contentsOf: url)
-            return inspect(data: data, sourcePath: url.path, options: options)
+            return inspect(data: data, sourcePath: safeSourcePath(url.path), options: options)
         } catch {
             return failedInspection(
-                sourcePath: url.path,
+                sourcePath: safeSourcePath(url.path),
                 code: .fileReadFailed,
                 message: error.localizedDescription
             )
@@ -392,12 +402,13 @@ public enum RunTraceInspector {
         sourcePath: String? = nil,
         options: Options = Options()
     ) -> RunTraceInspection {
+        let displaySourcePath = safeSourcePath(sourcePath)
         let rootObject: Any
         do {
             rootObject = try JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])
         } catch {
             return failedInspection(
-                sourcePath: sourcePath,
+                sourcePath: displaySourcePath,
                 code: .invalidJSON,
                 message: error.localizedDescription
             )
@@ -405,7 +416,7 @@ public enum RunTraceInspector {
 
         guard let root = rootObject as? [String: Any] else {
             return unknownInspection(
-                sourcePath: sourcePath,
+                sourcePath: displaySourcePath,
                 finding: .init(
                     severity: .error,
                     code: .invalidFieldType,
@@ -416,16 +427,16 @@ public enum RunTraceInspector {
         }
 
         if root["runId"] != nil || root["agentId"] != nil || root["turns"] != nil {
-            return inspectRunTrace(root: root, data: data, sourcePath: sourcePath, options: options)
+            return inspectRunTrace(root: root, data: data, sourcePath: displaySourcePath, options: options)
         }
         if root["cases"] != nil || (root["modelId"] != nil && root["startedAt"] != nil) {
-            return inspectEvalReport(root: root, sourcePath: sourcePath, options: options)
+            return inspectEvalReport(root: root, sourcePath: displaySourcePath, options: options)
         }
         if root["steps"] != nil {
-            return inspectGenericSteps(root: root, sourcePath: sourcePath, options: options)
+            return inspectGenericSteps(root: root, sourcePath: displaySourcePath, options: options)
         }
         return unknownInspection(
-            sourcePath: sourcePath,
+            sourcePath: displaySourcePath,
             finding: .init(
                 severity: .error,
                 code: .unsupportedArtifact,
@@ -598,6 +609,18 @@ public enum RunTraceInspector {
             options: options,
             redactionCount: &redactionCount
         )
+        let terminalErrorNote: String?
+        if let errorMessage = trace.errorMessage {
+            let redacted = redactedPreview(
+                errorMessage,
+                path: "$.errorMessage",
+                options: options
+            )
+            redactionCount += redacted.redactedPaths.count
+            terminalErrorNote = "terminal error: \(redacted.text)"
+        } else {
+            terminalErrorNote = nil
+        }
         if redactionCount > 0 {
             findings.append(redactionFinding(count: redactionCount))
         }
@@ -622,7 +645,7 @@ public enum RunTraceInspector {
             tokensIn: trace.tokensIn,
             tokensOut: trace.tokensOut,
             costUSD: trace.costUSD,
-            notes: trace.errorMessage.map { ["terminal error: \(preview($0, limit: options.previewLimit))"] } ?? []
+            notes: terminalErrorNote.map { [$0] } ?? []
         )
         return .init(
             sourcePath: sourcePath,
@@ -1251,7 +1274,33 @@ public enum RunTraceInspector {
         let normalized = key.lowercased()
             .replacingOccurrences(of: "-", with: "_")
             .replacingOccurrences(of: " ", with: "_")
-        return options.sensitiveKeyFragments.contains { normalized.contains($0) }
+        return options.sensitiveKeyFragments.contains { matchesSensitiveKey(normalized, fragment: $0) }
+    }
+
+    private static func matchesSensitiveKey(_ normalized: String, fragment: String) -> Bool {
+        guard !fragment.isEmpty else { return false }
+        if normalized == fragment { return true }
+
+        switch fragment {
+        case "token":
+            return normalized.hasSuffix("_token")
+        case "secret":
+            return normalized.hasSuffix("_secret")
+        case "api_key", "apikey", "private_key", "access_token", "refresh_token", "id_token", "auth_token",
+            "session_token":
+            return normalized.hasSuffix("_\(fragment)")
+        default:
+            return normalized.hasPrefix("\(fragment)_") || normalized.hasSuffix("_\(fragment)")
+        }
+    }
+
+    private static func safeSourcePath(_ sourcePath: String?) -> String? {
+        guard let sourcePath, !sourcePath.isEmpty else { return sourcePath }
+        guard sourcePath.hasPrefix("/") else { return sourcePath }
+
+        let url = URL(fileURLWithPath: sourcePath)
+        let fileName = url.lastPathComponent
+        return fileName.isEmpty ? "(absolute path redacted)" : fileName
     }
 
     private static func redactInlineSecrets(_ value: String, path: String) -> (text: String, paths: [String]) {
@@ -1371,7 +1420,7 @@ public enum RunTraceInspector {
         guard let data = trimmed.data(using: .utf8),
             let object = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])
         else {
-            return trimmed.localizedCaseInsensitiveContains("error") ? "error" : "ok"
+            return isPlainTextErrorResult(trimmed) ? "error" : "ok"
         }
         guard let dict = object as? [String: Any] else { return "ok" }
         if let success = dict["success"] as? Bool, success == false { return "error" }
@@ -1394,6 +1443,23 @@ public enum RunTraceInspector {
             return "error"
         }
         return "ok"
+    }
+
+    private static func isPlainTextErrorResult(_ value: String) -> Bool {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        let patterns = [
+            #"(?i)^(error|failed|failure)\b"#,
+            #"(?i)^tool[_\s-]?error\b"#,
+            #"(?i)^exception\b"#,
+        ]
+        return patterns.contains { pattern in
+            guard let regex = try? NSRegularExpression(pattern: pattern) else { return false }
+            return regex.firstMatch(
+                in: trimmed,
+                options: [],
+                range: NSRange(trimmed.startIndex..<trimmed.endIndex, in: trimmed)
+            ) != nil
+        }
     }
 
     private static func failedInspection(

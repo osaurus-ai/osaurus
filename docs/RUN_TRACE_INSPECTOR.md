@@ -24,6 +24,8 @@ diagnostic summary for debugging without rerunning the model.
 The existing database changelog remains below the inspector. If a trace file is
 missing, the Activity tab still shows the changelog. If a trace file is
 malformed, the inspector shows typed findings instead of silently hiding it.
+Copied reports abbreviate absolute source paths to the artifact filename so a
+debug bundle does not expose the user's home directory.
 
 ## Programmatic usage
 
@@ -66,12 +68,18 @@ The inspector redacts JSON fields whose keys look sensitive, including:
 - `password`
 - `private_key`
 - `secret`
+- `access_token`
+- `refresh_token`
+- `id_token`
+- `auth_token`
 - `session_token`
 - `token`
 
 It also scans text previews for common inline forms such as `Bearer ...`,
 `api_key=...`, `token=...`, and `password=...`. Reports include redacted
-previews only; raw trace files are not modified.
+previews only; raw trace files are not modified. Token-like diagnostic keys such
+as `max_tokens`, `token_type`, and `tokenizer` stay visible because they are not
+secrets.
 
 ## Timing
 

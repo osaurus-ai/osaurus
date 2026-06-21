@@ -43762,6 +43762,12 @@
             "value" : "JSON-Bericht kopieren"
           }
         },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "JSON 보고서 복사"
+          }
+        },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "needs_review",
@@ -43776,6 +43782,12 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Markdown-Bericht kopieren"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Markdown 보고서 복사"
           }
         },
         "zh-Hans" : {
