@@ -1104,6 +1104,15 @@ public actor RemoteProviderService: ToolCapableService {
         /// think block lands on the reasoning channel instead of leaking.
         var thinkSplitter: InlineThinkSplitter?
 
+        /// Provider-reported token usage from the streaming `usage` chunk
+        /// (OpenAI `stream_options.include_usage`). Captured as it streams and
+        /// surfaced once at the finish boundary (`dispatchFinal`) as a
+        /// `StreamingStatsHint`, so remote runs report real completion-token
+        /// counts the same way local vmlx runs do (the chat tok/s display still
+        /// comes from the rolling observer, never this). `nil` until a usage
+        /// object arrives, so providers that don't send one emit no hint.
+        var providerUsage: Usage?
+
         let stopSequences: [String]
         let trackContent: Bool
 
@@ -1115,6 +1124,17 @@ public actor RemoteProviderService: ToolCapableService {
             yieldedTextCount += 1
             yieldedTextBytes += text.utf8.count
             if trackContent { accumulatedContent += text }
+        }
+
+        /// Record the latest non-nil provider `usage`. OpenAI sends `usage:null`
+        /// on every chunk except the dedicated final one, so this no-ops until
+        /// the real totals arrive; if a provider sends cumulative usage on each
+        /// chunk, the last (complete) value wins. Never emits a hint itself —
+        /// that happens once at `dispatchFinal`.
+        @inline(__always)
+        mutating func captureProviderUsage(_ usage: Usage?) {
+            guard let usage else { return }
+            providerUsage = usage
         }
     }
 
@@ -1304,7 +1324,30 @@ public actor RemoteProviderService: ToolCapableService {
     private static func openAICompatibleParserOptions(
         for providerType: RemoteProviderType
     ) -> OpenAICompatibleStreamParser.Options {
-        providerType == .osaurusRouter ? .routerCompatible : .strict
+        var options: OpenAICompatibleStreamParser.Options =
+            providerType == .osaurusRouter ? .routerCompatible : .strict
+        // Defer a tool-call finish to the stream's end ONLY for upstreams we
+        // requested `usage` from, so the trailing usage chunk is captured and
+        // surfaced as completion-token telemetry before the call dispatches.
+        options.deferToolCallDispatchUntilUsage = requestsStreamUsageOptions(providerType: providerType)
+        return options
+    }
+
+    /// OpenAI Chat-Completions upstreams that honor `stream_options.include_usage`
+    /// and emit a final `usage` chunk we can surface as completion-token
+    /// telemetry. Scoped to the genuinely OpenAI-compatible `/chat/completions`
+    /// targets (xAI/Grok, OpenAI-compatible third parties, Azure OpenAI). The
+    /// Osaurus Router carries billed token counts in its own summary frame;
+    /// Anthropic, Gemini, the Responses API, and Codex use different request and
+    /// usage shapes — all excluded here so only the proven-compatible path
+    /// changes its outbound request and dispatch timing.
+    static func requestsStreamUsageOptions(providerType: RemoteProviderType) -> Bool {
+        switch providerType {
+        case .openaiLegacy, .azureOpenAI:
+            return true
+        case .osaurus, .osaurusRouter, .anthropic, .gemini, .openResponses, .openAICodex:
+            return false
+        }
     }
 
     static func remoteChatMaxTokens(
@@ -1699,6 +1742,28 @@ public actor RemoteProviderService: ToolCapableService {
                     if !visible.isEmpty { continuation.yield(visible) }
                 }
             }
+        }
+
+        // Surface provider-reported usage (OpenAI `stream_options.include_usage`)
+        // as an end-of-stream stats hint, mirroring the local vmlx
+        // `.completionInfo` path so the eval harness and chat token count see
+        // real remote completion tokens (previously remote runs reported 0).
+        // Yield BEFORE resolving the tool/text outcome so the hint reaches the
+        // consumer even when the stream finishes-by-throw with a tool call. The
+        // tok/s field is provider-supplied when present, else 0 — the chat UI
+        // derives its visible tok/s from a rolling observer (it only reads this
+        // hint's token count + stop reason), and the eval skips a 0 tps for its
+        // decode-speed average while still counting the tokens. `stopReason`
+        // carries the provider's real `finish_reason` (`stop`/`length`/
+        // `tool_calls`) for HTTP writers that map it back to a `usage` frame.
+        if let usage = state.providerUsage {
+            continuation.yield(
+                StreamingStatsHint.encode(
+                    tokenCount: usage.completion_tokens,
+                    tokensPerSecond: usage.tokens_per_second ?? 0,
+                    stopReason: state.lastFinishReason
+                )
+            )
         }
 
         switch resolveAccumulatedToolCall(
@@ -2157,7 +2222,7 @@ public actor RemoteProviderService: ToolCapableService {
             wireTools = tools
         }
 
-        return RemoteChatRequest(
+        var request = RemoteChatRequest(
             model: model,
             messages: messages,
             // Reasoning models (o1, gpt-5) forbid temperature/top_p when reasoning is active as inferred from
@@ -2188,6 +2253,17 @@ public actor RemoteProviderService: ToolCapableService {
             idempotencyKey: provider.providerType == .osaurusRouter
                 ? parameters.idempotencyKey : nil
         )
+
+        // Ask OpenAI Chat-Completions upstreams to emit a final `usage` chunk so
+        // the streaming path can report real completion tokens (the parser
+        // captures it; `dispatchFinal` surfaces it as a stats hint). Only for
+        // streaming requests to providers we know honor it — the non-streaming
+        // path already gets `usage` in its single JSON response, and other
+        // provider shapes (router/Anthropic/Gemini/Responses) are excluded.
+        if stream, Self.requestsStreamUsageOptions(providerType: provider.providerType) {
+            request.streamOptions = StreamOptions(include_usage: true)
+        }
+        return request
     }
 
     /// Extract Venice-specific parameters from model options when the provider is Venice AI.
@@ -3145,6 +3221,14 @@ struct RemoteChatRequest: Encodable {
     /// signature. Only ever set for `.osaurusRouter` (see `buildChatRequest`),
     /// so other OpenAI-compat upstreams never see an unknown field.
     var idempotencyKey: String? = nil
+    /// OpenAI `stream_options`. Set (in `buildChatRequest`) only for *streaming*
+    /// requests to OpenAI Chat-Completions upstreams that honor it (see
+    /// `requestsStreamUsageOptions`), so the provider emits a final `usage`
+    /// chunk we surface as completion-token telemetry (`include_usage`). Encoded
+    /// only when non-nil, so every other provider/path keeps its exact current
+    /// wire bytes (the non-streaming path and Anthropic/Gemini/Responses, which
+    /// build their own bodies, never set it).
+    var streamOptions: StreamOptions? = nil
 
     enum CodingKeys: String, CodingKey {
         case model, messages, temperature, max_completion_tokens, max_tokens, stream
@@ -3155,6 +3239,7 @@ struct RemoteChatRequest: Encodable {
         case clamp_to_balance
         case idempotencyKey = "idempotency_key"
         case veniceParameters = "venice_parameters"
+        case streamOptions = "stream_options"
     }
 
     func encode(to encoder: Encoder) throws {
@@ -3196,6 +3281,7 @@ struct RemoteChatRequest: Encodable {
         try container.encodeIfPresent(clamp_to_balance, forKey: .clamp_to_balance)
         try container.encodeIfPresent(idempotencyKey, forKey: .idempotencyKey)
         try container.encodeIfPresent(veniceParameters, forKey: .veniceParameters)
+        try container.encodeIfPresent(streamOptions, forKey: .streamOptions)
         // `modelOptions` is intentionally not in `CodingKeys` — it stays
         // in-process for model-specific feature flags.
     }
