@@ -113,9 +113,18 @@ Chat turn (orchestrator: local OR cloud)
 - `bb3ccb22` — inject active delegation tool schemas into the agent-run surface
   (the image-job trigger fix). Agent-run-only; chat surface unchanged.
 - `140d0398` — matrix A image handoff verified (unload→image→reload).
-- _(pending commit)_ — UI surfaces: `ImageGenerationPanelView` (manual gen/edit panel)
+- `47fabf0a` — UI surfaces: `ImageGenerationPanelView` (manual gen/edit panel)
   launched from `ImageModelDetailView`; spawn "How It Works" usage/info subsection in
-  `AgentDelegationSettingsSection`. Compile-verified Release.
+  `AgentDelegationSettingsSection`. Compile-verified Release; pushed.
+
+## Update 2026-06-21 — fresh-binary regression proof (panel engine path)
+After the UI commit, restarted the dev app onto the freshly-built Release binary
+(`:1337`, test root `/tmp/osaurus-spawn-test`) and drove `POST /v1/images/generations`
+(FLUX.1-schnell-4bit, 512², n=1) — the EXACT `ImageGenerationService.generate` call the
+new panel makes. HTTP 200 in 18s → real 512×512 8-bit RGB PNG (218 KB). So the new build
+did not regress the engine path; both panel modes are covered (gen now on fresh binary,
+edit earlier this session). Remaining for the panel: Eric's visual check of the SwiftUI
+sheet (renders / controls / progress / Save-As) — the one thing not headlessly verifiable.
 
 ---
 
