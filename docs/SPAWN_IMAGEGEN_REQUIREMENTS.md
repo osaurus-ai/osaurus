@@ -39,11 +39,12 @@ present as callable **schemas** in the chat's `<tools>` block, not just a prompt
    **image-gen**, and **image-edit** models. Scans the model folders (LLM root +
    `~/models/image`), persists to `agent-delegation.json`, survives restart, shows
    "(unavailable)" for a saved id no longer present.
-3. **Spawn settings + usage + info page** — ✅ DONE as the "How It Works" subsection in
-   `AgentDelegationSettingsSection` (what spawn is + local-vs-cloud flow + exposed tool
-   list), alongside the permission model (ask / deny / always per job type), load policy,
-   default models, and budgets. (osaurus settings are scrolling SECTIONS, not separate
-   windows — so the "info page" lives as the top subsection of this section.)
+3. **Spawn settings + usage + info page** — ✅ DONE as a dedicated **sidebar page**
+   (`SpawnSettingsView`, ManagementTab `.spawn`, next to Computer Use). Hosts the "How It
+   Works" usage/info (what spawn is + local-vs-cloud flow + exposed tool list) + the full
+   `AgentDelegationSettingsSection` (permission model ask/deny/always per job type, load
+   policy, default models, budgets). The same section also still renders inside the
+   Settings tab; both bind one store and sync via `.agentDelegationConfigurationChanged`.
 4. **RAM Safety** — ✅ DONE. The refuse-before-evict preflight toggle ("Memory Safety"
    subsection) + the per-job load policy (handoff on/off) all bind the SAME single
    `AgentDelegationConfiguration` → `agent-delegation.json`. Because there is one backing

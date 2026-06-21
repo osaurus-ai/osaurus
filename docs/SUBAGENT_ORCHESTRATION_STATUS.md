@@ -89,9 +89,13 @@ Chat turn (orchestrator: local OR cloud)
     directly by `ImageGenerationService` (manual panels keep their own loading
     behavior — no chat handoff). Launched from `ImageModelDetailView`'s footer
     for ready `imageGen`/`imageEdit` bundles (the Models → Images tab).
-  - **Spawn usage/info + settings**: "How It Works" subsection (flow for local
-    vs cloud orchestrator + the exposed tool list) atop `AgentDelegationSettingsSection`,
-    alongside the existing default-model pickers, load policy, permissions, budgets.
+  - **Spawn usage/info + settings**: now its own **sidebar page** (`SpawnSettingsView`,
+    ManagementTab `.spawn`, wand.and.stars icon, sits next to Computer Use) — promoted
+    out of the long Settings scroll where it was undiscoverable. The page wraps the same
+    `AgentDelegationSettingsSection` (How It Works flow + default-model pickers + load
+    policy + Memory Safety + permissions + budgets). Still also rendered inside Settings;
+    both bind the one `AgentDelegationConfigurationStore` and listen on
+    `.agentDelegationConfigurationChanged`, so they are **two-way synced**.
   - **RAM-Safety ⇄ Spawn sync**: both render the same single
     `AgentDelegationConfiguration` ("Memory Safety" subsection), so they are
     synced by construction (osaurus settings are sections, not separate tabs).
