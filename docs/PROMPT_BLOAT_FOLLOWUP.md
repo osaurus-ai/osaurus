@@ -138,6 +138,18 @@ substantially riskier.
   `ContextBudgetPreviewTests.swift`,
   `SystemPromptComposerToolResolutionTests.swift` — existing coverage that
   any refactor will need to pass.
+* `Packages/OsaurusCore/Tools/ToolOutputCompressor.swift` +
+  `ToolRegistry.normalizeToolResult` — the complementary **ingest-side** lane.
+  This note is about the first-turn preamble; multi-turn context is instead
+  dominated by re-sent tool results, which are now losslessly compacted
+  (KV-prefix-stable) at the normalize boundary. See
+  [`docs/TOOL_CONTRACT.md` → Output normalization](TOOL_CONTRACT.md#output-normalization-automatic).
+* The before/after `tokenCount=` measurement this note asks for is now a
+  first-class, per-task eval metric: `agent_loop` telemetry records
+  `promptTokensTotal` / `peakContextTokens` / `totalModelTokens` (surfaced in
+  the cross-model matrix as `ctx tok/task`), with optional
+  `scoredMaxPromptTokens` budgets to fail a context regression. See
+  [`Packages/OsaurusEvals/README.md`](../Packages/OsaurusEvals/README.md).
 
 Future prompt-budget work should still capture before/after `tokenCount=` on
 the same greeting + agent profile and a TTFT measurement for each — that's the

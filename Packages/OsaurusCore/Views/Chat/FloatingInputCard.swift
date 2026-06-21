@@ -76,6 +76,22 @@ struct FloatingInputCard: View {
     var onCancelQueued: (() -> Void)?
     /// Invoked when the user taps the credits chip (opens the top-up sheet).
     var onAddCredits: (() -> Void)?
+    /// Mode 2 (remote agent run): the model is pinned to the remote agent's own
+    /// model and the user must not change it. Renders the model chip as a
+    /// non-interactive label (no chevron / popover) and disables the `/model`
+    /// slash command.
+    var isModelPinned: Bool = false
+    /// Mode 2: explicit text for the pinned model chip. The caller resolves the
+    /// remote agent's effective model (or a neutral "agent name / Default"
+    /// fallback while it's still loading) so the chip never implies a specific
+    /// device model that isn't the agent's. When nil, falls back to the
+    /// selected picker item's display name.
+    var pinnedModelLabel: String? = nil
+    /// Mode 2: true while the selected remote agent's connect + model pin are
+    /// still in flight. Gates `canSend` so the first message can't race the
+    /// async connect and fail with a misleading "model not found"; the parent
+    /// shows a "connecting" notice for the duration.
+    var remoteConnectionPending: Bool = false
 
     init(
         text: Binding<String>,
@@ -107,7 +123,10 @@ struct FloatingInputCard: View {
         queuedSend: Binding<QueuedSend?> = .constant(nil),
         onSendNow: (() -> Void)? = nil,
         onCancelQueued: (() -> Void)? = nil,
-        onAddCredits: (() -> Void)? = nil
+        onAddCredits: (() -> Void)? = nil,
+        isModelPinned: Bool = false,
+        pinnedModelLabel: String? = nil,
+        remoteConnectionPending: Bool = false
     ) {
         self._text = text
         self._selectedModel = selectedModel
@@ -139,6 +158,9 @@ struct FloatingInputCard: View {
         self.onSendNow = onSendNow
         self.onCancelQueued = onCancelQueued
         self.onAddCredits = onAddCredits
+        self.isModelPinned = isModelPinned
+        self.pinnedModelLabel = pinnedModelLabel
+        self.remoteConnectionPending = remoteConnectionPending
     }
 
     // Observe managers for reactive updates
@@ -279,6 +301,11 @@ struct FloatingInputCard: View {
     private var canSend: Bool {
         // While the slash command popup is visible, Enter selects a command — not sends
         guard !showSlashPopup else { return false }
+
+        // Remote-agent (Mode 2) connect + model pin still resolving: block the
+        // send so the first message can't race the async connect and fail with
+        // a misleading "model not found". The parent shows a connecting notice.
+        guard !remoteConnectionPending else { return false }
 
         // Hard token gate: when the NON-compactable prefix alone (system
         // prompt + tools + memory + input + response reservation) can't
@@ -1320,6 +1347,15 @@ extension FloatingInputCard {
                 ToastManager.shared.infoLocalized("Clear Chat", message: "Pass an onClearChat handler to enable /clear")
             }
         case "model":
+            // Ignored in Mode 2: the model is pinned to the remote agent's own
+            // model and can't be changed from the client.
+            guard !isModelPinned else {
+                ToastManager.shared.infoLocalized(
+                    "Model Pinned",
+                    message: "This chat runs on the remote agent's own model, set by its owner."
+                )
+                break
+            }
             showModelPicker = true
         case "agent":
             NotificationCenter.default.post(
@@ -1564,7 +1600,7 @@ extension FloatingInputCard {
 
     private var selectorRow: some View {
         HStack(spacing: 6) {
-            if !pickerItems.isEmpty {
+            if !pickerItems.isEmpty || isModelPinned {
                 modelSelectorChip
             }
 
@@ -1915,7 +1951,39 @@ extension FloatingInputCard {
         return ModelManager.replacementForDeprecatedModel(id) != nil
     }
 
+    @ViewBuilder
     private var modelSelectorChip: some View {
+        if isModelPinned {
+            pinnedModelChip
+        } else {
+            interactiveModelSelectorChip
+        }
+    }
+
+    /// Non-interactive model label for Mode 2 (remote agent run). The model is
+    /// pinned to the remote agent's own model — no chevron, no popover, just the
+    /// model name and a lock glyph. Styled to match the resting `SelectorChip`.
+    private var pinnedModelChip: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "lock.fill")
+                .font(theme.font(size: CGFloat(theme.captionSize) - 2))
+                .foregroundColor(theme.tertiaryText)
+            Text(pinnedModelLabel ?? selectedPickerItem?.displayName ?? "Default")
+                .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                .foregroundColor(theme.secondaryText)
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .background(Capsule().fill(theme.secondaryBackground.opacity(0.8)))
+        .overlay(Capsule().strokeBorder(theme.primaryBorder.opacity(0.12), lineWidth: 1))
+        .clipShape(Capsule())
+        .localizedHelp(
+            "This chat runs on the remote agent's own model — chosen by the agent's owner and not changeable here."
+        )
+    }
+
+    private var interactiveModelSelectorChip: some View {
         SelectorChip(isActive: showModelPicker) {
             showModelPicker.toggle()
         } content: {

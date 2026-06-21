@@ -11,6 +11,19 @@ import Combine
 import Foundation
 import SwiftUI
 
+/// Lifecycle of a Mode 2 remote-agent connection, surfaced in chat so the user
+/// sees progress/errors and the composer can gate the first send.
+public enum RemoteAgentConnectionPhase: Equatable, Sendable {
+    /// Not in remote-agent mode (or fully torn down).
+    case idle
+    /// Connect + effective-model pin in flight; send is gated.
+    case connecting
+    /// Provider connected and model pinned; send is allowed.
+    case connected
+    /// Connect or secure-channel handshake failed; carries a user-facing reason.
+    case failed(String)
+}
+
 /// Per-window state container for ChatView - each window creates its own instance
 @MainActor
 final class ChatWindowState: ObservableObject {
@@ -54,6 +67,21 @@ final class ChatWindowState: ObservableObject {
     @Published var selectedDiscoveredAgentProviderId: UUID?
     @Published private(set) var pairedRelayAgents: [PairedRelayAgent] = []
     @Published var selectedRelayAgent: PairedRelayAgent?
+    /// Mode 2 only: the *unprefixed* live effective model id of the selected
+    /// remote agent (e.g. `mlx-community/Qwen3-4B-...`), resolved from
+    /// `GET /agents/{address}` on connect. Used to pin the model chip to the
+    /// agent's own model. `nil` until resolved (or when it can't be resolved),
+    /// in which case the picker falls back to the provider's first chat-capable
+    /// model. Cleared whenever the window leaves remote-agent mode.
+    @Published var pinnedRemoteAgentEffectiveModel: String?
+
+    /// Mode 2 only: lifecycle of the selected remote agent's connection so the
+    /// chat can show "connecting"/error and gate the first send until the
+    /// provider is connected and its model is pinned (otherwise the first
+    /// message races the async connect and fails with a misleading "model not
+    /// found"). Driven by `pinRemoteAgentModelAfterConnect` and kept in sync
+    /// with later disconnects via the `.remoteProviderStatusChanged` observer.
+    @Published var remoteAgentConnectionPhase: RemoteAgentConnectionPhase = .idle
 
     // MARK: - Theme State
 
@@ -228,6 +256,8 @@ final class ChatWindowState: ObservableObject {
         selectedDiscoveredAgent = nil
         selectedDiscoveredAgentProviderId = nil
         selectedRelayAgent = nil
+        pinnedRemoteAgentEffectiveModel = nil
+        remoteAgentConnectionPhase = .idle
         agentId = newAgentId
         refreshTheme()
         refreshAgentConfig()
@@ -534,13 +564,44 @@ final class ChatWindowState: ObservableObject {
                     guard let self,
                         let providerId = self.selectedDiscoveredAgentProviderId
                     else { return }
-                    let providerExists = RemoteProviderManager.shared.configuration.providers
+                    let manager = RemoteProviderManager.shared
+                    let providerExists = manager.configuration.providers
                         .contains(where: { $0.id == providerId })
-                    guard !providerExists else { return }
-                    self.selectedDiscoveredAgent = nil
-                    self.selectedRelayAgent = nil
-                    self.selectedDiscoveredAgentProviderId = nil
-                    self.refreshPairedRelayAgents()
+                    guard providerExists else {
+                        // Provider was removed from settings — leave remote-agent mode.
+                        self.selectedDiscoveredAgent = nil
+                        self.selectedRelayAgent = nil
+                        self.selectedDiscoveredAgentProviderId = nil
+                        self.remoteAgentConnectionPhase = .idle
+                        self.refreshPairedRelayAgents()
+                        return
+                    }
+                    // Provider still selected: mirror later connect/disconnect/
+                    // error transitions (e.g. the peer drops or reconnects) so
+                    // chat keeps showing an accurate status without overwriting
+                    // the optimistic `.connecting`/`.connected` set by the
+                    // connect flow before the manager publishes its first state.
+                    if let state = manager.providerStates[providerId] {
+                        if let lastError = state.lastError, !lastError.isEmpty,
+                            !state.isConnected, !state.isConnecting
+                        {
+                            self.remoteAgentConnectionPhase = .failed(lastError)
+                        } else if state.isConnected {
+                            // Don't pre-empt the in-flight connect+pin: while
+                            // we're still `.connecting`, the pin flow owns the
+                            // final `.connected` transition (it flips only once
+                            // the model pin resolves, so the gated send releases
+                            // with the right model). Only reflect a *later*
+                            // reconnect (phase was `.failed`/`.connected`) here.
+                            if self.remoteAgentConnectionPhase != .connecting {
+                                self.remoteAgentConnectionPhase = .connected
+                            }
+                        } else if state.isConnecting,
+                            self.remoteAgentConnectionPhase != .connected
+                        {
+                            self.remoteAgentConnectionPhase = .connecting
+                        }
+                    }
                 }
             }
         )

@@ -4208,6 +4208,27 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             return
         }
 
+        // Confine agent-scoped keys to their own agent: a key minted by
+        // `/pair` / `/pair-invite` for agent A must not read another agent's
+        // metadata (name, description, effective_model). Mirrors the
+        // `/agents/{id}/run` scope gate. Loopback callers (authedAudience ==
+        // nil) and master-scoped keys are unaffected. Read `stateRef` here on
+        // the event loop, before the detached `runRequestTask`.
+        if let rejection = agentScopeRejection(forAgentId: agentId) {
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(
+                    context: ctx.value,
+                    version: head.version,
+                    status: .forbidden,
+                    headers: headers,
+                    body: #"{"error":"\#(rejection.code)","message":"\#(rejection.message)"}"#
+                )
+            }
+            return
+        }
+
         runRequestTask(priority: .userInitiated) {
             // Built-in agents are not exposed via HTTP — return 404 (not 403)
             // so external clients learn the id is unreachable but cannot
@@ -4277,12 +4298,37 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         }
     }
 
+    /// Resolve a per-agent host workspace folder (`Agent.hostWorkspaceBookmark`)
+    /// into a live `FolderContext` and begin security-scoped access. Returns
+    /// nil when the agent has no folder configured, the bookmark is
+    /// stale/unresolvable (folder moved or deleted), or access can't be
+    /// started. A non-nil result means the caller now HOLDS security-scoped
+    /// access and MUST balance it with `stopAccessingSecurityScopedResource()`
+    /// on the returned URL once the run finishes.
+    private static func resolveAgentHostFolder(
+        agentId: UUID
+    ) async -> (url: URL, context: FolderContext)? {
+        let bookmark = await MainActor.run {
+            AgentManager.shared.agent(for: agentId)?.hostWorkspaceBookmark
+        }
+        guard let bookmark,
+            let url = FolderContextService.resolveSecurityScopedURL(from: bookmark),
+            url.startAccessingSecurityScopedResource()
+        else { return nil }
+        let context = await FolderContextService.shared.buildContext(from: url)
+        return (url, context)
+    }
+
     /// POST /agents/{id}/run — run the full agent chat loop server-side.
     ///
     /// Accepts a `ChatCompletionRequest` body. Runs inference with the agent's
     /// system prompt and executes any tool calls locally on the server, looping
     /// until the model produces a final text response. Streams SSE text deltas
     /// back to the caller — tool invocations are never forwarded to the client.
+    /// When the agent has a host workspace folder configured and the caller is
+    /// an authenticated remote (Secure Channel, agent-scoped), the run also
+    /// gets host file tools (`file_read`/`file_write`/`file_edit`) confined to
+    /// that folder.
     private func handleAgentRunEndpoint(
         head: HTTPRequestHead,
         context: ChannelHandlerContext,
@@ -4445,10 +4491,20 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
         let responseId = Self.shortId(prefix: "chatcmpl-", length: 12)
         let created = Int(Date().timeIntervalSince1970)
-        // Local Osaurus agent runs need visible tool progress during prefill/tool
-        // waits. The emitted chunk is sanitized: phase, tool name, call id, error
-        // state, and end-run status only; raw tool arguments/results stay hidden.
-        let emitAgentToolTrace = isLoopbackConnection(context)
+        // Agent runs need visible tool progress during prefill/tool waits. The
+        // emitted chunk is sanitized: phase, tool name, call id, error state,
+        // and end-run status only; raw tool arguments/results stay hidden. Every
+        // caller that reaches here is either loopback (trusted same machine) or
+        // a Secure-Channel-authenticated remote (the non-loopback plaintext path
+        // was rejected above), so streaming the sanitized trace is safe in both
+        // cases — and it lets a remote observer watch a file being written, not
+        // just the final prose.
+        let emitAgentToolTrace = true
+        // Host file tools are mounted only for an AUTHENTICATED REMOTE caller
+        // (Secure Channel, agent-scoped — enforced by the gates above). A
+        // loopback caller is unauthenticated under the no-auth-loopback model,
+        // so it never receives the host-folder relaxation.
+        let isAuthenticatedRemote = !isLoopbackConnection(context)
 
         hop { writerBound.value.writeHeaders(ctx.value, extraHeaders: cors) }
 
@@ -4481,8 +4537,53 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             // the first (user) turn only.
             Task { @MainActor in FeatureTelemetry.agentRun(source: "http_api") }
 
-            let executionMode = await MainActor.run {
-                let autonomousEnabled = AgentManager.shared.effectiveAutonomousExec(for: agentId)?.enabled == true
+            // Mount the agent's host workspace folder when an authenticated
+            // remote caller drives an agent whose owner granted one. Reachable
+            // only past the secure-transport + built-in + agent-scope gates, so
+            // the caller is paired and confined to THIS agent. When mounted, the
+            // run gets host file tools confined to the folder (see the deny-list
+            // relaxation gated on `authenticatedHostFolderRoot`); otherwise it
+            // falls back to sandbox/none. Loopback callers never mount it.
+            let hostFolder: (url: URL, context: FolderContext)? =
+                isAuthenticatedRemote
+                ? await Self.resolveAgentHostFolder(agentId: agentId)
+                : nil
+            // Snapshot/restore the process-wide folder-tool registration around
+            // the run (mirrors `AgentLoopEvaluator`) so a concurrent in-app
+            // folder session is restored afterward, serialized via
+            // `HostFolderRunGate` so two host-folder runs can't corrupt the
+            // single global registration.
+            let priorFolderContext: FolderContext? = await { () -> FolderContext? in
+                guard let hostFolder else { return nil }
+                await HostFolderRunGate.shared.acquire()
+                return await MainActor.run {
+                    let prior = FolderToolManager.shared.registeredContext
+                    FolderToolManager.shared.registerFolderTools(for: hostFolder.context)
+                    return prior
+                }
+            }()
+            let releaseHostFolder: @Sendable () async -> Void = {
+                guard let hostFolder else { return }
+                await MainActor.run {
+                    FolderToolManager.shared.unregisterFolderTools()
+                    if let priorFolderContext {
+                        FolderToolManager.shared.registerFolderTools(for: priorFolderContext)
+                    }
+                }
+                hostFolder.url.stopAccessingSecurityScopedResource()
+                await HostFolderRunGate.shared.release()
+            }
+
+            let executionMode: ExecutionMode = await MainActor.run {
+                if let hostFolder {
+                    // Host-files feature: full host read+write confined to the
+                    // granted folder. Prefer plain `.hostFolder` over the
+                    // sandbox-combined mode (which makes the host read-only) so
+                    // the agent can actually create/edit files as intended.
+                    return .hostFolder(hostFolder.context)
+                }
+                let autonomousEnabled =
+                    AgentManager.shared.effectiveAutonomousExec(for: agentId)?.enabled == true
                 return ToolRegistry.shared.resolveExecutionMode(
                     folderContext: nil,
                     autonomousEnabled: autonomousEnabled
@@ -4897,17 +4998,26 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
             let exitState: AgentToolLoop.Exit
             do {
-                let runResult = try await AgentToolLoop.run(
-                    policy: AgentLoopPolicy(
-                        maxIterations: maxIterations,
-                        stopOnToolRejection: false,
-                        dedupeNoticeEnabled: false
-                    ),
-                    state: taskState,
-                    hooks: hooks
-                )
+                // Bind the host-folder root for the whole loop so the deny-list
+                // relaxation (`isDeniedForCurrentSurface`) and the host file
+                // tools see it; `nil` when no folder is mounted, leaving the
+                // external-surface denial fully intact. Child tasks spawned by
+                // the parallel batch executor inherit the task-local.
+                let runResult = try await ChatExecutionContext.$authenticatedHostFolderRoot
+                    .withValue(hostFolder?.url) {
+                        try await AgentToolLoop.run(
+                            policy: AgentLoopPolicy(
+                                maxIterations: maxIterations,
+                                stopOnToolRejection: false,
+                                dedupeNoticeEnabled: false
+                            ),
+                            state: taskState,
+                            hooks: hooks
+                        )
+                    }
                 exitState = runResult.exit
             } catch {
+                await releaseHostFolder()
                 // SSE response head was already written as 200 — the
                 // failure surfaces as an in-band SSE error chunk. Log
                 // the actual on-wire status (200) so dashboards don't
@@ -4927,6 +5037,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 )
                 return
             }
+            // Tools have finished executing (the loop is done); release the
+            // host folder before streaming the tail so the gate isn't held
+            // across the final prose write. Runs exactly once per request —
+            // the catch path above returns after its own release.
+            await releaseHostFolder()
 
             // Even fully-compacted history can't fit the window: the
             // driver ended the run before sending a doomed request.

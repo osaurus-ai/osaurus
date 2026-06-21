@@ -346,11 +346,35 @@ final class ToolRegistry: ObservableObject {
         "file_write", "file_edit", "shell_run", "git_commit", "file_undo",
     ]
 
+    /// Subset of `externallyDeniedToolNames` that an AUTHENTICATED,
+    /// folder-bounded remote agent run may use (gated on
+    /// `ChatExecutionContext.authenticatedHostFolderRoot`). Host *file*
+    /// mutation is permitted — confined to the granted folder by the folder
+    /// tools' own captured root — so a paired peer can have the agent create
+    /// or edit files in the folder its owner chose. `shell_run` /
+    /// `git_commit` / `file_undo` are deliberately NOT here: they stay denied
+    /// on every external surface regardless of authentication.
+    nonisolated static let hostFolderAllowedWhenAuthenticated: Set<String> = [
+        "file_write", "file_edit",
+    ]
+
     /// Whether `name` is blocked for the current execution because an
     /// external surface (`ChatExecutionContext.isExternalSurface`) is
-    /// driving the call.
+    /// driving the call. An authenticated, folder-bounded remote agent run
+    /// (`authenticatedHostFolderRoot` set) is allowed the host file tools in
+    /// `hostFolderAllowedWhenAuthenticated`; the `/mcp/call` bridge, loopback,
+    /// plaintext, and cross-agent callers never set that task-local, so they
+    /// remain fully denied.
     nonisolated static func isDeniedForCurrentSurface(_ name: String) -> Bool {
-        ChatExecutionContext.isExternalSurface && externallyDeniedToolNames.contains(name)
+        guard ChatExecutionContext.isExternalSurface,
+            externallyDeniedToolNames.contains(name)
+        else { return false }
+        if ChatExecutionContext.authenticatedHostFolderRoot != nil,
+            hostFolderAllowedWhenAuthenticated.contains(name)
+        {
+            return false
+        }
+        return true
     }
 
     /// The structured refusal handed to external callers for denied

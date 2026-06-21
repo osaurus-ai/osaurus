@@ -143,12 +143,32 @@ struct ChatEmptyState: View {
         return nil
     }
 
+    /// Display name of the active remote agent (Mode 2), if any. Drives the
+    /// empty-state title so a remote conversation is headed by the remote
+    /// agent's own name rather than the local agent's greeting.
+    private var remoteAgentName: String? {
+        if let relay = activeRelayAgent {
+            let trimmed = relay.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        }
+        if let discovered = activeDiscoveredAgent {
+            let trimmed = discovered.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        }
+        return nil
+    }
+
     /// Title text rendered above the subtitle. Resolution order:
-    /// 1. AI-generated greeting (when ready), 2. per-agent override
-    /// (`Agent.chatGreeting`), 3. time-of-day default. Whitespace-only
-    /// strings are treated as nil so a cleared field falls through to
-    /// the next layer.
+    /// 1. Remote agent name (Mode 2 — this chat is the remote agent, not the
+    /// local one), 2. AI-generated greeting (when ready), 3. per-agent override
+    /// (`Agent.chatGreeting`), 4. time-of-day default. Whitespace-only strings
+    /// are treated as nil so a cleared field falls through to the next layer.
     private var greetingText: String {
+        // A remote agent owns the conversation: never surface the local
+        // agent's generative/custom greeting here.
+        if let remoteName = remoteAgentName {
+            return remoteName
+        }
         if let g = readyGreeting?.greeting,
             !g.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         {
@@ -166,15 +186,19 @@ struct ChatEmptyState: View {
     /// `greetingText`: AI-generated → per-agent override
     /// (`Agent.chatSubtitle`) → localized default.
     private var subtitleText: LocalizedStringKey {
-        if let s = readyGreeting?.subtitle,
-            !s.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        {
-            return LocalizedStringKey(s)
-        }
-        if let custom = activeAgent.chatSubtitle?.trimmingCharacters(in: .whitespacesAndNewlines),
-            !custom.isEmpty
-        {
-            return LocalizedStringKey(custom)
+        // Remote agent run: skip the local agent's generative/custom subtitle
+        // and use the neutral default beneath the remote agent's name.
+        if remoteAgentName == nil {
+            if let s = readyGreeting?.subtitle,
+                !s.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            {
+                return LocalizedStringKey(s)
+            }
+            if let custom = activeAgent.chatSubtitle?.trimmingCharacters(in: .whitespacesAndNewlines),
+                !custom.isEmpty
+            {
+                return LocalizedStringKey(custom)
+            }
         }
         return "How can I help you today?"
     }

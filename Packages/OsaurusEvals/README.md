@@ -135,7 +135,8 @@ Each run lands in `build/evals/loop/<timestamp>/` (also symlinked as
 - `det-<Suite>.json` — deterministic / embedder-only suites, run once.
 - `llm-<label>-<Suite>.json` — per-model LLM + sandbox suites.
 - `matrix.json` / `matrix.md` — cross-model scoreboard (domains × models,
-  `passed/scored` cells, plus a decode tok/s · TTFT · peak-RAM rollup).
+  `passed/scored` cells, plus a decode tok/s · TTFT · peak-RAM ·
+  `ctx tok/task` · `total tok/task` rollup).
 - `diff.json` / `diff.md` — when `BASELINE` is set: all-domain pass→fail /
   fail→pass classification + decode-tps and peak-RAM movements.
 
@@ -208,10 +209,20 @@ Model-driven rows (`agent_loop`, `capability_claims`, `computer_use_loop`,
 stats hint), **peak physical footprint MB** (Activity-Monitor "Memory", the
 value the `AGENTS.md` RAM gate reads — sampled on a timer across the case), and
 the **KV prefix-hit delta** (before/after `ModelRuntime.batchDiagnosticsSnapshot`,
-proving prefix reuse across loop iterations). The human-readable report prints a
-`perf:` line per row and a suite-wide rollup; the matrix aggregates per model.
-Fields are nil when not measurable (remote/non-streaming runs, deterministic
-rows), so a missing metric reads as "not measured", never a zeroed regression.
+proving prefix reuse across loop iterations). `agent_loop` rows additionally
+carry **deterministic context-cost** counters — `promptTokensTotal` (input
+tokens summed across every model step: the re-sent prefix + accumulated tool
+results), `peakContextTokens` (largest single-step input), `totalModelTokens`
+(input + output), and `modelSteps` — estimated provider-independently so local
+and frontier columns compare 1:1; the matrix surfaces them as `ctx tok/task` /
+`total tok/task`. The human-readable report prints a `perf:` line per row and a
+suite-wide rollup; the matrix aggregates per model. Fields are nil when not
+measurable (deterministic rows; non-streaming runs), so a missing metric reads
+as "not measured", never a zeroed regression. Remote OpenAI-compatible upstreams
+(xAI/Grok, Azure OpenAI) now report real **completion tokens** too: Osaurus
+requests `stream_options.include_usage` and surfaces the provider's `usage` as
+the same in-band stats hint the local runtime emits (decode tok/s stays nil when
+the provider omits it, rather than being fabricated).
 
 Startup bootstrap is domain-aware. Suites that require installed native plugins
 load them and rebuild search indices so they mirror the host app. `capability_search`
@@ -378,6 +389,7 @@ Field notes:
 - `expect.agentLoop.stopOnToolRejection` — loop policy: `true` runs the chat surface's policy (first error envelope ends the run with `toolRejected`); default `false` keeps the headless policy (the model gets the error and keeps looping). Lets cases pin BOTH behaviours.
 - `expect.agentLoop.todoUpdatedBeforeComplete` — todo discipline: some `todo` call with at least one checked (`[x]`) box must appear before the first `complete` call (or before the run ends). A single list creation with all boxes unchecked does not pass.
 - `expect.agentLoop.finalTextContains` / `rubric` — cheap substring checks vs. LLM-judge grading of the final answer (same `JUDGE_MODEL` override as `capability_claims`).
+- `expect.agentLoop.scoredMaxPromptTokens` / `scoredMaxTotalTokens` — optional context-cost ceilings for the "saving context" lane. `scoredMaxPromptTokens` **fails the case** when `promptTokensTotal` (input summed across steps, including the frozen tool schema) exceeds the budget, so a later prompt/tool regression that re-bloats context can't pass while silently burning tokens; `scoredMaxTotalTokens` gates input + output. Both are omitted by default (reported via telemetry, not scored), and only bite a live model — scripted/deterministic runs spend `0`.
 
 Reported `latencyMs` for this domain is **loop-only** wall time (model steps + tool execution), excluding workspace setup and judge calls.
 

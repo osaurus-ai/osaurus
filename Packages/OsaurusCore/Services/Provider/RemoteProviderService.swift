@@ -434,9 +434,12 @@ public actor RemoteProviderService: ToolCapableService {
         toolChoice: ToolChoiceOption?,
         requestedModel: String?
     ) async throws -> String {
-        // Native Osaurus agents run tools server-side and only expose a streaming endpoint.
-        // Route through generateOneShot, which consumes the SSE stream for .osaurus.
-        if provider.providerType == .osaurus {
+        // Mode 2 — native Osaurus agent run: tools execute server-side and the
+        // peer only exposes a streaming endpoint, so route through
+        // generateOneShot (consumes the SSE stream). Mode 1 falls through to the
+        // standard OpenAI-compatible non-streaming path so local tool calls are
+        // surfaced back to the caller.
+        if provider.providerType == .osaurus && parameters.runAsRemoteAgent {
             return try await generateOneShot(
                 messages: messages,
                 parameters: parameters,
@@ -513,10 +516,13 @@ public actor RemoteProviderService: ToolCapableService {
         toolChoice: ToolChoiceOption?,
         requestedModel: String?
     ) async throws -> AsyncThrowingStream<String, Error> {
-        // Native Osaurus agents run tools server-side — the /agents/{id}/run endpoint handles
-        // the full inference+tool loop and streams back only text deltas. No tool invocations
-        // are propagated to the client.
-        if provider.providerType == .osaurus {
+        // Mode 2 — native Osaurus agent run. The /agents/{id}/run endpoint
+        // handles the full inference+tool loop server-side and streams back
+        // only text deltas; no tool invocations are propagated to the client.
+        // Mode 1 (no `runAsRemoteAgent`) falls through and treats the `.osaurus`
+        // peer as a plain OpenAI-compatible inference backend, keeping tools so
+        // the *local* agent loop executes them.
+        if provider.providerType == .osaurus && parameters.runAsRemoteAgent {
             return try await streamDeltas(
                 messages: messages,
                 parameters: parameters,
@@ -698,6 +704,30 @@ public actor RemoteProviderService: ToolCapableService {
             self.iterator = iterator
         }
         func next() async throws -> Data? { try await iterator.next() }
+    }
+
+    /// Thread-safe one-shot holder for the live `URLSessionTask` backing a
+    /// streaming response. The stream's `onTermination` (which fires on user
+    /// stop, window close, or any consumer teardown — possibly off the producer
+    /// thread) cancels the task directly so the socket closes *immediately*,
+    /// rather than waiting for the cooperative chunk-stream → pump-task unwind.
+    /// Prompt socket close is what trips the peer's channel-close hook, which
+    /// cancels the remote agent run (Mode 2) and its generation server-side.
+    final class LiveURLSessionTaskBox: @unchecked Sendable {
+        private let lock = NSLock()
+        private var task: URLSessionTask?
+        func store(_ task: URLSessionTask?) {
+            lock.lock()
+            defer { lock.unlock() }
+            self.task = task
+        }
+        func cancel() {
+            lock.lock()
+            let t = task
+            task = nil
+            lock.unlock()
+            t?.cancel()
+        }
     }
 
     /// Reads the next chunk from `ref`, racing against an inactivity timeout.
@@ -1209,6 +1239,31 @@ public actor RemoteProviderService: ToolCapableService {
         }
 
         guard let jsonData = dataContent.data(using: .utf8) else { return false }
+
+        // Server-side agent tool loop trace (`osaurus_agent_tool`). The chunk
+        // carries no content (`choices: []`); surface it as a sanitized
+        // progress hint so a Mode 2 observer can see which tool is running on
+        // the remote agent during the otherwise-silent tool phase. The cheap
+        // substring pre-check avoids JSON-parsing every normal content chunk.
+        if dataContent.contains("osaurus_agent_tool"),
+            let root = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+            let trace = root["osaurus_agent_tool"] as? [String: Any],
+            let phase = trace["phase"] as? String,
+            let name = trace["name"] as? String
+        {
+            let hint = StreamingAgentToolHint.encode(
+                StreamingAgentToolHint.Trace(
+                    phase: phase,
+                    name: name,
+                    callId: trace["call_id"] as? String,
+                    isError: (trace["is_error"] as? Bool) ?? false,
+                    endRun: (trace["end_run"] as? Bool) ?? false
+                )
+            )
+            state.routerDiagnostics?.recordYield(hint)
+            continuation.yield(hint)
+            return false
+        }
 
         if providerType == .osaurusRouter,
             let summary = try? JSONDecoder().decode(OsaurusRouterSummaryEvent.self, from: jsonData)
@@ -1865,6 +1920,11 @@ public actor RemoteProviderService: ToolCapableService {
         // entry and we don't re-touch the task-local on every chunk.
         let probe = WireTransportProbe.current
 
+        // Holds the connected URLSession task so stream teardown can close the
+        // socket immediately (see `LiveURLSessionTaskBox`). Critical for Mode 2:
+        // a prompt close lets the peer cancel the in-flight remote agent run.
+        let liveTaskBox = LiveURLSessionTaskBox()
+
         let producerTask = Task {
             do {
                 var state = StreamingState(stopSequences: stopSequences, trackContent: trackContent)
@@ -2007,6 +2067,9 @@ public actor RemoteProviderService: ToolCapableService {
                     }
 
                     connectedBytes = bytes
+                    // Expose the live task so `onTermination` can hard-cancel
+                    // it (closes the socket) the instant the consumer stops.
+                    liveTaskBox.store(bytes.task)
                     break connectLoop
                 }
 
@@ -2160,7 +2223,16 @@ public actor RemoteProviderService: ToolCapableService {
             }
         }
 
-        continuation.onTermination = { @Sendable _ in producerTask.cancel() }
+        continuation.onTermination = { @Sendable _ in
+            // Cancel the producer first so its `catch` sees `Task.isCancelled`
+            // and finishes cleanly (no spurious URLError surfaced on user
+            // stop), then force the socket closed. The explicit task cancel is
+            // belt-and-suspenders over the cooperative chunk-stream unwind: it
+            // guarantees a prompt FIN so a Mode 2 peer aborts the remote run
+            // instead of finishing it after the client has walked away.
+            producerTask.cancel()
+            liveTaskBox.cancel()
+        }
         return stream
     }
 
@@ -2186,8 +2258,13 @@ public actor RemoteProviderService: ToolCapableService {
         "gemini-\(UUID().uuidString.prefix(8))"
     }
 
-    /// Build a chat completion request structure
-    private func buildChatRequest(
+    /// Build a chat completion request structure.
+    ///
+    /// `internal` (not `private`) so the Mode 1 / Mode 2 wire-shape contract can
+    /// be asserted in tests: Mode 2 (`parameters.runAsRemoteAgent`) forces
+    /// `model: "default"` and stamps `runAsRemoteAgent`; Mode 1 preserves the
+    /// resolved model and tools.
+    func buildChatRequest(
         messages: [ChatMessage],
         parameters: GenerationParameters,
         model: String,
@@ -2222,29 +2299,48 @@ public actor RemoteProviderService: ToolCapableService {
             wireTools = tools
         }
 
+        // Mode 2 (remote agent run): send `model: "default"` so the peer
+        // resolves the agent's *live* effective model server-side, faithful to
+        // "the agent runs from its own selected default model" even if the
+        // owner changes it after pairing. Provider routing already happened
+        // upstream off the prefixed model, so the wire value is free to be the
+        // sentinel here.
+        let wireModel = parameters.runAsRemoteAgent ? "default" : model
+        // Mode 2 (remote agent run): the remote agent owns its generation
+        // config — sampling and reasoning come from its own model bundle /
+        // agent settings, not the caller. Send only `model: "default"` + the
+        // conversation and strip every caller-supplied sampling/reasoning
+        // field. Without this the server's run loop applies the caller's local
+        // defaults and silently overrides the agent's native
+        // `generation_config.json` (faithfulness regression).
+        let isAgentRun = parameters.runAsRemoteAgent
         var request = RemoteChatRequest(
-            model: model,
+            model: wireModel,
             messages: messages,
             // Reasoning models (o1, gpt-5) forbid temperature/top_p when reasoning is active as inferred from
             // https://community.openai.com/t/gpt-5-nano-accepted-parameters/1355086/2
-            temperature: isReasoningModel ? nil : parameters.temperature,
-            max_completion_tokens: Self.remoteChatMaxTokens(
-                providerType: provider.providerType,
-                parameters: parameters
-            ),
+            temperature: isAgentRun ? nil : (isReasoningModel ? nil : parameters.temperature),
+            max_completion_tokens: isAgentRun
+                ? nil
+                : Self.remoteChatMaxTokens(
+                    providerType: provider.providerType,
+                    parameters: parameters
+                ),
             stream: stream,
-            top_p: isReasoningModel ? nil : parameters.topPOverride,
+            top_p: isAgentRun ? nil : (isReasoningModel ? nil : parameters.topPOverride),
             // Forward the raw OpenAI penalties — most upstream OpenAI-
             // compatible providers accept these natively, and stripping
             // them silently was a previous gap that surprised clients.
-            frequency_penalty: isReasoningModel ? nil : parameters.frequencyPenalty,
-            presence_penalty: isReasoningModel ? nil : parameters.presencePenalty,
+            frequency_penalty: isAgentRun ? nil : (isReasoningModel ? nil : parameters.frequencyPenalty),
+            presence_penalty: isAgentRun ? nil : (isReasoningModel ? nil : parameters.presencePenalty),
             stop: nil,
             tools: wireTools,
             tool_choice: toolChoice,
-            reasoning_effort: effortValue,
-            reasoning: allowsReasoningObject ? effortValue.map { ReasoningConfig(effort: $0) } : nil,
-            thinking: thinking,
+            reasoning_effort: isAgentRun ? nil : effortValue,
+            reasoning: isAgentRun
+                ? nil
+                : (allowsReasoningObject ? effortValue.map { ReasoningConfig(effort: $0) } : nil),
+            thinking: isAgentRun ? nil : thinking,
             modelOptions: parameters.modelOptions,
             veniceParameters: buildVeniceParameters(from: parameters.modelOptions),
             // Router-only: the body is signed, so this rides the existing
@@ -2263,6 +2359,7 @@ public actor RemoteProviderService: ToolCapableService {
         if stream, Self.requestsStreamUsageOptions(providerType: provider.providerType) {
             request.streamOptions = StreamOptions(include_usage: true)
         }
+        request.runAsRemoteAgent = parameters.runAsRemoteAgent
         return request
     }
 
@@ -2437,6 +2534,35 @@ public actor RemoteProviderService: ToolCapableService {
         return stream
     }
 
+    /// Endpoint URL for a native Osaurus peer, split by mode. This is the single
+    /// place the Mode 1 / Mode 2 routing decision lives (exposed `internal` for
+    /// tests):
+    ///
+    /// - Mode 2 (`runAsRemoteAgent == true`): `POST /agents/{identifier}/run`,
+    ///   where the agent runs fully server-side (own model/context/tools).
+    ///   Address the agent by its pinned crypto address — the identity the
+    ///   Secure Channel verifies and the host resolves — falling back to the
+    ///   receiver-minted `remoteAgentId` only for legacy providers paired before
+    ///   an address was pinned.
+    /// - Mode 1 (`runAsRemoteAgent == false`): `POST /chat/completions`. The
+    ///   peer is treated as a plain OpenAI-compatible backend; its endpoint is a
+    ///   passthrough that honors the caller's model + tools, so the *local*
+    ///   agent persona/tools drive the turn and tool calls run locally.
+    ///   (`.osaurus.chatEndpoint` is the unused `/run` sentinel, so the path is
+    ///   built explicitly here.)
+    ///
+    /// Returns nil only when a Mode 2 request has no resolvable agent identifier.
+    func osaurusEndpointURL(runAsRemoteAgent: Bool) -> URL? {
+        guard runAsRemoteAgent else {
+            return provider.url(for: "/chat/completions")
+        }
+        let identifier =
+            provider.remoteAgentAddress.flatMap { $0.isEmpty ? nil : $0 }
+            ?? provider.remoteAgentId?.uuidString
+        guard let identifier else { return nil }
+        return provider.url(for: "/agents/\(identifier)/run")
+    }
+
     /// Build a URLRequest for the chat completions endpoint
     private func buildURLRequest(for request: RemoteChatRequest) async throws -> URLRequest {
         let url: URL
@@ -2496,24 +2622,14 @@ public actor RemoteProviderService: ToolCapableService {
                 url = geminiURL
             }
         } else if requestProviderType == .osaurus {
-            // Native Osaurus agent: POST /agents/{identifier}/run. Address the
-            // agent by its pinned crypto address (the identity the Secure
-            // Channel verifies and the host resolves) — the local
-            // `remoteAgentId` is a receiver-minted UUID the host can't map.
-            // Fall back to `remoteAgentId` only for legacy providers that were
-            // paired before an address was pinned.
-            let identifier: String
-            if let address = provider.remoteAgentAddress, !address.isEmpty {
-                identifier = address
-            } else if let agentId = provider.remoteAgentId {
-                identifier = agentId.uuidString
-            } else {
+            // Native Osaurus peer, split by mode (see `osaurusEndpointURL`):
+            // Mode 2 (`runAsRemoteAgent`) → /agents/{address}/run (the agent
+            // runs fully server-side); Mode 1 → the OpenAI-compatible
+            // /chat/completions inference endpoint.
+            guard let osaurusURL = osaurusEndpointURL(runAsRemoteAgent: request.runAsRemoteAgent) else {
                 throw RemoteProviderServiceError.invalidURL
             }
-            guard let agentURL = provider.url(for: "/agents/\(identifier)/run") else {
-                throw RemoteProviderServiceError.invalidURL
-            }
-            url = agentURL
+            url = osaurusURL
         } else {
             let endpoint = requestProviderType.chatEndpoint
             guard let standardURL = provider.url(for: endpoint) else {
@@ -3229,6 +3345,11 @@ struct RemoteChatRequest: Encodable {
     /// wire bytes (the non-streaming path and Anthropic/Gemini/Responses, which
     /// build their own bodies, never set it).
     var streamOptions: StreamOptions? = nil
+    /// Local-only routing marker (Mode 2). When true, `buildURLRequest` targets
+    /// the peer's `/agents/{address}/run` endpoint instead of
+    /// `/chat/completions`. Intentionally absent from `CodingKeys` so it never
+    /// reaches the wire — the endpoint choice already encodes the intent.
+    var runAsRemoteAgent: Bool = false
 
     enum CodingKeys: String, CodingKey {
         case model, messages, temperature, max_completion_tokens, max_tokens, stream
@@ -4263,6 +4384,12 @@ extension RemoteProviderService {
     /// select one in the picker). Falls back to GET /agents/{id} when /models is unavailable.
     private static func fetchOsaurusModels(from provider: RemoteProvider) async throws -> [String] {
         let headers = await provider.resolvedHeadersOffMainActor()
+        // Tracks whether the peer answered at all (any HTTP status, even an
+        // error). Distinguishes "couldn't reach / Secure Channel handshake
+        // failed" (no response) from "reached but degraded" so we fail closed
+        // on the former instead of synthesizing a fake ["default"] model that
+        // makes an unreachable or unauthenticated peer look connected.
+        var reachedPeer = false
 
         // Try /models first
         if let url = provider.url(for: "/models") {
@@ -4271,12 +4398,14 @@ extension RemoteProviderService {
             req.setValue("application/json", forHTTPHeaderField: "Accept")
             req.timeoutInterval = min(provider.timeout, 10)
             for (key, value) in headers { req.setValue(value, forHTTPHeaderField: key) }
-            if let (data, status) = await osaurusGET(req, provider: provider),
-                status < 400,
-                let parsed = try? JSONDecoder().decode(ModelsResponse.self, from: data),
-                !parsed.data.isEmpty
-            {
-                return parsed.data.map { $0.id }
+            if let (data, status) = await osaurusGET(req, provider: provider) {
+                reachedPeer = true
+                if status < 400,
+                    let parsed = try? JSONDecoder().decode(ModelsResponse.self, from: data),
+                    !parsed.data.isEmpty
+                {
+                    return parsed.data.map { $0.id }
+                }
             }
         }
 
@@ -4284,37 +4413,94 @@ extension RemoteProviderService {
         // crypto address first (the stable identity the host resolves and a
         // paired peer knows), falling back to the minted remoteAgentId, so the
         // host's /agents/{id} resolves the agent instead of 400-ing on a random
-        // UUID and degrading the picker to ["default"]. Mirrors buildURLRequest.
+        // UUID. Mirrors buildURLRequest.
+        let identifier =
+            provider.remoteAgentAddress.flatMap { $0.isEmpty ? nil : $0 }
+            ?? provider.remoteAgentId?.uuidString
+        if let identifier, let url = provider.url(for: "/agents/\(identifier)") {
+            var req = URLRequest(url: url)
+            req.httpMethod = "GET"
+            req.setValue("application/json", forHTTPHeaderField: "Accept")
+            req.timeoutInterval = min(provider.timeout, 10)
+            for (key, value) in headers { req.setValue(value, forHTTPHeaderField: key) }
+            if let (data, status) = await osaurusGET(req, provider: provider) {
+                reachedPeer = true
+                if status < 400 {
+                    // A reachable agent with no concrete `default_model` still
+                    // degrades to ["default"] here (legit graceful fallback);
+                    // only an unreachable/error peer fails below.
+                    struct AgentInfo: Decodable { let default_model: String? }
+                    let model =
+                        (try? JSONDecoder().decode(AgentInfo.self, from: data))?.default_model
+                        ?? "default"
+                    return [model]
+                }
+            }
+        }
+
+        // No usable response from either endpoint. Fail closed so
+        // `RemoteProviderManager.connect` records `lastError` and leaves the
+        // provider disconnected, instead of reporting a phantom connection.
+        throw RemoteProviderServiceError.requestFailed(
+            reachedPeer
+                ? "Remote agent rejected the connection (check pairing and authorization)."
+                : "Could not reach the remote agent (Secure Channel handshake failed)."
+        )
+    }
+
+    /// Fetch a paired/discovered Osaurus agent's *live* effective model id (the
+    /// model the agent will actually run), used to pin the model chip in Mode 2
+    /// (remote agent run). Prefers `effective_model`, falling back to
+    /// `default_model`. Returns nil when the peer can't be reached or doesn't
+    /// expose a concrete model — the caller then falls back to the provider's
+    /// first chat-capable model. Routes through the Secure Channel GET so the
+    /// Bearer never crosses the wire in cleartext, mirroring `fetchOsaurusModels`.
+    static func fetchOsaurusAgentEffectiveModel(from provider: RemoteProvider) async -> String? {
         let identifier =
             provider.remoteAgentAddress.flatMap { $0.isEmpty ? nil : $0 }
             ?? provider.remoteAgentId?.uuidString
         guard let identifier, let url = provider.url(for: "/agents/\(identifier)") else {
-            return ["default"]
+            return nil
         }
+        let headers = await provider.resolvedHeadersOffMainActor()
         var req = URLRequest(url: url)
         req.httpMethod = "GET"
         req.setValue("application/json", forHTTPHeaderField: "Accept")
         req.timeoutInterval = min(provider.timeout, 10)
         for (key, value) in headers { req.setValue(value, forHTTPHeaderField: key) }
         guard let (data, status) = await osaurusGET(req, provider: provider), status < 400 else {
-            return ["default"]
+            return nil
         }
-        struct AgentInfo: Decodable { let default_model: String? }
-        let model = (try? JSONDecoder().decode(AgentInfo.self, from: data))?.default_model ?? "default"
-        return [model]
+        struct AgentInfo: Decodable {
+            let effective_model: String?
+            let default_model: String?
+        }
+        let info = try? JSONDecoder().decode(AgentInfo.self, from: data)
+        let model = info?.effective_model ?? info?.default_model
+        guard let model, !model.isEmpty, model != "default" else { return nil }
+        return model
     }
 
-    /// Metadata GET against an Osaurus peer. Prefers the Secure Channel (so
-    /// the Bearer never crosses the wire in cleartext); falls back to the
-    /// plaintext request when the peer predates the channel or has no pinned
-    /// address — the server intentionally keeps `/models` and agent metadata
-    /// plaintext-accessible for third-party SDK clients.
+    /// Metadata GET against an Osaurus peer.
+    ///
+    /// When the provider has a pinned `remoteAgentAddress` the peer is expected
+    /// to speak the Secure Channel, so metadata is treated exactly like chat
+    /// traffic: it goes **only** through the channel and never downgrades to a
+    /// plaintext request. A plaintext GET would put the agent-scoped Bearer on
+    /// the wire in cleartext (sniffable on a LAN, and pair-invite keys live
+    /// ~1 year), so on any secure failure we fail closed and return nil. The
+    /// caller then falls back to a safe default (the pinned chip shows
+    /// "Default"; the wire model stays "default", so the run is still correct).
+    ///
+    /// Only genuinely addressless legacy peers (paired before the channel
+    /// existed) use the plaintext path, matching the server keeping `/models`
+    /// and agent metadata plaintext-accessible for third-party SDK clients.
     private static func osaurusGET(
         _ request: URLRequest,
         provider: RemoteProvider
     ) async -> (data: Data, statusCode: Int)? {
         let urlSession = GlobalProxySettings.sharedSession()
-        if provider.remoteAgentAddress != nil {
+        if let address = provider.remoteAgentAddress, !address.isEmpty {
             do {
                 let (outer, opener) = try await SecureChannelClient.shared.wrappedRequest(
                     for: request,
@@ -4322,20 +4508,22 @@ extension RemoteProviderService {
                     urlSession: urlSession
                 )
                 let (data, response) = try await urlSession.data(for: outer)
-                if let http = response as? HTTPURLResponse {
-                    if SecureChannelClient.isSessionUnknownError(statusCode: http.statusCode, body: data) {
-                        await SecureChannelClient.shared.invalidateSession(for: provider)
-                    } else if http.statusCode < 400 {
-                        let inner = try SecureChannelClient.openBufferedResponse(data, opener: opener)
-                        let body = inner.body.flatMap { Data(base64urlEncoded: $0) } ?? Data()
-                        return (body, inner.status)
-                    }
+                guard let http = response as? HTTPURLResponse else { return nil }
+                if SecureChannelClient.isSessionUnknownError(statusCode: http.statusCode, body: data) {
+                    // Session rotated out from under us — drop it so the next
+                    // call re-handshakes. Fail closed for this attempt rather
+                    // than retrying in plaintext.
+                    await SecureChannelClient.shared.invalidateSession(for: provider)
+                    return nil
                 }
-            } catch SecureChannelClientError.peerUnsupported {
-                // Old peer — plaintext fallback below.
+                guard http.statusCode < 400 else { return nil }
+                let inner = try SecureChannelClient.openBufferedResponse(data, opener: opener)
+                let body = inner.body.flatMap { Data(base64urlEncoded: $0) } ?? Data()
+                return (body, inner.status)
             } catch {
-                // Handshake/transport failure: fall through to plaintext for
-                // metadata only (chat traffic never downgrades).
+                // peerUnsupported, handshake, or transport failure: never fall
+                // back to a cleartext Bearer when a secure channel was expected.
+                return nil
             }
         }
         guard let (data, response) = try? await urlSession.data(for: request),

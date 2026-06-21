@@ -131,7 +131,7 @@ What the channel does **not** hide: traffic timing and approximate sizes (true o
 ### Test coverage
 
 - `Tests/Identity/SecureChannelTests.swift` — handshake roundtrip, wrong-identity and tampered-transcript rejection, version negotiation, replay/reorder windows, cross-session and cross-call frame rejection, `fin` authentication, truncation detection.
-- `Tests/Networking/SecureChannelE2ETests.swift` — full NIO server: encrypted buffered and SSE calls, replay → `409`, unknown session → `401`, the `426` gate (plaintext remote refused, loopback allowed, encrypted relay-origin passes), inner auth still enforced, built-in-agent guard still fires inside the channel, no `/secure/*` nesting.
+- `Tests/Networking/SecureChannelE2ETests.swift` — full NIO server: encrypted buffered and SSE calls, replay → `409`, unknown session → `401`, the `426` gate (plaintext remote refused, loopback allowed, encrypted relay-origin passes), inner auth still enforced, built-in-agent guard still fires inside the channel, per-agent scope enforced on `GET /agents/{id}` (a cross-agent scoped key is refused `403 agent_scope_denied` inside the ciphertext), no `/secure/*` nesting.
 
 ### Compatibility
 
@@ -147,8 +147,9 @@ What the channel does **not** hide: traffic timing and approximate sizes (true o
 The Secure Channel composes with — it does not replace — the existing layers documented in [`IDENTITY.md`](IDENTITY.md) and [`SECURITY.md`](SECURITY.md):
 
 - **Pairing** establishes *who* a peer is (HPKE-sealed key delivery, challenge-response, server signature verification) and pins the agent address the channel later verifies on every handshake.
-- **`osk-v1` access keys** still authenticate *every* call — now inside the ciphertext — with unchanged scoping (`403 agent_scope_denied` for cross-agent use) and instant revocation.
+- **`osk-v1` access keys** still authenticate *every* call — now inside the ciphertext — with unchanged scoping (`403 agent_scope_denied` for cross-agent use, on both the run route `/agents/{id}/run` and the `GET /agents/{id}` metadata route) and instant revocation.
 - **Relay trust hardening** (no loopback trust for relay-origin traffic) still applies to the decrypted inner request.
+- **Per-agent host workspace** rides on this trust boundary: only a caller that completed the handshake and passed the agent-scope gate can have a remote agent read/write files inside the folder its owner granted (host **file** tools only — `shell_run` / `git_commit` / `file_undo` stay denied). See [`SECURITY.md`](SECURITY.md) and [`OpenAI_API_GUIDE.md`](OpenAI_API_GUIDE.md).
 - **Storage encryption** protects data at rest; the Secure Channel protects it in motion between agents.
 
 Together: keys are sealed at delivery, pinned at pairing, verified at every session, and never travel in plaintext again — and everything an agent says travels inside a forward-secret envelope only the two endpoints can open.

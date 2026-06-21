@@ -331,3 +331,36 @@ What you can rely on the preflight to handle for you:
   top-level shape when the model accidentally wraps its args in a
   `properties` envelope (only when `properties` isn't itself a declared
   field of the schema and at least one inner key matches).
+
+---
+
+## Output normalization (automatic)
+
+Every returned string passes through
+[`ToolRegistry.normalizeToolResult`](../Packages/OsaurusCore/Tools/ToolRegistry.swift)
+before the model ever sees it, in this order:
+
+1. **Secret-prompt guard.** A result that carries the `SecretPromptParser`
+   marker is handled first and returned byte-exact — it is **not** an
+   envelope and is never wrapped or compacted, so the secure-input overlay
+   flow stays intact.
+2. **Lossless compaction**
+   ([`ToolOutputCompressor`](../Packages/OsaurusCore/Tools/ToolOutputCompressor.swift)).
+   Validated-JSON whitespace crush (string-aware; preserves key order,
+   number lexemes, and escaping) plus a trailing-whitespace strip. It is
+   deterministic and idempotent, so the **KV prefix stays byte-stable**
+   across loop turns, and it runs *before* the cap so oversized external
+   pretty-JSON can crush back under the ceiling instead of being truncated.
+   It is a no-op on Osaurus's own already-compact envelopes — the win lands
+   on external surfaces (`shell_run` of `… | jq`, MCP text, pretty `.json`
+   reads), ~36% on pretty JSON and ~10% on trailing-whitespace logs.
+   Default-on; set `OSAURUS_DISABLE_TOOL_OUTPUT_COMPRESSION=1` to bypass it.
+3. **Envelope wrap + universal cap.** Non-envelope output is wrapped into the
+   success envelope, and anything still over `ToolOutputCaps.universalResult`
+   is head+tail truncated and re-wrapped with `truncated: true` plus a
+   recovery hint, so no single call can blow the context window in one turn
+   (error-ness is preserved).
+
+The `truncateForModel(_:maxChars:)` advice above is a tool deliberately
+shaping its *own* output; steps 1–3 are the platform's safety net applied to
+*every* tool's result regardless of how it was produced.

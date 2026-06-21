@@ -399,6 +399,77 @@ struct SecureChannelE2ETests {
         #expect(sse.contains("beta"))
     }
 
+    /// `GET /agents/{id}` must enforce the same per-agent scope as
+    /// `/agents/{id}/run`: an agent-scoped key (agent A) must NOT read a
+    /// DIFFERENT agent's (agent B) metadata — name, description,
+    /// `effective_model`. Before the fix the run route was scoped but the
+    /// metadata route was not, so a paired peer could enumerate every agent.
+    @Test func secureGetAgent_crossAgentScopedKey_returns403() async throws {
+        // Caller is agent A (index 0 == `agentAddress`); the GET targets a
+        // different agent B (index 1) the caller's key is not scoped to.
+        let callerAgentId = UUID()
+        let otherAgentId = UUID()
+        let otherAgentAddress = try AgentKey.deriveAddress(
+            masterKey: TestKeys.alicePrivateKey,
+            index: 1
+        )
+
+        // Agent-scoped key (iss == aud == agent A): NOT master-scoped, so the
+        // route's agent-scope check actually runs instead of being waved through.
+        let scopedKey = try TokenBuilder.build(
+            privateKey: agentKey,
+            iss: agentAddress,
+            aud: agentAddress
+        )
+        let validator = APIKeyValidator.forAlice(
+            agentAddress: agentAddress,
+            extraWhitelist: [agentAddress]
+        )
+
+        let server = try await startSecureTestServer(
+            trustLoopback: true,
+            validator: validator
+        )
+        defer { Task { await server.shutdown() } }
+
+        // Both addresses resolve via the registry (held under the server-test
+        // lease, which serializes registry mutation). The GET target (B) must
+        // resolve to a UUID so the scope gate runs before any existence check.
+        AgentIdentityRegistry.shared.update(
+            addresses: [agentAddress, otherAgentAddress],
+            indices: [0, 1],
+            addressByAgentId: [callerAgentId: agentAddress, otherAgentId: otherAgentAddress]
+        )
+        defer {
+            AgentIdentityRegistry.shared.update(addresses: [], indices: [], addressByAgentId: [:])
+        }
+
+        let session = try establishSession()
+
+        let inner = SecureChannel.InnerRequest(
+            method: "GET",
+            path: "/agents/\(otherAgentAddress)",
+            authorization: "Bearer \(scopedKey)",
+            accept: "application/json"
+        )
+        let (call, requestSeq) = try session.sealCall(innerRequest: JSONEncoder().encode(inner))
+        var request = try secureCallRequest(server: server, call: call)
+        // Arrive as a relayed (remote) caller so the Bearer audience — not
+        // loopback trust — drives the scope check, exactly like a paired peer.
+        request.setValue("1", forHTTPHeaderField: HTTPHandler.relayOriginHeaderName)
+
+        let (data, resp) = try await URLSession.shared.data(for: request)
+        // Outer secure envelope is 200; the rejection rides INSIDE the ciphertext.
+        #expect((resp as? HTTPURLResponse)?.statusCode == 200)
+        #expect(!String(decoding: data, as: UTF8.self).contains("agent_scope_denied"))
+
+        let opener = session.makeResponseOpener(requestSeq: requestSeq)
+        let innerResponse = try SecureChannelClient.openBufferedResponse(data, opener: opener)
+        #expect(innerResponse.status == 403)
+        let body = innerResponse.body.flatMap { Data(base64urlEncoded: $0) } ?? Data()
+        #expect(String(decoding: body, as: UTF8.self).contains("agent_scope_denied"))
+    }
+
     // MARK: - Inner Auth Still Enforced
 
     @Test func secureCall_missingInnerBearer_401Inside() async throws {

@@ -56,4 +56,23 @@ struct ChatErrorMessagesTests {
                 == "Error: Unsupported model type: gemma4_unified"
         )
     }
+
+    @Test func remoteConnectFailureSurfacesProviderErrorDescription() {
+        // The Secure-Channel handshake failure copy comes through verbatim (no
+        // "Error:" prefix) so the chat connection pill can style it.
+        let error = RemoteProviderServiceError.requestFailed(
+            "Could not reach the remote agent (Secure Channel handshake failed)."
+        )
+        let message = ChatErrorMessages.remoteConnectFailure(error)
+        #expect(message.contains("Secure Channel handshake failed"))
+        #expect(!message.hasPrefix("Error:"))
+    }
+
+    @Test func remoteConnectFailureFallsBackForBlankDescription() {
+        // An error whose localized description is empty must not produce an
+        // empty pill — a neutral fallback is used instead.
+        struct BlankError: LocalizedError { var errorDescription: String? { "" } }
+        let message = ChatErrorMessages.remoteConnectFailure(BlankError())
+        #expect(!message.isEmpty)
+    }
 }
