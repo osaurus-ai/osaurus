@@ -109,7 +109,8 @@ public struct NativeMacDriver: MacDriver {
         tier: CaptureTier,
         windowId: Int?,
         maxElements: Int?,
-        focusedWindowOnly: Bool
+        focusedWindowOnly: Bool,
+        interactiveOnly: Bool
     ) async -> CUSnapshot {
         switch tier {
         case .ax:
@@ -117,6 +118,7 @@ public struct NativeMacDriver: MacDriver {
                 var filter = ElementFilter(pid: pid)
                 if let maxElements { filter.maxElements = maxElements }
                 if focusedWindowOnly { filter.focusedWindowOnly = true }
+                filter.interactiveOnly = interactiveOnly
                 return AccessibilityManager.shared.traverse(filter: filter)
             }
             return mapSnapshot(snapshot, tier: .ax, image: nil)

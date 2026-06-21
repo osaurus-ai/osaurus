@@ -103,12 +103,18 @@ public struct ScreenContextDistiller: Sendable {
         var workingWindowTitle = working?.windowTitle
 
         if let working {
+            // `interactiveOnly: false` so passive content roles (statictext,
+            // headings, …) come through — they're the real "what's on screen"
+            // signal, not the buttons/menus an interactive-only tree returns.
+            // The larger element budget gives that content room past the chrome
+            // that tends to sit at the top of the tree.
             let snap = await driver.capture(
                 pid: working.pid,
                 tier: .ax,
                 windowId: nil,
-                maxElements: 80,
-                focusedWindowOnly: true
+                maxElements: 150,
+                focusedWindowOnly: true,
+                interactiveOnly: false
             )
             if let title = snap.focusedWindow, !title.isEmpty {
                 workingWindowTitle = title
@@ -209,42 +215,90 @@ public struct ScreenContextDistiller: Sendable {
         windowTitle: String?,
         focused: ScreenContextSnapshot.FocusedElement?
     ) -> [String] {
-        // Seed the de-dup set with text we've already surfaced so the sample
-        // only adds new signal.
-        var seen = Set([windowTitle, focused?.value, focused?.label].compactMap { $0?.lowercased() })
-        var items: [String] = []
+        // Seed the de-dup set with text we've already surfaced (window title +
+        // focused draft) so the sample only adds new signal. Keys are the
+        // sanitized, case-folded form so a trailing zero-width char can't slip
+        // a near-duplicate through.
+        var seen = Set(
+            [windowTitle, focused?.value, focused?.label].compactMap { $0 }.map(dedupKey)
+        )
 
-        for element in snapshot.elements {
+        // Rank candidates so genuine content leads (headings, then body text,
+        // then filled inputs) and lower tiers only fill leftover budget. The
+        // index tiebreaker keeps document order within a tier, since `sort` is
+        // not stable.
+        var ranked: [(rank: ContentRank, index: Int, text: String)] = []
+        for (index, element) in snapshot.elements.enumerated() {
+            // The focused field is already surfaced as "Focused field:"; don't
+            // repeat it here.
+            if element.focused { continue }
+            guard let item = sampledItem(for: element), !isLowSignal(item.text) else { continue }
+            ranked.append((rank: item.rank, index: index, text: item.text))
+        }
+        ranked.sort { ($0.rank.rawValue, $0.index) < ($1.rank.rawValue, $1.index) }
+
+        var items: [String] = []
+        for candidate in ranked {
             if items.count >= maxContentItems { break }
-            guard let text = sampleText(for: element) else { continue }
-            let key = text.lowercased()
-            if seen.insert(key).inserted {
-                items.append(text)
-            }
+            let key = dedupKey(candidate.text)
+            guard !key.isEmpty, seen.insert(key).inserted else { continue }
+            items.append(candidate.text)
         }
         return items
     }
 
-    /// One sampled line for an element, or nil if it carries no useful text.
-    private func sampleText(for element: CUElement) -> String? {
+    /// On-screen content tiers, highest priority first.
+    private enum ContentRank: Int {
+        case heading
+        case bodyText
+        case input
+    }
+
+    /// One ranked sample line for an element, or nil for UI chrome / empty
+    /// elements.
+    private func sampledItem(for element: CUElement) -> (text: String, rank: ContentRank)? {
         let label = cleaned(element.label, limit: maxItemChars)
         let value = cleaned(element.value, limit: maxItemChars)
 
         switch element.role.lowercased() {
-        case "statictext", "heading", "staticrtext":
-            return value ?? label
-        case "button", "link", "menuitem", "menubaritem", "tab", "checkbox", "radiobutton",
-            "popupbutton", "menubutton":
-            return label
+        case "heading":
+            guard let text = value ?? label else { return nil }
+            return (text, .heading)
+        case "statictext", "staticrtext":
+            guard let text = value ?? label else { return nil }
+            return (text, .bodyText)
         case "securetextfield":
-            return label.map { "\($0): (hidden)" }
+            guard let label else { return nil }
+            return ("\(label): (hidden)", .input)
         case "textfield", "textarea", "searchfield", "combobox":
             // Non-focused inputs only matter when they already hold something.
             guard let value else { return nil }
-            return label.map { "\($0): \(value)" } ?? value
+            return (label.map { "\($0): \(value)" } ?? value, .input)
         default:
+            // Interactive chrome (buttons, links, menu items, tabs, …) and
+            // structural roles carry no real "what's on screen" signal.
             return nil
         }
+    }
+
+    /// Characters that carry no signal alone: keyboard-shortcut glyphs plus the
+    /// brackets/spaces that wrap them in hints like "(⌘J)". A string made only
+    /// of these is chrome, not content.
+    private static let decorativeCharacters: Set<Character> = [
+        "⌘", "⌥", "⌃", "⇧", "↩", "⏎", "⌫", "⌦", "⎋", "⇥", "⇪", "⌅", "␣",
+        "(", ")", "[", "]", "{", "}", " ",
+    ]
+
+    /// True for items too short or shortcut-only to be worth surfacing.
+    private func isLowSignal(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespaces)
+        if trimmed.count < 2 { return true }
+        return trimmed.filter { !Self.decorativeCharacters.contains($0) }.count < 2
+    }
+
+    /// Folded key for de-dup: sanitized, then case-folded.
+    private func dedupKey(_ text: String) -> String {
+        normalize(text).lowercased()
     }
 
     // MARK: - Gist
@@ -292,12 +346,37 @@ public struct ScreenContextDistiller: Sendable {
 
     // MARK: - Text helpers
 
-    /// Collapse whitespace/newlines into a single line and truncate to `limit`.
+    /// Sanitize on-screen text: drop non-printing scalars and collapse every run
+    /// of whitespace/newlines into single spaces. Stripping the non-printing
+    /// scalars is what kills the blank `- ` lines (icon-only / codicon buttons)
+    /// and folds `"Agents Window\u{200b}"` into `"Agents Window"` so de-dup works.
+    private func normalize(_ text: String) -> String {
+        let printable = String.UnicodeScalarView(text.unicodeScalars.filter(Self.isPrintable))
+        return String(printable).split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+    }
+
+    /// `normalize`, then truncate to `limit` with an ellipsis.
     private func clean(_ text: String, limit: Int) -> String {
-        let collapsed = text.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
-        guard collapsed.count > limit else { return collapsed }
-        let end = collapsed.index(collapsed.startIndex, offsetBy: limit)
-        return String(collapsed[..<end]).trimmingCharacters(in: .whitespaces) + "…"
+        let normalized = normalize(text)
+        guard normalized.count > limit else { return normalized }
+        let end = normalized.index(normalized.startIndex, offsetBy: limit)
+        return String(normalized[..<end]).trimmingCharacters(in: .whitespaces) + "…"
+    }
+
+    /// Scalars worth keeping when sanitizing on-screen text. Whitespace is kept
+    /// so `normalize` can collapse it; control (Cc), format/zero-width (Cf),
+    /// private-use icon glyphs (Co), surrogate (Cs), unassigned, and explicit
+    /// line/paragraph separators are dropped because they render blank or defeat
+    /// de-dup.
+    private static func isPrintable(_ scalar: Unicode.Scalar) -> Bool {
+        if scalar.properties.isWhitespace { return true }
+        switch scalar.properties.generalCategory {
+        case .control, .format, .privateUse, .surrogate, .unassigned,
+            .lineSeparator, .paragraphSeparator:
+            return false
+        default:
+            return true
+        }
     }
 
     /// `clean`, but nil for nil / whitespace-only input.

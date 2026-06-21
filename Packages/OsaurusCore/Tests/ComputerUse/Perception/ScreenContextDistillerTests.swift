@@ -107,8 +107,9 @@ final class ScreenContextDistillerTests: XCTestCase {
         XCTAssertEqual(snap.activityGist, "In Safari — \"Weather — Safari\"; editing text field (draft present)")
         XCTAssertEqual(snap.windows.first?.app, "Safari")
         XCTAssertTrue(snap.windows.first?.frontmost ?? false)
-        // The focused draft is not repeated in the on-screen sample; other text is.
-        XCTAssertTrue(snap.sampledContents.contains("Go"))
+        // Interactive chrome (the "Go" button) is dropped; real on-screen text
+        // is kept, and the focused draft is not repeated in the sample.
+        XCTAssertFalse(snap.sampledContents.contains("Go"))
         XCTAssertTrue(snap.sampledContents.contains("Results for weather"))
         XCTAssertFalse(snap.sampledContents.contains("weather tomorrow"))
     }
@@ -319,5 +320,120 @@ final class ScreenContextDistillerTests: XCTestCase {
         XCTAssertFalse(snap.accessibilityGranted)
         XCTAssertTrue(snap.isEmpty)
         XCTAssertEqual(snap.render(), "")
+    }
+
+    // MARK: On-screen sampling (ranking, sanitizing, de-dup)
+
+    /// A focused-window AX tree shaped like an Electron app (Cursor): a few real
+    /// content nodes buried under toolbar/menu chrome and icon-only glyphs.
+    private func cursorDriver(_ elements: [CUElement]) -> MockMacDriver {
+        let title = "ScreenContextSnapshot.swift — osaurus"
+        let snapshot = CUSnapshot(
+            snapshotId: 1,
+            pid: 100,
+            app: "Cursor",
+            focusedWindow: title,
+            tier: .ax,
+            truncated: false,
+            windows: [CUWindowSummary(id: 1, title: title, focused: true, x: 0, y: 0, w: 1400, h: 900)],
+            elements: elements,
+            image: nil
+        )
+        return makeDriver(
+            apps: [
+                CUAppListing(pid: 100, bundleId: "com.todesktop.cursor", name: "Cursor", active: true, hidden: false)
+            ],
+            active: CUActiveWindow(pid: 100, app: "Cursor", title: title, x: 0, y: 0, w: 1400, h: 900),
+            windowsByPid: [
+                100: [
+                    CUWindowInfo(
+                        windowId: 1,
+                        title: title,
+                        focused: true,
+                        minimized: false,
+                        x: 0,
+                        y: 0,
+                        w: 1400,
+                        h: 900
+                    )
+                ]
+            ],
+            snapshots: [100: [snapshot]]
+        )
+    }
+
+    private func sample(_ elements: [CUElement]) async -> [String] {
+        await ScreenContextDistiller().capture(
+            using: cursorDriver(elements),
+            selfPid: selfPid,
+            selfBundleId: selfBundleId,
+            preferredPid: nil
+        ).sampledContents
+    }
+
+    func testDropsChromeAndRanksContentFirst() async {
+        let sampled = await sample([
+            CUElement(id: "b1", role: "button", label: "Toggle Primary Side Bar (⌘B)", windowId: 1),
+            CUElement(id: "b2", role: "button", label: "Go Back (⌃-)", windowId: 1),
+            CUElement(id: "m1", role: "menuitem", label: "Open Cursor Settings", windowId: 1),
+            CUElement(id: "tab", role: "tab", label: "ScreenContextSnapshot.swift", windowId: 1),
+            CUElement(id: "t1", role: "statictext", value: "public func render() -> String", windowId: 1),
+            CUElement(id: "h1", role: "heading", label: "Outline", windowId: 1),
+        ])
+
+        // Real content survives.
+        XCTAssertTrue(sampled.contains("Outline"))
+        XCTAssertTrue(sampled.contains("public func render() -> String"))
+        // Interactive chrome (buttons, menu items, tabs) is dropped entirely.
+        XCTAssertFalse(sampled.contains { $0.contains("Toggle Primary Side Bar") })
+        XCTAssertFalse(sampled.contains { $0.contains("Go Back") })
+        XCTAssertFalse(sampled.contains("Open Cursor Settings"))
+        XCTAssertFalse(sampled.contains("ScreenContextSnapshot.swift"))
+        // Headings rank ahead of body text.
+        let headingIdx = sampled.firstIndex(of: "Outline")
+        let bodyIdx = sampled.firstIndex(of: "public func render() -> String")
+        XCTAssertNotNil(headingIdx)
+        XCTAssertNotNil(bodyIdx)
+        if let headingIdx, let bodyIdx {
+            XCTAssertLessThan(headingIdx, bodyIdx)
+        }
+    }
+
+    func testSanitizesGlyphsAndDeduplicates() async {
+        let sampled = await sample([
+            // Icon-only codicon glyph (private-use area) -> renders blank.
+            CUElement(id: "icon", role: "statictext", value: "\u{ea7b}", windowId: 1),
+            // Whitespace-only.
+            CUElement(id: "blank", role: "statictext", value: "   ", windowId: 1),
+            // Keyboard-shortcut-only -> low signal.
+            CUElement(id: "sc", role: "statictext", value: "⌘J", windowId: 1),
+            // Zero-width-suffixed duplicate of the next item.
+            CUElement(id: "zw1", role: "statictext", value: "Agents Window\u{200b}", windowId: 1),
+            CUElement(id: "zw2", role: "statictext", value: "Agents Window", windowId: 1),
+            CUElement(id: "real", role: "statictext", value: "Read-only background context", windowId: 1),
+        ])
+
+        // No blank / whitespace-only lines leak through.
+        XCTAssertFalse(sampled.contains { $0.trimmingCharacters(in: .whitespaces).isEmpty })
+        // Shortcut-only entry is dropped.
+        XCTAssertFalse(sampled.contains("⌘J"))
+        // The zero-width-suffixed pair folds into a single entry.
+        XCTAssertEqual(sampled.filter { $0 == "Agents Window" }.count, 1)
+        // Genuine text remains.
+        XCTAssertTrue(sampled.contains("Read-only background context"))
+    }
+
+    func testRequestsContentInclusiveCapture() async {
+        let driver = cursorDriver([
+            CUElement(id: "t1", role: "statictext", value: "hello world", windowId: 1)
+        ])
+        _ = await ScreenContextDistiller().capture(
+            using: driver,
+            selfPid: selfPid,
+            selfBundleId: selfBundleId,
+            preferredPid: nil
+        )
+        let interactiveOnly = await driver.lastCaptureInteractiveOnly
+        XCTAssertEqual(interactiveOnly, false)
     }
 }

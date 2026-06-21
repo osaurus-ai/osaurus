@@ -414,13 +414,18 @@ public protocol MacDriver: Sendable {
     /// Launch (or attach to) an app, backgrounded by default.
     func open(identifier: String, background: Bool) async -> Result<CUAppInfo, MacDriverError>
 
-    /// Perceive an app at a given tier.
+    /// Perceive an app at a given tier. `interactiveOnly` controls whether the
+    /// AX traversal keeps only actionable elements (buttons, fields, …) or also
+    /// includes passive content roles like `statictext` — the latter is what
+    /// the screen-context distiller needs to surface real on-screen text rather
+    /// than UI chrome.
     func capture(
         pid: Int32,
         tier: CaptureTier,
         windowId: Int?,
         maxElements: Int?,
-        focusedWindowOnly: Bool
+        focusedWindowOnly: Bool,
+        interactiveOnly: Bool
     ) async -> CUSnapshot
 
     /// Server-side element query (a filtered capture). Always ax-tier.
@@ -455,7 +460,8 @@ extension MacDriver {
             tier: tier,
             windowId: nil,
             maxElements: nil,
-            focusedWindowOnly: false
+            focusedWindowOnly: false,
+            interactiveOnly: true
         )
     }
 

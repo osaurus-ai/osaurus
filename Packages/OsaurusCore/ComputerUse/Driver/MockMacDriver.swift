@@ -33,6 +33,9 @@ public actor MockMacDriver: MacDriver {
     public private(set) var coordinateActions: [CUCoordinateAction] = []
     public private(set) var narrations: [(note: String, step: Int?, total: Int?)] = []
     public private(set) var captureCount: Int = 0
+    /// `interactiveOnly` argument from the most recent `capture` call, so tests
+    /// can assert the screen-context distiller requests a content-inclusive tree.
+    public private(set) var lastCaptureInteractiveOnly: Bool?
 
     // MARK: Init
 
@@ -99,9 +102,11 @@ public actor MockMacDriver: MacDriver {
         tier: CaptureTier,
         windowId: Int?,
         maxElements: Int?,
-        focusedWindowOnly: Bool
+        focusedWindowOnly: Bool,
+        interactiveOnly: Bool
     ) async -> CUSnapshot {
         captureCount += 1
+        lastCaptureInteractiveOnly = interactiveOnly
         return nextSnapshot(pid: pid, tier: tier)
     }
 
