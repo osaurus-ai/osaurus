@@ -254,6 +254,44 @@ public final class PrivacyFilterEngine {
         return out
     }
 
+    /// Model-only NER spans (`person` / `address` / `date` / `secret`, plus
+    /// any other category the on-device classifier emits) for a single text,
+    /// with NO regex layer and NO `RedactionMap` interning. Returns `[]` when
+    /// the engine isn't loaded.
+    ///
+    /// This is the seam the screenshot `FrameScrubber` uses: it already runs
+    /// the deterministic `RegexEntityDetector` layer itself (over OCR'd text),
+    /// and only needs the model's categories on top so a screenshot bound for
+    /// a cloud model masks the same `person`/`address`/`secret` spans the text
+    /// Privacy Filter would — not just the regex-detectable ones. Best-effort
+    /// warms the bundle once (same posture as `applyOutbound`'s lazy load) so a
+    /// cold engine doesn't silently degrade a consented cloud-vision scrub.
+    public func modelSpans(in text: String)
+        async -> [(category: EntityCategory, range: Range<String.Index>)]
+    {
+        guard !text.isEmpty else { return [] }
+        if kit == nil {
+            let bundleDir = PrivacyFilterModelBundle.directoryURL()
+            if PrivacyFilterModelBundle.exists(at: bundleDir) {
+                try? await loadIfNeeded(bundle: bundleDir)
+            }
+        }
+        guard let kit else { return [] }
+        let entities: [Entity]
+        do {
+            entities = try await kit.extractEntities(from: text)
+        } catch {
+            return []
+        }
+        var out: [(category: EntityCategory, range: Range<String.Index>)] = []
+        out.reserveCapacity(entities.count)
+        for entity in entities {
+            guard let category = EntityCategory(entity.type) else { continue }
+            out.append((category, entity.range))
+        }
+        return out
+    }
+
     /// Merge model + regex matches into a non-overlapping set.
     ///
     /// Sort start-ascending, ties by longer span. On overlap, keep

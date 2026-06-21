@@ -179,14 +179,26 @@ scrubbing:
   relaunch, `UserDefaults` key `ai.osaurus.computeruse.cloudVisionConsent`) and a
   transient this-launch-only grant. Revoke clears both.
 - **`FrameScrubber`** (`ComputerUse/Perception/FrameScrubber.swift`) — the only
-  producer of a `ScrubbedFrame`. It runs Vision OCR over a frame and finds PII
-  with the same `RegexEntityDetector` engine the Privacy Filter uses, but with
-  **all built-in detectors** (the parameterless `detect(in:)`) rather than the
-  user's configured Privacy Filter ruleset — so frame scrubbing doesn't honor
-  disabled categories, presets, or custom rules the way outbound text filtering
-  does. It paints opaque boxes over the offending regions (or every text region
-  in `.allText` mode) before any frame can leave the device. A `ScrubReport`
-  (counts only) stays on-device for the feed/telemetry.
+  producer of a `ScrubbedFrame`. It runs Vision OCR over a frame and redacts it
+  in one of two modes:
+  - **`.allText` (default for cloud)** — paints opaque boxes over **every**
+    recognized text region, so nothing readable leaves the device. This is what
+    a consented cloud screenshot uses out of the box.
+  - **`.pii`** (opt-in via Settings → Computer Use → *Mask only detected
+    sensitive text*) — masks only regions whose text matched a detector. For
+    parity with outbound text filtering, the cloud path runs **both** the
+    `RegexEntityDetector` layer built from the **user's configured Privacy
+    Filter ruleset** (`honorUserRules: true` — honoring disabled categories,
+    presets, and custom rules) **and** the on-device NER model
+    (`PrivacyFilterEngine.modelSpans`) for `person` / `address` / `date` /
+    `secret`, which have no regex. A region with a model hit is masked whole
+    (recall over precision). Detection isn't perfect — OCR or the model can
+    miss text — which is why `.allText` is the default.
+
+  Either way it paints opaque boxes before any frame can leave the device. A
+  `ScrubReport` (counts only) stays on-device for the feed/telemetry. The mode
+  is resolved once per run into `VisionContext.cloudScrubMode` so a mid-run
+  settings edit can't change it under a running loop.
 - **`CaptureRouter.cloudRoute(...)`** — accepts **only** a `ScrubbedFrame` and
   returns `nil` unless consent is granted and Screen Recording is on. So the
   harness physically cannot reach `.cloudVision` without both a scrubbed frame
@@ -196,7 +208,11 @@ scrubbing:
   into a `Plan`: `.none`, `.localFrame` (local model — attach as-is), or
   `.needsScrubForCloud` (remote model — scrub then route). The loop attaches at
   most one screenshot to the conversation at a time and reserves image tokens
-  against the context budget.
+  against the context budget. When a frame *would* reach a cloud model if only
+  consent were granted (`wouldAttachWithConsent`), the loop surfaces a
+  **just-in-time consent prompt** once per run (Allow once / Always allow / Not
+  now) instead of silently staying AX-only — wiring `grantForSession()` /
+  `grantPersistently()` to the user's choice.
 
 A frame is only ever attached to a model request when **the model accepts
 images** (`ComputerUseTool.modelAcceptsImages`: local VLM detection / media
@@ -264,11 +280,30 @@ The gate decides `allow` / `confirm` / `deny` for every action by combining a
 | `consequential` | Commits something hard to undo or crossing a trust boundary: send, submit, delete, purchase, share with recipients. |
 
 The classifier starts from the verb's baseline and **escalates** using the
-resolved role + app context: consequential signals (Send / Delete / Purchase /
-Submit …) escalate on their own, while commit signals (Save / Done / Apply / OK
-…) escalate only when paired with **recipients** — plus the ⌘Return submit
-chord, ambiguous targets, and per-app recipe signals. It can only raise the
-effect, never lower it.
+resolved role + app context. Its signal string includes the element's `label`,
+`roleDescription`, and (for non-text-input roles) `value` — so an icon-only or
+value-titled control is still classified — plus the model's `describe`/`note`.
+Escalation rules:
+
+- **Consequential signals** (Send / Delete / Purchase / Submit …) escalate to
+  `consequential` on their own.
+- **Commit signals** (Save / Done / Apply / OK / Create / Add …) escalate to
+  `consequential` when paired with **recipients**, and otherwise to at least
+  **`edit`** on their own — so a bare "Save"/"OK" confirms under `balanced`
+  instead of silently auto-running as `navigate`.
+- **Icon-only / ambiguous controls** — a click on a button-like role with no
+  readable label/value/description (or any click with no identifiable target)
+  escalates to at least `edit`.
+- Plus the ⌘Return submit chord and per-app recipe signals.
+
+It can only raise the effect, never lower it.
+
+Independently of the preset/override/ceiling — and of the (often-empty)
+allowlist — `ComputerUseGate` applies a **dangerous-app guardrail**: driving a
+sensitive app (Terminal & friends, System Settings, Keychain Access, Activity
+Monitor, Disk Utility, Script Editor/Automator, password managers, …) always
+requires at least a confirm. It can only tighten, and the user can still
+approve at the prompt (`AutonomyPolicy.forcedConfirmAppNeedles`).
 
 ### Policy stack (strictest-wins)
 
@@ -320,9 +355,12 @@ Vivaldi / Opera).
 ## UI surfaces
 
 - **Settings → Computer Use** (`Views/Settings/ComputerUseSettingsView.swift`) —
-  global preset picker, per-app overrides, app allowlist, the **Cloud vision**
-  consent toggle ("Allow scrubbed screenshots to reach a cloud model", off by
-  default), the **Screen context** opt-in + live preview (see above),
+  global preset picker, per-app overrides (the picker is filtered to presets at
+  least as strict as the global default, since a looser per-app rule would
+  silently no-op), app allowlist, the **Cloud vision** consent toggle (off by
+  default) plus a **Mask only detected sensitive text** toggle (off = `.allText`,
+  the safest) and copy disclosing the on-device scrub's limits and the Screen
+  Recording dependency, the **Screen context** opt-in + live preview (see above),
   Accessibility / Screen Recording permission rows, and an "Enabling Computer
   Use" explainer.
 - **Per-agent** (Agents → Configure → Features) — the `computerUseEnabled`
@@ -331,8 +369,12 @@ Vivaldi / Opera).
   `ComputerUseFeed` renders each perceive/decide/gate/act/verify step in the
   chat row; the inner steps never enter the parent transcript.
 - **Confirm overlay** — `confirm` dispositions pause the loop and surface an
-  `ActionPreview` through the single-slot `ComputerUsePromptQueue`; a [Stop]
-  control interrupts the run (`InterruptToken`).
+  `ActionPreview` (structured app / action / target / expandable typed-text
+  fields, with an optional "don't ask again for similar actions in this app"
+  for the run) through the single-slot `ComputerUsePromptQueue`, which also
+  hosts the just-in-time cloud-vision consent card. A [Stop] control interrupts
+  the run (`InterruptToken`) **and** resolves any pending card, so Stop works
+  even while a confirmation is up.
 
 ## Telemetry
 
@@ -355,6 +397,7 @@ sends.
 |------------|---------|
 | `~/.osaurus/config/computer-use.json` | `AutonomyPolicy` (global preset + per-app overrides + allowlist), via `ComputerUsePolicyStore`. |
 | `UserDefaults` `ai.osaurus.computeruse.cloudVisionConsent` | Persisted cloud-vision opt-in (default `false`). |
+| `UserDefaults` `ai.osaurus.computeruse.cloudVisionPIIOnly` | Cloud screenshot redaction mode: `false` (default) = `.allText` (mask everything), `true` = `.pii` (mask only detected sensitive text). |
 | `UserDefaults` `ai.osaurus.computeruse.screenContextInjection` | Persisted screen-context opt-in (default `false`), via `ScreenContextSettings`. |
 | `Agent.settings.computerUseEnabled` / `computerUseCeiling` | Per-agent enablement + autonomy ceiling (in the agent JSON). |
 

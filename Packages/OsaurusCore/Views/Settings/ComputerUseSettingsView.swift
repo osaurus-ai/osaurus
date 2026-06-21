@@ -618,14 +618,20 @@ struct ComputerUseSettingsView: View {
             } else {
                 ForEach(sortedOverrideKeys, id: \.self) { appKey in
                     appRow(icon: "app.dashed", iconColor: theme.secondaryText, name: appKey) {
+                        let current = policy.perApp[appKey] ?? .cautious
                         presetPickerMenu(
                             Binding(
-                                get: { policy.perApp[appKey] ?? .cautious },
+                                get: { current },
                                 set: {
                                     policy.perApp[appKey] = $0
                                     persist()
                                 }
-                            )
+                            ),
+                            // Per-app rules can only TIGHTEN (strictest-wins merge), so
+                            // a looser preset would silently no-op. Only offer presets
+                            // at least as strict as the global default (plus whatever's
+                            // currently selected, so a pre-existing rule stays visible).
+                            options: perAppPresetOptions(current: current)
                         )
                         removeButton(help: L("Remove rule")) { removeOverride(appKey) }
                     }
@@ -692,6 +698,35 @@ struct ComputerUseSettingsView: View {
             }
             .padding(12)
             .surface(cornerRadius: 10, fill: theme.inputBackground, stroke: theme.inputBorder)
+
+            // Redaction mode: mask everything (default, safest) vs. mask only
+            // detected PII (less strict — leaves non-sensitive text readable).
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(L("Mask only detected sensitive text"))
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(theme.primaryText)
+                    hintText(
+                        "Off (recommended): mask ALL on-screen text before sending. On: send a screenshot where only detected sensitive text (names, emails, numbers, secrets) is masked — other text stays readable to the model."
+                    )
+                }
+                Spacer(minLength: 12)
+                Toggle(
+                    "",
+                    isOn: Binding(
+                        get: { cloudVisionConsent.masksOnlyDetectedPII },
+                        set: { cloudVisionConsent.setMasksOnlyDetectedPII($0) }
+                    )
+                )
+                .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
+                .labelsHidden()
+            }
+            .padding(12)
+            .surface(cornerRadius: 10, fill: theme.inputBackground, stroke: theme.inputBorder)
+
+            hintText(
+                "Masking runs on-device using OCR + the Privacy Filter (your configured rules plus an on-device model for names/addresses/dates/secrets). Detection isn't perfect — it can miss text OCR can't read or the model doesn't recognize — so \"mask only sensitive text\" trades some privacy for the model seeing more context. Screenshots also require Screen Recording permission; without it the agent stays on accessibility text only."
+            )
         }
     }
 
@@ -746,9 +781,12 @@ struct ComputerUseSettingsView: View {
     }
 
     @ViewBuilder
-    private func presetPickerMenu(_ selection: Binding<AutonomyPreset>) -> some View {
+    private func presetPickerMenu(
+        _ selection: Binding<AutonomyPreset>,
+        options: [AutonomyPreset] = AutonomyPreset.allCases
+    ) -> some View {
         Menu {
-            ForEach(AutonomyPreset.allCases) { preset in
+            ForEach(options) { preset in
                 Button {
                     selection.wrappedValue = preset
                 } label: {
@@ -810,6 +848,21 @@ struct ComputerUseSettingsView: View {
 
     private var sortedOverrideKeys: [String] {
         policy.perApp.keys.sorted()
+    }
+
+    /// Presets a per-app rule may pick: those at least as strict as the global
+    /// default on every effect (a looser one would silently no-op under the
+    /// strictest-wins merge), plus the currently selected value so an existing
+    /// rule never vanishes from its own menu.
+    private func perAppPresetOptions(current: AutonomyPreset) -> [AutonomyPreset] {
+        let global = policy.globalPreset
+        let effects: [EffectClass] = [.navigate, .edit, .consequential]
+        return AutonomyPreset.allCases.filter { preset in
+            if preset == current { return true }
+            return effects.allSatisfy {
+                preset.disposition(for: $0) >= global.disposition(for: $0)
+            }
+        }
     }
 
     private func persist() {

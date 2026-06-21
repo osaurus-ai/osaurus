@@ -87,7 +87,7 @@ struct ToolOutputCompressorTests {
     @Test func compactJSONIsReturnedByteIdentical() {
         // Already-compact JSON (no insignificant whitespace), padded over the
         // minimum-length gate. The crush must be a true no-op.
-        let pairs = (0..<40).map { "{\"id\":\($0),\"v\":\"item-value-\($0)\"}" }
+        let pairs = (0 ..< 40).map { "{\"id\":\($0),\"v\":\"item-value-\($0)\"}" }
         let compactJSON = "[" + pairs.joined(separator: ",") + "]"
         #expect(compactJSON.utf8.count >= ToolOutputCompressor.minimumLength)
         #expect(ToolOutputCompressor.compact(compactJSON) == compactJSON)
@@ -222,7 +222,7 @@ struct ToolOutputCompressorTests {
         // 2) Log/listing output that carries trailing whitespace (common from
         // shells, formatters, and some loggers).
         let log =
-            (1...60).map { "[\($0)] processing batch \($0) status=ok   \t" }
+            (1 ... 60).map { "[\($0)] processing batch \($0) status=ok   \t" }
             .joined(separator: "\n") + "\n"
         let stripped = ToolOutputCompressor.compact(log)
         let lBefore = ContextBudgetManager.estimateTokens(for: log)

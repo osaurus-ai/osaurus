@@ -1,0 +1,36 @@
+{
+  "apps": [
+    { "pid": 303, "bundleId": "com.apple.Safari", "name": "Safari", "active": true, "hidden": false }
+  ],
+  "activeWindow": {
+    "pid": 303,
+    "app": "Safari",
+    "title": "Sign in — Example",
+    "x": 0, "y": 0, "w": 1200, "h": 800
+  },
+  "windowsByPid": {
+    "303": [
+      { "windowId": 1, "title": "Sign in — Example", "focused": true, "minimized": false, "x": 0, "y": 0, "w": 1200, "h": 800 }
+    ]
+  },
+  "snapshot": {
+    "app": "Safari",
+    "focusedWindow": "Sign in — Example",
+    "truncated": false,
+    "windows": [
+      { "id": 1, "title": "Sign in — Example", "focused": true, "x": 0, "y": 0, "w": 1200, "h": 800 }
+    ],
+    "elements": [
+      { "id": "intro", "role": "statictext", "value": "Sign in to continue to your team workspace.", "focused": false, "enabled": true, "x": 300, "y": 150, "w": 600, "h": 24, "actions": [] },
+      { "id": "pw", "role": "securetextfield", "label": "Password", "value": "hunter2-DoNotLeak-9921", "focused": true, "enabled": true, "x": 300, "y": 250, "w": 400, "h": 32, "actions": [] },
+      { "id": "oldpw", "role": "securetextfield", "label": "Current password", "value": "old-secret-PleaseHide-7788", "focused": false, "enabled": true, "x": 300, "y": 300, "w": 400, "h": 32, "actions": [] },
+      { "id": "signin", "role": "button", "label": "Sign In", "focused": false, "enabled": true, "x": 300, "y": 360, "w": 120, "h": 32, "actions": [] }
+    ]
+  },
+  "focusedContent": {
+    "role": "securetextfield",
+    "label": "Password",
+    "value": "hunter2-DoNotLeak-9921",
+    "selectedText": "hunter2-DoNotLeak-9921"
+  }
+}

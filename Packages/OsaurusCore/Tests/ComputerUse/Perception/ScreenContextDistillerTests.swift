@@ -1053,4 +1053,83 @@ final class ScreenContextDistillerTests: XCTestCase {
         XCTAssertFalse(text.contains("Active:"))
         XCTAssertFalse(text.contains("Status:"))
     }
+
+    // MARK: Secure-field guard
+
+    /// A focused secure text field never surfaces its value/selection/viewport
+    /// through the DIRECT focused-content read — even if the driver somehow
+    /// reads one — so a password can't reach the model via screen context.
+    func testSecureFieldDirectReadNeverSurfacesValue() async {
+        let secret = "hunter2-topsecret"
+        let driver = editorDriver(
+            app: "Safari",
+            bundleId: "com.apple.Safari",
+            title: "Sign in — Example",
+            elements: [
+                CUElement(
+                    id: "pw",
+                    role: "securetextfield",
+                    label: "Password",
+                    value: secret,
+                    windowId: 1,
+                    focused: true
+                )
+            ],
+            focusedContent: CUFocusedContent(
+                role: "securetextfield",
+                label: "Password",
+                value: secret,
+                selectedText: secret,
+                viewport: secret
+            )
+        )
+
+        let snap = await ScreenContextDistiller().capture(
+            using: driver,
+            selfPid: selfPid,
+            selfBundleId: selfBundleId,
+            preferredPid: nil
+        )
+
+        XCTAssertNil(snap.focusedElement?.value)
+        XCTAssertNil(snap.focusedElement?.selectedText)
+        XCTAssertNil(snap.focusedElement?.viewing)
+        // The label still surfaces (it's not secret) so the field is represented.
+        XCTAssertEqual(snap.focusedElement?.label, "Password")
+        XCTAssertFalse(snap.render().contains(secret))
+    }
+
+    /// Same guard on the breadth-limited TRAVERSAL fallback (no direct read): a
+    /// focused secure field surfaces only its role/label, never its value.
+    func testSecureFieldTraversalFallbackNeverSurfacesValue() async {
+        let secret = "p@ssw0rd-do-not-leak"
+        let driver = editorDriver(
+            app: "Safari",
+            bundleId: "com.apple.Safari",
+            title: "Sign in — Example",
+            elements: [
+                CUElement(
+                    id: "pw",
+                    role: "axsecuretextfield",
+                    label: "Password",
+                    value: secret,
+                    windowId: 1,
+                    focused: true
+                )
+            ],
+            focusedContent: nil
+        )
+
+        let snap = await ScreenContextDistiller().capture(
+            using: driver,
+            selfPid: selfPid,
+            selfBundleId: selfBundleId,
+            preferredPid: nil
+        )
+
+        XCTAssertNil(snap.focusedElement?.value)
+        XCTAssertNil(snap.focusedElement?.selectedText)
+        XCTAssertFalse(snap.render().contains(secret))
+        XCTAssertFalse(snap.sampledContents.contains { $0.contains(secret) })
+    }
 }

@@ -282,9 +282,13 @@ public struct ScreenContextDistiller: Sendable {
         snapshot: CUSnapshot
     ) -> ScreenContextSnapshot.FocusedElement? {
         if let direct {
-            let viewing = contentValue(direct.viewport, limit: maxViewingChars)
-            let value = contentValue(direct.value, limit: maxValueChars)
-            let selected = contentValue(direct.selectedText, limit: maxValueChars)
+            // Secure fields: never surface value/selection/viewport even if the
+            // driver somehow read one (it shouldn't). Defense-in-depth so a
+            // password never reaches the model via screen context.
+            let isSecure = Self.secureFieldRoles.contains(direct.role.lowercased())
+            let viewing = isSecure ? nil : contentValue(direct.viewport, limit: maxViewingChars)
+            let value = isSecure ? nil : contentValue(direct.value, limit: maxValueChars)
+            let selected = isSecure ? nil : contentValue(direct.selectedText, limit: maxValueChars)
             let label = labelValue(direct.label, limit: maxItemChars)
             let placeholder = labelValue(direct.placeholder, limit: maxItemChars)
             if viewing != nil || value != nil || selected != nil || label != nil
@@ -316,8 +320,11 @@ public struct ScreenContextDistiller: Sendable {
         }
 
         guard let element = snapshot.elements.first(where: { $0.focused }) else { return nil }
-        let value = contentValue(element.value, limit: maxValueChars)
-        let selected = contentValue(element.selectedText, limit: maxValueChars)
+        // Same secure-field guard on the breadth-limited traversal fallback: a
+        // focused password field surfaces only its role/label, never its value.
+        let isSecure = Self.secureFieldRoles.contains(element.role.lowercased())
+        let value = isSecure ? nil : contentValue(element.value, limit: maxValueChars)
+        let selected = isSecure ? nil : contentValue(element.selectedText, limit: maxValueChars)
         let label = labelValue(element.label, limit: maxItemChars)
         let placeholder = labelValue(element.placeholder, limit: maxItemChars)
         if value == nil, selected == nil, label == nil, placeholder == nil,
@@ -613,6 +620,13 @@ public struct ScreenContextDistiller: Sendable {
     /// a "Focused field: <role>" line even when the content is unreadable.
     private static let rawInputRoles: Set<String> = [
         "textfield", "textarea", "searchfield", "securetextfield", "combobox",
+    ]
+
+    /// Secure-text roles whose `value`/`selectedText` must never be surfaced —
+    /// raw AX + friendly forms. The driver already refuses to read these; this is
+    /// a belt-and-suspenders guard in the distiller.
+    private static let secureFieldRoles: Set<String> = [
+        "securetextfield", "axsecuretextfield", "securefield",
     ]
 
     /// Characters that carry no signal alone: keyboard-shortcut glyphs plus the

@@ -198,6 +198,9 @@ public enum ComputerUseLoop {
         feed: ComputerUseFeed,
         interrupt: InterruptToken,
         confirm: @escaping @Sendable (ActionPreview) async -> Bool,
+        requestCloudVisionConsent: @escaping @Sendable () async -> CloudVisionConsentChoice = {
+            .deny
+        },
         limits: RunLimits = RunLimits(),
         policySummary: String = "",
         vision: VisionContext = .none,
@@ -244,6 +247,9 @@ public enum ComputerUseLoop {
         var hintedApps: Set<String> = []
         // Estimated tokens of the single screenshot currently in context (0 = none).
         var imageTokensInContext = 0
+        // Cloud-vision consent state for THIS run. Seeded from the snapshot taken
+        // at run start; a just-in-time prompt can flip `granted` true mid-run.
+        var runConsent = RunCloudVisionConsent(granted: vision.cloudConsent, asked: false)
 
         // Initial perception so the model's first turn has something to act on.
         // An empty AX tree (Electron, custom-drawn UI) escalates ax→som→vision
@@ -276,6 +282,8 @@ public enum ComputerUseLoop {
             await attachFrame(
                 image: frame,
                 vision: vision,
+                consent: &runConsent,
+                requestConsent: requestCloudVisionConsent,
                 availability: availability,
                 messages: &messages,
                 imageTokensInContext: &imageTokensInContext,
@@ -680,6 +688,8 @@ public enum ComputerUseLoop {
                     action: action,
                     resolvedRole: resolvedElement?.role,
                     resolvedLabel: resolvedElement?.label,
+                    resolvedValue: resolvedElement?.value,
+                    resolvedRoleDescription: resolvedElement?.roleDescription,
                     appName: currentApp,
                     recipeSignals: AppRecipes.signals(for: currentApp)
                 )
@@ -735,6 +745,8 @@ public enum ComputerUseLoop {
                 await attachFrame(
                     image: frame,
                     vision: vision,
+                    consent: &runConsent,
+                    requestConsent: requestCloudVisionConsent,
                     availability: availability,
                     messages: &messages,
                     imageTokensInContext: &imageTokensInContext,
@@ -1377,6 +1389,14 @@ public enum ComputerUseLoop {
 
     // MARK: - Vision frame attachment
 
+    /// Mutable cloud-vision consent state for a single run. Seeded from the
+    /// `VisionContext` snapshot; `asked` ensures the just-in-time prompt fires at
+    /// most once per run, and `granted` records a mid-run grant.
+    private struct RunCloudVisionConsent {
+        var granted: Bool
+        var asked: Bool
+    }
+
     /// Attach a freshly captured frame to the model conversation when the
     /// `VisionContext` allows it. Local models receive the frame directly; remote
     /// models receive a `FrameScrubber`-redacted frame routed through
@@ -1385,6 +1405,8 @@ public enum ComputerUseLoop {
     private static func attachFrame(
         image: CUImage,
         vision: VisionContext,
+        consent: inout RunCloudVisionConsent,
+        requestConsent: @Sendable () async -> CloudVisionConsentChoice,
         availability: MacDriverAvailability,
         messages: inout [ChatMessage],
         imageTokensInContext: inout Int,
@@ -1392,9 +1414,25 @@ public enum ComputerUseLoop {
         feed: ComputerUseFeed,
         step: Int
     ) async {
-        switch VisionAttachment.decide(image: image, context: vision, availability: availability) {
+        let effective = vision.withConsent(consent.granted)
+        switch VisionAttachment.decide(image: image, context: effective, availability: availability) {
         case .none:
-            return
+            // The frame can't attach as-is. If the ONLY thing missing is
+            // cloud-vision consent (remote image model + Screen Recording on),
+            // offer a just-in-time prompt once per run rather than silently
+            // dropping to AX-only.
+            await offerJustInTimeCloudConsent(
+                image: image,
+                vision: vision,
+                consent: &consent,
+                requestConsent: requestConsent,
+                availability: availability,
+                messages: &messages,
+                imageTokensInContext: &imageTokensInContext,
+                metrics: &metrics,
+                feed: feed,
+                step: step
+            )
         case .localFrame(let img):
             appendImageMessage(
                 img,
@@ -1413,34 +1451,159 @@ public enum ComputerUseLoop {
                 )
             )
         case .needsScrubForCloud(let img):
-            // Scrub, then build the consented cloud route. The route is the only way
-            // to reach `.cloudVision`, and it only accepts a `ScrubbedFrame`, so a
-            // raw or unconsented frame can never be attached here.
-            guard let frame = await FrameScrubber.scrub(img, mode: .pii),
-                let route = CaptureRouter.cloudRoute(
-                    scrubbed: frame,
-                    consentGranted: vision.cloudConsent,
-                    availability: availability
-                ),
-                case .cloudVision(let scrubbed) = route
-            else { return }
-            appendImageMessage(
-                scrubbed.image,
-                note:
-                    "Screenshot of the current view (sensitive text was redacted before it left the device). "
-                    + "Use it to locate the element, then address it by `describe`.",
-                into: &messages,
-                imageTokensInContext: &imageTokensInContext
+            await attachScrubbedForCloud(
+                img,
+                vision: vision,
+                availability: availability,
+                messages: &messages,
+                imageTokensInContext: &imageTokensInContext,
+                metrics: &metrics,
+                feed: feed,
+                step: step
             )
-            metrics.cloudVisionUsed = true
+        }
+    }
+
+    /// Offer a one-per-run just-in-time cloud-vision prompt when a frame would
+    /// reach a remote model if only consent were granted. On grant, scrub +
+    /// attach through the cloud route; on decline (or if consent isn't the sole
+    /// blocker) stay on accessibility text. Records that the prompt fired so it
+    /// doesn't nag again this run.
+    private static func offerJustInTimeCloudConsent(
+        image: CUImage,
+        vision: VisionContext,
+        consent: inout RunCloudVisionConsent,
+        requestConsent: @Sendable () async -> CloudVisionConsentChoice,
+        availability: MacDriverAvailability,
+        messages: inout [ChatMessage],
+        imageTokensInContext: inout Int,
+        metrics: inout ComputerUseRunMetrics,
+        feed: ComputerUseFeed,
+        step: Int
+    ) async {
+        let effective = vision.withConsent(consent.granted)
+        guard
+            !consent.asked,
+            VisionAttachment.wouldAttachWithConsent(
+                image: image,
+                context: effective,
+                availability: availability
+            )
+        else { return }
+        consent.asked = true
+        feed.emit(
+            FeedEvent(
+                step: step,
+                kind: .perceive,
+                title: "Asked to use Cloud vision",
+                detail: "a screenshot would help here — waiting for your choice"
+            )
+        )
+        switch await requestConsent() {
+        case .deny:
             feed.emit(
                 FeedEvent(
                     step: step,
                     kind: .perceive,
-                    title: "Attached a screenshot",
-                    detail: "redacted \(frame.report.maskedRegions) region(s) before cloud vision"
+                    title: "Staying on-device",
+                    detail: "Cloud vision declined; continuing from accessibility text"
                 )
             )
+            return
+        case .allowOnce:
+            await MainActor.run { CloudVisionConsent.shared.grantForSession() }
+            consent.granted = true
+        case .allowAlways:
+            await MainActor.run { CloudVisionConsent.shared.grantPersistently() }
+            consent.granted = true
+        }
+        guard
+            case .needsScrubForCloud(let img) = VisionAttachment.decide(
+                image: image,
+                context: vision.withConsent(true),
+                availability: availability
+            )
+        else { return }
+        await attachScrubbedForCloud(
+            img,
+            vision: vision,
+            availability: availability,
+            messages: &messages,
+            imageTokensInContext: &imageTokensInContext,
+            metrics: &metrics,
+            feed: feed,
+            step: step
+        )
+    }
+
+    /// Scrub a frame in the run's resolved cloud mode and attach it through the
+    /// consented cloud route. The route is the only way to reach `.cloudVision`
+    /// and only accepts a `ScrubbedFrame`, so a raw or unconsented frame can
+    /// never be attached here. Only called once consent is effectively granted.
+    private static func attachScrubbedForCloud(
+        _ img: CUImage,
+        vision: VisionContext,
+        availability: MacDriverAvailability,
+        messages: inout [ChatMessage],
+        imageTokensInContext: inout Int,
+        metrics: inout ComputerUseRunMetrics,
+        feed: ComputerUseFeed,
+        step: Int
+    ) async {
+        let mode = vision.cloudScrubMode
+        guard
+            let frame = await FrameScrubber.scrub(
+                img,
+                mode: mode,
+                honorUserRules: true,
+                useModelDetection: mode == .pii
+            ),
+            let route = CaptureRouter.cloudRoute(
+                scrubbed: frame,
+                consentGranted: true,
+                availability: availability
+            ),
+            case .cloudVision(let scrubbed) = route
+        else { return }
+        appendImageMessage(
+            scrubbed.image,
+            note: cloudFrameNote(mode: mode),
+            into: &messages,
+            imageTokensInContext: &imageTokensInContext
+        )
+        metrics.cloudVisionUsed = true
+        feed.emit(
+            FeedEvent(
+                step: step,
+                kind: .perceive,
+                title: "Attached a screenshot",
+                detail: cloudFrameFeedDetail(mode: mode, masked: frame.report.maskedRegions)
+            )
+        )
+    }
+
+    /// The note attached to a cloud-bound screenshot, honest about what the
+    /// resolved scrub mode actually masked (so neither the model nor the user
+    /// is told more was redacted than was).
+    private static func cloudFrameNote(mode: ScrubMode) -> String {
+        switch mode {
+        case .allText:
+            return
+                "Screenshot of the current view. All on-screen text was masked on-device before it "
+                + "left the machine, so rely on layout and the accessibility text already provided to "
+                + "locate the element, then address it by `describe`."
+        case .pii:
+            return
+                "Screenshot of the current view. Detected sensitive text (names, contacts, account "
+                + "numbers, secrets) was masked on-device before it left the machine; other on-screen "
+                + "text is still visible. Use it to locate the element, then address it by `describe`."
+        }
+    }
+
+    private static func cloudFrameFeedDetail(mode: ScrubMode, masked: Int) -> String {
+        switch mode {
+        case .allText: return "masked all \(masked) text region(s) before cloud vision"
+        case .pii: return "masked \(masked) sensitive region(s) before cloud vision"
         }
     }
 

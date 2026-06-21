@@ -43,8 +43,17 @@ public struct ComputerUseGate: ComputerUseGating {
             )
         }
 
-        // 2) Strictest-wins disposition for the classified effect.
-        switch policy.disposition(for: effect, app: appName, ceiling: ceiling) {
+        // 2) Strictest-wins disposition for the classified effect, then a
+        //    dangerous-app guardrail: driving a sensitive app (Terminal, System
+        //    Settings, Keychain, a password manager, …) always confirms at least
+        //    once, regardless of preset/override/ceiling and independent of the
+        //    (often-empty) allowlist. Reads never reach here, so this only ever
+        //    affects navigate/edit/consequential actions.
+        var disposition = policy.disposition(for: effect, app: appName, ceiling: ceiling)
+        if effect >= .navigate, policy.requiresForcedConfirm(app: appName) {
+            disposition = AutonomyDisposition.strictest(disposition, .confirm)
+        }
+        switch disposition {
         case .allow:
             return .run
         case .confirm:
@@ -54,7 +63,8 @@ public struct ComputerUseGate: ComputerUseGating {
                     actionLabel: action.feedLabel,
                     targetLabel: targetLabel,
                     effect: effect,
-                    note: action.note
+                    note: action.note,
+                    typedText: action.typedTextForPreview
                 )
             )
         case .deny:

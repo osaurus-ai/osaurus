@@ -254,7 +254,36 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         guard let data = try? encoder.encode(request),
             let s = String(data: data, encoding: .utf8)
         else { return nil }
-        return s
+        return redactInlineImagePayloads(in: s)
+    }
+
+    /// Replace inline base64 image payloads (e.g. Computer Use screenshots) with
+    /// a short marker before the request is handed to the Insights ring buffer.
+    /// Even a `FrameScrubber`-redacted frame shouldn't be retained verbatim in a
+    /// local debug buffer — the marker keeps the request shape inspectable
+    /// without persisting pixels. Text content is left intact (it's already on
+    /// the user's screen, and the panel exists to inspect the request).
+    static func redactInlineImagePayloads(in json: String) -> String {
+        guard
+            let regex = try? NSRegularExpression(pattern: "(;base64,)([A-Za-z0-9+/=]{64,})")
+        else { return json }
+        let matches = regex.matches(
+            in: json,
+            range: NSRange(location: 0, length: (json as NSString).length)
+        )
+        guard !matches.isEmpty else { return json }
+        var result = json as NSString
+        // Apply replacements back-to-front so earlier ranges stay valid.
+        for match in matches.reversed() {
+            let payload = match.range(at: 2)
+            guard payload.location != NSNotFound else { continue }
+            result =
+                result.replacingCharacters(
+                    in: payload,
+                    with: "[redacted \(payload.length)-char image]"
+                ) as NSString
+        }
+        return result as String
     }
 
     /// Pretty-print a `ChatCompletionResponse` for the Insights ring buffer.
