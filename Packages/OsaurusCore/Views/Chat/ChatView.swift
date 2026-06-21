@@ -340,6 +340,13 @@ final class ChatSession: ObservableObject {
     nonisolated(unsafe) private var remoteModelsObserver: NSObjectProtocol?
     nonisolated(unsafe) private var modelSelectionCancellable: AnyCancellable?
     nonisolated(unsafe) private var agentAutoSpeakCancellable: AnyCancellable?
+    /// Direct subscription to the shared model-picker cache. The
+    /// `.remoteProviderModelsChanged` notification bridge above only
+    /// *triggers* a rebuild; this makes the session's `pickerItems`
+    /// follow the cache's atomic `items` assignment so a newly connected
+    /// remote provider shows up in the picker live, without reopening the
+    /// window (mirrors `AgentsView`'s `$items` subscription).
+    nonisolated(unsafe) private var modelCacheCancellable: AnyCancellable?
     /// Flag to prevent auto-persist during initial load or programmatic resets
     private var isLoadingModel: Bool = false
 
@@ -418,6 +425,18 @@ final class ChatSession: ObservableObject {
         ) { [weak self] _ in
             Task { @MainActor in await self?.refreshPickerItems() }
         }
+
+        // Follow the shared cache reactively. `ModelPickerItemCache`
+        // already observes the same notifications and rebuilds `items`
+        // atomically; subscribing here guarantees the session's picker
+        // tracks that rebuild even when the notification-driven refresh
+        // above races the connect that produced it. Fires immediately
+        // with the current snapshot, which `applyPickerItems` no-ops when
+        // unchanged.
+        modelCacheCancellable = ModelPickerItemCache.shared.$items
+            .sink { [weak self] items in
+                Task { @MainActor in self?.applyPickerItems(items) }
+            }
 
         // Mirror AgentTodoStore -> currentTodo so the inline UI block
         // updates whenever the agent calls `todo`. Filter by this window's
@@ -598,6 +617,7 @@ final class ChatSession: ObservableObject {
         agentAutoSpeakCancellable = nil
         promptQueueCancellable = nil
         contextEstimateCancellable = nil
+        modelCacheCancellable = nil
     }
 
     private func loadActiveModelOptions(for model: String?) {
@@ -664,6 +684,14 @@ final class ChatSession: ObservableObject {
 
     func refreshPickerItems() async {
         let newOptions = await ModelPickerItemCache.shared.buildModelPickerItems()
+        applyPickerItems(newOptions)
+    }
+
+    /// Reconcile the session against a fresh picker list. Shared by the
+    /// explicit `refreshPickerItems()` (which first triggers a rebuild) and
+    /// the `$items` subscription (which receives the cache's already-rebuilt
+    /// list). Idempotent: a no-op when the option ids are unchanged.
+    func applyPickerItems(_ newOptions: [ModelPickerItem]) {
         let newOptionIds = newOptions.map { $0.id }
         let optionsChanged = pickerItems.map({ $0.id }) != newOptionIds
 
@@ -2381,6 +2409,22 @@ final class ChatSession: ObservableObject {
                     await processor.finalize()
                     return ([], currentTurn)
                 }
+                // Mode 2 (remote agent run): the remote device executes the
+                // tools and streams back only a sanitized trace. Surface it as
+                // a transient "running <tool>" chip so the observer sees
+                // progress during the silent tool phase. `pendingToolName` is
+                // display-only (never persisted); cleared when the tool ends.
+                if let trace = StreamingAgentToolHint.decode(delta) {
+                    switch trace.phase {
+                    case "started":
+                        currentTurn.pendingToolName = trace.name.isEmpty ? nil : trace.name
+                    default:
+                        // "completed" (or anything terminal) clears the chip.
+                        currentTurn.pendingToolName = nil
+                    }
+                    rebuildVisibleBlocks()
+                    continue
+                }
                 // Server-side tool call complete: add the call card + result turn to the chat log
                 if let done = StreamingToolHint.decodeDone(delta) {
                     uiToolSentinelCount += 1
@@ -3969,7 +4013,21 @@ final class ChatSession: ObservableObject {
                     assistantTurn.content = pfError.localizedDescription
                     lastStreamError = pfError.localizedDescription
                 } catch {
-                    assistantTurn.content = ChatErrorMessages.assistantMessage(for: error)
+                    let errorMessage = ChatErrorMessages.assistantMessage(for: error)
+                    // Preserve any text the model already streamed before the
+                    // failure (common when a remote agent disconnects
+                    // mid-stream): append the error as a trailing notice
+                    // instead of replacing the partial answer. Only overwrite
+                    // when nothing was streamed yet so an empty bubble still
+                    // shows the actionable error on its own.
+                    let streamedSoFar = assistantTurn.content.trimmingCharacters(
+                        in: .whitespacesAndNewlines
+                    )
+                    if streamedSoFar.isEmpty {
+                        assistantTurn.content = errorMessage
+                    } else {
+                        assistantTurn.content += "\n\n\(errorMessage)"
+                    }
                     lastStreamError = error.localizedDescription
                     noteInsufficientFundsIfNeeded(error: error, blockedTurn: assistantTurn)
                 }
@@ -4166,6 +4224,77 @@ struct ChatView: View {
         return windowState.selectedDiscoveredAgent?.name
             ?? windowState.selectedRelayAgent?.name
             ?? L("Default")
+    }
+
+    /// Friendly name of the selected remote agent (Mode 2) for status copy.
+    private var remoteAgentDisplayName: String {
+        windowState.selectedDiscoveredAgent?.name
+            ?? windowState.selectedRelayAgent?.name
+            ?? L("the agent")
+    }
+
+    /// Compact Mode 2 connection status shown above the composer: a spinner
+    /// while connect + model pin resolve, or an actionable error with Retry on
+    /// failure. Hidden once connected (the pinned model chip then reflects the
+    /// agent's model) and when not in remote-agent mode.
+    @ViewBuilder
+    private var remoteAgentConnectionNotice: some View {
+        if windowState.selectedDiscoveredAgentProviderId != nil {
+            switch windowState.remoteAgentConnectionPhase {
+            case .connecting:
+                remoteAgentNoticeRow {
+                    ProgressView().controlSize(.small)
+                    Text(L("Connecting to \(remoteAgentDisplayName)…"))
+                        .font(.system(size: CGFloat(theme.captionSize)))
+                        .foregroundColor(theme.secondaryText)
+                    Spacer(minLength: 0)
+                }
+            case .failed(let message):
+                remoteAgentNoticeRow {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundColor(.orange)
+                    Text(message)
+                        .font(.system(size: CGFloat(theme.captionSize)))
+                        .foregroundColor(theme.primaryText)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                    Button(action: { retryRemoteAgentConnection() }) {
+                        Text(L("Retry"))
+                            .font(.system(size: CGFloat(theme.captionSize), weight: .semibold))
+                            .foregroundColor(theme.accentColor)
+                    }
+                    .buttonStyle(.plain)
+                }
+            case .idle, .connected:
+                EmptyView()
+            }
+        }
+    }
+
+    /// Shared pill chrome for the Mode 2 status rows (spinner / error): one
+    /// `HStack` with consistent padding, background, and fade transition so the
+    /// two phases only differ in their content.
+    @ViewBuilder
+    private func remoteAgentNoticeRow<Content: View>(
+        @ViewBuilder _ content: () -> Content
+    ) -> some View {
+        HStack(spacing: 8) { content() }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(theme.secondaryBackground.opacity(0.6))
+            )
+            .padding(.horizontal, 8)
+            .padding(.bottom, 6)
+            .transition(.opacity)
+    }
+
+    /// Re-run the connect + model-pin flow after a failure (Retry button).
+    private func retryRemoteAgentConnection() {
+        guard let providerId = windowState.selectedDiscoveredAgentProviderId else { return }
+        pinRemoteAgentModelAfterConnect(providerId: providerId)
     }
 
     /// Resolve and apply the pinned model for a selected remote agent (Mode 2).
@@ -4439,6 +4568,14 @@ struct ChatView: View {
                                     .animation(theme.springAnimation(), value: isPromptOverlayActive)
                             }
 
+                            // Mode 2 connection status (connecting / error +
+                            // Retry) shown directly above the composer so the
+                            // gated send has a visible explanation.
+                            remoteAgentConnectionNotice
+                                .frame(maxWidth: 1100)
+                                .frame(maxWidth: .infinity)
+                                .animation(theme.springAnimation(), value: windowState.remoteAgentConnectionPhase)
+
                             // Floating input card. Dimmed and
                             // hit-test-disabled while a prompt overlay
                             // is mounted so the prompt's embedded
@@ -4499,7 +4636,9 @@ struct ChatView: View {
                                 onCancelQueued: { observedSession.cancelQueuedSend() },
                                 onAddCredits: { showTopUpSheet = true },
                                 isModelPinned: windowState.selectedDiscoveredAgentProviderId != nil,
-                                pinnedModelLabel: pinnedModelChipLabel
+                                pinnedModelLabel: pinnedModelChipLabel,
+                                remoteConnectionPending: windowState.remoteAgentConnectionPhase
+                                    == .connecting
                             )
                             .frame(maxWidth: 1100)
                             .frame(maxWidth: .infinity)
@@ -4777,7 +4916,10 @@ struct ChatView: View {
             } else {
                 manager.updateProvider(updated, apiKey: nil)
             }
-            Task { try? await manager.connect(providerId: existing.id) }
+            // The connect is owned by `pinRemoteAgentModelAfterConnect` below so
+            // the first model refresh / effective-model pin runs *after* the
+            // provider is connected (otherwise the picker stays empty until the
+            // window is reopened).
         } else {
             // Use basePath="" so URLs are constructed directly as /agents/{id}/run
             let provider = RemoteProvider(
@@ -4815,7 +4957,25 @@ struct ChatView: View {
         let provider = RemoteProviderManager.shared.configuration.providers.first {
             $0.id == providerId
         }
+        windowState.remoteAgentConnectionPhase = .connecting
         Task {
+            // Ensure the provider is connected before refreshing models /
+            // resolving the pin, so the first refresh sees the connected
+            // provider's model list rather than an empty one. `connect` is
+            // idempotent and tolerates the auto-connect that
+            // add/updateProvider may also kick off. A secure-channel handshake
+            // failure now throws (see `fetchOsaurusModels`) so connect failure
+            // surfaces here instead of leaving a phantom "connected" pill.
+            do {
+                try await RemoteProviderManager.shared.connect(providerId: providerId)
+            } catch {
+                guard windowState.selectedDiscoveredAgentProviderId == providerId else { return }
+                windowState.remoteAgentConnectionPhase = .failed(
+                    ChatErrorMessages.remoteConnectFailure(error)
+                )
+                return
+            }
+            guard windowState.selectedDiscoveredAgentProviderId == providerId else { return }
             await session.refreshPickerItems()
             if let provider {
                 let effective = await RemoteProviderService.fetchOsaurusAgentEffectiveModel(
@@ -4826,6 +4986,7 @@ struct ChatView: View {
             }
             guard windowState.selectedDiscoveredAgentProviderId == providerId else { return }
             applyRemoteAgentModelPin(providerId: providerId)
+            windowState.remoteAgentConnectionPhase = .connected
         }
     }
 
@@ -4843,7 +5004,7 @@ struct ChatView: View {
         updated.port = nil
         updated.enabled = true
         manager.updateProvider(updated, apiKey: nil)
-        Task { try? await manager.connect(providerId: relay.providerId) }
+        // Connect is owned by `pinRemoteAgentModelAfterConnect` (see note there).
 
         windowState.selectedDiscoveredAgent = nil
         windowState.selectedRelayAgent = relay

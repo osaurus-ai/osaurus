@@ -936,6 +936,11 @@ struct AgentDetailView: View {
     /// Per-agent autonomy ceiling for Computer Use (PR2). `nil` means no
     /// ceiling. Mirrored from / into `AgentSettings.computerUseCeiling`.
     @State private var computerUseCeiling: AutonomyCeiling? = nil
+    /// Display mirror of `Agent.hostWorkspacePath`. Drives the Host Files row
+    /// so the selected folder updates immediately after the user picks/clears
+    /// it (the persisted bookmark on `Agent.hostWorkspaceBookmark` is the real
+    /// grant). `nil` means no host folder is granted.
+    @State private var hostWorkspacePath: String? = nil
     /// Per-agent on/off for the chat empty-state generative greeting.
     /// Default off, like the other capability flags; the agent opts in
     /// from the Features tab. Drives whether the Empty State section
@@ -2919,6 +2924,13 @@ struct AgentDetailView: View {
                         sandboxExecSubsection
                     }
 
+                    featureGroup(
+                        "Host Files",
+                        description: "Let the agent read and write files inside a folder you choose."
+                    ) {
+                        hostWorkspaceFolderRow
+                    }
+
                     Text(
                         "Voice output lives in the Voice section; the greeting text and personality are in Customization > Empty State.",
                         bundle: .module
@@ -4103,6 +4115,110 @@ struct AgentDetailView: View {
         }
     }
 
+    /// Host Files row (Configure → Features). Lets the user grant this agent a
+    /// real macOS folder it may read and write inside — including over an
+    /// authenticated remote agent run (Secure Channel, agent-scoped key). The
+    /// grant is a security-scoped bookmark persisted on the agent; writes are
+    /// confined to the folder and shell/git stay denied on the remote surface.
+    /// Independent of the Linux sandbox, so it renders regardless of sandbox
+    /// availability.
+    @ViewBuilder
+    private var hostWorkspaceFolderRow: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(hostWorkspacePath ?? L("No folder selected"))
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(
+                            hostWorkspacePath == nil ? theme.tertiaryText : theme.primaryText
+                        )
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Text(
+                        "The agent can read and write files within this folder, including over authenticated remote agent runs. Writes stay inside the folder; shell and git remain disabled.",
+                        bundle: .module
+                    )
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.tertiaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer()
+                Button {
+                    chooseHostWorkspaceFolder()
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "folder")
+                            .font(.system(size: 10, weight: .semibold))
+                        Text(
+                            hostWorkspacePath == nil ? L("Choose…") : L("Change…")
+                        )
+                        .font(.system(size: 11, weight: .medium))
+                    }
+                    .foregroundColor(theme.accentColor)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(theme.accentColor.opacity(0.08))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .stroke(theme.accentColor.opacity(0.2), lineWidth: 1)
+                            )
+                    )
+                }
+                .buttonStyle(.plain)
+                if hostWorkspacePath != nil {
+                    Button {
+                        clearHostWorkspaceFolder()
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(theme.tertiaryText)
+                            .padding(6)
+                    }
+                    .buttonStyle(.plain)
+                    .help(L("Remove host folder access"))
+                }
+            }
+        }
+    }
+
+    /// Present a folder picker, mint a security-scoped bookmark, and persist it
+    /// on the agent. Mirrors `FolderContextService.selectFolder`'s panel but
+    /// stores the grant per-agent instead of in the process-wide context.
+    private func chooseHostWorkspaceFolder() {
+        Task { @MainActor in
+            let panel = NSOpenPanel()
+            panel.canChooseFiles = false
+            panel.canChooseDirectories = true
+            panel.canCreateDirectories = true
+            panel.allowsMultipleSelection = false
+            panel.title = L("Select Host Workspace Folder")
+            panel.message = L("Choose a folder this agent may read and write inside.")
+            panel.prompt = L("Select")
+
+            guard await panel.beginModal() == .OK, let url = panel.url else { return }
+            guard let bookmark = FolderContextService.makeSecurityScopedBookmark(for: url) else {
+                ToastManager.shared.error(L("Failed to grant folder access"))
+                return
+            }
+            guard var updated = agentManager.agent(for: agent.id) else { return }
+            updated.hostWorkspaceBookmark = bookmark
+            updated.hostWorkspacePath = url.path
+            agentManager.update(updated)
+            hostWorkspacePath = url.path
+        }
+    }
+
+    /// Revoke the agent's host folder grant.
+    private func clearHostWorkspaceFolder() {
+        guard var updated = agentManager.agent(for: agent.id) else { return }
+        updated.hostWorkspaceBookmark = nil
+        updated.hostWorkspacePath = nil
+        agentManager.update(updated)
+        hostWorkspacePath = nil
+    }
+
     /// Sandbox execution toggles, surfaced inside the Configure tab's
     /// Features section via the shared `featureCard` visual so they match
     /// the rest of the section. `interactive` is false when the sandbox is
@@ -5063,6 +5179,7 @@ struct AgentDetailView: View {
         selfSchedulingEnabled = agent.settings.selfSchedulingEnabled
         computerUseEnabled = agent.settings.computerUseEnabled
         computerUseCeiling = agent.settings.computerUseCeiling
+        hostWorkspacePath = agent.hostWorkspacePath
         generativeGreetingsEnabled = agent.settings.generativeGreetingsEnabled
         // Hydrate the Personality editor with the resolved default
         // (global persona, falling back to built-in) when the agent has

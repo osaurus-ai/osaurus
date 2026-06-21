@@ -1220,6 +1220,31 @@ public actor RemoteProviderService: ToolCapableService {
 
         guard let jsonData = dataContent.data(using: .utf8) else { return false }
 
+        // Server-side agent tool loop trace (`osaurus_agent_tool`). The chunk
+        // carries no content (`choices: []`); surface it as a sanitized
+        // progress hint so a Mode 2 observer can see which tool is running on
+        // the remote agent during the otherwise-silent tool phase. The cheap
+        // substring pre-check avoids JSON-parsing every normal content chunk.
+        if dataContent.contains("osaurus_agent_tool"),
+            let root = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+            let trace = root["osaurus_agent_tool"] as? [String: Any],
+            let phase = trace["phase"] as? String,
+            let name = trace["name"] as? String
+        {
+            let hint = StreamingAgentToolHint.encode(
+                StreamingAgentToolHint.Trace(
+                    phase: phase,
+                    name: name,
+                    callId: trace["call_id"] as? String,
+                    isError: (trace["is_error"] as? Bool) ?? false,
+                    endRun: (trace["end_run"] as? Bool) ?? false
+                )
+            )
+            state.routerDiagnostics?.recordYield(hint)
+            continuation.yield(hint)
+            return false
+        }
+
         if providerType == .osaurusRouter,
             let summary = try? JSONDecoder().decode(OsaurusRouterSummaryEvent.self, from: jsonData)
         {
@@ -4274,6 +4299,12 @@ extension RemoteProviderService {
     /// select one in the picker). Falls back to GET /agents/{id} when /models is unavailable.
     private static func fetchOsaurusModels(from provider: RemoteProvider) async throws -> [String] {
         let headers = await provider.resolvedHeadersOffMainActor()
+        // Tracks whether the peer answered at all (any HTTP status, even an
+        // error). Distinguishes "couldn't reach / Secure Channel handshake
+        // failed" (no response) from "reached but degraded" so we fail closed
+        // on the former instead of synthesizing a fake ["default"] model that
+        // makes an unreachable or unauthenticated peer look connected.
+        var reachedPeer = false
 
         // Try /models first
         if let url = provider.url(for: "/models") {
@@ -4282,12 +4313,14 @@ extension RemoteProviderService {
             req.setValue("application/json", forHTTPHeaderField: "Accept")
             req.timeoutInterval = min(provider.timeout, 10)
             for (key, value) in headers { req.setValue(value, forHTTPHeaderField: key) }
-            if let (data, status) = await osaurusGET(req, provider: provider),
-                status < 400,
-                let parsed = try? JSONDecoder().decode(ModelsResponse.self, from: data),
-                !parsed.data.isEmpty
-            {
-                return parsed.data.map { $0.id }
+            if let (data, status) = await osaurusGET(req, provider: provider) {
+                reachedPeer = true
+                if status < 400,
+                    let parsed = try? JSONDecoder().decode(ModelsResponse.self, from: data),
+                    !parsed.data.isEmpty
+                {
+                    return parsed.data.map { $0.id }
+                }
             }
         }
 
@@ -4295,24 +4328,39 @@ extension RemoteProviderService {
         // crypto address first (the stable identity the host resolves and a
         // paired peer knows), falling back to the minted remoteAgentId, so the
         // host's /agents/{id} resolves the agent instead of 400-ing on a random
-        // UUID and degrading the picker to ["default"]. Mirrors buildURLRequest.
+        // UUID. Mirrors buildURLRequest.
         let identifier =
             provider.remoteAgentAddress.flatMap { $0.isEmpty ? nil : $0 }
             ?? provider.remoteAgentId?.uuidString
-        guard let identifier, let url = provider.url(for: "/agents/\(identifier)") else {
-            return ["default"]
+        if let identifier, let url = provider.url(for: "/agents/\(identifier)") {
+            var req = URLRequest(url: url)
+            req.httpMethod = "GET"
+            req.setValue("application/json", forHTTPHeaderField: "Accept")
+            req.timeoutInterval = min(provider.timeout, 10)
+            for (key, value) in headers { req.setValue(value, forHTTPHeaderField: key) }
+            if let (data, status) = await osaurusGET(req, provider: provider) {
+                reachedPeer = true
+                if status < 400 {
+                    // A reachable agent with no concrete `default_model` still
+                    // degrades to ["default"] here (legit graceful fallback);
+                    // only an unreachable/error peer fails below.
+                    struct AgentInfo: Decodable { let default_model: String? }
+                    let model =
+                        (try? JSONDecoder().decode(AgentInfo.self, from: data))?.default_model
+                        ?? "default"
+                    return [model]
+                }
+            }
         }
-        var req = URLRequest(url: url)
-        req.httpMethod = "GET"
-        req.setValue("application/json", forHTTPHeaderField: "Accept")
-        req.timeoutInterval = min(provider.timeout, 10)
-        for (key, value) in headers { req.setValue(value, forHTTPHeaderField: key) }
-        guard let (data, status) = await osaurusGET(req, provider: provider), status < 400 else {
-            return ["default"]
-        }
-        struct AgentInfo: Decodable { let default_model: String? }
-        let model = (try? JSONDecoder().decode(AgentInfo.self, from: data))?.default_model ?? "default"
-        return [model]
+
+        // No usable response from either endpoint. Fail closed so
+        // `RemoteProviderManager.connect` records `lastError` and leaves the
+        // provider disconnected, instead of reporting a phantom connection.
+        throw RemoteProviderServiceError.requestFailed(
+            reachedPeer
+                ? "Remote agent rejected the connection (check pairing and authorization)."
+                : "Could not reach the remote agent (Secure Channel handshake failed)."
+        )
     }
 
     /// Fetch a paired/discovered Osaurus agent's *live* effective model id (the

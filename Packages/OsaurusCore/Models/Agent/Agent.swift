@@ -151,6 +151,19 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
     public var settings: AgentSettings
     /// User-defined position. `nil` falls to the end, sorted alphabetically.
     public var order: Int?
+    /// Security-scoped bookmark (created on this machine) for a host folder
+    /// the agent may read/write inside. Persisted so the grant survives
+    /// relaunch. When set, an authenticated remote agent run (Secure Channel,
+    /// agent-scoped) gets host file tools (`file_read`/`file_write`/`file_edit`)
+    /// confined to this folder — shell/git stay denied. `nil` means no host
+    /// folder is granted and remote runs fall back to sandbox-only tools.
+    /// The bookmark is machine-local (it lives on the agent's own host); a
+    /// paired caller never sees it.
+    public var hostWorkspaceBookmark: Data?
+    /// Human-readable path of `hostWorkspaceBookmark` for display in the agent
+    /// editor. Advisory only — `hostWorkspaceBookmark` is the source of truth
+    /// for access; this can go stale if the folder is moved/renamed.
+    public var hostWorkspacePath: String?
 
     public init(
         id: UUID = UUID(),
@@ -182,7 +195,9 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         autoSpeak: Bool? = nil,
         ttsVoice: String? = nil,
         settings: AgentSettings = .defaultDisabled,
-        order: Int? = nil
+        order: Int? = nil,
+        hostWorkspaceBookmark: Data? = nil,
+        hostWorkspacePath: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -214,6 +229,8 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         self.ttsVoice = ttsVoice
         self.settings = settings
         self.order = order
+        self.hostWorkspaceBookmark = hostWorkspaceBookmark
+        self.hostWorkspacePath = hostWorkspacePath
     }
 
     // MARK: - Custom avatar resolution
@@ -344,6 +361,9 @@ extension Agent {
         ttsVoice = try c.decodeIfPresent(String.self, forKey: .ttsVoice)
         settings = try c.decodeIfPresent(AgentSettings.self, forKey: .settings) ?? .defaultDisabled
         order = try c.decodeIfPresent(Int.self, forKey: .order)
+        // Added after initial release; absent in older agent JSON.
+        hostWorkspaceBookmark = try c.decodeIfPresent(Data.self, forKey: .hostWorkspaceBookmark)
+        hostWorkspacePath = try c.decodeIfPresent(String.self, forKey: .hostWorkspacePath)
     }
 }
 

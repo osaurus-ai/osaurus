@@ -82,6 +82,11 @@ struct FloatingInputCard: View {
     /// device model that isn't the agent's. When nil, falls back to the
     /// selected picker item's display name.
     var pinnedModelLabel: String? = nil
+    /// Mode 2: true while the selected remote agent's connect + model pin are
+    /// still in flight. Gates `canSend` so the first message can't race the
+    /// async connect and fail with a misleading "model not found"; the parent
+    /// shows a "connecting" notice for the duration.
+    var remoteConnectionPending: Bool = false
 
     init(
         text: Binding<String>,
@@ -114,7 +119,8 @@ struct FloatingInputCard: View {
         onCancelQueued: (() -> Void)? = nil,
         onAddCredits: (() -> Void)? = nil,
         isModelPinned: Bool = false,
-        pinnedModelLabel: String? = nil
+        pinnedModelLabel: String? = nil,
+        remoteConnectionPending: Bool = false
     ) {
         self._text = text
         self._selectedModel = selectedModel
@@ -147,6 +153,7 @@ struct FloatingInputCard: View {
         self.onAddCredits = onAddCredits
         self.isModelPinned = isModelPinned
         self.pinnedModelLabel = pinnedModelLabel
+        self.remoteConnectionPending = remoteConnectionPending
     }
 
     // Observe managers for reactive updates
@@ -282,6 +289,11 @@ struct FloatingInputCard: View {
     private var canSend: Bool {
         // While the slash command popup is visible, Enter selects a command — not sends
         guard !showSlashPopup else { return false }
+
+        // Remote-agent (Mode 2) connect + model pin still resolving: block the
+        // send so the first message can't race the async connect and fail with
+        // a misleading "model not found". The parent shows a connecting notice.
+        guard !remoteConnectionPending else { return false }
 
         // Hard token gate: when the NON-compactable prefix alone (system
         // prompt + tools + memory + input + response reservation) can't

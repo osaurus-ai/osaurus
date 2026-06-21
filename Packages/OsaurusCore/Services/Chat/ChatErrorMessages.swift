@@ -13,6 +13,19 @@ enum ChatErrorMessages {
         return "Error: \(description)"
     }
 
+    /// Concise, user-facing reason for a failed remote-agent connect, shown in
+    /// the chat's connection-status pill. No "Error:" prefix — the pill styles
+    /// it. `RemoteProviderServiceError` (and any `LocalizedError`) already
+    /// carries a friendly `errorDescription` (e.g. the Secure-Channel handshake
+    /// failure copy), so the localized description is the right surface here.
+    static func remoteConnectFailure(_ error: Error) -> String {
+        let description = error.localizedDescription
+        if description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return L("Couldn't connect to the remote agent.")
+        }
+        return description
+    }
+
     static func isSystemResourceExhaustion(_ message: String) -> Bool {
         let normalized = message.lowercased()
         if normalized.contains("not enough memory")
