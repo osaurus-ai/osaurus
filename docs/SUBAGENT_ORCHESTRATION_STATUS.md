@@ -417,3 +417,14 @@ exercised GAP1 (image scan resolved flux-schnell from ~/models/image) and GAP2
 **§5.A image_generate: PASS.** Next: image_edit round-trip; a RAM-tight refuse case
 to prove the preflight rejects; default-temp orchestrator reliability (forced
 tool_choice works; a stronger model would be more natural).
+
+### Matrix A image handoff — VERIFIED + a minor queue gap (2026-06-21)
+Handoff confirmed via /health: warm chat (`qwen3-4b` resident) → `image_generate` →
+chat model UNLOADED (`loaded=[]`) → FLUX runs (image not in /health.loaded; separate
+engine) → after the job a fresh chat reloads `qwen3-4b` and answers normally. Two
+images proven (512² apple, 1024² blue circle). So unload→image→reload works; the
+orchestrator is usable after (matrix A core PASS).
+**Minor gap found:** a chat request sent WHILE an image job is mid-run returns empty
+content instead of QUEUEING behind the single-residency job (GPU busy → model can't
+load → blank). Should wait-for-idle (the handoff already has `waitForChatIdle`) or
+return a "busy, image job running" envelope. Low severity; track as a follow-up.
