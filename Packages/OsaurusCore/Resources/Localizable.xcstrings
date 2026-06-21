@@ -11346,6 +11346,22 @@
         }
       }
     },
+    "Choose a folder this agent may read and write inside." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ordner wählen, in dem dieser Agent lesen und schreiben darf."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "选择一个此智能体可以读取和写入的文件夹。"
+          }
+        }
+      }
+    },
     "Choose a format to export this conversation." : {
       "localizations" : {
         "de" : {
@@ -11625,6 +11641,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "加密算法：AES-256-CBC + HMAC-SHA512，页大小 4096，kdf_iter 256000"
+          }
+        }
+      }
+    },
+    "Choose…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wählen…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "选择…"
           }
         }
       }
@@ -13701,6 +13733,22 @@
         }
       }
     },
+    "Connecting to %@…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Verbinde mit %@…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在连接到%@…"
+          }
+        }
+      }
+    },
     "Connecting your agent to the share network." : {
       "localizations" : {
         "de" : {
@@ -15140,6 +15188,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "无法在127.0.0.1:%1$u上启动Grok登录回调服务器。使用该端口关闭任何其他正在进行的登录或应用程序，然后重试。详细信息：%2$@"
+          }
+        }
+      }
+    },
+    "Couldn't connect to the remote agent." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Verbindung zum Remote-Agenten fehlgeschlagen."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法连接到远程智能体。"
           }
         }
       }
@@ -22872,6 +22936,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "导出技能失败"
+          }
+        }
+      }
+    },
+    "Failed to grant folder access" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ordnerzugriff konnte nicht gewährt werden"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "授予文件夹访问权限失败"
           }
         }
       }
@@ -47002,6 +47082,22 @@
         }
       }
     },
+    "Remove host folder access" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Host-Ordnerzugriff entfernen"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "移除主机文件夹访问权限"
+          }
+        }
+      }
+    },
     "Remove Image" : {
       "localizations" : {
         "de" : {
@@ -52399,6 +52495,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "选择要监视的文件夹"
+          }
+        }
+      }
+    },
+    "Select Host Workspace Folder" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Host-Arbeitsordner auswählen"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "选择主机工作区文件夹"
           }
         }
       }
@@ -57952,6 +58064,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "256位加密密钥存储在您的macOS钥匙串中。它永远不会离开这台Mac，并且不会同步到iCloud。"
+          }
+        }
+      }
+    },
+    "the agent" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "dem Agenten"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "智能体"
           }
         }
       }
