@@ -1,0 +1,40 @@
+{
+  "id": "screen_context.empty-input-minimal",
+  "domain": "screen_context",
+  "label": "Screen context • empty input stays minimal (inline scene)",
+  "query": "(ambient capture)",
+  "notes": "Uses an INLINE `scene` (no fixture file) to exercise that path. An empty focused field must NOT fabricate a Viewing or Selected line — the block stays a clean app + focused-field summary so the model isn't fed phantom content.",
+  "fixtures": {},
+  "expect": {
+    "screenContext": {
+      "scene": {
+        "apps": [
+          { "pid": 404, "bundleId": "com.apple.TextEdit", "name": "TextEdit", "active": true, "hidden": false }
+        ],
+        "activeWindow": {
+          "pid": 404, "app": "TextEdit", "title": "Untitled", "x": 0, "y": 0, "w": 900, "h": 700
+        },
+        "windowsByPid": {
+          "404": [
+            { "windowId": 1, "title": "Untitled", "focused": true, "minimized": false, "x": 0, "y": 0, "w": 900, "h": 700 }
+          ]
+        },
+        "snapshot": {
+          "app": "TextEdit",
+          "focusedWindow": "Untitled",
+          "windows": [
+            { "id": 1, "title": "Untitled", "focused": true, "x": 0, "y": 0, "w": 900, "h": 700 }
+          ],
+          "elements": [
+            { "id": "doc", "role": "textfield", "label": "Document", "focused": true, "enabled": true, "x": 40, "y": 60, "w": 820, "h": 600, "actions": [] }
+          ]
+        },
+        "focusedContent": { "role": "textfield", "label": "Document" }
+      },
+      "focusedRoleEquals": "text field",
+      "gistContains": ["In TextEdit", "text field focused (empty)"],
+      "mustContain": ["Focused field: text field", "empty"],
+      "mustNotContain": ["Viewing:", "Selected text:"]
+    }
+  }
+}

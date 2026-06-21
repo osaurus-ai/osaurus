@@ -1,0 +1,37 @@
+{
+  "apps": [
+    { "pid": 404, "bundleId": "com.google.Chrome", "name": "Google Chrome", "active": true, "hidden": false }
+  ],
+  "activeWindow": {
+    "pid": 404,
+    "app": "Google Chrome",
+    "title": "Local-first software — Example Blog - Google Chrome",
+    "x": 0, "y": 0, "w": 1440, "h": 900
+  },
+  "windowsByPid": {
+    "404": [
+      { "windowId": 1, "title": "Local-first software — Example Blog - Google Chrome", "focused": true, "minimized": false, "x": 0, "y": 0, "w": 1440, "h": 900 }
+    ]
+  },
+  "snapshot": {
+    "app": "Google Chrome",
+    "focusedWindow": "Local-first software — Example Blog - Google Chrome",
+    "truncated": false,
+    "windows": [
+      { "id": 1, "title": "Local-first software — Example Blog - Google Chrome", "focused": true, "x": 0, "y": 0, "w": 1440, "h": 900 }
+    ],
+    "elements": [
+      { "id": "url", "role": "textfield", "label": "Address and search bar", "value": "https://example.com/local-first", "focused": false, "enabled": true, "x": 200, "y": 16, "w": 1000, "h": 28, "actions": [] },
+      { "id": "reload", "role": "button", "label": "Reload this page", "focused": false, "enabled": true, "x": 60, "y": 16, "w": 24, "h": 24, "actions": [] },
+      { "id": "web", "role": "webarea", "value": "", "focused": false, "enabled": true, "x": 0, "y": 60, "w": 1440, "h": 820, "actions": [] },
+      { "id": "h1", "role": "heading", "value": "Local-first software: you own your data", "focused": false, "enabled": true, "x": 280, "y": 110, "w": 880, "h": 44, "actions": [] },
+      { "id": "p1", "role": "statictext", "value": "Local-first apps keep the primary copy of your data on your own device, syncing in the background so the network is an enhancement, not a requirement.", "focused": false, "enabled": true, "x": 280, "y": 170, "w": 880, "h": 90, "actions": [] },
+      { "id": "p2", "role": "statictext", "value": "The seven ideals cover fast local reads, working offline, multi-device sync, collaboration, longevity, privacy, and end-user control.", "focused": false, "enabled": true, "x": 280, "y": 270, "w": 880, "h": 90, "actions": [] },
+      { "id": "nav1", "role": "link", "value": "Home", "focused": false, "enabled": true, "x": 24, "y": 110, "w": 80, "h": 20, "actions": [] },
+      { "id": "nav2", "role": "statictext", "value": "Archive", "focused": false, "enabled": true, "x": 24, "y": 140, "w": 80, "h": 18, "actions": [] },
+      { "id": "bool", "role": "statictext", "value": "true", "focused": false, "enabled": true, "x": 24, "y": 170, "w": 60, "h": 18, "actions": [] },
+      { "id": "ver", "role": "statictext", "label": "Chrome version", "value": "126.0", "focused": false, "enabled": true, "x": 24, "y": 200, "w": 120, "h": 18, "actions": [] }
+    ]
+  },
+  "focusedContent": null
+}

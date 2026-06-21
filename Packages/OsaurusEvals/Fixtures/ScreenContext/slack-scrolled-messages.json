@@ -1,0 +1,36 @@
+{
+  "apps": [
+    { "pid": 202, "bundleId": "com.tinyspeck.slackmacgap", "name": "Slack", "active": true, "hidden": false }
+  ],
+  "activeWindow": {
+    "pid": 202,
+    "app": "Slack",
+    "title": "engineering (Channel) - Osaurus - Slack",
+    "x": 0, "y": 0, "w": 1400, "h": 900
+  },
+  "windowsByPid": {
+    "202": [
+      { "windowId": 1, "title": "engineering (Channel) - Osaurus - Slack", "focused": true, "minimized": false, "x": 0, "y": 0, "w": 1400, "h": 900 }
+    ]
+  },
+  "snapshot": {
+    "app": "Slack",
+    "focusedWindow": "engineering (Channel) - Osaurus - Slack",
+    "truncated": false,
+    "windows": [
+      { "id": 1, "title": "engineering (Channel) - Osaurus - Slack", "focused": true, "x": 0, "y": 0, "w": 1400, "h": 900 }
+    ],
+    "elements": [
+      { "id": "scroll", "role": "scrollarea", "label": "Messages", "value": "", "focused": false, "enabled": true, "x": 280, "y": 80, "w": 820, "h": 720, "actions": [] },
+      { "id": "m1", "role": "statictext", "value": "Alice: pushed the AXWebArea readiness fix — browsers read the page now", "focused": false, "enabled": true, "x": 300, "y": 200, "w": 760, "h": 22, "actions": [] },
+      { "id": "m2", "role": "statictext", "value": "Bob: does it keep native apps instant?", "focused": false, "enabled": true, "x": 300, "y": 230, "w": 760, "h": 22, "actions": [] },
+      { "id": "m3", "role": "statictext", "value": "Carol: yes, only the web case waits for the page tree to build", "focused": false, "enabled": true, "x": 300, "y": 260, "w": 760, "h": 22, "actions": [] },
+      { "id": "m4", "role": "statictext", "value": "Dave: shipping the scrolled-message capture this afternoon", "focused": false, "enabled": true, "x": 300, "y": 290, "w": 760, "h": 22, "actions": [] },
+      { "id": "side1", "role": "statictext", "value": "Threads", "focused": false, "enabled": true, "x": 24, "y": 120, "w": 120, "h": 18, "actions": [] },
+      { "id": "side2", "role": "statictext", "value": "Drafts", "focused": false, "enabled": true, "x": 24, "y": 150, "w": 120, "h": 18, "actions": [] },
+      { "id": "newmsg", "role": "button", "label": "New message", "focused": false, "enabled": true, "x": 1340, "y": 20, "w": 24, "h": 24, "actions": [] },
+      { "id": "composer", "role": "textfield", "label": "Message #engineering", "value": "", "focused": false, "enabled": true, "x": 300, "y": 820, "w": 760, "h": 40, "actions": [] }
+    ]
+  },
+  "focusedContent": null
+}

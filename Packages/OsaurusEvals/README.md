@@ -234,7 +234,7 @@ Exit codes:
 
 ## Case schema
 
-Every case file shares a top-level shape: `id`, `domain`, optional `label` and `notes`, `query`, `fixtures`, `expect`. The `domain` field selects which runner branch handles the case and which `expect.<sub>` block is required. Eleven domains exist today:
+Every case file shares a top-level shape: `id`, `domain`, optional `label` and `notes`, `query`, `fixtures`, `expect`. The `domain` field selects which runner branch handles the case and which `expect.<sub>` block is required. Twelve domains exist today:
 
 | Domain | Hits LLM? | Runner branch | Required expectation block |
 |---|---|---|---|
@@ -243,6 +243,7 @@ Every case file shares a top-level shape: `id`, `domain`, optional `label` and `
 | `capability_search` | no | `runCapabilitySearchCase` | `expect.capabilitySearch` |
 | `computer_use` | no | `runComputerUseCase` | `expect.computerUse` |
 | `computer_use_loop` | yes¹ | `runComputerUseLoopCase` | `expect.computerUseLoop` |
+| `screen_context` | no² | `runScreenContextCase` | `expect.screenContext` |
 | `schema` | no | `runSchemaCase` | `expect.schema` |
 | `tool_envelope` | no | `runToolEnvelopeCase` | `expect.toolEnvelope` |
 | `streaming_hint` | no | `runStreamingHintCase` | `expect.streamingHint` |
@@ -251,6 +252,8 @@ Every case file shares a top-level shape: `id`, `domain`, optional `label` and `
 | `request_validation` | no | `runRequestValidationCase` | `expect.requestValidation` |
 
 ¹ `computer_use_loop` drives a live model by default, but a case that supplies `scriptedActions` runs **model-free** (deterministic, CI-safe) via the loop's `AgentStepProvider` seam.
+
+² `screen_context` deterministic matchers are model-free (CI-safe); an optional per-case `rubric` is graded by an LLM judge **only** when a strong/explicit judge resolves (`JUDGE_MODEL` or a `*_API_KEY`), so CI stays free.
 
 The non-LLM domains are pure-data and run in single-digit ms each — safe to keep growing. `capability_claims` is the LLM-burning domain; keep it off CI.
 
@@ -458,6 +461,56 @@ make evals EVALS_SUITE=Packages/OsaurusEvals/Suites/ComputerUseLoop MODEL=founda
 ### `computer_use` domain
 
 Pure-data (no LLM): rebuilds a single `agent_action` exactly as the loop hands it to the gate and pins the `EffectClassifier` / gate decision against `expect.computerUse`. Pick a sibling under `Suites/ComputerUse/` as a template.
+
+### `screen_context` domain
+
+Replays a frozen macOS screen state (a `ScreenContextFixture`) through the real `ScreenContextDistiller` via the read-only `FixtureCUDriver`, then scores the rendered `[Screen Context]` block. This is the "is the ambient snapshot useful" lane: it guards that the distiller surfaces what the user is looking at (focused editor/input, selection, on-screen content) and drops chrome noise — the Xcode package-version sidebar that motivated the overhaul. The distiller is pure over `MacDriver`, so a fixture replay is fully deterministic — no real Accessibility, SkyLight, or Screen Recording.
+
+```json
+{
+  "id": "screen_context.xcode-editor-over-version-noise",
+  "domain": "screen_context",
+  "label": "Screen context • Xcode editor beats package-version sidebar",
+  "query": "(ambient capture)",
+  "fixtures": {},
+  "expect": {
+    "screenContext": {
+      "fixture": "xcode-storagemutationgate.json",
+      "focusedRoleEquals": "text area",
+      "viewingContains": ["func gate("],
+      "mustContain": ["In Xcode", "Viewing:"],
+      "mustNotContain": ["9.15.0", "0.3.11"],
+      "noiseRegexMustNotMatch": ["(?m)^- v?\\d+\\.\\d+(\\.\\d+)?$"],
+      "rubric": ["The context shows the user is viewing Swift code in Xcode"]
+    }
+  }
+}
+```
+
+Field notes (`expect.screenContext`):
+
+- Scene source (one required): `fixture` — a path resolved under `Fixtures/ScreenContext/` (CWD-independent; the runner also looks beside the suite and at the repo-root-relative path) — **or** `scene`, an inline `ScreenContextFixture`. Inline wins when both are present. A fixture carries `apps`, `activeWindow`, `windowsByPid` (string pid → windows), `snapshot` (`app`, `focusedWindow`, `truncated`, `windows`, `elements`), and `focusedContent` (the direct focused-element read: `role`, `label?`, `value?`, `selectedText?`, `viewport?`). Collections are optional on decode, so a synthetic fixture can omit empty parts.
+- Deterministic matchers (model-free, the CI floor): `mustContain` / `mustNotContain` substrings over the rendered block; `noiseRegexMustNotMatch` (regexes, matched multi-line, that must NOT match — e.g. a bare-version-token bullet); `focusedRoleEquals` / `selectedTextContains` / `viewingContains` on the focused element; `gistContains` on the "Doing:" line; and `orderedContains` (each inner array must appear in order — pins editor-beats-chrome ranking).
+- `rubric` — optional natural-language conditions for the LLM judge. Graded **only** when a strong/explicit judge resolves (`JUDGE_MODEL` or a `*_API_KEY`); otherwise skipped and noted, so CI stays deterministic and free.
+- The rendered block is always echoed into the report `notes` (`rendered:` …), so `--verbose` shows exactly what the distiller produced — the tuning signal.
+
+```bash
+make evals EVALS_SUITE=Packages/OsaurusEvals/Suites/ScreenContext
+```
+
+**Capturing real apps for tuning.** `osaurus-evals capture-screen` reads a real app (the frontmost, or `--app <name>`) via `NativeMacDriver` and writes a `ScreenContextFixture` JSON. It needs Accessibility permission for the process running it (grant your terminal in System Settings → Privacy & Security → Accessibility) and is **local-only** — never CI. Real captures contain your actual on-screen code/text, so the default output dir (`Fixtures/ScreenContext/local/`) is gitignored; committed fixtures alongside it are hand-authored/sanitized.
+
+```bash
+make evals-capture-screen APP=Xcode       # → Fixtures/ScreenContext/local/xcode-<ts>.json
+# Add --render to print the exact injected block in one shot (the fast diagnose loop):
+swift run --package-path Packages/OsaurusEvals osaurus-evals capture-screen --app Xcode --render
+# point a scratch case's `fixture` at it (relative to Fixtures/ScreenContext/), then:
+make evals EVALS_SUITE=Packages/OsaurusEvals/Suites/ScreenContext FILTER=my-scratch
+```
+
+Real captures exposed three app families the distiller now handles: **native** apps (Xcode, TextEdit) carry the editor/buffer over AX (code surfaces as `Viewing:`); **browsers** (Chrome/Safari) now read the page body — `prepareAndAwaitTree` waits for a built `AXWebArea` (not a bare node count, which the toolbar satisfies instantly), WebKit gets `AXEnhancedUserInterface` alongside `AXManualAccessibility`, and a targeted `find(statictext/heading/webarea)` recovers the body when the budget exhausts on chrome, so headings + paragraphs surface while nav/version/ARIA-`true` chrome is dropped; **Electron** apps (Cursor/VS Code, Slack) build their tree asynchronously too — Monaco's "editor is not accessible" sentinel and Slack's virtualized message rows are genuine text-only ceilings (not materialized into AX without an active screen reader), so for these shells the distiller mines the **reliable interactive/titled layer** (the same surface Computer Use *acts* on) into two behavior lines: `Active:` (channel/file parsed from the window title with high-precision patterns only) and `Status:` (git branch, problems, language, cursor position read from the bottom status-bar strip — geometry-gated, with bare version/commit tokens still dropped). `cursor-working-state` and the slack cases pin these.
+
+See `Suites/ScreenContext/README.md` for the per-case map and the capture/privacy boundary.
 
 ### Other domains
 

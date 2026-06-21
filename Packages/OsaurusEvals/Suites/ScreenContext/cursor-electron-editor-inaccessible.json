@@ -1,0 +1,29 @@
+{
+  "id": "screen_context.cursor-electron-editor-inaccessible",
+  "domain": "screen_context",
+  "label": "Screen context • Electron editor sentinel dropped; file + branch surface as behavior",
+  "query": "(ambient capture)",
+  "notes": "Regression guard for the real Cursor/VS-Code failure plus the behavior-signal upgrade: Monaco exposes 'The editor is not accessible…' + a '/' viewport instead of the buffer. The block must NOT contain the sentinel or a phantom 'Viewing:'/'(empty)'. The buffer body is the AX ceiling, so behavior comes from the reliable layer instead — the title names the active file ('Active: editing …') and the bottom status bar's git branch surfaces ('Status: main*'), the same single-token control the on-screen sampler drops as chrome.",
+  "fixtures": {},
+  "expect": {
+    "screenContext": {
+      "fixture": "cursor-electron-inaccessible.json",
+      "focusedRoleEquals": "text area",
+      "gistContains": ["In Cursor", "ScreenContextDistiller.swift"],
+      "mustContain": [
+        "In Cursor",
+        "Focused field: text area",
+        "Active: editing ScreenContextDistiller.swift",
+        "Status:",
+        "main*"
+      ],
+      "mustNotContain": [
+        "not accessible",
+        "screen reader optimized",
+        "Viewing:",
+        "Shift+Option",
+        "(empty)"
+      ]
+    }
+  }
+}

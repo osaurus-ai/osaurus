@@ -50,6 +50,11 @@ struct FloatingInputCard: View {
     var windowId: UUID? = nil
     /// Compact mode (sidebar open) - hides secondary chip content
     var isCompact: Bool = false
+    /// True when the chat has no visible messages yet (welcome/empty state).
+    /// Gates the read-only screen-context chip to the pre-first-send screen,
+    /// where "currently focused app" is meaningful — the snapshot freezes on
+    /// the first send.
+    var isEmptyChat: Bool = false
     /// Callback to clear the current chat session (triggered by /clear command).
     var onClearChat: (() -> Void)? = nil
     /// Callback when the user selects a skill slash command. Passes the skill UUID so the
@@ -110,6 +115,7 @@ struct FloatingInputCard: View {
         agentId: UUID? = nil,
         windowId: UUID? = nil,
         isCompact: Bool = false,
+        isEmptyChat: Bool = false,
         onClearChat: (() -> Void)? = nil,
         onSkillSelected: ((UUID) -> Void)? = nil,
         pendingSkillId: Binding<UUID?> = .constant(nil),
@@ -143,6 +149,7 @@ struct FloatingInputCard: View {
         self.agentId = agentId
         self.windowId = windowId
         self.isCompact = isCompact
+        self.isEmptyChat = isEmptyChat
         self.onClearChat = onClearChat
         self.onSkillSelected = onSkillSelected
         self._pendingSkillId = pendingSkillId
@@ -165,6 +172,11 @@ struct FloatingInputCard: View {
     /// Drives the composer credits chip (balance + low-balance tinting) for
     /// Osaurus Router sessions.
     @ObservedObject private var accountService = OsaurusRouterAccountService.shared
+    /// Opt-in gate + frontmost-app source + Accessibility status for the
+    /// read-only screen-context chip (shown only on the empty/welcome screen).
+    @ObservedObject private var screenContext = ScreenContextSettings.shared
+    @ObservedObject private var frontmostApp = FrontmostAppTracker.shared
+    @ObservedObject private var permissionService = SystemPermissionService.shared
 
     // MARK: - Slash Command State
 
@@ -412,19 +424,35 @@ struct FloatingInputCard: View {
         return Date().timeIntervalSince(lastSpeechTime)
     }
 
+    /// Whether the model / sandbox / clipboard / folder selector row has
+    /// anything to show. The screen-context indicator now lives on its own
+    /// row above this one, so it is no longer part of this gate.
+    private var showSelectorRow: Bool {
+        pickerItems.count > 1
+            || displayContextTokens > 0
+            || isSandboxAvailable
+            || isDefaultConfigAgent
+            || (appConfig.chatConfig.enableClipboardMonitoring && clipboardService.hasNewContent)
+            || showSessionSpend
+    }
+
     private var mainContent: some View {
         VStack(spacing: 12) {
-            if (pickerItems.count > 1
-                || displayContextTokens > 0
-                || isSandboxAvailable
-                || isDefaultConfigAgent
-                || (appConfig.chatConfig.enableClipboardMonitoring && clipboardService.hasNewContent)
-                || showSessionSpend)
-                && !showVoiceOverlay
-            {
-                selectorRow
-                    .padding(.top, 8)
-                    .padding(.horizontal, 20)
+            // Read-only screen-context indicator sits on its OWN row above the
+            // selector row, right-aligned so it stacks directly over the
+            // context-token count, rendered as quiet muted text (not a chip)
+            // so it reads as passive status rather than a control.
+            if !showVoiceOverlay && (showScreenContextIndicator || showSelectorRow) {
+                VStack(alignment: .trailing, spacing: 7) {
+                    if showScreenContextIndicator {
+                        screenContextIndicator
+                    }
+                    if showSelectorRow {
+                        selectorRow
+                    }
+                }
+                .padding(.top, 8)
+                .padding(.horizontal, 20)
             }
 
             if showVoiceOverlay {
@@ -1597,11 +1625,6 @@ extension FloatingInputCard {
                 sandboxToggleChip
             }
 
-            // Clipboard chip (visible when there's something new on the clipboard and monitoring is enabled)
-            if AppConfiguration.shared.chatConfig.enableClipboardMonitoring && clipboardService.hasNewContent {
-                clipboardToggleChip
-            }
-
             // Folder context selector: available so the user can point any
             // chat at a working directory. The Default (configuration) agent
             // doesn't use a working folder, so it shows a quiet
@@ -1612,6 +1635,15 @@ extension FloatingInputCard {
                 configurationOnlyChip
             } else {
                 folderContextChip
+            }
+
+            // Clipboard / paste chip — last in the left cluster, just to the
+            // right of the folder chip. It only appears when there's new
+            // clipboard content and its width varies with the source app, so
+            // keeping it at the trailing edge lets the Spacer absorb that change
+            // instead of shoving the fixed controls (and the folder chip) around.
+            if AppConfiguration.shared.chatConfig.enableClipboardMonitoring && clipboardService.hasNewContent {
+                clipboardToggleChip
             }
 
             Spacer()
@@ -2550,39 +2582,44 @@ extension FloatingInputCard {
 
     // MARK: - Clipboard Chip
 
-    private var clipboardChipInfo: (icon: String, label: String) {
+    /// SF Symbol representing the kind of content currently on the clipboard.
+    /// The chip pairs this icon with a leading "Paste" label and the source app.
+    private var clipboardChipIcon: String {
         guard let content = clipboardService.currentContent else {
-            return ("paperclip", "Clipboard")
+            return "paperclip"
         }
         switch content {
         case .text:
-            return ("text.quote", "Content")
+            return "text.quote"
         case .image:
-            return ("photo", "Image")
+            return "photo"
         case .file(let url):
             let kind = Attachment.Kind.document(filename: url.lastPathComponent, content: "", fileSize: 0)
-            let icon = Attachment(kind: kind).fileIcon
-            return (icon, url.lastPathComponent)
+            return Attachment(kind: kind).fileIcon
         }
     }
 
     private var clipboardChipLabel: some View {
-        let info = clipboardChipInfo
-        return HStack(spacing: 5) {
-            Image(systemName: info.icon)
+        HStack(spacing: 5) {
+            Image(systemName: clipboardChipIcon)
                 .font(.system(size: CGFloat(theme.captionSize) - 2, weight: .medium))
                 .foregroundColor(theme.accentColor)
 
-            HStack(spacing: 4) {
-                Text("Paste \(info.label) From", bundle: .module)
+            // Lead with the action word so the chip reads as "Paste" like its
+            // row-mates ("Sandbox", "Folder"); the source app trails as a quiet
+            // suffix so the "from which app" signal isn't lost.
+            Text("Paste", bundle: .module)
+                .font(theme.font(size: CGFloat(theme.captionSize), weight: .bold))
+                .foregroundColor(theme.accentColor)
+                .lineLimit(1)
+
+            if let source = clipboardService.lastSourceApp {
+                Text(source)
                     .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
                     .foregroundColor(theme.secondaryText)
-
-                Text(clipboardService.lastSourceApp ?? "Clipboard")
-                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .bold))
-                    .foregroundColor(theme.accentColor)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
             }
-            .lineLimit(1)
 
             Image(systemName: "chevron.right")
                 .font(theme.font(size: CGFloat(theme.captionSize) - 4, weight: .bold))
@@ -2842,6 +2879,49 @@ extension FloatingInputCard {
             )
         )
         .accessibilityLabel(Text("Configuration assistant", bundle: .module))
+    }
+
+    /// Accessibility permission, the gate for a useful screen-context capture.
+    private var isAccessibilityGranted: Bool {
+        permissionService.permissionStates[.accessibility] ?? false
+    }
+
+    /// The read-only screen-context indicator is shown only on the welcome/empty
+    /// screen, while the opt-in is on, Accessibility is granted, and we know
+    /// which app the user was just in (the snapshot freezes on the first send,
+    /// so "currently focused" only reads true pre-send).
+    private var showScreenContextIndicator: Bool {
+        screenContext.injectionEnabled
+            && isEmptyChat
+            && isAccessibilityGranted
+            && frontmostApp.lastNonSelfAppName != nil
+    }
+
+    /// Read-only indicator of the app the frozen screen-context snapshot will be
+    /// about (the app focused just before Osaurus). Rendered as a quiet,
+    /// right-aligned status line above the context-token count — just a
+    /// viewfinder glyph plus the app name, in muted text — so it pairs with the
+    /// budget readout rather than reading as a control.
+    private var screenContextIndicator: some View {
+        let app = frontmostApp.lastNonSelfAppName ?? "the focused app"
+        return HStack(spacing: 5) {
+            Image(systemName: "viewfinder")
+                .symbolRenderingMode(.hierarchical)
+                .font(.system(size: CGFloat(theme.captionSize) - 1, weight: .medium))
+                .foregroundColor(theme.accentColor.opacity(0.85))
+
+            Text(app)
+                .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .medium))
+                .foregroundColor(theme.tertiaryText)
+                .lineLimit(1)
+        }
+        .help(
+            Text(
+                "A read-only snapshot of \(app) is shared with this chat when you send. Manage it in Computer Use settings.",
+                bundle: .module
+            )
+        )
+        .accessibilityLabel(Text("Screen context from \(app)", bundle: .module))
     }
 
     /// Floating wrapper for `configContextErrorBanner`: keeps the toast out of
@@ -4021,6 +4101,7 @@ private struct ContextBreakdownPopover: View {
         case .cyan: return theme.isDark ? Color(red: 0.35, green: 0.82, blue: 0.9) : .cyan
         case .teal: return theme.isDark ? Color(red: 0.3, green: 0.75, blue: 0.75) : .teal
         case .indigo: return theme.isDark ? Color(red: 0.55, green: 0.48, blue: 0.95) : .indigo
+        case .pink: return theme.isDark ? Color(red: 1.0, green: 0.55, blue: 0.78) : .pink
         }
     }
 

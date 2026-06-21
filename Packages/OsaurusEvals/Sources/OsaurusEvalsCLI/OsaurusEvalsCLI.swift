@@ -36,6 +36,14 @@ struct OsaurusEvalsCLI {
         switch command {
         case "run":
             await runCommand(Array(args.dropFirst()))
+        case "capture-screen":
+            // Local-only AX capture (NativeMacDriver) → ScreenContextFixture
+            // JSON. No model/MLX load, so a plain exit (no Metal teardown) is
+            // correct and fast.
+            let captureExit = await runCaptureScreen(Array(args.dropFirst()))
+            fflush(stdout)
+            fflush(stderr)
+            exit(captureExit)
         case "agent-loop-lab":
             let labExitCode = await runAgentLoopLab(Array(args.dropFirst()))
             await shutdownAndExit(labExitCode)
@@ -655,6 +663,7 @@ struct OsaurusEvalsCLI {
                 osaurus-evals run --suite <dir> [--model <id>] [--filter <substr>] [--out <path>]
                                               [--threshold <float>] [--report-forensics]
                                               [--startup-timeout <seconds>]
+                osaurus-evals capture-screen [--app <name>] [--out <path>]
                 osaurus-evals agent-loop-lab --baseline <path> [--suite <dir> ...] [--model <id>]
                 osaurus-evals diff <baseline> <current> [--out <p>] [--markdown <p>]
                                               [--fail-on-regression]

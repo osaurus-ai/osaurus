@@ -403,6 +403,14 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// the arguments it passes (`argsMustContain`), and which tools it must
         /// NOT touch — plus an optional LLM-judge rubric.
         public let defaultAgent: DefaultAgentExpectations?
+        /// Distillation expectation for `domain == "screen_context"` cases.
+        /// Pure-data: replays a captured/synthetic accessibility tree
+        /// (`ScreenContextFixture`) through `ScreenContextDistiller` via the
+        /// `FixtureCUDriver` and scores deterministic matchers against the
+        /// rendered `[Screen Context]` block (plus an optional LLM-judge
+        /// rubric). The deterministic matchers run with NO model, so the lane
+        /// is CI-safe like `computer_use` / `schema`.
+        public let screenContext: ScreenContextExpectations?
 
         public init(
             schema: SchemaExpectations? = nil,
@@ -417,7 +425,8 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             agentLoop: AgentLoopExpectations? = nil,
             computerUse: ComputerUseExpectations? = nil,
             computerUseLoop: ComputerUseLoopExpectations? = nil,
-            defaultAgent: DefaultAgentExpectations? = nil
+            defaultAgent: DefaultAgentExpectations? = nil,
+            screenContext: ScreenContextExpectations? = nil
         ) {
             self.schema = schema
             self.toolEnvelope = toolEnvelope
@@ -432,6 +441,78 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.computerUse = computerUse
             self.computerUseLoop = computerUseLoop
             self.defaultAgent = defaultAgent
+            self.screenContext = screenContext
+        }
+    }
+
+    /// Expectation for `domain == "screen_context"` cases. Carries the scene
+    /// (a `ScreenContextFixture`, referenced by `fixture` path or inlined as
+    /// `scene`) plus matchers scored against the distiller's rendered block:
+    ///   - **Deterministic** (CI-safe, no model): `mustContain` /
+    ///     `mustNotContain` substring gates, `noiseRegexMustNotMatch` (a regex
+    ///     that must NOT match — e.g. a bare-version-token line), the focused
+    ///     field's `focusedRoleEquals` / `selectedTextContains` /
+    ///     `viewingContains`, the `gistContains` "Doing:" check, and
+    ///     `orderedContains` (A appears before B — pins the editor-beats-chrome
+    ///     ranking).
+    ///   - **LLM judge** (optional, off-CI): every `rubric` condition graded
+    ///     against the rendered block.
+    /// A case passes only when every present matcher passes.
+    public struct ScreenContextExpectations: Sendable, Codable {
+        /// Relative path to a fixture JSON, resolved under
+        /// `Packages/OsaurusEvals/Fixtures/ScreenContext/`. Mutually exclusive
+        /// with `scene` (inline wins when both are present).
+        public let fixture: String?
+        /// An inline fixture — handy for committed synthetic cases that don't
+        /// want a separate file. Takes precedence over `fixture`.
+        public let scene: ScreenContextFixture?
+        /// Substrings the rendered block MUST contain.
+        public let mustContain: [String]?
+        /// Substrings the rendered block must NOT contain (the noise gate).
+        public let mustNotContain: [String]?
+        /// Regular expressions (matched multi-line) that must NOT match the
+        /// rendered block — e.g. `(?m)^- \d+\.\d+\.\d+$` for a standalone
+        /// version-number bullet.
+        public let noiseRegexMustNotMatch: [String]?
+        /// The focused element's friendly role must equal this (e.g. `text area`).
+        public let focusedRoleEquals: String?
+        /// The focused element's selected text must contain this substring.
+        public let selectedTextContains: String?
+        /// Substrings the focused element's "Viewing:" slice must contain.
+        public let viewingContains: [String]?
+        /// Substrings the activity gist ("Doing:" line) must contain.
+        public let gistContains: [String]?
+        /// Ordered-subsequence assertions over the rendered block: for each
+        /// inner array, every element must appear, in order (the first strictly
+        /// before the next). Pins ranking, e.g. editor body before sidebar.
+        public let orderedContains: [[String]]?
+        /// Natural-language conditions for the LLM judge (optional, off-CI).
+        public let rubric: [String]?
+
+        public init(
+            fixture: String? = nil,
+            scene: ScreenContextFixture? = nil,
+            mustContain: [String]? = nil,
+            mustNotContain: [String]? = nil,
+            noiseRegexMustNotMatch: [String]? = nil,
+            focusedRoleEquals: String? = nil,
+            selectedTextContains: String? = nil,
+            viewingContains: [String]? = nil,
+            gistContains: [String]? = nil,
+            orderedContains: [[String]]? = nil,
+            rubric: [String]? = nil
+        ) {
+            self.fixture = fixture
+            self.scene = scene
+            self.mustContain = mustContain
+            self.mustNotContain = mustNotContain
+            self.noiseRegexMustNotMatch = noiseRegexMustNotMatch
+            self.focusedRoleEquals = focusedRoleEquals
+            self.selectedTextContains = selectedTextContains
+            self.viewingContains = viewingContains
+            self.gistContains = gistContains
+            self.orderedContains = orderedContains
+            self.rubric = rubric
         }
     }
 

@@ -101,7 +101,8 @@ public enum EvalRunner {
                     testCase,
                     modelId: modelLabel,
                     thresholdOverride: thresholdOverride,
-                    embedCosineFloorOverride: embedCosineFloorOverride
+                    embedCosineFloorOverride: embedCosineFloorOverride,
+                    suiteDirectory: suite.directory
                 )
                 rows.append(annotatedWithCaseNotes(row, from: testCase))
             }
@@ -161,14 +162,16 @@ public enum EvalRunner {
         _ testCase: EvalCase,
         modelId: String,
         thresholdOverride: Float? = nil,
-        embedCosineFloorOverride: Float? = nil
+        embedCosineFloorOverride: Float? = nil,
+        suiteDirectory: URL
     ) async -> EvalCaseReport {
         guard resourceSampledDomains.contains(testCase.domain) else {
             return await dispatchCase(
                 testCase,
                 modelId: modelId,
                 thresholdOverride: thresholdOverride,
-                embedCosineFloorOverride: embedCosineFloorOverride
+                embedCosineFloorOverride: embedCosineFloorOverride,
+                suiteDirectory: suiteDirectory
             )
         }
         // Wrap model/embedder-driven cases with a peak-RAM + CPU sampler and
@@ -182,7 +185,8 @@ public enum EvalRunner {
             testCase,
             modelId: modelId,
             thresholdOverride: thresholdOverride,
-            embedCosineFloorOverride: embedCosineFloorOverride
+            embedCosineFloorOverride: embedCosineFloorOverride,
+            suiteDirectory: suiteDirectory
         )
         let kvAfter = await ModelRuntime.batchDiagnosticsSnapshot()
         let sample = sampler.stop()
@@ -253,7 +257,8 @@ public enum EvalRunner {
         _ testCase: EvalCase,
         modelId: String,
         thresholdOverride: Float? = nil,
-        embedCosineFloorOverride: Float? = nil
+        embedCosineFloorOverride: Float? = nil,
+        suiteDirectory: URL
     ) async -> EvalCaseReport {
         let label = testCase.label ?? testCase.id
 
@@ -276,6 +281,12 @@ public enum EvalRunner {
             return runComputerUseCase(testCase, modelId: modelId)
         case "computer_use_loop":
             return await runComputerUseLoopCase(testCase, modelId: modelId)
+        case "screen_context":
+            return await runScreenContextCase(
+                testCase,
+                modelId: modelId,
+                suiteDirectory: suiteDirectory
+            )
         case "capability_search":
             return await runCapabilitySearchCase(
                 testCase,
