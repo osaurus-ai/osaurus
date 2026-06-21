@@ -1,0 +1,39 @@
+{
+  "_comment": "Synthetic Electron/VS-Code-family (Cursor) scene. Monaco exposes a sentinel string ('The editor is not accessible…') as the focused text area's label/value and a lone '/' as the viewport instead of the real buffer — the exact shape captured from a real Cursor window. The distiller must drop the sentinel + junk viewport and degrade to an honest app+window+role summary (the window title still names the file), never feeding the model the sentinel or a phantom 'Viewing:'.",
+  "apps": [
+    { "pid": 701, "bundleId": "com.todesktop.230313mzl4w4u92", "name": "Cursor", "active": true, "hidden": false },
+    { "pid": 404, "bundleId": "com.apple.dt.Xcode", "name": "Xcode", "active": false, "hidden": false }
+  ],
+  "activeWindow": {
+    "pid": 701, "app": "Cursor", "title": "ScreenContextDistiller.swift — osaurus", "x": 0, "y": 0, "w": 1600, "h": 1000
+  },
+  "windowsByPid": {
+    "701": [
+      { "windowId": 1, "title": "ScreenContextDistiller.swift — osaurus", "focused": true, "minimized": false, "x": 0, "y": 0, "w": 1600, "h": 1000 }
+    ],
+    "404": [
+      { "windowId": 1, "title": "osaurus — StorageMutationGate.swift", "focused": false, "minimized": false, "x": 40, "y": 40, "w": 1400, "h": 900 }
+    ]
+  },
+  "snapshot": {
+    "app": "Cursor",
+    "focusedWindow": "ScreenContextDistiller.swift — osaurus",
+    "truncated": false,
+    "windows": [
+      { "id": 1, "title": "ScreenContextDistiller.swift — osaurus", "focused": true, "x": 0, "y": 0, "w": 1600, "h": 1000 }
+    ],
+    "elements": [
+      { "id": "ed", "role": "textarea", "label": "The editor is not accessible at this time. To enable screen reader optimized mode, use Shift+Option+F1", "value": "The editor is not accessible at this time. To enable screen reader optimized mode, use Shift+Option+F1", "focused": true, "enabled": true, "x": 380, "y": 80, "w": 1100, "h": 880, "actions": [] },
+      { "id": "tab", "role": "statictext", "value": "ScreenContextDistiller.swift", "focused": false, "enabled": true, "x": 390, "y": 50, "w": 220, "h": 22, "actions": [] },
+      { "id": "ext", "role": "statictext", "value": "Prettier", "focused": false, "enabled": true, "x": 1500, "y": 980, "w": 60, "h": 18, "actions": [] },
+      { "id": "branch", "role": "statictext", "value": "main*", "focused": false, "enabled": true, "x": 20, "y": 980, "w": 50, "h": 18, "actions": [] },
+      { "id": "panel", "role": "statictext", "value": "Agents Window", "focused": false, "enabled": true, "x": 20, "y": 60, "w": 180, "h": 20, "actions": [] }
+    ]
+  },
+  "focusedContent": {
+    "role": "textarea",
+    "label": "The editor is not accessible at this time. To enable screen reader optimized mode, use Shift+Option+F1",
+    "value": "The editor is not accessible at this time. To enable screen reader optimized mode, use Shift+Option+F1",
+    "viewport": "/"
+  }
+}

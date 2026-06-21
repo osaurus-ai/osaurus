@@ -18,6 +18,8 @@ public actor MockMacDriver: MacDriver {
     private var windowsByPid: [Int32: [CUWindowInfo]]
     private var active: CUActiveWindow?
     private var openOverride: Result<CUAppInfo, MacDriverError>?
+    /// Per-pid direct focused-content read returned by `focusedContent`.
+    private var focusedContentByPid: [Int32: CUFocusedContent]
 
     /// Per-pid queue of snapshots returned by `capture`/`find`, in order. The
     /// last entry repeats once the queue is exhausted (steady state).
@@ -48,13 +50,15 @@ public actor MockMacDriver: MacDriver {
         apps: [CUAppListing] = [],
         windowsByPid: [Int32: [CUWindowInfo]] = [:],
         activeWindow: CUActiveWindow? = nil,
-        snapshots: [Int32: [CUSnapshot]] = [:]
+        snapshots: [Int32: [CUSnapshot]] = [:],
+        focusedContent: [Int32: CUFocusedContent] = [:]
     ) {
         self._availability = availability
         self.apps = apps
         self.windowsByPid = windowsByPid
         self.active = activeWindow
         self.snapshotQueue = snapshots
+        self.focusedContentByPid = focusedContent
     }
 
     // MARK: Scripting API
@@ -62,6 +66,9 @@ public actor MockMacDriver: MacDriver {
     public func setAvailability(_ a: MacDriverAvailability) { _availability = a }
     public func setApps(_ a: [CUAppListing]) { apps = a }
     public func setOpenResult(_ r: Result<CUAppInfo, MacDriverError>) { openOverride = r }
+    public func setFocusedContent(_ c: CUFocusedContent?, pid: Int32) {
+        focusedContentByPid[pid] = c
+    }
     public func enqueueSnapshots(_ snaps: [CUSnapshot], pid: Int32) {
         snapshotQueue[pid, default: []].append(contentsOf: snaps)
     }
@@ -78,6 +85,8 @@ public actor MockMacDriver: MacDriver {
     public func listWindows(pid: Int32) async -> [CUWindowInfo] { windowsByPid[pid] ?? [] }
 
     public func activeWindow() async -> CUActiveWindow? { active }
+
+    public func focusedContent(pid: Int32) async -> CUFocusedContent? { focusedContentByPid[pid] }
 
     public func open(
         identifier: String,

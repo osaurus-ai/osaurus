@@ -1,0 +1,23 @@
+{
+  "id": "screen_context.xcode-editor-over-version-noise",
+  "domain": "screen_context",
+  "label": "Screen context • Xcode editor beats package-version sidebar",
+  "query": "(ambient capture)",
+  "notes": "The reported failure: Xcode's snapshot surfaced only the package-dependency version numbers (9.15.0, 0.3.11, …) and never the code. With the direct focused-content read + bare-version-token drop, the block must instead show the Swift the user is viewing and omit the version noise.",
+  "fixtures": {},
+  "expect": {
+    "screenContext": {
+      "fixture": "xcode-storagemutationgate.json",
+      "focusedRoleEquals": "text area",
+      "viewingContains": ["func gate("],
+      "gistContains": ["In Xcode"],
+      "mustContain": ["In Xcode", "Viewing:"],
+      "mustNotContain": ["9.15.0", "0.3.11", "13.0.0"],
+      "noiseRegexMustNotMatch": ["(?m)^- v?\\d+\\.\\d+(\\.\\d+)?$"],
+      "rubric": [
+        "The context shows the user is viewing or editing Swift code in Xcode",
+        "It does not present dependency version numbers as the on-screen content"
+      ]
+    }
+  }
+}

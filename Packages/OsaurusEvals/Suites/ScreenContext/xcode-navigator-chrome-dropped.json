@@ -1,0 +1,19 @@
+{
+  "id": "screen_context.xcode-navigator-chrome-dropped",
+  "domain": "screen_context",
+  "label": "Screen context • Xcode navigator file rows + commit hash dropped, code leads",
+  "query": "(ambient capture)",
+  "notes": "Faithful version of the original bug: Xcode's Project Navigator rows are editable 'textfield's whose value is a bare file name, and the blame gutter shows a commit hash. Those are sidebar chrome — the focused editor's code must lead via 'Viewing:' and the unlabeled single-token file names + hash must NOT appear in 'On screen'.",
+  "fixtures": {},
+  "expect": {
+    "screenContext": {
+      "fixture": "xcode-navigator-chrome.json",
+      "focusedRoleEquals": "text area",
+      "viewingContains": ["func gate("],
+      "gistContains": ["In Xcode"],
+      "mustContain": ["In Xcode", "Viewing:"],
+      "mustNotContain": ["AppDelegate", "ServerController", "RouteHandler", "d35c074"],
+      "noiseRegexMustNotMatch": ["(?m)^- [0-9a-f]{7,40}$"]
+    }
+  }
+}

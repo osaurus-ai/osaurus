@@ -1488,7 +1488,12 @@ struct ThemePreviewCard: View {
         // forces an offscreen render pass per state change and was a
         // significant scroll cost when `onHover` fires while the cursor
         // crosses cells.
-        .shadow(color: Color.black.opacity(isActive ? 0.12 : 0.07), radius: isActive ? 10 : 6, x: 0, y: isActive ? 4 : 2)
+        .shadow(
+            color: Color.black.opacity(isActive ? 0.12 : 0.07),
+            radius: isActive ? 10 : 6,
+            x: 0,
+            y: isActive ? 4 : 2
+        )
         .onHover { isHovered = $0 }
         .task(id: theme.metadata.id) {
             cachedImage = await ThemePreviewImageCache.shared.image(for: theme)

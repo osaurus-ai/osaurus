@@ -79,6 +79,20 @@ public struct NativeMacDriver: MacDriver {
         }
     }
 
+    public func focusedContent(pid: Int32) async -> CUFocusedContent? {
+        await MainActor.run {
+            guard let info = computeFocusedContent(pid: pid) else { return nil }
+            return CUFocusedContent(
+                role: info.role,
+                label: info.label,
+                placeholder: info.placeholder,
+                value: info.value,
+                selectedText: info.selectedText,
+                viewport: info.viewport
+            )
+        }
+    }
+
     // MARK: Open
 
     public func open(
@@ -114,6 +128,11 @@ public struct NativeMacDriver: MacDriver {
     ) async -> CUSnapshot {
         switch tier {
         case .ax:
+            // Electron/Chromium build their AX tree asynchronously after
+            // `AXManualAccessibility` flips, so wait for it before this one-shot
+            // traverse (Cocoa apps + already-built trees return immediately).
+            // Without this the first read of Slack/Chrome/VS Code is empty.
+            await AccessibilityManager.shared.prepareAndAwaitTree(pid: pid)
             let snapshot = await MainActor.run { () -> TraversalResult in
                 var filter = ElementFilter(pid: pid)
                 if let maxElements { filter.maxElements = maxElements }
@@ -342,6 +361,7 @@ private func mapSnapshot(
                 roleDescription: $0.roleDescription,
                 label: $0.label,
                 value: $0.value,
+                selectedText: $0.selectedText,
                 placeholder: $0.placeholder,
                 path: $0.path,
                 windowId: $0.windowId,

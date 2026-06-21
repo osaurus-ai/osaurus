@@ -1,0 +1,28 @@
+{
+  "id": "screen_context.chrome-webarea-article",
+  "domain": "screen_context",
+  "label": "Screen context • Chrome web-area article body surfaces",
+  "query": "(ambient capture)",
+  "notes": "A browser reading scene: the page sits under an AXWebArea with a heading and body paragraphs. The article body (and heading) must surface as on-screen content, while browser/page chrome stays dropped — nav links, a single-token nav label, an ARIA boolean ('true') leaked as text, and a bare version token.",
+  "fixtures": {},
+  "expect": {
+    "screenContext": {
+      "fixture": "chrome-webarea-article.json",
+      "gistContains": ["In Google Chrome"],
+      "mustContain": [
+        "In Google Chrome",
+        "On screen:",
+        "Local-first software: you own your data",
+        "Local-first apps keep the primary copy"
+      ],
+      "mustNotContain": ["Home", "Archive", "true", "126.0"],
+      "noiseRegexMustNotMatch": ["(?m)^- v?\\d+\\.\\d+(\\.\\d+)?$", "(?mi)^- true$"],
+      "orderedContains": [["Local-first software: you own your data", "Local-first apps keep the primary copy"]],
+      "rubric": [
+        "Indicates the user is reading an article about local-first software",
+        "Surfaces the page heading and body text, not just the address bar",
+        "Does not surface nav chrome, the 'true' state token, or the browser version number as on-screen content"
+      ]
+    }
+  }
+}
