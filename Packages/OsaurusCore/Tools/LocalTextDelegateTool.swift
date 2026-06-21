@@ -277,7 +277,7 @@ public final class LocalTextDelegateTool: OsaurusTool, @unchecked Sendable {
             )
         } catch {
             _ = await unloadDelegateIfNeeded(model: model.name, config: config)
-            try? await ChatResidencyHandoff.restore(residencyLease)
+            await ChatResidencyHandoff.restoreBestEffort(residencyLease)
             return ToolEnvelope.failure(
                 kind: .executionError,
                 message: "Local delegate failed: \(error.localizedDescription)",

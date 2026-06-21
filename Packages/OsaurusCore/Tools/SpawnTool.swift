@@ -157,7 +157,7 @@ public final class SpawnTool: OsaurusTool, @unchecked Sendable {
                 sessionId: sessionId
             )
         } catch {
-            try? await ChatResidencyHandoff.restore(lease)
+            await ChatResidencyHandoff.restoreBestEffort(lease)
             return ToolEnvelope.failure(
                 kind: .executionError,
                 message: "Subagent '\(agentName)' failed: \(error.localizedDescription)",

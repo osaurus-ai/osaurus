@@ -121,3 +121,8 @@ Chat turn (orchestrator: local OR cloud)
   `AgentDelegationConfigurationStore` (`agent-delegation.json`).
 - **Tests:** NativeImageJobCoordinatorTests, AgentDelegationToolAvailabilityTests,
   NativeImageToolArtifactBridgeTests, config-store tests.
+
+## Update 2026-06-21 — GAP 5 fixed
+`ChatResidencyHandoff.restoreBestEffort` logs a reload failure instead of swallowing
+it (`try?`); wired into SpawnTool + LocalTextDelegateTool restore paths. A
+left-unloaded orchestrator after a failed restore is now diagnosable.

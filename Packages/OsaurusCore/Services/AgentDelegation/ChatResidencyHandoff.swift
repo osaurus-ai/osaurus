@@ -15,6 +15,7 @@
 
 import Darwin
 import Foundation
+import os
 
 /// Models unloaded by a handoff, to be reloaded when the job finishes.
 struct ChatResidencyLease: Sendable, Equatable {
@@ -24,6 +25,28 @@ struct ChatResidencyLease: Sendable, Equatable {
 }
 
 enum ChatResidencyHandoff {
+    private static let logger = Logger(
+        subsystem: "com.dinoki.osaurus", category: "ChatResidencyHandoff")
+
+    /// Restore the orchestrator, logging (not swallowing) a failure. Use on the
+    /// cleanup / failure paths where the caller can't propagate — a reload
+    /// failure leaves the chat model unloaded, which must be diagnosable rather
+    /// than silently lost (was `try? await restore(...)`).
+    @discardableResult
+    static func restoreBestEffort(
+        _ lease: ChatResidencyLease,
+        onPhase: (_ phase: String, _ detail: String) -> Void = { _, _ in }
+    ) async -> [String] {
+        do {
+            return try await restore(lease, onPhase: onPhase)
+        } catch {
+            logger.error(
+                "Orchestrator restore failed after a subagent job — chat model left unloaded: \(error.localizedDescription, privacy: .public)"
+            )
+            return []
+        }
+    }
+
     enum HandoffError: Error, CustomStringConvertible {
         case chatBusy
         case insufficientMemory(neededGB: Double, availableGB: Double)
