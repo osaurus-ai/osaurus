@@ -22,13 +22,13 @@ struct RemoteAgentRoutingTests {
 
     // MARK: - Fixtures
 
-    private static func makeService(
+    private static func makeProvider(
         basePath: String,
         port: Int? = 1234,
         remoteAgentId: UUID? = UUID(),
         remoteAgentAddress: String? = "agent-address"
-    ) -> RemoteProviderService {
-        let provider = RemoteProvider(
+    ) -> RemoteProvider {
+        RemoteProvider(
             name: "Coco",
             host: "127.0.0.1",
             providerProtocol: .http,
@@ -39,8 +39,21 @@ struct RemoteAgentRoutingTests {
             remoteAgentId: remoteAgentId,
             remoteAgentAddress: remoteAgentAddress
         )
-        return RemoteProviderService(
-            provider: provider,
+    }
+
+    private static func makeService(
+        basePath: String,
+        port: Int? = 1234,
+        remoteAgentId: UUID? = UUID(),
+        remoteAgentAddress: String? = "agent-address"
+    ) -> RemoteProviderService {
+        RemoteProviderService(
+            provider: makeProvider(
+                basePath: basePath,
+                port: port,
+                remoteAgentId: remoteAgentId,
+                remoteAgentAddress: remoteAgentAddress
+            ),
             models: ["coco/model-a"],
             resolvedHeaders: [:]
         )
@@ -287,5 +300,91 @@ struct RemoteAgentRoutingTests {
         let json = #"{"model":"m","messages":[],"runAsRemoteAgent":true}"#
         let req = try JSONDecoder().decode(ChatCompletionRequest.self, from: Data(json.utf8))
         #expect(req.runAsRemoteAgent == false)
+    }
+
+    // MARK: - Agent metadata decode (avatar over the wire)
+
+    @Test func parseAgentMetadata_decodesAvatarAndEffectiveModel() throws {
+        let json = #"""
+        {
+            "name": "Coco",
+            "description": "A friendly helper",
+            "effective_model": "coco/gemma-3-12b",
+            "default_model": "default",
+            "avatar": "green"
+        }
+        """#
+        let meta = try #require(
+            RemoteProviderService.parseAgentMetadata(from: Data(json.utf8))
+        )
+        #expect(meta.name == "Coco")
+        #expect(meta.description == "A friendly helper")
+        // Prefers effective_model over default_model.
+        #expect(meta.effectiveModel == "coco/gemma-3-12b")
+        // The mascot id is the whole point of this workstream.
+        #expect(meta.avatar == "green")
+    }
+
+    @Test func parseAgentMetadata_collapsesDefaultSentinelModelToNil() throws {
+        // A peer that only exposes the "default" sentinel has no concrete model
+        // to pin — the chip must not imply a specific device model.
+        let json = #"{"name":"Coco","default_model":"default"}"#
+        let meta = try #require(
+            RemoteProviderService.parseAgentMetadata(from: Data(json.utf8))
+        )
+        #expect(meta.effectiveModel == nil)
+        // Absent avatar → nil (monogram fallback), absent description → nil.
+        #expect(meta.avatar == nil)
+        #expect(meta.description == nil)
+        #expect(meta.name == "Coco")
+    }
+
+    @Test func parseAgentMetadata_trimsAndNilsBlankFields() throws {
+        let json = #"""
+        {"name":"  ","description":"   ","avatar":"  ","effective_model":""}
+        """#
+        let meta = try #require(
+            RemoteProviderService.parseAgentMetadata(from: Data(json.utf8))
+        )
+        #expect(meta.name == nil)
+        #expect(meta.description == nil)
+        #expect(meta.avatar == nil)
+        #expect(meta.effectiveModel == nil)
+    }
+
+    @Test func parseAgentMetadata_returnsNilForNonJSON() {
+        #expect(RemoteProviderService.parseAgentMetadata(from: Data("not json".utf8)) == nil)
+    }
+
+    // MARK: - Connection metadata fidelity (Insights honesty)
+
+    @Test func remoteConnectionInfo_mode2_isSecureChannelAgentRun() throws {
+        // Hold the provider locally (a Sendable struct) so the providerId
+        // assertion reads it directly instead of through the actor-isolated
+        // `service.provider`, which the `#expect` @Sendable autoclosure rejects.
+        let provider = Self.makeProvider(basePath: "/v1", remoteAgentAddress: "addr-1")
+        let service = RemoteProviderService(
+            provider: provider,
+            models: ["coco/model-a"],
+            resolvedHeaders: [:]
+        )
+        let conn = try #require(
+            ChatEngine.remoteConnectionInfo(for: service, runAsRemoteAgent: true)
+        )
+        #expect(conn.info.mode == .remoteAgentRun)
+        #expect(conn.info.transport == .secureChannel)
+        #expect(conn.info.providerId == provider.id)
+        #expect(conn.path == "/v1/agents/addr-1/run")
+        #expect(conn.info.remoteEndpoint?.contains("/agents/addr-1/run") == true)
+    }
+
+    @Test func remoteConnectionInfo_mode1_isSecureChannelInference() throws {
+        let service = Self.makeService(basePath: "/v1", remoteAgentAddress: "addr-1")
+        let conn = try #require(
+            ChatEngine.remoteConnectionInfo(for: service, runAsRemoteAgent: false)
+        )
+        #expect(conn.info.mode == .remoteInference)
+        #expect(conn.info.transport == .secureChannel)
+        #expect(conn.path == "/v1/chat/completions")
     }
 }

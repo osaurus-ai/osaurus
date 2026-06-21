@@ -94,6 +94,12 @@ struct FloatingInputCard: View {
     /// async connect and fail with a misleading "model not found"; the parent
     /// shows a "connecting" notice for the duration.
     var remoteConnectionPending: Bool = false
+    /// Mode 2 (remote agent run): the conversation targets a discovered remote
+    /// agent that executes its own tool loop, system prompt, and generation
+    /// config server-side. Hides the composer's local-only affordances —
+    /// sandbox, working folder, screen-context, and the thinking / model-option
+    /// chips — because none of them are sent to (or honored by) the remote peer.
+    var isRemoteAgentRun: Bool = false
 
     init(
         text: Binding<String>,
@@ -129,7 +135,8 @@ struct FloatingInputCard: View {
         onAddCredits: (() -> Void)? = nil,
         isModelPinned: Bool = false,
         pinnedModelLabel: String? = nil,
-        remoteConnectionPending: Bool = false
+        remoteConnectionPending: Bool = false,
+        isRemoteAgentRun: Bool = false
     ) {
         self._text = text
         self._selectedModel = selectedModel
@@ -165,6 +172,7 @@ struct FloatingInputCard: View {
         self.isModelPinned = isModelPinned
         self.pinnedModelLabel = pinnedModelLabel
         self.remoteConnectionPending = remoteConnectionPending
+        self.isRemoteAgentRun = isRemoteAgentRun
     }
 
     // Observe managers for reactive updates
@@ -431,9 +439,13 @@ struct FloatingInputCard: View {
     /// Whether the model / sandbox / clipboard / folder selector row has
     /// anything to show. The screen-context indicator now lives on its own
     /// row above this one, so it is no longer part of this gate.
+    ///
+    /// In a Mode 2 remote-agent run the context-budget chip is hidden, so the
+    /// pinned-model chip (`isModelPinned`) is what keeps the row visible.
     private var showSelectorRow: Bool {
         pickerItems.count > 1
-            || displayContextTokens > 0
+            || isModelPinned
+            || (displayContextTokens > 0 && !isRemoteAgentRun)
             || isSandboxAvailable
             || isDefaultConfigAgent
             || (appConfig.chatConfig.enableClipboardMonitoring && clipboardService.hasNewContent)
@@ -1617,13 +1629,18 @@ extension FloatingInputCard {
                 modelSelectorChip
             }
 
-            thinkingToggleChip
+            // Mode 2 owns its own generation config (thinking + sampler
+            // options) server-side; the local toggles wouldn't reach the
+            // remote agent, so hide them rather than imply they apply.
+            if !isRemoteAgentRun {
+                thinkingToggleChip
+            }
 
             if autoSpeakAssistant {
                 autoSpeakToggleChip
             }
 
-            if hasNonThinkingOptions {
+            if hasNonThinkingOptions, !isRemoteAgentRun {
                 modelOptionsSelectorChip
             }
 
@@ -1634,7 +1651,9 @@ extension FloatingInputCard {
             // `toggleSandbox()` (it clears the active folder before enabling
             // sandbox), not by hiding the chip — that way the user can
             // always see and switch backends.
-            if !isDefaultConfigAgent, isSandboxAvailable {
+            // Hidden in Mode 2: the remote agent runs its own tools server-side,
+            // so the local sandbox never participates.
+            if !isRemoteAgentRun, !isDefaultConfigAgent, isSandboxAvailable {
                 sandboxToggleChip
             }
 
@@ -1644,10 +1663,14 @@ extension FloatingInputCard {
             // "Configuration" indicator in place of the picker instead.
             // Mutual exclusion with sandbox is enforced inside the selection
             // handlers (they disable autonomous exec before opening the picker).
-            if isDefaultConfigAgent {
-                configurationOnlyChip
-            } else {
-                folderContextChip
+            // Hidden in Mode 2: no local folder context is sent to the remote
+            // agent — its own host workspace (if any) is server-side.
+            if !isRemoteAgentRun {
+                if isDefaultConfigAgent {
+                    configurationOnlyChip
+                } else {
+                    folderContextChip
+                }
             }
 
             // Clipboard / paste chip — last in the left cluster, just to the
@@ -1676,7 +1699,11 @@ extension FloatingInputCard {
     @ViewBuilder
     private var metaCluster: some View {
         let showCredits = showSessionSpend
-        let showTokens = displayContextTokens > 0
+        // Mode 2 hides the context-budget chip + popover entirely: a remote
+        // agent composes its own system prompt / tools server-side, so a local
+        // token breakdown (system prompt, tools, history) doesn't reflect what
+        // actually runs and would mislead about the remote agent's budget.
+        let showTokens = displayContextTokens > 0 && !isRemoteAgentRun
         if showCredits || showTokens {
             HStack(alignment: .center, spacing: 8) {
                 if showCredits {
@@ -2904,7 +2931,10 @@ extension FloatingInputCard {
     /// which app the user was just in (the snapshot freezes on the first send,
     /// so "currently focused" only reads true pre-send).
     private var showScreenContextIndicator: Bool {
-        screenContext.injectionEnabled
+        // Mode 2 never injects local screen context (the remote agent runs its
+        // own context server-side), so don't promise a snapshot we won't send.
+        !isRemoteAgentRun
+            && screenContext.injectionEnabled
             && isEmptyChat
             && isAccessibilityGranted
             && frontmostApp.lastNonSelfAppName != nil

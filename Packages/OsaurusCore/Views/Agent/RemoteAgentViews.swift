@@ -267,6 +267,8 @@ struct RemoteAgentCard: View {
 struct RemoteAgentDetailView: View {
     @Environment(\.theme) private var theme
     @ObservedObject private var manager = RemoteAgentManager.shared
+    @ObservedObject private var providerManager = RemoteProviderManager.shared
+    @ObservedObject private var insights = InsightsService.shared
 
     let remoteId: UUID
     let onBack: () -> Void
@@ -275,6 +277,15 @@ struct RemoteAgentDetailView: View {
 
     @State private var note: String = ""
     @State private var showRemoveConfirm: Bool = false
+    /// Live `effective_model` from a `GET /agents/{id}` refresh on appear. The
+    /// peer's real runtime model (Mode 2 sends `model:"default"` on the wire),
+    /// so we fetch it here rather than infer it from the local picker.
+    @State private var liveEffectiveModel: String?
+    /// True while the connect-time `GET /agents/{id}` refresh is in flight.
+    @State private var isRefreshingMetadata: Bool = false
+    @State private var metadataRefreshTask: Task<Void, Never>?
+    /// True while a manual Connect is in flight (drives the button spinner).
+    @State private var isConnecting: Bool = false
     /// Transient "Saved" pill toggled by `commitNote()` after the debounce
     /// fires. Lives next to the note label so the user has explicit feedback
     /// that their typing was persisted (mirroring the local agent detail's
@@ -297,6 +308,8 @@ struct RemoteAgentDetailView: View {
                 VStack(alignment: .leading, spacing: 16) {
                     if let remote {
                         identityCard(for: remote)
+                        connectionCard(for: remote)
+                        activityCard(for: remote)
                         sourceCard(for: remote)
                         noteCard(for: remote)
                         actionCard(for: remote)
@@ -330,9 +343,11 @@ struct RemoteAgentDetailView: View {
             // fires from this assignment is treated as the initial sync, not
             // a user edit.
             DispatchQueue.main.async { noteHydrated = true }
+            refreshLiveMetadata()
         }
         .onDisappear {
             noteSaveTask?.cancel()
+            metadataRefreshTask?.cancel()
         }
         .themedAlert(
             "Remove this remote agent?",
@@ -392,21 +407,13 @@ struct RemoteAgentDetailView: View {
 
     private func identityCard(for remote: RemoteAgent) -> some View {
         HStack(spacing: 16) {
-            ZStack {
-                Circle()
-                    .fill(
-                        LinearGradient(
-                            colors: [color.opacity(0.2), color.opacity(0.05)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                Circle().strokeBorder(color.opacity(0.5), lineWidth: 2)
-                Text(remote.name.prefix(1).uppercased())
-                    .font(.system(size: 22, weight: .bold, design: .rounded))
-                    .foregroundColor(color)
-            }
-            .frame(width: 56, height: 56)
+            AgentAvatarView(
+                mascotId: remote.avatar,
+                name: remote.name,
+                tint: color,
+                diameter: 56,
+                monogramFontSize: 22
+            )
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(remote.name)
@@ -442,6 +449,267 @@ struct RemoteAgentDetailView: View {
                     RoundedRectangle(cornerRadius: 12).stroke(theme.cardBorder, lineWidth: 1)
                 )
         )
+    }
+
+    // MARK: Connection
+
+    /// Live connection phase derived from the provider's runtime state, plus
+    /// the transient manual-connect flag so the button reflects an in-flight
+    /// connect immediately.
+    private enum ConnectionPhase: Equatable {
+        case connected
+        case connecting
+        case disconnected
+        case failed(String)
+
+        var label: LocalizedStringKey {
+            switch self {
+            case .connected: return "Connected"
+            case .connecting: return "Connecting…"
+            case .disconnected: return "Disconnected"
+            case .failed: return "Connection failed"
+            }
+        }
+    }
+
+    private func phase(for remote: RemoteAgent) -> ConnectionPhase {
+        if isConnecting { return .connecting }
+        guard let state = providerManager.providerStates[remote.providerId] else {
+            return .disconnected
+        }
+        if state.isConnected { return .connected }
+        if state.isConnecting { return .connecting }
+        if let error = state.lastError, !error.isEmpty { return .failed(error) }
+        return .disconnected
+    }
+
+    private func phaseColor(_ phase: ConnectionPhase) -> Color {
+        switch phase {
+        case .connected: return theme.successColor
+        case .connecting: return .orange
+        case .disconnected: return theme.tertiaryText
+        case .failed: return theme.errorColor
+        }
+    }
+
+    private func connectionCard(for remote: RemoteAgent) -> some View {
+        let currentPhase = phase(for: remote)
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                AgentSheetSectionLabel("Connection")
+                if isRefreshingMetadata {
+                    ProgressView()
+                        .controlSize(.mini)
+                        .scaleEffect(0.7)
+                }
+                Spacer()
+                Button {
+                    refreshLiveMetadata()
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(theme.accentColor)
+                }
+                .buttonStyle(.plain)
+                .help(Text("Refresh from the agent", bundle: .module))
+                .disabled(isRefreshingMetadata)
+            }
+
+            // Status row with a colored phase dot.
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Text("Status", bundle: .module)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(theme.tertiaryText)
+                    .frame(width: 80, alignment: .leading)
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(phaseColor(currentPhase))
+                        .frame(width: 7, height: 7)
+                    Text(currentPhase.label, bundle: .module)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(theme.secondaryText)
+                }
+                Spacer()
+            }
+            if case .failed(let message) = currentPhase {
+                Text(message)
+                    .font(.system(size: 10))
+                    .foregroundColor(theme.errorColor.opacity(0.85))
+                    .lineLimit(2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            metadataRow(label: "Mode", value: NSLocalizedString("Remote agent run", bundle: .module, comment: ""), mono: false)
+            metadataRow(
+                label: "Encryption",
+                value: NSLocalizedString("Secure Channel (E2E)", bundle: .module, comment: ""),
+                mono: false
+            )
+            metadataRow(
+                label: "Model",
+                value: liveEffectiveModel ?? NSLocalizedString("Default (agent decides)", bundle: .module, comment: ""),
+                mono: false
+            )
+
+            connectionActionRow(for: remote, phase: currentPhase)
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(theme.cardBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12).stroke(theme.cardBorder, lineWidth: 1)
+                )
+        )
+    }
+
+    @ViewBuilder
+    private func connectionActionRow(for remote: RemoteAgent, phase: ConnectionPhase) -> some View {
+        HStack(spacing: 10) {
+            if phase == .connected {
+                Button {
+                    providerManager.disconnect(providerId: remote.providerId)
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "bolt.slash")
+                            .font(.system(size: 11))
+                        Text("Disconnect", bundle: .module)
+                    }
+                }
+                .buttonStyle(SecondaryButtonStyle())
+            } else {
+                Button {
+                    connect(remote)
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "bolt")
+                            .font(.system(size: 11))
+                        Text("Connect", bundle: .module)
+                    }
+                }
+                .buttonStyle(SecondaryButtonStyle())
+                .disabled(phase == .connecting)
+            }
+            Spacer()
+        }
+        .padding(.top, 2)
+    }
+
+    // MARK: Activity
+
+    private func activityCard(for remote: RemoteAgent) -> some View {
+        let activity = insights.activity(forProviderId: remote.providerId)
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                AgentSheetSectionLabel("Activity")
+                Spacer()
+                if !activity.isEmpty {
+                    Button {
+                        viewInInsights(remote)
+                    } label: {
+                        HStack(spacing: 4) {
+                            Text("View in Insights", bundle: .module)
+                                .font(.system(size: 11, weight: .medium))
+                            Image(systemName: "arrow.up.right")
+                                .font(.system(size: 9, weight: .semibold))
+                        }
+                        .foregroundColor(theme.accentColor)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+
+            if activity.isEmpty {
+                Text("No requests recorded this session.", bundle: .module)
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.tertiaryText)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                HStack(spacing: 10) {
+                    activityStat(
+                        value: "\(activity.requestCount)",
+                        label: Text("Requests", bundle: .module)
+                    )
+                    activityStat(
+                        value: activity.formattedAvgSpeed,
+                        label: Text("Avg speed", bundle: .module)
+                    )
+                    if let last = activity.lastUsed {
+                        activityStat(
+                            value: last.formatted(.relative(presentation: .named)),
+                            label: Text("Last used", bundle: .module)
+                        )
+                    }
+                }
+            }
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(theme.cardBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12).stroke(theme.cardBorder, lineWidth: 1)
+                )
+        )
+    }
+
+    private func activityStat(value: String, label: Text) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(value)
+                .font(.system(size: 15, weight: .semibold, design: .rounded))
+                .foregroundColor(theme.primaryText)
+                .lineLimit(1)
+            label
+                .font(.system(size: 10, weight: .medium))
+                .foregroundColor(theme.tertiaryText)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(theme.tertiaryBackground.opacity(0.4))
+        )
+    }
+
+    // MARK: Connection actions
+
+    private func connect(_ remote: RemoteAgent) {
+        isConnecting = true
+        Task { @MainActor in
+            defer { isConnecting = false }
+            try? await providerManager.connect(providerId: remote.providerId)
+            refreshLiveMetadata()
+        }
+    }
+
+    /// Pull the agent's live metadata (`GET /agents/{id}` over the Secure
+    /// Channel) so the Connection section shows the real effective model and
+    /// the local label/avatar stay honest if the owner renamed/re-skinned.
+    private func refreshLiveMetadata() {
+        guard let remote = remote,
+            let provider = providerManager.configuration.provider(id: remote.providerId)
+        else { return }
+        metadataRefreshTask?.cancel()
+        isRefreshingMetadata = true
+        metadataRefreshTask = Task { @MainActor in
+            defer { isRefreshingMetadata = false }
+            let metadata = await RemoteProviderService.fetchOsaurusAgentMetadata(from: provider)
+            guard !Task.isCancelled else { return }
+            if let model = metadata?.effectiveModel, !model.isEmpty {
+                liveEffectiveModel = model
+            }
+            manager.updateLiveMetadata(
+                forAddress: remote.agentAddress,
+                name: metadata?.name,
+                description: metadata?.description,
+                avatar: metadata?.avatar
+            )
+        }
+    }
+
+    private func viewInInsights(_ remote: RemoteAgent) {
+        InsightsService.shared.focus(providerId: remote.providerId)
+        ManagementStateManager.shared.selectedTab = .insights
     }
 
     private func sourceCard(for remote: RemoteAgent) -> some View {

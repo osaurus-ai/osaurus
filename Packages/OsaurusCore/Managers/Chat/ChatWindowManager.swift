@@ -877,14 +877,9 @@ private struct ChatToolbarAgentView: View {
                 )
             },
             activeRelayAgent: windowState.selectedRelayAgent,
-            onOpenActiveAgentSettings: {
-                let active = windowState.agents.first { $0.id == windowState.agentId }
-                let deeplinkId = (active?.isBuiltIn == false) ? active?.id : nil
-                AppDelegate.shared?.showManagementWindow(
-                    initialTab: .agents,
-                    deeplinkAgentId: deeplinkId
-                )
-            },
+            activeRemoteAgentAvatar: windowState.pinnedRemoteAgentAvatar,
+            onOpenActiveAgentSettings: { openActiveAgentSettings() },
+            onOpenRemoteAgentSettings: { openRemoteAgentSettings() },
             openPickerTrigger: openPickerTrigger
         )
         .environment(\.theme, windowState.theme)
@@ -894,6 +889,31 @@ private struct ChatToolbarAgentView: View {
             else { return }
             openPickerTrigger &+= 1
         }
+    }
+
+    /// Deep-link the management window to the active local agent's config.
+    /// Built-in agents have no editable record, so they open the Agents tab
+    /// without a selection.
+    private func openActiveAgentSettings() {
+        let active = windowState.agents.first { $0.id == windowState.agentId }
+        let deeplinkId = (active?.isBuiltIn == false) ? active?.id : nil
+        AppDelegate.shared?.showManagementWindow(
+            initialTab: .agents,
+            deeplinkAgentId: deeplinkId
+        )
+    }
+
+    /// Deep-link the management window to the active remote agent's detail view.
+    /// Resolves the chat's remote target → persisted `RemoteAgent` id; ephemeral
+    /// peers with no record fall back to the Agents tab.
+    private func openRemoteAgentSettings() {
+        let remoteId = windowState.selectedDiscoveredAgentProviderId.flatMap {
+            RemoteAgentManager.shared.remoteAgentDetailId(forProviderId: $0)
+        }
+        AppDelegate.shared?.showManagementWindow(
+            initialTab: .agents,
+            deeplinkRemoteAgentId: remoteId
+        )
     }
 }
 

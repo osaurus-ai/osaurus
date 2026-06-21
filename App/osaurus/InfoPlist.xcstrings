@@ -279,7 +279,7 @@
     },
     "NSScreenCaptureUsageDescription" : {
       "comment" : "Privacy - Screen Capture Usage Description",
-      "extractionState" : "extracted_with_value",
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {

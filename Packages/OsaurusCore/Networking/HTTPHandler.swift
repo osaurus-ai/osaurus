@@ -34,6 +34,20 @@ private final class SendableStringBox: @unchecked Sendable {
     }
 }
 
+/// Thread-safe holder for the inbound request's attribution metadata
+/// (paired-key nonce + audience + transport). The auth gate sets it on the
+/// event loop; the request log can be emitted off-loop from inside
+/// `runRequestTask`, where touching the `NIOLoopBound` `RequestState` would
+/// trap — so the snapshot is read through this lock instead.
+private final class SendableConnectionBox: @unchecked Sendable {
+    private var _value: RequestConnectionInfo?
+    private let _lock = NSLock()
+    var value: RequestConnectionInfo? {
+        get { _lock.withLock { _value } }
+        set { _lock.withLock { _value = newValue } }
+    }
+}
+
 private final class ChannelCloseFutureBox: @unchecked Sendable {
     private var future: EventLoopFuture<Void>?
     private let lock = NSLock()
@@ -179,6 +193,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     private let _isChannelActive = SendableBool(false)
     private let requestTasks = HTTPRequestTaskRegistry()
     private let channelCloseFuture = ChannelCloseFutureBox()
+    /// Off-loop-readable mirror of the current request's inbound attribution
+    /// (set by the auth gate, cleared on each `.head`). See
+    /// `SendableConnectionBox` for why this isn't read off the `RequestState`.
+    private let _inboundConnection = SendableConnectionBox()
     private static let openResponsesContextStore = OpenResponsesContextStore()
 
     /// Internal marker header stamped by `RelayTunnelManager` on every request
@@ -312,6 +330,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             stateRef.value.isSecureChannel = false
             stateRef.value.authedAudience = nil
             stateRef.value.authedScopeIsMaster = false
+            // Clear last request's attribution so a keep-alive connection's
+            // next (possibly loopback / public) request can't inherit it.
+            _inboundConnection.value = nil
             // Detect relay-proxied traffic before computing CORS / loopback
             // trust so the relay marker can strip loopback privileges.
             stateRef.value.isRelayOrigin =
@@ -477,13 +498,22 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 } else {
                     let result = apiKeyValidator.validate(rawKey: token)
                     switch result {
-                    case .valid(_, let audience):
+                    case .valid(_, let audience, let keyNonce):
                         message = ""
                         // Record the key's scope so agent-addressing routes can
                         // confine an agent-scoped key to its own agent.
                         stateRef.value.authedAudience = audience.lowercased()
                         stateRef.value.authedScopeIsMaster =
                             apiKeyValidator.isMasterScoped(audience: audience)
+                        // Snapshot the attribution into the off-loop-readable box
+                        // (read by the possibly-off-loop request log) so inbound
+                        // `.httpAPI` traffic is tied to this paired key. Built
+                        // here where audience + nonce + transport are all known.
+                        _inboundConnection.value = RequestConnectionInfo(
+                            transport: stateRef.value.isSecureChannel ? .secureChannel : .direct,
+                            accessKeyId: keyNonce,
+                            audience: audience.lowercased()
+                        )
                     case .expired:
                         message = "Access key has expired"
                     case .revoked:
@@ -3118,6 +3148,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let id: String
         let name: String
         let description: String
+        /// Mascot avatar identifier (e.g. "green") so paired peers can render
+        /// the agent's own avatar instead of a generic monogram. nil = no
+        /// mascot (client falls back to the name's initial). User-uploaded
+        /// custom images are intentionally not serialized.
+        let avatar: String?
         let default_model: String?
         /// Server-resolved model id, known before the first streamed chunk.
         let effective_model: String?
@@ -4125,6 +4160,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     id: agent.id.uuidString,
                     name: agent.name,
                     description: agent.description,
+                    avatar: agent.avatar,
                     default_model: agent.defaultModel,
                     effective_model: modelId,
                     supports_thinking: supportsThinking,
@@ -4263,6 +4299,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 id: agent.id.uuidString,
                 name: agent.name,
                 description: agent.description,
+                avatar: agent.avatar,
                 default_model: agent.defaultModel,
                 effective_model: effectiveModelId,
                 supports_thinking: supportsThinking,
@@ -10368,7 +10405,18 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             maxTokens: maxTokens,
             toolCalls: toolCalls,
             finishReason: finishReason,
-            errorMessage: errorMessage
+            errorMessage: errorMessage,
+            connection: inboundConnectionInfo()
         )
+    }
+
+    /// Attribution metadata for an inbound request, built by the auth gate and
+    /// read through the off-loop-safe box. Lets the host's Remote Connections
+    /// view tie `.httpAPI` traffic to a specific paired access key (by nonce)
+    /// and shows the transport (Secure Channel vs direct) in Insights. Returns
+    /// nil for loopback / public routes that carried no token.
+    private func inboundConnectionInfo() -> RequestConnectionInfo? {
+        let info = _inboundConnection.value
+        return (info?.isEmpty == true) ? nil : info
     }
 }

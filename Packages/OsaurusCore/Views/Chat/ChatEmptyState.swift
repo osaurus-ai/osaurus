@@ -16,8 +16,6 @@ private let heroAvatarDiameter: CGFloat = 64
 /// Font size for the icon/monogram inside a hero avatar (built-in `person.fill`
 /// placeholder and `AgentAvatarView` monogram fallback).
 private let heroAvatarIconFontSize: CGFloat = 28
-/// Font size for the SF Symbol inside the remote-hero avatar (relay / discovered).
-private let heroAvatarRemoteIconFontSize: CGFloat = 24
 
 // MARK: - Shimmer Fade-In
 
@@ -128,6 +126,12 @@ struct ChatEmptyState: View {
     let onOpenOnboarding: (() -> Void)?
     var activeDiscoveredAgent: DiscoveredAgent? = nil
     var activeRelayAgent: PairedRelayAgent? = nil
+    /// Mascot avatar id of the active remote agent (Mode 2), resolved from its
+    /// live metadata on connect. nil = monogram fallback on the remote name.
+    var remoteAgentAvatar: String? = nil
+    /// The active remote agent's description, used as the empty-state subtitle
+    /// so the remote agent introduces itself instead of the generic default.
+    var remoteAgentDescription: String? = nil
 
     @State private var hasAppeared = false
     @Environment(\.theme) private var theme
@@ -141,6 +145,11 @@ struct ChatEmptyState: View {
     private var readyGreeting: GenerativeGreeting? {
         if case .ready(let g) = generativeGreetingState { return g }
         return nil
+    }
+
+    /// True when this empty state heads a Mode 2 remote-agent conversation.
+    private var isRemoteChat: Bool {
+        activeRelayAgent != nil || activeDiscoveredAgent != nil
     }
 
     /// Display name of the active remote agent (Mode 2), if any. Drives the
@@ -158,6 +167,12 @@ struct ChatEmptyState: View {
         return nil
     }
 
+    /// Remote agent name with a safe fallback, for the hero avatar seed/title
+    /// when the advertised name happens to be blank.
+    private var remoteDisplayName: String {
+        remoteAgentName ?? L("Remote Agent")
+    }
+
     /// Title text rendered above the subtitle. Resolution order:
     /// 1. Remote agent name (Mode 2 — this chat is the remote agent, not the
     /// local one), 2. AI-generated greeting (when ready), 3. per-agent override
@@ -166,8 +181,8 @@ struct ChatEmptyState: View {
     private var greetingText: String {
         // A remote agent owns the conversation: never surface the local
         // agent's generative/custom greeting here.
-        if let remoteName = remoteAgentName {
-            return remoteName
+        if isRemoteChat {
+            return remoteDisplayName
         }
         if let g = readyGreeting?.greeting,
             !g.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -186,19 +201,26 @@ struct ChatEmptyState: View {
     /// `greetingText`: AI-generated → per-agent override
     /// (`Agent.chatSubtitle`) → localized default.
     private var subtitleText: LocalizedStringKey {
-        // Remote agent run: skip the local agent's generative/custom subtitle
-        // and use the neutral default beneath the remote agent's name.
-        if remoteAgentName == nil {
-            if let s = readyGreeting?.subtitle,
-                !s.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        // Remote agent run: surface the remote agent's own description (so it
+        // introduces itself), never the local agent's generative/custom
+        // subtitle. Falls back to the neutral default when it has none.
+        if isRemoteChat {
+            if let d = remoteAgentDescription?.trimmingCharacters(in: .whitespacesAndNewlines),
+                !d.isEmpty
             {
-                return LocalizedStringKey(s)
+                return LocalizedStringKey(d)
             }
-            if let custom = activeAgent.chatSubtitle?.trimmingCharacters(in: .whitespacesAndNewlines),
-                !custom.isEmpty
-            {
-                return LocalizedStringKey(custom)
-            }
+            return "How can I help you today?"
+        }
+        if let s = readyGreeting?.subtitle,
+            !s.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        {
+            return LocalizedStringKey(s)
+        }
+        if let custom = activeAgent.chatSubtitle?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !custom.isEmpty
+        {
+            return LocalizedStringKey(custom)
         }
         return "How can I help you today?"
     }
@@ -207,6 +229,12 @@ struct ChatEmptyState: View {
     /// configured shortcuts when they arrive; the user's custom shortcuts
     /// (or the static defaults) act as the fallback.
     private var effectiveQuickActions: [AgentQuickAction] {
+        // Mode 2: the local agent's (and locally-generated) quick actions don't
+        // represent the remote agent, so show neutral chat defaults instead of
+        // e.g. a local coding agent's shortcuts on a remote research agent.
+        if isRemoteChat {
+            return AgentQuickAction.defaultChatQuickActions
+        }
         if let g = readyGreeting?.actions, !g.isEmpty { return g }
         return quickActions
     }
@@ -369,10 +397,19 @@ struct ChatEmptyState: View {
 
     @ViewBuilder
     private var heroAvatar: some View {
-        if let relay = activeRelayAgent {
-            remoteHeroAvatar(systemImage: "antenna.radiowaves.left.and.right", seed: relay.name)
-        } else if let discovered = activeDiscoveredAgent {
-            remoteHeroAvatar(systemImage: "network", seed: discovered.name)
+        if isRemoteChat {
+            // Match the local hero: the remote agent's own mascot (surfaced over
+            // the Secure Channel), falling back to a monogram on its name.
+            AgentAvatarView(
+                mascotId: remoteAgentAvatar,
+                name: remoteDisplayName,
+                tint: agentColorFor(remoteDisplayName),
+                diameter: heroAvatarDiameter,
+                customImageURL: nil,
+                monogramFontSize: heroAvatarIconFontSize,
+                borderWidth: 0,
+                bleedsToEdge: true
+            )
         } else {
             HeroAgentAvatar(agent: activeAgent)
         }
@@ -406,17 +443,6 @@ struct ChatEmptyState: View {
                     "This peer runs an older Osaurus without the Secure Channel. Agent chat is refused until it upgrades — no plaintext fallback."
                 )
         )
-    }
-
-    private func remoteHeroAvatar(systemImage: String, seed: String) -> some View {
-        ZStack {
-            Circle()
-                .fill(theme.accentColorLight.opacity(theme.isDark ? 0.18 : 0.12))
-            Image(systemName: systemImage)
-                .font(.system(size: heroAvatarRemoteIconFontSize, weight: .semibold))
-                .foregroundColor(theme.accentColorLight)
-        }
-        .frame(width: heroAvatarDiameter, height: heroAvatarDiameter)
     }
 
     private var staggeredQuickActions: some View {

@@ -2061,8 +2061,15 @@ extension AppDelegate {
         initialTab: ManagementTab? = nil,
         deeplinkModelId: String? = nil,
         deeplinkFile: String? = nil,
-        deeplinkAgentId: UUID? = nil
+        deeplinkAgentId: UUID? = nil,
+        deeplinkRemoteAgentId: UUID? = nil
     ) {
+        // Remote-agent detail navigation rides the shared management state
+        // (mirrors `pendingPluginDetailId`) so it works for both a freshly
+        // created window and a reused one without rebuilding the SwiftUI graph.
+        if let deeplinkRemoteAgentId {
+            ManagementStateManager.shared.pendingRemoteAgentDetailId = deeplinkRemoteAgentId
+        }
         closePopoverAndPerform { [weak self] in
             guard let self = self else { return }
             // Reopening a reused window doesn't rebuild the SwiftUI graph, so

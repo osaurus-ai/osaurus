@@ -28,6 +28,12 @@ public struct RemoteAgent: Codable, Identifiable, Sendable, Equatable {
     /// Optional description from the invite at pairing time.
     public var description: String
 
+    /// Mascot avatar id (e.g. "green") refreshed from the remote agent's live
+    /// metadata on connect, so the receiver can render the agent's own avatar.
+    /// nil = no mascot (fall back to the name's initial monogram). Custom
+    /// uploaded images are never transferred. Optional for back-compat decode.
+    public var avatar: String?
+
     /// Relay tunnel base URL the receiver uses to reach the agent.
     /// E.g. `https://0xabc....agent.osaurus.ai`.
     public var relayBaseURL: String
@@ -47,6 +53,7 @@ public struct RemoteAgent: Codable, Identifiable, Sendable, Equatable {
         agentAddress: String,
         name: String,
         description: String,
+        avatar: String? = nil,
         relayBaseURL: String,
         providerId: UUID,
         pairedAt: Date = Date(),
@@ -57,6 +64,7 @@ public struct RemoteAgent: Codable, Identifiable, Sendable, Equatable {
         self.agentAddress = agentAddress
         self.name = name
         self.description = description
+        self.avatar = avatar
         self.relayBaseURL = relayBaseURL
         self.providerId = providerId
         self.pairedAt = pairedAt

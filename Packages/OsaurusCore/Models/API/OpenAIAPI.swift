@@ -757,6 +757,14 @@ struct ChatCompletionRequest: Codable, Sendable {
     /// OpenAI-compatible inference backend (`/chat/completions`, Mode 1). Not
     /// decoded from OpenAI JSON and not forwarded to remote providers.
     var runAsRemoteAgent: Bool = false
+    /// Local-only: the remote agent's live effective model (the model the peer
+    /// will actually run), carried purely so the Insights log records *that*
+    /// instead of the local prefixed fallback (e.g. `coco/foundation`) the
+    /// picker pinned when the agent's real model isn't in the device catalog.
+    /// Only meaningful for Mode 2 (`runAsRemoteAgent`); over the wire Mode 2
+    /// still sends `model: "default"`. Not decoded from OpenAI JSON and not
+    /// forwarded to remote providers.
+    var remoteAgentLogModel: String? = nil
 
     /// Resolved max tokens, preferring max_tokens then max_completion_tokens.
     var resolvedMaxTokens: Int? { max_tokens ?? max_completion_tokens }
@@ -799,6 +807,7 @@ struct ChatCompletionRequest: Codable, Sendable {
         copy.isAgentRequest = isAgentRequest
         copy.idempotencyKey = idempotencyKey
         copy.runAsRemoteAgent = runAsRemoteAgent
+        copy.remoteAgentLogModel = remoteAgentLogModel
         return copy
     }
 
@@ -836,6 +845,7 @@ struct ChatCompletionRequest: Codable, Sendable {
         copy.isAgentRequest = isAgentRequest
         copy.idempotencyKey = idempotencyKey
         copy.runAsRemoteAgent = runAsRemoteAgent
+        copy.remoteAgentLogModel = remoteAgentLogModel
         return copy
     }
 }

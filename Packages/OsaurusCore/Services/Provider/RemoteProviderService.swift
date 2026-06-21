@@ -2552,7 +2552,11 @@ public actor RemoteProviderService: ToolCapableService {
     ///   built explicitly here.)
     ///
     /// Returns nil only when a Mode 2 request has no resolvable agent identifier.
-    func osaurusEndpointURL(runAsRemoteAgent: Bool) -> URL? {
+    ///
+    /// `nonisolated` because it's a pure function of the immutable `provider`
+    /// (no actor state), so `ChatEngine` can build Insights connection metadata
+    /// for the endpoint synchronously without an actor hop.
+    nonisolated func osaurusEndpointURL(runAsRemoteAgent: Bool) -> URL? {
         guard runAsRemoteAgent else {
             return provider.url(for: "/chat/completions")
         }
@@ -4448,14 +4452,29 @@ extension RemoteProviderService {
         )
     }
 
-    /// Fetch a paired/discovered Osaurus agent's *live* effective model id (the
-    /// model the agent will actually run), used to pin the model chip in Mode 2
-    /// (remote agent run). Prefers `effective_model`, falling back to
-    /// `default_model`. Returns nil when the peer can't be reached or doesn't
-    /// expose a concrete model — the caller then falls back to the provider's
-    /// first chat-capable model. Routes through the Secure Channel GET so the
-    /// Bearer never crosses the wire in cleartext, mirroring `fetchOsaurusModels`.
-    static func fetchOsaurusAgentEffectiveModel(from provider: RemoteProvider) async -> String? {
+    /// Live metadata for a paired/discovered Osaurus agent, fetched from
+    /// `GET /agents/{id}` after connect (Mode 2). All fields are optional so a
+    /// partial / legacy peer response still yields whatever it could resolve.
+    public struct RemoteAgentMetadata: Sendable, Equatable {
+        /// The model the agent will actually run (prefers `effective_model`,
+        /// falls back to `default_model`). nil when the peer exposes no
+        /// concrete model (i.e. only the `"default"` sentinel).
+        public let effectiveModel: String?
+        /// The agent's live display name (may differ from the name captured at
+        /// pair time if the owner renamed it).
+        public let name: String?
+        public let description: String?
+        /// Mascot avatar id (e.g. "green"); nil = monogram fallback.
+        public let avatar: String?
+    }
+
+    /// Fetch a paired/discovered Osaurus agent's *live* metadata (effective
+    /// model + name/description/avatar), used to pin the model chip and surface
+    /// the remote agent's own identity/avatar in Mode 2 (remote agent run).
+    /// Returns nil only when the peer can't be reached. Routes through the
+    /// Secure Channel GET so the Bearer never crosses the wire in cleartext,
+    /// mirroring `fetchOsaurusModels`.
+    static func fetchOsaurusAgentMetadata(from provider: RemoteProvider) async -> RemoteAgentMetadata? {
         let identifier =
             provider.remoteAgentAddress.flatMap { $0.isEmpty ? nil : $0 }
             ?? provider.remoteAgentId?.uuidString
@@ -4471,14 +4490,41 @@ extension RemoteProviderService {
         guard let (data, status) = await osaurusGET(req, provider: provider), status < 400 else {
             return nil
         }
+        return parseAgentMetadata(from: data)
+    }
+
+    /// Decode + normalize a peer's `GET /agents/{id}` body into
+    /// `RemoteAgentMetadata`. Split out from the network fetch so the decode /
+    /// trimming / sentinel-collapsing contract (notably the mascot `avatar`
+    /// field and the `"default"`-model collapse) is unit-testable without a
+    /// live peer. Returns nil only when the body isn't decodable JSON.
+    static func parseAgentMetadata(from data: Data) -> RemoteAgentMetadata? {
         struct AgentInfo: Decodable {
             let effective_model: String?
             let default_model: String?
+            let name: String?
+            let description: String?
+            let avatar: String?
         }
-        let info = try? JSONDecoder().decode(AgentInfo.self, from: data)
-        let model = info?.effective_model ?? info?.default_model
-        guard let model, !model.isEmpty, model != "default" else { return nil }
-        return model
+        guard let info = try? JSONDecoder().decode(AgentInfo.self, from: data) else { return nil }
+        let rawModel = info.effective_model ?? info.default_model
+        let model: String? =
+            (rawModel?.isEmpty == false && rawModel != "default") ? rawModel : nil
+        let trimmedName = info.name?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedDescription = info.description?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedAvatar = info.avatar?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return RemoteAgentMetadata(
+            effectiveModel: model,
+            name: (trimmedName?.isEmpty == false) ? trimmedName : nil,
+            description: (trimmedDescription?.isEmpty == false) ? trimmedDescription : nil,
+            avatar: (trimmedAvatar?.isEmpty == false) ? trimmedAvatar : nil
+        )
+    }
+
+    /// Back-compat thin wrapper: just the live effective model id (used to pin
+    /// the model chip). Returns nil when unreachable or no concrete model.
+    static func fetchOsaurusAgentEffectiveModel(from provider: RemoteProvider) async -> String? {
+        await fetchOsaurusAgentMetadata(from: provider)?.effectiveModel
     }
 
     /// Metadata GET against an Osaurus peer.

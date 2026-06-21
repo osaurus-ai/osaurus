@@ -861,6 +861,14 @@ final class ChatSession: ObservableObject {
     /// rebuilds. Skipping it removes one of two rebuilds per switch.
     private var suppressVisibleBlockRebuild = false
 
+    /// Mode 2 override for the per-turn header name baked into `visibleBlocks`.
+    /// When non-nil (a remote agent owns the chat), thread headers show the
+    /// remote agent's name instead of the local agent's — without it, blocks
+    /// always baked the local name and the thread read "Osaurus". `ChatView`
+    /// keeps this in sync with `ChatWindowState.effectiveChatIdentity`; nil
+    /// restores the local-agent name.
+    var threadAgentDisplayName: String?
+
     /// Flattened content blocks for NSTableView rendering.
     /// Read-through to `visibleBlocksStore.blocks` so existing call sites
     /// (helpers, checks that don't need to drive re-renders) keep working.
@@ -899,7 +907,10 @@ final class ChatSession: ObservableObject {
 
     private func rebuildVisibleBlocksImpl() {
         let agent = AgentManager.shared.agent(for: agentId ?? Agent.defaultId)
-        let displayName = agent?.isBuiltIn == true ? L("Osaurus") : (agent?.name ?? L("Osaurus"))
+        let localName = agent?.isBuiltIn == true ? L("Osaurus") : (agent?.name ?? L("Osaurus"))
+        // In Mode 2 the remote agent owns the conversation, so its name heads
+        // the thread; otherwise fall back to the local agent's name.
+        let displayName = threadAgentDisplayName ?? localName
         let streamingTurnId = isStreaming ? turns.last?.id : nil
 
         if MockChatData.isEnabled {
@@ -3900,6 +3911,12 @@ final class ChatSession: ObservableObject {
                             // effective model is used. False = Mode 1 (plain
                             // remote inference via `/chat/completions`).
                             req.runAsRemoteAgent = self.isRemoteAgentTarget
+                            // Insights fidelity: in Mode 2 the wire model is
+                            // `default`, so log the agent's live effective
+                            // model instead of the local prefixed fallback.
+                            req.remoteAgentLogModel =
+                                self.isRemoteAgentTarget
+                                ? self.windowState?.pinnedRemoteAgentEffectiveModel : nil
                             req.modelOptions =
                                 self.activeModelOptions.isEmpty ? nil : self.activeModelOptions
                             req.ttftTrace = ttftTrace
@@ -4150,6 +4167,9 @@ final class ChatSession: ObservableObject {
                             )
                             finalReq.samplingParametersAreImplicit = true
                             finalReq.runAsRemoteAgent = isRemoteAgentTarget
+                            finalReq.remoteAgentLogModel =
+                                isRemoteAgentTarget
+                                ? windowState?.pinnedRemoteAgentEffectiveModel : nil
                             finalReq.modelOptions = activeModelOptions.isEmpty ? nil : activeModelOptions
                             finalReq.turnId = assistantTurn.id
                             // Distinct logical step (the post-cap summarizing
@@ -4452,53 +4472,73 @@ struct ChatView: View {
         if windowState.selectedDiscoveredAgentProviderId != nil {
             switch windowState.remoteAgentConnectionPhase {
             case .connecting:
-                remoteAgentNoticeRow {
-                    ProgressView().controlSize(.small)
-                    Text(L("Connecting to \(remoteAgentDisplayName)…"))
-                        .font(.system(size: CGFloat(theme.captionSize)))
-                        .foregroundColor(theme.secondaryText)
-                    Spacer(minLength: 0)
-                }
+                connectingNotice
             case .failed(let message):
-                remoteAgentNoticeRow {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundColor(.orange)
-                    Text(message)
-                        .font(.system(size: CGFloat(theme.captionSize)))
-                        .foregroundColor(theme.primaryText)
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Spacer(minLength: 0)
-                    Button(action: { retryRemoteAgentConnection() }) {
-                        Text(L("Retry"))
-                            .font(.system(size: CGFloat(theme.captionSize), weight: .semibold))
-                            .foregroundColor(theme.accentColor)
-                    }
-                    .buttonStyle(.plain)
-                }
+                connectionFailedNotice(message)
             case .idle, .connected:
                 EmptyView()
             }
         }
     }
 
-    /// Shared pill chrome for the Mode 2 status rows (spinner / error): one
-    /// `HStack` with consistent padding, background, and fade transition so the
-    /// two phases only differ in their content.
+    /// "Connecting to <agent>…" chip. Uses the app's themed activity spinner
+    /// (the same `MorphingStatusIcon` used for running tool calls / background
+    /// tasks) instead of a stock `ProgressView`, so the loading affordance
+    /// matches the rest of the chat.
+    private var connectingNotice: some View {
+        remoteAgentNoticeRow(tint: theme.accentColor) {
+            MorphingStatusIcon(state: .active, accentColor: theme.accentColor, size: 14)
+            Text(L("Connecting to \(remoteAgentDisplayName)…"))
+                .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                .foregroundColor(theme.secondaryText)
+        }
+    }
+
+    /// Connection-failure chip: the error message plus a Retry that re-runs the
+    /// connect + model-pin flow.
+    private func connectionFailedNotice(_ message: String) -> some View {
+        remoteAgentNoticeRow(tint: theme.warningColor) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: CGFloat(theme.captionSize), weight: .semibold))
+                .foregroundColor(theme.warningColor)
+            Text(message)
+                .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                .foregroundColor(theme.primaryText)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+            Button(action: { retryRemoteAgentConnection() }) {
+                Text(L("Retry"))
+                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .semibold))
+                    .foregroundColor(theme.accentColor)
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    /// Shared chip chrome for the Mode 2 status rows (connecting / error): a
+    /// content-hugging, centered rounded chip with a subtle tinted fill and
+    /// hairline border, matching the empty-state security badge and the rest
+    /// of the app's chrome. The `tint` conveys intent (accent while
+    /// connecting, warning on failure) so the two phases differ only in their
+    /// content and color, not their shape.
     @ViewBuilder
     private func remoteAgentNoticeRow<Content: View>(
+        tint: Color,
         @ViewBuilder _ content: () -> Content
     ) -> some View {
         HStack(spacing: 8) { content() }
             .padding(.horizontal, 12)
-            .padding(.vertical, 8)
+            .padding(.vertical, 7)
             .background(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(theme.secondaryBackground.opacity(0.6))
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(tint.opacity(theme.isDark ? 0.14 : 0.10))
             )
-            .padding(.horizontal, 8)
-            .padding(.bottom, 6)
-            .transition(.opacity)
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(tint.opacity(0.22), lineWidth: 1)
+            )
+            .padding(.bottom, 8)
+            .transition(.opacity.combined(with: .scale(scale: 0.96)))
     }
 
     /// Re-run the connect + model-pin flow after a failure (Retry button).
@@ -4850,7 +4890,9 @@ struct ChatView: View {
                                 isModelPinned: windowState.selectedDiscoveredAgentProviderId != nil,
                                 pinnedModelLabel: pinnedModelChipLabel,
                                 remoteConnectionPending: windowState.remoteAgentConnectionPhase
-                                    == .connecting
+                                    == .connecting,
+                                isRemoteAgentRun: windowState.selectedDiscoveredAgentProviderId
+                                    != nil
                             )
                             .frame(maxWidth: 1100)
                             .frame(maxWidth: .infinity)
@@ -4986,6 +5028,17 @@ struct ChatView: View {
                 session.selectedModel = model
             } else {
                 session.selectedModel = session.pickerItems.firstChatCapable?.id
+            }
+        }
+        .onChange(of: windowState.effectiveChatIdentity, initial: true) { _, identity in
+            // Keep the thread's baked header name in sync with whoever owns the
+            // chat: the remote agent in Mode 2, else the local agent (nil =
+            // local default). Rebuild so already-rendered turns pick up the
+            // change immediately (e.g. a remote agent renamed mid-session).
+            let override = identity.isRemote ? identity.name : nil
+            if session.threadAgentDisplayName != override {
+                session.threadAgentDisplayName = override
+                session.rebuildVisibleBlocks()
             }
         }
         .environment(\.theme, windowState.theme)
@@ -5157,6 +5210,7 @@ struct ChatView: View {
         windowState.selectedDiscoveredAgent = agent
         windowState.selectedDiscoveredAgentProviderId = providerId
         windowState.pinnedRemoteAgentEffectiveModel = nil
+        windowState.pinnedRemoteAgentAvatar = nil
         windowState.refreshPairedRelayAgents()
         session.reset()
         pinRemoteAgentModelAfterConnect(providerId: providerId)
@@ -5192,11 +5246,25 @@ struct ChatView: View {
             guard windowState.selectedDiscoveredAgentProviderId == providerId else { return }
             await session.refreshPickerItems()
             if let provider {
-                let effective = await RemoteProviderService.fetchOsaurusAgentEffectiveModel(
+                // One metadata fetch resolves the live model + avatar + name so
+                // Mode 2 can both pin the model chip and surface the remote
+                // agent's own identity (avatar/name) in chat.
+                let metadata = await RemoteProviderService.fetchOsaurusAgentMetadata(
                     from: provider
                 )
                 guard windowState.selectedDiscoveredAgentProviderId == providerId else { return }
-                windowState.pinnedRemoteAgentEffectiveModel = effective
+                windowState.pinnedRemoteAgentEffectiveModel = metadata?.effectiveModel
+                windowState.pinnedRemoteAgentAvatar = metadata?.avatar
+                // Keep the persisted paired-agent label/avatar honest (no-op for
+                // ephemeral Bonjour peers without a RemoteAgent record).
+                if let address = provider.remoteAgentAddress, !address.isEmpty {
+                    RemoteAgentManager.shared.updateLiveMetadata(
+                        forAddress: address,
+                        name: metadata?.name,
+                        description: metadata?.description,
+                        avatar: metadata?.avatar
+                    )
+                }
             }
             guard windowState.selectedDiscoveredAgentProviderId == providerId else { return }
             applyRemoteAgentModelPin(providerId: providerId)
@@ -5224,6 +5292,7 @@ struct ChatView: View {
         windowState.selectedRelayAgent = relay
         windowState.selectedDiscoveredAgentProviderId = relay.providerId
         windowState.pinnedRemoteAgentEffectiveModel = nil
+        windowState.pinnedRemoteAgentAvatar = nil
         session.reset()
         pinRemoteAgentModelAfterConnect(providerId: relay.providerId)
     }
@@ -5243,6 +5312,23 @@ struct ChatView: View {
             ?? (windowState.agentId == Agent.defaultId
                 ? AgentQuickAction.defaultConfigurationQuickActions
                 : AgentQuickAction.defaultChatQuickActions)
+    }
+
+    /// Description shown beneath the remote agent's name in the empty state.
+    /// Prefers the Bonjour-advertised description, then the persisted paired
+    /// record's (refreshed from live metadata on connect). nil → neutral default.
+    private var remoteAgentDescriptionForEmptyState: String? {
+        if let discovered = windowState.selectedDiscoveredAgent {
+            let d = discovered.agentDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !d.isEmpty { return d }
+        }
+        if let providerId = windowState.selectedDiscoveredAgentProviderId,
+            let remote = RemoteAgentManager.shared.remoteAgent(forProviderId: providerId)
+        {
+            let d = remote.description.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !d.isEmpty { return d }
+        }
+        return nil
     }
 
     @ViewBuilder
@@ -5268,7 +5354,9 @@ struct ChatView: View {
             },
             onOpenOnboarding: nil,
             activeDiscoveredAgent: windowState.selectedDiscoveredAgent,
-            activeRelayAgent: windowState.selectedRelayAgent
+            activeRelayAgent: windowState.selectedRelayAgent,
+            remoteAgentAvatar: windowState.pinnedRemoteAgentAvatar,
+            remoteAgentDescription: remoteAgentDescriptionForEmptyState
         )
         .transition(.opacity.combined(with: .scale(scale: 0.98)))
         .modifier(
@@ -5339,7 +5427,11 @@ struct ChatView: View {
         // objectWillChange, if visibleBlocks were @Published) and/or delay the
         // reactivity needed by the table. `IsolatedThreadView` observes the
         // store directly, so only *its* body re-runs on per-token updates
-        let displayName = windowState.cachedAgentDisplayName
+        // Use the effective chat identity so a Mode 2 remote conversation is
+        // headed by the *remote* agent's name + mascot, not the local agent
+        // (which always rendered "Osaurus" with the local avatar).
+        let identity = windowState.effectiveChatIdentity
+        let displayName = identity.name
         let lastAssistantTurnId = session.lastAssistantTurnIdForThread
         let blocks = session.visibleBlocks
         let minimapMarkers = buildMinimapMarkers(from: blocks)
@@ -5358,8 +5450,8 @@ struct ChatView: View {
                 store: session.visibleBlocksStore,
                 width: width,
                 agentName: displayName,
-                agentAvatar: windowState.cachedActiveAgent.avatar,
-                agentCustomAvatarPath: windowState.cachedActiveAgent.customAvatarURL?.path,
+                agentAvatar: identity.mascotId,
+                agentCustomAvatarPath: identity.customAvatarPath,
                 isStreaming: session.isStreaming,
                 lastAssistantTurnId: lastAssistantTurnId,
                 expandedBlocksStore: session.expandedBlocksStore,

@@ -24,6 +24,21 @@ public enum RemoteAgentConnectionPhase: Equatable, Sendable {
     case failed(String)
 }
 
+/// The display identity (name + avatar) of whoever currently "owns" the chat
+/// thread: the local agent in Mode 1, or the paired/discovered remote agent in
+/// Mode 2. Lets message bubbles, the empty state, and the toolbar pill render a
+/// single coherent identity instead of always showing the local agent.
+public struct ChatThreadIdentity: Equatable, Sendable {
+    public let name: String
+    /// Mascot avatar id (e.g. "green") or nil for the name-initial monogram.
+    public let mascotId: String?
+    /// Absolute path to a user-supplied avatar image (local agents only;
+    /// remote agents never transfer custom images, so this is nil for them).
+    public let customAvatarPath: String?
+    /// True when this identity is a remote agent (Mode 2).
+    public let isRemote: Bool
+}
+
 /// Per-window state container for ChatView - each window creates its own instance
 @MainActor
 final class ChatWindowState: ObservableObject {
@@ -74,6 +89,12 @@ final class ChatWindowState: ObservableObject {
     /// in which case the picker falls back to the provider's first chat-capable
     /// model. Cleared whenever the window leaves remote-agent mode.
     @Published var pinnedRemoteAgentEffectiveModel: String?
+
+    /// Mode 2 only: the selected remote agent's mascot avatar id (e.g. "green"),
+    /// resolved from `GET /agents/{address}` on connect so the chat surfaces the
+    /// remote agent's own avatar instead of a generic icon. `nil` falls back to
+    /// the remote name's initial monogram. Cleared when leaving remote-agent mode.
+    @Published var pinnedRemoteAgentAvatar: String?
 
     /// Mode 2 only: lifecycle of the selected remote agent's connection so the
     /// chat can show "connecting"/error and gate the first send until the
@@ -257,6 +278,7 @@ final class ChatWindowState: ObservableObject {
         selectedDiscoveredAgentProviderId = nil
         selectedRelayAgent = nil
         pinnedRemoteAgentEffectiveModel = nil
+        pinnedRemoteAgentAvatar = nil
         remoteAgentConnectionPhase = .idle
         agentId = newAgentId
         refreshTheme()
@@ -496,6 +518,32 @@ final class ChatWindowState: ObservableObject {
         agent.isBuiltIn ? L("Osaurus") : agent.name
     }
 
+    /// The identity that should head the chat thread / empty state right now.
+    /// In Mode 2 (a discovered/relay agent is selected) this is the *remote*
+    /// agent's name + fetched mascot; otherwise it's the local active agent.
+    /// Drives message-bubble headers so a remote conversation isn't mislabeled
+    /// "Osaurus" with the local avatar.
+    var effectiveChatIdentity: ChatThreadIdentity {
+        if selectedDiscoveredAgentProviderId != nil {
+            let remoteName =
+                selectedDiscoveredAgent?.name
+                ?? selectedRelayAgent?.name
+                ?? L("Remote Agent")
+            return ChatThreadIdentity(
+                name: remoteName,
+                mascotId: pinnedRemoteAgentAvatar,
+                customAvatarPath: nil,
+                isRemote: true
+            )
+        }
+        return ChatThreadIdentity(
+            name: cachedAgentDisplayName,
+            mascotId: cachedActiveAgent.avatar,
+            customAvatarPath: cachedActiveAgent.customAvatarURL?.path,
+            isRemote: false
+        )
+    }
+
     private func decodeBackgroundImageAsync(themeConfig: CustomTheme?) {
         Task { [weak self] in
             let decoded = themeConfig?.background.decodedImage()
@@ -572,6 +620,8 @@ final class ChatWindowState: ObservableObject {
                         self.selectedDiscoveredAgent = nil
                         self.selectedRelayAgent = nil
                         self.selectedDiscoveredAgentProviderId = nil
+                        self.pinnedRemoteAgentEffectiveModel = nil
+                        self.pinnedRemoteAgentAvatar = nil
                         self.remoteAgentConnectionPhase = .idle
                         self.refreshPairedRelayAgents()
                         return

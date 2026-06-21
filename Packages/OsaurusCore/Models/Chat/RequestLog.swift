@@ -48,6 +48,88 @@ enum RequestSource: String, Sendable, CaseIterable {
     }
 }
 
+/// How a request reached its model — distinguishes a purely local run from
+/// the two remote shapes so Insights doesn't conflate "the local Apple model
+/// ran" with "a remote agent ran its own loop".
+enum RequestMode: String, Sendable {
+    /// Ran on this device (MLX / Foundation / etc.).
+    case local
+    /// Mode 1: a remote peer used as a plain inference backend (`/chat/completions`).
+    case remoteInference
+    /// Mode 2: a remote agent run (`/agents/{address}/run`) where the peer
+    /// runs its own tool loop + generation config.
+    case remoteAgentRun
+
+    var displayName: String {
+        switch self {
+        case .local: return L("Local")
+        case .remoteInference: return L("Remote inference")
+        case .remoteAgentRun: return L("Remote agent run")
+        }
+    }
+}
+
+/// Transport security for a request that crossed the network.
+enum RequestTransport: String, Sendable {
+    /// Never left the device.
+    case local
+    /// Osaurus Secure Channel (forward-secret, mutually authenticated E2E).
+    case secureChannel
+    /// Direct request (TLS to a third-party provider, or plaintext LAN).
+    case direct
+
+    var displayName: String {
+        switch self {
+        case .local: return L("Local")
+        case .secureChannel: return L("Secure Channel")
+        case .direct: return L("Direct")
+        }
+    }
+}
+
+/// Connection + attribution metadata for a logged request. Lets Insights show
+/// where a remote run actually went (relay/host + real endpoint + mode) instead
+/// of a bare model badge, and — for inbound host traffic — which paired access
+/// key it authenticated with so per-connection usage can be tallied.
+struct RequestConnectionInfo: Sendable, Equatable {
+    /// The `RemoteProvider.id` for an outbound remote request (client side).
+    var providerId: UUID?
+    /// Human-readable host/relay + the real path used, e.g.
+    /// `https://0xabc….agent.osaurus.ai/agents/0xabc…/run`.
+    var remoteEndpoint: String?
+    var transport: RequestTransport?
+    var mode: RequestMode?
+    /// (inbound / host only) Access-key id (`AccessKeyInfo.id`) the request
+    /// authenticated with, so the host's Remote Connections view can attribute
+    /// usage to a specific paired peer. nil for loopback / master-scoped.
+    var accessKeyId: String?
+    /// (inbound / host only) The agent-address audience the key is scoped to.
+    var audience: String?
+
+    init(
+        providerId: UUID? = nil,
+        remoteEndpoint: String? = nil,
+        transport: RequestTransport? = nil,
+        mode: RequestMode? = nil,
+        accessKeyId: String? = nil,
+        audience: String? = nil
+    ) {
+        self.providerId = providerId
+        self.remoteEndpoint = remoteEndpoint
+        self.transport = transport
+        self.mode = mode
+        self.accessKeyId = accessKeyId
+        self.audience = audience
+    }
+
+    /// True when no field carries information (used to avoid storing an empty
+    /// struct that would clutter the Insights detail pane).
+    var isEmpty: Bool {
+        providerId == nil && remoteEndpoint == nil && transport == nil
+            && mode == nil && accessKeyId == nil && audience == nil
+    }
+}
+
 /// Represents a single request log entry with optional inference data
 struct RequestLog: Identifiable, Sendable {
     let id: UUID
@@ -103,6 +185,11 @@ struct RequestLog: Identifiable, Sendable {
     /// marker is implicit in the size.
     let wireResponseBody: String?
 
+    /// Connection + attribution metadata (relay/host, transport, mode, and —
+    /// for inbound host traffic — the paired access key). nil for plain local
+    /// runs with nothing remote to describe.
+    let connection: RequestConnectionInfo?
+
     init(
         id: UUID = UUID(),
         timestamp: Date = Date(),
@@ -126,7 +213,8 @@ struct RequestLog: Identifiable, Sendable {
         finishReason: FinishReason? = nil,
         errorMessage: String? = nil,
         wireRequestBody: String? = nil,
-        wireResponseBody: String? = nil
+        wireResponseBody: String? = nil,
+        connection: RequestConnectionInfo? = nil
     ) {
         self.id = id
         self.timestamp = timestamp
@@ -151,6 +239,7 @@ struct RequestLog: Identifiable, Sendable {
         self.errorMessage = errorMessage
         self.wireRequestBody = wireRequestBody
         self.wireResponseBody = wireResponseBody
+        self.connection = (connection?.isEmpty == true) ? nil : connection
 
         // Calculate tokens per second if we have inference data
         if let outputTokens = outputTokens, durationMs > 0 {

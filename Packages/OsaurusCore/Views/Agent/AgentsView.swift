@@ -35,6 +35,7 @@ struct AgentsView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
     @ObservedObject private var agentManager = AgentManager.shared
     @ObservedObject private var remoteAgentManager = RemoteAgentManager.shared
+    @ObservedObject private var managementState = ManagementStateManager.shared
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
@@ -153,10 +154,19 @@ struct AgentsView: View {
                 hasAppeared = true
             }
             consumeDeeplinkIfPossible()
+            applyPendingRemoteAgentDetail()
         }
         .onChange(of: agentManager.agents) { _, _ in
             // Agent list may load asynchronously after the view appears.
             consumeDeeplinkIfPossible()
+        }
+        .onChange(of: remoteAgentManager.remoteAgents) { _, _ in
+            // Paired remote agents can load after the view appears; retry the
+            // pending deep-link once the target record is known.
+            applyPendingRemoteAgentDetail()
+        }
+        .onReceive(managementState.$pendingRemoteAgentDetailId) { _ in
+            applyPendingRemoteAgentDetail()
         }
         .onReceive(NotificationCenter.default.publisher(for: .agentDetailDeeplink)) { note in
             // Notification-tap deep-link router (spec §3.3). Resolves
@@ -353,6 +363,21 @@ struct AgentsView: View {
         withAnimation(Self.navTransition) {
             selectedRemoteAgentId = nil
             selectedAgent = agent
+        }
+    }
+
+    /// Open a paired remote agent's detail view in response to a deep-link
+    /// (`ManagementStateManager.pendingRemoteAgentDetailId`, e.g. from the chat
+    /// empty-state gear). Mirrors `PluginsView.applyPendingPluginDetailRequest`:
+    /// waits until the matching `RemoteAgent` record is known (the list can load
+    /// after this view appears), then navigates and clears the request.
+    private func applyPendingRemoteAgentDetail() {
+        guard let pendingId = managementState.pendingRemoteAgentDetailId else { return }
+        guard remoteAgentManager.remoteAgent(for: pendingId) != nil else { return }
+        managementState.pendingRemoteAgentDetailId = nil
+        withAnimation(Self.navTransition) {
+            selectedAgent = nil
+            selectedRemoteAgentId = pendingId
         }
     }
 
@@ -750,6 +775,11 @@ private enum DetailTab: String, CaseIterable {
     case capabilities
     case customization
     case network
+    /// Host-side "who can reach this agent" surface. Lists the access keys /
+    /// invites granted to remote peers, their inbound usage, and a Revoke
+    /// action. Visible for every agent; the content gates itself to agents
+    /// that actually have a shareable identity (`agentAddress`).
+    case connections
     case sandbox
     case automation
     case memory
@@ -784,6 +814,7 @@ private enum DetailTab: String, CaseIterable {
         case .capabilities: return L("Capabilities")
         case .customization: return L("Customization")
         case .network: return L("Network")
+        case .connections: return L("Remote Connections")
         case .sandbox: return L("Sandbox")
         case .automation: return L("Automation")
         case .memory: return L("Memory")
@@ -801,6 +832,7 @@ private enum DetailTab: String, CaseIterable {
         case .capabilities: return "wrench.and.screwdriver"
         case .customization: return "paintpalette.fill"
         case .network: return "network"
+        case .connections: return "person.2.badge.key"
         case .sandbox: return "shippingbox"
         case .automation: return "clock.badge.checkmark"
         case .memory: return "brain.head.profile"
@@ -818,6 +850,8 @@ private enum DetailTab: String, CaseIterable {
         case .capabilities: return L("Pick which tools and skills this agent can use.")
         case .customization: return L("Avatar, empty state, and visual theme.")
         case .network: return L("Bonjour discovery and relay tunnel.")
+        case .connections:
+            return L("Peers granted access to this agent — usage and revocation.")
         case .sandbox: return L("Container-based code execution.")
         case .automation: return L("Schedules and file watchers for autonomous behavior.")
         case .memory: return L("Conversation history, pinned facts, and episode summaries.")
@@ -1748,8 +1782,8 @@ struct AgentDetailView: View {
         switch tab {
         case .builtIn(let dt):
             switch dt {
-            case .configure, .capabilities, .customization, .network, .sandbox,
-                .home, .schema, .data, .views, .activity:
+            case .configure, .capabilities, .customization, .network, .connections,
+                .sandbox, .home, .schema, .data, .views, .activity:
                 return nil
             case .automation:
                 let count = linkedSchedules.count + linkedWatchers.count
@@ -2013,6 +2047,8 @@ struct AgentDetailView: View {
             customizationTabContent
         case .builtIn(.network):
             networkTabContent
+        case .builtIn(.connections):
+            connectionsTabContent
         case .builtIn(.sandbox):
             sandboxTabContent
         case .builtIn(.automation):
@@ -2443,6 +2479,12 @@ struct AgentDetailView: View {
         tabHelperText(DetailTab.network.helperText)
         bonjourSection
         relaySection
+    }
+
+    @ViewBuilder
+    private var connectionsTabContent: some View {
+        tabHelperText(DetailTab.connections.helperText)
+        AgentConnectionsSection(agent: currentAgent)
     }
 
     @ViewBuilder
@@ -5718,6 +5760,391 @@ private struct ClickableHistoryRow<Content: View>: View {
                 isHovered = hovering
             }
         }
+    }
+}
+
+// MARK: - Remote Connections (host side)
+
+/// A single peer/grant row in the host-side "Remote Connections" tab. Backed
+/// either by a minted agent-scoped access key (a LAN pairing or a redeemed
+/// relay invite) or by a still-pending relay invite that hasn't been redeemed
+/// into a key yet. `internal` (not file-private) so the pure assembly in
+/// `RemoteConnectionsModel` is unit-testable.
+struct ConnectionRow: Identifiable, Equatable {
+    enum Status: Equatable {
+        case active
+        /// LAN pairing key that lives only for this app session
+        /// (`TemporaryPairedKeyStore`).
+        case temporary
+        case expired
+        case revoked
+        /// Issued relay invite that nobody has redeemed yet — no key exists.
+        case pending
+    }
+
+    /// Stable id — `key-<uuid>` for minted keys, `invite-<nonce>` for pending
+    /// invites — so SwiftUI keeps row identity stable across reloads.
+    let id: String
+    let title: String
+    let status: Status
+    let createdAt: Date?
+    let expiresAt: Date?
+    /// Key nonce used to attribute inbound Insights rows. `nil` for pending
+    /// invites (no key minted until redemption).
+    let accessKeyNonce: String?
+    /// Revoke target — exactly one of these is set per row.
+    let keyId: UUID?
+    let inviteNonce: String?
+
+    var canRevoke: Bool {
+        switch status {
+        case .active, .temporary, .pending: return true
+        case .expired, .revoked: return false
+        }
+    }
+}
+
+/// Pure assembly for the host-side Remote Connections list. Kept free of any
+/// singletons or `@MainActor` UI state so the merge / status-mapping contract
+/// (revoked → `.revoked`, expired → `.expired`, temporary LAN keys →
+/// `.temporary`, unredeemed invites → `.pending`) is unit-testable. The live
+/// view feeds it `APIKeyManager` keys, `AgentInviteStore` invites, and a
+/// `TemporaryPairedKeyStore` predicate.
+enum RemoteConnectionsModel {
+    static func rows(
+        keys: [AccessKeyInfo],
+        invites: [IssuedInviteRecord],
+        isTemporary: (UUID) -> Bool
+    ) -> [ConnectionRow] {
+        var result: [ConnectionRow] = []
+
+        for key in keys.sorted(by: { $0.createdAt > $1.createdAt }) {
+            let status: ConnectionRow.Status
+            if key.revoked {
+                status = .revoked
+            } else if key.isExpired {
+                status = .expired
+            } else if isTemporary(key.id) {
+                status = .temporary
+            } else {
+                status = .active
+            }
+            result.append(
+                ConnectionRow(
+                    id: "key-\(key.id.uuidString)",
+                    title: key.label,
+                    status: status,
+                    createdAt: key.createdAt,
+                    expiresAt: key.expiresAt,
+                    accessKeyNonce: key.nonce,
+                    keyId: key.id,
+                    inviteNonce: nil
+                )
+            )
+        }
+
+        // Still-pending relay invites: issued, not yet redeemed (no key), and
+        // not past expiry. Redeemed invites already appear above as their
+        // minted key, so only surface the ones that haven't connected yet.
+        for invite in invites
+        where invite.displayStatus == .active && invite.accessKeyId == nil {
+            result.append(
+                ConnectionRow(
+                    id: "invite-\(invite.nonce)",
+                    title: L("Pending invite · \(String(invite.nonce.prefix(8)))…"),
+                    status: .pending,
+                    createdAt: invite.issuedAt,
+                    expiresAt: invite.expirationDate,
+                    accessKeyNonce: nil,
+                    keyId: nil,
+                    inviteNonce: invite.nonce
+                )
+            )
+        }
+
+        return result
+    }
+}
+
+/// Owner-side view of who can reach a shared agent: the granted keys / invites,
+/// their inbound usage (attributed via `RequestConnectionInfo.accessKeyId`), and
+/// a per-peer Revoke. Gates itself to agents that have a shareable identity.
+@MainActor
+private struct AgentConnectionsSection: View {
+    @ObservedObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var insights = InsightsService.shared
+    private var theme: ThemeProtocol { themeManager.currentTheme }
+
+    let agent: Agent
+
+    @State private var rows: [ConnectionRow] = []
+    @State private var revokeConfirm: ConnectionRow?
+
+    var body: some View {
+        Group {
+            if agent.agentAddress == nil {
+                notShareableState
+            } else if rows.isEmpty {
+                noConnectionsState
+            } else {
+                connectionsList
+            }
+        }
+        .onAppear(perform: reload)
+        // Inbound attribution shows up as new Insights rows; the debounced
+        // `totalRequestCount` is the cheapest "something changed" signal to
+        // re-summarize per-key usage without polling.
+        .onChange(of: insights.totalRequestCount) { _, _ in reload() }
+        .onChange(of: agent.id) { _, _ in reload() }
+        .themedAlert(
+            L("Revoke access?"),
+            isPresented: Binding(
+                get: { revokeConfirm != nil },
+                set: { if !$0 { revokeConfirm = nil } }
+            ),
+            message: revokeConfirm.map(revokeMessage(for:)) ?? "",
+            primaryButton: .destructive(L("Revoke")) {
+                if let target = revokeConfirm { revoke(target) }
+                revokeConfirm = nil
+            },
+            secondaryButton: .cancel(L("Cancel"))
+        )
+    }
+
+    // MARK: States
+
+    private var notShareableState: some View {
+        AgentDetailSection(title: L("Remote Connections"), icon: "person.2.badge.key") {
+            AgentSectionEmptyState(
+                icon: "person.crop.circle.badge.xmark",
+                title: "Not shared yet",
+                hint:
+                    "This agent has no shareable identity. Pair it over your network or generate a relay invite from the header Share button, then connected peers will appear here."
+            )
+        }
+    }
+
+    private var noConnectionsState: some View {
+        AgentDetailSection(title: L("Remote Connections"), icon: "person.2.badge.key") {
+            AgentSectionEmptyState(
+                icon: "antenna.radiowaves.left.and.right.slash",
+                title: "No connections yet",
+                hint:
+                    "Peers you pair with — or who redeem an invite to this agent — show up here with their usage and a way to revoke access."
+            )
+        }
+    }
+
+    private var connectionsList: some View {
+        AgentDetailSection(title: L("Remote Connections"), icon: "person.2.badge.key") {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(
+                    "Peers granted access to this agent. Revoking takes effect immediately.",
+                    bundle: .module
+                )
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
+
+                ForEach(rows) { row in
+                    connectionRow(row)
+                }
+            }
+        }
+    }
+
+    // MARK: Row
+
+    @ViewBuilder
+    private func connectionRow(_ row: ConnectionRow) -> some View {
+        let activity = row.accessKeyNonce.map { insights.activity(forAccessKeyId: $0) }
+        HStack(spacing: 10) {
+            statusBadge(for: row.status)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(row.title)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(theme.primaryText)
+                    .lineLimit(1)
+
+                metaLine(row)
+
+                if let activity, !activity.isEmpty {
+                    usageLine(activity)
+                } else if row.status == .pending {
+                    Text("Waiting to be redeemed", bundle: .module)
+                        .font(.system(size: 9))
+                        .foregroundColor(theme.tertiaryText)
+                } else {
+                    Text("No requests yet", bundle: .module)
+                        .font(.system(size: 9))
+                        .foregroundColor(theme.tertiaryText)
+                }
+            }
+
+            Spacer(minLength: 8)
+
+            if activity?.isEmpty == false {
+                Button {
+                    viewInInsights(row)
+                } label: {
+                    HStack(spacing: 4) {
+                        Text("Insights", bundle: .module)
+                            .font(.system(size: 11, weight: .medium))
+                        Image(systemName: "arrow.up.right")
+                            .font(.system(size: 9, weight: .semibold))
+                    }
+                    .foregroundColor(theme.accentColor)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .localizedHelp("View this connection's requests in Insights")
+            }
+
+            if row.canRevoke {
+                Button {
+                    revokeConfirm = row
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 10))
+                        Text("Revoke", bundle: .module)
+                            .font(.system(size: 11, weight: .semibold))
+                    }
+                    .foregroundColor(theme.errorColor)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .localizedHelp("Revoke this peer's access")
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(theme.inputBackground.opacity(0.5))
+        )
+    }
+
+    private func metaLine(_ row: ConnectionRow) -> some View {
+        HStack(spacing: 6) {
+            if let created = row.createdAt {
+                Text(
+                    "Added \(created.formatted(date: .abbreviated, time: .omitted))",
+                    bundle: .module
+                )
+            }
+            if let expires = row.expiresAt {
+                Text(verbatim: "·")
+                Text(
+                    "Expires \(expires.formatted(date: .abbreviated, time: .omitted))",
+                    bundle: .module
+                )
+            } else if row.status != .pending {
+                Text(verbatim: "·")
+                Text("No expiry", bundle: .module)
+            }
+        }
+        .font(.system(size: 9))
+        .foregroundColor(theme.tertiaryText)
+        .lineLimit(1)
+    }
+
+    private func usageLine(_ activity: ConnectionActivitySummary) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "chart.bar.fill")
+                .font(.system(size: 8))
+            Text("\(activity.requestCount) requests", bundle: .module)
+            if let last = activity.lastUsed {
+                Text(verbatim: "·")
+                Text(
+                    "Last \(last.formatted(.relative(presentation: .named)))",
+                    bundle: .module
+                )
+            }
+            if activity.averageSpeed > 0 {
+                Text(verbatim: "·")
+                Text(verbatim: String(format: "%.0f tok/s", activity.averageSpeed))
+            }
+        }
+        .font(.system(size: 9))
+        .foregroundColor(theme.secondaryText)
+        .lineLimit(1)
+    }
+
+    private func statusBadge(for status: ConnectionRow.Status) -> some View {
+        let (color, label, icon): (Color, String, String) = {
+            switch status {
+            case .active:
+                return (theme.successColor, L("Active"), "checkmark.circle.fill")
+            case .temporary:
+                return (theme.accentColor, L("Temporary"), "clock.arrow.circlepath")
+            case .pending:
+                return (theme.warningColor, L("Pending"), "hourglass")
+            case .expired:
+                return (theme.tertiaryText, L("Expired"), "clock.badge.xmark.fill")
+            case .revoked:
+                return (theme.errorColor, L("Revoked"), "xmark.circle.fill")
+            }
+        }()
+        return HStack(spacing: 3) {
+            Image(systemName: icon).font(.system(size: 8))
+            Text(label).font(.system(size: 9, weight: .semibold))
+        }
+        .foregroundColor(color)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 2)
+        .background(Capsule().fill(color.opacity(0.12)))
+    }
+
+    // MARK: Behaviour
+
+    private func reload() {
+        guard let address = agent.agentAddress else {
+            rows = []
+            return
+        }
+        rows = RemoteConnectionsModel.rows(
+            keys: APIKeyManager.shared.listKeys(forAudience: address),
+            invites: AgentInviteStore.list(for: agent.id),
+            isTemporary: { TemporaryPairedKeyStore.shared.isTemporary(id: $0) }
+        )
+    }
+
+    private func revoke(_ row: ConnectionRow) {
+        if let keyId = row.keyId {
+            // Mark revoked (keep the row so it flips to a "Revoked" badge and
+            // preserves the audit trail) — takes effect immediately via the
+            // validator epoch bump inside `revoke(id:)`.
+            APIKeyManager.shared.revoke(id: keyId)
+        } else if let nonce = row.inviteNonce {
+            // Revoking an invite removes it from the ledger and, if it had
+            // already minted a key, revokes that key too.
+            let linkedKeyId = AgentInviteStore.revoke(nonce: nonce, for: agent.id)
+            if let linkedKeyId {
+                APIKeyManager.shared.revoke(id: linkedKeyId)
+            }
+        }
+        reload()
+    }
+
+    /// Copy varies with what the peer is mid-flight: an active grant cuts a
+    /// live connection, a pending invite just stops the link from working.
+    private func revokeMessage(for row: ConnectionRow) -> String {
+        switch row.status {
+        case .pending:
+            return L("The invite link will stop working. Anyone trying to use it will be turned away.")
+        default:
+            return L("This peer will lose access immediately. Their access key will be revoked.")
+        }
+    }
+
+    private func viewInInsights(_ row: ConnectionRow) {
+        if let nonce = row.accessKeyNonce {
+            _ = InsightsService.shared.focus(accessKeyId: nonce)
+        }
+        ManagementStateManager.shared.selectedTab = .insights
     }
 }
 
