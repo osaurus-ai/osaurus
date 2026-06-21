@@ -382,3 +382,25 @@ live-exercised until the trigger fires.
   `!manualPanelKeepsImageLoaded` → unloadImageAfterAgentJob = keep chat + unload
   image). The audit's "dead branch" was a misread; behavior is correct. (Could add
   a clarifying comment later; no functional change.)
+
+### Image-job trigger ROOT CAUSE FOUND (2026-06-21)
+Live tool-payload dump (`/agents/{id}/run`, env `OSAURUS_DUMP_AGENT_TOOLS`):
+- Echo (custom agent): `composed=[]` — zero tools.
+- default agent: `composed=[todo, complete, clarify, capabilities_discover,
+  capabilities_load, osaurus_describe, osaurus_list, osaurus_status]` — NO
+  `image_generate`, `local_delegate`, or `spawn`.
+**Root cause:** `SystemPromptComposer.composeChatContext` (the agent-run/HTTP tool
+surface) adds the active image tools only as a PROMPT-HINT capability
+(`SystemPromptComposer.swift:1244-1260`, `ManifestCapability`) — it does NOT add
+`image_generate`/`image_edit` to the callable tool **schemas**. The CHAT-surface
+path uses `resolveTools` (`:~2018`, logs `image_generate_in_schema`) which DOES add
+the schema. So an agent-run orchestrator is *told* it can make images but the tool
+is absent from its `<tools>` block → no valid tool call possible. This is why
+neither Echo nor the default agent fired `image_generate` even with forced
+`tool_choice` (the spawn matrix used the chat-surface tooling, not this path).
+**FIX (proposed):** in `composeChatContext`, when `imageDelegationActive` (and the
+text/spawn equivalents), append the active delegation tool SCHEMAS to the composed
+tool set — not just the prompt hint — mirroring `resolveTools`. Then agent-run/HTTP
+orchestrators (and headless tests) can actually call `image_generate`/`image_edit`/
+`local_delegate`/`spawn`. Until then, image jobs only fire from the chat-UI surface.
+(Removed the temporary `OSAURUS_DUMP_AGENT_TOOLS` dump after diagnosis.)
