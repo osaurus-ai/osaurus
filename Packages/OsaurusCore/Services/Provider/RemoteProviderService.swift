@@ -296,25 +296,43 @@ public actor RemoteProviderService: ToolCapableService {
         }
     }
 
+    /// Drain a delta stream into a single visible-text string, dropping the
+    /// `\u{FFFE}` hint sentinels (billing/reasoning/tool/prefill/stats) that the
+    /// streaming path interleaves with model text. The one-shot entrypoint uses
+    /// this for the streaming-only Osaurus agent + router providers so sentinels
+    /// never leak into the returned text (e.g. the distill JSON). A single
+    /// `StreamingToolHint.isSentinel` check covers every variant — they share
+    /// the sentinel prefix.
+    static func collectVisibleText(
+        from stream: AsyncThrowingStream<String, Error>
+    ) async throws -> String {
+        var result = ""
+        for try await chunk in stream {
+            if StreamingToolHint.isSentinel(chunk) { continue }
+            result += chunk
+        }
+        return result
+    }
+
     func generateOneShot(
         messages: [ChatMessage],
         parameters: GenerationParameters,
         requestedModel: String?
     ) async throws -> String {
-        // Native Osaurus agents only support the streaming /agents/{id}/run endpoint.
-        // Consume the SSE stream and concatenate all text deltas into a single string.
-        if provider.providerType == .osaurus {
+        // The native Osaurus agent (/agents/{id}/run) and the streaming-first
+        // Osaurus Router both reject the non-streaming path below: a
+        // `stream:false` request returns a body that isn't a decodable
+        // chat-completion, so it throws a DecodingError — the root cause of
+        // distillation failing against `osaurus/*` core models. Stream instead
+        // and keep only the visible text.
+        if provider.providerType == .osaurus || provider.providerType == .osaurusRouter {
             let stream = try await streamDeltas(
                 messages: messages,
                 parameters: parameters,
                 requestedModel: requestedModel,
                 stopSequences: []
             )
-            var result = ""
-            for try await chunk in stream {
-                result += chunk
-            }
-            return result
+            return try await Self.collectVisibleText(from: stream)
         }
 
         guard let modelName = extractModelName(requestedModel) else {

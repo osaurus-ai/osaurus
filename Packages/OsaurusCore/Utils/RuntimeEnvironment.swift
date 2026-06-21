@@ -41,4 +41,16 @@ public enum RuntimeEnvironment {
             || ProcessInfo.processInfo.environment["GITHUB_ACTIONS"] == "true"
             || ProcessInfo.processInfo.environment["CI"] == "true"
     }
+
+    /// Rollout kill-switch for the opt-in storage-encryption convergence
+    /// migration. When `OSAURUS_DISABLE_STORAGE_CONVERGENCE=1`,
+    /// `StorageMigrationCoordinator.convergeOnLaunch()` becomes a no-op, so an
+    /// existing install's on-disk files are left exactly as they are.
+    /// Detection-first opening still reads whatever is on disk, so every store
+    /// continues to open — this only suppresses the automatic format migration.
+    /// Provides an escape hatch if a rollout misbehaves, without a code
+    /// rollback. The explicit Settings toggle is unaffected.
+    public static var storageConvergenceDisabled: Bool {
+        ProcessInfo.processInfo.environment["OSAURUS_DISABLE_STORAGE_CONVERGENCE"] == "1"
+    }
 }

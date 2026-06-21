@@ -66,6 +66,12 @@ public final class PersistenceHealth: @unchecked Sendable {
         /// Subsystem name → its most recent classified open issue. Cleared on
         /// successful recovery so the diagnostics/settings UI stays accurate.
         var storeIssues: [String: StorageStoreIssue] = [:]
+        /// Informational (NON-degraded) notes keyed by topic, e.g. the storage
+        /// posture decision or the last convergence summary. Surfaced in the
+        /// `/health` snapshot for fleet observability but never flips
+        /// `isDegraded`, so a normal "kept encrypted" launch isn't reported as
+        /// a problem.
+        var infoNotes: [String: String] = [:]
         var lastMessage: String?
         var lastEventAt: Date?
     }
@@ -146,6 +152,24 @@ public final class PersistenceHealth: @unchecked Sendable {
         state.withLock { _ = $0.storeIssues.removeValue(forKey: store) }
     }
 
+    /// Record an informational, non-degraded note (e.g. the resolved storage
+    /// posture or the last launch convergence summary). Overwrites any prior
+    /// note for `key`. Does NOT affect `isDegraded`; purely for `/health`
+    /// observability across the fleet.
+    public func recordInfo(key: String, message: String) {
+        state.withLock {
+            $0.infoNotes[key] = message
+        }
+        Self.logger.info(
+            "storage info \(key, privacy: .public): \(message, privacy: .public)"
+        )
+    }
+
+    /// The current informational notes (for diagnostics/tests).
+    public func infoNotes() -> [String: String] {
+        state.withLock { $0.infoNotes }
+    }
+
     // MARK: - Observe
 
     /// True when any persistence failure has been recorded this session.
@@ -184,6 +208,9 @@ public final class PersistenceHealth: @unchecked Sendable {
             obj["store_issues"] = c.storeIssues.mapValues { issue in
                 ["kind": issue.kind.rawValue, "message": issue.message]
             }
+        }
+        if !c.infoNotes.isEmpty {
+            obj["info"] = c.infoNotes
         }
         obj["last_message"] = c.lastMessage as Any? ?? NSNull()
         obj["last_event_at"] = c.lastEventAt?.ISO8601Format() as Any? ?? NSNull()
