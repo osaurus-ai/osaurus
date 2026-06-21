@@ -255,6 +255,7 @@ When you want Osaurus to execute tools on your behalf (manage the iteration budg
 - Independent tool calls within a single model turn run **in parallel**.
 - The loop is capped at 30 iterations; if the budget is exhausted while still requesting tools, a notice is appended to the stream so the client sees a clear reason rather than a silent stop.
 - Honors client-supplied `tools` (merged with the agent's always-loaded set) and `tool_choice` (defaults to `"auto"` when tools are present).
+- **Authenticated remote callers** (Osaurus [Secure Channel](SECURE_CHANNEL.md), agent-scoped) that drive an agent whose owner granted a **host workspace folder** also get host file tools (`file_read` / `file_write` / `file_edit`) confined to that folder. `shell_run` / `git_commit` / `file_undo` stay denied (see the deny list below), and loopback callers never mount it.
 
 ### Aggregating Osaurus tools through MCP
 
@@ -267,7 +268,9 @@ Combine `/chat/completions` (your harness's own tool loop) with `/mcp/tools` + `
 
 #### External surface deny list
 
-Folder write and shell tools are **never invocable from external surfaces** — neither `/mcp/call` nor the `/agents/{id}/run` loop will execute `file_write`, `file_edit`, `file_undo`, `shell_run`, or `git_commit`, even while a working folder is open in the app and those tools are registered process-wide. `/mcp/call` returns `403` with `{"error": "tool_not_exposable"}`, the agent loop hands the model a structured `rejected` envelope, and the denied names are hidden from `GET /mcp/tools` listings. Rationale: loopback connections skip Bearer auth, so an external caller could otherwise rewrite the user's files or run arbitrary shell commands through the open folder session. Write access from outside the app goes through the sandbox (`sandbox_*` tools on sandboxed agents), which is isolated by construction.
+Folder write and shell tools are **denied to external surfaces by default** — neither `/mcp/call` nor the `/agents/{id}/run` loop will execute `file_write`, `file_edit`, `file_undo`, `shell_run`, or `git_commit`, even while a working folder is open in the app and those tools are registered process-wide. `/mcp/call` returns `403` with `{"error": "tool_not_exposable"}`, the agent loop hands the model a structured `rejected` envelope, and the denied names are hidden from `GET /mcp/tools` listings. Rationale: loopback connections skip Bearer auth, so an external caller could otherwise rewrite the user's files or run arbitrary shell commands through the open folder session. Write access from outside the app otherwise goes through the sandbox (`sandbox_*` tools on sandboxed agents), which is isolated by construction.
+
+**One narrow exception — per-agent host workspace.** When an **authenticated remote** caller (Osaurus [Secure Channel](SECURE_CHANNEL.md), agent-scoped key — never loopback, plaintext, `/mcp/call`, or a cross-agent key) drives an agent whose owner granted a **host workspace folder** (Agent → Configure → Features → Host Files), the `/agents/{id}/run` loop may execute `file_write` and `file_edit`, confined to that folder by the folder tools' own root. `file_read` is always permitted; `shell_run`, `git_commit`, and `file_undo` stay denied even then. The folder root is bound (as a task-local) only after the secure-transport, built-in, and agent-scope gates pass, so the relaxation is unreachable from any untrusted surface.
 
 ### Session Grouping (`session_id`)
 

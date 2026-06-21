@@ -246,6 +246,8 @@ Research notes for the next local-runtime compatibility wave live in
 | OpenRouter | openrouter.ai | 443 (HTTPS) | API Key |
 | Custom | (user-defined) | (user-defined) | Optional |
 
+**Osaurus peers (paired / discovered):** a native Osaurus peer is added as an `.osaurus` provider and can be used either as a plain OpenAI-compatible inference backend (**Mode 1**, `/chat/completions`, local tool loop) or run fully server-side as a **remote agent** (**Mode 2**, `/agents/{address}/run`, the remote agent's own model/context/tools). Mode 2 pins the model chip to the agent's live effective model and gates the first send on connect. See [REMOTE_PROVIDERS.md](REMOTE_PROVIDERS.md) and [SECURE_CHANNEL.md](SECURE_CHANNEL.md).
+
 ---
 
 ### Remote MCP Providers
@@ -485,6 +487,7 @@ This command bridge is for external clients connecting to Osaurus. If Server > N
 - **Generation Settings** — Configure default model, temperature, and max tokens
 - **Import/Export** — Share agents as JSON files for backup or sharing
 - **Live Switching** — Click to activate a agent, theme updates automatically
+- **Host Files (per-agent folder grant)** — Optionally grant the agent a real macOS folder it may read and write inside, including over an authenticated remote agent run (Secure Channel). Writes stay inside the folder; shell and git remain disabled. Configure → Features → Host Files; see [SECURITY.md](SECURITY.md) and [OpenAI_API_GUIDE.md](OpenAI_API_GUIDE.md).
 
 **Feature Gates (Configure → Features):** stored on `Agent.settings`; [`SystemPromptComposer.resolveTools`](../Packages/OsaurusCore/Services/Chat/SystemPromptComposer.swift) strips the matching tools when a gate is off (auto mode). Capabilities are grouped by purpose; extra ones default **off** to reduce token cost.
 
@@ -510,6 +513,8 @@ This command bridge is for external clients connecting to Osaurus. If Server > N
 | `defaultModel` | Optional model ID for this agent |
 | `temperature` | Optional temperature override |
 | `maxTokens` | Optional max tokens override |
+| `hostWorkspaceBookmark` | Machine-local security-scoped bookmark for a host folder the agent may read/write inside; mounted only for authenticated remote agent runs (never sent to a paired peer) |
+| `hostWorkspacePath` | Advisory display path for the host workspace folder (source of truth is the bookmark) |
 
 ---
 
