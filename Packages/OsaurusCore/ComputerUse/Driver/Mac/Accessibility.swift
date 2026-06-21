@@ -342,7 +342,7 @@ final class AccessibilityManager: @unchecked Sendable {
         }
 
         // 1. A focused element that already exposes text → ready immediately.
-        if let focused = axAsElement(axCopyAttribute(app, kAXFocusedUIElementAttribute as String)),
+        if let focused = axElement(axCopyAttribute(app, kAXFocusedUIElementAttribute as String)),
             readableLength(focused) > 0
         {
             return true
@@ -350,7 +350,7 @@ final class AccessibilityManager: @unchecked Sendable {
 
         // The focused window (else the first window).
         let window =
-            axAsElement(axCopyAttribute(app, kAXFocusedWindowAttribute as String))
+            axElement(axCopyAttribute(app, kAXFocusedWindowAttribute as String))
             ?? (axCopyAttribute(app, kAXWindowsAttribute as String) as? [AXUIElement])?.first
         guard let window else { return false }
 
@@ -1324,12 +1324,6 @@ private func axCopyAttribute(_ element: AXUIElement, _ attribute: String) -> CFT
     guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success
     else { return nil }
     return value
-}
-
-/// Cast a copied AX value back to an `AXUIElement`, guarding the CF type id.
-private func axAsElement(_ ref: CFTypeRef?) -> AXUIElement? {
-    guard let ref, CFGetTypeID(ref) == AXUIElementGetTypeID() else { return nil }
-    return (ref as! AXUIElement)
 }
 
 /// The element's AX children (empty when it exposes none).
