@@ -1,5 +1,5 @@
 {
-  "originHash" : "5f6d5b571e5f778f5ad97b0dbfe56d0084d8ae5b929fd43242ec494e237f9ab0",
+  "originHash" : "37a68bc2d053f8cdc70a07660d92f54aadb0c2f504cea16d72f073edaeac05c2",
   "pins" : [
     {
       "identity" : "aachartkit-swift",
@@ -8,6 +8,15 @@
       "state" : {
         "revision" : "b51e53c3b04372c1ed1906b0ec3ba45733953ef4",
         "version" : "9.5.0"
+      }
+    },
+    {
+      "identity" : "aptabase-swift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/aptabase/aptabase-swift.git",
+      "state" : {
+        "revision" : "cfd67fac2a228d448d9d2ac92ffc71589cc3ef00",
+        "version" : "0.3.11"
       }
     },
     {
@@ -89,6 +98,15 @@
       "state" : {
         "revision" : "766c72235ba795717f57ce5c6b755768a9420dd7",
         "version" : "2.5.2"
+      }
+    },
+    {
+      "identity" : "sentry-cocoa",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/getsentry/sentry-cocoa.git",
+      "state" : {
+        "revision" : "43abfbf9a26089ad34604c718ad0935440caf1d4",
+        "version" : "9.18.0"
       }
     },
     {
@@ -356,7 +374,7 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/osaurus-ai/vmlx-swift",
       "state" : {
-        "revision" : "1b7d3ef14e213f09f855667d031535222267eb98"
+        "revision" : "4453909ef453f9235fd7e65986ca3ffc62ff904d"
       }
     },
     {
