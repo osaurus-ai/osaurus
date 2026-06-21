@@ -28,20 +28,27 @@ present as callable **schemas** in the chat's `<tools>` block, not just a prompt
   with no reload. Permissions + preflight still apply to the spawn model load.
 
 ## 3. The four surfaces (UI / settings)
-1. **Image Gen / Edit panel** — direct manual image generation + editing UI (keeps the
-   image model loaded per `manualPanelKeepsImageLoaded`); reuses the native image tools
-   + `NativeImageJobCoordinator`. Shows progress (load → steps → image card).
-2. **Default-model settings** — pickers for the default **text-delegate**, **image-gen**,
-   and **image-edit** models. Scans the model folders (LLM root + `~/models/image`),
-   persists to `agent-delegation.json`, survives restart, shows "(unavailable)" for a
-   saved id no longer present.
-3. **Spawn settings + usage + info page** — what spawn is, how to use it (examples),
-   the spawnable agents list + per-agent enable toggle, the permission model
-   (ask / deny / always per job type), and the resolved model per job.
-4. **RAM Safety** — the auto-smart-unload/reload toggle + the refuse-before-evict
-   preflight toggle. **These settings appear in BOTH the RAM-Safety tab and the Spawn
-   tab but are SYNCED** (one backing store: `AgentDelegationConfiguration` →
-   `agent-delegation.json`; a change in one reflects live in the other).
+1. **Image Gen / Edit panel** — ✅ BUILT (`ImageGenerationPanelView`, compile-verified;
+   visual live-check pending). Direct manual generation/edit UI: prompt + negative +
+   size + seed (+ source-image picker for edit) → live progress (loadingModel → step
+   bar) → result card with Reveal / Save-As. Driven directly by `ImageGenerationService`
+   (manual panels keep their own loading behavior — no chat handoff). Launched from
+   `ImageModelDetailView`'s footer for ready `imageGen`/`imageEdit` bundles (Models →
+   Images tab → tap a model → Generate / Edit).
+2. **Default-model settings** — ✅ DONE. Pickers for the default **text-delegate**,
+   **image-gen**, and **image-edit** models. Scans the model folders (LLM root +
+   `~/models/image`), persists to `agent-delegation.json`, survives restart, shows
+   "(unavailable)" for a saved id no longer present.
+3. **Spawn settings + usage + info page** — ✅ DONE as the "How It Works" subsection in
+   `AgentDelegationSettingsSection` (what spawn is + local-vs-cloud flow + exposed tool
+   list), alongside the permission model (ask / deny / always per job type), load policy,
+   default models, and budgets. (osaurus settings are scrolling SECTIONS, not separate
+   windows — so the "info page" lives as the top subsection of this section.)
+4. **RAM Safety** — ✅ DONE. The refuse-before-evict preflight toggle ("Memory Safety"
+   subsection) + the per-job load policy (handoff on/off) all bind the SAME single
+   `AgentDelegationConfiguration` → `agent-delegation.json`. Because there is one backing
+   store and one section, the spawn and RAM-safety views are **synced by construction**
+   (osaurus has no separate tabs to desync).
 
 ## 4. Cohesion (reuse, don't reinvent)
 - Spawn/image/delegate tools register in the existing `ToolRegistry`, gated by the

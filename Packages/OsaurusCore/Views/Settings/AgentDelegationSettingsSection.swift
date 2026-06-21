@@ -28,6 +28,25 @@ struct AgentDelegationSettingsSection: View {
     var body: some View {
         SettingsSection(title: "Agent Delegation", icon: "person.2.wave.2") {
             VStack(alignment: .leading, spacing: 16) {
+                SettingsSubsection(label: "How It Works") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        infoLine(
+                            "Spawn lets the main chat model run a bounded helper job — image generation/editing or a local text/coder sub-agent — and fold the result back into its reply."
+                        )
+                        infoLine(
+                            "Local chat model: the orchestrator is unloaded, the spawn model loads and runs, then the chat model reloads. Memory Safety verifies it fits first."
+                        )
+                        infoLine(
+                            "Cloud / API chat model: nothing is unloaded — the local spawn model runs alongside and returns a compact result."
+                        )
+                        infoLine(
+                            "Enabling Agent Delegation exposes these tools to chat: image_generate, image_edit, local_delegate, spawn."
+                        )
+                    }
+                }
+
+                SettingsDivider()
+
                 SettingsSubsection(label: "Availability") {
                     SettingsToggle(
                         title: "Enable Agent Delegation",
@@ -192,6 +211,18 @@ struct AgentDelegationSettingsSection: View {
                     }
                 }
             }
+        }
+    }
+
+    private func infoLine(_ text: String) -> some View {
+        HStack(alignment: .top, spacing: 6) {
+            Text("•")
+                .font(.system(size: 11))
+                .foregroundColor(themeManager.currentTheme.tertiaryText)
+            Text(LocalizedStringKey(text), bundle: .module)
+                .font(.system(size: 11))
+                .foregroundColor(themeManager.currentTheme.tertiaryText)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 

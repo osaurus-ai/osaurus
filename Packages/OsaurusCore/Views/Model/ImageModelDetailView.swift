@@ -27,6 +27,15 @@ struct ImageModelDetailView: View, Identifiable {
 
     @State private var resolvedRepoId: String? = nil
     @State private var hasAppeared = false
+    @State private var showPanel = false
+
+    /// `true` when the bundle is installed, ready, and supports a manual
+    /// generate/edit run (gen or edit kind — upscale has no prompt panel).
+    private var canRunPanel: Bool {
+        guard let info, info.ready else { return false }
+        return info.kind == "imageGen" || info.kind == "imageEdit"
+    }
+    private var isEditKind: Bool { info?.kind == "imageEdit" }
 
     private func state() -> DownloadState { downloads.states[id] ?? .notStarted }
     private var isInstalled: Bool { downloads.isInstalled(id) }
@@ -55,6 +64,9 @@ struct ImageModelDetailView: View, Identifiable {
         .onAppear {
             withAnimation(.easeOut(duration: 0.2)) { hasAppeared = true }
             resolvedRepoId = repoId ?? downloads.sourceRepoId(for: id)
+        }
+        .sheet(isPresented: $showPanel) {
+            ImageGenerationPanelView(modelId: id, displayName: displayName, isEdit: isEditKind)
         }
     }
 
@@ -283,15 +295,24 @@ struct ImageModelDetailView: View, Identifiable {
 
             Spacer()
 
-            Button(action: { dismiss() }) {
-                Text("Done", bundle: .module)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 18)
-                    .padding(.vertical, 9)
-                    .background(RoundedRectangle(cornerRadius: 8).fill(theme.accentColor))
+            if canRunPanel {
+                primaryButton(
+                    icon: isEditKind ? "wand.and.stars" : "sparkles",
+                    title: isEditKind ? "Edit" : "Generate"
+                ) {
+                    showPanel = true
+                }
+            } else {
+                Button(action: { dismiss() }) {
+                    Text("Done", bundle: .module)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 18)
+                        .padding(.vertical, 9)
+                        .background(RoundedRectangle(cornerRadius: 8).fill(theme.accentColor))
+                }
+                .buttonStyle(PlainButtonStyle())
             }
-            .buttonStyle(PlainButtonStyle())
         }
     }
 

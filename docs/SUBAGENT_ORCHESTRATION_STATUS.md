@@ -82,8 +82,21 @@ Chat turn (orchestrator: local OR cloud)
   single-residency job (should `waitForChatIdle` or return a "busy" envelope).
 - **`capabilities_discover` embedding SIGSEGV** (concurrent-GPU resource race, #34
   family) — open; harden alongside #34.
-- **UI surfaces still to build** (per requirements doc): dedicated image gen/edit
-  panel; spawn settings + usage + info page; RAM-Safety ⇄ Spawn synced tabs.
+- **UI surfaces — built (compile-verified, awaiting visual live-check):**
+  - **Manual image gen/edit panel** (`ImageGenerationPanelView`): prompt +
+    negative + size + seed (+ source-image picker for edit) → live progress
+    (loadingModel / step bar) → result image with Reveal / Save-As. Driven
+    directly by `ImageGenerationService` (manual panels keep their own loading
+    behavior — no chat handoff). Launched from `ImageModelDetailView`'s footer
+    for ready `imageGen`/`imageEdit` bundles (the Models → Images tab).
+  - **Spawn usage/info + settings**: "How It Works" subsection (flow for local
+    vs cloud orchestrator + the exposed tool list) atop `AgentDelegationSettingsSection`,
+    alongside the existing default-model pickers, load policy, permissions, budgets.
+  - **RAM-Safety ⇄ Spawn sync**: both render the same single
+    `AgentDelegationConfiguration` ("Memory Safety" subsection), so they are
+    synced by construction (osaurus settings are sections, not separate tabs).
+- **Still TODO (UI):** visual live-check of the panel in the dev app (UI can't be
+  headless-verified); optional reachability from the chat composer / image tab toolbar.
 
 ---
 
@@ -100,6 +113,9 @@ Chat turn (orchestrator: local OR cloud)
 - `bb3ccb22` — inject active delegation tool schemas into the agent-run surface
   (the image-job trigger fix). Agent-run-only; chat surface unchanged.
 - `140d0398` — matrix A image handoff verified (unload→image→reload).
+- _(pending commit)_ — UI surfaces: `ImageGenerationPanelView` (manual gen/edit panel)
+  launched from `ImageModelDetailView`; spawn "How It Works" usage/info subsection in
+  `AgentDelegationSettingsSection`. Compile-verified Release.
 
 ---
 
