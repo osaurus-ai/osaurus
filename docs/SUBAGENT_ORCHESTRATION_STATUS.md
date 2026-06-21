@@ -404,3 +404,16 @@ tool set — not just the prompt hint — mirroring `resolveTools`. Then agent-r
 orchestrators (and headless tests) can actually call `image_generate`/`image_edit`/
 `local_delegate`/`spawn`. Until then, image jobs only fire from the chat-UI surface.
 (Removed the temporary `OSAURUS_DUMP_AGENT_TOOLS` dump after diagnosis.)
+
+### ★ Image-job trigger FIXED + §5.A LIVE-PROVEN (2026-06-21)
+Fix `bb3ccb22`: `enrichWithAgentContext` now appends the active AgentDelegation
+tool SCHEMAS (`specs(forTools: [image_generate, image_edit, local_delegate, spawn]`,
+active-gated + name-deduped) to the agent-run tool surface. Agent-run-only (chat
+surface unchanged). **Live E2E proven**: default agent (qwen3-4b) → `image_generate`
+(forced tool_choice) → `NativeImageJobCoordinator` handoff → FLUX-schnell generate →
+`generated-images/flux1-schnell-*.png` (real 512×512 RGB PNG, 258 KB). This also
+exercised GAP1 (image scan resolved flux-schnell from ~/models/image) and GAP2
+(RAM preflight passed with ample RAM, no false-refuse).
+**§5.A image_generate: PASS.** Next: image_edit round-trip; a RAM-tight refuse case
+to prove the preflight rejects; default-temp orchestrator reliability (forced
+tool_choice works; a stronger model would be more natural).
