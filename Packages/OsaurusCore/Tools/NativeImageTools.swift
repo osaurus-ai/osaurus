@@ -111,11 +111,25 @@ public final class NativeImageGenerateTool: OsaurusTool, @unchecked Sendable {
         )
 
         do {
-            let stream = await NativeImageJobCoordinator.shared.generate(request)
-            var finalResult: NativeImageJobResult?
-            for try await result in stream {
-                finalResult = result
-            }
+            // Detach the job consumption from the calling chat-turn task. A native
+            // chat triggers image_generate mid-turn, and the residency handoff
+            // (unloading the chat model) can incidentally cancel that turn task.
+            // If this consumer stopped, the stream `onTermination` chain would
+            // cascade a cancel down into the engine drain — aborting generation at
+            // ~step0 and losing the result ("finished without a result"). Keeping
+            // the consumer alive in a detached task lets the engine drain to
+            // completion. Explicit user cancel still works via the coordinator /
+            // ImageGenerationService jobID cancel path (soft cancel).
+            let finalResult: NativeImageJobResult? = try await Task.detached(
+                priority: .userInitiated
+            ) {
+                let stream = await NativeImageJobCoordinator.shared.generate(request)
+                var last: NativeImageJobResult?
+                for try await result in stream {
+                    last = result
+                }
+                return last
+            }.value
             guard let finalResult else {
                 return ToolEnvelope.failure(
                     kind: .executionError,
@@ -340,11 +354,20 @@ public final class NativeImageEditTool: OsaurusTool, @unchecked Sendable {
         )
 
         do {
-            let stream = await NativeImageJobCoordinator.shared.edit(request)
-            var finalResult: NativeImageJobResult?
-            for try await result in stream {
-                finalResult = result
-            }
+            // Detached for the same reason as image_generate above: a chat-turn
+            // cancel (residency handoff) must not cascade a cancel into the engine
+            // drain and lose the edited image. Explicit user cancel still works via
+            // the jobID cancel path.
+            let finalResult: NativeImageJobResult? = try await Task.detached(
+                priority: .userInitiated
+            ) {
+                let stream = await NativeImageJobCoordinator.shared.edit(request)
+                var last: NativeImageJobResult?
+                for try await result in stream {
+                    last = result
+                }
+                return last
+            }.value
             guard let finalResult else {
                 return ToolEnvelope.failure(
                     kind: .executionError,
