@@ -82,11 +82,39 @@ app-log/NSLog values, PNG bytes, SSE final text).
 
 ---
 
-## Known gaps / follow-ups
-- **Concurrent chat during an image job** returns empty instead of queueing behind the
-  single-residency job (should `waitForChatIdle` or return a "busy" envelope).
-- **`capabilities_discover` embedding SIGSEGV** (concurrent-GPU resource race, #34
-  family) — open; harden alongside #34.
+## Gap triage (loop run 2026-06-21 — re-verified live, no assumptions)
+- **Concurrent chat during an image job** — ✅ NOT A BUG. Re-tested: a chat sent
+  mid-image-job **queues correctly** behind the exclusive MetalGate image owner and
+  then succeeds (HTTP 200, correct content) once the job releases — proven with a
+  chat timeout > the image job (47.5s, returned "PINEAPPLE"). The earlier "empty/HTTP
+  000" was just the client timing out before the ~60s job finished. No fake fix made.
+  Possible future nicety: SSE keep-alive or a fast 503 "image in progress" so short
+  client timeouts don't expire — but the serialization itself is correct.
+- **MCP-direct `/mcp/call image_generate`** — ✅ NOT A BUG (stale). Re-tested: HTTP 200,
+  full coordinator handoff (unload qwen3 → load FLUX → gen 1–20 → restore qwen3), real
+  PNG. The old "no model loaded — call FluxEngine.load first" no longer reproduces;
+  the MCP path now routes through `NativeImageJobCoordinator`.
+- **`capabilities_discover` embedding SIGSEGV** (concurrent-GPU resource race, #34/#60
+  family) — STILL OPEN; harden alongside #34 (the only remaining real gap).
+
+## Per-agent delegation redesign (Eric 2026-06-21) — TODO
+Spawn/delegation should be a **per-agent feature toggle** (in the agent editor's
+Features section, next to Computer Use / Code Execution), NOT only a global section —
+mirroring `computerUseEnabled`. Plan (mirror the `computer_use` per-agent gate exactly):
+1. `AgentSettings.spawnDelegationEnabled: Bool = false` (+ init param + Codable
+   `decodeIfPresent ?? false` + encode) — Agent.swift.
+2. `AgentConfigSnapshot.spawnDelegationEnabled` (mirror `computerUseEnabled` at the
+   field / init / `from(caps:)` sites).
+3. `SystemPromptComposer.resolveTools`: after the `computer_use` strip (line ~1973),
+   add `if !snapshot.spawnDelegationEnabled { byName.removeValue("spawn"/"local_delegate"/
+   "image_generate"/"image_edit") }` — authoritative per-agent gate (AND with the global).
+4. `HTTPHandler.enrichWithAgentContext`: gate the delegation-spec injection on the
+   agent's `spawnDelegationEnabled` too (not just the global flags).
+5. `AgentsView`: add a `featureGroup("Spawn & Delegation") { featureToggleRow(isOn:
+   $spawnDelegationEnabled) }` adjacent to Code Execution + `@State` + load (≈5064) +
+   debouncedSave wiring. Custom-agents pattern like Computer Use.
+The existing global `AgentDelegationConfiguration` stays for DEFAULTS (model pickers,
+load policy, RAM safety, permissions, budgets); the per-agent flag becomes the enable.
 - **UI surfaces — built (compile-verified, awaiting visual live-check):**
   - **Manual image gen/edit panel** (`ImageGenerationPanelView`): prompt +
     negative + size + seed (+ source-image picker for edit) → live progress
