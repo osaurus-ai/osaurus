@@ -97,10 +97,16 @@ app-log/NSLog values, PNG bytes, SSE final text).
 - **`capabilities_discover` embedding SIGSEGV** (concurrent-GPU resource race, #34/#60
   family) — STILL OPEN; harden alongside #34 (the only remaining real gap).
 
-## Per-agent delegation redesign (Eric 2026-06-21) — TODO
-Spawn/delegation should be a **per-agent feature toggle** (in the agent editor's
-Features section, next to Computer Use / Code Execution), NOT only a global section —
-mirroring `computerUseEnabled`. Plan (mirror the `computer_use` per-agent gate exactly):
+## Per-agent delegation redesign (Eric 2026-06-21) — ✅ DONE (commit 34a3ed71)
+Spawn/delegation is now a **per-agent feature toggle** ("Spawn & Delegation" in the
+agent editor's Features section, next to Code Execution; custom agents only), mirroring
+`computerUseEnabled`. The global `AgentDelegationConfiguration` still supplies DEFAULTS
+(models, load policy, RAM safety, permissions, budgets); the per-agent flag is the enable
+(ANDs with the global gates). **Live-proven:** agent flag OFF → 0 `image_generate`
+tool-calls + no image; flag ON → tool-call + real PNG.
+⚠️ Needs Eric's visual check: the "Spawn & Delegation" toggle render in the agent editor
+Features section (UI not headlessly verifiable).
+Implemented (mirror of the `computer_use` per-agent gate):
 1. `AgentSettings.spawnDelegationEnabled: Bool = false` (+ init param + Codable
    `decodeIfPresent ?? false` + encode) — Agent.swift.
 2. `AgentConfigSnapshot.spawnDelegationEnabled` (mirror `computerUseEnabled` at the
