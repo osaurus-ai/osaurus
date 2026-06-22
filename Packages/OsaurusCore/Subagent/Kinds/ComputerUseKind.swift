@@ -82,6 +82,7 @@ final class ComputerUseKind: SubagentKind, @unchecked Sendable {
         let policy: AutonomyPolicy
         let vision: VisionContext
         let policySummary: String
+        let contextPreflight: ComputerUseContextPreflight
     }
     private var config: RunConfig?
     /// Residency plan resolved in `resolveModel` (reject-before-evict), run by
@@ -154,6 +155,11 @@ final class ComputerUseKind: SubagentKind, @unchecked Sendable {
             policySummary: ComputerUseTool.policySummary(
                 policy: snapshot.policy,
                 ceiling: snapshot.ceiling
+            ),
+            contextPreflight: ComputerUseContextPreflight(
+                policy: snapshot.policy,
+                ceiling: snapshot.ceiling,
+                modelIsLocal: snapshot.vision.modelIsLocal
             )
         )
         self.residencyPlan = resolved.decision.plan
@@ -237,6 +243,7 @@ final class ComputerUseKind: SubagentKind, @unchecked Sendable {
             limits: limits,
             policySummary: config.policySummary,
             vision: config.vision,
+            contextPreflight: config.contextPreflight,
             sessionId: scope.sessionId
         )
 

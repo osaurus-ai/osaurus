@@ -24,26 +24,37 @@ final class ComputerUseLoopRunTests: XCTestCase {
 
     // MARK: - Fixtures
 
+    private actor StepCounter {
+        private var count = 0
+        func bump() { count += 1 }
+        func value() -> Int { count }
+    }
+
     private func el(_ id: String, _ role: String, _ label: String?, value: String? = nil) -> CUElement {
         CUElement(id: id, role: role, label: label, value: value)
     }
 
     /// A driver with one focused app (so `currentPid` is non-nil from the
     /// start) serving a single steady-state snapshot.
-    private func driver(_ elements: [CUElement], pid: Int32 = 4242) -> MockMacDriver {
+    private func driver(
+        _ elements: [CUElement],
+        pid: Int32 = 4242,
+        app: String = "Demo",
+        windowTitle: String = "Main"
+    ) -> MockMacDriver {
         let snap = CUSnapshot(
             snapshotId: 1,
             pid: pid,
-            app: "Demo",
-            focusedWindow: "Main",
+            app: app,
+            focusedWindow: windowTitle,
             tier: .ax,
             truncated: false,
-            windows: [CUWindowSummary(id: 1, title: "Main", focused: true, x: 0, y: 0, w: 800, h: 600)],
+            windows: [CUWindowSummary(id: 1, title: windowTitle, focused: true, x: 0, y: 0, w: 800, h: 600)],
             elements: elements,
             image: nil
         )
         return MockMacDriver(
-            activeWindow: CUActiveWindow(pid: pid, app: "Demo", title: "Main", x: 0, y: 0, w: 800, h: 600),
+            activeWindow: CUActiveWindow(pid: pid, app: app, title: windowTitle, x: 0, y: 0, w: 800, h: 600),
             snapshots: [pid: [snap]]
         )
     }
@@ -54,7 +65,8 @@ final class ComputerUseLoopRunTests: XCTestCase {
         gate: ComputerUseGating = HardwiredGate(),
         confirm: @escaping @Sendable (ActionPreview) async -> Bool = { _ in true },
         interrupt: InterruptToken = InterruptToken(),
-        limits: RunLimits = RunLimits(wallClockSeconds: 30)
+        limits: RunLimits = RunLimits(wallClockSeconds: 30),
+        contextPreflight: ComputerUseContextPreflight = .disabled
     ) async -> ComputerUseRunResult {
         await ComputerUseLoop.run(
             goal: "test goal",
@@ -65,6 +77,7 @@ final class ComputerUseLoopRunTests: XCTestCase {
             interrupt: interrupt,
             confirm: confirm,
             limits: limits,
+            contextPreflight: contextPreflight,
             sessionId: "cu-test",
             nextAction: provider
         )
@@ -181,6 +194,94 @@ final class ComputerUseLoopRunTests: XCTestCase {
         guard case .interrupted = result.outcome else {
             return XCTFail("Expected interrupted; got \(result.outcome)")
         }
+    }
+
+    // MARK: - Context preflight
+
+    func testContextPreflightRejectsBeforeProviderRuns() async {
+        let d = driver([el("msg", "text", "Inbox")], app: "Mail", windowTitle: "Inbox")
+        let counter = StepCounter()
+        let provider: AgentStepProvider = { _ in
+            await counter.bump()
+            return ModelActionCall(
+                id: "should-not-run",
+                arguments: AgentAction(verb: .done, reason: "unexpected").argumentsJSON()
+            )
+        }
+
+        let result = await run(
+            d,
+            provider: provider,
+            contextPreflight: ComputerUseContextPreflight(
+                policy: AutonomyPolicy(allowlist: ["Notes"]),
+                modelIsLocal: true
+            )
+        )
+
+        guard case .failed(let reason) = result.outcome else {
+            return XCTFail("Expected failed preflight rejection; got \(result.outcome)")
+        }
+        XCTAssertTrue(reason.localizedCaseInsensitiveContains("allowlist"))
+        let providerCalls = await counter.value()
+        XCTAssertEqual(providerCalls, 0, "The model/provider must not see an out-of-scope view")
+        XCTAssertEqual(result.metrics.contextPreflightChecks, 1)
+        XCTAssertEqual(result.metrics.contextPreflightBlocks, 1)
+        XCTAssertEqual(result.metrics.blocked, 1)
+    }
+
+    func testContextPreflightConfirmationCanApproveRunStart() async {
+        let d = driver([el("prompt", "text", "Shell")], app: "Terminal.app", windowTitle: "zsh")
+        let result = await run(
+            d,
+            provider: ComputerUseLoop.scriptedProvider([
+                AgentAction(verb: .done, reason: "looked")
+            ]),
+            confirm: { preview in
+                XCTAssertEqual(preview.actionLabel, "Start Computer Use")
+                XCTAssertEqual(preview.appName, "Terminal.app")
+                return true
+            },
+            contextPreflight: ComputerUseContextPreflight(
+                policy: AutonomyPolicy(globalPreset: .autonomous),
+                modelIsLocal: true
+            )
+        )
+
+        XCTAssertTrue(result.outcome.isSuccess, "Approved preflight should continue; got \(result.outcome)")
+        XCTAssertEqual(result.metrics.contextPreflightChecks, 1)
+        XCTAssertEqual(result.metrics.contextPreflightConfirms, 1)
+        XCTAssertEqual(result.metrics.confirmsRequested, 1)
+        XCTAssertEqual(result.metrics.confirmsApproved, 1)
+    }
+
+    func testContextPreflightDeclineStopsBeforeProviderRuns() async {
+        let d = driver([el("prompt", "text", "Shell")], app: "Terminal.app", windowTitle: "zsh")
+        let counter = StepCounter()
+        let provider: AgentStepProvider = { _ in
+            await counter.bump()
+            return ModelActionCall(
+                id: "should-not-run",
+                arguments: AgentAction(verb: .done, reason: "unexpected").argumentsJSON()
+            )
+        }
+
+        let result = await run(
+            d,
+            provider: provider,
+            confirm: { _ in false },
+            contextPreflight: ComputerUseContextPreflight(
+                policy: AutonomyPolicy(globalPreset: .autonomous),
+                modelIsLocal: true
+            )
+        )
+
+        guard case .interrupted = result.outcome else {
+            return XCTFail("Expected interrupted after declined preflight; got \(result.outcome)")
+        }
+        let providerCalls = await counter.value()
+        XCTAssertEqual(providerCalls, 0, "Declining context preflight must stop before model step")
+        XCTAssertEqual(result.metrics.contextPreflightConfirms, 1)
+        XCTAssertEqual(result.metrics.confirmsDeclined, 1)
     }
 
     // MARK: - Gate decline

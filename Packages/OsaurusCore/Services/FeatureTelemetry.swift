@@ -224,6 +224,9 @@ enum FeatureTelemetry {
             "verify_pass": ComputerUseRunMetrics.rateBucket(metrics.verifyPassRate),
             "had_dead_end": metrics.deadEnds > 0,
             "had_block": metrics.blocked > 0,
+            "preflight_checked": metrics.contextPreflightChecks > 0,
+            "preflight_blocked": metrics.contextPreflightBlocks > 0,
+            "preflight_confirmed": metrics.contextPreflightConfirms > 0,
             "cloud_vision_used": metrics.cloudVisionUsed,
         ]
         service.track("computer_use_run", props)

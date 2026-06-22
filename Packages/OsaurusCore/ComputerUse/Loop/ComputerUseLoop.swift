@@ -205,6 +205,7 @@ public enum ComputerUseLoop {
         limits: RunLimits = RunLimits(),
         policySummary: String = "",
         vision: VisionContext = .none,
+        contextPreflight: ComputerUseContextPreflight = .disabled,
         sessionId: String,
         nextAction: AgentStepProvider? = nil
     ) async -> ComputerUseRunResult {
@@ -259,6 +260,21 @@ public enum ComputerUseLoop {
         // Cloud-vision consent state for THIS run. Seeded from the snapshot taken
         // at run start; a just-in-time prompt can flip `granted` true mid-run.
         var runConsent = RunCloudVisionConsent(granted: vision.cloudConsent, asked: false)
+        var step = 0
+
+        func terminate(_ outcome: RunOutcome) -> ComputerUseRunResult {
+            metrics.steps = step
+            feed.emit(
+                SubagentActivityEvent(
+                    step: step,
+                    kind: .outcome,
+                    title: outcome.summary,
+                    success: outcome.isSuccess
+                )
+            )
+            feed.finish(success: outcome.isSuccess, summary: outcome.summary)
+            return ComputerUseRunResult(outcome: outcome, metrics: metrics)
+        }
 
         // Initial perception so the model's first turn has something to act on.
         // An empty AX tree (Electron, custom-drawn UI) escalates ax→som→vision
@@ -278,6 +294,62 @@ public enum ComputerUseLoop {
         lastView = initialView.view
         lastSnapshot = initialView.snapshot
         if let app = initialView.snapshot?.app { currentApp = app }
+
+        if contextPreflight.enabled {
+            metrics.contextPreflightChecks += 1
+        }
+        switch contextPreflight.evaluate(
+            goal: goal,
+            appName: currentApp,
+            focusedWindow: initialView.snapshot?.focusedWindow
+        ) {
+        case .allow:
+            break
+        case .reject(let reason):
+            metrics.contextPreflightBlocks += 1
+            metrics.blocked += 1
+            feed.emit(
+                SubagentActivityEvent(
+                    step: 0,
+                    kind: .blocked,
+                    title: "Blocked starting context",
+                    detail: reason,
+                    success: false
+                )
+            )
+            return terminate(.failed(reason: reason))
+        case .confirm(let preview, let reason):
+            metrics.contextPreflightConfirms += 1
+            metrics.confirmsRequested += 1
+            feed.emit(
+                SubagentActivityEvent(
+                    step: 0,
+                    kind: .confirmRequested,
+                    title: "Confirm: \(preview.summary)",
+                    detail: reason
+                )
+            )
+            if await confirm(preview) {
+                metrics.confirmsApproved += 1
+                feed.emit(
+                    SubagentActivityEvent(
+                        step: 0,
+                        kind: .confirmed,
+                        title: "Approved: Start Computer Use"
+                    )
+                )
+            } else {
+                metrics.confirmsDeclined += 1
+                feed.emit(
+                    SubagentActivityEvent(
+                        step: 0,
+                        kind: .denied,
+                        title: "Declined: Start Computer Use"
+                    )
+                )
+                return terminate(.interrupted)
+            }
+        }
 
         messages.append(
             ChatMessage(
@@ -302,27 +374,12 @@ public enum ComputerUseLoop {
             )
         }
 
-        var step = 0
         var consecutiveInvalid = 0
         var consecutiveDeadEnd = 0
         var lastReobserveTargetKey: String? = nil
         var consecutiveReobserve = 0
         var lastActionSignature: String? = nil
         var repeatedActionCount = 0
-
-        func terminate(_ outcome: RunOutcome) -> ComputerUseRunResult {
-            metrics.steps = step
-            feed.emit(
-                SubagentActivityEvent(
-                    step: step,
-                    kind: .outcome,
-                    title: outcome.summary,
-                    success: outcome.isSuccess
-                )
-            )
-            feed.finish(success: outcome.isSuccess, summary: outcome.summary)
-            return ComputerUseRunResult(outcome: outcome, metrics: metrics)
-        }
 
         while true {
             // Interrupt / cancellation / wall-clock boundary.

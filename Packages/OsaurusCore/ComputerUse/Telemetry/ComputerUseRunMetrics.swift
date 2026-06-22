@@ -26,6 +26,12 @@ public struct ComputerUseRunMetrics: Sendable, Equatable {
     public var confirmsDeclined = 0
     /// Gate rejections (allowlist / deny disposition).
     public var blocked = 0
+    /// Run-start contextual-integrity checks. These are separate from action
+    /// gates because they happen before the current view enters the model
+    /// transcript.
+    public var contextPreflightChecks = 0
+    public var contextPreflightConfirms = 0
+    public var contextPreflightBlocks = 0
     /// Dead-end terminations encountered (resolution gave out).
     public var deadEnds = 0
     /// Actions executed and how many the verify step saw land (view changed).
