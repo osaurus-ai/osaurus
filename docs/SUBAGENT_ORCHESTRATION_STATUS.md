@@ -316,3 +316,12 @@ Root cause: in `/agents/{id}/run`, when `req.model == "default"` and `AgentManag
 Fix: when `effectiveModel` is nil, fall back to the currently-loaded model (`ModelRuntime.cachedModelSummaries().first{ $0.isCurrent }`) — the same model /health reports — instead of the literal "default". Verified post-fix: `model=osaurusai--gemma-4-12b-it-qat-mxfp4 window=128000 effBudget=108800 historyBudget=100787` and the agent-run generated a coherent response (no overflow). This also unblocks the HTTP E2E of BUG E's default-agent delegation injection.
 
 Minor adjacent note (not fixed, harmless): the resolved window came back 128000 (the fallbackContextWindow) rather than gemma's real 262144, i.e. `ModelInfo.load` didn't resolve the lowercased model id to the on-disk dir (case mismatch). Both values are far larger than any prompt here, so it has no functional impact on this path; logged for a future ModelInfo id-normalisation pass.
+
+## HTTP agent-run surface E2E (after BUG E + BUG F) — deterministic, no GUI
+
+With BUG E (default-agent delegation surfacing) and BUG F (model resolution / window) fixed, the `/agents/default/run` HTTP path now works end-to-end for the delegation tools — verified deterministically over HTTP (no Codex GUI), with a model warmed first so BUG F's loaded-model fallback resolves:
+- **image_generate**: tool surfaced + fired; FLUX ran (`[flux] image shape=[1,3,1024,1024] finite=true`) and saved a valid PNG. (The curl client hit its 180s cap during the cold warm+handoff+gen before the completion frame; the server completed the job and saved the image — a client-timeout artifact, not a feature defect.)
+- **local_delegate**: fired → qwen3-4b returned a coherent haiku into the stream, no looping, no tag leaks.
+- **spawn**: fired → Sparky responded "I'm Sparky, a concise assistant."
+
+So the delegation feature is now proven coherent on BOTH surfaces — the native chat (image_generate / image_edit / local_delegate / spawn, with context preserved across handoffs) and the HTTP agent-run API. Six bugs fixed across the campaign (A: tool/ prefix, B: cancellation [pre-existing], C: result-bloat loop, D: config-decode fragility, E: agent-run surface split, F: agent-run model/window), all with verified root causes.
