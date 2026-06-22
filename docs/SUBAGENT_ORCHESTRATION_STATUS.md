@@ -368,3 +368,14 @@ Multi-architecture crash-repro sweep on the BUG-G-fixed binary (rapid chat->imag
 - minimax-m2.7-small-jangtq (linear attention): CRASHED iter 2 — new SIGABRT in tryCoalescingPreviousComputeCommandEncoder via copy_gpu_inplace.
 
 The minimax crash is the SAME concurrent-GPU race CLASS but on a path the finishSlot drain doesn't cover. Verified it is NOT OOM (38GB free) and NOT the disk store (DiskCache.store already brackets materialization with Stream.gpu.synchronize(); paged-KV disabled here). So a minimax-specific GPU submission (its linear-attention / sparse-cache decode, actively being ported under #58) escapes the known drain points. minimax is also very slow (~40s first token). Tracked as #77 — honest residual, NOT claimed fixed. The mainstream/default path (gemma) and qwen3/lfm2 are solid and proven.
+
+## minimax (#77): multi-layer GPU-concurrency cascade — NOT fully fixable by targeted patches
+
+Root-caused via three successive crash reports while fixing layer by layer. minimax (slow: ~40s first token, heavy JANGTQ + SSM state) widens every race window, exposing a CASCADE of MLX metal-device concurrency gaps that fast models (gemma/qwen3/lfm2) win on timing:
+1. **Decode/cache-store tail (031748/045251)** — generation finished the stream before its async eval drained. FIXED + PROVEN (BatchEngine finishSlot `Stream().synchronize()` before finish; mainstream models 6/6 + 3/3).
+2. **Cache-store vs FLUX (045251)** — the post-gen cache store holds `MLXDiskCacheIOLock` and submits Metal work; FLUX doesn't take that lock. Tried an `MLXCacheIOLock.withSerializedMLXCacheIO` barrier in image gen — it CLOSED this layer (crash moved past it) but revealed layer 3, so it was reverted (kept only proven fixes).
+3. **Model unload vs load (051006)** — SIGSEGV in `mlx::Fence::wait`/`encodeWaitForEvent` colliding with `IOGPUMetalResource dealloc` (`MetalAllocator::free`) during FLUX weight load (`ParallelFileReader::read`→`Load::eval_cpu`). model UNLOAD does `Stream.gpu.synchronize()` but is NOT MetalGate-serialized (load IS, line 1401), and its async buffer dealloc + fences outlive the synchronize, racing the next producer's load.
+
+Layers 2-3 are the deep #60 device-serialization problem: async MLX/Metal operations (allocator free, fences, file-load eval) that escape `synchronize` and the producer-level MetalGate. Fully closing them is a dedicated architectural concurrency refactor (gate model unload too, and serialize async dealloc/fences across the residency handoff) — NOT safe to patch blindly layer-by-layer (deadlock risk: unload runs INSIDE the image gate during the handoff). Tracked under #77 + #60.
+
+NET: the mainstream/default path (gemma) and qwen3/lfm2 are solid and proven across the whole campaign. minimax — an edge, slow, actively-being-ported (#58) model — exposes the residual concurrency cascade and needs the dedicated #60 architectural work, with the precise 3 layers now documented.
