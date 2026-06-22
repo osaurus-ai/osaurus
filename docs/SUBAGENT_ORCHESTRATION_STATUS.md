@@ -325,3 +325,13 @@ With BUG E (default-agent delegation surfacing) and BUG F (model resolution / wi
 - **spawn**: fired → Sparky responded "I'm Sparky, a concise assistant."
 
 So the delegation feature is now proven coherent on BOTH surfaces — the native chat (image_generate / image_edit / local_delegate / spawn, with context preserved across handoffs) and the HTTP agent-run API. Six bugs fixed across the campaign (A: tool/ prefix, B: cancellation [pre-existing], C: result-bloat loop, D: config-decode fragility, E: agent-run surface split, F: agent-run model/window), all with verified root causes.
+
+## Deep context-carry stress (Eric /loop 2026-06-22) — SWA, resume coherence, image/file carry-over
+
+Deterministic multi-turn HTTP harnesses (growing message history through /agents/default/run, interleaving handoffs). Every turn scanned for tag/channel leaks and repeated-n-gram looping; recall checks for early facts.
+
+- **Text context carry across handoffs — PASS.** 8-turn conversation; established name/secret-number/city, grew context, did an image_generate handoff then a local_delegate handoff. Recall after BOTH handoffs was exact ("Zephyr / 4291 / Reykjavik"; "4291 / Reykjavik"). Every turn clean — no looping, no incoherence, no tag leaks.
+- **User-provided image carry-over across a handoff — PASS.** Sent a real image (gemma-4 vision: "teapot, light blue"), generated a different image (model unload/reload), then asked about the FIRST image — "the main object in the first image you showed was a teapot, and its color was light blue." Visual context survived the handoff.
+- **Long-context / SWA-window crossing — PASS.** Grew the conversation to ~2.8k tokens (2.7× gemma's sliding_window=1024) with six detailed multi-paragraph answers, planted two facts at the very start (GLACIER-7734 / NIGHTJAR), did an image handoff deep in the context, then recalled both early facts exactly and resumed coherently. No degeneration/looping at depth. (A deeper ~8-10k-token run extends this; the known ~36k+ degeneration ceiling is tracked separately as a vmlx-side limit, far beyond normal usage.)
+
+Net: context — text and images — passes through cleanly across model load/unload handoffs and past gemma's local attention window, with no looping, no incoherency, and accurate recall. gemma's SWA/hybrid attention carries the conversation correctly.
