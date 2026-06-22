@@ -379,3 +379,13 @@ Root-caused via three successive crash reports while fixing layer by layer. mini
 Layers 2-3 are the deep #60 device-serialization problem: async MLX/Metal operations (allocator free, fences, file-load eval) that escape `synchronize` and the producer-level MetalGate. Fully closing them is a dedicated architectural concurrency refactor (gate model unload too, and serialize async dealloc/fences across the residency handoff) — NOT safe to patch blindly layer-by-layer (deadlock risk: unload runs INSIDE the image gate during the handoff). Tracked under #77 + #60.
 
 NET: the mainstream/default path (gemma) and qwen3/lfm2 are solid and proven across the whole campaign. minimax — an edge, slow, actively-being-ported (#58) model — exposes the residual concurrency cascade and needs the dedicated #60 architectural work, with the precise 3 layers now documented.
+
+## Proper GPU serialization for the chat->image handoff (IN PROGRESS — verifying full model set)
+
+Context: vmlx-swift is correct for LLM-only (generation/load/unload/swap/context all proven). The concurrent-GPU crash class is at the NEW boundary this session added — vMLXFlux image generation as a SECOND MLX graph on the same Metal device, racing the LLM's async GPU tails during the handoff. Fast models won the timing; minimax-m2.7 (slow) reliably lost it. Three serialization fixes (general, not model-specific):
+
+1. **Engine decode/cache-store drain** (vmlx `BatchEngine.finishSlot`, commit 107c467b): `Stream().synchronize()` on the engine's own buffer-owning thread before `continuation.finish()`, so "stream finished ⇒ GPU idle". PROVEN (qwen3-8b 6/6, gemma/lfm2 3/3).
+2. **Image-gen barrier vs cache IO** (osaurus `ImageGenerationService`, after `enterImageGeneration`): `MLXCacheIOLock.withSerializedMLXCacheIO { Memory.clearCache() }` — waits for any in-flight post-gen cache store (held under `MLXDiskCacheIOLock`) to finish, returns freed teardown buffers, drains. Avoids force-committing a mid-flight buffer.
+3. **Unload teardown drain** (osaurus `ModelRuntime.unload`): `Stream.gpu.synchronize()` → `Memory.clearCache()` → `Stream.gpu.synchronize()`, so the chat-model's async buffer frees + fences fully settle before the next producer (FLUX load) touches the device.
+
+VERIFICATION IN PROGRESS: full model matrix — gemma, qwen3-8b, lfm2, minimax-m2.7, laguna — each through load -> chat(remember codeword) -> image handoff (unload/context-swap) -> recall, asserting no crash + context recall + coherence. Results to be appended.
