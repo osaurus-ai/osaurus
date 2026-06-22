@@ -199,8 +199,16 @@ public enum MemoryConfigurationStore: Sendable {
         OsaurusPaths.ensureExistsSilent(url.deletingLastPathComponent())
         do {
             let data = try encoder.encode(validated)
-            try data.write(to: url, options: .atomic)
+            // Update the cache before the write so in-process reads see the new
+            // value immediately; the disk write then lands off the main thread.
+            // Tests run against an override root and write synchronously.
             lock.withLock { $0 = validated }
+            ConfigDiskWriter.write(
+                data,
+                to: url,
+                synchronous: OsaurusPaths.overrideRoot != nil,
+                onError: { MemoryLogger.config.error("Failed to save config: \($0.localizedDescription)") }
+            )
         } catch {
             MemoryLogger.config.error("Failed to save config: \(error)")
         }

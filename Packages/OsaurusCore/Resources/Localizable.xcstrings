@@ -49099,7 +49099,11 @@
         }
       }
     },
+    "Restore view settings to recommended defaults (saved automatically, like any change)" : {
+
+    },
     "Restore view-only settings to recommended defaults (does not affect saved configuration)" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {

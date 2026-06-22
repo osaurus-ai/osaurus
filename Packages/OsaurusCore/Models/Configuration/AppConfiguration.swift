@@ -182,7 +182,16 @@ public final class AppConfiguration: ObservableObject {
             }
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            try encoder.encode(config).write(to: url, options: .atomic)
+            let data = try encoder.encode(config)
+            // Persist off the main thread; the `@Published chatConfig` cache is
+            // already updated, so in-process reads see the new value at once.
+            // Tests run against an override root and write synchronously.
+            ConfigDiskWriter.write(
+                data,
+                to: url,
+                synchronous: OsaurusPaths.overrideRoot != nil,
+                onError: { print("[Osaurus] Failed to save ChatConfiguration: \($0)") }
+            )
         } catch {
             print("[Osaurus] Failed to save ChatConfiguration: \(error)")
         }

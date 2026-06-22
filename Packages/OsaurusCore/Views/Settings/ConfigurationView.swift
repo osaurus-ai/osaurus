@@ -76,6 +76,12 @@ struct ConfigurationView: View {
     /// the pending debounce that each new edit cancels and reschedules.
     @State private var autoSaveTask: Task<Void, Never>?
 
+    /// Last-loaded/saved full `ServerConfiguration`, kept so `saveConfiguration`
+    /// can preserve the server fields this screen doesn't edit without a
+    /// synchronous `ServerConfigurationStore.load()` disk read on the main
+    /// thread each (auto-)save.
+    @State private var loadedServerConfig: ServerConfiguration = .default
+
     // Search (passed from sidebar)
     @Binding var searchText: String
 
@@ -891,6 +897,7 @@ struct ConfigurationView: View {
 
     private func applyLoadedConfiguration(_ snapshot: ConfigurationSnapshot) {
         let configuration = snapshot.server
+        loadedServerConfig = configuration
         tempStartAtLogin = configuration.startAtLogin
         tempHideDockIcon = configuration.hideDockIcon
 
@@ -1054,7 +1061,9 @@ struct ConfigurationView: View {
     // MARK: - Configuration Saving
 
     private func saveConfiguration() {
-        let previousServerCfg = ServerConfigurationStore.load() ?? ServerConfiguration.default
+        // Use the cached last-loaded server config instead of a synchronous
+        // disk read; the store writes back off the main thread below.
+        let previousServerCfg = loadedServerConfig
         let previousChatCfg = ChatConfigurationStore.load()
 
         var configuration = previousServerCfg
@@ -1065,6 +1074,7 @@ struct ConfigurationView: View {
         let startAtLoginChanged = previousServerCfg.startAtLogin != configuration.startAtLogin
 
         ServerConfigurationStore.save(configuration)
+        loadedServerConfig = configuration
 
         let trimmedTemp = tempChatTemperature.trimmingCharacters(in: .whitespacesAndNewlines)
         let parsedTemp: Float? = {
