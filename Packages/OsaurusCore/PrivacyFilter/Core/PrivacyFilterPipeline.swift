@@ -228,34 +228,13 @@ enum PrivacyFilterPipelineError: Error, Equatable, LocalizedError {
         }
 
         if renderedLooksUnresolved(rendered, keyPrefix: keyPrefix) {
-            return "\(count) \(localizedCategoryName(for: category))"
+            return "\(count) \(category.localizedName)"
         }
         return rendered
     }
 
     private static func renderedLooksUnresolved(_ rendered: String, keyPrefix: String) -> Bool {
         rendered == keyPrefix || rendered.hasPrefix("\(keyPrefix) ")
-    }
-
-    private static func localizedCategoryName(for category: EntityCategory) -> String {
-        switch category {
-        case .phone:
-            return String(localized: "privacy.category.phone", bundle: .module)
-        case .email:
-            return String(localized: "privacy.category.email", bundle: .module)
-        case .url:
-            return String(localized: "privacy.category.url", bundle: .module)
-        case .accountNumber:
-            return String(localized: "privacy.category.accountNumber", bundle: .module)
-        case .address:
-            return String(localized: "privacy.category.address", bundle: .module)
-        case .person:
-            return String(localized: "privacy.category.person", bundle: .module)
-        case .date:
-            return String(localized: "privacy.category.date", bundle: .module)
-        case .secret:
-            return String(localized: "privacy.category.secret", bundle: .module)
-        }
     }
 
     /// English-style join: "a, b and c". Localization of the
@@ -312,44 +291,54 @@ enum PrivacyFilterPipeline {
             )
             return (messages, nil)
         }
-        // PrivacyFilterEngine is @MainActor; the await hops to main
-        // for one property read + one detect() per outbound call.
-        var isLoaded = await PrivacyFilterEngine.shared.isLoaded
-        var loadError: String?
-        if !isLoaded {
-            // Engine not warm yet. If the bundle is on disk we try one
-            // synchronous lazy load here so the user doesn't see a
-            // bypass on the first chat after launch. We bound this to
-            // a single attempt per call so a corrupt bundle can't trap
-            // every outbound request in a load loop.
-            let bundleDir = PrivacyFilterModelBundle.directoryURL()
-            if PrivacyFilterModelBundle.exists(at: bundleDir) {
-                do {
-                    try await PrivacyFilterEngine.shared.loadIfNeeded(bundle: bundleDir)
-                    isLoaded = await PrivacyFilterEngine.shared.isLoaded
-                    if isLoaded {
-                        print("[PrivacyFilter] Engine lazy-loaded for first outbound call.")
+        // Decouple the on-device AI model from the deterministic regex
+        // layer. When the user has AI detection OFF we never load the
+        // bundle and never fail-closed on a missing model — the regex
+        // layer (built-ins / presets / custom rules) runs standalone,
+        // so the filter is fully usable without the ~2.8 GB download.
+        let useModel = config.aiDetectionEnabled
+        if useModel {
+            // PrivacyFilterEngine is @MainActor; the await hops to main
+            // for one property read + one detect() per outbound call.
+            var isLoaded = await PrivacyFilterEngine.shared.isLoaded
+            var loadError: String?
+            if !isLoaded {
+                // Engine not warm yet. If the bundle is on disk we try one
+                // synchronous lazy load here so the user doesn't see a
+                // bypass on the first chat after launch. We bound this to
+                // a single attempt per call so a corrupt bundle can't trap
+                // every outbound request in a load loop.
+                let bundleDir = PrivacyFilterModelBundle.directoryURL()
+                if PrivacyFilterModelBundle.exists(at: bundleDir) {
+                    do {
+                        try await PrivacyFilterEngine.shared.loadIfNeeded(bundle: bundleDir)
+                        isLoaded = await PrivacyFilterEngine.shared.isLoaded
+                        if isLoaded {
+                            print("[PrivacyFilter] Engine lazy-loaded for first outbound call.")
+                        }
+                    } catch {
+                        loadError = error.localizedDescription
+                        print("[PrivacyFilter] Lazy load failed: \(error.localizedDescription).")
                     }
-                } catch {
-                    loadError = error.localizedDescription
-                    print("[PrivacyFilter] Lazy load failed: \(error.localizedDescription).")
+                } else {
+                    loadError = "model bundle missing at \(bundleDir.path)"
                 }
-            } else {
-                loadError = "model bundle missing at \(bundleDir.path)"
             }
+            // Fail-CLOSED: the user enabled AI detection expecting their
+            // PII to be scrubbed before reaching cloud providers. If we
+            // can't actually run the model, blocking the send (with an
+            // explanation) is the safer default than silently sending
+            // raw text. Previously this branch returned `(messages, nil)`
+            // which the chat layer rendered as a successful send.
+            guard isLoaded else {
+                let detail = loadError ?? "engine not loaded"
+                print("[PrivacyFilter] BLOCKING send: \(detail).")
+                throw PrivacyFilterPipelineError.engineUnavailable(detail)
+            }
+            print("[PrivacyFilter] Outbound: filter ENABLED (AI + regex) for provider \(providerId.uuidString); running detection.")
+        } else {
+            print("[PrivacyFilter] Outbound: filter ENABLED (regex-only, AI detection off) for provider \(providerId.uuidString); running detection.")
         }
-        // Fail-CLOSED: the user enabled this feature expecting their
-        // PII to be scrubbed before reaching cloud providers. If we
-        // can't actually run detection, blocking the send (with an
-        // explanation) is the safer default than silently sending
-        // raw text. Previously this branch returned `(messages, nil)`
-        // which the chat layer rendered as a successful send.
-        guard isLoaded else {
-            let detail = loadError ?? "engine not loaded"
-            print("[PrivacyFilter] BLOCKING send: \(detail).")
-            throw PrivacyFilterPipelineError.engineUnavailable(detail)
-        }
-        print("[PrivacyFilter] Outbound: filter ENABLED for provider \(providerId.uuidString); running detection.")
 
         // Build the effective regex rule set ONCE per pipeline call.
         // This snapshot drives both the detection pass below and the
@@ -395,7 +384,8 @@ enum PrivacyFilterPipeline {
                     in: segment,
                     map: map,
                     skipCodeBlocks: config.skipCodeBlocks,
-                    ruleset: ruleset
+                    ruleset: ruleset,
+                    useModel: useModel
                 )
                 // Stamp the source segment onto every detection
                 // before append so the review sheet can render the

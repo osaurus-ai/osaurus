@@ -74,7 +74,7 @@ Canonical reference for all Osaurus features, their status, and documentation.
 │  │   ├── InsightsView (Developer: Insights)                              │
 │  │   ├── ServerView (Developer: Server Explorer)                         │
 │  │   ├── VoiceView (Voice Input & VAD Settings)                          │
-│  │   ├── PrivacyView (Privacy Filter: install + 4 sub-tabs)              │
+│  │   ├── PrivacyView (Privacy Filter: 4 sub-tabs; opt-in model)          │
 │  │   └── ConfigurationView (Settings)                                    │
 ├─────────────────────────────────────────────────────────────────────────┤
 │  Services Layer                                                          │
@@ -1282,7 +1282,7 @@ Eight settings total, down from v1's 18. The per-section budget knobs, MMR tunin
 
 ### Privacy Filter
 
-**Purpose:** Scrub sensitive content from cloud-bound requests on the way out and unscrub the placeholders on the way back. Detection runs entirely on-device via OpenAI's `openai/privacy-filter` (Apache-2.0, 1.5B / 50M-active sparse-MoE token classifier), served through the MLX conversion `mlx-community/openai-privacy-filter-bf16` (~2.8 GB). Fail-closed on every write path — model unavailable, no substitutions applied, or post-scrub leak detected all block the send with a typed error instead of silently sending the original. See [PRIVACY_FILTER.md](PRIVACY_FILTER.md) for the full architecture.
+**Purpose:** Scrub sensitive content from cloud-bound requests on the way out and unscrub the placeholders on the way back. Two independent layers: a **deterministic regex** layer (built-ins + presets + custom rules) that ships on and needs **zero download**, and an **opt-in on-device AI classifier** — OpenAI's `openai/privacy-filter` (Apache-2.0, 1.5B / 50M-active sparse-MoE token classifier), served through the MLX conversion `mlx-community/openai-privacy-filter-bf16` (~2.8 GB) — that adds the fuzzy categories (names, addresses, secrets) only when `aiDetectionEnabled` is on. Fail-closed on every write path — no substitutions applied or post-scrub leak detected blocks the send with a typed error; with AI detection on, a missing model also blocks; with it off, detection is regex-only and never blocks on the model. See [PRIVACY_FILTER.md](PRIVACY_FILTER.md) for the full architecture.
 
 **Components:**
 
@@ -1301,11 +1301,11 @@ Eight settings total, down from v1's 18. The per-section budget knobs, MMR tunin
 - `PrivacyFilter/Model/PrivacyFilterModelDownloader.swift` — Hugging Face streaming download + manifest synthesis
 - `PrivacyFilter/Store/PrivacyFilterConfiguration.swift` — Persisted user settings (Codable, hand-rolled decoder for forward-compat defaults)
 - `PrivacyFilter/Store/PrivacyFilterStore.swift` — JSON-on-disk persistence + lock-protected in-memory snapshot (synchronous `save`)
-- `PrivacyFilter/Views/PrivacyView.swift` — Settings UI: install hero (pre-install) + 4 sub-tabs (Overview / Rules / Providers / Model) post-install
+- `PrivacyFilter/Views/PrivacyView.swift` — Settings UI: 4 sub-tabs always rendered (no model gate); AI-detection toggle + no-detector note in Overview; dry-run tester in Rules; install hero lives inside the Model tab
 - `PrivacyFilter/Views/RedactionReviewSheet.swift` — Modal review with scrubbed preview + hover-reveal
 - `PrivacyFilter/Views/RedactionPreviewBuilder.swift` — Pure helper that scrubs text and builds the highlight map for the preview pane
 - `PrivacyFilter/Views/RedactionPreviewTextView.swift` — `NSViewRepresentable` that reuses the chat highlighter inside the review sheet
-- `PrivacyFilter/Views/PrivacyCustomRuleEditor.swift` — Custom-rule editor sheet with regex validation
+- `PrivacyFilter/Views/PrivacyCustomRuleEditor.swift` — Custom-rule editor sheet: Simple (no-regex builder) / Regex modes, case toggle, custom placeholder label, live test panel
 - `Views/Chat/RedactionHighlighter.swift` — Walks `NSTextStorage` and applies underline + accent to placeholder ranges (chat bubbles + preview)
 - `Views/Chat/RedactionHoverController.swift` — Hover-tracked `NSPopover` tooltip with direction-aware copy (outbound / inbound / preview)
 - `Services/Provider/WireTransportProbe.swift` — Captures the post-scrub HTTP body + pre-unscrub inbound stream for the Insights surface
@@ -1316,8 +1316,8 @@ Eight settings total, down from v1's 18. The per-section budget knobs, MMR tunin
 |-------|--------|---------|
 | Built-in regex | `RegexEntityDetector` | Phone / email / URL / account number — all on, toggled per-category |
 | Preset rules | `PrivacyRulePresets.all` | Driver's license, passport, IBAN, AWS keys, GitHub tokens — all opt-in |
-| Custom rules | `PrivacyFilterConfiguration.customRules` | User-defined; validated through `safeCompile` before save |
-| On-device classifier | `PrivacyFilterKit` over OpenAI's `openai/privacy-filter` (MLX BF16 conversion) | BIOES decoder + Viterbi calibration; emits 8 categories (`person`, `email`, `phone`, `url`, `address`, `date`, `accountNumber`, `secret`) |
+| Custom rules | `PrivacyFilterConfiguration.customRules` | User-defined; Simple (no-regex builder) or raw Regex, per-rule case flag + optional custom placeholder label; validated/escaped before save |
+| On-device classifier | `PrivacyFilterKit` over OpenAI's `openai/privacy-filter` (MLX BF16 conversion) | **Opt-in (off by default)** via `aiDetectionEnabled`; BIOES decoder + Viterbi calibration; emits 8 categories (`person`, `email`, `phone`, `url`, `address`, `date`, `accountNumber`, `secret`) |
 
 **Placeholder wire format:** `[PERSON_1]`, `[EMAIL_2]`, `[PHONE_1]`, `[URL_1]`, `[ADDR_1]`, `[ACCT_1]`, `[DATE_1]`, `[SECRET_1]`. Per-category, per-conversation indexing. `RedactionMap` interns by original so the same value across turns reuses one placeholder.
 
@@ -1326,7 +1326,7 @@ Eight settings total, down from v1's 18. The per-section budget knobs, MMR tunin
 | Case | When it fires |
 |------|---------------|
 | `.reviewCanceled` | User dismissed the review sheet (or task cancelled while suspended on it) |
-| `.engineUnavailable(detail)` | Master toggle on, model bundle missing / failed to load |
+| `.engineUnavailable(detail)` | AI detection on, model bundle missing / failed to load (regex-only sends never hit this) |
 | `.scrubNoOp(approvedCount)` | Approved entities produced zero substitutions (almost certainly a wiring bug) |
 | `.scrubLeaked(categoryCounts)` | Post-scrub re-scan found PII the substitution missed; send is blocked |
 
@@ -1336,13 +1336,13 @@ The post-scrub invariant only re-scans categories whose built-in regex toggle is
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `enabled` | false | Master toggle (synchronous persistence; survives Cmd-Q) |
+| `enabled` | false | Master toggle (regex layer; no model required; synchronous persistence; survives Cmd-Q) |
+| `aiDetectionEnabled` | false | Opt into the on-device AI classifier; on → load model + fail closed if missing, off → regex-only. Legacy files missing the key decode to `true` (preserve existing model users) |
 | `skipCodeBlocks` | true | Skip fenced + inline code spans |
 | `alwaysApproveByDefault` | false | Skip the review sheet per-session |
-| `confidenceThreshold` | 0.5 | Reserved for the classifier; persisted for future kit versions |
 | `builtinPatternEnabled` | all on | Per-category regex toggle (controls detection + leak check) |
 | `presetRules` | `{}` | Opt-in preset rule map |
-| `customRules` | `[]` | User-defined `PrivacyRule` array |
+| `customRules` | `[]` | User-defined `PrivacyRule` array (`kind`, `caseSensitive`, optional `builder` + `placeholderLabel`) |
 | `providerOverrides` | `{}` | Per-`RemoteProvider.id` enable map; missing keys → true |
 
 **Storage:**

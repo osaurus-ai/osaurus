@@ -1,21 +1,28 @@
 # Privacy Filter
 
-The Privacy Filter redacts sensitive content from cloud-bound requests on its way out of your Mac and unscrubs the placeholders back on the way in. The classifier runs entirely on-device — **OpenAI's `openai/privacy-filter`** (Apache-2.0), served via the MLX conversion at [`mlx-community/openai-privacy-filter-bf16`](https://huggingface.co/mlx-community/openai-privacy-filter-bf16) (~2.8 GB) — so no third-party model ever sees your raw text, even to *decide* what counts as sensitive.
+The Privacy Filter redacts sensitive content from cloud-bound requests on its way out of your Mac and unscrubs the placeholders back on the way in.
 
-The mental model is a redaction gate sitting between the chat surface and any remote provider: detect → review → scrub → send → stream back → unscrub → render. The user is never the last line of defense; the pipeline is **fail-closed** on every write path (model unavailable, scrub produced no substitutions, post-scrub invariant tripped → block the send, surface the reason).
+It runs as **two independent layers**:
 
-> Privacy Filter is **experimental**. The on-device classifier catches the common shapes (names, emails, phones, URLs, addresses, dates, account numbers, free-form secrets) and the regex layer covers deterministic ones (SSN, credit cards, IBAN, AWS keys, GitHub tokens, passport, driver's license). Always review the redaction sheet for messages that contain things you genuinely care about.
+- **Deterministic regex** (built-ins, opt-in presets, your custom rules) — ships on, needs **zero download**, and is the default detector. This is all most users need.
+- **On-device AI classifier** (opt-in) — **OpenAI's `openai/privacy-filter`** (Apache-2.0), served via the MLX conversion at [`mlx-community/openai-privacy-filter-bf16`](https://huggingface.co/mlx-community/openai-privacy-filter-bf16) (~2.8 GB). It adds the categories regex can't model — names, addresses, free-form secrets — but is entirely optional: the ~2.8 GB bundle is never downloaded unless you turn AI detection on. When on, the model runs entirely on-device, so no third-party model ever sees your raw text, even to *decide* what counts as sensitive.
+
+The mental model is a redaction gate sitting between the chat surface and any remote provider: detect → review → scrub → send → stream back → unscrub → render. The user is never the last line of defense; the pipeline is **fail-closed** on every write path (scrub produced no substitutions, post-scrub invariant tripped → block the send, surface the reason). Fail-closed is preserved per-layer: with AI detection **on**, a missing/corrupt model still blocks; with AI detection **off**, detection runs regex-only and never blocks on the model.
+
+> Privacy Filter is **experimental**. The regex layer covers deterministic shapes (email, URL, phone, SSN, credit cards, IBAN, AWS keys, GitHub tokens, passport, driver's license) with no model. Turn on AI detection to also catch the fuzzy shapes (names, addresses, dates, free-form secrets). Always review the redaction sheet for messages that contain things you genuinely care about.
 
 ---
 
 ## Getting Started
 
-1. Open the Management window (`⌘ Shift M`) → **Privacy**
-2. The first launch shows a full-viewport install hero. Click **Install** — the ~2.8 GB bundle streams from Hugging Face and is SHA-256 verified file-by-file before the toggle becomes available
-3. Once verified the surface flips to four sub-tabs (**Overview** / **Rules** / **Providers** / **Model**). Flip **Enable Privacy Filter** on in Overview
-4. Send a chat message that contains PII — a review sheet appears showing each detected entity, the surrounding context, and a side-by-side scrubbed preview with hover-to-reveal originals. Approve → message scrubs and sends → reply streams back with placeholders unscrubbed inline
+1. Open the Management window (`⌘ Shift M`) → **Privacy**. The four sub-tabs (**Overview** / **Rules** / **Providers** / **Model**) are available immediately — no download required.
+2. Flip **Enable Privacy Filter** on in Overview. The deterministic regex layer (built-ins + any presets/custom rules you enable) is now active with zero model download.
+3. *(Optional)* To also catch names, addresses, and free-form secrets, install the AI model: go to the **Model** tab, click **Install** — the ~2.8 GB bundle streams from Hugging Face and is SHA-256 verified file-by-file — then turn **AI detection** on in Overview. The toggle stays disabled (with an inline install prompt) until the bundle is verified.
+4. Send a chat message that contains PII — a review sheet appears showing each detected entity, the surrounding context, and a side-by-side scrubbed preview with hover-to-reveal originals. Approve → message scrubs and sends → reply streams back with placeholders unscrubbed inline.
 
-The toggle is sticky: it persists synchronously to `~/.osaurus/config/privacy-filter.json` so Cmd-Q immediately after toggling can't lose the state.
+Both toggles are sticky: they persist synchronously to `~/.osaurus/config/privacy-filter.json` so Cmd-Q immediately after toggling can't lose the state.
+
+> Want to see exactly what your rules catch before sending anything real? The **Rules** tab has a built-in **dry-run tester** — paste sample text and it shows every entity the live rule set (plus the AI model when it's on and loaded) would redact, with the placeholder each one gets.
 
 ---
 
@@ -76,6 +83,8 @@ The toggle is sticky: it persists synchronously to `~/.osaurus/config/privacy-fi
                        Chat rendering + inline highlights
 ```
 
+`applyOutbound` branches on `aiDetectionEnabled` before detection. With AI **on**, it lazy-loads the model and **fails closed** if the bundle is missing/corrupt, then calls `detect(…, useModel: true)` (regex + classifier). With AI **off**, it skips the model entirely and calls `detect(…, useModel: false)` (regex only) — no `.engineUnavailable` is ever thrown. Either way the merge, review sheet, scrub, and regex-only post-scrub leak scan are identical.
+
 Two side channels run alongside the main path:
 
 - **`WireTransportProbe`** captures the *post-scrub* HTTP body actually written to the network and the *pre-unscrub* inbound bytes, so the Insights view can show "this is verbatim what the cloud saw / sent back" — not the local pre-scrub copy. Without this, the Insights logs would lie by omission.
@@ -85,7 +94,7 @@ Two side channels run alongside the main path:
 
 ## Detection
 
-Three detectors run in sequence and union their results. The merge is by `(category, range)` — overlapping detections from different sources collapse to one entity in the review sheet.
+Detection runs as a **regex layer** (always) plus an **optional AI classifier**, and unions the results. The merge is by `(category, range)` — overlapping detections from different sources collapse to one entity in the review sheet. The regex layer (sections 1–3 below) needs no model and is the default; the classifier (section 4) only participates when `aiDetectionEnabled` is on and the bundle is loaded (`detect(useModel:)` gates this).
 
 ### 1. Built-in regex (`RegexEntityDetector`)
 
@@ -114,9 +123,32 @@ Adding a preset to the ship-list extends the table here and the corresponding lo
 
 ### 3. Custom rules
 
-User-defined regex from **Privacy → Rules → Custom Rules**. Patterns are validated through `safeCompile` in the editor sheet *before* save — bad regex never makes it onto disk. At detection time bad rules are silently dropped (forward-compat: an old rule that no longer compiles can't crash the pipeline). Max pattern length is 512 chars to bound the matcher's work.
+User-defined rules from **Privacy → Rules → Custom Rules**. The editor sheet has two modes (`PrivacyRule.kind`):
 
-### 4. On-device classifier
+- **Simple** (`.builder`) — a no-regex builder for non-technical users. Pick a **match type** and type literals; Osaurus generates an escaped, always-valid pattern (`RuleBuilder.compile()` via `NSRegularExpression.escapedPattern(for:)`), so a malformed regex is impossible by construction. Match types:
+
+  | Match type       | Matches                                                | Generated shape         |
+  | ---------------- | ------------------------------------------------------ | ----------------------- |
+  | `exactWord`      | Whole word(s)/phrase(s), word-bounded                  | `\b(?:term1\|term2)\b`  |
+  | `anyOfTerms`     | Any of a list of literals, anywhere (the "redact this list of strings" mode) | `(?:term1\|term2)`      |
+  | `startsWith`     | A token that starts with one of the terms              | `\b(?:term)[\w.\-]*`    |
+  | `endsWith`       | A token that ends with one of the terms                | `[\w.\-]*(?:term)\b`    |
+  | `contains`       | A token that contains one of the terms                 | `[\w.\-]*(?:term)[\w.\-]*` |
+  | `numberSequence` | A run of digits of a configurable length               | `\b\d{min,max}\b`       |
+  | `betweenMarkers` | Everything between a start and end marker (non-greedy) | `start[\s\S]*?end`      |
+
+- **Regex** (`.regex`, the default and the only shape older config files know) — a raw `NSRegularExpression` pattern. Validated through `safeCompile` in the editor *before* save (bad regex never reaches disk); at detection time bad rules are silently dropped (forward-compat: an old rule that no longer compiles can't crash the pipeline). Max pattern length is 512 chars to bound the matcher's work.
+
+Both modes share two extras:
+
+- **Case sensitivity** (`caseSensitive`, default `true`) — uncheck to match case-insensitively (compiles with `.caseInsensitive`). Defaults to `true` to preserve the historical behavior.
+- **Custom placeholder label** (`placeholderLabel`, optional) — mint `[CUSTOMER_1]` instead of the category default `[SECRET_1]`. Sanitized to uppercase ASCII letters so the inbound `StreamingUnscrubber` (which only recognizes `[A-Z]+_<digits>` tokens) can still restore it.
+
+A live test panel in the editor shows the generated pattern and what it matches against sample text as you type. The **Rules** tab also has an all-rules dry-run tester (see Getting Started) that runs the entire effective rule set at once.
+
+### 4. On-device classifier (opt-in)
+
+This layer is **off by default** and only runs when `aiDetectionEnabled` is on and the bundle is installed; the ~2.8 GB model is never downloaded otherwise. It adds the fuzzy categories regex can't model (`person`, `address`, `date`, `secret`).
 
 The detection model is [`openai/privacy-filter`](https://huggingface.co/openai/privacy-filter) — OpenAI's bidirectional 1.5B-parameter / ~50M-active sparse-MoE token classifier, Apache-2.0 licensed. Sparse-MoE matters here: only ~50M of those 1.5B parameters fire per token, which is why a 2.8 GB BF16 model is practical to run locally per outbound request. Osaurus ships the MLX conversion at [`mlx-community/openai-privacy-filter-bf16`](https://huggingface.co/mlx-community/openai-privacy-filter-bf16).
 
@@ -145,6 +177,8 @@ Placeholders are emitted as `[CATEGORY_N]` where `N` is per-category, per-conver
 
 The category prefix is kept short (`PERSON`, `EMAIL`, `URL`, `ACCT`, `ADDR`, `PHONE`, `DATE`, `SECRET`) so the model doesn't waste attention on verbose placeholders.
 
+A custom rule may override the prefix with its own `placeholderLabel` (e.g. `[CUSTOMER_1]`). To keep numbering collision-free, `RedactionMap` keys its counters by the **effective prefix string** (the custom label, or the category default), not by `EntityCategory` — so two rules that share a label across different categories still mint distinct tokens (`[TAG_1]`, `[TAG_2]`) rather than colliding. Labels are constrained to `[A-Z]+` so the `[A-Z]+_<digits>` tokens still round-trip through `StreamingUnscrubber` on the inbound side.
+
 ---
 
 ## Fail-Closed Guarantees
@@ -154,7 +188,7 @@ The pipeline throws — never silently sends — on five distinct failure modes.
 | Error case                | When it fires                                                                                          | What the user sees                                                  |
 | ------------------------- | ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------- |
 | `.reviewCanceled`         | User dismissed the review sheet or the awaiting task was cancelled                                     | "Privacy Filter: review canceled."                                  |
-| `.engineUnavailable(d)`   | Master toggle on but model bundle is missing / failed to load                                          | Points at **Settings → Privacy** to re-download or disable          |
+| `.engineUnavailable(d)`   | **AI detection on** but model bundle is missing / failed to load (regex-only sends never hit this — they don't load the model) | Points at **Settings → Privacy** to re-download or turn AI detection off |
 | `.scrubNoOp(count)`       | User approved N entities but the substitution produced zero changes (`entity.original` doesn't match the wire text — almost always a bug) | "N approved redaction(s) didn't apply. Please report."              |
 | `.scrubLeaked(counts)`    | Post-scrub re-scan of the outbound payload found PII the substitution missed. Send is blocked         | Per-category counts of what leaked, no raw values                   |
 | (review cancel via Cmd-.) | `withTaskCancellationHandler` resolves the suspended continuation as `.canceled`                       | Same as `.reviewCanceled`                                            |
@@ -199,36 +233,40 @@ This is the verification surface for "did the redaction actually take?" — if y
 ## Settings Surface
 
 ```
-Privacy (Management → Privacy)
-├── (pre-install) PrivacyInstallHero
-│   88pt accent-glow circle + state-driven icon
-│   "Install the on-device detection model"
-│   3 benefit cards + Install/Cancel/Retry CTA + progress
-│
-└── (post-install) ManagerHeaderWithTabs
+Privacy (Management → Privacy)  ← tabs always render; no model required
+└── ManagerHeaderWithTabs
     │
     ├── Overview
-    │   ├── Enable Privacy Filter (master toggle)
+    │   ├── Enable Privacy Filter (master toggle — regex layer, no download)
+    │   ├── AI detection
+    │   │   ├── (model ready)   toggle for aiDetectionEnabled
+    │   │   └── (no model)      disabled + inline "Install" link → Model tab
+    │   ├── (no-detector note)  shown when enabled but nothing can detect
+    │   │                       (AI off + all built-ins off + no presets/customs)
     │   ├── Skip Code Blocks (fenced + inline)
     │   ├── Always Approve by Default (skip the sheet per-session)
-    │   ├── Confidence Threshold slider (0.0 – 1.0, persisted)
     │   └── Conversation Privacy
     │       └── Forget Redactions in Every Conversation
     │
     ├── Rules
     │   ├── Detection Patterns (4 built-in toggles)
     │   ├── Preset Rules (collapsible, 5 patterns, all opt-in)
-    │   └── Custom Rules (regex editor sheet)
+    │   ├── Custom Rules (Simple builder / Regex editor sheet)
+    │   └── Dry-run tester (paste text → see every rule's hits + placeholder)
     │
     ├── Providers
     │   ├── per-provider override toggles (RemoteProvider.id keyed)
     │   └── empty state when no providers — points at Remote Providers tab
     │
     └── Model
-        └── Status card with bundle version + Re-verify (one-place action)
+        ├── (not installed) PrivacyInstallHero
+        │   88pt accent-glow circle + state-driven icon
+        │   "Install the on-device detection model"
+        │   3 benefit cards + Install/Cancel/Retry CTA + progress
+        └── (installed) Status card with bundle version + Re-verify + Remove
 ```
 
-The pre-install hero matches `SettingsEmptyState` visual weight (Schedules, Watchers, Skills) so the onboarding language is consistent across the app. Sub-tabs are deliberately NOT rendered until `isModelReady` is true; per-category toggles without a working classifier would be meaningless.
+The tabbed surface renders immediately — the deterministic regex layer needs no model, so gating the whole UI behind a 2.8 GB download would hide a fully working feature. The install hero now lives inside the **Model** tab as its empty state (matching `SettingsEmptyState` visual weight — Schedules, Watchers, Skills — so the onboarding language is consistent across the app). The **AI detection** toggle in Overview is the only control that requires the bundle: it's disabled with an inline install link until the model verifies, and removing the model flips `aiDetectionEnabled` back off so the UI can't claim AI detection while the bundle is gone.
 
 ---
 
@@ -236,13 +274,13 @@ The pre-install hero matches `SettingsEmptyState` visual weight (Schedules, Watc
 
 | Setting                  | Default | Description                                                                                       |
 | ------------------------ | ------- | ------------------------------------------------------------------------------------------------- |
-| `enabled`                | `false` | Master toggle. When false the pipeline never invokes detection.                                   |
+| `enabled`                | `false` | Master toggle. When false the pipeline never invokes detection. Does **not** require the model — the regex layer runs on its own. |
+| `aiDetectionEnabled`     | `false`* | Opt into the on-device AI classifier. When on, the pipeline loads the model and **fails closed** if it's missing; when off, detection is regex-only and never blocks on the model. *Fresh installs default `false` (regex-only, no download). A legacy config file missing this key decodes to `true` so users who already had the model keep AI detection on. |
 | `skipCodeBlocks`         | `true`  | Skip fenced (` ``` `) + inline (` ` `) code spans.                                                |
 | `alwaysApproveByDefault` | `false` | Skip the review sheet — still redact, just don't ask each turn.                                   |
-| `confidenceThreshold`    | `0.5`   | Reserved for the classifier (today no-op; the slider persists so future kit versions can use it). |
 | `builtinPatternEnabled`  | all on  | Per-category toggle (`phone` / `email` / `url` / `accountNumber`). Controls detection + leak check together. |
 | `presetRules`            | `{}`    | Opt-in preset toggles by preset id. Missing keys → disabled.                                       |
-| `customRules`            | `[]`    | User-defined `PrivacyRule` array (name, category, pattern, enabled).                              |
+| `customRules`            | `[]`    | User-defined `PrivacyRule` array (name, category, `kind` + raw `pattern` or `builder` spec, `caseSensitive`, optional `placeholderLabel`, enabled). |
 | `providerOverrides`      | `{}`    | Per-provider enable map keyed by `RemoteProvider.id.uuidString`. Missing keys → true.             |
 
 Stored at `~/.osaurus/config/privacy-filter.json`. The `Codable` decoder is hand-rolled (not synthesized) so new fields land with safe defaults instead of failing the whole decode when an older on-disk config file is missing them — turning on the master toggle in a future Osaurus that grows a new setting will never reset the user's other choices.
@@ -294,13 +332,82 @@ Overrides are keyed by `RemoteProvider.id` (UUID) so renaming or re-creating a p
 
 ---
 
+## Multimodal Scanning (Design — not yet implemented)
+
+> **Status:** design pass only. No outbound image/audio/video content is
+> scanned today (see the Limitations bullet above). Shipping this is gated
+> on a product decision (warn vs. strip vs. box-redact) and is intentionally
+> NOT wired into the pipeline yet — adding a half-measure would risk the
+> fail-closed contract for binary content.
+
+### The gap
+
+`MessageScrubbing.appendScrubbableTexts` only walks text: `content`, the
+`.text` entries of `contentParts`, tool-call argument JSON, and
+`reasoning_content`. Image parts (`MessageContentPart.imageUrl` — a `data:`
+URL or an `http(s)` URL, surfaced via `ChatMessage.imageDataFromParts`),
+audio, and video flow to the provider untouched. A cloud model can OCR a
+pasted screenshot, so PII in an image is a real leak path the text filter
+can't see.
+
+### Reusable machinery (already on-device)
+
+- **`ComputerUse/Perception/FrameScrubber.swift`** already does exactly the
+  hard part for screenshots: Vision OCR → run the SAME `RegexEntityDetector`
+  over the recognized text → paint opaque boxes over matched regions →
+  return a `ScrubbedFrame` + `ScrubReport` (`textRegions`, `maskedRegions`,
+  per-category counts). It supports `.pii` (mask only matches) and
+  `.allText` (mask everything) modes.
+- **`PrivacyFilterEngine.modelSpans(in:)`** is the seam for adding the
+  model's NER categories (person / address / secret) on top of the regex
+  layer over OCR'd text — best-effort, regex-only when the bundle isn't
+  loaded.
+
+### Product options (the decision to settle first)
+
+| Option | Behavior | Pros | Cons |
+| ------ | -------- | ---- | ---- |
+| **Detect-and-warn** (recommended first step) | OCR each outbound image, run detection on the text, surface "this image appears to contain PII (N emails, 1 person…)" in the review sheet. User decides. | Non-destructive; no false-positive data loss; reuses the existing review sheet; matches the text path's "review before send" posture. | Doesn't remove the PII — the user must act (strip the attachment or send anyway). |
+| **Box-redact** | Reuse `FrameScrubber` to paint boxes over matched regions and send the redacted image. | Strongest protection; image still useful to the model. | Destructive; OCR misses leak; alignment/UX work; no inbound "unscrub" (unlike text, a boxed image can't be restored). |
+| **Strip** | Drop the image part entirely when PII is detected. | Simple; zero leak. | Most destructive; likely breaks the user's intent. |
+
+### Recommended phased plan
+
+1. **Phase A — detect-and-warn (opt-in).** Add an `aiImageScanEnabled`
+   (or `scanImageContent`) config flag, default off. In
+   `PrivacyFilterPipeline.applyOutbound`, when on, decode
+   `ChatMessage.imageDataFromParts`, OCR via `FrameScrubber`'s recognizer,
+   run `RegexEntityDetector` (+ `modelSpans` when AI detection is on), and
+   attach a per-image `ScrubReport`-style summary to the review sheet as an
+   advisory row. No bytes are modified; the user approves or cancels.
+2. **Phase B — optional box-redact.** Behind its own toggle, let the user
+   choose `.pii` box-redaction (reusing `FrameScrubber.scrub`) so the
+   modified image replaces the original `contentParts` entry before send.
+
+### Why it's gated
+
+- **No inbound symmetry.** Text redaction round-trips via `RedactionMap` +
+  `StreamingUnscrubber`; an image has no placeholder to restore, so
+  box-redaction is one-way and must be a deliberate, well-understood choice.
+- **Fail-closed cost.** Treating "couldn't OCR / model not loaded" as a hard
+  block on every image-bearing send is a heavy default; detect-and-warn
+  keeps the user in control without silently dropping content.
+- **Latency.** OCR + per-region model passes are bounded in `FrameScrubber`
+  (region cap) for screenshots; the chat path needs the same bound and a
+  size guard before it runs on arbitrary pasted images.
+
+Until the product decision lands, the text path's behavior is unchanged and
+the limitation stays documented above and in the master-toggle copy.
+
+---
+
 ## Troubleshooting
 
 **Toggle resets to off after restart.** Fixed in the synchronous-save change. If it recurs, check that `~/.osaurus/config/privacy-filter.json` is writable (`-rw-r--r--`) and that `PrivacyFilterStore.setOverrideDirectory` isn't stuck on a leftover test path (only relevant if you're running Osaurus from a development build right after `swift test`).
 
 **Review sheet appears but the send goes unscrubbed.** The sheet's Send button used to be wired through the `.approved` array but didn't always re-run the scrub when the user toggled individual entities off and then back on. Confirm by checking **Insights → Server Request** for placeholders. If you see raw PII in the wire body, file an issue with the request log — the `WireTransportProbe` capture is the smoking-gun evidence.
 
-**"Privacy Filter is enabled but the on-device model isn't available."** The bundle isn't installed or failed to verify. Open **Privacy → Model** and click **Re-verify**. If the verifier reports mismatches, the easiest path is to delete `~/.osaurus/aux-models/openai-privacy-filter-bf16-v1/` and re-install from the **Privacy** tab.
+**"Privacy Filter is enabled but the on-device model isn't available."** You have **AI detection** on but the bundle isn't installed or failed to verify. Two fixes: (a) turn **AI detection** off in **Privacy → Overview** to fall back to the regex-only layer (no model needed), or (b) open **Privacy → Model** and click **Re-verify**. If the verifier reports mismatches, the easiest path is to delete `~/.osaurus/aux-models/openai-privacy-filter-bf16-v1/` and re-install from the **Model** tab.
 
 **Per-category leak block is too aggressive.** The post-scrub invariant re-scans for the same categories as detection, so if you've enabled `awsKey` as a preset and your prompt legitimately contains a string that matches the AWS-key heuristic but ISN'T a key, the send blocks. Disable the preset or refine its pattern via a custom rule with a tighter regex.
 
@@ -324,11 +431,11 @@ Overrides are keyed by `RemoteProvider.id` (UUID) so renaming or re-creating a p
 | `PrivacyFilter/Model/PrivacyFilterModelDownloader.swift`               | Hugging Face streaming download + manifest synthesis                                         |
 | `PrivacyFilter/Store/PrivacyFilterConfiguration.swift`                 | Persisted user settings model (`Codable`, hand-rolled decoder)                              |
 | `PrivacyFilter/Store/PrivacyFilterStore.swift`                         | JSON-on-disk persistence + lock-protected in-memory snapshot                                |
-| `PrivacyFilter/Views/PrivacyView.swift`                                | Settings UI (install hero + 4 sub-tabs)                                                    |
+| `PrivacyFilter/Views/PrivacyView.swift`                                | Settings UI (4 sub-tabs always rendered; AI-detection toggle; Rules-tab dry-run tester; install hero inside Model tab) |
 | `PrivacyFilter/Views/RedactionReviewSheet.swift`                       | Modal review sheet with scrubbed preview + hover-reveal                                     |
 | `PrivacyFilter/Views/RedactionPreviewBuilder.swift`                    | Pure helper that turns `(original, placeholder)` pairs into scrubbed text + highlight map  |
 | `PrivacyFilter/Views/RedactionPreviewTextView.swift`                   | `NSViewRepresentable` wrapper that reuses the chat's highlighter inside the review sheet  |
-| `PrivacyFilter/Views/PrivacyCustomRuleEditor.swift`                    | Custom-rule editor sheet with regex validation                                              |
+| `PrivacyFilter/Views/PrivacyCustomRuleEditor.swift`                    | Custom-rule editor sheet — Simple (no-regex builder) / Regex modes, case toggle, custom label, live test panel |
 | `PrivacyFilter/Vendor/PrivacyFilterKit/`                               | Vendored detection kit (BIOES decoder, Viterbi calibration, label vocabulary)              |
 | `Views/Chat/RedactionHighlighter.swift`                                | Walks `NSTextStorage` and applies underline + accent to placeholder ranges                  |
 | `Views/Chat/RedactionHoverController.swift`                            | Hover tracking + `NSPopover` tooltip with direction-aware copy                              |
@@ -337,6 +444,8 @@ Overrides are keyed by `RemoteProvider.id` (UUID) so renaming or re-creating a p
 | `Tests/PrivacyFilter/PrivacyReviewServiceTests.swift`                  | Cancel + presenter-token + always-approve contracts                                         |
 | `Tests/PrivacyFilter/PrivacyFilterPipelineCancelTests.swift`           | `.reviewCanceled` propagation contract                                                      |
 | `Tests/PrivacyFilter/RedactionReviewContextTests.swift`                | `RedactionPreviewBuilder` substitution / dedup / ordering                                   |
+| `Tests/PrivacyFilter/DecouplingAndBuilderTests.swift`                  | Regex-only path (`useModel: false`), `RuleBuilder.compile()`, per-rule case flag, custom-label minting + unscrub round-trip |
+| `Tests/PrivacyFilter/PrivacyRuleConfigTests.swift`                     | `safeCompile`, `EffectiveRuleSet`, config/rule `Codable` round-trip + legacy decode defaults |
 | `Tests/Chat/PrivacyHighlightAccumulatorTests.swift`                    | Chat-side highlight accumulator (FIFO cap, dedup, empty-original skip)                      |
 | `Tests/Provider/WireTransportProbeTests.swift`                         | Probe lifecycle, task-local propagation, no-leak across requests                            |
 
