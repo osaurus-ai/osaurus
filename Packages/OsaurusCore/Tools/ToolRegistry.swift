@@ -501,10 +501,24 @@ final class ToolRegistry: ObservableObject {
     /// `kind: .unavailable` "still initializing" notice so the model knows
     /// to retry rather than pivot.
     func execute(
-        name: String,
+        name rawName: String,
         argumentsJSON: String,
         permissionGateResolved: Bool = false
     ) async throws -> String {
+        // The capabilities manifest lists deferred tools to the model as
+        // `tool/<name>` (SystemPromptTemplates.enabledCapabilitiesManifest). Some
+        // models copy that `tool/` prefix verbatim into a tool call even for a
+        // first-class function tool, yielding a spurious tool_not_found. Worse,
+        // the default agent can't self-heal — capabilities_load is gated off for
+        // it — so it just gives up and refuses ("I cannot generate images").
+        // Resolve to the model's real intent by stripping a `tool/` prefix when
+        // the bare name isn't registered but the stripped one is, mirroring the
+        // `tool/` handling in CapabilityTools.resolve.
+        var name = rawName
+        if toolsByName[name] == nil, name.hasPrefix("tool/") {
+            let stripped = String(name.dropFirst("tool/".count))
+            if toolsByName[stripped] != nil { name = stripped }
+        }
         // External-surface deny list: refuse workspace-mutating tool
         // classes for HTTP/MCP-initiated executions regardless of
         // registration state or permission policy.

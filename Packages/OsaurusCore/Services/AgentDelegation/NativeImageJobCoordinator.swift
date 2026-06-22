@@ -205,7 +205,16 @@ struct NativeImageJobResult: Sendable, Equatable {
                     "seed": image.seed,
                 ] as [String: Any]
             },
-            "progress": progress.map(\.dictionary),
+            // NOTE: the per-step `progress` telemetry is deliberately NOT included
+            // in the model-facing tool result. It is ~8KB of repetitive UUID-laden
+            // JSON (queued/running/… events × every step) that the model never
+            // needs — it only has to know the image was created and is already
+            // shown. Feeding it back bloats context and, on small quantized chat
+            // models (e.g. gemma-4 4-bit), measurably pushes them toward
+            // post-handoff degeneration/looping. The live UI consumes progress via
+            // `NativeImageJobProgress` NotificationCenter events, and the inline
+            // render bridge only reads `job_id`/`images` — so dropping it here is
+            // safe for both surfaces.
         ]
     }
 }

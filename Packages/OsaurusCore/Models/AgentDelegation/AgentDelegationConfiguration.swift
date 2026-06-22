@@ -86,6 +86,35 @@ struct AgentDelegationPermissionDefaults: Codable, Equatable, Sendable {
         self.imageGenerate = imageGenerate
         self.imageEdit = imageEdit
     }
+
+    private enum CodingKeys: String, CodingKey {
+        case localTextDelegate, localTextDelegateToolUse, imageGenerate, imageEdit
+    }
+
+    /// Lenient per-field decode. A single invalid policy raw value (e.g. a
+    /// hand-edited or version-migrated `"alwaysAllow"` where the enum expects
+    /// `"always_allow"`) must NOT fail the decode of the whole struct — and,
+    /// because the parent `AgentDelegationConfiguration` decodes this with
+    /// `decodeIfPresent`, a throw here used to discard the ENTIRE delegation
+    /// configuration and silently fall back to all-defaults (delegation OFF),
+    /// invisibly disabling the feature. Each field instead falls back to the
+    /// safe `.ask` default when absent or unparseable.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        func policy(_ key: CodingKeys) -> AgentDelegationPermissionPolicy {
+            // `try?` flattens decodeIfPresent's optional: absent key -> nil,
+            // present+valid -> value, present+invalid (throw) -> nil. All the
+            // nil cases fall back to the safe `.ask` default.
+            if let v = try? c.decodeIfPresent(AgentDelegationPermissionPolicy.self, forKey: key) {
+                return v
+            }
+            return .ask
+        }
+        self.localTextDelegate = policy(.localTextDelegate)
+        self.localTextDelegateToolUse = policy(.localTextDelegateToolUse)
+        self.imageGenerate = policy(.imageGenerate)
+        self.imageEdit = policy(.imageEdit)
+    }
 }
 
 struct AgentDelegationBudgets: Codable, Equatable, Sendable {
@@ -262,22 +291,27 @@ struct AgentDelegationConfiguration: Codable, Equatable, Sendable {
                 forKey: .defaultImageGenerationModelId
             ),
             defaultImageEditModelId: try container.decodeIfPresent(String.self, forKey: .defaultImageEditModelId),
-            textDelegateLoadPolicy: try container.decodeIfPresent(
+            // Enum fields use `(try? …) ?? default` so a single invalid/renamed
+            // raw value falls back to its default instead of throwing — a throw
+            // here would discard the ENTIRE delegation config (see the lenient
+            // decode note on AgentDelegationPermissionDefaults). `try?` flattens
+            // decodeIfPresent's optional, so absent and unparseable both -> default.
+            textDelegateLoadPolicy: (try? container.decodeIfPresent(
                 AgentDelegationTextLoadPolicy.self,
                 forKey: .textDelegateLoadPolicy
-            ) ?? .unloadAfterJob,
-            imageJobLoadPolicy: try container.decodeIfPresent(
+            )) ?? .unloadAfterJob,
+            imageJobLoadPolicy: (try? container.decodeIfPresent(
                 AgentDelegationImageLoadPolicy.self,
                 forKey: .imageJobLoadPolicy
-            ) ?? .agentSingleResidency,
-            sharingPolicy: try container.decodeIfPresent(
+            )) ?? .agentSingleResidency,
+            sharingPolicy: (try? container.decodeIfPresent(
                 AgentDelegationSharingPolicy.self,
                 forKey: .sharingPolicy
-            ) ?? .compactResultOnly,
-            permissionDefaults: try container.decodeIfPresent(
+            )) ?? .compactResultOnly,
+            permissionDefaults: (try? container.decodeIfPresent(
                 AgentDelegationPermissionDefaults.self,
                 forKey: .permissionDefaults
-            ) ?? AgentDelegationPermissionDefaults(),
+            )) ?? AgentDelegationPermissionDefaults(),
             budgets: try container.decodeIfPresent(AgentDelegationBudgets.self, forKey: .budgets)
                 ?? AgentDelegationBudgets(),
             ramSafetyPreflightEnabled: try container.decodeIfPresent(
