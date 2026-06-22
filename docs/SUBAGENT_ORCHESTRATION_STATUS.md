@@ -61,19 +61,24 @@ Chat turn (orchestrator: local OR cloud)
 
 ---
 
-## Matrix status (live, dev-built app)
+## Matrix status (live, dev-built app) — loop run 2026-06-21
+
+All proven via real HTTP on :1337 with explicit artifacts (resident-poller timelines,
+app-log/NSLog values, PNG bytes, SSE final text).
 
 | | Item | Status |
 |---|---|---|
-| A | `image_generate` → handoff → PNG | ✅ PASS |
-| A | `image_edit` round-trip | ✅ PASS — orchestrator `image_edit` → qwen-image-edit load → real 1024² edited PNG (differs from source) |
-| A | cancel/failure mid-job restores orchestrator | ⬜ TODO (code path present) |
-| A | cloud-orchestrator image job (no unload) | ⬜ TODO |
-| B | `local_delegate` / `spawn` coder live run | 🟡 schemas injected; text run 2 passed; image-of-this not re-run |
-| C | unload→image→reload; chat usable after | ✅ PASS (text coherence proven run 2; 6-turn interleave TODO) |
-| D | ask/deny/always live; toggle adds/removes tool; persist; RAM↔Spawn tab sync | 🟡 deny + persist PASS; ask/always + tab-sync TODO |
-| E | refuse-before-evict actually rejects (tight case) | ⬜ TODO (preflight built + passes ample-RAM) |
-| F | cloud + local orchestrators; coder model; z-image/flux/qwen-image/edit/ideogram | 🟡 qwen3-4b orch + flux-schnell proven |
+| A | `image_generate` → unload orch → PNG → reload orch → path returned | ✅ PASS (resident qwen3→[]→qwen3; real 512² PNG; final text states the real saved path) |
+| A | `image_edit` round-trip | ✅ PASS — real 1024² edited PNG distinct from source |
+| B | toggle enforcement (persisted-config-on-load) | ✅ PASS — `agentDelegationEnabled=false` → 0 image_generate tool-calls + model says NO_IMAGE_TOOL; baseline → tool-call + new PNG. (live raw-file edits need restart: `snapshot()` caches; UI `save()` is live) |
+| C | RAM preflight — no-false-refuse @ ample RAM | ✅ PASS (C3 instrumented: req=36GB needed=50GB avail=98GB → refuse=false, job proceeds) |
+| C | RAM refuse-**before**-evict @ tight | ✅ PASS (C6 forced: needed=263GB>avail → refuse=true, orchestrator STAYS resident, no PNG, graceful "insufficient RAM … ~245GB needed / ~100GB avail" returned) |
+| D | text `local_delegate` context passthrough + return | ✅ PASS — sentinel `BANANA_PHONE_42` round-trips back into orchestrator final answer |
+| E | context passthrough + finished-loop-returns-to-main | ✅ PASS — covered by A (real path) + D/F (sentinels) |
+| F | `spawn` (persona) returns subagent digest to orchestrator | ✅ PASS — spawn(Sparky) loads Sparky's own model (qwen2.5-3b, distinct from orch), runs, sentinel `ZEBRA_TOKEN_99` returned |
+| — | cloud-orchestrator image/text job (no unload) | 🟡 code-verified (empty residency lease when nothing resident); NOT live — no remote provider/API key configured in the test instance |
+| — | cancel/failure mid-job restores orchestrator | ⬜ in progress (loop) |
+| — | 6-turn chat coherence with spawn interleaved | ⬜ in progress (loop) |
 
 ---
 
