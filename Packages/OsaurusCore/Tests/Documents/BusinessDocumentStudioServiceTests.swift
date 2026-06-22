@@ -69,6 +69,40 @@ struct BusinessDocumentStudioServiceTests {
         #expect(table.rows[1].cells.map(\.text) == ["Ada", "37", "true"])
     }
 
+    @Test func unsupportedImportThrowsExplicitUnsupportedFormat() async throws {
+        let registry = DocumentFormatRegistry()
+        DocumentAdaptersBootstrap.registerBuiltIns(registry: registry)
+        let service = BusinessDocumentStudioService(registry: registry)
+        let source = try Self.write("bitmap bytes", filename: "scan.bmp")
+        defer { try? FileManager.default.removeItem(at: source) }
+
+        do {
+            _ = try await service.inspect(url: source)
+            Issue.record("Expected unsupported format error")
+        } catch BusinessDocumentStudioError.unsupportedFormat(let fileExtension) {
+            #expect(fileExtension == "bmp")
+        } catch {
+            Issue.record("Expected unsupportedFormat, got \(error)")
+        }
+    }
+
+    @Test func malformedWorkbookImportThrowsReadFailure() async throws {
+        let registry = DocumentFormatRegistry()
+        DocumentAdaptersBootstrap.registerBuiltIns(registry: registry)
+        let service = BusinessDocumentStudioService(registry: registry)
+        let source = try Self.writeData(Data("not a zip package".utf8), filename: "broken.xlsx")
+        defer { try? FileManager.default.removeItem(at: source) }
+
+        do {
+            _ = try await service.parse(url: source)
+            Issue.record("Expected malformed workbook read failure")
+        } catch DocumentAdapterError.readFailed(let underlying) {
+            #expect(!underlying.isEmpty)
+        } catch {
+            Issue.record("Expected DocumentAdapterError.readFailed, got \(error)")
+        }
+    }
+
     @Test func inspectWorkbookSamplesCellsAndReportsValidationBlockedExport() async throws {
         let registry = DocumentFormatRegistry()
         registry.register(emitter: XLSXEmitter())
@@ -259,6 +293,13 @@ struct BusinessDocumentStudioServiceTests {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(UUID().uuidString)-\(filename)")
         try content.write(to: url, atomically: true, encoding: .utf8)
+        return url
+    }
+
+    private static func writeData(_ data: Data, filename: String) throws -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(UUID().uuidString)-\(filename)")
+        try data.write(to: url, options: .atomic)
         return url
     }
 

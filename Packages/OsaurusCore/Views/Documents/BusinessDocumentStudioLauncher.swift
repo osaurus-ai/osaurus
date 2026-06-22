@@ -22,7 +22,7 @@ public enum BusinessDocumentStudioLauncher {
         panel.resolvesAliases = true
         panel.title = L("Open Business Document")
         panel.message = L("Choose a supported document to inspect preview, security, and export availability.")
-        panel.allowedContentTypes = supportedContentTypes
+        panel.allowedContentTypes = BusinessDocumentStudioDocumentTypes.supportedContentTypes
 
         panel.begin { response in
             guard response == .OK, let url = panel.url else { return }
@@ -72,19 +72,21 @@ public enum BusinessDocumentStudioLauncher {
         show(window)
     }
 
-    private static var supportedContentTypes: [UTType] {
-        let extensions = ["csv", "tsv", "xlsx", "pdf", "pptx", "potx", "docx", "doc", "rtf", "rtfd", "txt"]
-        let structuredTypes = extensions.compactMap { UTType(filenameExtension: $0) }
-        let parserTypes = DocumentParser.supportedDocumentTypes
-        var seen = Set<String>()
-        return (parserTypes + structuredTypes).filter { seen.insert($0.identifier).inserted }
-    }
-
     private static func show(_ window: NSWindow) {
         NSApp.unhide(nil)
         NSApp.activate()
         window.makeKeyAndOrderFront(nil)
         window.orderFrontRegardless()
+    }
+}
+
+enum BusinessDocumentStudioDocumentTypes {
+    static var supportedContentTypes: [UTType] {
+        let extensions = ["csv", "tsv", "xlsx", "pdf", "pptx", "potx", "docx", "doc", "rtf", "rtfd", "txt"]
+        let structuredTypes = extensions.compactMap { UTType(filenameExtension: $0) }
+        let parserTypes = DocumentParser.supportedDocumentTypes
+        var seen = Set<String>()
+        return (parserTypes + structuredTypes).filter { seen.insert($0.identifier).inserted }
     }
 }
 

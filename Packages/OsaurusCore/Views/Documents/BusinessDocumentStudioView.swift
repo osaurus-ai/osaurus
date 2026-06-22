@@ -11,16 +11,17 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct BusinessDocumentStudioView: View {
-    private let sourceURL: URL?
-
     @StateObject private var presenter: BusinessDocumentStudioPresenter
+    private let sourceURL: URL?
+    @State private var currentSourceURL: URL?
 
     init(
         sourceURL: URL? = nil,
         presenter: BusinessDocumentStudioPresenter = BusinessDocumentStudioPresenter()
     ) {
-        self.sourceURL = sourceURL
         _presenter = StateObject(wrappedValue: presenter)
+        self.sourceURL = sourceURL
+        _currentSourceURL = State(initialValue: sourceURL)
     }
 
     var body: some View {
@@ -30,9 +31,12 @@ struct BusinessDocumentStudioView: View {
             content
         }
         .frame(minWidth: 720, minHeight: 520)
-        .task(id: sourceURL) {
-            guard let sourceURL else { return }
-            await presenter.load(url: sourceURL)
+        .task(id: currentSourceURL) {
+            guard let currentSourceURL else { return }
+            await presenter.load(url: currentSourceURL)
+        }
+        .onChange(of: sourceURL) { _, newValue in
+            currentSourceURL = newValue
         }
     }
 
@@ -52,6 +56,19 @@ struct BusinessDocumentStudioView: View {
             }
 
             Spacer(minLength: 16)
+
+            Button {
+                beginImport()
+            } label: {
+                Label {
+                    Text(verbatim: "Import")
+                } icon: {
+                    Image(systemName: "square.and.arrow.down")
+                }
+                    .labelStyle(.titleAndIcon)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 12)
@@ -78,17 +95,20 @@ struct BusinessDocumentStudioView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-        case .failed(let message):
+        case .failed(let failure):
             emptyState(
-                systemImage: "exclamationmark.triangle",
-                title: "Document unavailable",
-                message: message
+                systemImage: failure.kind == .unsupportedFormat ? "doc.badge.questionmark" : "exclamationmark.triangle",
+                title: failure.title,
+                message: failure.message
             )
 
         case .loaded(let presentation):
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     documentHeader(presentation)
+                    StudioSection(title: "Import Summary") {
+                        infoGrid(presentation.importRows)
+                    }
                     StudioSection(title: "Metadata") {
                         infoGrid(presentation.summaryRows)
                     }
@@ -101,7 +121,7 @@ struct BusinessDocumentStudioView: View {
                             warningsView(presentation.warnings)
                         }
                     }
-                    StudioSection(title: "Preview") {
+                    StudioSection(title: "Structured Extraction Preview") {
                         VStack(alignment: .leading, spacing: 14) {
                             infoGrid(presentation.previewRows)
                             previewSections(presentation.previewSections)
@@ -113,6 +133,11 @@ struct BusinessDocumentStudioView: View {
                             ForEach(presentation.exportOptions) { option in
                                 exportOptionRow(option, presentation: presentation)
                             }
+                        }
+                    }
+                    if !presenter.artifactStatuses.isEmpty {
+                        StudioSection(title: "Artifact Status") {
+                            artifactStatusesView(presenter.artifactStatuses)
                         }
                     }
                 }
@@ -245,6 +270,38 @@ struct BusinessDocumentStudioView: View {
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
 
+        case .awaitingOverwriteConsent(let request):
+            HStack(alignment: .center, spacing: 10) {
+                Label {
+                    Text(verbatim: request.message)
+                } icon: {
+                    Image(systemName: "exclamationmark.triangle")
+                }
+                    .font(.system(size: 12))
+                    .foregroundStyle(.orange)
+                    .lineLimit(2)
+
+                Spacer(minLength: 12)
+
+                Button {
+                    presenter.cancelPendingOverwrite()
+                } label: {
+                    Text(verbatim: "Cancel")
+                }
+                .controlSize(.small)
+
+                Button {
+                    Task { @MainActor in
+                        await presenter.confirmPendingOverwrite()
+                    }
+                } label: {
+                    Text(verbatim: "Replace")
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+            }
+            .help(request.destination.path)
+
         case .succeeded(let receipt):
             Label {
                 Text(verbatim: receipt.message)
@@ -273,6 +330,53 @@ struct BusinessDocumentStudioView: View {
             }
                 .font(.system(size: 12))
                 .foregroundStyle(.red)
+        }
+    }
+
+    private func artifactStatusesView(_ statuses: [BusinessDocumentStudioArtifactStatus]) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            ForEach(statuses) { status in
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: artifactIconName(for: status.state))
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(artifactColor(for: status.state))
+                        .frame(width: 20, height: 20)
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 8) {
+                            Text(verbatim: status.title)
+                                .font(.system(size: 12, weight: .semibold))
+                            Text(verbatim: status.safetyLabel)
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(.secondary)
+                        }
+                        Text(verbatim: status.message)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if let path = status.path {
+                            Text(verbatim: path)
+                                .font(.system(size: 10))
+                                .foregroundStyle(.tertiary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                                .textSelection(.enabled)
+                        }
+                        if let bytesWritten = status.bytesWritten {
+                            Text(verbatim: ByteCountFormatter.string(fromByteCount: bytesWritten, countStyle: .file))
+                                .font(.system(size: 10))
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
+
+                    Spacer(minLength: 12)
+                }
+                .padding(10)
+                .background(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(Color(nsColor: .controlBackgroundColor))
+                )
+            }
         }
     }
 
@@ -346,8 +450,24 @@ struct BusinessDocumentStudioView: View {
                 optionID: option.id,
                 to: url,
                 allowedDirectory: url.deletingLastPathComponent(),
-                allowOverwrite: true
+                allowOverwrite: false
             )
+        }
+    }
+
+    private func beginImport() {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.resolvesAliases = true
+        panel.title = L("Open Business Document")
+        panel.message = L("Choose a business document to inspect or export.")
+        panel.allowedContentTypes = BusinessDocumentStudioDocumentTypes.supportedContentTypes
+
+        Task { @MainActor in
+            guard await panel.beginModal() == .OK, let url = panel.url else { return }
+            currentSourceURL = url.standardizedFileURL
         }
     }
 
@@ -394,6 +514,24 @@ struct BusinessDocumentStudioView: View {
         case .info: return .secondary
         case .caution: return .orange
         case .blocked: return .red
+        }
+    }
+
+    private func artifactIconName(for state: BusinessDocumentStudioArtifactStatus.State) -> String {
+        switch state {
+        case .created: return "checkmark.circle"
+        case .needsConsent: return "exclamationmark.triangle"
+        case .blocked: return "nosign"
+        case .failed: return "xmark.octagon"
+        }
+    }
+
+    private func artifactColor(for state: BusinessDocumentStudioArtifactStatus.State) -> Color {
+        switch state {
+        case .created: return .green
+        case .needsConsent: return .orange
+        case .blocked: return .orange
+        case .failed: return .red
         }
     }
 }

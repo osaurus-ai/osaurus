@@ -16,12 +16,13 @@ final class BusinessDocumentStudioPresenter: ObservableObject {
         case idle
         case loading(URL?)
         case loaded(BusinessDocumentStudioPresentation)
-        case failed(String)
+        case failed(BusinessDocumentStudioLoadFailure)
     }
 
     enum ExportState: Equatable {
         case idle
         case exporting(optionID: String)
+        case awaitingOverwriteConsent(BusinessDocumentStudioOverwriteRequest)
         case succeeded(BusinessDocumentStudioExportReceipt)
         case blocked(BusinessDocumentStudioExportBlock)
         case failed(String)
@@ -29,10 +30,12 @@ final class BusinessDocumentStudioPresenter: ObservableObject {
 
     @Published private(set) var loadState: LoadState = .idle
     @Published private(set) var exportState: ExportState = .idle
+    @Published private(set) var artifactStatuses: [BusinessDocumentStudioArtifactStatus] = []
 
     private let service: BusinessDocumentStudioService
     private var document: StructuredDocument?
     private var inspection: BusinessDocumentStudioInspection?
+    private var pendingOverwrite: PendingExport?
 
     init(service: BusinessDocumentStudioService = BusinessDocumentStudioService()) {
         self.service = service
@@ -44,26 +47,31 @@ final class BusinessDocumentStudioPresenter: ObservableObject {
     ) async {
         loadState = .loading(url)
         exportState = .idle
+        artifactStatuses = []
+        clearPendingOverwriteStatus()
 
         do {
             let document = try await service.parse(url: url)
-            try load(document: document, policy: policy)
+            try load(document: document, sourceURL: url, policy: policy)
         } catch {
             self.document = nil
             inspection = nil
-            loadState = .failed(error.localizedDescription)
+            loadState = .failed(BusinessDocumentStudioLoadFailure(url: url, error: error))
         }
     }
 
     func load(
         document: StructuredDocument,
+        sourceURL: URL? = nil,
         policy: BusinessDocumentStudioPolicy = .standard
     ) throws {
         let inspection = try service.inspect(document, policy: policy)
         self.document = document
         self.inspection = inspection
-        loadState = .loaded(BusinessDocumentStudioPresentation(inspection: inspection))
+        loadState = .loaded(BusinessDocumentStudioPresentation(inspection: inspection, sourceURL: sourceURL))
         exportState = .idle
+        artifactStatuses = []
+        clearPendingOverwriteStatus()
     }
 
     func export(
@@ -77,6 +85,7 @@ final class BusinessDocumentStudioPresenter: ObservableObject {
             exportState = .failed("No document is loaded.")
             return
         }
+        clearPendingOverwriteStatus()
 
         guard let option = inspection.exportOptions.first(where: { $0.targetFormatId == optionID }) else {
             exportState = .failed("Export option '\(optionID)' is not available for this document.")
@@ -84,15 +93,31 @@ final class BusinessDocumentStudioPresenter: ObservableObject {
         }
 
         guard option.canExport else {
-            exportState = .blocked(
-                BusinessDocumentStudioExportBlock(
-                    kind: .unavailableOption,
-                    optionID: option.targetFormatId,
-                    message: option.message,
-                    path: nil,
-                    reason: option.reason
-                )
+            let block = BusinessDocumentStudioExportBlock(
+                kind: .unavailableOption,
+                optionID: option.targetFormatId,
+                message: option.message,
+                path: nil,
+                reason: option.reason
             )
+            exportState = .blocked(block)
+            appendArtifactStatus(BusinessDocumentStudioArtifactStatus(block: block))
+            return
+        }
+
+        if !allowOverwrite,
+            Self.canCheckExistence(destination: destination, allowedDirectory: allowedDirectory),
+            FileManager.default.fileExists(atPath: destination.path) {
+            let request = BusinessDocumentStudioOverwriteRequest(
+                optionID: option.targetFormatId,
+                label: option.label,
+                destination: destination,
+                allowedDirectory: allowedDirectory,
+                maxTextExportUTF8Bytes: maxTextExportUTF8Bytes
+            )
+            pendingOverwrite = PendingExport(request: request)
+            exportState = .awaitingOverwriteConsent(request)
+            appendArtifactStatus(BusinessDocumentStudioArtifactStatus(overwriteRequest: request))
             return
         }
 
@@ -109,12 +134,54 @@ final class BusinessDocumentStudioPresenter: ObservableObject {
                     maxTextExportUTF8Bytes: maxTextExportUTF8Bytes
                 )
             )
-            exportState = .succeeded(BusinessDocumentStudioExportReceipt(result: result))
+            let receipt = BusinessDocumentStudioExportReceipt(result: result)
+            exportState = .succeeded(receipt)
+            appendArtifactStatus(BusinessDocumentStudioArtifactStatus(receipt: receipt))
         } catch let error as BusinessDocumentStudioError {
-            exportState = mapServiceError(error, optionID: option.targetFormatId)
+            let mapped = mapServiceError(error, optionID: option.targetFormatId)
+            exportState = mapped
+            if case .failed(let message) = mapped {
+                appendArtifactStatus(.failed(optionID: option.targetFormatId, message: message, path: destination.path))
+            } else {
+                appendArtifactStatus(BusinessDocumentStudioArtifactStatus(exportState: mapped, optionID: option.targetFormatId))
+            }
         } catch {
-            exportState = .failed(error.localizedDescription)
+            let message = error.localizedDescription
+            exportState = .failed(message)
+            appendArtifactStatus(.failed(optionID: option.targetFormatId, message: message, path: destination.path))
         }
+    }
+
+    func confirmPendingOverwrite() async {
+        guard let pendingOverwrite else {
+            exportState = .failed("No overwrite is waiting for confirmation.")
+            return
+        }
+        await export(
+            optionID: pendingOverwrite.request.optionID,
+            to: pendingOverwrite.request.destination,
+            allowedDirectory: pendingOverwrite.request.allowedDirectory,
+            allowOverwrite: true,
+            maxTextExportUTF8Bytes: pendingOverwrite.request.maxTextExportUTF8Bytes
+        )
+    }
+
+    func cancelPendingOverwrite() {
+        guard let pendingOverwrite else {
+            exportState = .idle
+            return
+        }
+        removeArtifactStatus(matching: pendingOverwrite.request)
+        self.pendingOverwrite = nil
+        let block = BusinessDocumentStudioExportBlock(
+            kind: .overwriteDeclined,
+            optionID: pendingOverwrite.request.optionID,
+            message: "Overwrite was cancelled. No artifact was written.",
+            path: pendingOverwrite.request.destination.path,
+            reason: nil
+        )
+        exportState = .blocked(block)
+        appendArtifactStatus(BusinessDocumentStudioArtifactStatus(block: block))
     }
 
     private func mapServiceError(
@@ -205,12 +272,44 @@ final class BusinessDocumentStudioPresenter: ObservableObject {
             return .failed(error.localizedDescription)
         }
     }
+
+    private func appendArtifactStatus(_ status: BusinessDocumentStudioArtifactStatus) {
+        artifactStatuses.removeAll { $0.id == status.id }
+        artifactStatuses.insert(status, at: 0)
+        if artifactStatuses.count > 10 {
+            artifactStatuses.removeLast(artifactStatuses.count - 10)
+        }
+    }
+
+    private func clearPendingOverwriteStatus() {
+        guard let pendingOverwrite else { return }
+        removeArtifactStatus(matching: pendingOverwrite.request)
+        self.pendingOverwrite = nil
+    }
+
+    private func removeArtifactStatus(matching request: BusinessDocumentStudioOverwriteRequest) {
+        let pendingStatusID = BusinessDocumentStudioArtifactStatus(overwriteRequest: request).id
+        artifactStatuses.removeAll { $0.id == pendingStatusID }
+    }
+
+    private static func canCheckExistence(destination: URL, allowedDirectory: URL?) -> Bool {
+        guard destination.isFileURL else { return false }
+        guard let allowedDirectory else { return true }
+        let root = allowedDirectory.standardizedFileURL.resolvingSymlinksInPath().path
+        let parent = destination.deletingLastPathComponent().standardizedFileURL.resolvingSymlinksInPath().path
+        return parent == root || parent.hasPrefix(root + "/")
+    }
+
+    private struct PendingExport: Equatable {
+        let request: BusinessDocumentStudioOverwriteRequest
+    }
 }
 
 struct BusinessDocumentStudioPresentation: Equatable {
     let title: String
     let subtitle: String
     let iconSystemName: String
+    let importRows: [BusinessDocumentStudioInfoRow]
     let summaryRows: [BusinessDocumentStudioInfoRow]
     let structureRows: [BusinessDocumentStudioInfoRow]
     let securityRows: [BusinessDocumentStudioInfoRow]
@@ -220,11 +319,12 @@ struct BusinessDocumentStudioPresentation: Equatable {
     let exportOptions: [BusinessDocumentStudioExportOptionPresentation]
     let registryRoleLabels: [String]
 
-    init(inspection: BusinessDocumentStudioInspection) {
+    init(inspection: BusinessDocumentStudioInspection, sourceURL: URL? = nil) {
         let summary = inspection.summary
         title = summary.filename
         subtitle = "\(summary.kind.displayName) - \(summary.formatId.uppercased())"
         iconSystemName = summary.kind.systemImageName
+        importRows = Self.importRows(for: inspection, sourceURL: sourceURL)
         summaryRows = Self.summaryRows(for: inspection)
         structureRows = Self.structureRows(for: summary.structureSummary)
         securityRows = Self.securityRows(for: inspection.security)
@@ -259,6 +359,32 @@ struct BusinessDocumentStudioPresentation: Equatable {
             pairs.insert(("Extension", ".\(fileExtension)"), at: 3)
         }
         return numberedRows(prefix: "summary", pairs)
+    }
+
+    private static func importRows(
+        for inspection: BusinessDocumentStudioInspection,
+        sourceURL: URL?
+    ) -> [BusinessDocumentStudioInfoRow] {
+        let summary = inspection.summary
+        var pairs = [
+            ("Source", sourceURL?.path ?? "In-memory document"),
+            ("Filename", summary.filename),
+            ("Document kind", summary.kind.displayName),
+            ("Adapter format", summary.formatId),
+            ("Extraction", extractionLabel(for: inspection.preview)),
+        ]
+        if !inspection.registryRoles.isEmpty {
+            pairs.append(
+                (
+                    "Registry roles",
+                    inspection.registryRoles
+                        .sorted { $0.rawValue < $1.rawValue }
+                        .map(roleLabel)
+                        .joined(separator: " / ")
+                )
+            )
+        }
+        return numberedRows(prefix: "import", pairs)
     }
 
     private static func structureRows(
@@ -353,6 +479,23 @@ struct BusinessDocumentStudioPresentation: Equatable {
                 ("Text length", countLabel(text.fullUTF16Length, "UTF-16 unit")),
                 ("Truncated", text.isTruncated ? "Yes" : "No"),
             ])
+        }
+    }
+
+    private static func extractionLabel(for preview: BusinessDocumentStudioPreview) -> String {
+        switch preview {
+        case .table:
+            return "Structured table preview"
+        case .workbook:
+            return "Structured workbook preview"
+        case .pdf:
+            return "PDF text and table preview"
+        case .presentation:
+            return "Presentation slide preview"
+        case .richText:
+            return "Rich text block preview"
+        case .text:
+            return "Text fallback preview"
         }
     }
 
@@ -725,8 +868,58 @@ struct BusinessDocumentStudioExportOptionPresentation: Identifiable, Equatable {
         canExport = option.canExport
         reason = option.reason
         reasonLabel = BusinessDocumentStudioPresentation.exportReasonLabel(option.reason)
-        statusLabel = option.canExport ? "Available" : "Unavailable"
+        statusLabel = option.canExport ? "Available" : reasonLabel
         message = option.message
+    }
+}
+
+struct BusinessDocumentStudioLoadFailure: Equatable {
+    enum Kind: String, Equatable {
+        case unsupportedFormat
+        case malformedFile
+        case unexpectedFormat
+        case other
+    }
+
+    let kind: Kind
+    let title: String
+    let message: String
+    let path: String?
+
+    init(url: URL?, error: Error) {
+        path = url?.path
+        message = error.localizedDescription
+
+        if let studioError = error as? BusinessDocumentStudioError {
+            switch studioError {
+            case .unsupportedFormat:
+                kind = .unsupportedFormat
+                title = "Unsupported format"
+            case .adapterReturnedUnexpectedFormat:
+                kind = .unexpectedFormat
+                title = "Unexpected adapter output"
+            case .unsupportedExport,
+                 .destinationOutsideAllowedDirectory,
+                 .destinationAlreadyExists,
+                 .destinationIsNotFileURL,
+                 .unsafeTextPackageTarget,
+                 .packageTargetExtensionMismatch,
+                 .textExportTooLarge,
+                 .writeFailed:
+                kind = .other
+                title = "Document unavailable"
+            }
+            return
+        }
+
+        if error is DocumentAdapterError {
+            kind = .malformedFile
+            title = "Document could not be extracted"
+            return
+        }
+
+        kind = .other
+        title = "Document unavailable"
     }
 }
 
@@ -746,6 +939,18 @@ struct BusinessDocumentStudioExportReceipt: Equatable {
     }
 }
 
+struct BusinessDocumentStudioOverwriteRequest: Equatable {
+    let optionID: String
+    let label: String
+    let destination: URL
+    let allowedDirectory: URL?
+    let maxTextExportUTF8Bytes: Int
+
+    var message: String {
+        "Replace the existing \(label) artifact at \(destination.path)?"
+    }
+}
+
 struct BusinessDocumentStudioExportBlock: Equatable {
     enum Kind: String, Equatable {
         case unavailableOption
@@ -756,6 +961,7 @@ struct BusinessDocumentStudioExportBlock: Equatable {
         case packageExtensionMismatch
         case textFallbackTooLarge
         case unsupportedExport
+        case overwriteDeclined
     }
 
     let kind: Kind
@@ -763,4 +969,136 @@ struct BusinessDocumentStudioExportBlock: Equatable {
     let message: String
     let path: String?
     let reason: BusinessDocumentStudioExportReason?
+}
+
+struct BusinessDocumentStudioArtifactStatus: Identifiable, Equatable {
+    enum State: String, Equatable {
+        case created
+        case needsConsent
+        case blocked
+        case failed
+    }
+
+    let id: String
+    let state: State
+    let optionID: String
+    let title: String
+    let message: String
+    let path: String?
+    let bytesWritten: Int64?
+    let safetyLabel: String
+    let reason: BusinessDocumentStudioExportReason?
+
+    init(receipt: BusinessDocumentStudioExportReceipt) {
+        state = .created
+        optionID = receipt.targetFormatId
+        title = "\(receipt.targetFormatId.uppercased()) artifact created"
+        message = receipt.message
+        path = receipt.url.path
+        bytesWritten = receipt.bytesWritten
+        safetyLabel = "Written by a registered document workflow"
+        reason = nil
+        id = Self.makeID(state: state, optionID: optionID, path: path, message: message)
+    }
+
+    init(overwriteRequest: BusinessDocumentStudioOverwriteRequest) {
+        state = .needsConsent
+        optionID = overwriteRequest.optionID
+        title = "Overwrite consent required"
+        message = overwriteRequest.message
+        path = overwriteRequest.destination.path
+        bytesWritten = nil
+        safetyLabel = "No artifact written until replacement is confirmed"
+        reason = nil
+        id = Self.makeID(state: state, optionID: optionID, path: path, message: message)
+    }
+
+    init(block: BusinessDocumentStudioExportBlock) {
+        state = .blocked
+        optionID = block.optionID
+        title = Self.blockTitle(block.kind)
+        message = block.message
+        path = block.path
+        bytesWritten = nil
+        safetyLabel = "No artifact written"
+        reason = block.reason
+        id = Self.makeID(state: state, optionID: optionID, path: path, message: message)
+    }
+
+    init(exportState: BusinessDocumentStudioPresenter.ExportState, optionID: String) {
+        switch exportState {
+        case .blocked(let block):
+            self.init(block: block)
+        case .failed(let message):
+            self = .failed(optionID: optionID, message: message, path: nil)
+        default:
+            self = .failed(optionID: optionID, message: "Export did not create an artifact.", path: nil)
+        }
+    }
+
+    static func failed(optionID: String, message: String, path: String?) -> BusinessDocumentStudioArtifactStatus {
+        BusinessDocumentStudioArtifactStatus(
+            state: .failed,
+            optionID: optionID,
+            title: "Export failed",
+            message: message,
+            path: path,
+            bytesWritten: nil,
+            safetyLabel: "No artifact written by the workbench",
+            reason: nil
+        )
+    }
+
+    private init(
+        state: State,
+        optionID: String,
+        title: String,
+        message: String,
+        path: String?,
+        bytesWritten: Int64?,
+        safetyLabel: String,
+        reason: BusinessDocumentStudioExportReason?
+    ) {
+        self.state = state
+        self.optionID = optionID
+        self.title = title
+        self.message = message
+        self.path = path
+        self.bytesWritten = bytesWritten
+        self.safetyLabel = safetyLabel
+        self.reason = reason
+        id = Self.makeID(state: state, optionID: optionID, path: path, message: message)
+    }
+
+    private static func blockTitle(_ kind: BusinessDocumentStudioExportBlock.Kind) -> String {
+        switch kind {
+        case .unavailableOption:
+            return "Export unavailable"
+        case .destinationAlreadyExists:
+            return "Destination already exists"
+        case .destinationOutsideAllowedDirectory:
+            return "Destination outside allowed directory"
+        case .destinationIsNotFileURL:
+            return "Destination is not a file URL"
+        case .unsafePackageTarget:
+            return "Unsafe package target blocked"
+        case .packageExtensionMismatch:
+            return "Package extension mismatch"
+        case .textFallbackTooLarge:
+            return "Text fallback too large"
+        case .unsupportedExport:
+            return "Unsupported export"
+        case .overwriteDeclined:
+            return "Overwrite cancelled"
+        }
+    }
+
+    private static func makeID(
+        state: State,
+        optionID: String,
+        path: String?,
+        message: String
+    ) -> String {
+        "\(state.rawValue):\(optionID):\(path ?? ""):\(message)"
+    }
 }
