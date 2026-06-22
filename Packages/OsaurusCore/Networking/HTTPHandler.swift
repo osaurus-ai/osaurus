@@ -2833,11 +2833,22 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         // never reach its `<tools>` block. `specs(forTools:)` returns only the
         // currently active ones (it applies the same delegation gating), and a
         // name dedupe keeps composeChatContext's surface authoritative.
-        let delegationSpecs = await MainActor.run {
-            ToolRegistry.shared.specs(forTools: [
-                "image_generate", "image_edit", "local_delegate", "spawn",
-            ])
+        // Per-agent gate: only inject the delegation schemas when THIS agent has
+        // opted into spawn/delegation (mirrors the authoritative `resolveTools`
+        // strip). Without this, the explicit injection below would re-add the
+        // tools that the per-agent gate just stripped. `specs(forTools:)` still
+        // applies the global delegation gating on top.
+        let spawnDelegationEnabled = await MainActor.run {
+            AgentManager.shared.effectiveCapabilities(for: agentUUID).spawnDelegationEnabled
         }
+        let delegationSpecs =
+            spawnDelegationEnabled
+            ? await MainActor.run {
+                ToolRegistry.shared.specs(forTools: [
+                    "image_generate", "image_edit", "local_delegate", "spawn",
+                ])
+            }
+            : []
         let composedToolNames = Set(composed.tools.map(\.function.name))
         let contextToolsWithDelegation =
             composed.tools + delegationSpecs.filter { !composedToolNames.contains($0.function.name) }

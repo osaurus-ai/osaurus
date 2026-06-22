@@ -1974,6 +1974,19 @@ public struct SystemPromptComposer: Sendable {
             byName.removeValue(forKey: ComputerUseTool.toolName)
         }
 
+        // Spawn / agent delegation is an AUTHORITATIVE per-agent gate, same as
+        // Computer Use: the spawn / local_delegate / image_generate / image_edit
+        // tools are stripped whenever the agent's `spawnDelegationEnabled` is off,
+        // in BOTH auto and manual mode. This ANDs with the global
+        // `AgentDelegationConfiguration` gates (which still control defaults and
+        // can disable a family wholesale) — a tool is offered only when the global
+        // config allows it AND this agent opted in.
+        if !snapshot.spawnDelegationEnabled {
+            for name in ToolRegistry.agentDelegationAllToolNames {
+                byName.removeValue(forKey: name)
+            }
+        }
+
         // Phase C default-agent surface:
         //   * For the Default agent, hard-restrict to the 8-tool baseline
         //     (3 reads + 2 discovery + 3 agent-loop). Writes are NOT in

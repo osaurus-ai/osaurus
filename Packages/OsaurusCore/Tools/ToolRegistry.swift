@@ -1270,6 +1270,12 @@ final class ToolRegistry: ObservableObject {
     static let agentDelegationTextToolNames: Set<String> = ["local_delegate"]
     static let agentDelegationSpawnToolNames: Set<String> = ["spawn"]
     static let agentDelegationImageToolNames: Set<String> = ["image_generate", "image_edit"]
+    /// All agent-delegation tool names — used by the authoritative per-agent
+    /// `spawnDelegationEnabled` gate in `SystemPromptComposer.resolveTools`.
+    static let agentDelegationAllToolNames: Set<String> =
+        agentDelegationTextToolNames
+        .union(agentDelegationSpawnToolNames)
+        .union(agentDelegationImageToolNames)
 
     /// Read-only snapshot of the built-in sandbox tool names. Exposed so the
     /// composer's canonical-order helper can group them at the top of the
