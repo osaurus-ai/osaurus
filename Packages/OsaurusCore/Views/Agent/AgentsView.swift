@@ -20,10 +20,11 @@ private func formatModelName(_ model: String) -> String {
 // MARK: - Agents View
 
 struct AgentsView: View {
-    /// Shared spring used for grid ↔ detail navigation. Centralized so the
-    /// transition feels identical whether the user opens a local agent, a
-    /// remote agent, or a freshly-duplicated one.
-    fileprivate static let navTransition = Animation.spring(response: 0.35, dampingFraction: 0.85)
+    /// Shared animation for grid ↔ detail navigation. A quick cross-fade (no
+    /// horizontal slide) so opening an agent reads like the rest of the app's
+    /// tab/content swaps rather than a push. Centralized so it feels identical
+    /// whether the user opens a local agent, a remote agent, or a duplicate.
+    fileprivate static let navTransition = Animation.easeInOut(duration: 0.2)
 
     /// Two-column grid layout reused by the main agent grid and the
     /// "Paired Remote Agents" section in the empty state.
@@ -78,7 +79,7 @@ struct AgentsView: View {
         ZStack {
             if selectedAgent == nil && selectedRemoteAgentId == nil {
                 gridContent
-                    .transition(.opacity.combined(with: .move(edge: .leading)))
+                    .transition(.opacity)
             }
 
             if let agent = selectedAgent {
@@ -100,7 +101,7 @@ struct AgentsView: View {
                     showSuccess: showSuccess
                 )
                 .id(agent.id)
-                .transition(.opacity.combined(with: .move(edge: .trailing)))
+                .transition(.opacity)
             }
 
             if let remoteId = selectedRemoteAgentId {
@@ -116,7 +117,7 @@ struct AgentsView: View {
                     onChat: { _ in ChatWindowManager.shared.toggleLastFocused() }
                 )
                 .id(remoteId)
-                .transition(.opacity.combined(with: .move(edge: .trailing)))
+                .transition(.opacity)
             }
 
             if let message = successMessage {
@@ -1058,7 +1059,6 @@ struct AgentDetailView: View {
     /// Data tab via the Schema-tab "Browse" deep-link. Same lifecycle
     /// as `pendingFocusedViewName`.
     @State private var pendingFocusedTableName: String? = nil
-    @State private var hasAppeared = false
     @State private var saveIndicator: String?
     @State private var saveDebounceTask: Task<Void, Never>?
     @State private var showDeleteConfirm = false
@@ -1250,8 +1250,10 @@ struct AgentDetailView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(theme.primaryBackground)
-        .opacity(hasAppeared ? 1 : 0)
-        .animation(.easeOut(duration: 0.2), value: hasAppeared)
+        // No internal fade-in here: the parent's navigation transition
+        // (spring slide + opacity) already animates this view's entrance. A
+        // second easeOut opacity curve on top read as an inconsistent
+        // "slide-then-fade", unlike the rest of the app's detail navigations.
         .onAppear {
             loadAgentData()
             loadMemoryData()
@@ -1261,7 +1263,6 @@ struct AgentDetailView: View {
             DispatchQueue.main.async {
                 isInitialLoadComplete = true
             }
-            withAnimation { hasAppeared = true }
         }
         .onChange(of: agent.id) { _, _ in
             refreshDetailCaches()
