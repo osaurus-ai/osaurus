@@ -8,6 +8,42 @@ Branch: `feat/image-generation-vmlxflux`. Last updated 2026-06-21.
 
 ---
 
+## ⭐ GPU concurrency / chat↔image handoff — FINAL STATE (2026-06-22)
+
+This is the authoritative summary; the dated "BUG G" / "minimax" / "serialization"
+sections lower down are the working log that led here.
+
+**Status: the chat↔image handoff is SECURE (no crash) and SMOOTH (context preserved,
+coherent) — proven across gemma-4-12b, qwen3-8b, lfm2.5-8b, minimax-m2.7, laguna-m.1.**
+
+**Why it crashed:** image generation (vMLXFlux) is a SECOND MLX graph on the shared
+Metal device — new this session. It raced the LLM engine's async GPU tails (decode
++ cache-store eval, model-teardown buffer frees) during the handoff. vmlx is correct
+for LLM-only; the crash is purely the two-graph boundary.
+
+**The fix = 3 serialization changes:**
+1. `vmlx BatchEngine.finishSlot`: `Stream().synchronize()` before `continuation.finish()`
+   → "stream finished ⇒ GPU idle" (drains the decode/SSM-rederive tail on the engine's
+   own thread). **REQUIRED for slow models (minimax) — proven: without it minimax crashes,
+   with it 0 crashes.**
+2. `osaurus ImageGenerationService`: `MLXCacheIOLock.withSerializedMLXCacheIO { Memory.clearCache() }`
+   after `enterImageGeneration()` → waits for in-flight cache store + drains teardown.
+3. `osaurus ModelRuntime.unload`: `Stream.gpu.synchronize → clearCache → synchronize`
+   → chat-model teardown fully settles before the next producer loads.
+
+**Durability — ONE open action:**
+- Fixes #2 and #3 are COMMITTED in osaurus (durable).
+- Fix #1 is a vmlx change. osaurus pins `github.com/osaurus-ai/vmlx-swift @ d35c0744`.
+  The change is committed in the LOCAL vmlx (107c467b) but that fork is DO_NOT_PUSH.
+  **To make it durable: land the finishSlot drain on canonical osaurus-ai/vmlx-swift
+  and repin osaurus' Package.resolved.** Proven necessary (the fast models survive on
+  osaurus-side fixes alone; minimax needs #1). The current dev build carries all three.
+
+**Separate open item:** `lfm2.5-8b-a1b` returns empty output even with NO image/handoff
+(plain chat) — a pre-existing model/template bug, not this work. Tracked as #78.
+
+---
+
 ## ✅ Current state (2026-06-21)
 
 Spawn is a **tool** the orchestrator chat (local OR cloud) calls to run a bounded
