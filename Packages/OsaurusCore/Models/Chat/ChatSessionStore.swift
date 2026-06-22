@@ -68,6 +68,16 @@ enum ChatSessionStore {
             print("[ChatSessionStore] Chat history unavailable: storage key is not already unlocked")
             return
         }
+        // Never park the main thread waiting on a key rotation. Opening chat
+        // history isn't launch-critical (`loadAllMetadata` returns [] until the
+        // DB is open), and blocking here on a launch/rotation race tripped the
+        // app-hang watchdog. Defer when a rotation is in flight on the main
+        // thread; `ChatSessionsManager` reloads on the rotation-complete
+        // notification. Off-main callers still block as before.
+        if Thread.isMainThread, StorageMutationGate.isRotationInFlight {
+            print("[ChatSessionStore] Deferring chat-history open: key rotation in flight")
+            return
+        }
         StorageMutationGate.blockingAwaitNotMutating()
         didOpen = true
         do {

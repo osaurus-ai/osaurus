@@ -34,6 +34,17 @@ public final class StorageMutationGate {
     /// on the main actor via the `didSet` above.
     nonisolated private static let isMutatingAtomic = AtomicBool(false)
 
+    /// Lock-free check for main-actor launch paths that prefer to defer
+    /// (and retry later) rather than park the UI while a rotation runs.
+    nonisolated public static var isRotationInFlight: Bool { isMutatingAtomic.load() }
+
+    /// Posted after a key rotation finishes (`endMutating`). Launch paths
+    /// that skipped a load while a rotation was in flight observe this to
+    /// retry once storage has settled.
+    public static let didFinishMutatingNotification = Notification.Name(
+        "StorageMutationGate.didFinishMutating"
+    )
+
     /// Continuations parked by `awaitNotMutating` while a rotation is
     /// in flight. Drained by `endMutating()`.
     private var waiters: [CheckedContinuation<Void, Never>] = []
@@ -57,6 +68,7 @@ public final class StorageMutationGate {
         let parked = waiters
         waiters.removeAll()
         for cont in parked { cont.resume() }
+        NotificationCenter.default.post(name: Self.didFinishMutatingNotification, object: nil)
     }
 
     // MARK: - Gating

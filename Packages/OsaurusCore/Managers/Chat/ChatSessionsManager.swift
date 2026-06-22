@@ -20,12 +20,22 @@ final class ChatSessionsManager: ObservableObject {
     /// Currently selected session ID
     @Published var currentSessionId: UUID?
 
+    private var cancellables: Set<AnyCancellable> = []
+
     private init() {
         // Load synchronously so the first reader (ChatWindowState.init)
         // sees populated sessions. Deferring this via Task caused the
         // sidebar to render empty on first open until something else
         // (New Chat, agent switch) triggered a manual refresh.
         sessions = ChatSessionStore.loadAll()
+
+        // If the initial load raced a key rotation, `ChatSessionStore`
+        // deferred the DB open rather than parking the launch main thread,
+        // so `sessions` may be empty. Reload once the rotation settles.
+        NotificationCenter.default.publisher(for: StorageMutationGate.didFinishMutatingNotification)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.refresh() }
+            .store(in: &cancellables)
     }
 
     // MARK: - Public API
