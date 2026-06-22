@@ -29797,6 +29797,9 @@
         }
       }
     },
+    "Business Document Studio" : {
+      "shouldTranslate" : false
+    },
     "Bundle" : {
       "localizations" : {
         "de" : {
@@ -34603,6 +34606,9 @@
           }
         }
       }
+    },
+    "Choose a supported document to inspect preview, security, and export availability." : {
+      "shouldTranslate" : false
     },
     "Choose a SKILL.md file or a ZIP bundle to import" : {
       "localizations" : {
@@ -110982,6 +110988,12 @@
           }
         }
       }
+    },
+    "Open Business Document" : {
+      "shouldTranslate" : false
+    },
+    "Open Business Document..." : {
+      "shouldTranslate" : false
     },
     "Open Chat" : {
       "localizations" : {

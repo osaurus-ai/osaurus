@@ -95,6 +95,14 @@ private extension osaurusApp {
         CommandGroup(after: .newItem) {
             Divider()
 
+            Button {
+                BusinessDocumentStudioLauncher.openDocumentPicker()
+            } label: {
+                Text(verbatim: L("Open Business Document..."))
+            }
+
+            Divider()
+
             Button(vadToggleLabel) {
                 toggleVAD()
             }
