@@ -870,7 +870,7 @@ struct DiscordConnectionTests {
         }
     }
 
-    @Test func nativeAgentChannelToolsAreDynamicButNotPluginOwned() async throws {
+    @Test func nativeAgentChannelToolsAreDisabledButRemainExternallyDenied() async throws {
         let names = ToolRegistry.agentChannelToolNames.sorted()
         let phantomDiscordNames: Set<String> = [
             "discord_diagnostics",
@@ -891,10 +891,17 @@ struct DiscordConnectionTests {
                 phantomDiscordNames.filter { ToolRegistry.shared.entry(named: $0) != nil }
             )
         }
-        #expect(Set(names).isSubset(of: registeredNames))
+        // Agent Channel tool registration is intentionally disabled in
+        // `ToolRegistry.registerBuiltInTools`, so none of the native action
+        // tools are live in the registry. They must also never leak in as
+        // plugin-owned tools or collide with the phantom Discord vocabulary.
+        #expect(Set(names).isDisjoint(with: registeredNames))
         #expect(pluginNames.isEmpty)
         #expect(phantomNames.isEmpty)
 
+        // Even while the tools are disabled, their names stay on the
+        // external-surface deny list (defense in depth) and must never be
+        // promoted to built-ins.
         for name in names {
             #expect(ToolRegistry.externallyDeniedToolNames.contains(name))
             #expect(!builtInNames.contains(name))
