@@ -92,20 +92,20 @@ struct DiscordConnectionTests {
         let session = DiscordHTTPStubProtocol.session(
             statusCode: 200,
             body: """
-            {
-              "id": "sent-1",
-              "channel_id": "333333333333333333",
-              "content": "Hello @everyone <@123456789012345678>",
-              "timestamp": "2026-06-19T20:00:00.000000+00:00",
-              "author": {
-                "id": "444444444444444444",
-                "username": "osaurus-bot",
-                "global_name": "Osaurus",
-                "bot": true
-              },
-              "attachments": []
-            }
-            """
+                {
+                  "id": "sent-1",
+                  "channel_id": "333333333333333333",
+                  "content": "Hello @everyone <@123456789012345678>",
+                  "timestamp": "2026-06-19T20:00:00.000000+00:00",
+                  "author": {
+                    "id": "444444444444444444",
+                    "username": "osaurus-bot",
+                    "global_name": "Osaurus",
+                    "bot": true
+                  },
+                  "attachments": []
+                }
+                """
         )
         let client = DiscordAPIClient(
             baseURL: URL(string: "https://discord.test/api/v10")!,
@@ -131,7 +131,7 @@ struct DiscordConnectionTests {
                 "222222222222222222": [
                     .fixture(id: "9001", channelId: "222222222222222222", content: "eval reports landed"),
                     .fixture(id: "9002", channelId: "222222222222222222", content: "review requested"),
-                ],
+                ]
             ])
             let service = DiscordConnectionService(client: fake, credentialStore: credentials)
             try service.saveBotToken("discord-bot-token-super-secret")
@@ -264,7 +264,7 @@ struct DiscordConnectionTests {
                 "222222222222222222": [
                     .fixture(id: "9001", channelId: "222222222222222222", content: "eval reports landed"),
                     .fixture(id: "9002", channelId: "222222222222222222", content: "review requested"),
-                ],
+                ]
             ])
             let service = DiscordConnectionService(
                 client: fake,
@@ -346,7 +346,7 @@ struct DiscordConnectionTests {
                 "222222222222222222": [
                     .fixture(id: "9001", channelId: "222222222222222222", content: "eval reports landed"),
                     .fixture(id: "9002", channelId: "222222222222222222", content: "ordinary update"),
-                ],
+                ]
             ])
             let service = DiscordConnectionService(
                 client: fake,
@@ -519,40 +519,40 @@ struct DiscordConnectionTests {
     @Test func customAgentChannelCanBeDefinedWithPureJSON() async throws {
         try await withIsolatedDiscordStores { credentials in
             let json = """
-            {
-              "schemaVersion": 1,
-              "connections": [
                 {
-                  "id": "ops-webhook",
-                  "name": "Ops Webhook",
-                  "kind": "custom_http",
-                  "enabled": true,
-                  "supportedActions": ["diagnostics", "send_message"],
-                  "spaceAllowlist": ["ops"],
-                  "readRoomAllowlist": [],
-                  "writeRoomAllowlist": ["alerts"],
-                  "writeEnabled": true,
-                  "defaultReadLimit": 25,
-                  "secrets": [
-                    { "name": "bearer", "keychainId": "ops_webhook_token" }
-                  ],
-                  "customHTTP": {
-                    "baseURL": "https://hooks.example.test",
-                    "actions": {
-                      "send_message": {
-                        "method": "POST",
-                        "path": "/rooms/{room_id}/messages",
-                        "headers": {
-                          "Authorization": "Bearer ${secret:bearer}"
-                        },
-                        "bodyTemplate": "{\\"text\\":\\"${content}\\"}"
+                  "schemaVersion": 1,
+                  "connections": [
+                    {
+                      "id": "ops-webhook",
+                      "name": "Ops Webhook",
+                      "kind": "custom_http",
+                      "enabled": true,
+                      "supportedActions": ["diagnostics", "send_message"],
+                      "spaceAllowlist": ["ops"],
+                      "readRoomAllowlist": [],
+                      "writeRoomAllowlist": ["alerts"],
+                      "writeEnabled": true,
+                      "defaultReadLimit": 25,
+                      "secrets": [
+                        { "name": "bearer", "keychainId": "ops_webhook_token" }
+                      ],
+                      "customHTTP": {
+                        "baseURL": "https://hooks.example.test",
+                        "actions": {
+                          "send_message": {
+                            "method": "POST",
+                            "path": "/rooms/{room_id}/messages",
+                            "headers": {
+                              "Authorization": "Bearer ${secret:bearer}"
+                            },
+                            "bodyTemplate": "{\\"text\\":\\"${content}\\"}"
+                          }
+                        }
                       }
                     }
-                  }
+                  ]
                 }
-              ]
-            }
-            """
+                """
             try FileManager.default.createDirectory(
                 at: AgentChannelConfigurationStore.configurationFileURL().deletingLastPathComponent(),
                 withIntermediateDirectories: true
@@ -587,10 +587,10 @@ struct DiscordConnectionTests {
             let fake = FakeDiscordAPIClient()
             await fake.setMessages([
                 "222222222222222222": [
-                    .fixture(id: "9001", channelId: "222222222222222222", content: "eval reports landed"),
+                    .fixture(id: "9001", channelId: "222222222222222222", content: "eval reports landed")
                 ],
                 "333333333333333333": [
-                    .fixture(id: "9002", channelId: "333333333333333333", content: "eval secret"),
+                    .fixture(id: "9002", channelId: "333333333333333333", content: "eval secret")
                 ],
             ])
             let service = DiscordConnectionService(client: fake, credentialStore: credentials)
@@ -839,7 +839,6 @@ private final class DiscordHTTPStubProtocol: URLProtocol {
         }
         return data
     }
-
 
     override class func canInit(with request: URLRequest) -> Bool {
         true

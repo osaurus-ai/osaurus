@@ -513,9 +513,12 @@ final class DBMigrateTool: OsaurusTool, @unchecked Sendable {
 final class DBInsertTool: OsaurusTool, @unchecked Sendable {
     let name = "db_insert"
     let description =
-        "Insert one row into a table. The host-managed columns (`id`, "
-        + "`_created_at`, `_updated_at`, `_deleted_at`) are filled in "
-        + "automatically — do not include them in `row`."
+        "Insert row(s) into a table. Pass `row` for a single row, or `rows` "
+        + "(an array of objects) to insert many in one call — prefer `rows` "
+        + "for batches so you don't spend a tool call per row. For data that "
+        + "already lives in a file, use `db_import` instead. Host-managed "
+        + "columns (`id`, `_created_at`, `_updated_at`, `_deleted_at`) are "
+        + "filled in automatically — do not include them."
 
     let parameters: JSONValue? = .object([
         "type": .string("object"),
@@ -525,12 +528,24 @@ final class DBInsertTool: OsaurusTool, @unchecked Sendable {
             "row": .object([
                 "type": .string("object"),
                 "description": .string(
-                    "Column → value map. Strings / numbers / booleans / null only."
+                    "A single row: column → value map. Strings / numbers / "
+                        + "booleans / null only."
                 ),
                 "additionalProperties": .bool(true),
             ]),
+            "rows": .object([
+                "type": .string("array"),
+                "description": .string(
+                    "Many rows in one call. Each item is a column → value map. "
+                        + "Use this instead of repeated `db_insert` for batches."
+                ),
+                "items": .object([
+                    "type": .string("object"),
+                    "additionalProperties": .bool(true),
+                ]),
+            ]),
         ]),
-        "required": .array([.string("table"), .string("row")]),
+        "required": .array([.string("table")]),
     ])
 
     func execute(argumentsJSON: String) async throws -> String {
@@ -542,15 +557,39 @@ final class DBInsertTool: OsaurusTool, @unchecked Sendable {
         let tableReq = requireString(args, "table", expected: "table name", tool: name)
         guard case .value(let table) = tableReq else { return tableReq.failureEnvelope ?? "" }
 
-        guard let rowRaw = args["row"] as? [String: Any] else {
-            return ToolEnvelope.failure(
-                kind: .invalidArgs,
-                message: "`row` must be a JSON object.",
-                tool: name
-            )
-        }
-
         do {
+            if let rowsAny = args["rows"] {
+                guard let rowsRaw = rowsAny as? [[String: Any]], !rowsRaw.isEmpty else {
+                    return ToolEnvelope.failure(
+                        kind: .invalidArgs,
+                        message: "`rows` must be a non-empty array of objects.",
+                        field: "rows",
+                        tool: name
+                    )
+                }
+                let mapped = rowsRaw.map { DatabaseToolHelpers.toSQLValues($0) }
+                let result = try LocalAgentBridge.shared.insertMany(
+                    agentId: agentId,
+                    table: table,
+                    rows: mapped
+                )
+                return ToolEnvelope.success(
+                    tool: name,
+                    result: [
+                        "ids": result.rowIDs.map { NSNumber(value: $0) },
+                        "count": result.count,
+                    ]
+                )
+            }
+
+            guard let rowRaw = args["row"] as? [String: Any] else {
+                return ToolEnvelope.failure(
+                    kind: .invalidArgs,
+                    message: "Provide `row` (a single object) or `rows` (an array of objects).",
+                    field: "row",
+                    tool: name
+                )
+            }
             let result = try LocalAgentBridge.shared.insert(
                 agentId: agentId,
                 table: table,
@@ -571,9 +610,10 @@ final class DBInsertTool: OsaurusTool, @unchecked Sendable {
 final class DBUpsertTool: OsaurusTool, @unchecked Sendable {
     let name = "db_upsert"
     let description =
-        "Insert a row, or update the existing row if one conflicts on "
-        + "`key_columns`. The conflict columns must have a UNIQUE or "
-        + "PRIMARY KEY constraint."
+        "Insert row(s), or update the existing row when one conflicts on "
+        + "`key_columns`. Pass `row` for a single row or `rows` for a batch. "
+        + "The conflict columns must have a UNIQUE or PRIMARY KEY constraint. "
+        + "For file-backed data, use `db_import` with `mode=upsert` instead."
 
     let parameters: JSONValue? = .object([
         "type": .string("object"),
@@ -589,8 +629,16 @@ final class DBUpsertTool: OsaurusTool, @unchecked Sendable {
                 "type": .string("object"),
                 "additionalProperties": .bool(true),
             ]),
+            "rows": .object([
+                "type": .string("array"),
+                "description": .string("Many rows in one call. Each item is a column → value map."),
+                "items": .object([
+                    "type": .string("object"),
+                    "additionalProperties": .bool(true),
+                ]),
+            ]),
         ]),
-        "required": .array([.string("table"), .string("key_columns"), .string("row")]),
+        "required": .array([.string("table"), .string("key_columns")]),
     ])
 
     func execute(argumentsJSON: String) async throws -> String {
@@ -610,15 +658,37 @@ final class DBUpsertTool: OsaurusTool, @unchecked Sendable {
         )
         guard case .value(let keyColumns) = keyReq else { return keyReq.failureEnvelope ?? "" }
 
-        guard let rowRaw = args["row"] as? [String: Any] else {
-            return ToolEnvelope.failure(
-                kind: .invalidArgs,
-                message: "`row` must be a JSON object.",
-                tool: name
-            )
-        }
-
         do {
+            if let rowsAny = args["rows"] {
+                guard let rowsRaw = rowsAny as? [[String: Any]], !rowsRaw.isEmpty else {
+                    return ToolEnvelope.failure(
+                        kind: .invalidArgs,
+                        message: "`rows` must be a non-empty array of objects.",
+                        field: "rows",
+                        tool: name
+                    )
+                }
+                let mapped = rowsRaw.map { DatabaseToolHelpers.toSQLValues($0) }
+                let result = try LocalAgentBridge.shared.upsertMany(
+                    agentId: agentId,
+                    table: table,
+                    keyColumns: keyColumns,
+                    rows: mapped
+                )
+                return ToolEnvelope.success(
+                    tool: name,
+                    result: ["count": result.rowsAffected]
+                )
+            }
+
+            guard let rowRaw = args["row"] as? [String: Any] else {
+                return ToolEnvelope.failure(
+                    kind: .invalidArgs,
+                    message: "Provide `row` (a single object) or `rows` (an array of objects).",
+                    field: "row",
+                    tool: name
+                )
+            }
             let result = try LocalAgentBridge.shared.upsert(
                 agentId: agentId,
                 table: table,
@@ -824,10 +894,17 @@ final class DBRestoreTool: OsaurusTool, @unchecked Sendable {
 final class DBQueryTool: OsaurusTool, @unchecked Sendable {
     let name = "db_query"
     let description =
-        "Run a read-only SQL query. Returns at most 1000 rows; `truncated` "
-        + "is true when there were more. Queries auto-filter "
-        + "`_deleted_at IS NULL` on user tables unless you pass "
-        + "`include_deleted=true` explicitly in the WHERE clause."
+        "Run a read-only SQL query. Returns up to `limit` rows (default "
+        + "1000, hard cap 5000); page through larger results with "
+        + "`limit`/`offset`. `truncated` is true when more rows existed. For "
+        + "big tables, prefer aggregating in SQL (COUNT/SUM/GROUP BY) over "
+        + "returning raw rows. Queries auto-filter `_deleted_at IS NULL` on "
+        + "user tables unless you pass `include_deleted=true` in the WHERE."
+
+    /// Soft ceiling on the encoded row payload (chars), kept under the
+    /// universal 100K tool-result cap so the model gets a clean
+    /// `truncated` + paging hint instead of a hard string cut.
+    private static let maxEncodedRowBytes = 80_000
 
     let parameters: JSONValue? = .object([
         "type": .string("object"),
@@ -843,6 +920,16 @@ final class DBQueryTool: OsaurusTool, @unchecked Sendable {
                 "type": .string("array"),
                 "description": .string("Positional bind parameters (optional)."),
                 "items": .object(["type": .string("string")]),
+            ]),
+            "limit": .object([
+                "type": .string("integer"),
+                "description": .string(
+                    "Max rows to return (default 1000, hard cap 5000). Pair with `offset` to page."
+                ),
+            ]),
+            "offset": .object([
+                "type": .string("integer"),
+                "description": .string("Rows to skip before returning (default 0)."),
             ]),
         ]),
         "required": .array([.string("sql")]),
@@ -863,23 +950,53 @@ final class DBQueryTool: OsaurusTool, @unchecked Sendable {
         } else {
             params = []
         }
+        let limit = coerceInt(args["limit"])
+        let offset = coerceInt(args["offset"])
 
         do {
             let result = try LocalAgentBridge.shared.query(
                 agentId: agentId,
                 sql: sql,
-                params: params
+                params: params,
+                limit: limit,
+                offset: offset
             )
-            let rows: [[Any]] = result.rows.map { row in
+            var rows: [[Any]] = result.rows.map { row in
                 row.map { DatabaseToolHelpers.toJSONAny($0) }
+            }
+
+            // Encoded-size guard: trim trailing rows so the payload stays
+            // under the soft cap, surfacing a paging hint rather than a hard
+            // truncation of the JSON string downstream.
+            var sizeTruncated = false
+            if let data = try? JSONSerialization.data(withJSONObject: rows),
+                data.count > Self.maxEncodedRowBytes, !rows.isEmpty
+            {
+                let avg = max(1, data.count / rows.count)
+                let keep = max(1, (Self.maxEncodedRowBytes * 9 / 10) / avg)
+                if keep < rows.count {
+                    rows = Array(rows.prefix(keep))
+                    sizeTruncated = true
+                }
+            }
+
+            let truncated = result.truncated || sizeTruncated
+            var warnings: [String] = []
+            if truncated {
+                let nextOffset = (offset ?? 0) + rows.count
+                warnings.append(
+                    "Result truncated at \(rows.count) rows. Page with `offset: \(nextOffset)`, "
+                        + "or aggregate in SQL (COUNT/SUM/GROUP BY) instead of returning raw rows."
+                )
             }
             return ToolEnvelope.success(
                 tool: name,
                 result: [
                     "columns": result.columns,
                     "rows": rows,
-                    "truncated": result.truncated,
-                ]
+                    "truncated": truncated,
+                ],
+                warnings: warnings.isEmpty ? nil : warnings
             )
         } catch {
             return DatabaseToolHelpers.envelope(for: error, tool: name)
@@ -892,11 +1009,14 @@ final class DBQueryTool: OsaurusTool, @unchecked Sendable {
 final class DBExecuteTool: OsaurusTool, @unchecked Sendable {
     let name = "db_execute"
     let description =
-        "Raw SQL escape hatch. Use only when the typed surface "
-        + "(`db_insert`/`db_update`/`db_query`/etc.) can't express what "
-        + "you need. Logged distinctly in the activity log with "
-        + "`op='raw'`. DROP TABLE, TRUNCATE, DROP DATABASE, and "
-        + "unconstrained DELETE are rejected."
+        "Run first-class SQL the typed tools can't express — including "
+        + "multi-statement transform scripts (`INSERT … SELECT`, CTEs, "
+        + "window functions, index/trigger DDL) which run inside one "
+        + "transaction. Prefer this over pulling rows into context to "
+        + "compute by hand, and use `db_import` for file ingestion. Logged "
+        + "with `op='raw'`. Rejected: DROP TABLE, TRUNCATE, DROP DATABASE, "
+        + "unconstrained DELETE, ATTACH/DETACH, PRAGMA writes, "
+        + "load_extension, and writes to system tables."
 
     let parameters: JSONValue? = .object([
         "type": .string("object"),
@@ -944,6 +1064,254 @@ final class DBExecuteTool: OsaurusTool, @unchecked Sendable {
                 tool: name,
                 result: resultDict,
                 warnings: result.warning.map { [$0] }
+            )
+        } catch {
+            return DatabaseToolHelpers.envelope(for: error, tool: name)
+        }
+    }
+}
+
+// MARK: - db_import
+
+/// Host-mediated bulk loader. The model points at a file in the working
+/// folder; the host resolves the path (same symlink-safe guard as
+/// `file_read`), parses CSV/TSV/JSON/JSONL, optionally infers + creates the
+/// table, and bulk-inserts via `LocalAgentBridge.importRows` — so a large
+/// load costs zero per-row tokens and doesn't burn the tool-call budget.
+final class DBImportTool: OsaurusTool, @unchecked Sendable {
+    let name = "db_import"
+    let description =
+        "Bulk-load a file from your working folder straight into a table. "
+        + "The host reads and parses it, so no row data passes through your "
+        + "tokens and you don't spend a tool call per row — use this instead "
+        + "of looping `db_insert` whenever the data already lives in a file. "
+        + "Supports CSV, TSV, JSON (array or object), and JSONL/NDJSON; the "
+        + "format is auto-detected from the extension/content. Creates the "
+        + "table from the file's columns when it doesn't exist (set "
+        + "`create_table` false to require an existing one). Returns a small "
+        + "summary (counts + columns), never the row data."
+
+    let parameters: JSONValue? = .object([
+        "type": .string("object"),
+        "additionalProperties": .bool(false),
+        "properties": .object([
+            "table": .object([
+                "type": .string("string"),
+                "description": .string("Destination table name."),
+            ]),
+            "path": .object([
+                "type": .string("string"),
+                "description": .string(
+                    "Path to the data file, relative to your working folder "
+                        + "(e.g. `data/today.csv`)."
+                ),
+            ]),
+            "format": .object([
+                "type": .string("string"),
+                "description": .string(
+                    "Optional override: `csv`, `tsv`, `json`, `jsonl`/`ndjson`. "
+                        + "Auto-detected from the extension/content when omitted."
+                ),
+            ]),
+            "mode": .object([
+                "type": .string("string"),
+                "description": .string(
+                    "`insert` (default) or `upsert`. Upsert requires `key_columns`."
+                ),
+            ]),
+            "key_columns": .object([
+                "type": .string("array"),
+                "items": .object(["type": .string("string")]),
+                "description": .string(
+                    "For `upsert`: the conflict columns. A UNIQUE index on them "
+                        + "is created automatically when this call creates the table."
+                ),
+            ]),
+            "create_table": .object([
+                "type": .string("boolean"),
+                "description": .string(
+                    "Create the table from the file's columns if it's missing. Default true."
+                ),
+            ]),
+            "has_header": .object([
+                "type": .string("boolean"),
+                "description": .string("CSV/TSV only: first row is a header. Default true."),
+            ]),
+            "columns": .object([
+                "type": .string("array"),
+                "description": .string(
+                    "Optional ordered column names — each item is a string or "
+                        + "`{name, type}`. Required for headerless CSV; the `type` "
+                        + "overrides inferred affinity when a table is created."
+                ),
+                "items": .object(["type": .string("object")]),
+            ]),
+            "max_rows": .object([
+                "type": .string("integer"),
+                "description": .string("Optional cap on the number of rows imported."),
+            ]),
+        ]),
+        "required": .array([.string("table"), .string("path")]),
+    ])
+
+    func execute(argumentsJSON: String) async throws -> String {
+        let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
+        guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
+        let agentReq = DatabaseToolHelpers.requireAgentId(tool: name)
+        guard case .value(let agentId) = agentReq else { return agentReq.failureEnvelope ?? "" }
+
+        let tableReq = requireString(args, "table", expected: "destination table name", tool: name)
+        guard case .value(let table) = tableReq else { return tableReq.failureEnvelope ?? "" }
+        let pathReq = requireString(
+            args,
+            "path",
+            expected: "path under your working folder",
+            tool: name
+        )
+        guard case .value(let path) = pathReq else { return pathReq.failureEnvelope ?? "" }
+
+        let modeRaw = (args["mode"] as? String)?.lowercased() ?? "insert"
+        guard modeRaw == "insert" || modeRaw == "upsert" else {
+            return ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message: "`mode` must be `insert` or `upsert`.",
+                field: "mode",
+                expected: "insert | upsert",
+                tool: name
+            )
+        }
+        var keyColumns: [String] = []
+        if modeRaw == "upsert" {
+            let keyReq = requireStringArray(
+                args,
+                "key_columns",
+                expected: "conflict columns for upsert",
+                tool: name
+            )
+            guard case .value(let keys) = keyReq else { return keyReq.failureEnvelope ?? "" }
+            keyColumns = keys
+        }
+
+        let createTable = coerceBool(args["create_table"]) ?? true
+        let hasHeader = coerceBool(args["has_header"]) ?? true
+        let maxRows = coerceInt(args["max_rows"])
+
+        // `columns` override accepts a [String] of names or [{name, type?}].
+        var explicitColumnNames: [String]?
+        var typeOverrides: [String: String] = [:]
+        if let colsAny = args["columns"] {
+            if let names = colsAny as? [String], !names.isEmpty {
+                explicitColumnNames = names
+            } else if let objects = colsAny as? [[String: Any]], !objects.isEmpty {
+                var names: [String] = []
+                for object in objects {
+                    guard let columnName = object["name"] as? String, !columnName.isEmpty else {
+                        continue
+                    }
+                    names.append(columnName)
+                    if let type = object["type"] as? String, !type.isEmpty {
+                        typeOverrides[columnName] = type
+                    }
+                }
+                if !names.isEmpty { explicitColumnNames = names }
+            }
+        }
+
+        // Resolve the working-folder root the same way `file_read` does.
+        let root: URL? = await MainActor.run {
+            FolderToolManager.shared.registeredContext?.rootPath
+        }
+        guard let rootPath = root else {
+            return ToolEnvelope.failure(
+                kind: .unavailable,
+                message:
+                    "db_import reads from your working folder, but no folder is bound to "
+                    + "this session. Ask the user to pick a working folder, then retry.",
+                tool: name,
+                retryable: false
+            )
+        }
+
+        let fileURL: URL
+        do {
+            fileURL = try FolderToolHelpers.resolvePath(path, rootPath: rootPath)
+        } catch {
+            return ToolEnvelope.fromError(error, tool: name)
+        }
+        guard FileManager.default.fileExists(atPath: fileURL.path) else {
+            return ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message: "No file at `\(path)` in the working folder.",
+                field: "path",
+                tool: name,
+                retryable: false
+            )
+        }
+        let parsed: DatabaseImport.Parsed
+        do {
+            parsed = try AgentImportRunner.parse(
+                url: fileURL,
+                explicitFormat: args["format"] as? String,
+                hasHeader: hasHeader,
+                explicitColumns: explicitColumnNames,
+                maxRows: maxRows
+            )
+        } catch {
+            return ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message: (error as? LocalizedError)?.errorDescription ?? error.localizedDescription,
+                tool: name,
+                retryable: false
+            )
+        }
+
+        let mode: AgentImportRunner.Mode =
+            (modeRaw == "upsert") ? .upsert(keyColumns: keyColumns) : .insert
+        do {
+            let outcome = try AgentImportRunner.run(
+                agentId: agentId,
+                table: table,
+                parsed: parsed,
+                mode: mode,
+                createTable: createTable,
+                typeOverrides: typeOverrides,
+                sourceLabel: (path as NSString).lastPathComponent
+            )
+
+            var resultDict: [String: Any] = [
+                "table": outcome.table,
+                "rows_imported": outcome.rowsImported,
+                "rows_skipped": outcome.rowsSkipped,
+                "created_table": outcome.createdTable,
+                "columns": outcome.columns,
+                "truncated": outcome.truncated,
+            ]
+            if !outcome.droppedColumns.isEmpty {
+                resultDict["dropped_columns"] = outcome.droppedColumns
+            }
+            if !outcome.sampleErrors.isEmpty { resultDict["sample_errors"] = outcome.sampleErrors }
+
+            var warnings: [String] = []
+            if outcome.truncated {
+                warnings.append("Import stopped at max_rows; not all rows were loaded.")
+            }
+            if !outcome.droppedColumns.isEmpty {
+                warnings.append(
+                    "Ignored columns not on `\(table)`: "
+                        + outcome.droppedColumns.joined(separator: ", ") + "."
+                )
+            }
+            return ToolEnvelope.success(
+                tool: name,
+                result: resultDict,
+                warnings: warnings.isEmpty ? nil : warnings
+            )
+        } catch let error as AgentImportRunner.RunError {
+            return ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message: error.errorDescription ?? "Import failed.",
+                tool: name,
+                retryable: false
             )
         } catch {
             return DatabaseToolHelpers.envelope(for: error, tool: name)

@@ -67,9 +67,11 @@ public struct ScheduleHistoryService: Sendable {
         runLimit: Int = 8,
         asOf now: Date = Date()
     ) -> [UUID: ScheduleAutomationSummary] {
-        Dictionary(uniqueKeysWithValues: schedules.map { schedule in
-            (schedule.id, summary(for: schedule, runLimit: runLimit, asOf: now))
-        })
+        Dictionary(
+            uniqueKeysWithValues: schedules.map { schedule in
+                (schedule.id, summary(for: schedule, runLimit: runLimit, asOf: now))
+            }
+        )
     }
 
     public func summariesOffMain(

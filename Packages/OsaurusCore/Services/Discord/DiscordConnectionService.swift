@@ -183,19 +183,23 @@ final class DiscordConnectionService: @unchecked Sendable {
         for guildId in config.configuredGuildIds {
             do {
                 let guild = try await client.guild(id: guildId, token: token)
-                guildRows.append(DiscordConfiguredGuildDiagnostic(
-                    id: guild.id,
-                    name: guild.name,
-                    status: "accessible",
-                    reason: nil
-                ))
+                guildRows.append(
+                    DiscordConfiguredGuildDiagnostic(
+                        id: guild.id,
+                        name: guild.name,
+                        status: "accessible",
+                        reason: nil
+                    )
+                )
             } catch {
-                guildRows.append(DiscordConfiguredGuildDiagnostic(
-                    id: guildId,
-                    name: "",
-                    status: "unavailable",
-                    reason: redacted(error, token: token)
-                ))
+                guildRows.append(
+                    DiscordConfiguredGuildDiagnostic(
+                        id: guildId,
+                        name: "",
+                        status: "unavailable",
+                        reason: redacted(error, token: token)
+                    )
+                )
             }
         }
 

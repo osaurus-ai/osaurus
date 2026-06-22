@@ -179,7 +179,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         if request.runAsRemoteAgent, let agentProviderId = request.remoteAgentProviderId {
             let remoteServices = await remoteServicesProvider()
             if let agentService = Self.remoteAgentService(
-                providerId: agentProviderId, in: remoteServices
+                providerId: agentProviderId,
+                in: remoteServices
             ) {
                 let effective = request.remoteAgentLogModel ?? request.model
                 RemoteAgentRunLog.client(
@@ -650,7 +651,9 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             // Wrap stream to count tokens and log when complete
             let inputTokens = estimateInputTokens(messages)
             let model = Self.loggedModel(
-                for: request, remoteConn: remoteConn, fallback: effectiveModel
+                for: request,
+                remoteConn: remoteConn,
+                fallback: effectiveModel
             )
             let temp = temperature
             let maxTok = maxTokens
@@ -1147,7 +1150,9 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                 ? Self.remoteConnectionInfo(for: service, runAsRemoteAgent: params.runAsRemoteAgent)
                 : nil
             let loggedModel = Self.loggedModel(
-                for: request, remoteConn: remoteConn, fallback: effectiveModel
+                for: request,
+                remoteConn: remoteConn,
+                fallback: effectiveModel
             )
             let loggedPath = remoteConn?.path ?? "/chat/completions"
 

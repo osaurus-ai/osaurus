@@ -318,7 +318,8 @@ final class AgentChannelConnectionService: @unchecked Sendable {
         row["credential_saved"] = discordService.hasBotToken()
         let readRooms = row["read_room_allowlist"] as? [String] ?? []
         let writeRooms = row["write_room_allowlist"] as? [String] ?? []
-        row["configured"] = discordService.hasBotToken()
+        row["configured"] =
+            discordService.hasBotToken()
             && (!readRooms.isEmpty || !writeRooms.isEmpty)
         return row
     }

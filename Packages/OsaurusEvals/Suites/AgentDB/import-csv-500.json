@@ -1,0 +1,44 @@
+{
+  "id": "agentdb.import-csv-500",
+  "domain": "agent_loop",
+  "label": "agentdb • import a 500-row CSV in one host-mediated call",
+  "query": "There is a file named commits.csv in your working folder with 500 commit records (columns: sha, author, additions, deletions). Load it into your agent database as a table named commits, then tell me exactly how many rows the table has.",
+  "notes": "WS1 proof: a 500-row file must land via the host db_import path (one tool call, no row data through tokens), NOT a db_insert loop. mustNotCallTools pins that the model didn't fall back to per-row inserts; dbState reads the isolated per-eval-agent DB AFTER the run (500 rows, SUM(additions)=125250 from the deterministic fixture). maxToolCalls is far below 500, so a row-by-row strategy can't pass.",
+  "fixtures": {
+    "agentCapabilities": {
+      "dbEnabled": true
+    },
+    "workspaceFiles": [
+      {
+        "path": "commits.csv",
+        "contentsFromFixture": "commits-500.csv"
+      }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 10,
+      "maxToolCalls": 8,
+      "mustCallTools": [
+        "db_import"
+      ],
+      "mustNotCallTools": [
+        "db_insert",
+        "db_upsert"
+      ],
+      "dbState": [
+        {
+          "sql": "SELECT COUNT(*) FROM commits",
+          "expectFirstValue": "500"
+        },
+        {
+          "sql": "SELECT SUM(additions) FROM commits",
+          "expectFirstValue": "125250"
+        }
+      ],
+      "finalTextContains": [
+        "500"
+      ]
+    }
+  }
+}

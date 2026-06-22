@@ -5173,7 +5173,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                             policy: AgentLoopPolicy(
                                 maxIterations: maxIterations,
                                 stopOnToolRejection: false,
-                                dedupeNoticeEnabled: false
+                                dedupeNoticeEnabled: false,
+                                maxDataMovementSteps: min(16, maxIterations)
                             ),
                             state: taskState,
                             hooks: hooks

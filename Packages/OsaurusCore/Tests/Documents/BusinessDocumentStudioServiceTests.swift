@@ -81,11 +81,13 @@ struct BusinessDocumentStudioServiceTests {
         let inspection = try service.inspect(document)
 
         #expect(inspection.summary.kind == .workbook)
-        #expect(inspection.exportOptions.contains { option in
-            option.targetFormatId == "xlsx"
-                && option.canExport == false
-                && option.reason == .validationFailed
-        })
+        #expect(
+            inspection.exportOptions.contains { option in
+                option.targetFormatId == "xlsx"
+                    && option.canExport == false
+                    && option.reason == .validationFailed
+            }
+        )
         guard case let .workbook(preview) = inspection.preview else {
             Issue.record("Expected workbook preview")
             return
@@ -235,11 +237,13 @@ struct BusinessDocumentStudioServiceTests {
         let inspection = try service.inspect(Self.pdfDocument())
 
         #expect(inspection.summary.kind == .pdf)
-        #expect(inspection.exportOptions.contains { option in
-            option.targetFormatId == "pdf"
-                && option.canExport == false
-                && option.reason == .missingEmitter
-        })
+        #expect(
+            inspection.exportOptions.contains { option in
+                option.targetFormatId == "pdf"
+                    && option.canExport == false
+                    && option.reason == .missingEmitter
+            }
+        )
         guard case let .pdf(preview) = inspection.preview else {
             Issue.record("Expected PDF preview")
             return
@@ -339,7 +343,7 @@ struct BusinessDocumentStudioServiceTests {
                         ),
                     ],
                     anchor: DocumentAnchor(kind: .sheet, path: [.init(kind: .sheet, index: 0)])
-                ),
+                )
             ]
         )
 

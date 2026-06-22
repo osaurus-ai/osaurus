@@ -262,7 +262,8 @@ extension Schedule {
     }
 
     public mutating func trimRunHistory(limit: Int = Self.maxRunHistoryEntries) {
-        runHistory = runHistory
+        runHistory =
+            runHistory
             .sorted { lhs, rhs in
                 if lhs.startedAt == rhs.startedAt {
                     return lhs.id.uuidString < rhs.id.uuidString

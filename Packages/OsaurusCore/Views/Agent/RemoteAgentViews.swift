@@ -539,7 +539,11 @@ struct RemoteAgentDetailView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            metadataRow(label: "Mode", value: NSLocalizedString("Remote agent run", bundle: .module, comment: ""), mono: false)
+            metadataRow(
+                label: "Mode",
+                value: NSLocalizedString("Remote agent run", bundle: .module, comment: ""),
+                mono: false
+            )
             metadataRow(
                 label: "Encryption",
                 value: NSLocalizedString("Secure Channel (E2E)", bundle: .module, comment: ""),

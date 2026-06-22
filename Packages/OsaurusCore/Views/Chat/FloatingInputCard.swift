@@ -4207,7 +4207,6 @@ private struct ContextBreakdownPopover: View {
             .map { (id: $0.id, tint: $0.tint, tokens: $0.tokens) }
     }
 
-
     /// One-line italic notice rendered above the entry list when the
     /// composer auto-disabled features for a small-context model.
     /// `nil` collapses the row entirely so normal-sized models render

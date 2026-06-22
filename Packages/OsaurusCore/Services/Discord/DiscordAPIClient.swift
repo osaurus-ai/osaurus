@@ -193,9 +193,13 @@ final class DiscordAPIClient: DiscordAPIClientProtocol, @unchecked Sendable {
     func messages(channelId: String, token: String, limit: Int) async throws -> [DiscordMessage] {
         try validateSnowflake(channelId, label: "channel_id")
         let safeLimit = DiscordConnectionConfiguration.clampReadLimit(limit)
-        return try await get(["channels", channelId, "messages"], token: token, query: [
-            URLQueryItem(name: "limit", value: "\(safeLimit)")
-        ])
+        return try await get(
+            ["channels", channelId, "messages"],
+            token: token,
+            query: [
+                URLQueryItem(name: "limit", value: "\(safeLimit)")
+            ]
+        )
     }
 
     func sendMessage(channelId: String, content: String, token: String) async throws -> DiscordMessage {
@@ -206,7 +210,7 @@ final class DiscordAPIClient: DiscordAPIClientProtocol, @unchecked Sendable {
             body: [
                 "content": content,
                 "allowed_mentions": [
-                    "parse": [] as [String],
+                    "parse": [] as [String]
                 ],
             ]
         )

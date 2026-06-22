@@ -138,7 +138,7 @@ struct HTTPAuthGateTests {
     /// Polls `InsightsService` (main-actor) for an inbound log stamped with the
     /// given access-key nonce. Returns nil if it never appears within ~1s.
     private static func findInboundLog(accessKeyId: String) async -> RequestLog? {
-        for _ in 0..<40 {
+        for _ in 0 ..< 40 {
             let match = await MainActor.run {
                 InsightsService.shared.logs.first {
                     $0.connection?.accessKeyId == accessKeyId

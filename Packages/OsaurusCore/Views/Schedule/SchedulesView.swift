@@ -83,7 +83,9 @@ struct SchedulesView: View {
                                         scheduleManager.setEnabled(schedule.id, enabled: enabled)
                                         scheduleManager.refresh()
                                         reloadHistorySummaries()
-                                        showSuccess(enabled ? "Resumed \"\(schedule.name)\"" : "Paused \"\(schedule.name)\"")
+                                        showSuccess(
+                                            enabled ? "Resumed \"\(schedule.name)\"" : "Paused \"\(schedule.name)\""
+                                        )
                                     },
                                     onRunNow: {
                                         scheduleManager.runNow(schedule.id)
@@ -300,7 +302,10 @@ struct SchedulesView: View {
         let panel = NSSavePanel()
         panel.title = L("Export")
         panel.prompt = L("Export")
-        panel.nameFieldStringValue = service.suggestedExportFilename(for: schedule, generatedAt: filenameSummary.generatedAt)
+        panel.nameFieldStringValue = service.suggestedExportFilename(
+            for: schedule,
+            generatedAt: filenameSummary.generatedAt
+        )
         panel.allowedContentTypes = [UTType(filenameExtension: "md") ?? .plainText]
         panel.canCreateDirectories = true
 

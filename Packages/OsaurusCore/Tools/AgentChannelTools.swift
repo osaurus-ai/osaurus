@@ -110,7 +110,8 @@ private extension OsaurusTool {
     }
 }
 
-final class AgentChannelListConnectionsTool: OsaurusTool, PermissionedTool, AgentChannelServiceTool, @unchecked Sendable {
+final class AgentChannelListConnectionsTool: OsaurusTool, PermissionedTool, AgentChannelServiceTool, @unchecked Sendable
+{
     let name = "agent_channel_list_connections"
     let description =
         "List configured agent communication channel connections such as Discord, Slack, Telegram, or custom JSON channels."
@@ -143,7 +144,7 @@ final class AgentChannelDiagnosticsTool: OsaurusTool, PermissionedTool, AgentCha
             "connection_id": .object([
                 "type": .string("string"),
                 "description": .string("Channel connection id. Defaults to `discord` when omitted."),
-            ]),
+            ])
         ]),
     ])
 
@@ -175,7 +176,7 @@ final class AgentChannelListSpacesTool: OsaurusTool, PermissionedTool, AgentChan
             "connection_id": .object([
                 "type": .string("string"),
                 "description": .string("Channel connection id. Defaults to `discord` when omitted."),
-            ]),
+            ])
         ]),
     ])
 
@@ -358,7 +359,8 @@ final class AgentChannelReadThreadTool: OsaurusTool, PermissionedTool, AgentChan
     }
 }
 
-final class AgentChannelSearchMessagesTool: OsaurusTool, PermissionedTool, AgentChannelServiceTool, @unchecked Sendable {
+final class AgentChannelSearchMessagesTool: OsaurusTool, PermissionedTool, AgentChannelServiceTool, @unchecked Sendable
+{
     let name = "agent_channel_search_messages"
     let description = "Search recent messages across allowlisted channel rooms."
     let parameters: JSONValue? = .object([

@@ -72,7 +72,8 @@ struct GlobalProxySection: View {
             return .invalid(validationMessage)
         }
         if let endpoint = draft.globalProxyURL?.trimmingCharacters(in: .whitespacesAndNewlines),
-            !endpoint.isEmpty {
+            !endpoint.isEmpty
+        {
             return .configured(endpoint)
         }
         return .disabled

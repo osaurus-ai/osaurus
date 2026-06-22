@@ -2633,7 +2633,9 @@ final class ChatSession: ObservableObject {
                     default:
                         // "completed" (or anything terminal) stamps the result.
                         currentTurn.noteRemoteToolFinished(
-                            callId: callKey, name: trace.name, isError: trace.isError
+                            callId: callKey,
+                            name: trace.name,
+                            isError: trace.isError
                         )
                     }
                     if trace.endRun {
@@ -4171,7 +4173,8 @@ final class ChatSession: ObservableObject {
                         policy: AgentLoopPolicy(
                             maxIterations: maxAttempts,
                             stopOnToolRejection: true,
-                            dedupeNoticeEnabled: true
+                            dedupeNoticeEnabled: true,
+                            maxDataMovementSteps: min(16, maxAttempts)
                         ),
                         state: taskState,
                         hooks: loopHooks

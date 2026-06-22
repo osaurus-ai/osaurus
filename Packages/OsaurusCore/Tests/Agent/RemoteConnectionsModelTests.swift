@@ -66,7 +66,9 @@ struct RemoteConnectionsModelTests {
     @Test func activeKey_mapsToActiveRow() {
         let key = makeKey(label: "Paired – mac")
         let rows = RemoteConnectionsModel.rows(
-            keys: [key], invites: [], isTemporary: { _ in false }
+            keys: [key],
+            invites: [],
+            isTemporary: { _ in false }
         )
         #expect(rows.count == 1)
         #expect(rows.first?.status == .active)
@@ -80,7 +82,9 @@ struct RemoteConnectionsModelTests {
     @Test func revokedKey_mapsToRevokedRow() {
         let key = makeKey(label: "Invite – Bob").withRevoked()
         let rows = RemoteConnectionsModel.rows(
-            keys: [key], invites: [], isTemporary: { _ in false }
+            keys: [key],
+            invites: [],
+            isTemporary: { _ in false }
         )
         #expect(rows.first?.status == .revoked)
         #expect(rows.first?.canRevoke == false)
@@ -93,7 +97,9 @@ struct RemoteConnectionsModelTests {
             expiration: .days30
         )
         let rows = RemoteConnectionsModel.rows(
-            keys: [key], invites: [], isTemporary: { _ in false }
+            keys: [key],
+            invites: [],
+            isTemporary: { _ in false }
         )
         #expect(rows.first?.status == .expired)
         #expect(rows.first?.canRevoke == false)
@@ -102,7 +108,9 @@ struct RemoteConnectionsModelTests {
     @Test func temporaryKey_mapsToTemporaryRow() {
         let key = makeKey(label: "Paired – iPhone")
         let rows = RemoteConnectionsModel.rows(
-            keys: [key], invites: [], isTemporary: { $0 == key.id }
+            keys: [key],
+            invites: [],
+            isTemporary: { $0 == key.id }
         )
         #expect(rows.first?.status == .temporary)
     }
@@ -112,7 +120,9 @@ struct RemoteConnectionsModelTests {
     @Test func pendingInvite_appendsPendingRow() {
         let invite = makeInvite(status: .active)
         let rows = RemoteConnectionsModel.rows(
-            keys: [], invites: [invite], isTemporary: { _ in false }
+            keys: [],
+            invites: [invite],
+            isTemporary: { _ in false }
         )
         #expect(rows.count == 1)
         #expect(rows.first?.status == .pending)
@@ -126,7 +136,9 @@ struct RemoteConnectionsModelTests {
         // also surface as a pending invite row.
         let usedInvite = makeInvite(status: .used, accessKeyId: UUID())
         let rows = RemoteConnectionsModel.rows(
-            keys: [], invites: [usedInvite], isTemporary: { _ in false }
+            keys: [],
+            invites: [usedInvite],
+            isTemporary: { _ in false }
         )
         #expect(rows.isEmpty)
     }
@@ -136,7 +148,9 @@ struct RemoteConnectionsModelTests {
         // a key exists for it — don't show a redundant pending row.
         let invite = makeInvite(status: .active, accessKeyId: UUID())
         let rows = RemoteConnectionsModel.rows(
-            keys: [], invites: [invite], isTemporary: { _ in false }
+            keys: [],
+            invites: [invite],
+            isTemporary: { _ in false }
         )
         #expect(rows.isEmpty)
     }
@@ -144,7 +158,9 @@ struct RemoteConnectionsModelTests {
     @Test func expiredInvite_isNotPending() {
         let invite = makeInvite(status: .active, expiresInSeconds: -60)
         let rows = RemoteConnectionsModel.rows(
-            keys: [], invites: [invite], isTemporary: { _ in false }
+            keys: [],
+            invites: [invite],
+            isTemporary: { _ in false }
         )
         #expect(rows.isEmpty)
     }
@@ -153,10 +169,12 @@ struct RemoteConnectionsModelTests {
 
     @Test func keysSortedNewestFirst_thenPendingInvites() {
         let older = makeKey(
-            label: "Older", createdAt: Date().addingTimeInterval(-1000)
+            label: "Older",
+            createdAt: Date().addingTimeInterval(-1000)
         )
         let newer = makeKey(
-            label: "Newer", createdAt: Date().addingTimeInterval(-10)
+            label: "Newer",
+            createdAt: Date().addingTimeInterval(-10)
         )
         let pending = makeInvite(status: .active)
 

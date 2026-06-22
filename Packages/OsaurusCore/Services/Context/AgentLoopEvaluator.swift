@@ -804,7 +804,8 @@ public enum AgentLoopEvaluator {
                     policy: AgentLoopPolicy(
                         maxIterations: maxIterations,
                         stopOnToolRejection: stopOnToolRejection,
-                        dedupeNoticeEnabled: true
+                        dedupeNoticeEnabled: true,
+                        maxDataMovementSteps: min(16, maxIterations)
                     ),
                     state: state,
                     hooks: hooks

@@ -508,7 +508,8 @@ public struct BusinessDocumentStudioService: Sendable {
         }
 
         if let pdfPPTX = try? PDFPPTXWorkflowService(registry: registry)
-            .preview(document, policy: policy.pdfPPTXPreview) {
+            .preview(document, policy: policy.pdfPPTXPreview)
+        {
             switch pdfPPTX {
             case .pdf(let preview):
                 return .pdf(Self.pdfPreview(preview))

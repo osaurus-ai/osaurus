@@ -158,7 +158,8 @@ public final class CentralRepositoryManager: @unchecked Sendable {
                 return
             }
             if let http = response as? HTTPURLResponse,
-                !(200 ..< 300).contains(http.statusCode) {
+                !(200 ..< 300).contains(http.statusCode)
+            {
                 outcome.error = RefreshError.httpStatus(http.statusCode)
                 return
             }
@@ -240,7 +241,8 @@ public final class CentralRepositoryManager: @unchecked Sendable {
         for case let fileURL as URL in enumerator
         where fileURL.pathExtension.lowercased() == "json" {
             if let data = try? Data(contentsOf: fileURL),
-                let spec = try? decoder.decode(PluginSpec.self, from: data) {
+                let spec = try? decoder.decode(PluginSpec.self, from: data)
+            {
                 specs.append(spec)
             }
         }

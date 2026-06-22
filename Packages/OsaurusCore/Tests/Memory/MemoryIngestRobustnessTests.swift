@@ -70,7 +70,9 @@ struct MemoryIngestRobustnessTests {
         #expect(snapshot.count == 1)
 
         // A turn buffered *during* the (simulated) LLM call.
-        try db.insertPendingSignal(PendingSignal(agentId: "a", conversationId: "c", userMessage: "buffered mid-distill"))
+        try db.insertPendingSignal(
+            PendingSignal(agentId: "a", conversationId: "c", userMessage: "buffered mid-distill")
+        )
 
         // Insert the episode marking only the snapshotted id.
         _ = try db.insertEpisodeAndMarkProcessed(

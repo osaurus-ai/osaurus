@@ -155,12 +155,14 @@ struct CaptureScreenshotCommandTests {
                     return nil
                 }
                 #expect(artifacts == [captured.artifact])
-                #expect(!blocks.contains { block in
-                    if case .toolCallGroup = block.kind {
-                        return true
+                #expect(
+                    !blocks.contains { block in
+                        if case .toolCallGroup = block.kind {
+                            return true
+                        }
+                        return false
                     }
-                    return false
-                })
+                )
             }
         }
     }

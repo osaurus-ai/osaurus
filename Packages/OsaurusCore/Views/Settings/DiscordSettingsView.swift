@@ -108,7 +108,8 @@ struct DiscordSettingsView: View {
                 )
                 SettingsToggle(
                     title: "Enable Discord Writes",
-                    description: "Allow send/reply tools for write-allowlisted destinations. Tool calls still require approval.",
+                    description:
+                        "Allow send/reply tools for write-allowlisted destinations. Tool calls still require approval.",
                     isOn: $writeEnabled
                 )
                 multilineField(

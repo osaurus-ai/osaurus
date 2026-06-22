@@ -334,14 +334,14 @@ struct RemoteAgentRoutingTests {
 
     @Test func parseAgentMetadata_decodesAvatarAndEffectiveModel() throws {
         let json = #"""
-        {
-            "name": "Coco",
-            "description": "A friendly helper",
-            "effective_model": "coco/gemma-3-12b",
-            "default_model": "default",
-            "avatar": "green"
-        }
-        """#
+            {
+                "name": "Coco",
+                "description": "A friendly helper",
+                "effective_model": "coco/gemma-3-12b",
+                "default_model": "default",
+                "avatar": "green"
+            }
+            """#
         let meta = try #require(
             RemoteProviderService.parseAgentMetadata(from: Data(json.utf8))
         )
@@ -369,8 +369,8 @@ struct RemoteAgentRoutingTests {
 
     @Test func parseAgentMetadata_trimsAndNilsBlankFields() throws {
         let json = #"""
-        {"name":"  ","description":"   ","avatar":"  ","effective_model":""}
-        """#
+            {"name":"  ","description":"   ","avatar":"  ","effective_model":""}
+            """#
         let meta = try #require(
             RemoteProviderService.parseAgentMetadata(from: Data(json.utf8))
         )
@@ -425,10 +425,14 @@ struct RemoteAgentRoutingTests {
         // not by the model string, so the decoy never wins.
         let cocoProvider = Self.makeProvider(basePath: "/v1", remoteAgentAddress: "coco-addr")
         let coco = RemoteProviderService(
-            provider: cocoProvider, models: ["coco/model-a"], resolvedHeaders: [:]
+            provider: cocoProvider,
+            models: ["coco/model-a"],
+            resolvedHeaders: [:]
         )
         let decoy = RemoteProviderService(
-            provider: Self.makeNonOsaurusProvider(), models: ["fugu/fugu"], resolvedHeaders: [:]
+            provider: Self.makeNonOsaurusProvider(),
+            models: ["fugu/fugu"],
+            resolvedHeaders: [:]
         )
 
         let picked = ChatEngine.remoteAgentService(
@@ -456,7 +460,9 @@ struct RemoteAgentRoutingTests {
         // on a third-party provider, the URL builder must throw rather than POST
         // `/chat/completions` (the path that produced "Model default not found").
         let service = RemoteProviderService(
-            provider: Self.makeNonOsaurusProvider(), models: ["fugu/fugu"], resolvedHeaders: [:]
+            provider: Self.makeNonOsaurusProvider(),
+            models: ["fugu/fugu"],
+            resolvedHeaders: [:]
         )
         let req = await service.buildChatRequest(
             messages: [ChatMessage(role: "user", content: "hi")],
@@ -477,7 +483,9 @@ struct RemoteAgentRoutingTests {
         // provider must still build a `/chat/completions` URL — the guard only
         // fires for agent runs.
         let service = RemoteProviderService(
-            provider: Self.makeNonOsaurusProvider(), models: ["fugu/fugu"], resolvedHeaders: [:]
+            provider: Self.makeNonOsaurusProvider(),
+            models: ["fugu/fugu"],
+            resolvedHeaders: [:]
         )
         let req = await service.buildChatRequest(
             messages: [ChatMessage(role: "user", content: "hi")],

@@ -141,7 +141,8 @@ struct AgentChannelConnection: Codable, Equatable, Identifiable, Sendable {
 
     static func normalizedIds(_ ids: [String]) -> [String] {
         var seen = Set<String>()
-        return ids
+        return
+            ids
             .map(normalizedId)
             .filter { !$0.isEmpty && seen.insert($0).inserted }
     }
@@ -178,7 +179,8 @@ struct AgentChannelConfiguration: Codable, Equatable, Sendable {
         _ connections: [AgentChannelConnection]
     ) -> [AgentChannelConnection] {
         var seen = Set<String>()
-        return connections
+        return
+            connections
             .map(\.normalized)
             .filter { !$0.id.isEmpty && seen.insert($0.id).inserted }
     }

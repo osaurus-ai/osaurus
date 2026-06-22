@@ -68,7 +68,7 @@ final class RepositoryGlobalProxySettingsTests: XCTestCase {
             )
 
             await withTaskGroup(of: Void.self) { group in
-                for _ in 0..<20 {
+                for _ in 0 ..< 20 {
                     group.addTask {
                         _ = RepositoryGlobalProxySettings.sharedSession()
                     }
@@ -195,9 +195,12 @@ private final class RepositoryProxyHTTPTestServer: @unchecked Sendable {
                     let headers = Data(
                         "HTTP/1.1 200 OK\r\nContent-Length: \(body.count)\r\nConnection: close\r\n\r\n".utf8
                     )
-                    connection.send(content: headers + body, completion: .contentProcessed { _ in
-                        connection.cancel()
-                    })
+                    connection.send(
+                        content: headers + body,
+                        completion: .contentProcessed { _ in
+                            connection.cancel()
+                        }
+                    )
                 }
             }
             listener.start(queue: queue)

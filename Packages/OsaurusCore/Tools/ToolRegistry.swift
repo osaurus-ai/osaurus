@@ -198,6 +198,7 @@ final class ToolRegistry: ObservableObject {
             DBMigrateTool(),
             DBInsertTool(),
             DBUpsertTool(),
+            DBImportTool(),
             DBUpdateTool(),
             DBDeleteTool(),
             DBRestoreTool(),
@@ -844,7 +845,8 @@ final class ToolRegistry: ObservableObject {
         // marker is a leading root key, so scanning the whole string just to
         // detect it could hang the UI.
         if raw.prefix(4096).contains("\"action\":\"\(SecretPromptAction.actionKey)\""),
-            SecretPromptParser.parse(raw) != nil {
+            SecretPromptParser.parse(raw) != nil
+        {
             return raw
         }
 

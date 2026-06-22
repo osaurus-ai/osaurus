@@ -1525,7 +1525,8 @@ final class PluginHostContext: @unchecked Sendable {
                     policy: AgentLoopPolicy(
                         maxIterations: prep.options.maxIterations,
                         stopOnToolRejection: false,
-                        dedupeNoticeEnabled: false
+                        dedupeNoticeEnabled: false,
+                        maxDataMovementSteps: min(16, prep.options.maxIterations)
                     ),
                     state: taskState,
                     hooks: hooks
@@ -1999,7 +2000,8 @@ final class PluginHostContext: @unchecked Sendable {
                     policy: AgentLoopPolicy(
                         maxIterations: prep.options.maxIterations,
                         stopOnToolRejection: false,
-                        dedupeNoticeEnabled: false
+                        dedupeNoticeEnabled: false,
+                        maxDataMovementSteps: min(16, prep.options.maxIterations)
                     ),
                     state: taskState,
                     hooks: hooks

@@ -75,7 +75,8 @@ struct ScreenCaptureKitScreenshotCapturer: ScreenshotImageCapturing {
     private static func displayToCapture(from displays: [SCDisplay]) async -> SCDisplay? {
         guard !displays.isEmpty else { return nil }
         if let mainID = await mainDisplayID(),
-            let main = displays.first(where: { $0.displayID == mainID }) {
+            let main = displays.first(where: { $0.displayID == mainID })
+        {
             return main
         }
         return displays.first
@@ -83,12 +84,14 @@ struct ScreenCaptureKitScreenshotCapturer: ScreenshotImageCapturing {
 
     private static func pngData(from image: CGImage) throws -> Data {
         let data = NSMutableData()
-        guard let destination = CGImageDestinationCreateWithData(
-            data,
-            UTType.png.identifier as CFString,
-            1,
-            nil
-        ) else {
+        guard
+            let destination = CGImageDestinationCreateWithData(
+                data,
+                UTType.png.identifier as CFString,
+                1,
+                nil
+            )
+        else {
             throw ScreenshotCaptureError.pngEncodingFailed
         }
         CGImageDestinationAddImage(destination, image, nil)
@@ -208,17 +211,20 @@ final class ScreenshotCaptureService: @unchecked Sendable {
 
     static func sanitizedFilename(_ raw: String?, now: Date) -> String {
         let fallback = "screenshot-\(Int(now.timeIntervalSince1970))"
-        let candidate = raw?
+        let candidate =
+            raw?
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .components(separatedBy: CharacterSet(charactersIn: "/:\\"))
             .last
             ?? ""
         let withoutExtension = (candidate as NSString).deletingPathExtension
         let stemSource = withoutExtension.isEmpty ? candidate : withoutExtension
-        let sanitizedStem = stemSource
+        let sanitizedStem =
+            stemSource
             .map { character -> Character in
                 if character.isASCII,
-                    character.isLetter || character.isNumber || character == "-" || character == "_" {
+                    character.isLetter || character.isNumber || character == "-" || character == "_"
+                {
                     return character
                 }
                 return "-"

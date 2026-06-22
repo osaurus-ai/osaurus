@@ -97,20 +97,29 @@ struct InsightsConnectionActivityTests {
         // Two rows for our key (10 + 30 tok/s), one row for a different key.
         InsightsService.shared.log(
             inboundLog(
-                keyId: keyId, audience: aud, outputTokens: 10, durationMs: 1000,
+                keyId: keyId,
+                audience: aud,
+                outputTokens: 10,
+                durationMs: 1000,
                 timestamp: base
             )
         )
         let newest = base.addingTimeInterval(60)
         InsightsService.shared.log(
             inboundLog(
-                keyId: keyId, audience: aud, outputTokens: 30, durationMs: 1000,
+                keyId: keyId,
+                audience: aud,
+                outputTokens: 30,
+                durationMs: 1000,
                 timestamp: newest
             )
         )
         InsightsService.shared.log(
             inboundLog(
-                keyId: otherKey, audience: aud, outputTokens: 99, durationMs: 1000,
+                keyId: otherKey,
+                audience: aud,
+                outputTokens: 99,
+                durationMs: 1000,
                 timestamp: base
             )
         )
@@ -147,13 +156,19 @@ struct InsightsConnectionActivityTests {
 
         InsightsService.shared.log(
             inboundLog(
-                keyId: keyA, audience: aud, outputTokens: 10, durationMs: 1000,
+                keyId: keyA,
+                audience: aud,
+                outputTokens: 10,
+                durationMs: 1000,
                 timestamp: base
             )
         )
         InsightsService.shared.log(
             inboundLog(
-                keyId: keyB, audience: aud, outputTokens: 20, durationMs: 1000,
+                keyId: keyB,
+                audience: aud,
+                outputTokens: 20,
+                durationMs: 1000,
                 timestamp: base
             )
         )
@@ -201,8 +216,11 @@ struct InsightsConnectionActivityTests {
     @Test func focusByAccessKeyId_targetsMatchingLog() {
         let keyId = "key-\(UUID().uuidString)"
         let log = inboundLog(
-            keyId: keyId, audience: "agent-\(UUID().uuidString)",
-            outputTokens: 7, durationMs: 700, timestamp: Date()
+            keyId: keyId,
+            audience: "agent-\(UUID().uuidString)",
+            outputTokens: 7,
+            durationMs: 700,
+            timestamp: Date()
         )
         InsightsService.shared.log(log)
 

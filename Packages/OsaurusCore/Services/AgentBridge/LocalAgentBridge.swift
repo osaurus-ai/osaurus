@@ -69,6 +69,20 @@ public final class LocalAgentBridge: @unchecked Sendable, AgentRuntimeBridge {
         try AgentDatabaseStore.shared.database(for: agentId).query(sql: sql, params: params)
     }
 
+    /// Paged read: `limit` caps the returned rows (up to the engine's hard
+    /// max) and `offset` skips rows so a caller can walk a large result set
+    /// across calls. Overload of `query(agentId:sql:params:)`.
+    public func query(
+        agentId: UUID,
+        sql: String,
+        params: [AgentSQLValue],
+        limit: Int?,
+        offset: Int?
+    ) throws -> AgentQueryResult {
+        try AgentDatabaseStore.shared.database(for: agentId)
+            .query(sql: sql, params: params, limit: limit, offset: offset)
+    }
+
     public func schemaSnapshot(agentId: UUID) throws -> String {
         let schema = try AgentDatabaseStore.shared.database(for: agentId).schema()
         return SchemaSnapshot.render(schema)
@@ -215,6 +229,69 @@ public final class LocalAgentBridge: @unchecked Sendable, AgentRuntimeBridge {
                 runId: ChatExecutionContext.currentRunId
             )
             return AgentInsertResult(rowID: rowID)
+        }
+    }
+
+    @discardableResult
+    public func insertMany(
+        agentId: UUID,
+        table: String,
+        rows: [[String: AgentSQLValue]]
+    ) throws -> AgentBulkInsertResult {
+        try serialized(agentId) {
+            let database = try AgentDatabaseStore.shared.database(for: agentId)
+            let rowIDs = try database.insertMany(
+                table: table,
+                rows: rows,
+                actor: self.currentActor(),
+                runId: ChatExecutionContext.currentRunId
+            )
+            return AgentBulkInsertResult(rowIDs: rowIDs, count: rowIDs.count)
+        }
+    }
+
+    @discardableResult
+    public func upsertMany(
+        agentId: UUID,
+        table: String,
+        keyColumns: [String],
+        rows: [[String: AgentSQLValue]]
+    ) throws -> AgentMutationResult {
+        try serialized(agentId) {
+            let database = try AgentDatabaseStore.shared.database(for: agentId)
+            let count = try database.upsertMany(
+                table: table,
+                keyColumns: keyColumns,
+                rows: rows,
+                actor: self.currentActor(),
+                runId: ChatExecutionContext.currentRunId
+            )
+            return AgentMutationResult(rowsAffected: count)
+        }
+    }
+
+    @discardableResult
+    public func importRows(
+        agentId: UUID,
+        table: String,
+        rows: [[String: AgentSQLValue]],
+        keyColumns: [String],
+        columns: [String]
+    ) throws -> AgentImportResult {
+        try serialized(agentId) {
+            let database = try AgentDatabaseStore.shared.database(for: agentId)
+            let imported = try database.importRows(
+                table: table,
+                rows: rows,
+                keyColumns: keyColumns,
+                actor: self.currentActor(),
+                runId: ChatExecutionContext.currentRunId
+            )
+            return AgentImportResult(
+                table: table,
+                rowsImported: imported,
+                columns: columns
+            )
         }
     }
 

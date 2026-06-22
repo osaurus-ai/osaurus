@@ -104,7 +104,8 @@ extension EvalRunner {
                     at: target.deletingLastPathComponent(),
                     withIntermediateDirectories: true
                 )
-                try file.contents.write(to: target, atomically: true, encoding: .utf8)
+                let body = try workspaceFileContents(file)
+                try body.write(to: target, atomically: true, encoding: .utf8)
             }
         } catch {
             try? FileManager.default.removeItem(at: workspace)
@@ -222,6 +223,49 @@ extension EvalRunner {
                     secret.value,
                     id: secret.key,
                     agentId: evalAgentId
+                )
+            }
+        }
+
+        // Pre-seed the agent DB (requires dbEnabled). Each entry runs through
+        // the same multi-statement `db_execute` path the agent uses, so a
+        // case can stage baseline rows ("yesterday") before the model sees
+        // the task. Runs after the eval agent + any sandbox setup so the
+        // per-agent DB exists; failures error the case rather than scoring a
+        // misleading FAIL against an unseeded DB.
+        if let seeds = testCase.fixtures.seedSql, !seeds.isEmpty {
+            guard let seedAgentId = evalAgentId else {
+                return .terminal(
+                    id: testCase.id,
+                    label: label,
+                    domain: testCase.domain,
+                    outcome: .errored,
+                    notes: ["seedSql requires fixtures.agentCapabilities.dbEnabled"],
+                    modelId: modelId
+                )
+            }
+            do {
+                for sql in seeds {
+                    _ = try LocalAgentBridge.shared.execute(
+                        agentId: seedAgentId,
+                        sql: sql,
+                        params: []
+                    )
+                }
+            } catch {
+                if sandboxFixture != nil {
+                    await cleanupSandboxCase(
+                        agentId: seedAgentId,
+                        pluginIdsBeforeRun: pluginIdsBeforeRun
+                    )
+                }
+                return .terminal(
+                    id: testCase.id,
+                    label: label,
+                    domain: testCase.domain,
+                    outcome: .errored,
+                    notes: ["seedSql failed: \(error.localizedDescription)"],
+                    modelId: modelId
                 )
             }
         }
@@ -545,6 +589,46 @@ extension EvalRunner {
     /// tools later read/write). Contents ride base64 so arbitrary code
     /// fixtures survive the shell pipeline. Returns an error string on
     /// failure, nil on success.
+    /// Resolve a `WorkspaceFile`'s body: inline `contents` wins; otherwise
+    /// load `contentsFromFixture` from the committed fixtures tree; an empty
+    /// file when neither is set.
+    static func workspaceFileContents(_ file: EvalCase.WorkspaceFile) throws -> String {
+        if let inline = file.contents { return inline }
+        if let fixture = file.contentsFromFixture, !fixture.isEmpty {
+            return try resolveFixtureFileContents(fixture)
+        }
+        return ""
+    }
+
+    /// Load a fixture file's text, trying the candidate locations in order.
+    private static func resolveFixtureFileContents(_ relative: String) throws -> String {
+        let candidates = fixtureContentCandidateURLs(relative)
+        for url in candidates where FileManager.default.fileExists(atPath: url.path) {
+            return try String(contentsOf: url, encoding: .utf8)
+        }
+        throw NSError(
+            domain: "OsaurusEvals",
+            code: 1,
+            userInfo: [
+                NSLocalizedDescriptionKey:
+                    "contentsFromFixture '\(relative)' not found (looked in: "
+                    + candidates.map(\.path).joined(separator: ", ") + ")"
+            ]
+        )
+    }
+
+    /// On-disk candidates for a `contentsFromFixture` path, most specific
+    /// first. Evals run from the repo root (`make evals`), so the
+    /// package-relative `Fixtures/` locations resolve there; an absolute or
+    /// CWD-relative path is honored as-is.
+    private static func fixtureContentCandidateURLs(_ relative: String) -> [URL] {
+        [
+            URL(fileURLWithPath: relative),
+            URL(fileURLWithPath: "Packages/OsaurusEvals/Fixtures/\(relative)"),
+            URL(fileURLWithPath: "Packages/OsaurusEvals/Fixtures/AgentDB/\(relative)"),
+        ]
+    }
+
     private static func seedSandboxFile(
         _ file: EvalCase.WorkspaceFile,
         agentName: String
@@ -552,7 +636,13 @@ extension EvalRunner {
         let home = OsaurusPaths.inContainerAgentHome(agentName)
         let absolute = home + "/" + file.path
         let directory = (absolute as NSString).deletingLastPathComponent
-        let encoded = Data(file.contents.utf8).base64EncodedString()
+        let contents: String
+        do {
+            contents = try workspaceFileContents(file)
+        } catch {
+            return error.localizedDescription
+        }
+        let encoded = Data(contents.utf8).base64EncodedString()
         do {
             let result = try await SandboxManager.shared.execAsAgent(
                 agentName,
@@ -833,13 +923,21 @@ extension EvalRunner {
                 failures.append("errors \(errs) > max \(maxErrors)")
             }
         }
-        if let needle = audit.argsMustContain,
-            !calls.contains(where: { $0.arguments.contains(needle) })
-        {
-            failures.append("no call args contain '\(needle)'")
+        // Substring checks are case-INSENSITIVE, matching the sibling
+        // default-agent matcher (`scoreArgsMustContain`): the model's
+        // arg/value casing must not flake the assertion. e.g. a model that
+        // pages with SQL `... LIMIT 1 OFFSET 22` satisfies `offset` just as
+        // one that passes the typed `offset` parameter does — both are real
+        // offset paging, and the audit shouldn't reject one on casing alone.
+        if let needle = audit.argsMustContain {
+            let lowerNeedle = needle.lowercased()
+            if !calls.contains(where: { $0.arguments.lowercased().contains(lowerNeedle) }) {
+                failures.append("no call args contain '\(needle)'")
+            }
         }
         if let forbidden = audit.argsMustNotContain {
-            let offenders = calls.filter { $0.arguments.contains(forbidden) }
+            let lowerForbidden = forbidden.lowercased()
+            let offenders = calls.filter { $0.arguments.lowercased().contains(lowerForbidden) }
             if !offenders.isEmpty {
                 failures.append("\(offenders.count) call(s) args contain forbidden '\(forbidden)'")
             }
@@ -912,6 +1010,18 @@ extension EvalRunner {
                 "dbState (\(assertion.sql)): \(result.rows.count) rows < required \(floor)"
             )
         }
+        if let exact = assertion.expectRowCountEquals, result.rows.count != exact {
+            return (
+                false,
+                "dbState (\(assertion.sql)): \(result.rows.count) rows != expected \(exact)"
+            )
+        }
+        if let expectedColumns = assertion.expectColumns, result.columns != expectedColumns {
+            return (
+                false,
+                "dbState (\(assertion.sql)): columns \(result.columns) != expected \(expectedColumns)"
+            )
+        }
         if let expected = assertion.expectFirstValue {
             guard let first = result.rows.first?.first else {
                 return (false, "dbState (\(assertion.sql)): no rows, expected first value '\(expected)'")
@@ -922,6 +1032,31 @@ extension EvalRunner {
                     false,
                     "dbState (\(assertion.sql)): first value '\(actual)' != expected '\(expected)'"
                 )
+            }
+        }
+        if let expectedValues = assertion.expectValues {
+            guard let firstRow = result.rows.first else {
+                return (
+                    false,
+                    "dbState (\(assertion.sql)): no rows, expected values \(expectedValues)"
+                )
+            }
+            guard firstRow.count >= expectedValues.count else {
+                return (
+                    false,
+                    "dbState (\(assertion.sql)): row has \(firstRow.count) columns, "
+                        + "expected at least \(expectedValues.count) values"
+                )
+            }
+            for (index, expected) in expectedValues.enumerated() {
+                let actual = canonicalSQLValueString(firstRow[index])
+                guard actual == expected else {
+                    return (
+                        false,
+                        "dbState (\(assertion.sql)): value[\(index)] '\(actual)' "
+                            + "!= expected '\(expected)'"
+                    )
+                }
             }
         }
         return (true, "dbState ok (\(assertion.sql)): \(result.rows.count) rows")
