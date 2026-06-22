@@ -48,6 +48,12 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             /// Routing returned `.none` for a non-empty model request for some
             /// other reason (e.g. provider marked disconnected). Maps to 503.
             case noServiceAvailable(requested: String)
+            /// A Mode 2 remote-agent run was requested but the paired agent's
+            /// provider isn't among the connected services (e.g. it
+            /// disconnected mid-flight). Fails closed instead of falling back
+            /// to model-string routing, which could silently retarget a
+            /// different local provider. Maps to 503.
+            case remoteAgentUnavailable
         }
 
         let kind: Kind
@@ -58,6 +64,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                 return "Model '\(requested)' is not installed or registered with any provider."
             case .noServiceAvailable(let requested):
                 return "No service is currently available to handle model '\(requested)'."
+            case .remoteAgentUnavailable:
+                return "The selected remote agent isn't connected. Reconnect to the agent and try again."
             }
         }
 
@@ -66,6 +74,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             switch kind {
             case .modelNotFound: return 404
             case .noServiceAvailable: return 503
+            case .remoteAgentUnavailable: return 503
             }
         }
     }
@@ -160,6 +169,33 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             idempotencyKey: request.idempotencyKey,
             runAsRemoteAgent: request.runAsRemoteAgent
         )
+
+        // Mode 2 (remote agent run): route to the *selected agent's provider*,
+        // never by the model string. A stale `selectedModel` left over from
+        // earlier local testing (e.g. "fugu/...") must not redirect an agent
+        // run to a different local provider — that produced opaque upstream
+        // 404s ("Model default not found"). The peer resolves its own
+        // effective model server-side, so the model field here is irrelevant.
+        if request.runAsRemoteAgent, let agentProviderId = request.remoteAgentProviderId {
+            let remoteServices = await remoteServicesProvider()
+            if let agentService = Self.remoteAgentService(
+                providerId: agentProviderId, in: remoteServices
+            ) {
+                let effective = request.remoteAgentLogModel ?? request.model
+                RemoteAgentRunLog.client(
+                    "dispatch route=provider providerId=\(agentProviderId.uuidString) effectiveModel=\(effective) reqModel=\(request.model)"
+                )
+                return Dispatch(
+                    route: .service(service: agentService, effectiveModel: effective),
+                    params: params,
+                    remoteServices: remoteServices
+                )
+            }
+            RemoteAgentRunLog.clientError(
+                "dispatch remote agent providerId=\(agentProviderId.uuidString) not in connected services; failing closed"
+            )
+            return Dispatch(route: .none, params: params, remoteServices: remoteServices)
+        }
 
         let services = self.services
         trace?.mark("route_resolve_local")
@@ -643,6 +679,9 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             )
 
         case .none:
+            if request.runAsRemoteAgent, request.remoteAgentProviderId != nil {
+                throw EngineError(kind: .remoteAgentUnavailable)
+            }
             throw EngineError(kind: .modelNotFound(requested: request.model))
         }
     }
@@ -692,6 +731,18 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             debugLog("[ChatEngine] streamChat: streamDeltas returned")
             return plainStream
         }
+    }
+
+    /// Mode 2 routing primitive: pick the paired agent's `RemoteProviderService`
+    /// by its `provider.id`, never by the model string — a stale `selectedModel`
+    /// (e.g. a leftover local provider prefix) must not redirect a remote-agent
+    /// run to a different provider. `static` and pure over the immutable
+    /// `provider` `let`, so it's unit-testable without standing up an engine.
+    static func remoteAgentService(
+        providerId: UUID,
+        in remoteServices: [ModelService]
+    ) -> ModelService? {
+        remoteServices.first { ($0 as? RemoteProviderService)?.provider.id == providerId }
     }
 
     /// Build Insights connection + attribution metadata for a remote send so a
@@ -1347,6 +1398,9 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
 
             return response
         case .none:
+            if request.runAsRemoteAgent, request.remoteAgentProviderId != nil {
+                throw EngineError(kind: .remoteAgentUnavailable)
+            }
             throw EngineError(kind: .modelNotFound(requested: request.model))
         }
     }

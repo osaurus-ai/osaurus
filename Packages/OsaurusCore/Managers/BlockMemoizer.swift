@@ -21,6 +21,12 @@ final class BlockMemoizer {
     private var lastThinkingLen = 0
     private var lastPendingToolName: String?
     private var lastPendingToolArgSize = 0
+    /// Remote-agent (Mode 2) tool-activity counter of the streaming turn. A
+    /// trace can change the persistent remote tool chips without touching
+    /// content/thinking length or `pendingToolName`, so without this the fast
+    /// path would keep returning the stale cached blocks and the chips would
+    /// never appear/transition during a remote run.
+    private var lastRemoteToolTick = 0
     private var lastVersion = -1
     /// The agent name baked into cached header blocks. A change (e.g. switching
     /// from a local agent to a remote one) must force a full rebuild so stale
@@ -48,6 +54,7 @@ final class BlockMemoizer {
         let thinkingLen = turns.last?.thinkingLength ?? 0
         let pendingToolName = turns.last?.pendingToolName
         let pendingToolArgSize = turns.last?.pendingToolArgSize ?? 0
+        let remoteToolTick = turns.last?.remoteToolActivityTick ?? 0
         // The header name is baked into cached blocks; a change must invalidate
         // the fast / incremental / append paths so headers re-render with it.
         let agentNameChanged = agentName != lastAgentName
@@ -58,6 +65,7 @@ final class BlockMemoizer {
             && contentLen == lastContentLen && thinkingLen == lastThinkingLen
             && pendingToolName == lastPendingToolName
             && pendingToolArgSize == lastPendingToolArgSize
+            && remoteToolTick == lastRemoteToolTick
             && version == lastVersion && !cached.isEmpty
             && streamingTurnId == lastStreamingTurnId
         {
@@ -121,6 +129,7 @@ final class BlockMemoizer {
         lastThinkingLen = thinkingLen
         lastPendingToolName = pendingToolName
         lastPendingToolArgSize = pendingToolArgSize
+        lastRemoteToolTick = remoteToolTick
         lastVersion = version
         lastStreamingTurnId = streamingTurnId
         lastAgentName = agentName

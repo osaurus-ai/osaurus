@@ -2611,21 +2611,39 @@ final class ChatSession: ObservableObject {
             for try await delta in stream {
                 if !isRunActive(runId) {
                     await processor.finalize()
+                    // Cancelled mid-run: don't leave a remote tool chip
+                    // shimmering forever — settle any still-running rows.
+                    currentTurn.finalizeRemoteToolActivity()
                     return ([], currentTurn)
                 }
                 // Mode 2 (remote agent run): the remote device executes the
-                // tools and streams back only a sanitized trace. Surface it as
-                // a transient "running <tool>" chip so the observer sees
-                // progress during the silent tool phase. `pendingToolName` is
-                // display-only (never persisted); cleared when the tool ends.
+                // tools and streams back only a sanitized trace (name + phase +
+                // error state — never raw args/results). Accumulate it into a
+                // persistent per-turn tool-call group so the observer keeps a
+                // visible record of every tool the remote agent ran
+                // (running → done/failed), instead of a chip that vanished the
+                // instant the tool finished. The activity is display-only and is
+                // never re-sent as history (see `ChatTurn.remoteToolActivity`).
                 if let trace = StreamingAgentToolHint.decode(delta) {
+                    let callKey =
+                        (trace.callId?.isEmpty == false) ? trace.callId! : trace.name
                     switch trace.phase {
                     case "started":
-                        currentTurn.pendingToolName = trace.name.isEmpty ? nil : trace.name
+                        currentTurn.noteRemoteToolStarted(callId: callKey, name: trace.name)
                     default:
-                        // "completed" (or anything terminal) clears the chip.
-                        currentTurn.pendingToolName = nil
+                        // "completed" (or anything terminal) stamps the result.
+                        currentTurn.noteRemoteToolFinished(
+                            callId: callKey, name: trace.name, isError: trace.isError
+                        )
                     }
+                    if trace.endRun {
+                        currentTurn.finalizeRemoteToolActivity()
+                    }
+                    RemoteAgentRunLog.client(
+                        "tool trace phase=\(trace.phase) "
+                            + "name=\(trace.name.isEmpty ? "<unknown>" : trace.name) "
+                            + "isError=\(trace.isError) endRun=\(trace.endRun)"
+                    )
                     rebuildVisibleBlocks()
                     continue
                 }
@@ -2781,6 +2799,19 @@ final class ChatSession: ObservableObject {
         // `send()`'s return so the residual buffer is rendered, not
         // dropped on dealloc.
         await processor.finalize()
+
+        // Mode 2 safety net: if the stream ended without an explicit
+        // `endRun` trace (clean end, network cutoff, or a peer that doesn't
+        // send one), settle any remote tool rows still marked "running" so
+        // none shimmer indefinitely. No-op for non-remote turns.
+        currentTurn.finalizeRemoteToolActivity()
+        if currentTurn.hasRemoteToolActivity {
+            RemoteAgentRunLog.client(
+                "stream end remoteTools=\(currentTurn.remoteToolActivity.count) "
+                    + "contentDeltas=\(uiDeltaCount) reasoningDeltas=\(uiReasoningDeltaCount) "
+                    + "finalContentLen=\(currentTurn.contentLength)"
+            )
+        }
 
         if let first = firstDeltaTime {
             currentTurn.timeToFirstToken = first.timeIntervalSince(streamStartTime)
@@ -3889,7 +3920,12 @@ final class ChatSession: ObservableObject {
                                 attempt: attempt
                             )
                             var req = ChatCompletionRequest(
-                                model: self.selectedModel ?? "default",
+                                // Mode 2: the wire omits the model and routing is
+                                // by provider id, so don't pass the local
+                                // `selectedModel` — it can lag the async agent pin
+                                // and would only leak a stale prefix internally.
+                                model: self.isRemoteAgentTarget
+                                    ? "default" : (self.selectedModel ?? "default"),
                                 messages: msgs,
                                 temperature: effectiveTemp,
                                 max_tokens: effectiveMaxTokensForAgent,
@@ -3906,14 +3942,25 @@ final class ChatSession: ObservableObject {
                             req.samplingParametersAreImplicit = true
                             // Mode 2 routing signal: tells `RemoteProviderService`
                             // to target the peer's `/agents/{address}/run`
-                            // endpoint (remote agent runs fully server-side) and
-                            // to send `model: "default"` so the agent's live
-                            // effective model is used. False = Mode 1 (plain
-                            // remote inference via `/chat/completions`).
+                            // endpoint (remote agent runs fully server-side). The
+                            // local `model` placeholder above is dropped from the
+                            // wire entirely (`RemoteChatRequest.encode`), so the
+                            // peer resolves its own live effective model. False =
+                            // Mode 1 (plain remote inference via
+                            // `/chat/completions`).
                             req.runAsRemoteAgent = self.isRemoteAgentTarget
-                            // Insights fidelity: in Mode 2 the wire model is
-                            // `default`, so log the agent's live effective
-                            // model instead of the local prefixed fallback.
+                            // Mode 2 routing: target the selected agent's
+                            // provider directly (by id), so a stale
+                            // `selectedModel` can never redirect the run to a
+                            // different local provider. `ChatEngine` resolves
+                            // the service from this id and ignores the model
+                            // string for agent runs.
+                            req.remoteAgentProviderId =
+                                self.isRemoteAgentTarget
+                                ? self.windowState?.selectedDiscoveredAgentProviderId : nil
+                            // Insights fidelity: in Mode 2 the wire omits the
+                            // model, so log the agent's live effective model
+                            // instead of the local prefixed fallback.
                             req.remoteAgentLogModel =
                                 self.isRemoteAgentTarget
                                 ? self.windowState?.pinnedRemoteAgentEffectiveModel : nil
@@ -4167,6 +4214,14 @@ final class ChatSession: ObservableObject {
                             )
                             finalReq.samplingParametersAreImplicit = true
                             finalReq.runAsRemoteAgent = isRemoteAgentTarget
+                            // Carry the agent provider id on this path too so
+                            // the route-by-provider invariant holds for *every*
+                            // Mode 2 request — a `runAsRemoteAgent` send with no
+                            // provider id would fall back to model-string
+                            // routing (the exact mis-route this fix removes).
+                            finalReq.remoteAgentProviderId =
+                                isRemoteAgentTarget
+                                ? windowState?.selectedDiscoveredAgentProviderId : nil
                             finalReq.remoteAgentLogModel =
                                 isRemoteAgentTarget
                                 ? windowState?.pinnedRemoteAgentEffectiveModel : nil

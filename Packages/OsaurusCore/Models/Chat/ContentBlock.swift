@@ -204,6 +204,22 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
         )
     }
 
+    /// Display-only tool-call group for remote-agent (Mode 2) activity. Reuses
+    /// the `.toolCallGroup` kind (same rendering / height / caching), but with a
+    /// distinct id so it can never collide with a turn's real tool group in the
+    /// table/diff (it never coexists in Mode 2 — the client runs no tools — but
+    /// the id space stays unambiguous regardless).
+    static func remoteToolActivityGroup(turnId: UUID, calls: [ToolCallItem], position: BlockPosition)
+        -> ContentBlock
+    {
+        ContentBlock(
+            id: "remote-toolgroup-\(turnId.uuidString)",
+            turnId: turnId,
+            kind: .toolCallGroup(calls: calls),
+            position: position
+        )
+    }
+
     /// Stable id for a turn's thinking block. Shared by the factory and the
     /// reasoning-only auto-expand seeding so the two never drift apart.
     static func thinkingBlockId(turnId: UUID, index: Int = 0) -> String {
@@ -410,6 +426,30 @@ extension ContentBlock {
                 )
             }
 
+            // Mode 2 remote-agent tool activity, rendered above the answer so it
+            // reads chronologically ("called these tools, then replied"). Each
+            // row is reconstructed from sanitized traces: a missing result keeps
+            // it shimmering ("running"), a failure envelope turns it red, any
+            // other result marks it done. Agent-loop control tools (todo /
+            // complete / clarify) are filtered to match local behavior.
+            if turn.hasRemoteToolActivity {
+                let remoteItems =
+                    turn.remoteToolActivity
+                    .filter { !Self.isAgentLoopToolName($0.function.name) }
+                    .map { call in
+                        ToolCallItem(
+                            call: call,
+                            result: turn.remoteToolResults[call.id],
+                            duration: nil
+                        )
+                    }
+                if !remoteItems.isEmpty {
+                    turnBlocks.append(
+                        .remoteToolActivityGroup(turnId: turn.id, calls: remoteItems, position: .middle)
+                    )
+                }
+            }
+
             if hasVisibleContent {
                 // during streaming, skip the regex-based metadata strip (O(n) on every sync).
                 // visibleContent is used for the final render once streaming ends.
@@ -431,9 +471,12 @@ extension ContentBlock {
 
             if isStreaming && !hasVisibleContent && !hasRenderableThinking
                 && !hasSharedArtifacts && (turn.toolCalls ?? []).isEmpty && turn.pendingToolName == nil
+                && !turn.hasRemoteToolActivity
             {
                 // During prefill (no content/thinking/tools yet), always show the typing
-                // indicator so the interface doesn't appear frozen.
+                // indicator so the interface doesn't appear frozen. Skipped once a
+                // Mode 2 remote tool is running — the running tool chip already
+                // signals progress, so a typing indicator on top would be noise.
                 // Only add the thinking placeholder when thinking is actually enabled for
                 // this model — non-thinking models don't need it.
                 if thinkingEnabled {
@@ -452,7 +495,8 @@ extension ContentBlock {
             }
 
             if !isStreaming && !hasVisibleContent && !hasRenderableThinking
-                && !hasSharedArtifacts && (turn.toolCalls ?? []).isEmpty && turn.pendingToolName == nil,
+                && !hasSharedArtifacts && (turn.toolCalls ?? []).isEmpty && turn.pendingToolName == nil
+                && !turn.hasRemoteToolActivity,
                 let billing = turn.routerBilling
             {
                 // The router billed this turn but it produced no visible text,
@@ -463,6 +507,7 @@ extension ContentBlock {
                 )
             } else if !isStreaming && !hasVisibleContent && !hasRenderableThinking
                 && !hasSharedArtifacts && (turn.toolCalls ?? []).isEmpty && turn.pendingToolName == nil
+                && !turn.hasRemoteToolActivity
                 && (turn.generationTokenCount != nil || turn.generationTokensPerSecond != nil)
             {
                 turnBlocks.append(

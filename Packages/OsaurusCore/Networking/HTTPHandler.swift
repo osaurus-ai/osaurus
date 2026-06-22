@@ -4356,6 +4356,23 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         return (url, context)
     }
 
+    /// Make a `/agents/{id}/run` body decodable when the caller omitted the
+    /// `model` key. Mode 2 callers intentionally do not send a model (the agent
+    /// runs its own effective model server-side), but the shared
+    /// `ChatCompletionRequest` decoder requires `model`. Inject an empty string
+    /// so decode succeeds; the run handler resolves empty/"default" → the
+    /// agent's effective model. Returns the original bytes unchanged when the
+    /// body isn't a JSON object or already carries a non-null `model`.
+    static func injectingEmptyModelIfMissing(_ data: Data) -> Data {
+        guard var obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return data
+        }
+        guard obj["model"] == nil || obj["model"] is NSNull else { return data }
+        obj["model"] = ""
+        guard let patched = try? JSONSerialization.data(withJSONObject: obj) else { return data }
+        return patched
+    }
+
     /// POST /agents/{id}/run — run the full agent chat loop server-side.
     ///
     /// Accepts a `ChatCompletionRequest` body. Runs inference with the agent's
@@ -4398,7 +4415,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             requestBodyString = nil
         }
 
-        guard let req = try? JSONDecoder().decode(ChatCompletionRequest.self, from: data) else {
+        // `/agents/{id}/run` does NOT require a `model`: a Mode 2 caller omits
+        // it on purpose because the agent runs its own effective model
+        // server-side. The shared `ChatCompletionRequest` decoder requires
+        // `model`, so inject an empty value when the caller omitted it; the
+        // resolver below maps empty/"default" → the agent's effective model.
+        let runDecodeData = Self.injectingEmptyModelIfMissing(data)
+        guard let req = try? JSONDecoder().decode(ChatCompletionRequest.self, from: runDecodeData) else {
             sendResponse(
                 context: context,
                 version: head.version,
@@ -4559,7 +4582,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
         runRequestTask(priority: .userInitiated) {
             defer { admissionToken.release() }
-            // Resolve model: client sends "default" when no specific model was known
+            // Resolve model: a Mode 2 caller omits `model` (decoded as empty),
+            // and older clients send the "default" sentinel. Both resolve to
+            // the agent's effective model server-side.
             let model: String
             if req.model.isEmpty || req.model == "default" {
                 let agentModel = await MainActor.run { AgentManager.shared.effectiveModel(for: agentId) }
@@ -4568,6 +4593,37 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 model = req.model
             }
             cancelModelBox.value = model
+
+            // No model on the request and none resolvable for the agent: fail
+            // fast with an in-band SSE error (the 200 head is already on the
+            // wire) instead of running the loop with an empty model and hitting
+            // an opaque downstream routing failure. An empty resolution is the
+            // canonical "agent has no model configured" signal. ("default" is
+            // left intact — it resolves to the host's local Foundation model.)
+            if model.isEmpty {
+                let msg =
+                    "This agent has no model configured. Set the agent's default model on the host and try again."
+                RemoteAgentRunLog.serverError(
+                    "run agent=\(agentId.uuidString) FAILED reqModel=\(req.model.isEmpty ? "<omitted>" : req.model) error=no_model_resolved"
+                )
+                hop {
+                    writerBound.value.writeError(msg, context: ctx.value)
+                    writerBound.value.writeEnd(ctx.value)
+                }
+                logSelf.logRequest(
+                    method: "POST",
+                    path: path,
+                    userAgent: logUserAgent,
+                    requestBody: logRequestBody,
+                    responseStatus: 200,
+                    startTime: logStartTime,
+                    errorMessage: msg
+                )
+                return
+            }
+            RemoteAgentRunLog.server(
+                "run start agent=\(agentId.uuidString) model=\(model) reqModel=\(req.model.isEmpty ? "<omitted>" : req.model)"
+            )
 
             // KPI: one agent run initiated via the HTTP endpoint. The
             // per-turn `message_sent` is emitted separately by ChatEngine on
@@ -4925,6 +4981,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                                     ).first ?? AgentLoopToolExecution(result: "")
                                 let execution = interceptAware(call.invocation, single)
                                 if emitAgentToolTrace {
+                                    RemoteAgentRunLog.server(
+                                        "tool completed agent=\(agentId.uuidString) name=\(call.invocation.toolName) "
+                                            + "callId=\(call.callId) isError=\(execution.isError) endRun=\(execution.endRun)"
+                                    )
                                     hop {
                                         writerBound.value.writeAgentToolTrace(
                                             phase: "completed",
@@ -4946,6 +5006,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         }
                         if emitAgentToolTrace {
                             for call in calls {
+                                RemoteAgentRunLog.server(
+                                    "tool started agent=\(agentId.uuidString) name=\(call.invocation.toolName) callId=\(call.callId)"
+                                )
                                 hop {
                                     writerBound.value.writeAgentToolTrace(
                                         phase: "started",
@@ -4976,6 +5039,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     var toolResultsByCallId: [(String, String)] = []
                     for outcome in outcomes {
                         if emitAgentToolTrace {
+                            RemoteAgentRunLog.server(
+                                "tool completed agent=\(agentId.uuidString) name=\(outcome.invocation.toolName) "
+                                    + "callId=\(outcome.callId) isError=\(outcome.wasError)"
+                            )
                             hop {
                                 writerBound.value.writeAgentToolTrace(
                                     phase: "completed",
@@ -5053,8 +5120,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         )
                     }
                 exitState = runResult.exit
+                RemoteAgentRunLog.server(
+                    "run loop done agent=\(agentId.uuidString) model=\(model) exit=\(String(describing: exitState))"
+                )
             } catch {
                 await releaseHostFolder()
+                RemoteAgentRunLog.serverError(
+                    "run loop FAILED agent=\(agentId.uuidString) model=\(model) error=\(error.localizedDescription)"
+                )
                 // SSE response head was already written as 200 — the
                 // failure surfaces as an in-band SSE error chunk. Log
                 // the actual on-wire status (200) so dashboards don't

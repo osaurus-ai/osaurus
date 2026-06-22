@@ -762,9 +762,15 @@ struct ChatCompletionRequest: Codable, Sendable {
     /// instead of the local prefixed fallback (e.g. `coco/foundation`) the
     /// picker pinned when the agent's real model isn't in the device catalog.
     /// Only meaningful for Mode 2 (`runAsRemoteAgent`); over the wire Mode 2
-    /// still sends `model: "default"`. Not decoded from OpenAI JSON and not
-    /// forwarded to remote providers.
+    /// omits `model` entirely (the peer resolves its own effective model).
+    /// Not decoded from OpenAI JSON and not forwarded to remote providers.
     var remoteAgentLogModel: String? = nil
+    /// Local-only: the `RemoteProvider` id of the remote agent this Mode 2 run
+    /// targets. With `runAsRemoteAgent`, `ChatEngine` routes directly to this
+    /// provider's service instead of by model string, so a stale `selectedModel`
+    /// (e.g. a leftover prefix like `fugu/...`) can't redirect an agent run to a
+    /// different provider. Not decoded from OpenAI JSON, not sent to providers.
+    var remoteAgentProviderId: UUID? = nil
 
     /// Resolved max tokens, preferring max_tokens then max_completion_tokens.
     var resolvedMaxTokens: Int? { max_tokens ?? max_completion_tokens }
@@ -808,6 +814,7 @@ struct ChatCompletionRequest: Codable, Sendable {
         copy.idempotencyKey = idempotencyKey
         copy.runAsRemoteAgent = runAsRemoteAgent
         copy.remoteAgentLogModel = remoteAgentLogModel
+        copy.remoteAgentProviderId = remoteAgentProviderId
         return copy
     }
 
@@ -846,6 +853,7 @@ struct ChatCompletionRequest: Codable, Sendable {
         copy.idempotencyKey = idempotencyKey
         copy.runAsRemoteAgent = runAsRemoteAgent
         copy.remoteAgentLogModel = remoteAgentLogModel
+        copy.remoteAgentProviderId = remoteAgentProviderId
         return copy
     }
 }
