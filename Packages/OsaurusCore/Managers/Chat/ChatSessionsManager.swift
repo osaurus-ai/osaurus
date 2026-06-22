@@ -29,13 +29,20 @@ final class ChatSessionsManager: ObservableObject {
         // (New Chat, agent switch) triggered a manual refresh.
         sessions = ChatSessionStore.loadAll()
 
-        // If the initial load raced a key rotation, `ChatSessionStore`
-        // deferred the DB open rather than parking the launch main thread,
-        // so `sessions` may be empty. Reload once the rotation settles.
-        NotificationCenter.default.publisher(for: StorageMutationGate.didFinishMutatingNotification)
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in self?.refresh() }
-            .store(in: &cancellables)
+        // Production-only launch-race recovery: if the initial load raced a
+        // key rotation, `ChatSessionStore` deferred the DB open rather than
+        // parking the launch main thread, leaving `sessions` empty. Reload
+        // once the rotation settles. Armed only when the initial load came
+        // back empty (the sole case a deferral matters), and never under
+        // tests — a rotation in an unrelated suite must not trigger a stray
+        // cross-suite DB reload on the main actor (see RuntimeEnvironment
+        // .isUnderTests for the prior contactsd main-actor-stall incident).
+        if sessions.isEmpty, !RuntimeEnvironment.isUnderTests {
+            NotificationCenter.default.publisher(for: StorageMutationGate.didFinishMutatingNotification)
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] _ in self?.refresh() }
+                .store(in: &cancellables)
+        }
     }
 
     // MARK: - Public API
