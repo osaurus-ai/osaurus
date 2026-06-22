@@ -82,7 +82,7 @@ struct VoiceSetupTab: View {
                         .animation(.spring(response: 0.5, dampingFraction: 0.85).delay(0.05), value: hasAppeared)
 
                     Spacer()
-                        .frame(height: 48)
+                        .frame(height: 24)
 
                     // Central voice test area
                     voiceTestSection
@@ -91,7 +91,7 @@ struct VoiceSetupTab: View {
                         .animation(.spring(response: 0.6, dampingFraction: 0.8).delay(0.15), value: hasAppeared)
 
                     Spacer()
-                        .frame(height: 32)
+                        .frame(height: 16)
 
                     // Privacy footer
                     privacyFooter
@@ -269,7 +269,7 @@ struct VoiceSetupTab: View {
     // MARK: - Voice Test Section
 
     private var voiceTestSection: some View {
-        VStack(spacing: 24) {
+        VStack(spacing: 12) {
             // Mic button with waveform ring
             micButton
 
