@@ -228,3 +228,26 @@ Minor gap: a DIRECT `/mcp/call` to `image_generate`/`image_edit` errors "no mode
 loaded — call FluxEngine.load first" (the MCP bridge bypasses the coordinator that
 owns the model load/handoff). MCP-direct image tools need a load step or to route
 through the coordinator; the chat/agent-run tool path is correct.
+
+## Main-chat spawn — WORKING (Codex live, 2026-06-21)
+Piece #1 (commit, surfacing) landed: the **main/default local chat now calls `image_generate`
+and renders the image INLINE**. Codex computer-use PASS on the default chat:
+- main chat invoked `image_generate {"prompt":"a single red apple..."}`,
+- FLUX ran to completion (`[flux] image shape=[1,3,1024,1024]`, new PNG),
+- the result rendered as a **first-class inline image card** in the chat ("Native image
+  generation result from FLUX.1-schnell-mflux-4bit", Open-in-Finder action).
+So the target flow (local main chat → spawn image → tool shown → bg gen → image inline) works.
+Piece #3 (inline render via `processNativeImageToolResult`) was already wired — confirmed live.
+
+### Remaining
+- **Intermittent mid-gen cancellation (reliability).** On some runs the chat-triggered image
+  job is cancelled (FLUX stops at `step0`) and the tool returns `"image generation finished
+  without a result"`, so the chat model then refuses. Root: image cancellation is **soft** —
+  the drive suppresses the result and finishes `.cancelled` when the consuming/parent task is
+  cancelled; the native-chat residency handoff (unloading the chat model mid-turn) can trip
+  that parent cancel as a self-inflicted race (agent-run's turn-task survives it). Fix
+  direction: decouple the chat-triggered image job from incidental parent-task cancellation
+  (honor only explicit `cancelledJobIDs`), and/or yield produced images even on a soft cancel.
+- **Piece #2 — first-use permission + model picker** (still to build): on first spawn, show the
+  standard Yes/No/Always tool-permission prompt extended with a spawn-model picker; persist the
+  choice to `AgentDelegationConfiguration`; the Spawn settings page reflects it.
