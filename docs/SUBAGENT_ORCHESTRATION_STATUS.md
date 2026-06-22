@@ -109,10 +109,19 @@ process name + `osaurus://` aren't ambiguous. Verified by screenshot + accessibi
   picker), Image Jobs (Enable Chat Image Jobs ON + Default Image Generator picker).
 - **Spawn settings text** read verbatim from the a11y tree — matches the source strings.
 - **Agents** and **Models** (On Device / Catalog / Images sub-tabs) tabs navigated.
-Open: the agent **cards** and Models sub-tabs expose no a11y labels (SwiftUI gap), so
-driving into the agent *editor* (per-agent toggle) and the image *panel* by automation is
-unreliable — needs a11y labels added to those cards, or manual visual check. The per-agent
-toggle + image panel are functionally proven regardless (gate test + image E2E).
+**Codex computer-use** (the proper tool — `codex exec` + bundled `computer-use` plugin,
+model gpt-5.3-codex-spark) then drove the two surfaces my AppleScript couldn't reach, and
+PASSED both:
+- **Per-agent toggle (agent editor → Sparky → Features):** title `Spawn & Delegation`,
+  description read verbatim ("Let this agent spawn helper jobs and sub-agents. Give the
+  agent the spawn / local_delegate / image_generate / image_edit tools …"), state ON.
+- **Image panel (Models → Images → FLUX.1 Schnell → Generate):** panel opened with Prompt,
+  Negative prompt (optional), Size (512² / 1,024²), Seed (random), Generate, Close.
+So ALL FOUR UI surfaces are render-verified. (Lesson: use Codex computer-use for GUI
+automation, not hand-rolled AppleScript — it reads the a11y tree + vision and navigates
+cards reliably.)
+A **live functional** pass (toggle ON→chat spawns image w/ load-unload handoff; toggle
+OFF→blocked; panel actually generates) is running via Codex computer-use.
 
 ## Per-agent delegation redesign (Eric 2026-06-21) — ✅ DONE (commit 34a3ed71)
 Spawn/delegation is now a **per-agent feature toggle** ("Spawn & Delegation" in the
