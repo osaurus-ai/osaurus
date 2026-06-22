@@ -188,7 +188,14 @@ let package = Package(
             ],
             path: ".",
             exclude: ["Tests", "SQLCipher"],
-            resources: [.process("Resources")]
+            resources: [.process("Resources")],
+            swiftSettings: [
+                // `SystemLanguageModel.contextSize` only exists in the macOS 26.4+
+                // SDK. Enable this flag when building against that SDK (or newer) to
+                // read the real on-device context window; leave it off on older SDKs
+                // (≤ 26.2), where FoundationModelService falls back to `nil`.
+                // .define("HAS_FM_CONTEXT_SIZE"),
+            ]
         ),
         .testTarget(
             name: "OsaurusCoreTests",
