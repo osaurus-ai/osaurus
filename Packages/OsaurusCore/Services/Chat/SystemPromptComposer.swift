@@ -1974,14 +1974,16 @@ public struct SystemPromptComposer: Sendable {
             byName.removeValue(forKey: ComputerUseTool.toolName)
         }
 
-        // Spawn / agent delegation is an AUTHORITATIVE per-agent gate, same as
-        // Computer Use: the spawn / local_delegate / image_generate / image_edit
-        // tools are stripped whenever the agent's `spawnDelegationEnabled` is off,
-        // in BOTH auto and manual mode. This ANDs with the global
-        // `AgentDelegationConfiguration` gates (which still control defaults and
-        // can disable a family wholesale) — a tool is offered only when the global
-        // config allows it AND this agent opted in.
-        if !snapshot.spawnDelegationEnabled {
+        // Spawn / agent delegation gate. For CUSTOM agents this is an
+        // AUTHORITATIVE per-agent gate, same as Computer Use: the spawn /
+        // local_delegate / image_generate / image_edit tools are stripped unless
+        // the agent's `spawnDelegationEnabled` is on (ANDs with the global
+        // `AgentDelegationConfiguration` family gates applied in alwaysLoadedSpecs).
+        // The DEFAULT / main chat is EXEMPT here — it is governed by the global
+        // Agent Delegation switch in the default-agent surface below (the user's
+        // main chat spawns when delegation is globally on; the first actual call
+        // prompts for permission + model). So we never strip it for the default agent.
+        if snapshot.agentId != Agent.defaultId, !snapshot.spawnDelegationEnabled {
             for name in ToolRegistry.agentDelegationAllToolNames {
                 byName.removeValue(forKey: name)
             }
@@ -1997,8 +1999,17 @@ public struct SystemPromptComposer: Sendable {
         //     into the schema, the strip filter keeps the model from
         //     seeing it.
         if snapshot.agentId == Agent.defaultId {
-            let allowed = ToolRegistry.defaultAgentAllowedToolNames
+            var allowed = ToolRegistry.defaultAgentAllowedToolNames
                 .union(additionalToolNames)
+            // Spawn UX: the main/default chat may call the delegation tools
+            // (image_generate / image_edit / spawn / local_delegate) when the
+            // global Agent Delegation switch is on. They survive the filter only
+            // if still in `byName` — i.e. the global family gates (applied in
+            // alwaysLoadedSpecs) allowed them. The first actual call prompts for
+            // permission + spawn-model choice.
+            if AgentDelegationConfigurationStore.snapshot().agentDelegationEnabled {
+                allowed.formUnion(ToolRegistry.agentDelegationAllToolNames)
+            }
             byName = byName.filter { allowed.contains($0.key) }
         } else {
             for name in ToolRegistry.configureToolNames {
