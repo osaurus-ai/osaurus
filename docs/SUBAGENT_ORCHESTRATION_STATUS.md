@@ -97,6 +97,23 @@ app-log/NSLog values, PNG bytes, SSE final text).
 - **`capabilities_discover` embedding SIGSEGV** (concurrent-GPU resource race, #34/#60
   family) — STILL OPEN; harden alongside #34 (the only remaining real gap).
 
+## UI automation verification (loop 2026-06-21)
+Established a working macOS UI-automation harness for the dev app (no MCP/Playwright):
+**System Events** (clicks + accessibility-tree text reads), **screencapture** (visual),
+and a custom **Swift scroll helper** (`/tmp/scroll.swift` → CGEvent scroll, needed for
+the sidebar). Prereq: quit the conflicting production `/Applications/osaurus.app` so the
+process name + `osaurus://` aren't ambiguous. Verified by screenshot + accessibility text:
+- **Spawn sidebar tab** renders (wand.and.stars icon, between Computer Use and Privacy).
+- **Spawn & Delegation page** (`SpawnSettingsView`) renders fully: header, How It Works
+  (4 bullets), Availability, Cloud Cost Saver (Local Orchestrator Handoff ON + delegate
+  picker), Image Jobs (Enable Chat Image Jobs ON + Default Image Generator picker).
+- **Spawn settings text** read verbatim from the a11y tree — matches the source strings.
+- **Agents** and **Models** (On Device / Catalog / Images sub-tabs) tabs navigated.
+Open: the agent **cards** and Models sub-tabs expose no a11y labels (SwiftUI gap), so
+driving into the agent *editor* (per-agent toggle) and the image *panel* by automation is
+unreliable — needs a11y labels added to those cards, or manual visual check. The per-agent
+toggle + image panel are functionally proven regardless (gate test + image E2E).
+
 ## Per-agent delegation redesign (Eric 2026-06-21) — ✅ DONE (commit 34a3ed71)
 Spawn/delegation is now a **per-agent feature toggle** ("Spawn & Delegation" in the
 agent editor's Features section, next to Code Execution; custom agents only), mirroring
