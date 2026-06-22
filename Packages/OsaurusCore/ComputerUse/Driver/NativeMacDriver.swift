@@ -229,9 +229,11 @@ public struct NativeMacDriver: MacDriver {
                 }
                 if result.success {
                     let delta = resolvedPid.flatMap { computeFocusDelta(pid: $0) }
+                    let textRoute = textInputRoute(elementAddressed: id != nil, pidAddressed: resolvedPid != nil)
                     return CUActionResult.ok(
                         delta: delta.map(mapDelta),
-                        routeUsed: inputRoute(pidAddressed: resolvedPid != nil)
+                        routeUsed: inputRoute(pidAddressed: resolvedPid != nil),
+                        textInputRoute: textRoute
                     )
                 }
                 return .failure(result.error ?? "Type failed")
@@ -400,7 +402,9 @@ private func mapActionResult(_ r: ElementActionResult) -> CUActionResult {
         error: r.error,
         stale: r.stale ?? false,
         removed: r.removed ?? false,
-        delta: r.delta.map(mapDelta)
+        delta: r.delta.map(mapDelta),
+        routeUsed: r.routeUsed,
+        textInputRoute: r.textInputRoute
     )
 }
 
@@ -414,6 +418,13 @@ private func mapInputResult(_ r: InputResult, routeUsed: InputRoute? = nil) -> C
 /// warp the cursor.
 private func inputRoute(pidAddressed: Bool) -> InputRoute {
     pidAddressed ? BackgroundDriver.shared.lastRoute : .hidFallback
+}
+
+/// Text edit semantics are above the transport layer: a pid-addressed keyboard
+/// action can be either target-focused (`id != nil`) or current-focus only.
+private func textInputRoute(elementAddressed: Bool, pidAddressed: Bool) -> CUTextInputRoute {
+    if !pidAddressed { return .hidKeyboard }
+    return elementAddressed ? .elementFocusedKeyboard : .pidFocusedKeyboard
 }
 
 private func mapButton(_ b: CUMouseButton) -> MouseButton {

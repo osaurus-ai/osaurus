@@ -29,15 +29,25 @@ struct ElementActionResult: Codable {
     let cancelled: Bool?
     /// A small "what changed" record for successful actions on a known pid.
     let delta: FocusDelta?
+    /// Lower-level input transport when the action synthesized events.
+    let routeUsed: InputRoute?
+    /// High-level text-edit path when the action changed text.
+    let textInputRoute: CUTextInputRoute?
 
-    static func ok(delta: FocusDelta? = nil) -> ElementActionResult {
+    static func ok(
+        delta: FocusDelta? = nil,
+        routeUsed: InputRoute? = nil,
+        textInputRoute: CUTextInputRoute? = nil
+    ) -> ElementActionResult {
         return ElementActionResult(
             success: true,
             error: nil,
             stale: nil,
             removed: nil,
             cancelled: nil,
-            delta: delta
+            delta: delta,
+            routeUsed: routeUsed,
+            textInputRoute: textInputRoute
         )
     }
 
@@ -48,7 +58,9 @@ struct ElementActionResult: Codable {
             stale: nil,
             removed: nil,
             cancelled: nil,
-            delta: nil
+            delta: nil,
+            routeUsed: nil,
+            textInputRoute: nil
         )
     }
 
@@ -62,7 +74,9 @@ struct ElementActionResult: Codable {
             stale: true,
             removed: nil,
             cancelled: nil,
-            delta: nil
+            delta: nil,
+            routeUsed: nil,
+            textInputRoute: nil
         )
     }
 
@@ -76,7 +90,9 @@ struct ElementActionResult: Codable {
             stale: nil,
             removed: true,
             cancelled: nil,
-            delta: nil
+            delta: nil,
+            routeUsed: nil,
+            textInputRoute: nil
         )
     }
 
@@ -137,7 +153,7 @@ final class ElementInteraction: @unchecked Sendable {
             let center = CGPoint(x: frame.midX, y: frame.midY)
             let result = driver.click(pid: element.pid, point: center)
             if result.success {
-                return .ok(delta: computeFocusDelta(pid: element.pid))
+                return .ok(delta: computeFocusDelta(pid: element.pid), routeUsed: driver.lastRoute)
             }
             return .fail(result.error ?? "Click failed")
         }
@@ -151,7 +167,7 @@ final class ElementInteraction: @unchecked Sendable {
             let center = CGPoint(x: frame.midX, y: frame.midY)
             let result = driver.doubleClick(pid: element.pid, point: center)
             if result.success {
-                return .ok(delta: computeFocusDelta(pid: element.pid))
+                return .ok(delta: computeFocusDelta(pid: element.pid), routeUsed: driver.lastRoute)
             }
             return .fail(result.error ?? "Double click failed")
         }
@@ -186,7 +202,7 @@ final class ElementInteraction: @unchecked Sendable {
                 // Heads-up: Chromium coerces synthetic right-clicks on web content
                 // to left-clicks at the renderer-IPC boundary. AXShowMenu above is
                 // the only reliable right-click path for those targets.
-                return .ok(delta: computeFocusDelta(pid: element.pid))
+                return .ok(delta: computeFocusDelta(pid: element.pid), routeUsed: driver.lastRoute)
             }
             return .fail(result.error ?? "Right click failed")
         }
@@ -218,7 +234,7 @@ final class ElementInteraction: @unchecked Sendable {
                 value as CFTypeRef
             )
             if result == .success {
-                return .ok(delta: computeFocusDelta(pid: element.pid))
+                return .ok(delta: computeFocusDelta(pid: element.pid), textInputRoute: .axValue)
             }
             return .fail(
                 "Failed to set element value. Element may not be editable. "
@@ -239,7 +255,7 @@ final class ElementInteraction: @unchecked Sendable {
                 "" as CFTypeRef
             )
             if result == .success {
-                return .ok(delta: computeFocusDelta(pid: element.pid))
+                return .ok(delta: computeFocusDelta(pid: element.pid), textInputRoute: .axValue)
             }
             // Fallback: focus, select all, delete — routed per-pid so other
             // apps don't see the Cmd+A.
@@ -253,7 +269,11 @@ final class ElementInteraction: @unchecked Sendable {
             }
             let del = driver.pressKey(pid: element.pid, keyCode: delCode, modifiers: [])
             if del.success {
-                return .ok(delta: computeFocusDelta(pid: element.pid))
+                return .ok(
+                    delta: computeFocusDelta(pid: element.pid),
+                    routeUsed: driver.lastRoute,
+                    textInputRoute: .elementFocusedKeyboard
+                )
             }
             return .fail(del.error ?? "Failed to clear field")
         }

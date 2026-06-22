@@ -117,6 +117,46 @@ final class ComputerUseLoopActTests: XCTestCase {
         XCTAssertEqual(metrics.maxTier, .som)
     }
 
+    func testSetValueReportsAccessibilityValueRoute() async {
+        let pid: Int32 = 4242
+        let driver = MockMacDriver()
+        await driver.enqueueActionResults([
+            CUActionResult.ok(textInputRoute: .axValue)
+        ])
+
+        var currentTier: CaptureTier = .ax
+        var pendingFrame: CUImage?
+        var lastView: AgentView?
+        var lastSnapshot: CUSnapshot?
+        var metrics = ComputerUseRunMetrics()
+        let feed = ComputerUseFeed(toolCallId: "t", goal: "g")
+
+        let out = await ComputerUseLoop.act(
+            action: AgentAction(verb: .setValue, target: AgentTarget(mark: 13), text: "Jared"),
+            element: makeElement(),
+            pid: pid,
+            driver: driver,
+            availability: grantedAvailability(),
+            currentTier: &currentTier,
+            pendingFrameImage: &pendingFrame,
+            lastView: &lastView,
+            lastSnapshot: &lastSnapshot,
+            metrics: &metrics,
+            feed: feed,
+            step: 1
+        )
+
+        let actions = await driver.elementActions
+        guard case let .setValue(id, value)? = actions.first else {
+            return XCTFail("Expected set_value; got \(actions)")
+        }
+        XCTAssertEqual(id, "s1-13")
+        XCTAssertEqual(value, "Jared")
+        XCTAssertTrue(out.contains("Accessibility value setting"), "Route should be model-visible; got: \(out)")
+        XCTAssertEqual(metrics.textInputRoutes[.axValue], 1)
+        XCTAssertEqual(metrics.coordinateFallbacks, 0)
+    }
+
     func testSetValueRetriesViaCoordinateFocusWhenRefRemoved() async {
         let pid: Int32 = 4242
         let driver = MockMacDriver()
@@ -125,7 +165,7 @@ final class ComputerUseLoopActTests: XCTestCase {
         await driver.enqueueActionResults([
             CUActionResult(success: false, error: "gone", removed: true),  // setValue
             CUActionResult.ok(),  // focus coordinate click
-            CUActionResult.ok(),  // typeText retry
+            CUActionResult.ok(routeUsed: .skyLight, textInputRoute: .pidFocusedKeyboard),  // typeText retry
         ])
 
         var currentTier: CaptureTier = .ax
@@ -162,6 +202,8 @@ final class ComputerUseLoopActTests: XCTestCase {
         XCTAssertEqual(text, "Jared")
         XCTAssertTrue(replace)
         XCTAssertEqual(metrics.coordinateFallbacks, 1)
+        XCTAssertEqual(metrics.textInputRoutes[.pidFocusedKeyboard], 1)
+        XCTAssertTrue(out.contains("pid-focused keyboard input"), "Retry route should be model-visible; got: \(out)")
         XCTAssertTrue(out.contains("Action succeeded"), "Fallback success should be reported; got: \(out)")
         XCTAssertEqual(currentTier, .ax, "A landed fallback means no need to escalate")
     }
