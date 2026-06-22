@@ -301,3 +301,7 @@ Deterministic sweep: for each config, restart and read the resolved default-agen
 | global-off | OFF | on  | on  | [Sparky,Echo] | (none) |
 
 Each gate removes exactly its own tool family and nothing else; `global-off` is the master kill (all delegation tools gone — also the live-proven root of the BUG D intermittency); no toggle interferes with another. The feature is default-off and invisible at baseline, and every combination behaves as specified.
+
+## Known limitation (NOT introduced by this branch): default-agent /agents/{id}/run overflow
+
+`POST /agents/default/run` returns `.overBudget` ("Context window cannot fit this request even after compaction") even for a trivial "hi". Verified PRE-EXISTING: reproduces on the clean binary independent of the BUG E change, and the "hi" overflow was observed before BUG E was even built. The native chat path for the default agent is UNAFFECTED (all the image/edit/delegate/spawn coherence proofs above ran through native chat). Root cause not yet fully verified — likely the heavyweight agent-run enrichment (default config-agent persona + manifest) against the conservative memory-safety window cap (server-runtime memorySafety.slider=2). Tracked as a separate follow-up; deliberately NOT speculatively fixed in this feature branch (would need dedicated investigation per the verify-before-fixing rule). It only gates the HTTP-API E2E of BUG E's default-agent injection, not the chat feature.
