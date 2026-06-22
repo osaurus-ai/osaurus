@@ -64,12 +64,17 @@ struct ConfigurationView: View {
     @State private var tempToastMaxConcurrent: String = ""
 
     /// Baseline of the save-relevant fields as last loaded or saved. The
-    /// "Save Changes" button is disabled while the live form equals this,
-    /// so a pristine settings screen reads as "nothing to save" rather
-    /// than an always-armed button. Fields applied immediately on change
-    /// (privacy toggles, toasts, smooth streaming, beta channel) are
-    /// deliberately excluded — they never flow through `saveConfiguration`.
+    /// debounced auto-save is gated on the live form differing from this, so a
+    /// pristine settings screen never writes to disk. Fields applied
+    /// immediately on change (privacy toggles, toasts, smooth streaming, beta
+    /// channel) are deliberately excluded — they never flow through
+    /// `saveConfiguration`.
     @State private var savedFormState: SaveableFormState?
+
+    /// Debounced auto-save. Save-relevant edits persist ~0.6s after the user
+    /// stops, so there's no explicit "Save Changes" button. `autoSaveTask` is
+    /// the pending debounce that each new edit cancels and reschedules.
+    @State private var autoSaveTask: Task<Void, Never>?
 
     // Search (passed from sidebar)
     @Binding var searchText: String
@@ -705,6 +710,36 @@ struct ConfigurationView: View {
         .onReceive(ModelPickerItemCache.shared.$items) { options in
             coreModelPickerItems = options
         }
+        // Any edit to a save-relevant field reschedules the debounced save.
+        // `currentFormState` is the same snapshot the dirty check uses, so
+        // immediately-applied toggles (privacy, toasts, …) don't trigger it.
+        .onChange(of: currentFormState) { _, _ in scheduleAutoSave() }
+        // Persist a pending edit if the user leaves before the debounce fires.
+        .onDisappear { flushPendingSave() }
+    }
+
+    // MARK: - Auto-Save
+
+    /// Reschedule the debounced save. No-op while the form matches the saved
+    /// baseline — so loading the tab (which sets `temp*` then re-baselines)
+    /// and immediately-applied toggles never trigger a write.
+    private func scheduleAutoSave() {
+        guard hasUnsavedChanges else { return }
+        autoSaveTask?.cancel()
+        autoSaveTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 600_000_000)
+            guard !Task.isCancelled, hasUnsavedChanges else { return }
+            saveConfiguration()
+        }
+    }
+
+    /// Cancel any pending debounce and save right now if the form is dirty.
+    /// Called on disappear so a half-typed change isn't lost when the window
+    /// closes before the 0.6s debounce elapses.
+    private func flushPendingSave() {
+        autoSaveTask?.cancel()
+        autoSaveTask = nil
+        if hasUnsavedChanges { saveConfiguration() }
     }
 
     // MARK: - Generative Greetings — Personality Editor
@@ -793,14 +828,10 @@ struct ConfigurationView: View {
             }
             .help(
                 Text(
-                    "Restore view-only settings to recommended defaults (does not affect saved configuration)",
+                    "Restore view settings to recommended defaults (saved automatically, like any change)",
                     bundle: .module
                 )
             )
-            HeaderPrimaryButton("Save Changes", icon: "checkmark") {
-                saveConfiguration()
-            }
-            .disabled(!hasUnsavedChanges)
         }
     }
 
@@ -970,8 +1001,8 @@ struct ConfigurationView: View {
     // MARK: - Dirty-State Tracking
 
     /// Snapshot of exactly the fields that `saveConfiguration` persists.
-    /// Compared against the live form to decide whether "Save Changes"
-    /// has anything to do.
+    /// Compared against the live form to decide whether the debounced
+    /// auto-save has anything to write.
     private struct SaveableFormState: Equatable {
         var startAtLogin: Bool
         var hideDockIcon: Bool
@@ -1133,11 +1164,9 @@ struct ConfigurationView: View {
             // RuntimeConfig invalidation flow.
         }
 
-        // Re-baseline so the button disarms again now that the live form
+        // Re-baseline so the dirty check clears now that the live form
         // matches what's persisted.
         savedFormState = currentFormState
-
-        showSuccess(L("Settings saved successfully"))
     }
 
     // MARK: - Core Model Picker
