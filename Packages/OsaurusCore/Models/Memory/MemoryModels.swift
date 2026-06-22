@@ -274,6 +274,57 @@ public struct ProcessingStats: Sendable {
     public var errorCount: Int = 0
 }
 
+/// Structured result of a single `MemoryService.distillSession` /
+/// `performDistillSession` run. Returned so callers (notably the
+/// `POST /memory/ingest` handler) can report what actually happened
+/// instead of guessing from a fire-and-forget `Task`. Before this existed
+/// the handler returned `{"status":"ok"}` even when distillation was
+/// silently skipped (issue #1632): the heavy non-resident core-model gate
+/// short-circuited the coordinator with no `processing_log` row at all.
+public enum DistillOutcome: Sendable, Equatable {
+    /// An episode was written. `pinned` / `identityFacts` are the counts
+    /// promoted from this session.
+    case distilled(episodeId: Int, pinned: Int, identityFacts: Int)
+    /// No `pending` signals for the conversation (already distilled, or
+    /// nothing was buffered).
+    case noSignals
+    /// A pre-LLM or transient gate skipped the run without erroring.
+    /// `reason` is a stable token: `memory_disabled`, `not_resident`,
+    /// `core_model_unset`, `core_model_unavailable`, `breaker_open`,
+    /// `low_novelty:<n>chars`, `cancelled`.
+    case skipped(reason: String)
+    /// The model ran but produced no usable episode. `reason` is
+    /// `no_episode` or `empty_summary`. Terminal: the signals are marked
+    /// processed so the session is not retried.
+    case empty(reason: String)
+    /// The session failed `attempts` times and was dead-lettered; its
+    /// signals will no longer be retried.
+    case deadLettered(attempts: Int)
+    /// A retryable error occurred (signals stay `pending` until the
+    /// attempt cap is reached).
+    case error(String)
+
+    /// Compact, machine-readable status token for the `/memory/ingest`
+    /// JSON body (`"distilled" | "skipped:<reason>" | "empty:<reason>" |
+    /// "dead_letter:<attempts>" | "error:<msg>" | "no_signals"`).
+    public var apiStatus: String {
+        switch self {
+        case .distilled: return "distilled"
+        case .noSignals: return "no_signals"
+        case .skipped(let reason): return "skipped:\(reason)"
+        case .empty(let reason): return "empty:\(reason)"
+        case .deadLettered(let attempts): return "dead_letter:\(attempts)"
+        case .error(let msg): return "error:\(msg)"
+        }
+    }
+
+    /// The episode primary key when a row was written, else nil.
+    public var episodeId: Int? {
+        if case .distilled(let id, _, _) = self { return id }
+        return nil
+    }
+}
+
 /// One row from `processing_log`. Surfaces what every distillation /
 /// consolidation pass actually did — including the new `"skipped"` rows
 /// that the distill pipeline writes when it bails before reaching the

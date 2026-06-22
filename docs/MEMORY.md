@@ -232,7 +232,9 @@ response = client.chat.completions.create(
 
 ### Memory Ingestion — `POST /memory/ingest`
 
-Bulk-ingest conversation turns. Useful for seeding memory from existing chat logs, migrating from another system, or running benchmarks. Ingestion always flushes distillation immediately at the end of the batch — you don't have to wait for the debounce.
+Bulk-ingest conversation turns. Useful for seeding memory from existing chat logs, migrating from another system, or running benchmarks.
+
+Unless `skip_extraction` is set, the request **distills synchronously and waits for the result**: it forces an on-demand cold load of the core model if it isn't already resident, runs the single distillation LLM call, and reports the outcome in the response body. (A cold load can take tens of seconds for a larger core model — allow a long client timeout; the server has no idle cutoff on this path.) This replaces the old fire-and-forget behavior that returned `{"status":"ok"}` even when distillation was silently skipped because the core model wasn't resident.
 
 ```bash
 curl http://127.0.0.1:1337/memory/ingest \
@@ -249,15 +251,31 @@ curl http://127.0.0.1:1337/memory/ingest \
 
 | Parameter | Type | Description |
 |---|---|---|
-| `agent_id` | string | Identifier for the agent whose memory is being populated |
+| `agent_id` | string | Identifier for the agent whose memory is being populated. A UUID is canonicalized (uppercased) so it matches the agent's recall key regardless of input casing. |
 | `conversation_id` | string | Identifier for the conversation session |
 | `turns` | array | Array of turn objects, each with `user` and `assistant` fields |
-| `session_date` | string | Optional ISO 8601 date for the whole batch |
-| `skip_extraction` | bool | When `true`, only insert transcript rows; skip distillation |
+| `session_date` | string | Optional ISO 8601 date for the whole batch (used as the episode timestamp) |
+| `skip_extraction` | bool | When `true`, only insert transcript rows; skip distillation (and the synchronous wait) |
+
+**Response body:**
+
+```json
+{ "status": "ok", "turns_ingested": 2, "distillation": "distilled", "episode_id": 42 }
+```
+
+| Field | Description |
+|---|---|
+| `turns_ingested` | Number of turns stored |
+| `distillation` | Outcome token (omitted when `skip_extraction` is set): `distilled`, `no_signals`, `skipped:<reason>` (`core_model_unset`, `not_resident`, `core_model_unavailable`, `breaker_open`, `low_novelty:<n>chars`, `cancelled`, `memory_disabled`), `empty:<reason>` (`no_episode`, `empty_summary`), `dead_letter:<attempts>`, or `error:<message>` |
+| `episode_id` | Primary key of the written episode (present only when `distillation` is `distilled`) |
+
+**Idempotent per `conversation_id`.** Re-ingesting the same `conversation_id` (e.g. re-running a benchmark) first clears that conversation's prior pending signals and episodes, so you get exactly one active episode per conversation instead of duplicates. `skip_extraction` ingests leave the memory pipeline untouched and only replace transcript rows.
+
+**Bounded retries.** A session that repeatedly fails to distill (unparseable model output, persistent timeouts) is retried a bounded number of times and then dead-lettered (`distillation: "dead_letter:<attempts>"`), so it stops re-distilling on every launch/ingest. Terminal empty results (`no_episode`, `empty_summary`) mark their signals processed immediately. A missing/unavailable core model stays pending and recovers once a model is configured and resident.
 
 ### List Agents — `GET /agents`
 
-Returns all configured agents with their pinned-fact counts. Use this to discover valid agent IDs.
+Returns all configured agents with their `memory_entry_count`. Use this to discover valid agent IDs. The count reflects **stored memory** — distilled episodes plus active pinned facts — so an agent whose sessions distilled into episodes reads non-zero even when no pinned facts were promoted. `GET /agents/{id}` reports the same count for a single agent.
 
 See the [API Guide](OpenAI_API_GUIDE.md#memory-api) for additional examples.
 

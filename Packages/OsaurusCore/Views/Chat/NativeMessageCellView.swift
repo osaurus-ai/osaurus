@@ -2428,6 +2428,11 @@ final class NativeMessageCellView: NSTableCellView {
         spacerView?.removeFromSuperview(); spacerView = nil
         nativeHeaderView?.removeFromSuperview(); nativeHeaderView = nil
         nativeHeaderHeightConstraint = nil
+        // Detach the redaction hover controller (and its text view's
+        // `.mouseMoved` tracking flag) deterministically before dropping
+        // the view — this cell-reuse path otherwise bypasses
+        // `NativeMarkdownView`'s own teardown (issue #1632 launch SIGABRT).
+        nativeMarkdownView?.tearDownForReuse()
         nativeMarkdownView?.removeFromSuperview(); nativeMarkdownView = nil
         nativeThinkingView?.removeFromSuperview(); nativeThinkingView = nil
         // Coordinator-cached views: only call `removeFromSuperview` if
@@ -2451,6 +2456,9 @@ final class NativeMessageCellView: NSTableCellView {
         nativeStatsView?.removeFromSuperview(); nativeStatsView = nil
         nativeAssistantActionsView?.removeFromSuperview(); nativeAssistantActionsView = nil
         nativeEmptyNoticeView?.removeFromSuperview(); nativeEmptyNoticeView = nil
+        // User messages carry outbound redactions (PII the user typed), so
+        // the user text view has the same hover controller to tear down.
+        userTextView?.tearDownForReuse()
         userMessageContainer?.removeFromSuperview(); userMessageContainer = nil
         userTextView = nil
         userInlineEditView = nil

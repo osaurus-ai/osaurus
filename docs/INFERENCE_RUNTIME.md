@@ -188,7 +188,7 @@ the `LayerKind.deepseekV4` disk serializer instead of generic paged KV blocks.
 | `ModelLease` | Pins a model name for the lifetime of one stream so eviction (`unload`, `clearAll`, GC) blocks until the lease drops to zero. |
 | `ModelResidencyManager` | Schedules Osaurus-owned idle unload policy after the final lease drops; it never owns execution, KV cache, or disk cache deletion. |
 | `PluginHostAPI` per-plugin in-flight cap | Caps concurrent inference calls per plugin (default 2). Excess returns `plugin_busy`. |
-| `MetalGate.enterEmbedding` | Embedding service (`MetalSafeEmbedder`) opt-in serialization point. The generation surface of the gate was retired; only embeddings call into it today. |
+| `MetalGate` (`enterGeneration` / `enterEmbedding` / `enterModelLoad`) | Serializes GPU producers across families so concurrent command buffers can't trip `AGXG17XFamilyCommandBuffer` asserts. Generation (`gen:<model>`, shared per model) gates `MLXBatchAdapter.prepareInput` and the live-voice audio pre-encode (`ModelRuntime.preencodeLiveVoiceAudioIfResident`); embedding (`MetalSafeEmbedder`) and model load are exclusive. |
 
 ## Residency policy
 
@@ -301,7 +301,7 @@ sentinels.
 | `RuntimeConfig.swift` | Server-side default `topP`. |
 | `InferenceFeatureFlags.swift` | Single user-tunable: `mlxBatchEngineMaxBatchSize`. |
 | `RuntimeProofValidation.swift` | Source-level validation for runtime proof rows and issue-closure evidence. |
-| `MetalGate.swift` | Embedding-only counter (kept as the canonical hook for any future MLX-vs-CoreML interlock). |
+| `MetalGate.swift` | Cross-family GPU serialization gate. `enterGeneration` (shared per model) wraps `MLXBatchAdapter.prepareInput` + the live-voice audio pre-encode; `enterEmbedding` and `enterModelLoad` are exclusive. |
 | `ModelLease.swift` | Per-model refcount; `unload(name)` waits for `count == 0` before freeing buffers. |
 | `ModelResidencyManager.swift` | Per-model idle timers and health snapshots for the Settings residency policy. |
 | `NATIVE_SWIFT_IMAGE_GENERATION_INTEGRATION.md` | Pending native Swift image-generation lane and release gate. |

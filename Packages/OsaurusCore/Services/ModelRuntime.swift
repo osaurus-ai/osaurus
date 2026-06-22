@@ -263,6 +263,16 @@ public actor ModelRuntime {
         }
         let box = OutBox()
 
+        // Serialize the audio-encoder `MLX.eval` against every other GPU
+        // producer (generation, embedding, model load) through the shared
+        // Metal gate, owner `gen:<model>` — the same gate
+        // `MLXBatchAdapter.prepareInput` takes for its in-generation
+        // preencode. Without it, a live-voice attach landing while a chat
+        // generation is in flight runs two unsynchronized command buffers and
+        // trips `AGXG17XFamilyCommandBuffer` asserts (issue #1632). Balanced
+        // on every exit path below.
+        await MetalGate.shared.enterGeneration(model: holder.name)
+
         do {
             try await holder.container.perform { context in
                 guard let omni = context.model as? NemotronHOmni else {
@@ -313,6 +323,7 @@ public actor ModelRuntime {
                 )
             }
         } catch {
+            await MetalGate.shared.exitGeneration(model: holder.name)
             await soloLease.release()
             await ModelLease.shared.release(holder.name)
             await scheduleIdleResidency(for: holder.name)
@@ -325,6 +336,7 @@ public actor ModelRuntime {
             )
         }
 
+        await MetalGate.shared.exitGeneration(model: holder.name)
         await soloLease.release()
         await ModelLease.shared.release(holder.name)
         await scheduleIdleResidency(for: holder.name)

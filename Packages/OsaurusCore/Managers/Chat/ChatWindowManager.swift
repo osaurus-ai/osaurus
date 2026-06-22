@@ -176,21 +176,31 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         guard StorageKeyManager.shared.isStorageReadyForWrites else { return }
         didPrewarmChatView = true
 
-        let windowState = ChatWindowState(
-            windowId: UUID(),
-            agentId: AgentManager.shared.activeAgentId
-        )
-        let chatView = ChatView(windowState: windowState)
-            .environment(\.theme, windowState.theme)
-        let hostingController = NSHostingController(rootView: chatView)
-        // Forcing layout evaluates the SwiftUI body once, which realizes the
-        // metadata. The controller is never attached to a visible window, so
-        // `onAppear` / `task` side effects don't fire.
-        hostingController.view.layoutSubtreeIfNeeded()
+        // Wrap the throwaway view tree in an autorelease pool so its teardown
+        // — including SwiftUI's `dismantleNSView` (which clears the prewarmed
+        // message table's hover closures) and the release of every cell's
+        // tracking areas — is drained deterministically when this call
+        // returns, instead of deferring to a later pool drain during the
+        // sensitive launch window where the tracking-area SIGABRT was seen
+        // (issue #1632).
+        autoreleasepool {
+            let windowState = ChatWindowState(
+                windowId: UUID(),
+                agentId: AgentManager.shared.activeAgentId
+            )
+            let chatView = ChatView(windowState: windowState)
+                .environment(\.theme, windowState.theme)
+            let hostingController = NSHostingController(rootView: chatView)
+            // Forcing layout evaluates the SwiftUI body once, which realizes
+            // the metadata. The controller is never attached to a visible
+            // window, so `onAppear` / `task` side effects don't fire.
+            hostingController.view.layoutSubtreeIfNeeded()
 
-        // Tear the throwaway state down so its session/observers don't linger;
-        // `deinit` removes the notification observers as it deallocates.
-        windowState.cleanup()
+            // Tear the throwaway state down so its session/observers don't
+            // linger; `deinit` removes the notification observers as it
+            // deallocates.
+            windowState.cleanup()
+        }
         print("[ChatWindowManager] Prewarmed ChatView metadata")
     }
 
