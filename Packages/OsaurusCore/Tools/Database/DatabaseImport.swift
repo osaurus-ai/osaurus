@@ -467,7 +467,7 @@ enum DatabaseImport {
     /// `TEXT`) when creating a fresh table.
     private struct TypeSampler {
         private struct ColumnStats {
-            var count = 0
+            var samples = 0
             var allInteger = true
             var allNumeric = true
         }
@@ -480,8 +480,8 @@ enum DatabaseImport {
 
         mutating func observe(column: String, value: AgentSQLValue) {
             var entry = stats[column] ?? ColumnStats()
-            guard entry.count < DatabaseImport.typeSampleLimit else { return }
-            entry.count += 1
+            guard entry.samples < DatabaseImport.typeSampleLimit else { return }
+            entry.samples += 1
             switch value {
             case .integer, .bool:
                 break  // integer-compatible
@@ -511,7 +511,7 @@ enum DatabaseImport {
         }
 
         private func affinity(for entry: ColumnStats) -> String {
-            guard entry.count > 0 else { return "TEXT" }
+            guard entry.samples > 0 else { return "TEXT" }
             if entry.allInteger { return "INTEGER" }
             if entry.allNumeric { return "REAL" }
             return "TEXT"

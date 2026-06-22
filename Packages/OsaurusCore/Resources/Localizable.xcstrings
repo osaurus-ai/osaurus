@@ -27859,6 +27859,22 @@
         }
       }
     },
+    "Imported data into the database" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Daten in die Datenbank importiert"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已将数据导入数据库"
+          }
+        }
+      }
+    },
     "Imported from input" : {
       "localizations" : {
         "de" : {
@@ -27929,6 +27945,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "正在导入第 %lld 个，共 %lld 个"
+          }
+        }
+      }
+    },
+    "Importing data into the database" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Importiert Daten in die Datenbank"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在将数据导入数据库"
           }
         }
       }
