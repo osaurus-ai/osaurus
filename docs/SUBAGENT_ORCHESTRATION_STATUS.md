@@ -359,3 +359,12 @@ PROVEN: the qwen3-8b chat → image_generate handoff that reliably crashed on it
 LANDING: the fix is committed to the LOCAL vmlx fork (push remote is DO_NOT_PUSH; the local branch has diverged from osaurus' pin d35c0744). To land durably: apply the same finishSlot drain to the canonical vmlx osaurus pins, then repin osaurus' Package.resolved. The current dev build already carries the fix (applied to the resolved checkout) and is proven.
 
 LIKELY ALSO FIXES #60: the capabilities_discover embedding SIGSEGV is the same race class — the embedder (an exclusive MetalGate producer) racing a prior generation's async GPU tail. Draining before the generation stream finishes closes that window too.
+
+## BUG G fix: proven for mainstream models; minimax residual (same race class, edge/in-dev)
+
+Multi-architecture crash-repro sweep on the BUG-G-fixed binary (rapid chat->image handoff):
+- qwen3-8b (standard KV): SURVIVED 3/3 (was iter-1 crash pre-fix) — fix holds.
+- lfm2.5-8b (conv-hybrid): SURVIVED 3/3.
+- minimax-m2.7-small-jangtq (linear attention): CRASHED iter 2 — new SIGABRT in tryCoalescingPreviousComputeCommandEncoder via copy_gpu_inplace.
+
+The minimax crash is the SAME concurrent-GPU race CLASS but on a path the finishSlot drain doesn't cover. Verified it is NOT OOM (38GB free) and NOT the disk store (DiskCache.store already brackets materialization with Stream.gpu.synchronize(); paged-KV disabled here). So a minimax-specific GPU submission (its linear-attention / sparse-cache decode, actively being ported under #58) escapes the known drain points. minimax is also very slow (~40s first token). Tracked as #77 — honest residual, NOT claimed fixed. The mainstream/default path (gemma) and qwen3/lfm2 are solid and proven.
