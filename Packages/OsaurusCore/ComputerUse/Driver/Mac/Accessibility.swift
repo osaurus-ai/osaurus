@@ -220,6 +220,18 @@ final class AccessibilityManager: @unchecked Sendable {
     /// `truncated`) once this elapses so a capture still returns promptly.
     static let traversalDeadline: TimeInterval = 2.0
 
+    /// Osaurus's own process id.
+    static let selfPid: Int32 = ProcessInfo.processInfo.processIdentifier
+
+    /// Whether `pid` is Osaurus itself. The native driver must NEVER resolve the
+    /// current process's AX tree on the off-main driver queue: querying our own
+    /// elements re-enters AppKit/SwiftUI accessibility *in-process*, which
+    /// evaluates SwiftUI `body` and trips its main-thread assertion
+    /// (`_dispatch_assert_queue_fail`) when it runs off the main thread. We also
+    /// never want to perceive or drive our own UI through Computer Use, so every
+    /// AX entry point treats self as "nothing to perceive".
+    static func isSelf(_ pid: Int32) -> Bool { pid == selfPid }
+
     private var snapshots: [Int: [String: CachedElement]] = [:]
     private var snapshotPids: [Int: Int32] = [:]
     private var snapshotOrder: [Int] = []
@@ -294,6 +306,8 @@ final class AccessibilityManager: @unchecked Sendable {
     /// the tree then builds asynchronously (see `prepareAndAwaitTree`).
     @discardableResult
     func prepareForAccessibility(pid: Int32) -> Bool {
+        // Never poke our own process (see `isSelf`).
+        if Self.isSelf(pid) { return false }
         lock.lock()
         if preparedPids.contains(pid) {
             lock.unlock()
@@ -344,6 +358,9 @@ final class AccessibilityManager: @unchecked Sendable {
     /// that built late) but never block again. The poll runs on the off-main
     /// driver queue because it issues blocking AX reads.
     func prepareAndAwaitTree(pid: Int32, timeout: TimeInterval = 1.6) async {
+        // Resolving our own focused window re-enters SwiftUI off-main and traps
+        // (see `isSelf`); there is nothing of ours to wait for.
+        if Self.isSelf(pid) { return }
         prepareForAccessibility(pid: pid)
         if await Self.runOffMain({ Self.focusedWindowHasContent(pid: pid) }) { return }
 
@@ -565,6 +582,22 @@ final class AccessibilityManager: @unchecked Sendable {
     /// Begins a new snapshot. Element IDs in the result are valid until the cache
     /// rotates them out (after the next snapshot beyond the retention limit).
     func traverse(filter: ElementFilter, search: SearchOptions? = nil) -> TraversalResult {
+        // Never traverse our own process: resolving Osaurus's AX tree re-enters
+        // SwiftUI/AppKit accessibility in-process (evaluating `body`), which
+        // traps on the off-main driver queue — and we never perceive our own UI.
+        if Self.isSelf(filter.pid) {
+            return TraversalResult(
+                snapshotId: beginNewSnapshot(pid: filter.pid),
+                pid: filter.pid,
+                app: getAppName(for: filter.pid) ?? "Osaurus",
+                focusedWindow: nil,
+                elementCount: 0,
+                truncated: false,
+                windows: [],
+                elements: []
+            )
+        }
+
         // Ensure Chromium/Electron targets have been asked to expose their tree.
         // Idempotent and cheap after the first call; covers apps reached via a
         // bare capture (not just `open`). The tree may still be settling on the
@@ -1011,6 +1044,8 @@ struct FocusedElementSummary: Codable, Sendable {
 /// Capture the current focused window title and focused element for a given pid.
 /// Returns nil if pid is unknown or accessibility query fails.
 func computeFocusDelta(pid: Int32) -> FocusDelta? {
+    // Never read our own focused element off-main (see `AccessibilityManager.isSelf`).
+    if AccessibilityManager.isSelf(pid) { return nil }
     let app = AccessibilityManager.axApp(pid)
 
     var focusedWindowTitle: String?
@@ -1082,6 +1117,8 @@ func computeFocusedContent(
     valueCap: Int = 200_000,
     viewportRadius: Int = 1_200
 ) -> FocusedContentInfo? {
+    // Never read our own focused element off-main (see `AccessibilityManager.isSelf`).
+    if AccessibilityManager.isSelf(pid) { return nil }
     let app = AccessibilityManager.axApp(pid)
 
     var elRef: CFTypeRef?
@@ -1475,6 +1512,10 @@ func listRunningApps() -> AppListResult {
 
 func listWindowsForPid(_ pid: Int32) -> WindowListResult {
     let appName = NSRunningApplication(processIdentifier: pid)?.localizedName ?? "Unknown"
+    // Never enumerate our own windows off-main (see `AccessibilityManager.isSelf`).
+    if AccessibilityManager.isSelf(pid) {
+        return WindowListResult(pid: pid, app: appName, windows: [])
+    }
     let app = AccessibilityManager.axApp(pid)
 
     // Focused window for the `focused: true` flag.
@@ -1577,6 +1618,13 @@ func getActiveWindow() -> MacActiveWindowInfo? {
 
     let pid = frontApp.processIdentifier
     let appName = frontApp.localizedName ?? "Unknown"
+
+    // When Osaurus itself is frontmost there's no external active window to
+    // report, and resolving our own AX tree off-main traps in SwiftUI (see
+    // `AccessibilityManager.isSelf`). Returning nil also keeps callers that seed
+    // a target pid from the frontmost app (e.g. the Computer Use loop) from
+    // ever pointing at ourselves.
+    if AccessibilityManager.isSelf(pid) { return nil }
 
     let app = AccessibilityManager.axApp(pid)
 
