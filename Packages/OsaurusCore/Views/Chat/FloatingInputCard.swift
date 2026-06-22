@@ -239,6 +239,10 @@ struct FloatingInputCard: View {
     @State private var showModelOptionsPicker = false
     @State private var showContextBreakdown = false
     @State private var contextHoverTask: Task<Void, Never>?
+    /// Delayed dismiss for the context popover. Gives the cursor a grace
+    /// period to travel from the trigger into the popover (which lives in its
+    /// own window, so hovering it doesn't keep the trigger "hovered").
+    @State private var contextDismissTask: Task<Void, Never>?
     @State private var showBalanceBreakdown = false
     @State private var balanceHoverTask: Task<Void, Never>?
     @State private var isSandboxHovered = false
@@ -1945,15 +1949,10 @@ extension FloatingInputCard {
         }
         .pointingHandCursor()
         .onHover { hovering in
-            contextHoverTask?.cancel()
             if hovering {
-                contextHoverTask = Task { @MainActor in
-                    try? await Task.sleep(nanoseconds: 300_000_000)
-                    guard !Task.isCancelled else { return }
-                    showContextBreakdown = true
-                }
+                openContextBreakdown()
             } else {
-                showContextBreakdown = false
+                scheduleContextDismiss()
             }
         }
         .popover(isPresented: $showContextBreakdown, arrowEdge: .top) {
@@ -1963,6 +1962,39 @@ extension FloatingInputCard {
                 isStreaming: isStreaming,
                 formatTokenCount: formatTokenCount
             )
+            // Keep the popover alive while the cursor is over it, so the user
+            // can travel from the trigger and click the disclosure headers.
+            .onHover { hovering in
+                if hovering {
+                    contextDismissTask?.cancel()
+                } else {
+                    scheduleContextDismiss()
+                }
+            }
+        }
+    }
+
+    /// Open the context popover after a short hover dwell, cancelling any
+    /// pending dismiss so a quick re-entry doesn't flicker it closed.
+    private func openContextBreakdown() {
+        contextDismissTask?.cancel()
+        contextHoverTask?.cancel()
+        contextHoverTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            guard !Task.isCancelled else { return }
+            showContextBreakdown = true
+        }
+    }
+
+    /// Dismiss the context popover after a grace period, giving the cursor
+    /// time to cross the gap into the popover window.
+    private func scheduleContextDismiss() {
+        contextHoverTask?.cancel()
+        contextDismissTask?.cancel()
+        contextDismissTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            guard !Task.isCancelled else { return }
+            showContextBreakdown = false
         }
     }
 
@@ -4099,6 +4131,21 @@ private extension View {
 
 // MARK: - Context Breakdown Popover
 
+/// A roll-up of one or more breakdown entries shown as a single legend row.
+/// Multi-entry groups (the system prompt's many sections) collapse behind a
+/// disclosure so the popover reads as a handful of categories by default and
+/// only fans out to per-section detail on demand. Single-entry groups (Tools,
+/// Memory, …) render as a plain row.
+private struct BudgetGroup: Identifiable {
+    let id: String
+    let label: String
+    let tint: ContextBreakdown.Tint
+    let entries: [ContextBreakdown.Entry]
+
+    var tokens: Int { entries.reduce(0) { $0 + $1.tokens } }
+    var isExpandable: Bool { entries.count > 1 }
+}
+
 private struct ContextBreakdownPopover: View {
     let breakdown: ContextBreakdown
     let maxTokens: Int?
@@ -4107,7 +4154,51 @@ private struct ContextBreakdownPopover: View {
 
     @Environment(\.theme) private var theme
 
+    /// Which multi-entry groups are drilled open. Starts empty so the popover
+    /// opens in its compact, grouped form.
+    @State private var expandedGroups: Set<String> = []
+
     private var budgetCap: Int { maxTokens ?? breakdown.total }
+
+    /// IDs in `breakdown.context` that read as their own category rather than
+    /// folding into the "System Prompt" roll-up. Order here is their canonical
+    /// display order beneath the system-prompt group.
+    private static let standaloneContextIDs = ["memory", "screenContext", "tools"]
+
+    /// `breakdown.context` rolled into display groups: every manifest prompt
+    /// section collapses into one "System Prompt" group; Memory, Screen
+    /// Context, and Tools stay as their own rows (they're large and the user
+    /// reasons about them individually).
+    private var contextGroups: [BudgetGroup] {
+        let standalone = Set(Self.standaloneContextIDs)
+        var groups: [BudgetGroup] = []
+
+        let sections = breakdown.context.filter { !standalone.contains($0.id) }
+        if !sections.isEmpty {
+            groups.append(
+                BudgetGroup(id: "systemPrompt", label: L("System Prompt"), tint: .indigo, entries: sections)
+            )
+        }
+        for id in Self.standaloneContextIDs {
+            if let entry = breakdown.context.first(where: { $0.id == id }) {
+                groups.append(BudgetGroup(id: entry.id, label: entry.label, tint: entry.tint, entries: [entry]))
+            }
+        }
+        return groups
+    }
+
+    /// Stacked-bar segments at group granularity — one block per context group
+    /// plus each message entry — so the bar shows a few legible bands instead
+    /// of a dozen hairline slivers.
+    private var barSegments: [(id: String, tint: ContextBreakdown.Tint, tokens: Int)] {
+        var segs = contextGroups.map { (id: $0.id, tint: $0.tint, tokens: $0.tokens) }
+        segs += breakdown.messages.map { (id: $0.id, tint: $0.tint, tokens: $0.tokens) }
+        return segs.filter { $0.tokens > 0 }
+    }
+
+    private func percent(_ tokens: Int) -> String {
+        budgetCap > 0 ? "\(tokens * 100 / budgetCap)%" : "0%"
+    }
 
     /// One-line italic notice rendered above the entry list when the
     /// composer auto-disabled features for a small-context model.
@@ -4179,9 +4270,9 @@ private struct ContextBreakdownPopover: View {
                     .padding(.bottom, 10)
             }
 
-            if !breakdown.context.isEmpty {
+            if !contextGroups.isEmpty {
                 divider
-                entryGroup(breakdown.context).padding(.horizontal, 12).padding(.vertical, 8)
+                contextGroupList.padding(.horizontal, 12).padding(.vertical, 8)
             }
 
             if !breakdown.messages.isEmpty {
@@ -4199,25 +4290,28 @@ private struct ContextBreakdownPopover: View {
     // MARK: - Stacked Bar
 
     private var barChart: some View {
-        let entries = breakdown.allEntries.filter { $0.tokens > 0 }
+        let segments = barSegments
         let hasCeiling = maxTokens != nil
         // When there is no ceiling, the bar reports each segment's share of
         // the current total instead of a fixed budget — so percentages and
         // bar widths agree, and the track always fills.
         let scale = hasCeiling ? max(budgetCap, 1) : max(breakdown.total, 1)
         return GeometryReader { geo in
-            let gapTotal = CGFloat(max(entries.count - 1, 0))
+            let gapTotal = CGFloat(max(segments.count - 1, 0))
             let available = max(0, geo.size.width - gapTotal)
             let widths = computeContextBudgetSegmentWidths(
-                tokens: entries.map(\.tokens),
+                tokens: segments.map(\.tokens),
                 totalTokens: scale,
                 available: available,
-                fillsTrack: !hasCeiling
+                fillsTrack: !hasCeiling,
+                // Keep the used band visible when the window is nearly empty
+                // (e.g. ~2k of a 262k budget would otherwise be a 1pt sliver).
+                minUsedWidth: 12
             )
             HStack(spacing: 1) {
-                ForEach(Array(zip(entries, widths)), id: \.0.id) { entry, width in
+                ForEach(Array(zip(segments, widths)), id: \.0.id) { segment, width in
                     RoundedRectangle(cornerRadius: 2)
-                        .fill(color(for: entry.tint).opacity(0.85))
+                        .fill(color(for: segment.tint).opacity(0.85))
                         .frame(width: width)
                 }
                 if hasCeiling { Spacer(minLength: 0) }
@@ -4230,12 +4324,80 @@ private struct ContextBreakdownPopover: View {
 
     // MARK: - Legend
 
+    /// The context legend at group granularity. Expandable groups render a
+    /// tappable header that reveals their per-section rows indented beneath.
+    private var contextGroupList: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(contextGroups) { group in
+                if group.isExpandable {
+                    let expanded = expandedGroups.contains(group.id)
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.15)) {
+                            if expanded {
+                                expandedGroups.remove(group.id)
+                            } else {
+                                expandedGroups.insert(group.id)
+                            }
+                        }
+                    } label: {
+                        groupHeader(group, expanded: expanded)
+                    }
+                    .buttonStyle(.plain)
+
+                    if expanded {
+                        VStack(alignment: .leading, spacing: 4) {
+                            ForEach(group.entries) { entry in
+                                entryRow(entry).padding(.leading, 11)
+                            }
+                        }
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                    }
+                } else if let entry = group.entries.first {
+                    entryRow(entry)
+                }
+            }
+        }
+    }
+
     private func entryGroup(_ entries: [ContextBreakdown.Entry], highlightOutput: Bool = false) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             ForEach(entries) { entry in
                 entryRow(entry, highlighted: highlightOutput && entry.id == "output")
             }
         }
+    }
+
+    /// Disclosure header for a multi-entry group: swatch, label, rotating
+    /// chevron, summed tokens, and the group's share of the budget.
+    private func groupHeader(_ group: BudgetGroup, expanded: Bool) -> some View {
+        HStack(spacing: 0) {
+            RoundedRectangle(cornerRadius: 1.5)
+                .fill(color(for: group.tint).opacity(0.85))
+                .frame(width: 3, height: 12)
+                .padding(.trailing, 8)
+
+            Text(group.label)
+                .font(.system(size: 11))
+                .foregroundColor(theme.secondaryText)
+
+            Image(systemName: "chevron.right")
+                .font(.system(size: 7, weight: .semibold))
+                .foregroundColor(theme.tertiaryText)
+                .rotationEffect(.degrees(expanded ? 90 : 0))
+                .padding(.leading, 4)
+
+            Spacer()
+
+            Text(formatTokenCount(group.tokens))
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .foregroundColor(theme.primaryText)
+
+            Text(percent(group.tokens))
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundColor(theme.tertiaryText)
+                .frame(width: 32, alignment: .trailing)
+        }
+        .contentShape(Rectangle())
     }
 
     private func entryRow(_ entry: ContextBreakdown.Entry, highlighted: Bool = false) -> some View {
@@ -4256,7 +4418,7 @@ private struct ContextBreakdownPopover: View {
                 .foregroundColor(highlighted ? color(for: entry.tint) : theme.primaryText)
                 .contentTransition(highlighted ? .numericText() : .identity)
 
-            Text(budgetCap > 0 ? "\(entry.tokens * 100 / budgetCap)%" : "0%")
+            Text(percent(entry.tokens))
                 .font(.system(size: 10, design: .monospaced))
                 .foregroundColor(theme.tertiaryText)
                 .frame(width: 32, alignment: .trailing)
@@ -4394,11 +4556,17 @@ private struct BalanceBreakdownPopover: View {
 ///   redistributed weighted by `tokens[i]` so segments cover the full track.
 ///   When false (ceiling present), the leftover is the caller's headroom
 ///   slot, surfaced as a trailing `Spacer`.
+/// - `minUsedWidth` floors the COMBINED width of the used segments (ceiling
+///   case only). With few segments, a near-empty budget would otherwise
+///   render the used region as a ~1pt sliver; scaling the segments up
+///   together to this minimum keeps low utilization visible without
+///   distorting their relative proportions or hiding the headroom.
 func computeContextBudgetSegmentWidths(
     tokens: [Int],
     totalTokens: Int,
     available: CGFloat,
-    fillsTrack: Bool
+    fillsTrack: Bool,
+    minUsedWidth: CGFloat = 0
 ) -> [CGFloat] {
     guard !tokens.isEmpty else { return [] }
     guard available > 0, totalTokens > 0 else {
@@ -4418,6 +4586,13 @@ func computeContextBudgetSegmentWidths(
 
     if sum > availableDouble && sum > 0 {
         let scale = availableDouble / sum
+        widths = widths.map { $0 * scale }
+        sum = widths.reduce(0, +)
+    }
+
+    if !fillsTrack, sum > 0, sum < Double(minUsedWidth) {
+        let target = min(Double(minUsedWidth), availableDouble)
+        let scale = target / sum
         widths = widths.map { $0 * scale }
         sum = widths.reduce(0, +)
     }
