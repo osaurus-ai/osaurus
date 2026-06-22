@@ -304,6 +304,8 @@ public struct AutonomyPolicy: Codable, Sendable, Equatable {
         "disk utility", "com.apple.diskutility",
         "script editor", "com.apple.scripteditor",
         "automator", "com.apple.automator",
+        "shortcuts", "com.apple.shortcuts",
+        "docker", "orbstack", "utm", "virtualbox", "parallels",
         "1password", "bitwarden", "dashlane", "lastpass",
     ]
 

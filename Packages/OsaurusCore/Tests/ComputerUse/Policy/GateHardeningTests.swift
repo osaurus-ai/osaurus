@@ -150,7 +150,8 @@ final class DangerousAppGuardrailTests: XCTestCase {
         for app in [
             "Terminal.app", "com.apple.Terminal", "iTerm", "Ghostty",
             "System Settings", "com.apple.systempreferences",
-            "Keychain Access", "1Password", "Bitwarden",
+            "Keychain Access", "Shortcuts", "com.apple.shortcuts",
+            "Docker", "OrbStack", "UTM", "1Password", "Bitwarden",
         ] {
             let decision = await gate.evaluate(
                 action: click,
@@ -162,6 +163,30 @@ final class DangerousAppGuardrailTests: XCTestCase {
                 return XCTFail("\(app) should be guardrailed to confirm")
             }
         }
+    }
+
+    /// Launching a sensitive app is itself a navigate-class action and must
+    /// confirm under autonomous policy before the app is opened.
+    func testOpeningDangerousAppConfirmsEvenUnderAutonomous() async {
+        let gate = ComputerUseGate(policy: AutonomyPolicy(globalPreset: .autonomous))
+        let openTerminal = AgentAction(verb: .open, app: "com.apple.Terminal")
+        let effect = EffectClassifier.classify(
+            action: openTerminal,
+            appName: openTerminal.app,
+            recipeSignals: AppRecipes.signals(for: openTerminal.app)
+        )
+        XCTAssertEqual(effect, .navigate)
+
+        let decision = await gate.evaluate(
+            action: openTerminal,
+            effect: effect,
+            appName: openTerminal.app,
+            targetLabel: openTerminal.app
+        )
+        guard case .confirm(let preview) = decision else {
+            return XCTFail("opening Terminal should force a confirm under autonomous")
+        }
+        XCTAssertEqual(preview.appName, "com.apple.Terminal")
     }
 
     /// The guardrail only TIGHTENS: a read-only policy that denies edits still
@@ -310,6 +335,8 @@ final class AutonomyPolicyNormalizeTests: XCTestCase {
         let policy = AutonomyPolicy()
         XCTAssertTrue(policy.requiresForcedConfirm(app: "Terminal.app"))
         XCTAssertTrue(policy.requiresForcedConfirm(app: "com.apple.Terminal"))
+        XCTAssertTrue(policy.requiresForcedConfirm(app: "Shortcuts"))
+        XCTAssertTrue(policy.requiresForcedConfirm(app: "OrbStack"))
         XCTAssertFalse(policy.requiresForcedConfirm(app: "Notes"))
         XCTAssertFalse(policy.requiresForcedConfirm(app: nil))
         XCTAssertFalse(policy.requiresForcedConfirm(app: ""))

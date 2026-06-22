@@ -24,13 +24,23 @@ final class ComputerUseLoopRunTests: XCTestCase {
 
     // MARK: - Fixtures
 
-    private func el(_ id: String, _ role: String, _ label: String?, value: String? = nil) -> CUElement {
-        CUElement(id: id, role: role, label: label, value: value)
+    private func el(
+        _ id: String,
+        _ role: String,
+        _ label: String?,
+        value: String? = nil,
+        windowId: Int? = nil
+    ) -> CUElement {
+        CUElement(id: id, role: role, label: label, value: value, windowId: windowId)
     }
 
     /// A driver with one focused app (so `currentPid` is non-nil from the
     /// start) serving a single steady-state snapshot.
-    private func driver(_ elements: [CUElement], pid: Int32 = 4242) -> MockMacDriver {
+    private func driver(
+        _ elements: [CUElement],
+        pid: Int32 = 4242,
+        windows: [CUWindowSummary]? = nil
+    ) -> MockMacDriver {
         let snap = CUSnapshot(
             snapshotId: 1,
             pid: pid,
@@ -38,7 +48,7 @@ final class ComputerUseLoopRunTests: XCTestCase {
             focusedWindow: "Main",
             tier: .ax,
             truncated: false,
-            windows: [CUWindowSummary(id: 1, title: "Main", focused: true, x: 0, y: 0, w: 800, h: 600)],
+            windows: windows ?? [CUWindowSummary(id: 1, title: "Main", focused: true, x: 0, y: 0, w: 800, h: 600)],
             elements: elements,
             image: nil
         )
@@ -320,6 +330,35 @@ final class ComputerUseLoopRunTests: XCTestCase {
         }
         let coords = await d.coordinateActions
         XCTAssertTrue(coords.isEmpty, "An unresolved drag destination must never reach the driver")
+    }
+
+    func testDragAcrossWindowsIsBlockedBeforeDriver() async {
+        let windows = [
+            CUWindowSummary(id: 1, title: "Main", focused: true, x: 0, y: 0, w: 800, h: 600),
+            CUWindowSummary(id: 2, title: "Other", focused: false, x: 900, y: 0, w: 800, h: 600),
+        ]
+        let d = driver(
+            [
+                el("card", "cell", "Card", windowId: 1),
+                el("trash", "button", "Trash", windowId: 2),
+            ],
+            windows: windows
+        )
+        let result = await run(
+            d,
+            provider: ComputerUseLoop.scriptedProvider([
+                AgentAction(verb: .drag, target: AgentTarget(mark: 1), to: AgentTarget(mark: 2), note: "cross"),
+                AgentAction(verb: .giveUp, reason: "blocked"),
+            ]),
+            limits: RunLimits(maxSteps: 10, wallClockSeconds: 30)
+        )
+
+        guard case .gaveUp = result.outcome else {
+            return XCTFail("Expected giveUp after blocked drag; got \(result.outcome)")
+        }
+        XCTAssertEqual(result.metrics.blocked, 1)
+        let coords = await d.coordinateActions
+        XCTAssertTrue(coords.isEmpty, "A cross-window drag must never reach the driver")
     }
 
     // MARK: - Loop robustness (Phase 3)
