@@ -2658,12 +2658,33 @@ private final class UserDocumentChipView: NSView {
         sizeField.textColor = NSColor(theme.tertiaryText)
 
         invalidateIntrinsicContentSize()
-        window?.invalidateCursorRects(for: self)
     }
 
-    override func resetCursorRects() {
+    // Tracking-area + `cursorUpdate` rather than `resetCursorRects`: cursor
+    // rects are unreliable for a subview nested inside the message
+    // `NSTableView`/scroll view, but a `.cursorUpdate` tracking area pushes
+    // the pointing hand reliably on hover. Gated on `onTap` so plain
+    // (non-tappable) document chips keep the arrow cursor.
+    private var cursorTrackingArea: NSTrackingArea?
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let cursorTrackingArea { removeTrackingArea(cursorTrackingArea) }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.cursorUpdate, .activeInKeyWindow, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        cursorTrackingArea = area
+    }
+
+    override func cursorUpdate(with event: NSEvent) {
         if onTap != nil {
-            addCursorRect(bounds, cursor: .pointingHand)
+            NSCursor.pointingHand.set()
+        } else {
+            super.cursorUpdate(with: event)
         }
     }
 
