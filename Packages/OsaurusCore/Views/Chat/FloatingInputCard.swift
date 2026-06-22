@@ -4158,7 +4158,16 @@ private struct ContextBreakdownPopover: View {
     /// opens in its compact, grouped form.
     @State private var expandedGroups: Set<String> = []
 
-    private var budgetCap: Int { maxTokens ?? breakdown.total }
+    /// Each row's share of the *current* total, not of the model's full
+    /// window — the window is typically so large (e.g. 262k) that share-of-
+    /// budget rounds every category to 0%. Share-of-total instead sums to
+    /// ~100% and tracks the stacked bar, which fills the whole track.
+    private func percent(_ tokens: Int) -> String {
+        let total = breakdown.total
+        guard total > 0 else { return "0%" }
+        let pct = Int((Double(tokens) / Double(total) * 100).rounded())
+        return "\(pct)%"
+    }
 
     /// IDs in `breakdown.context` that read as their own category rather than
     /// folding into the "System Prompt" roll-up. Order here is their canonical
@@ -4187,18 +4196,15 @@ private struct ContextBreakdownPopover: View {
         return groups
     }
 
-    /// Stacked-bar segments at group granularity — one block per context group
-    /// plus each message entry — so the bar shows a few legible bands instead
-    /// of a dozen hairline slivers.
+    /// Stacked-bar segments — one block per individual entry (every prompt
+    /// section, Tools, Memory, and each message row) so the bar shows the full
+    /// breakdown. The legend collapses these into groups; the bar does not.
     private var barSegments: [(id: String, tint: ContextBreakdown.Tint, tokens: Int)] {
-        var segs = contextGroups.map { (id: $0.id, tint: $0.tint, tokens: $0.tokens) }
-        segs += breakdown.messages.map { (id: $0.id, tint: $0.tint, tokens: $0.tokens) }
-        return segs.filter { $0.tokens > 0 }
+        breakdown.allEntries
+            .filter { $0.tokens > 0 }
+            .map { (id: $0.id, tint: $0.tint, tokens: $0.tokens) }
     }
 
-    private func percent(_ tokens: Int) -> String {
-        budgetCap > 0 ? "\(tokens * 100 / budgetCap)%" : "0%"
-    }
 
     /// One-line italic notice rendered above the entry list when the
     /// composer auto-disabled features for a small-context model.
@@ -4291,11 +4297,11 @@ private struct ContextBreakdownPopover: View {
 
     private var barChart: some View {
         let segments = barSegments
-        let hasCeiling = maxTokens != nil
-        // When there is no ceiling, the bar reports each segment's share of
-        // the current total instead of a fixed budget — so percentages and
-        // bar widths agree, and the track always fills.
-        let scale = hasCeiling ? max(budgetCap, 1) : max(breakdown.total, 1)
+        // The bar shows composition: every segment's share of the current
+        // total, always filling the track. Share-of-budget would render the
+        // whole breakdown as a near-invisible sliver against a huge window;
+        // headroom is conveyed by the "~2.1k / 262k" total row instead.
+        let scale = max(breakdown.total, 1)
         return GeometryReader { geo in
             let gapTotal = CGFloat(max(segments.count - 1, 0))
             let available = max(0, geo.size.width - gapTotal)
@@ -4303,10 +4309,7 @@ private struct ContextBreakdownPopover: View {
                 tokens: segments.map(\.tokens),
                 totalTokens: scale,
                 available: available,
-                fillsTrack: !hasCeiling,
-                // Keep the used band visible when the window is nearly empty
-                // (e.g. ~2k of a 262k budget would otherwise be a 1pt sliver).
-                minUsedWidth: 12
+                fillsTrack: true
             )
             HStack(spacing: 1) {
                 ForEach(Array(zip(segments, widths)), id: \.0.id) { segment, width in
@@ -4314,7 +4317,6 @@ private struct ContextBreakdownPopover: View {
                         .fill(color(for: segment.tint).opacity(0.85))
                         .frame(width: width)
                 }
-                if hasCeiling { Spacer(minLength: 0) }
             }
             .clipShape(RoundedRectangle(cornerRadius: 4))
         }
@@ -4556,17 +4558,11 @@ private struct BalanceBreakdownPopover: View {
 ///   redistributed weighted by `tokens[i]` so segments cover the full track.
 ///   When false (ceiling present), the leftover is the caller's headroom
 ///   slot, surfaced as a trailing `Spacer`.
-/// - `minUsedWidth` floors the COMBINED width of the used segments (ceiling
-///   case only). With few segments, a near-empty budget would otherwise
-///   render the used region as a ~1pt sliver; scaling the segments up
-///   together to this minimum keeps low utilization visible without
-///   distorting their relative proportions or hiding the headroom.
 func computeContextBudgetSegmentWidths(
     tokens: [Int],
     totalTokens: Int,
     available: CGFloat,
-    fillsTrack: Bool,
-    minUsedWidth: CGFloat = 0
+    fillsTrack: Bool
 ) -> [CGFloat] {
     guard !tokens.isEmpty else { return [] }
     guard available > 0, totalTokens > 0 else {
@@ -4586,13 +4582,6 @@ func computeContextBudgetSegmentWidths(
 
     if sum > availableDouble && sum > 0 {
         let scale = availableDouble / sum
-        widths = widths.map { $0 * scale }
-        sum = widths.reduce(0, +)
-    }
-
-    if !fillsTrack, sum > 0, sum < Double(minUsedWidth) {
-        let target = min(Double(minUsedWidth), availableDouble)
-        let scale = target / sum
         widths = widths.map { $0 * scale }
         sum = widths.reduce(0, +)
     }
