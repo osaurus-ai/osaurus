@@ -77,30 +77,30 @@ public struct ScreenContextFixture: Sendable, Codable, Equatable {
         }
     }
 
-        public struct PromotionSanitizationReport: Sendable, Equatable {
-            public var stringFieldsRedacted: Int
-            public var secureValuesDropped: Int
-            public var elementIDsRewritten: Int
-            public var pathFieldsDropped: Int
-            public var windowTitlesRedacted: Int
-            public var appMetadataRedacted: Int
+    public struct PromotionSanitizationReport: Sendable, Equatable {
+        public var stringFieldsRedacted: Int
+        public var secureValuesDropped: Int
+        public var elementIDsRewritten: Int
+        public var pathFieldsDropped: Int
+        public var windowTitlesRedacted: Int
+        public var appMetadataRedacted: Int
 
-            public init(
-                stringFieldsRedacted: Int = 0,
-                secureValuesDropped: Int = 0,
-                elementIDsRewritten: Int = 0,
-                pathFieldsDropped: Int = 0,
-                windowTitlesRedacted: Int = 0,
-                appMetadataRedacted: Int = 0
-            ) {
-                self.stringFieldsRedacted = stringFieldsRedacted
-                self.secureValuesDropped = secureValuesDropped
-                self.elementIDsRewritten = elementIDsRewritten
-                self.pathFieldsDropped = pathFieldsDropped
-                self.windowTitlesRedacted = windowTitlesRedacted
-                self.appMetadataRedacted = appMetadataRedacted
-            }
+        public init(
+            stringFieldsRedacted: Int = 0,
+            secureValuesDropped: Int = 0,
+            elementIDsRewritten: Int = 0,
+            pathFieldsDropped: Int = 0,
+            windowTitlesRedacted: Int = 0,
+            appMetadataRedacted: Int = 0
+        ) {
+            self.stringFieldsRedacted = stringFieldsRedacted
+            self.secureValuesDropped = secureValuesDropped
+            self.elementIDsRewritten = elementIDsRewritten
+            self.pathFieldsDropped = pathFieldsDropped
+            self.windowTitlesRedacted = windowTitlesRedacted
+            self.appMetadataRedacted = appMetadataRedacted
         }
+    }
 
     public struct PromotionCandidate: Sendable, Equatable {
         public let fixture: ScreenContextFixture
@@ -275,7 +275,8 @@ public struct ScreenContextFixture: Sendable, Codable, Equatable {
         if pathFields > 0 {
             reasons.append("contains accessibility paths that can include private labels")
         }
-        let hasUserWindowTitle = Self.hasUserWindowTitle(activeWindow?.title)
+        let hasUserWindowTitle =
+            Self.hasUserWindowTitle(activeWindow?.title)
             || Self.hasUserWindowTitle(snapshot.focusedWindow)
             || snapshot.windows.contains(where: { Self.hasUserWindowTitle($0.title) })
             || windowsByPid.values.flatMap({ $0 }).contains(where: { Self.hasUserWindowTitle($0.title) })

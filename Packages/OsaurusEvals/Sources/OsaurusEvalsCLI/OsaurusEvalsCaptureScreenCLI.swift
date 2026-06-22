@@ -267,7 +267,8 @@ extension OsaurusEvalsCLI {
         do {
             let fixture = try loadFixture(at: inputURL)
             let candidate = fixture.sanitizedForPromotion()
-            let outURL = outPath.map { URL(fileURLWithPath: $0) }
+            let outURL =
+                outPath.map { URL(fileURLWithPath: $0) }
                 ?? defaultPromotionURL(inputURL: inputURL, fixture: fixture)
             try writeFixture(candidate.fixture, to: outURL)
 

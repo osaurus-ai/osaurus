@@ -134,7 +134,8 @@ enum ComputerUseGateInspector {
         let decision: GateDecision
         let decisionText: String
         if gateIsReached {
-            finalDisposition = allowlist.isAllowed
+            finalDisposition =
+                allowlist.isAllowed
                 ? (dangerousConfirm
                     ? AutonomyDisposition.strictest(policyDisposition, .confirm)
                     : policyDisposition)

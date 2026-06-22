@@ -232,7 +232,8 @@ public struct RuleBuilder: Codable, Hashable, Sendable {
         case .exactWord, .anyOfTerms, .startsWith, .endsWith, .contains:
             let cleaned = cleanedTerms
             guard !cleaned.isEmpty else { return nil }
-            let alt = cleaned
+            let alt =
+                cleaned
                 .map { NSRegularExpression.escapedPattern(for: $0) }
                 .joined(separator: "|")
             let group = "(?:\(alt))"

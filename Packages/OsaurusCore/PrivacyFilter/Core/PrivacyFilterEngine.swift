@@ -246,9 +246,8 @@ public final class PrivacyFilterEngine {
         // code-block mask to a `nil` (entirely masked) and collect
         // the survivors. We do this BEFORE interning so we don't pay
         // for placeholders we're about to throw away.
-        var surviving:
-            [(category: EntityCategory, original: String, range: Range<String.Index>, label: String?)] =
-                []
+        var surviving: [(category: EntityCategory, original: String, range: Range<String.Index>, label: String?)] =
+            []
         surviving.reserveCapacity(resolved.count)
         for match in resolved {
             guard let restored = restore(match.range) else { continue }

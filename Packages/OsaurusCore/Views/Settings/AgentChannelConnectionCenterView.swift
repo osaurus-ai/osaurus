@@ -228,7 +228,8 @@ struct AgentChannelConnectionCenterView: View {
 
             SettingsToggle(
                 title: "Enable Writes",
-                description: "Permit send and reply actions only for write-allowlisted rooms. Tool calls still require confirmation.",
+                description:
+                    "Permit send and reply actions only for write-allowlisted rooms. Tool calls still require confirmation.",
                 isOn: $draft.writeEnabled
             )
 
@@ -302,7 +303,7 @@ struct AgentChannelConnectionCenterView: View {
 
             LazyVGrid(
                 columns: [
-                    GridItem(.adaptive(minimum: 150), spacing: 8),
+                    GridItem(.adaptive(minimum: 150), spacing: 8)
                 ],
                 alignment: .leading,
                 spacing: 8
@@ -338,12 +339,14 @@ struct AgentChannelConnectionCenterView: View {
                     label: "Base URL",
                     text: $draft.customBaseURL,
                     placeholder: "https://hooks.example.test",
-                    help: "HTTP or HTTPS origin for this configured channel. Execution remains disabled until the security-reviewed runner lands."
+                    help:
+                        "HTTP or HTTPS origin for this configured channel. Execution remains disabled until the security-reviewed runner lands."
                 )
                 multilineField(
                     title: "Action Map JSON",
                     text: $draft.customActionsJSON,
-                    help: "JSON object keyed by standard action names. Values define method, path, optional query, headers, and bodyTemplate."
+                    help:
+                        "JSON object keyed by standard action names. Values define method, path, optional query, headers, and bodyTemplate."
                 )
             }
         }
@@ -426,7 +429,8 @@ struct AgentChannelConnectionCenterView: View {
     private func reloadConnections() {
         connections = manager.editableConnections()
         if let selectedConnectionId,
-           let selected = connections.first(where: { $0.id == selectedConnectionId }) {
+            let selected = connections.first(where: { $0.id == selectedConnectionId })
+        {
             draft = AgentChannelConnectionDraft(connection: selected)
         } else if let first = connections.first {
             select(first)
@@ -474,7 +478,7 @@ struct AgentChannelConnectionCenterView: View {
         let connectionId = draft.id.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !connectionId.isEmpty else { return }
         guard let originalId = draft.originalId,
-              AgentChannelConnection.normalizedId(connectionId) == originalId
+            AgentChannelConnection.normalizedId(connectionId) == originalId
         else {
             showStatus("Save the channel connection before running diagnostics", isError: true)
             return
@@ -508,11 +512,11 @@ struct AgentChannelConnectionCenterView: View {
 
     private static func prettyJSON(_ payload: [String: Any]) -> String {
         guard JSONSerialization.isValidJSONObject(payload),
-              let data = try? JSONSerialization.data(
-                  withJSONObject: payload,
-                  options: [.prettyPrinted, .sortedKeys]
-              ),
-              let string = String(data: data, encoding: .utf8)
+            let data = try? JSONSerialization.data(
+                withJSONObject: payload,
+                options: [.prettyPrinted, .sortedKeys]
+            ),
+            let string = String(data: data, encoding: .utf8)
         else {
             return String(describing: payload)
         }
@@ -638,7 +642,11 @@ private struct StatusMessageView: View {
         .padding(10)
         .background(
             RoundedRectangle(cornerRadius: 8)
-                .fill((isError ? themeManager.currentTheme.warningColor : themeManager.currentTheme.successColor).opacity(0.08))
+                .fill(
+                    (isError ? themeManager.currentTheme.warningColor : themeManager.currentTheme.successColor).opacity(
+                        0.08
+                    )
+                )
         )
     }
 }
@@ -710,21 +718,21 @@ private struct AgentChannelConnectionDraft {
     }
 
     private static let defaultActionsJSON = """
-    {
-      "send_message" : {
-        "bodyTemplate" : "{\\"text\\":\\"${content}\\"}",
-        "headers" : {
-          "Authorization" : "Bearer ${secret:bearer}",
-          "Content-Type" : "application/json"
-        },
-        "method" : "POST",
-        "path" : "/rooms/{room_id}/messages",
-        "query" : {
+        {
+          "send_message" : {
+            "bodyTemplate" : "{\\"text\\":\\"${content}\\"}",
+            "headers" : {
+              "Authorization" : "Bearer ${secret:bearer}",
+              "Content-Type" : "application/json"
+            },
+            "method" : "POST",
+            "path" : "/rooms/{room_id}/messages",
+            "query" : {
 
+            }
+          }
         }
-      }
-    }
-    """
+        """
 
     private static func parseList(_ text: String) -> [String] {
         text.components(separatedBy: CharacterSet(charactersIn: ", \n\t"))
@@ -762,8 +770,8 @@ private struct AgentChannelConnectionDraft {
         _ actions: [String: AgentChannelCustomHTTPAction]
     ) -> String {
         guard !actions.isEmpty,
-              let data = try? JSONEncoder.prettyAgentChannelEncoder.encode(actions),
-              let string = String(data: data, encoding: .utf8)
+            let data = try? JSONEncoder.prettyAgentChannelEncoder.encode(actions),
+            let string = String(data: data, encoding: .utf8)
         else {
             return defaultActionsJSON
         }

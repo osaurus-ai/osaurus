@@ -595,7 +595,7 @@ struct DiscordConnectionTests {
                 writeEnabled: true,
                 defaultReadLimit: 250,
                 secrets: [
-                    AgentChannelSecretReference(name: " bearer ", keychainId: " ops_webhook_token "),
+                    AgentChannelSecretReference(name: " bearer ", keychainId: " ops_webhook_token ")
                 ],
                 customHTTP: AgentChannelCustomHTTPConfiguration(
                     baseURL: "https://hooks.example.test",
@@ -604,10 +604,10 @@ struct DiscordConnectionTests {
                             method: "post",
                             path: "/rooms/{room_id}/messages",
                             headers: [
-                                "Authorization": "Bearer ${secret:bearer}",
+                                "Authorization": "Bearer ${secret:bearer}"
                             ],
                             bodyTemplate: #"{"text":"${content}"}"#
-                        ),
+                        )
                     ]
                 )
             )
@@ -722,7 +722,7 @@ struct DiscordConnectionTests {
                     kind: .customHTTP,
                     supportedActions: [.diagnostics],
                     secrets: [
-                        AgentChannelSecretReference(name: "bearer", keychainId: "ops_webhook_token"),
+                        AgentChannelSecretReference(name: "bearer", keychainId: "ops_webhook_token")
                     ],
                     customHTTP: AgentChannelCustomHTTPConfiguration(
                         baseURL: "https://hooks.example.test",
@@ -764,10 +764,12 @@ struct DiscordConnectionTests {
                 )
             }
 
-            #expect(throws: AgentChannelConnectionManagerError.invalidCustomHTTPHeader(
-                action: "send_message",
-                header: "Authorization"
-            )) {
+            #expect(
+                throws: AgentChannelConnectionManagerError.invalidCustomHTTPHeader(
+                    action: "send_message",
+                    header: "Authorization"
+                )
+            ) {
                 try manager.upsertConnection(
                     AgentChannelConnection(
                         id: "unsafe-webhook",
@@ -781,9 +783,9 @@ struct DiscordConnectionTests {
                                     method: "POST",
                                     path: "/messages",
                                     headers: [
-                                        "Authorization": "Bearer ok\nInjected: value",
+                                        "Authorization": "Bearer ok\nInjected: value"
                                     ]
-                                ),
+                                )
                             ]
                         )
                     )
@@ -796,40 +798,40 @@ struct DiscordConnectionTests {
         try await withIsolatedDiscordStores { _ in
             let manager = AgentChannelConnectionManager()
             let json = """
-            {
-              "schemaVersion": 1,
-              "connections": [
                 {
-                  "id": "ops-webhook",
-                  "name": "Ops Webhook",
-                  "kind": "custom_http",
-                  "enabled": true,
-                  "supportedActions": ["diagnostics"],
-                  "spaceAllowlist": [],
-                  "readRoomAllowlist": [],
-                  "writeRoomAllowlist": [],
-                  "writeEnabled": false,
-                  "defaultReadLimit": 50,
-                  "secrets": [],
-                  "customHTTP": { "baseURL": "https://hooks.example.test", "actions": {} }
-                },
-                {
-                  "id": "ops-webhook",
-                  "name": "Duplicate",
-                  "kind": "custom_http",
-                  "enabled": true,
-                  "supportedActions": ["diagnostics"],
-                  "spaceAllowlist": [],
-                  "readRoomAllowlist": [],
-                  "writeRoomAllowlist": [],
-                  "writeEnabled": false,
-                  "defaultReadLimit": 50,
-                  "secrets": [],
-                  "customHTTP": { "baseURL": "https://hooks.example.test", "actions": {} }
+                  "schemaVersion": 1,
+                  "connections": [
+                    {
+                      "id": "ops-webhook",
+                      "name": "Ops Webhook",
+                      "kind": "custom_http",
+                      "enabled": true,
+                      "supportedActions": ["diagnostics"],
+                      "spaceAllowlist": [],
+                      "readRoomAllowlist": [],
+                      "writeRoomAllowlist": [],
+                      "writeEnabled": false,
+                      "defaultReadLimit": 50,
+                      "secrets": [],
+                      "customHTTP": { "baseURL": "https://hooks.example.test", "actions": {} }
+                    },
+                    {
+                      "id": "ops-webhook",
+                      "name": "Duplicate",
+                      "kind": "custom_http",
+                      "enabled": true,
+                      "supportedActions": ["diagnostics"],
+                      "spaceAllowlist": [],
+                      "readRoomAllowlist": [],
+                      "writeRoomAllowlist": [],
+                      "writeEnabled": false,
+                      "defaultReadLimit": 50,
+                      "secrets": [],
+                      "customHTTP": { "baseURL": "https://hooks.example.test", "actions": {} }
+                    }
+                  ]
                 }
-              ]
-            }
-            """
+                """
 
             #expect(throws: AgentChannelConnectionManagerError.duplicateConnectionId("ops-webhook")) {
                 try manager.importConfigurationData(Data(json.utf8))

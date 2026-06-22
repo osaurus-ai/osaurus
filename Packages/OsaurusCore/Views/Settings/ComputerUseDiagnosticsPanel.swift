@@ -546,7 +546,7 @@ struct ComputerUseDiagnosticsPanel: View {
                 format: L("Global %@ -> %@"),
                 inspection.globalContribution.label,
                 inspection.globalContribution.disposition.displayLabel
-            ),
+            )
         ]
         if let perApp = inspection.perAppContribution {
             parts.append(

@@ -44,7 +44,7 @@ struct ScreenContextCaptureLabTests {
                     name: "Terminal",
                     active: true,
                     hidden: false
-                ),
+                )
             ],
             activeWindow: CUActiveWindow(
                 pid: 22,
@@ -136,7 +136,7 @@ struct ScreenContextCaptureLabTests {
                     name: "Safari",
                     active: true,
                     hidden: false
-                ),
+                )
             ],
             activeWindow: CUActiveWindow(
                 pid: 701,
@@ -158,8 +158,8 @@ struct ScreenContextCaptureLabTests {
                         y: 0,
                         w: 1200,
                         h: 800
-                    ),
-                ],
+                    )
+                ]
             ],
             snapshot: ScreenContextFixture.Snapshot(
                 app: "Safari",
@@ -174,7 +174,7 @@ struct ScreenContextCaptureLabTests {
                         y: 0,
                         w: 1200,
                         h: 800
-                    ),
+                    )
                 ],
                 elements: [
                     CUElement(

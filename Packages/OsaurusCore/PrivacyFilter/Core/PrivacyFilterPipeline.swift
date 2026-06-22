@@ -335,9 +335,13 @@ enum PrivacyFilterPipeline {
                 print("[PrivacyFilter] BLOCKING send: \(detail).")
                 throw PrivacyFilterPipelineError.engineUnavailable(detail)
             }
-            print("[PrivacyFilter] Outbound: filter ENABLED (AI + regex) for provider \(providerId.uuidString); running detection.")
+            print(
+                "[PrivacyFilter] Outbound: filter ENABLED (AI + regex) for provider \(providerId.uuidString); running detection."
+            )
         } else {
-            print("[PrivacyFilter] Outbound: filter ENABLED (regex-only, AI detection off) for provider \(providerId.uuidString); running detection.")
+            print(
+                "[PrivacyFilter] Outbound: filter ENABLED (regex-only, AI detection off) for provider \(providerId.uuidString); running detection."
+            )
         }
 
         // Build the effective regex rule set ONCE per pipeline call.

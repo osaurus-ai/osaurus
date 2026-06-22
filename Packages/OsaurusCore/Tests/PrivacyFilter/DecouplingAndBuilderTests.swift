@@ -72,11 +72,13 @@ struct DecouplingAndBuilderTests {
     @Test func builder_numberSequence_rangeAndOpenEnded() {
         #expect(
             RuleBuilder(matchType: .numberSequence, digitsMin: 4, digitsMax: 6).compile()
-                == #"\b\d{4,6}\b"#)
+                == #"\b\d{4,6}\b"#
+        )
         // digitsMax < digitsMin means "no upper bound".
         #expect(
             RuleBuilder(matchType: .numberSequence, digitsMin: 9, digitsMax: 0).compile()
-                == #"\b\d{9,}\b"#)
+                == #"\b\d{9,}\b"#
+        )
     }
 
     @Test func builder_betweenMarkers_nonGreedy() {
@@ -90,7 +92,8 @@ struct DecouplingAndBuilderTests {
         #expect(RuleBuilder(matchType: .numberSequence, digitsMin: 0).compile() == nil)
         #expect(
             RuleBuilder(matchType: .betweenMarkers, startMarker: "", endMarker: ">>").compile()
-                == nil)
+                == nil
+        )
     }
 
     @Test func effectivePattern_resolvesBuilderOrRaw() {
@@ -98,13 +101,21 @@ struct DecouplingAndBuilderTests {
         #expect(raw.effectivePattern == "abc")
 
         let built = PrivacyRule(
-            name: "built", pattern: "", category: .secret, kind: .builder,
-            builder: RuleBuilder(matchType: .exactWord, terms: ["Zed"]))
+            name: "built",
+            pattern: "",
+            category: .secret,
+            kind: .builder,
+            builder: RuleBuilder(matchType: .exactWord, terms: ["Zed"])
+        )
         #expect(built.effectivePattern == #"\b(?:Zed)\b"#)
 
         let empty = PrivacyRule(
-            name: "empty", pattern: "", category: .secret, kind: .builder,
-            builder: RuleBuilder(matchType: .anyOfTerms, terms: []))
+            name: "empty",
+            pattern: "",
+            category: .secret,
+            kind: .builder,
+            builder: RuleBuilder(matchType: .anyOfTerms, terms: [])
+        )
         #expect(empty.effectivePattern == nil)
     }
 
@@ -114,9 +125,13 @@ struct DecouplingAndBuilderTests {
         var config = PrivacyFilterConfiguration()
         config.customRules = [
             PrivacyRule(
-                name: "Codename", pattern: "", category: .secret, kind: .builder,
+                name: "Codename",
+                pattern: "",
+                category: .secret,
+                kind: .builder,
                 caseSensitive: false,
-                builder: RuleBuilder(matchType: .exactWord, terms: ["Bluebird"]))
+                builder: RuleBuilder(matchType: .exactWord, terms: ["Bluebird"])
+            )
         ]
         let set = RegexEntityDetector.EffectiveRuleSet.build(from: config)
         let matches = RegexEntityDetector.detect(in: "the BLUEBIRD project", ruleset: set)
@@ -127,9 +142,13 @@ struct DecouplingAndBuilderTests {
         var config = PrivacyFilterConfiguration()
         config.customRules = [
             PrivacyRule(
-                name: "Codename", pattern: "", category: .secret, kind: .builder,
+                name: "Codename",
+                pattern: "",
+                category: .secret,
+                kind: .builder,
                 caseSensitive: true,
-                builder: RuleBuilder(matchType: .exactWord, terms: ["Bluebird"]))
+                builder: RuleBuilder(matchType: .exactWord, terms: ["Bluebird"])
+            )
         ]
         let set = RegexEntityDetector.EffectiveRuleSet.build(from: config)
         let matches = RegexEntityDetector.detect(in: "the BLUEBIRD project", ruleset: set)
@@ -140,8 +159,11 @@ struct DecouplingAndBuilderTests {
         var config = PrivacyFilterConfiguration()
         config.customRules = [
             PrivacyRule(
-                name: "Tag", pattern: "secret-[0-9]+", category: .secret,
-                caseSensitive: false)
+                name: "Tag",
+                pattern: "secret-[0-9]+",
+                category: .secret,
+                caseSensitive: false
+            )
         ]
         let set = RegexEntityDetector.EffectiveRuleSet.build(from: config)
         let matches = RegexEntityDetector.detect(in: "ref SECRET-42 here", ruleset: set)

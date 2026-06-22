@@ -244,11 +244,11 @@ final class ComputerUseEvidencePackTests: XCTestCase {
 
     func testScreenContextPrivacyPathInjectsFrozenBlockIntoLatestUserTurnOnly() {
         let frozenBlock = """
-        [Screen Context]
-        Doing: In Safari
-        Focused field: text field "Search"
-        [/Screen Context]
-        """
+            [Screen Context]
+            Doing: In Safari
+            Focused field: text field "Search"
+            [/Screen Context]
+            """
         var messages: [ChatMessage] = [
             ChatMessage(role: "system", content: "stable system prefix"),
             ChatMessage(role: "user", content: "first turn"),

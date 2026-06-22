@@ -143,7 +143,8 @@ private extension ManagementView {
             get: { stateManager.selectedTab.rawValue },
             set: { newValue in
                 if let tab = ManagementTab.resolved(from: newValue),
-                   ManagementTab.visibleCases.contains(tab) {
+                    ManagementTab.visibleCases.contains(tab)
+                {
                     stateManager.selectedTab = tab
                 }
             }

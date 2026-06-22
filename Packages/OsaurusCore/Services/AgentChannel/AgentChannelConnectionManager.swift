@@ -86,21 +86,25 @@ final class AgentChannelConnectionManager: @unchecked Sendable {
         replacingOriginalId originalId: String? = nil
     ) throws {
         let validated = try validatedConnection(connection)
-        let normalizedOriginalId = originalId
+        let normalizedOriginalId =
+            originalId
             .map(AgentChannelConnection.normalizedId)
             .flatMap { $0.isEmpty ? nil : $0 }
         if let normalizedOriginalId,
-           Self.reservedConnectionIds.contains(normalizedOriginalId.lowercased()) {
+            Self.reservedConnectionIds.contains(normalizedOriginalId.lowercased())
+        {
             throw AgentChannelConnectionManagerError.reservedConnectionId(normalizedOriginalId)
         }
         var configuration = loadConfiguration()
         if let normalizedOriginalId,
-           normalizedOriginalId != validated.id,
-           configuration.connections.contains(where: { $0.id == validated.id }) {
+            normalizedOriginalId != validated.id,
+            configuration.connections.contains(where: { $0.id == validated.id })
+        {
             throw AgentChannelConnectionManagerError.duplicateConnectionId(validated.id)
         }
         if normalizedOriginalId == nil,
-           configuration.connections.contains(where: { $0.id == validated.id }) {
+            configuration.connections.contains(where: { $0.id == validated.id })
+        {
             throw AgentChannelConnectionManagerError.duplicateConnectionId(validated.id)
         }
         configuration.connections.removeAll { existing in
@@ -189,10 +193,10 @@ final class AgentChannelConnectionManager: @unchecked Sendable {
             let name = secret.name.trimmingCharacters(in: .whitespacesAndNewlines)
             let keychainId = secret.keychainId.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !name.isEmpty,
-                  !keychainId.isEmpty,
-                  !name.containsLineBreak,
-                  !keychainId.containsLineBreak,
-                  seen.insert(name).inserted
+                !keychainId.isEmpty,
+                !name.containsLineBreak,
+                !keychainId.containsLineBreak,
+                seen.insert(name).inserted
             else {
                 throw AgentChannelConnectionManagerError.invalidSecretReference(name)
             }
@@ -206,9 +210,9 @@ final class AgentChannelConnectionManager: @unchecked Sendable {
             throw AgentChannelConnectionManagerError.missingCustomHTTPConfiguration(connection.id)
         }
         guard let components = URLComponents(string: customHTTP.baseURL),
-              let scheme = components.scheme?.lowercased(),
-              ["http", "https"].contains(scheme),
-              components.host?.isEmpty == false
+            let scheme = components.scheme?.lowercased(),
+            ["http", "https"].contains(scheme),
+            components.host?.isEmpty == false
         else {
             throw AgentChannelConnectionManagerError.invalidCustomHTTPBaseURL(customHTTP.baseURL)
         }
@@ -216,7 +220,7 @@ final class AgentChannelConnectionManager: @unchecked Sendable {
         let supportedActionNames = Set(connection.supportedActions.map(\.rawValue))
         for (actionName, action) in customHTTP.actions {
             guard AgentChannelAction(rawValue: actionName) != nil,
-                  supportedActionNames.contains(actionName)
+                supportedActionNames.contains(actionName)
             else {
                 throw AgentChannelConnectionManagerError.unsupportedCustomHTTPAction(actionName)
             }
@@ -227,7 +231,7 @@ final class AgentChannelConnectionManager: @unchecked Sendable {
                 )
             }
             guard action.path.hasPrefix("/"),
-                  !action.path.containsLineBreak
+                !action.path.containsLineBreak
             else {
                 throw AgentChannelConnectionManagerError.invalidCustomHTTPPath(
                     action: actionName,

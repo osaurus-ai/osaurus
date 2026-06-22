@@ -239,7 +239,6 @@ struct ModelManagerSuggestedTests {
                 "OsaurusAI/gemma-4-12B-it-qat-MXFP4",
                 "OsaurusAI/gemma-4-31B-it-qat-MXFP4",
                 "OsaurusAI/gemma-4-26B-A4B-it-qat-MXFP4",
-                "OsaurusAI/diffusiongemma-26B-A4B-it-MXFP8",
                 "OsaurusAI/gemma-4-E4B-it-8bit",
                 "OsaurusAI/gemma-4-E2B-it-8bit",
                 "OsaurusAI/Qwen3.6-27B-MXFP4",
@@ -270,6 +269,7 @@ struct ModelManagerSuggestedTests {
             "liquidai/lfm2-24b-a2b-mlx-8bit",
             "lmstudio-community/gpt-oss-20b-mlx-8bit",
             "lmstudio-community/gpt-oss-120b-mlx-8bit",
+            "osaurusai/diffusiongemma-26b-a4b-it-mxfp8",
             "osaurusai/gemma-4-26b-a4b-it-mxfp4",
             "osaurusai/gemma-4-26b-a4b-it-4bit",
             "osaurusai/gemma-4-31b-it-jang_4m",
@@ -298,8 +298,17 @@ struct ModelManagerSuggestedTests {
                 description: "from auto-fetch",
                 downloadURL: "https://huggingface.co/OsaurusAI/gemma-4-26B-A4B-it-4bit"
             )
-            manager.applyOsaurusOrgFetch(autoFetched: [retired])
+            // DiffusionGemma was retired from suggestions; the org auto-fetch
+            // must not re-surface it as a plain non-curated row either.
+            let diffusionGemma = MLXModel(
+                id: "OsaurusAI/diffusiongemma-26B-A4B-it-MXFP8",
+                name: "x",
+                description: "from auto-fetch",
+                downloadURL: "https://huggingface.co/OsaurusAI/diffusiongemma-26B-A4B-it-MXFP8"
+            )
+            manager.applyOsaurusOrgFetch(autoFetched: [retired, diffusionGemma])
             #expect(!manager.suggestedModels.contains { $0.id == retired.id })
+            #expect(!manager.suggestedModels.contains { $0.id == diffusionGemma.id })
         }
     }
 
@@ -334,7 +343,6 @@ struct ModelManagerSuggestedTests {
             let candidates = ModelManager().suggestedModels.filter(\.isTopSuggestion)
             let excluded: Set<String> = [
                 "OsaurusAI/gemma-4-26B-A4B-it-qat-MXFP4",
-                "OsaurusAI/diffusiongemma-26B-A4B-it-MXFP8",
                 "OsaurusAI/Qwen3.6-35B-A3B-MXFP8-MTP",
                 "OsaurusAI/Qwen3.6-27B-MXFP8-MTP",
             ]
