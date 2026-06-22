@@ -1,18 +1,18 @@
 # Evidence Report Registry
 
 The evidence report registry is the shared projection layer for report
-artifacts produced by eval, benchmark, runtime, live-proof, run-trace, and
-provider validation flows. It does not create a new report destination or move
-artifact files; callers register local artifact descriptors and receive typed
-summaries that can be listed, filtered, serialized, and rendered by future
-surfaces.
+artifacts produced by eval, benchmark, runtime, live-proof, run-trace, provider
+validation, and model-library evidence flows. It does not create a new report
+destination or move artifact files; callers register local artifact descriptors
+and receive typed summaries that can be listed, filtered, serialized, and
+rendered by future surfaces.
 
 ## Model
 
 `EvidenceReportDescriptor` is the input from a local producer:
 
 - `kind`: one of `eval`, `benchmark`, `runtime`, `live_proof`, `run_trace`,
-  `provider`, or `custom`.
+  `provider`, `model_compatibility`, `cache`, or `custom`.
 - `source`: the producing flow, such as `evals-pr-evidence` or
   `provider-connectivity`.
 - `artifactPath`: the local artifact path. Relative paths can be resolved
@@ -54,3 +54,29 @@ watcher scoreboard. It does not scan arbitrary `summary.json` files as a second
 report source; it follows registry summaries, fails closed when a registered
 artifact is unavailable or invalid, and writes its own scoreboard registry
 snapshot with source `osaurus-evals-scoreboard`.
+
+## Model Library Evidence
+
+`ModelLibraryEvidenceService` is the model-library producer for the shared
+registry. It registers read-only rows for:
+
+- local cache/import status (`kind = cache`, `source = model-library-cache`);
+- compatibility and preflight status (`kind = model_compatibility`,
+  `source = model-library-preflight`);
+- optional cache, benchmark, and runtime proof artifacts supplied by proof
+  producers.
+
+The service preserves model state as `supported`, `partial`, `unsupported`, or
+`unproven` metadata while mapping registry status to the common report
+vocabulary. Missing local/proof artifacts stay explicit `unavailable` rows
+rather than becoming support claims.
+
+The model projection also returns grouping metadata for consumers. Incomplete
+local directories and external cache/import candidates are grouped and excluded
+from default visible rows, so large local caches do not flood model views. A
+consumer can opt into those groups for repair or audit workflows.
+
+Full bundle paths are not copied into model row metadata. The registry artifact
+path remains the local source-of-truth pointer, but model evidence metadata uses
+redacted display paths such as `.../repo-name` and stores `bundle_path` as
+`<redacted>`.

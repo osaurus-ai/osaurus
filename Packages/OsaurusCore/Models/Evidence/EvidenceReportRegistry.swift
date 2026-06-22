@@ -16,6 +16,8 @@ public enum EvidenceReportKind: String, Codable, CaseIterable, Hashable, Sendabl
     case liveProof = "live_proof"
     case runTrace = "run_trace"
     case provider
+    case modelCompatibility = "model_compatibility"
+    case cache
     case custom
 }
 
