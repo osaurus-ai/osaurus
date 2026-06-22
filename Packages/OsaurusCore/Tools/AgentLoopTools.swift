@@ -29,11 +29,11 @@ import Foundation
 public final class TodoTool: OsaurusTool, @unchecked Sendable {
     public let name = "todo"
     public let description =
-        "Write or replace the current task checklist. For any task with 3+ steps, create the "
-        + "list BEFORE starting work, then re-send it with the new box checked IMMEDIATELY "
+        "Write or replace the OPTIONAL task checklist. Use it for multi-step work (3+ steps): "
+        + "create the list BEFORE starting, then re-send it with the new box checked IMMEDIATELY "
         + "after finishing each item — do not batch updates for the end. Every item is a line "
         + "starting with `- [ ]` (pending) or `- [x]` (done); each call replaces the entire "
-        + "list. Skip only for trivial single-step work."
+        + "list. Skip it for a direct question or single-step work — just answer."
 
     public let parameters: JSONValue? = .object([
         "type": .string("object"),
@@ -97,7 +97,8 @@ public final class TodoTool: OsaurusTool, @unchecked Sendable {
             tool: name,
             text:
                 "Todo updated: \(stored.doneCount)/\(stored.totalCount) complete. "
-                + "Continue with the next pending item, or call `complete(summary)` when all done."
+                + "Continue with the next pending item; when everything is done, write your "
+                + "answer to the user (you may then call `complete(summary)` to close the task)."
         )
     }
 }
@@ -109,11 +110,14 @@ public final class TodoTool: OsaurusTool, @unchecked Sendable {
 public final class CompleteTool: OsaurusTool, @unchecked Sendable {
     public let name = "complete"
     public let description =
-        "End the current task with a one-paragraph summary of WHAT you did and HOW you verified "
-        + "it (the command you ran, the file you checked, the URL you opened). "
-        + "Vague summaries (`done`, `looks good`, `complete`) are rejected. If you couldn't "
-        + "finish, say so honestly in the summary instead of pretending — that's fine; the "
-        + "user understands partial work."
+        "OPTIONAL closure for a multi-step task you tracked with a `todo` list. Write your "
+        + "actual answer/result to the user as a normal message FIRST; this summary is a short "
+        + "status of WHAT you did + HOW you verified it (the command you ran, the file you "
+        + "checked, the URL you opened), NOT the answer itself. Call it in the same message as "
+        + "that final answer and not alongside other tool calls; for a direct question, just "
+        + "answer and do not call complete. Vague summaries (`done`, `looks good`, `complete`) "
+        + "are rejected. If you couldn't finish, say so honestly in the summary instead of "
+        + "pretending — that's fine; the user understands partial work."
 
     public let parameters: JSONValue? = .object([
         "type": .string("object"),

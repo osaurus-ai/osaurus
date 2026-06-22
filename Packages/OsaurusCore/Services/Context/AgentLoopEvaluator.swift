@@ -551,13 +551,25 @@ public enum AgentLoopEvaluator {
                 )
             )
             // Agent-loop intercepts, mirroring the chat surface: a
-            // successful `complete` ends the run and its summary is the
-            // final answer; a successful `clarify` ends the run awaiting
-            // user input (headless: no answer ever arrives). Error
-            // envelopes fall through so the model can retry.
+            // successful `complete` ends the run and a successful `clarify`
+            // ends the run awaiting user input (headless: no answer ever
+            // arrives). Error envelopes fall through so the model can retry.
+            //
+            // Under the agent-loop contract the user-facing ANSWER is the
+            // model's visible prose; `complete`'s summary is only a closing
+            // status. Prefer this turn's assistant prose as `finalText` so
+            // rubric grading judges the real answer, falling back to the
+            // summary when the turn carried no visible text (the older
+            // bare-`complete` behavior the chat banner still renders).
             if inv.toolName == "complete", !isError {
                 completedViaTool = true
-                if let summary = CompleteTool.parseSummary(from: inv.jsonArguments) {
+                let answer =
+                    history.last(where: { $0.role == "assistant" })?
+                    .content?
+                    .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                if !answer.isEmpty {
+                    finalText = answer
+                } else if let summary = CompleteTool.parseSummary(from: inv.jsonArguments) {
                     finalText = summary
                 }
                 return AgentLoopToolExecution(result: result, endRun: true)

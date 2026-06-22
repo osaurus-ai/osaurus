@@ -63,21 +63,24 @@ public enum SystemPromptTemplates {
     public static let agentLoopGuidance = """
         ## Agent loop
 
-        - `todo(markdown)` — write or replace the user-visible task list. For any task with 3+ steps, create it BEFORE starting work, then re-send the full list with the new box checked immediately after finishing each item. Skip only for trivial work.
-        - `complete(summary)` — call once at the very end (never alongside other tools) with WHAT you did + HOW you verified it. Vague placeholders are rejected; report partial work honestly.
+        - Always answer the user in plain text — that reply is what they read and ends the turn.
+        - `todo(markdown)` — OPTIONAL, multi-step (3+) only: create it before starting, then re-send it with the next box checked after each item. Skip direct/single-step work.
+        - `complete(summary)` — OPTIONAL: close a `todo` task with a short WHAT+HOW status (not the answer) in the SAME message as your answer. Not for direct questions or other tools; no vague placeholders.
         - `clarify(question)` — pause and ask exactly one concrete question only when guessing wrong would change the result. For minor preferences pick a sensible default and proceed.
         - `share_artifact(path | content+filename)` — the only way the user sees a generated image, chart, report, code blob, or any file. **The file MUST exist before this call.** Sandbox: save under your home dir (default cwd), not `/tmp`. For inline text/markdown, pass `content`+`filename` and skip the file write.
         """
 
     /// Compact agent-loop cheat-sheet for small-context / small local models
     /// (`prefersCompactPrompt`). Same four tools and the load-bearing rules
-    /// (3+ step todo, complete-alone-at-end, one-question clarify, file-exists
-    /// artifact), one line each.
+    /// (always answer in plain text, OPTIONAL 3+ step todo, OPTIONAL complete
+    /// that only closes a todo alongside the answer, one-question clarify,
+    /// file-exists artifact), one line each.
     public static let agentLoopGuidanceCompact = """
         ## Agent loop
 
-        - `todo(markdown)` — user-visible checklist. For 3+ step tasks, write it before starting, then re-send the full list with each box checked as you finish.
-        - `complete(summary)` — once at the very end, never alongside other tools: WHAT you did + HOW you verified. No vague placeholders.
+        - Always answer the user in plain text; that plain-text reply ends the turn.
+        - `todo(markdown)` — OPTIONAL checklist for multi-step (3+) work; re-send it with each box checked as you finish. Skip single-step or direct questions.
+        - `complete(summary)` — OPTIONAL: only to close a `todo`, in the SAME message as your answer; a short WHAT+HOW status, not the answer. No vague placeholders.
         - `clarify(question)` — last resort, NOT for big or multi-step tasks. If the request is fully specified, just do the work. Ask one concrete question only when a required input is missing or contradictory and no sensible default exists (or the user explicitly asks you to); otherwise assume a reasonable default, proceed, and note it.
         - `share_artifact(path | content+filename)` — the only way the user sees a file/image/report; the file MUST exist first. Sandbox: save under home, not `/tmp`.
         """
