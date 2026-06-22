@@ -77,10 +77,12 @@ func buildCapture(
     maxElements: Int? = nil,
     focusedWindowOnly: Bool = false
 ) async -> SOMResult {
-    var filter = ElementFilter(pid: pid)
-    if let maxElements = maxElements { filter.maxElements = maxElements }
-    if focusedWindowOnly { filter.focusedWindowOnly = true }
-    let snapshot = await MainActor.run { AccessibilityManager.shared.traverse(filter: filter) }
+    let snapshot = await AccessibilityManager.runOffMain { () -> TraversalResult in
+        var filter = ElementFilter(pid: pid)
+        if let maxElements { filter.maxElements = maxElements }
+        if focusedWindowOnly { filter.focusedWindowOnly = true }
+        return AccessibilityManager.shared.traverse(filter: filter)
+    }
 
     let elementRefs: [SOMElementRef] = snapshot.elements.enumerated().map { idx, info in
         SOMElementRef(

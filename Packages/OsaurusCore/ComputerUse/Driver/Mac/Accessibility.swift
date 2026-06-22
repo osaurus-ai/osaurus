@@ -208,9 +208,17 @@ struct TraversalResult: Encodable, Sendable {
 final class AccessibilityManager: @unchecked Sendable {
     static let shared = AccessibilityManager()
 
-    /// Maximum time (seconds) any AX call is allowed to block. Without this,
-    /// a wedged target app would hang the agent indefinitely.
-    private static let axMessagingTimeout: Float = 3.0
+    /// Maximum time (seconds) any single AX call is allowed to block before it
+    /// returns a timeout error. Applied per-app via `axApp` (and globally on the
+    /// system-wide element in `init`) so a wedged target app can't stall the
+    /// off-main driver queue indefinitely on any one call.
+    static let axMessagingTimeout: Float = 1.5
+
+    /// Overall wall-clock budget for a single `traverse`. Even when each AX call
+    /// stays under `axMessagingTimeout`, a huge or partially-wedged tree can
+    /// accumulate many slow calls; the traversal bails (marking the result
+    /// `truncated`) once this elapses so a capture still returns promptly.
+    static let traversalDeadline: TimeInterval = 2.0
 
     private var snapshots: [Int: [String: CachedElement]] = [:]
     private var snapshotPids: [Int: Int32] = [:]
@@ -237,6 +245,37 @@ final class AccessibilityManager: @unchecked Sendable {
             AXUIElementCreateSystemWide(),
             Self.axMessagingTimeout
         )
+    }
+
+    // MARK: Off-main execution
+
+    /// Serializes ALL native-driver AX IPC and input synthesis off the main
+    /// thread, so a slow/wedged target app blocks this background queue instead
+    /// of the UI run loop. One operation at a time preserves input-event
+    /// ordering and AX-cache coherence — the same single-threaded guarantee the
+    /// old main-actor hop provided, just off the main thread.
+    static let serialQueue = DispatchQueue(
+        label: "com.osaurus.computeruse.driver",
+        qos: .userInitiated
+    )
+
+    /// Run blocking native-driver work (AX IPC, input synthesis) on
+    /// `serialQueue` and await its result, keeping the main thread responsive.
+    static func runOffMain<T: Sendable>(_ body: @escaping @Sendable () -> T) async -> T {
+        await withCheckedContinuation { continuation in
+            serialQueue.async { continuation.resume(returning: body()) }
+        }
+    }
+
+    /// Create an application AX element with the per-app messaging timeout
+    /// applied. Setting the timeout on the system-wide element alone does not
+    /// reliably propagate to per-application elements, so every site that needs
+    /// an app element goes through here to bound how long a single AX call can
+    /// block.
+    static func axApp(_ pid: Int32) -> AXUIElement {
+        let app = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(app, axMessagingTimeout)
+        return app
     }
 
     // MARK: Electron / Chromium accessibility
@@ -302,11 +341,11 @@ final class AccessibilityManager: @unchecked Sendable {
     /// The timeout only elapses for an app that exposes no AX text within the
     /// budget (a blank page, or a canvas/WebGL app), and we pay it at most once
     /// per pid — subsequent captures still re-check cheaply (picking up a page
-    /// that built late) but never block again. The poll runs on the main actor
-    /// because it issues AX reads.
+    /// that built late) but never block again. The poll runs on the off-main
+    /// driver queue because it issues blocking AX reads.
     func prepareAndAwaitTree(pid: Int32, timeout: TimeInterval = 1.6) async {
         prepareForAccessibility(pid: pid)
-        if await MainActor.run(body: { Self.focusedWindowHasContent(pid: pid) }) { return }
+        if await Self.runOffMain({ Self.focusedWindowHasContent(pid: pid) }) { return }
 
         // Only pay the timeout once per pid: a contentless app (canvas/blank)
         // shouldn't block every capture, just the first.
@@ -315,7 +354,7 @@ final class AccessibilityManager: @unchecked Sendable {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
             try? await Task.sleep(nanoseconds: 80_000_000)
-            if await MainActor.run(body: { Self.focusedWindowHasContent(pid: pid) }) { return }
+            if await Self.runOffMain({ Self.focusedWindowHasContent(pid: pid) }) { return }
         }
     }
 
@@ -331,9 +370,8 @@ final class AccessibilityManager: @unchecked Sendable {
     /// of nodes with no readable text, and treating that as "ready" is exactly
     /// what skipped the wait for the page. Bounded BFS so it stays cheap on huge
     /// trees.
-    @MainActor
     private static func focusedWindowHasContent(pid: Int32) -> Bool {
-        let app = AXUIElementCreateApplication(pid)
+        let app = Self.axApp(pid)
 
         func readableLength(_ element: AXUIElement) -> Int {
             guard let value = axCopyAttribute(element, kAXValueAttribute as String) as? String
@@ -536,8 +574,11 @@ final class AccessibilityManager: @unchecked Sendable {
 
         let snapshotId = beginNewSnapshot(pid: filter.pid)
 
-        let app = AXUIElementCreateApplication(filter.pid)
+        let app = Self.axApp(filter.pid)
         let appName = getAppName(for: filter.pid) ?? "Unknown"
+
+        // Overall wall-clock budget for this traversal (see `traversalDeadline`).
+        let deadline = Date().addingTimeInterval(Self.traversalDeadline)
 
         let maxDepth = filter.maxDepth ?? 20
         let maxElements: Int = {
@@ -609,7 +650,7 @@ final class AccessibilityManager: @unchecked Sendable {
         var truncated = false
 
         for window in orderedWindows {
-            if elements.count >= maxElements {
+            if elements.count >= maxElements || Date() >= deadline {
                 truncated = true
                 break
             }
@@ -627,6 +668,7 @@ final class AccessibilityManager: @unchecked Sendable {
                 depth: 0,
                 maxDepth: maxDepth,
                 maxElements: maxElements,
+                deadline: deadline,
                 interactiveOnly: interactiveOnly,
                 allowedRoles: allowedRoles,
                 textNeedle: textNeedle,
@@ -653,6 +695,7 @@ final class AccessibilityManager: @unchecked Sendable {
                 depth: 0,
                 maxDepth: maxDepth,
                 maxElements: maxElements,
+                deadline: deadline,
                 interactiveOnly: interactiveOnly,
                 allowedRoles: allowedRoles,
                 textNeedle: textNeedle,
@@ -687,6 +730,7 @@ final class AccessibilityManager: @unchecked Sendable {
         depth: Int,
         maxDepth: Int,
         maxElements: Int,
+        deadline: Date,
         interactiveOnly: Bool,
         allowedRoles: Set<String>?,
         textNeedle: String?,
@@ -701,7 +745,10 @@ final class AccessibilityManager: @unchecked Sendable {
         truncated: inout Bool
     ) {
         if depth > maxDepth { return }
-        if elements.count >= maxElements {
+        // Stop at the element cap or the overall wall-clock budget — a huge or
+        // wedged tree can accrue many slow AX calls even under the per-call
+        // timeout, so the deadline still guarantees a prompt (truncated) return.
+        if elements.count >= maxElements || Date() >= deadline {
             truncated = true
             return
         }
@@ -836,7 +883,7 @@ final class AccessibilityManager: @unchecked Sendable {
         }
 
         for child in children {
-            if elements.count >= maxElements {
+            if elements.count >= maxElements || Date() >= deadline {
                 truncated = true
                 break
             }
@@ -845,6 +892,7 @@ final class AccessibilityManager: @unchecked Sendable {
                 depth: depth + 1,
                 maxDepth: maxDepth,
                 maxElements: maxElements,
+                deadline: deadline,
                 interactiveOnly: interactiveOnly,
                 allowedRoles: allowedRoles,
                 textNeedle: textNeedle,
@@ -963,7 +1011,7 @@ struct FocusedElementSummary: Codable, Sendable {
 /// Capture the current focused window title and focused element for a given pid.
 /// Returns nil if pid is unknown or accessibility query fails.
 func computeFocusDelta(pid: Int32) -> FocusDelta? {
-    let app = AXUIElementCreateApplication(pid)
+    let app = AccessibilityManager.axApp(pid)
 
     var focusedWindowTitle: String?
     var winRef: CFTypeRef?
@@ -1034,7 +1082,7 @@ func computeFocusedContent(
     valueCap: Int = 200_000,
     viewportRadius: Int = 1_200
 ) -> FocusedContentInfo? {
-    let app = AXUIElementCreateApplication(pid)
+    let app = AccessibilityManager.axApp(pid)
 
     var elRef: CFTypeRef?
     guard
@@ -1427,7 +1475,7 @@ func listRunningApps() -> AppListResult {
 
 func listWindowsForPid(_ pid: Int32) -> WindowListResult {
     let appName = NSRunningApplication(processIdentifier: pid)?.localizedName ?? "Unknown"
-    let app = AXUIElementCreateApplication(pid)
+    let app = AccessibilityManager.axApp(pid)
 
     // Focused window for the `focused: true` flag.
     var focusedRef: CFTypeRef?
@@ -1530,7 +1578,7 @@ func getActiveWindow() -> MacActiveWindowInfo? {
     let pid = frontApp.processIdentifier
     let appName = frontApp.localizedName ?? "Unknown"
 
-    let app = AXUIElementCreateApplication(pid)
+    let app = AccessibilityManager.axApp(pid)
 
     var windowRef: CFTypeRef?
     guard

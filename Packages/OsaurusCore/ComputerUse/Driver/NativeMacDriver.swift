@@ -7,8 +7,11 @@
 //  `Driver/Mac/*` classes, returning the harness's `CU…` contract types. No
 //  JSON marshalling, no PluginManager / ExternalPlugin.
 //
-//  All AX / input / screenshot work hops to the main actor, matching the
-//  driver's original main-thread affinity.
+//  AX reads and input synthesis run on a dedicated serial background queue
+//  (`AccessibilityManager.runOffMain`) so slow cross-process AX IPC and the
+//  per-character input sleeps never block the UI thread. Only `narrate` stays
+//  on the main actor (it mutates `AutomationSession` UI state); screenshots use
+//  async ScreenCaptureKit.
 //
 
 import AppKit
@@ -22,7 +25,7 @@ public struct NativeMacDriver: MacDriver {
     // MARK: Availability
 
     public func availability() async -> MacDriverAvailability {
-        await MainActor.run {
+        await AccessibilityManager.runOffMain {
             MacDriverAvailability(
                 accessibility: AXIsProcessTrusted(),
                 screenRecording: CGPreflightScreenCaptureAccess(),
@@ -34,7 +37,7 @@ public struct NativeMacDriver: MacDriver {
     // MARK: Perceive (read-only)
 
     public func listApps() async -> [CUAppListing] {
-        await MainActor.run {
+        await AccessibilityManager.runOffMain {
             listRunningApps().apps.map {
                 CUAppListing(
                     pid: $0.pid,
@@ -48,7 +51,7 @@ public struct NativeMacDriver: MacDriver {
     }
 
     public func listWindows(pid: Int32) async -> [CUWindowInfo] {
-        await MainActor.run {
+        await AccessibilityManager.runOffMain {
             listWindowsForPid(pid).windows.map {
                 CUWindowInfo(
                     windowId: $0.windowId,
@@ -65,7 +68,7 @@ public struct NativeMacDriver: MacDriver {
     }
 
     public func activeWindow() async -> CUActiveWindow? {
-        await MainActor.run {
+        await AccessibilityManager.runOffMain {
             guard let info = getActiveWindow() else { return nil }
             return CUActiveWindow(
                 pid: info.pid,
@@ -80,7 +83,7 @@ public struct NativeMacDriver: MacDriver {
     }
 
     public func focusedContent(pid: Int32) async -> CUFocusedContent? {
-        await MainActor.run {
+        await AccessibilityManager.runOffMain {
             guard let info = computeFocusedContent(pid: pid) else { return nil }
             return CUFocusedContent(
                 role: info.role,
@@ -133,7 +136,7 @@ public struct NativeMacDriver: MacDriver {
             // traverse (Cocoa apps + already-built trees return immediately).
             // Without this the first read of Slack/Chrome/VS Code is empty.
             await AccessibilityManager.shared.prepareAndAwaitTree(pid: pid)
-            let snapshot = await MainActor.run { () -> TraversalResult in
+            let snapshot = await AccessibilityManager.runOffMain { () -> TraversalResult in
                 var filter = ElementFilter(pid: pid)
                 if let maxElements { filter.maxElements = maxElements }
                 if focusedWindowOnly { filter.focusedWindowOnly = true }
@@ -162,7 +165,7 @@ public struct NativeMacDriver: MacDriver {
         enabledOnly: Bool,
         limit: Int
     ) async -> CUSnapshot {
-        await MainActor.run {
+        await AccessibilityManager.runOffMain {
             var filter = ElementFilter(pid: pid)
             filter.roles = roles
             filter.maxDepth = 25
@@ -182,7 +185,7 @@ public struct NativeMacDriver: MacDriver {
     // MARK: Act — element-addressed
 
     public func perform(_ action: CUElementAction) async -> CUActionResult {
-        await MainActor.run {
+        await AccessibilityManager.runOffMain {
             switch action {
             case let .click(id, button, doubleClick):
                 let r: ElementActionResult
@@ -257,7 +260,7 @@ public struct NativeMacDriver: MacDriver {
     // MARK: Act — coordinate-addressed
 
     public func coordinate(_ action: CUCoordinateAction) async -> CUActionResult {
-        await MainActor.run {
+        await AccessibilityManager.runOffMain {
             switch action {
             case let .click(x, y, button, doubleClick, pid):
                 let point = CGPoint(x: x, y: y)
