@@ -17,7 +17,7 @@ definitions.
 
 The model-facing tools use these standard verbs through `agent_channel_*`
 tools. Provider-specific adapters translate the standard action into the
-provider API. Discord is the first executable adapter.
+provider API. Native adapters currently include Discord and Slack.
 
 Each connection also reports provider-neutral action policy metadata in
 `agent_channel_list_connections` and `agent_channel_diagnostics`:
@@ -252,6 +252,7 @@ requests.
 The connection center validates channel definitions before saving:
 
 - `discord` is reserved for the native Discord adapter.
+- `slack` is reserved for the native Slack adapter.
 - Custom HTTP connections require an HTTP or HTTPS base URL.
 - Custom HTTP base URLs run through the same blocked-host policy used by the
   runner, so localhost/private/link-local targets are rejected before save.
@@ -278,6 +279,35 @@ non-secret IDs and policy:
   `reply_thread` can target.
 - `writeEnabled` must be true, and send/reply actions still require
   `confirm_send: true`.
+
+## Slack Connection
+
+Slack is a native Agent Channel connection. It is addressed through
+`connection_id: "slack"` on the `agent_channel_*` tools rather than through a
+separate Slack-specific model-facing tool set.
+
+The Slack bot token and optional signing secret are stored in Keychain under
+the native Slack credential reference names `bot_token` and `signing_secret`.
+The JSON configuration stores only non-secret IDs and policy in `slack.json`:
+
+- `configuredTeamIds` limits which workspace can be inspected. Leave it empty
+  to allow the workspace authenticated by the saved bot token.
+- `readableChannelIds` limits rooms that `read_messages`, `read_thread`, and
+  `search_messages` can read.
+- `writableChannelIds` limits rooms that `draft_message`, `send_message`, and
+  `reply_thread` can target.
+- `writeEnabled` must be true, and send/reply actions still require
+  `confirm_send: true`.
+- `allowBroadcastMentions` defaults to false. When false, outbound messages
+  containing Slack broadcast markup such as `<!channel>`, `<!here>`, or
+  `<!everyone>` are rejected before any network call.
+
+Slack thread ids use `channel_id:thread_ts` so the canonical
+`agent_channel_read_thread` and `agent_channel_reply_thread` tools can route
+Slack thread operations without adding Slack-only tool names. Sent messages use
+conservative Slack posting controls: automatic name linking is disabled,
+message parsing is set to `none`, unfurls are disabled, and thread replies do
+not broadcast.
 
 ## Message State And Dedupe
 
