@@ -167,6 +167,33 @@ public final class NativeImageGenerateTool: OsaurusTool, @unchecked Sendable {
             if ChatExecutionContext.autoApproveToolPrompts {
                 return nil
             }
+            // First use (no default image model chosen yet): show the spawn-model
+            // picker inside the permission prompt so the user picks the image model
+            // once. Persist the choice (Settings → Spawn reflects it) + the
+            // permission decision (Always Allow → no further prompts).
+            if config.defaultImageGenerationModelId == nil {
+                let options = await Self.imageGenModelChoices()
+                let outcome = await ToolPermissionPromptService.requestSpawnApproval(
+                    toolName: name,
+                    description: description,
+                    argumentsJSON: argumentsJSON,
+                    modelPickerTitle: "Image model",
+                    modelOptions: options,
+                    currentModel: nil
+                )
+                switch outcome {
+                case .denied:
+                    return ToolEnvelope.failure(
+                        kind: .userDenied,
+                        message: "User denied image generation.",
+                        tool: name,
+                        retryable: false
+                    )
+                case .allowed(let model, let always):
+                    Self.persistImagePreferences(model: model, always: always)
+                    return nil
+                }
+            }
             let approved = await ToolPermissionPromptService.requestApproval(
                 toolName: name,
                 description: description,
@@ -180,6 +207,23 @@ public final class NativeImageGenerateTool: OsaurusTool, @unchecked Sendable {
                 retryable: false
             )
         }
+    }
+
+    /// Ready text→image bundles, as first-use permission-prompt choices.
+    private static func imageGenModelChoices() async -> [SpawnModelChoice] {
+        let models = (try? await ImageGenerationService.shared.availableModels()) ?? []
+        return models
+            .filter { $0.ready && $0.kind == "imageGen" }
+            .map { SpawnModelChoice(id: $0.id, label: $0.displayName) }
+    }
+
+    /// Persist the first-use spawn-model + permission choice so Settings → Spawn
+    /// reflects it and subsequent jobs use it.
+    private static func persistImagePreferences(model: String?, always: Bool) {
+        var cfg = AgentDelegationConfigurationStore.snapshot()
+        if let model, !model.isEmpty { cfg.defaultImageGenerationModelId = model }
+        if always { cfg.permissionDefaults.imageGenerate = .alwaysAllow }
+        AgentDelegationConfigurationStore.save(cfg)
     }
 
     private func optionalStringValue(_ raw: Any?) -> String? {
