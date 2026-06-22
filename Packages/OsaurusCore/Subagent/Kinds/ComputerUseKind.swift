@@ -131,6 +131,14 @@ final class ComputerUseKind: SubagentKind, @unchecked Sendable {
             defaultModel: { AgentManager.shared.effectiveModel(for: agentId) }
         )
         let modelId = resolved.model
+        let modelIsLocal = await MainActor.run {
+            ComputerUseModelPrivacy.isOnDeviceModel(modelId)
+        }
+        guard modelIsLocal else {
+            throw SubagentError.unavailable(
+                ComputerUseModelPrivacy.remoteModelFailureMessage(modelId: modelId)
+            )
+        }
         // Snapshot the run rules from the RESOLVED model in a second main-actor
         // hop: the agent's autonomy ceiling, a snapshot of the user policy, and
         // the vision context (image support + local-vs-cloud posture +
@@ -141,7 +149,7 @@ final class ComputerUseKind: SubagentKind, @unchecked Sendable {
             let policy = ComputerUsePolicyStore.load()
             let vision = VisionContext(
                 modelAcceptsImages: ComputerUseTool.modelAcceptsImages(modelId),
-                modelIsLocal: ModelManager.findInstalledModel(named: modelId) != nil,
+                modelIsLocal: modelIsLocal,
                 cloudConsent: CloudVisionConsent.shared.isGranted,
                 cloudScrubMode: CloudVisionConsent.shared.scrubMode
             )
