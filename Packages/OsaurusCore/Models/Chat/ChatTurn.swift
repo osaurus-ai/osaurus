@@ -192,6 +192,33 @@ final class ChatTurn: ObservableObject, Identifiable {
     /// id. Recorded by `setToolResult(_:for:)` and persisted so a reloaded chat
     /// still shows "· 1.2s" next to the tool title.
     @Published var toolCallDurations: [String: TimeInterval] = [:]
+
+    // MARK: - Remote-agent (Mode 2) tool activity — display only
+
+    /// Tools the *remote agent* (Mode 2) executed, reconstructed from the
+    /// sanitized `osaurus_agent_tool` traces it streams back (name + phase +
+    /// error state only — never raw args/results). Rendered as a tool-call
+    /// group so the observer watches each remote tool transition
+    /// running → done/failed instead of a chip that vanishes the instant the
+    /// tool finishes.
+    ///
+    /// IMPORTANT: this is display-only and deliberately NOT serialized into
+    /// outgoing messages (`turnToMessage` reads `toolCalls`, never this). A
+    /// Mode 2 history must never carry synthetic, unpaired `tool_calls` — the
+    /// peer runs statelessly and re-deriving them client-side would corrupt the
+    /// next turn's history.
+    @Published var remoteToolActivity: [ToolCall] = []
+    /// Sanitized terminal state per remote tool call id. Absent ⇒ still running
+    /// (renders the live shimmer); a failure envelope ⇒ red node; any other
+    /// non-error string ⇒ green/done node.
+    @Published var remoteToolResults: [String: String] = [:]
+    /// Bumped on every `remoteToolActivity` / `remoteToolResults` mutation so
+    /// `BlockMemoizer`'s streaming fast-path can't short-circuit a trace that
+    /// changed neither visible content nor thinking. Read-only to callers;
+    /// mutated only through the helpers below.
+    private(set) var remoteToolActivityTick: Int = 0
+    /// True when this turn carries any remote-agent tool activity.
+    var hasRemoteToolActivity: Bool { !remoteToolActivity.isEmpty }
     /// How long the model spent thinking (seconds) — from the first reasoning
     /// token to the first content/tool that follows. Drives "Thought for 30s";
     /// persisted so it survives reload.
@@ -295,6 +322,71 @@ final class ChatTurn: ObservableObject, Identifiable {
         if elapsed >= Self.minDisplayableToolDuration {
             toolCallDurations[callId] = elapsed
         }
+    }
+
+    // MARK: - Remote-agent (Mode 2) tool activity helpers
+
+    /// Sanitized placeholder result for a remote tool that succeeded. The peer
+    /// never ships raw output, so the row records only that it ran.
+    private static let remoteToolSuccessResult = "Completed on the remote agent."
+
+    /// Record that the remote agent *started* a tool. Idempotent per call id;
+    /// the row renders as "running" (shimmer) until `noteRemoteToolFinished`.
+    @MainActor
+    func noteRemoteToolStarted(callId: String, name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        guard !remoteToolActivity.contains(where: { $0.id == callId }) else { return }
+        remoteToolActivity.append(
+            ToolCall(
+                id: callId,
+                type: "function",
+                function: ToolCallFunction(name: trimmed, arguments: "")
+            )
+        )
+        remoteToolActivityTick &+= 1
+    }
+
+    /// Record that a remote tool *finished*. Materializes the row if we never
+    /// saw its "started" (some peers may only emit terminal traces) and stamps a
+    /// sanitized success/failure result so the chip flips to done/failed. The
+    /// failure case uses a `ToolEnvelope` error so the row renders red without
+    /// ever exposing the remote's raw tool output.
+    @MainActor
+    func noteRemoteToolFinished(callId: String, name: String, isError: Bool) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !remoteToolActivity.contains(where: { $0.id == callId }) {
+            remoteToolActivity.append(
+                ToolCall(
+                    id: callId,
+                    type: "function",
+                    function: ToolCallFunction(name: trimmed.isEmpty ? "tool" : trimmed, arguments: "")
+                )
+            )
+        }
+        remoteToolResults[callId] =
+            isError
+            ? ToolEnvelope.failure(
+                kind: .executionError,
+                message: "The remote agent reported this tool call failed.",
+                tool: trimmed.isEmpty ? nil : trimmed
+            )
+            : Self.remoteToolSuccessResult
+        remoteToolActivityTick &+= 1
+    }
+
+    /// Flip any still-"running" remote tool rows to a neutral completed state.
+    /// Called when a Mode 2 stream ends (or is cancelled) so a missing terminal
+    /// trace can't leave a row shimmering forever.
+    @MainActor
+    func finalizeRemoteToolActivity() {
+        guard !remoteToolActivity.isEmpty else { return }
+        var changed = false
+        for call in remoteToolActivity where remoteToolResults[call.id] == nil {
+            remoteToolResults[call.id] = Self.remoteToolSuccessResult
+            changed = true
+        }
+        if changed { remoteToolActivityTick &+= 1 }
     }
 
     /// Appends a tool-argument fragment to the preview, keeping only the trailing window.

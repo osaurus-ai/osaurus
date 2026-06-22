@@ -130,12 +130,42 @@ public actor MemoryService {
     }
 
     /// Force immediate distillation for a session. Called from the chat UI
-    /// when the user navigates away.
+    /// when the user navigates away. Fire-and-forget: the caller doesn't
+    /// wait for (or learn) the outcome. For the request/response path
+    /// (`POST /memory/ingest`) use `flushSessionAndWait` instead.
     public func flushSession(agentId: String, conversationId: String) {
         debounceTasks[conversationId]?.cancel()
         debounceTasks[conversationId] = Task { [weak self] in
             await self?.distillSession(agentId: agentId, conversationId: conversationId)
         }
+    }
+
+    /// Force immediate distillation for a session and await the outcome.
+    ///
+    /// Used by `POST /memory/ingest` so the HTTP response can report
+    /// whether an episode was actually written (issue #1632) instead of
+    /// returning a blind `{"status":"ok"}` while the coordinator silently
+    /// skipped a heavy, non-resident core model. Forces
+    /// `requireResident: false` so the cold load happens on demand
+    /// (matching the user-driven "Distill pending" / backfill semantics).
+    /// The load still routes through the gated `load:<model>` path, so it
+    /// stays GPU-safe.
+    @discardableResult
+    public func flushSessionAndWait(
+        agentId: String,
+        conversationId: String,
+        sessionDate: String? = nil
+    ) async -> DistillOutcome {
+        // Cancel any armed debounce so we don't double-distill this
+        // session; we drive the distill directly below and await it.
+        debounceTasks[conversationId]?.cancel()
+        debounceTasks[conversationId] = nil
+        return await distillSession(
+            agentId: agentId,
+            conversationId: conversationId,
+            sessionDate: sessionDate,
+            requireResident: false
+        )
     }
 
     /// Distill every pending conversation and run identity regeneration if needed.
@@ -323,22 +353,39 @@ public actor MemoryService {
     /// as the residency gate before yielding to chat-idle. Both live
     /// under `Services/Memory/` so the coupling is intentional.
     func canDistillCheaply() async -> Bool {
-        guard let modelId = await MainActor.run(body: { ChatConfigurationStore.load().coreModelIdentifier }) else {
+        // Resolve via the router first. The pre-fix code matched the raw
+        // `coreModelIdentifier` against `discoverLocalModels()` and returned
+        // `true` on a *miss* — so an unroutable core model (deleted MLX
+        // model, Foundation on pre-26 macOS, disconnected remote) reported
+        // "cheap", the coordinator proceeded, and `generate` threw
+        // `modelUnavailable` on every attempt → endless `error` rows
+        // (issue #1632 D3). Routing through `resolveStatus()` makes an
+        // unroutable / unset / breaker-open model report "not cheap" so the
+        // background path skips it (signals stay pending) instead of looping.
+        let status = await CoreModelService.shared.resolveStatus()
+        switch status {
+        case .unset, .unavailable, .breakerOpen:
+            return false
+        case .available(let modelId, _, let effectiveModel):
+            // Only locally-hosted MLX models carry a cold-load cost. A
+            // routable model that isn't a discoverable local model
+            // (Foundation, remote provider) is cheap — no load required.
+            guard
+                let local = ModelManager.discoverLocalModels()
+                    .first(where: {
+                        $0.id.caseInsensitiveCompare(modelId) == .orderedSame
+                            || $0.name.caseInsensitiveCompare(modelId) == .orderedSame
+                            || $0.id.caseInsensitiveCompare(effectiveModel) == .orderedSame
+                            || $0.name.caseInsensitiveCompare(effectiveModel) == .orderedSame
+                    })
+            else { return true }
+
+            if await ModelRuntime.shared.isResident(name: local.name) { return true }
+            if let params = local.parameterCountBillions, params <= Self.coldLoadParamBudgetBillions {
+                return true
+            }
             return false
         }
-        guard
-            let local = ModelManager.discoverLocalModels()
-                .first(where: {
-                    $0.id.caseInsensitiveCompare(modelId) == .orderedSame
-                        || $0.name.caseInsensitiveCompare(modelId) == .orderedSame
-                })
-        else { return true }
-
-        if await ModelRuntime.shared.isResident(name: local.name) { return true }
-        if let params = local.parameterCountBillions, params <= Self.coldLoadParamBudgetBillions {
-            return true
-        }
-        return false
     }
 
     private static let coldLoadParamBudgetBillions: Double = 2.0
@@ -575,26 +622,33 @@ public actor MemoryService {
     ///   * `false` — user explicitly asked (the "Distill pending"
     ///     button + the chat-history backfill): proceed regardless;
     ///     the user has opted into the cold load.
+    @discardableResult
     private func distillSession(
         agentId: String,
         conversationId: String,
         sessionDate: String? = nil,
         requireResident: Bool = true
-    ) async {
+    ) async -> DistillOutcome {
         // Quick global gate before queuing — signals stale-by-the-time-
         // we-run is not an issue because `performDistillSession`
         // re-reads from `pending_signals` inside the coordinator body.
         let config = MemoryConfigurationStore.load()
-        guard config.enabled else { return }
+        guard config.enabled else { return .skipped(reason: "memory_disabled") }
 
-        await DistillationCoordinator.shared.run(requireResident: requireResident) { [weak self] in
-            guard let self else { return }
-            await self.performDistillSession(
+        let outcome = await DistillationCoordinator.shared.runReturning(
+            requireResident: requireResident
+        ) { [weak self] () -> DistillOutcome in
+            guard let self else { return .error("service_released") }
+            return await self.performDistillSession(
                 agentId: agentId,
                 conversationId: conversationId,
                 sessionDate: sessionDate
             )
         }
+        // `nil` means the coordinator's residency gate short-circuited the
+        // run (`requireResident && !canDistillCheaply`); signals stay
+        // pending and recover next launch / once the model is resident.
+        return outcome ?? .skipped(reason: "not_resident")
     }
 
     /// The actual distillation body. Holds every cheap pre-LLM gate
@@ -604,18 +658,21 @@ public actor MemoryService {
     ///
     /// Called via `DistillationCoordinator` by `distillSession` and
     /// directly (no coordinator) by `flushAllPending` at app quit.
+    @discardableResult
     private func performDistillSession(
         agentId: String,
         conversationId: String,
         sessionDate: String? = nil
-    ) async {
+    ) async -> DistillOutcome {
         let config = MemoryConfigurationStore.load()
-        guard config.enabled else { return }
+        guard config.enabled else { return .skipped(reason: "memory_disabled") }
         guard await hasCoreModel() else {
             // Pre-fix this was an `.info` log, which meant the user
             // had no UI affordance to see why distillation was silently
             // disabled. Now we both warn AND write a `skipped` row to
             // `processing_log` so the diagnostics panel can surface it.
+            // Signals stay pending intentionally (no model yet) and this
+            // does NOT count toward the dead-letter cap.
             MemoryLogger.service.warning(
                 "distill: no core model configured; signals stay pending (configure one in Settings → Core Model)"
             )
@@ -626,7 +683,7 @@ public actor MemoryService {
                 status: "skipped",
                 details: "core_model_unset"
             )
-            return
+            return .skipped(reason: "core_model_unset")
         }
 
         let coreModelId = await coreModelIdentifier()
@@ -635,16 +692,21 @@ public actor MemoryService {
         let signals: [PendingSignal]
         do { signals = try db.loadPendingSignals(conversationId: conversationId) } catch {
             MemoryLogger.service.error("distill: failed to load signals for \(conversationId): \(error)")
-            return
+            return .error(error.localizedDescription)
         }
-        guard !signals.isEmpty else { return }
+        guard !signals.isEmpty else { return .noSignals }
+        // Snapshot the ids so we only ever mark *these* signals processed —
+        // turns buffered while the LLM call is in flight stay pending (D2).
+        let signalIds = signals.map(\.id)
 
         // Cheap pre-LLM gate: combined char count must clear novelty floor.
         let combinedChars = signals.reduce(0) {
             $0 + $1.userMessage.count + ($1.assistantMessage?.count ?? 0)
         }
         guard combinedChars >= MemoryConfiguration.distillNoveltyMinChars else {
-            try? db.markSignalsProcessed(conversationId: conversationId)
+            // Terminal + non-retryable: clear exactly these signals
+            // (id-scoped) so a low-novelty session can't loop forever.
+            try? db.markSignals(ids: signalIds, status: "processed")
             MemoryLogger.service.warning(
                 "distill: skipping low-novelty session \(conversationId) (\(combinedChars) chars)"
             )
@@ -656,7 +718,7 @@ public actor MemoryService {
                 details: "low_novelty:\(combinedChars)chars"
             )
             debounceTasks[conversationId] = nil
-            return
+            return .skipped(reason: "low_novelty:\(combinedChars)chars")
         }
 
         let identity = (try? db.loadIdentity()) ?? Identity()
@@ -682,30 +744,40 @@ public actor MemoryService {
                 systemPrompt: distillSystemPrompt
             )
             let parsed = parseDistillResponse(response)
+            let durationMs = Int(Date().timeIntervalSince(startTime) * 1000)
+
             guard let episode = parsed.episode else {
+                // Terminal: the model ran but produced no usable episode.
+                // Mark these signals processed (id-scoped) so an unparseable
+                // session is not retried on every launch/ingest forever (D1).
+                try? db.markSignals(ids: signalIds, status: "processed")
                 MemoryLogger.service.warning("distill: no episode produced for \(conversationId)")
                 logProcessing(
                     agentId: agentId,
                     taskType: "distill",
                     model: coreModelId,
                     status: "empty",
-                    durationMs: Int(Date().timeIntervalSince(startTime) * 1000)
+                    durationMs: durationMs,
+                    details: "no_episode"
                 )
-                return
+                debounceTasks[conversationId] = nil
+                return .empty(reason: "no_episode")
             }
 
             let summaryText = stripPreamble(episode.summary)
             guard !summaryText.isEmpty else {
+                try? db.markSignals(ids: signalIds, status: "processed")
                 MemoryLogger.service.warning("distill: empty summary for \(conversationId)")
                 logProcessing(
                     agentId: agentId,
                     taskType: "distill",
                     model: coreModelId,
                     status: "empty",
-                    durationMs: Int(Date().timeIntervalSince(startTime) * 1000),
+                    durationMs: durationMs,
                     details: "empty_summary"
                 )
-                return
+                debounceTasks[conversationId] = nil
+                return .empty(reason: "empty_summary")
             }
 
             let tokenCount = max(1, summaryText.count / MemoryConfiguration.charsPerToken)
@@ -731,10 +803,19 @@ public actor MemoryService {
 
             let episodeId: Int
             do {
-                episodeId = try db.insertEpisodeAndMarkProcessed(ep)
+                // Id-scoped marking (D2): only the snapshotted ids are
+                // cleared inside the same transaction as the episode insert.
+                episodeId = try db.insertEpisodeAndMarkProcessed(ep, signalIds: signalIds)
             } catch {
                 MemoryLogger.service.error("distill: failed to insert episode for \(conversationId): \(error)")
-                return
+                return recordRetryableDistillFailure(
+                    message: "episode_insert_failed: \(error.localizedDescription)",
+                    agentId: agentId,
+                    conversationId: conversationId,
+                    coreModelId: coreModelId,
+                    signalIds: signalIds,
+                    durationMs: durationMs
+                )
             }
 
             // Index the episode for search.
@@ -760,7 +841,6 @@ public actor MemoryService {
                 )
             }
 
-            let durationMs = Int(Date().timeIntervalSince(startTime) * 1000)
             logProcessing(
                 agentId: agentId,
                 taskType: "distill",
@@ -775,18 +855,105 @@ public actor MemoryService {
             )
 
             await MemoryContextAssembler.shared.invalidateCache(agentId: agentId)
-        } catch {
-            MemoryLogger.service.error("distill: failed for \(conversationId): \(error)")
+            debounceTasks[conversationId] = nil
+            return .distilled(
+                episodeId: episodeId,
+                pinned: storedPinned,
+                identityFacts: parsed.identityFacts.count
+            )
+        } catch is CancellationError {
+            // Interrupted (app quitting, caller walked away). Not an error
+            // and NOT counted toward the dead-letter cap — signals stay
+            // pending and recover next launch. Logged as `skipped` so a
+            // mid-flight teardown stops masquerading as a hard `error` row.
+            MemoryLogger.service.info("distill: cancelled for \(conversationId)")
             logProcessing(
                 agentId: agentId,
                 taskType: "distill",
                 model: coreModelId,
-                status: "error",
-                details: error.localizedDescription
+                status: "skipped",
+                durationMs: Int(Date().timeIntervalSince(startTime) * 1000),
+                details: "cancelled"
+            )
+            debounceTasks[conversationId] = nil
+            return .skipped(reason: "cancelled")
+        } catch let coreErr as CoreModelError {
+            let durationMs = Int(Date().timeIntervalSince(startTime) * 1000)
+            switch coreErr {
+            case .modelUnavailable, .circuitBreakerOpen:
+                // Config-level / transient backend state. Stay pending and
+                // recover once the model resolves or the breaker closes; do
+                // NOT count toward the cap (a misconfig shouldn't permanently
+                // lose the user's turns).
+                let reason = (coreErr == .circuitBreakerOpen) ? "breaker_open" : "core_model_unavailable"
+                MemoryLogger.service.warning("distill: \(reason) for \(conversationId)")
+                logProcessing(
+                    agentId: agentId,
+                    taskType: "distill",
+                    model: coreModelId,
+                    status: "skipped",
+                    durationMs: durationMs,
+                    details: reason
+                )
+                debounceTasks[conversationId] = nil
+                return .skipped(reason: reason)
+            case .timedOut:
+                // A persistently-too-slow session DOES count toward the cap so
+                // it eventually dead-letters instead of timing out forever.
+                MemoryLogger.service.error("distill: timed out for \(conversationId)")
+                return recordRetryableDistillFailure(
+                    message: "timed_out",
+                    agentId: agentId,
+                    conversationId: conversationId,
+                    coreModelId: coreModelId,
+                    signalIds: signalIds,
+                    durationMs: durationMs
+                )
+            }
+        } catch {
+            MemoryLogger.service.error("distill: failed for \(conversationId): \(error)")
+            return recordRetryableDistillFailure(
+                message: error.localizedDescription,
+                agentId: agentId,
+                conversationId: conversationId,
+                coreModelId: coreModelId,
+                signalIds: signalIds,
+                durationMs: Int(Date().timeIntervalSince(startTime) * 1000)
             )
         }
+    }
 
+    /// Record one retryable distillation failure and dead-letter the
+    /// session's signals once they exceed `distillMaxAttempts` (D1). Writes
+    /// the matching `processing_log` row (`error` or `dead_letter`) and
+    /// returns the corresponding `DistillOutcome`.
+    private func recordRetryableDistillFailure(
+        message: String,
+        agentId: String,
+        conversationId: String,
+        coreModelId: String,
+        signalIds: [Int],
+        durationMs: Int
+    ) -> DistillOutcome {
+        let failure =
+            (try? db.recordDistillFailure(
+                ids: signalIds,
+                maxAttempts: MemoryConfiguration.distillMaxAttempts
+            )) ?? (attempts: 0, deadLettered: false)
+        logProcessing(
+            agentId: agentId,
+            taskType: "distill",
+            model: coreModelId,
+            status: failure.deadLettered ? "dead_letter" : "error",
+            durationMs: durationMs,
+            details: failure.deadLettered
+                ? "dead_letter_after_\(failure.attempts)_attempts: \(message)"
+                : message
+        )
         debounceTasks[conversationId] = nil
+        return failure.deadLettered
+            ? .deadLettered(attempts: failure.attempts)
+            : .error(message)
     }
 
     // MARK: - Pinned Candidates
@@ -912,16 +1079,48 @@ public actor MemoryService {
             prompt += "\n"
         }
 
+        // I4 — input caps. A session is one LLM call, so an unbounded
+        // concatenation of every buffered turn (bulk LoCoMo imports, giant
+        // pastes) can overflow a small core model's context and get stuck
+        // erroring on every retry. Clamp the turn count (keeping the
+        // identity-bearing opening head + the most-recent tail) and clamp
+        // each individual message, with explicit truncation markers so the
+        // model knows the transcript was trimmed.
+        let maxTurns = MemoryConfiguration.distillMaxTurns
+        let headCount = max(1, maxTurns / 4)
+        let included: [PendingSignal]
+        let omittedCount: Int
+        if signals.count > maxTurns {
+            let tailCount = maxTurns - headCount
+            included = Array(signals.prefix(headCount)) + Array(signals.suffix(tailCount))
+            omittedCount = signals.count - included.count
+        } else {
+            included = signals
+            omittedCount = 0
+        }
+
         prompt += "Conversation turns:\n"
-        for signal in signals {
-            prompt += "\nUser: \(signal.userMessage)"
+        for (i, signal) in included.enumerated() {
+            if omittedCount > 0, i == headCount {
+                prompt += "\n[... \(omittedCount) middle turn(s) omitted to fit the core model's context ...]\n"
+            }
+            prompt += "\nUser: \(Self.clampTurnText(signal.userMessage))"
             if let asst = signal.assistantMessage {
-                prompt += "\nAssistant: \(asst)"
+                prompt += "\nAssistant: \(Self.clampTurnText(asst))"
             }
         }
 
         prompt += "\n\nDistill this session into the JSON digest."
         return prompt
+    }
+
+    /// Clamp a single turn's text to `MemoryConfiguration.distillMaxTurnChars`,
+    /// appending a marker when truncated so the model doesn't mistake the cut
+    /// for the end of the message.
+    private static func clampTurnText(_ text: String) -> String {
+        let limit = MemoryConfiguration.distillMaxTurnChars
+        guard text.count > limit else { return text }
+        return String(text.prefix(limit)) + " …[truncated \(text.count - limit) chars]"
     }
 
     // MARK: - Response Parsing

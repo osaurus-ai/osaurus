@@ -1274,7 +1274,7 @@ Eight settings total, down from v1's 18. The per-section budget knobs, MMR tunin
 
 **Tool API:** `search_memory(scope, query)` with three scopes: `pinned`, `episodes`, `transcript`. Replaces v1's five-scope tool.
 
-**HTTP API:** `POST /memory/ingest` writes transcripts and triggers an immediate distillation flush after the batch (no need to wait for the writer's debounce). Strict `/chat/completions` requests do not inject read-side memory; app chat, `POST /agents/{id}/run`, and plugin host inference own composed agent context.
+**HTTP API:** `POST /memory/ingest` writes transcripts and then distills synchronously after the batch — it forces an on-demand cold load of the core model when it isn't resident, awaits the single distill call, and reports the outcome (`distillation`, `episode_id`) in the response instead of a blind `{"status":"ok"}`. It is idempotent per `conversation_id` (re-ingest clears that conversation's prior pending signals + episodes), canonicalizes a UUID `agent_id`, and dead-letters sessions that keep failing so they stop re-distilling forever. `GET /agents` / `GET /agents/{id}` report `memory_entry_count` as stored memory (episodes + active pinned facts). Strict `/chat/completions` requests do not inject read-side memory; app chat, `POST /agents/{id}/run`, and plugin host inference own composed agent context.
 
 **Storage:** `~/.osaurus/memory/memory.sqlite` (SQLite with WAL mode), `~/.osaurus/memory/vectura/` (vector index)
 

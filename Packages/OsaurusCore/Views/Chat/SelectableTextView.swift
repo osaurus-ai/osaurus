@@ -1189,6 +1189,50 @@ final class SelectableNSTextView: NSTextView {
     /// 80ms hide debounce.
     var onMouseExitedHover: (() -> Void)?
 
+    /// Whether the redaction-hover `.mouseMoved` tracking area should be
+    /// installed. Toggled by `RedactionHoverController`. The area itself is
+    /// created/destroyed inside `updateTrackingAreas()` with `owner: self`,
+    /// so AppKit manages its lifecycle and it is torn down with the view —
+    /// it can never be left dangling for the tracking-area manager to
+    /// dispatch `mouseMoved:` into a freed owner (the
+    /// `-[_NSTrackingAreaAKManager mouseMoved:]` launch SIGABRT, issue
+    /// #1632). The pre-fix code added the area imperatively from the
+    /// controller without reconciling it in `updateTrackingAreas()`, so a
+    /// view moved between windows (prewarm) or torn down via a cell path
+    /// that skipped `detach()` could leave a stale area behind.
+    var wantsRedactionHoverTracking: Bool = false {
+        didSet {
+            guard oldValue != wantsRedactionHoverTracking else { return }
+            if wantsRedactionHoverTracking { window?.acceptsMouseMovedEvents = true }
+            updateTrackingAreas()
+        }
+    }
+
+    /// Our owned hover tracking area. Reconciled on every
+    /// `updateTrackingAreas()` pass; nil when hover tracking is disabled.
+    private var redactionHoverTrackingArea: NSTrackingArea?
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        // Reconcile only the area we own (tracked by reference). NSTextView
+        // manages its own areas — for the I-beam cursor etc. — via
+        // `super`, and we must not disturb those. Remove-then-add against
+        // the current bounds so the area always matches the live geometry.
+        if let existing = redactionHoverTrackingArea {
+            removeTrackingArea(existing)
+            redactionHoverTrackingArea = nil
+        }
+        guard wantsRedactionHoverTracking else { return }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        redactionHoverTrackingArea = area
+    }
+
     override func mouseMoved(with event: NSEvent) {
         super.mouseMoved(with: event)
         onMouseHover?(event)

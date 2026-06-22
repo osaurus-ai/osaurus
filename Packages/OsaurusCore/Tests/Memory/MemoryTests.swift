@@ -313,6 +313,7 @@ struct MemoryDatabaseTests {
         try db.insertPendingSignal(
             PendingSignal(agentId: "a", conversationId: "c1", userMessage: "hi")
         )
+        let loaded = try db.loadPendingSignals(conversationId: "c1")
         let ep = Episode(
             agentId: "a",
             conversationId: "c1",
@@ -321,7 +322,7 @@ struct MemoryDatabaseTests {
             model: "test",
             conversationAt: "2025-01-01T00:00:00Z"
         )
-        _ = try db.insertEpisodeAndMarkProcessed(ep)
+        _ = try db.insertEpisodeAndMarkProcessed(ep, signalIds: loaded.map(\.id))
         let pending = try db.loadPendingSignals(conversationId: "c1")
         #expect(pending.isEmpty)
         let episodes = try db.loadEpisodes(agentId: "a")

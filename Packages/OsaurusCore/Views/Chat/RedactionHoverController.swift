@@ -29,7 +29,6 @@ final class RedactionHoverController {
     /// Currently-attached text view. Weak so detaching is enough to
     /// let the cell drop the view; we never hold the view alive.
     private weak var textView: SelectableNSTextView?
-    private var trackingArea: NSTrackingArea?
     private var popover: NSPopover?
     private var ranges: [AppliedRedactionRange] = []
     /// Theme captured at the most recent `attach`. Used by the
@@ -72,19 +71,23 @@ final class RedactionHoverController {
         }
 
         if self.textView !== stv {
-            removeTrackingArea()
+            // Stop the previous view from advertising our hover area.
+            self.textView?.wantsRedactionHoverTracking = false
             self.textView = stv
         }
         installHooksIfNeeded()
-        installTrackingAreaIfNeeded()
+        // The text view owns the `.mouseMoved` area now (installed inside
+        // its `updateTrackingAreas()` when this flag is set), so AppKit
+        // ties the area's lifetime to the view — no manual add/remove.
+        stv.wantsRedactionHoverTracking = true
     }
 
     /// Remove all observers + tracking + the popover. Called when
     /// the cell's redaction map becomes empty or the cell is reused
     /// for a different turn.
     func detach() {
+        textView?.wantsRedactionHoverTracking = false
         clearHooks()
-        removeTrackingArea()
         popover?.close()
         popover = nil
         ranges = []
@@ -94,41 +97,7 @@ final class RedactionHoverController {
         textView = nil
     }
 
-    // MARK: Tracking Area
-
-    private func installTrackingAreaIfNeeded() {
-        guard let tv = textView else { return }
-        if let existing = trackingArea, tv.trackingAreas.contains(existing) {
-            return
-        }
-        // NSTrackingArea with `.mouseMoved` only fires when the
-        // owning window has `acceptsMouseMovedEvents = true`. The
-        // chat window typically already does (NSTextView relies on
-        // this for I-beam cursor tracking) but we set it defensively
-        // so a fresh window that hasn't focused the text view yet
-        // still routes our hover events.
-        tv.window?.acceptsMouseMovedEvents = true
-        let area = NSTrackingArea(
-            rect: tv.bounds,
-            options: [
-                .mouseMoved,
-                .mouseEnteredAndExited,
-                .activeInKeyWindow,
-                .inVisibleRect,
-            ],
-            owner: tv,
-            userInfo: nil
-        )
-        tv.addTrackingArea(area)
-        trackingArea = area
-    }
-
-    private func removeTrackingArea() {
-        if let tv = textView, let area = trackingArea {
-            tv.removeTrackingArea(area)
-        }
-        trackingArea = nil
-    }
+    // MARK: Hooks
 
     private func installHooksIfNeeded() {
         guard let tv = textView else { return }

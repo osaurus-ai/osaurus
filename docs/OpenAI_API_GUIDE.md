@@ -603,7 +603,7 @@ print(response.choices[0].message.content)
 
 ### Memory Ingestion — `POST /memory/ingest`
 
-Bulk-ingest conversation turns. Osaurus inserts each turn into the transcript and then flushes session distillation immediately at the end of the batch — you do not have to wait for the writer's debounce. Distillation produces an episode and (when warranted) a small set of pinned facts.
+Bulk-ingest conversation turns. Osaurus inserts each turn into the transcript and then, unless `skip_extraction` is set, **distills synchronously and waits for the result** before responding: it forces an on-demand cold load of the core model if it isn't already resident, runs the single distillation LLM call, and reports the outcome. A cold load can take tens of seconds for a larger core model, so allow a long client timeout (the server applies no idle cutoff on this path). Distillation produces an episode and (when warranted) a small set of pinned facts.
 
 ```bash
 curl http://127.0.0.1:1337/memory/ingest \
@@ -620,21 +620,23 @@ curl http://127.0.0.1:1337/memory/ingest \
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `agent_id` | string | Identifier for the agent whose memory is being populated (required) |
+| `agent_id` | string | Identifier for the agent whose memory is being populated (required). A UUID is canonicalized (uppercased) to match the agent's recall key. |
 | `conversation_id` | string | Identifier for the conversation session (required) |
 | `turns` | array | Array of turn objects, each with `user` and `assistant` string fields (required) |
-| `session_date` | string | Optional ISO 8601 date for the whole batch |
-| `skip_extraction` | bool | When `true`, only insert transcript rows; skip distillation |
+| `session_date` | string | Optional ISO 8601 date for the whole batch (used as the episode timestamp) |
+| `skip_extraction` | bool | When `true`, only insert transcript rows; skip distillation (and the synchronous wait) |
 
 Response:
 
 ```json
-{"status": "ok", "turns_ingested": 2}
+{"status": "ok", "turns_ingested": 2, "distillation": "distilled", "episode_id": 42}
 ```
+
+`distillation` is the outcome token (omitted when `skip_extraction` is set): `distilled`, `no_signals`, `skipped:<reason>`, `empty:<reason>`, `dead_letter:<attempts>`, or `error:<message>`. `episode_id` is present only when an episode was written. Re-ingesting the same `conversation_id` is idempotent (prior pending signals + episodes for that conversation are cleared first), so re-runs yield exactly one active episode instead of duplicates. See [docs/MEMORY.md](MEMORY.md#memory-ingestion--post-memoryingest) for the full outcome table.
 
 ### List Agents — `GET /agents`
 
-Returns all configured agents along with their pinned-fact counts. Use this to discover agent IDs for the `X-Osaurus-Agent-Id` header.
+Returns all configured agents along with their `memory_entry_count`. Use this to discover agent IDs for the `X-Osaurus-Agent-Id` header. The count reflects stored memory (distilled episodes + active pinned facts), so it is non-zero once an agent has any distilled sessions even when no pinned facts were promoted.
 
 ```bash
 curl http://127.0.0.1:1337/agents

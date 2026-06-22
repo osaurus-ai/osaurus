@@ -523,6 +523,11 @@ public actor RemoteProviderService: ToolCapableService {
         // peer as a plain OpenAI-compatible inference backend, keeping tools so
         // the *local* agent loop executes them.
         if provider.providerType == .osaurus && parameters.runAsRemoteAgent {
+            RemoteAgentRunLog.client(
+                "stream start provider=\(provider.name) type=\(provider.providerType.rawValue) "
+                    + "endpoint=\(osaurusEndpointURL(runAsRemoteAgent: true)?.absoluteString ?? "<unresolved>") "
+                    + "modelOnWire=omitted msgs=\(messages.count)"
+            )
             return try await streamDeltas(
                 messages: messages,
                 parameters: parameters,
@@ -2261,9 +2266,9 @@ public actor RemoteProviderService: ToolCapableService {
     /// Build a chat completion request structure.
     ///
     /// `internal` (not `private`) so the Mode 1 / Mode 2 wire-shape contract can
-    /// be asserted in tests: Mode 2 (`parameters.runAsRemoteAgent`) forces
-    /// `model: "default"` and stamps `runAsRemoteAgent`; Mode 1 preserves the
-    /// resolved model and tools.
+    /// be asserted in tests: Mode 2 (`parameters.runAsRemoteAgent`) OMITS the
+    /// `model` field on the wire and stamps `runAsRemoteAgent`; Mode 1 preserves
+    /// the resolved model and tools.
     func buildChatRequest(
         messages: [ChatMessage],
         parameters: GenerationParameters,
@@ -2299,23 +2304,17 @@ public actor RemoteProviderService: ToolCapableService {
             wireTools = tools
         }
 
-        // Mode 2 (remote agent run): send `model: "default"` so the peer
-        // resolves the agent's *live* effective model server-side, faithful to
-        // "the agent runs from its own selected default model" even if the
-        // owner changes it after pairing. Provider routing already happened
-        // upstream off the prefixed model, so the wire value is free to be the
-        // sentinel here.
-        let wireModel = parameters.runAsRemoteAgent ? "default" : model
         // Mode 2 (remote agent run): the remote agent owns its generation
-        // config — sampling and reasoning come from its own model bundle /
-        // agent settings, not the caller. Send only `model: "default"` + the
-        // conversation and strip every caller-supplied sampling/reasoning
-        // field. Without this the server's run loop applies the caller's local
+        // config. The `model` field is omitted on the wire (see
+        // `RemoteChatRequest.encode`) so the peer resolves its own live
+        // effective model, and we strip every caller-supplied sampling/reasoning
+        // field below — otherwise the host's run loop applies the caller's local
         // defaults and silently overrides the agent's native
-        // `generation_config.json` (faithfulness regression).
+        // `generation_config.json` (faithfulness regression). `model` is passed
+        // through for Mode 1 and for local reasoning-profile checks only.
         let isAgentRun = parameters.runAsRemoteAgent
         var request = RemoteChatRequest(
-            model: wireModel,
+            model: model,
             messages: messages,
             // Reasoning models (o1, gpt-5) forbid temperature/top_p when reasoning is active as inferred from
             // https://community.openai.com/t/gpt-5-nano-accepted-parameters/1355086/2
@@ -2567,13 +2566,34 @@ public actor RemoteProviderService: ToolCapableService {
         return provider.url(for: "/agents/\(identifier)/run")
     }
 
-    /// Build a URLRequest for the chat completions endpoint
-    private func buildURLRequest(for request: RemoteChatRequest) async throws -> URLRequest {
+    /// Build a URLRequest for the chat completions endpoint.
+    ///
+    /// `internal` (not `private`) so the Mode 2 defense-in-depth guard — a
+    /// `runAsRemoteAgent` request against a non-`.osaurus` provider must throw
+    /// rather than POST `/chat/completions` — can be asserted directly in tests.
+    func buildURLRequest(for request: RemoteChatRequest) async throws -> URLRequest {
         let url: URL
         let requestProviderType = Self.effectiveRequestProviderType(
             configuredProviderType: provider.providerType,
             request: request
         )
+
+        // Mode 2 hard guard (defense-in-depth): a remote-agent run must only
+        // ever target a native Osaurus peer's `/agents/{address}/run`. If
+        // routing ever lands a `runAsRemoteAgent` request on a non-Osaurus
+        // provider (e.g. a stale model prefix pointing at a local third-party
+        // provider), fail fast with a clear error instead of POSTing
+        // `/chat/completions` — that path produced the opaque upstream 404
+        // ("Model default not found ['fugu', ...]") this guard exists to stop.
+        if request.runAsRemoteAgent && provider.providerType != .osaurus {
+            RemoteAgentRunLog.clientError(
+                "agent run blocked: provider '\(provider.name)' type=\(provider.providerType.rawValue) is not an Osaurus agent endpoint"
+            )
+            throw RemoteProviderServiceError.requestFailed(
+                "Remote agent run cannot use provider '\(provider.name)' — it is not an Osaurus agent endpoint. "
+                    + "Reconnect to the remote agent and try again."
+            )
+        }
 
         if requestProviderType == .gemini {
             // Gemini uses model-in-URL pattern: /models/{model}:generateContent or :streamGenerateContent
@@ -3369,7 +3389,15 @@ struct RemoteChatRequest: Encodable {
 
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(model, forKey: .model)
+        // Mode 2 (remote agent run): omit `model` entirely. The peer resolves
+        // the agent's own effective model server-side; sending any caller-side
+        // model — even the "default" sentinel — is wrong and previously leaked
+        // to a mis-routed upstream as an opaque 404 ("Model default not
+        // found"). The endpoint choice (/agents/{address}/run) already encodes
+        // the intent. Every other path keeps its exact current wire bytes.
+        if !runAsRemoteAgent {
+            try container.encode(model, forKey: .model)
+        }
         try container.encode(messages, forKey: .messages)
         try container.encodeIfPresent(temperature, forKey: .temperature)
 

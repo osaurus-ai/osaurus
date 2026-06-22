@@ -3024,8 +3024,27 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
             let skipExtraction = req.skip_extraction ?? false
 
+            // I3 — agent-id canonicalization. Recall and the per-agent
+            // vector index key off Swift's (uppercase) `UUID.uuidString`, so
+            // a lowercase UUID ingested verbatim would write where recall
+            // never reads. Canonicalize a valid UUID to its uppercase form;
+            // pass non-UUID ids through unchanged.
+            let canonicalAgentId = UUID(uuidString: req.agent_id)?.uuidString ?? req.agent_id
+
             do {
                 try db.deleteTranscriptForConversation(req.conversation_id)
+
+                // I1 — idempotency. `episodes` has no `UNIQUE(conversation_id)`,
+                // so re-ingesting the same conversation (e.g. re-running a
+                // LoCoMo session) would otherwise stack duplicate episodes and
+                // pending signals. Clearing both first makes a re-ingest fully
+                // replace the conversation's prior memory state. Only when we
+                // actually run the extraction pipeline — `skip_extraction`
+                // callers explicitly want transcript-only storage untouched.
+                if !skipExtraction {
+                    try db.deletePendingSignalsForConversation(req.conversation_id)
+                    try db.deleteEpisodesForConversation(req.conversation_id)
+                }
 
                 for (i, turn) in req.turns.enumerated() {
                     let turnDate = turn.date ?? req.session_date
@@ -3042,10 +3061,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                             role: role,
                             content: content,
                             tokenCount: tokens,
-                            agentId: req.agent_id
+                            agentId: canonicalAgentId
                         )
                         try db.insertTranscriptTurn(
-                            agentId: req.agent_id,
+                            agentId: canonicalAgentId,
                             conversationId: req.conversation_id,
                             chunkIndex: chunkIndex,
                             role: role,
@@ -3060,7 +3079,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         await MemoryService.shared.bufferTurn(
                             userMessage: turn.user,
                             assistantMessage: turn.assistant,
-                            agentId: req.agent_id,
+                            agentId: canonicalAgentId,
                             conversationId: req.conversation_id,
                             sessionDate: turnDate
                         )
@@ -3102,15 +3121,39 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
             // Ingestion always implies "I'm done with this conversation
             // batch": flush distillation immediately so callers (benchmarks,
-            // bulk imports) don't have to wait for the debounce.
+            // bulk imports) don't have to wait for the debounce. We now
+            // *await* the outcome (forcing an on-demand cold load if the core
+            // model isn't resident) and report it, instead of the old
+            // fire-and-forget `flushSession` that returned `{"status":"ok"}`
+            // even when the residency gate silently skipped distillation
+            // entirely (issue #1632). The response is only written after the
+            // distill resolves; cold loads can take tens of seconds, so the
+            // benchmark client allows a long (300s) timeout.
+            var distillation: DistillOutcome? = nil
             if !skipExtraction {
-                await MemoryService.shared.flushSession(
-                    agentId: req.agent_id,
-                    conversationId: req.conversation_id
+                distillation = await MemoryService.shared.flushSessionAndWait(
+                    agentId: canonicalAgentId,
+                    conversationId: req.conversation_id,
+                    sessionDate: req.session_date
                 )
             }
 
-            let responseBody = "{\"status\":\"ok\",\"turns_ingested\":\(req.turns.count)}"
+            // Build via JSONSerialization so the distillation detail string
+            // (which can carry an arbitrary error message) is always escaped.
+            var payload: [String: Any] = [
+                "status": "ok",
+                "turns_ingested": req.turns.count,
+            ]
+            if let distillation {
+                payload["distillation"] = distillation.apiStatus
+                if let episodeId = distillation.episodeId {
+                    payload["episode_id"] = episodeId
+                }
+            }
+            let responseBody: String =
+                (try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]))
+                .flatMap { String(data: $0, encoding: .utf8) }
+                ?? "{\"status\":\"ok\",\"turns_ingested\":\(req.turns.count)}"
             var headers: [(String, String)] = [("Content-Type", "application/json")]
             headers.append(contentsOf: cors)
             let headersCopy = headers
@@ -4136,10 +4179,18 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             }
 
             let db = MemoryDatabase.shared
+            // `memory_entry_count` reflects *stored memory* — distilled
+            // episodes plus active pinned facts — not just pinned facts.
+            // Counting only pinned facts read 0 for an agent whose sessions
+            // distilled into episodes but produced no pinned candidates
+            // (issue #1632 U3: "memory_entry_count stays 0").
             var memoryCounts: [String: Int] = [:]
-            if db.isOpen, let counts = try? db.agentIdsWithPinnedFacts() {
-                for (agentId, count) in counts {
-                    memoryCounts[agentId] = count
+            if db.isOpen {
+                if let pinned = try? db.agentIdsWithPinnedFacts() {
+                    for (agentId, count) in pinned { memoryCounts[agentId, default: 0] += count }
+                }
+                if let episodes = try? db.agentIdsWithEpisodes() {
+                    for (agentId, count) in episodes { memoryCounts[agentId, default: 0] += count }
                 }
             }
 
@@ -4295,6 +4346,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let supportsVision = effectiveModelId.map { VLMDetection.isVLM(modelId: $0) } ?? false
             let supportsThinking =
                 effectiveModelId.flatMap { ModelProfileRegistry.profile(for: $0)?.thinkingOption } != nil
+            // Same stored-memory count as the `/agents` listing (episodes +
+            // pinned facts) instead of the pre-fix hardcoded 0 (issue #1632 U3).
+            let memoryEntryCount: Int = {
+                let db = MemoryDatabase.shared
+                guard db.isOpen else { return 0 }
+                let episodes = (try? db.episodeCount(agentId: agent.id.uuidString)) ?? 0
+                let pinned = (try? db.pinnedFactCount(agentId: agent.id.uuidString)) ?? 0
+                return episodes + pinned
+            }()
             let item = AgentListItem(
                 id: agent.id.uuidString,
                 name: agent.name,
@@ -4305,7 +4365,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 supports_thinking: supportsThinking,
                 supports_vision: supportsVision,
                 is_built_in: agent.isBuiltIn,
-                memory_entry_count: 0,
+                memory_entry_count: memoryEntryCount,
                 created_at: formatter.string(from: agent.createdAt),
                 updated_at: formatter.string(from: agent.updatedAt)
             )
@@ -4356,6 +4416,23 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         return (url, context)
     }
 
+    /// Make a `/agents/{id}/run` body decodable when the caller omitted the
+    /// `model` key. Mode 2 callers intentionally do not send a model (the agent
+    /// runs its own effective model server-side), but the shared
+    /// `ChatCompletionRequest` decoder requires `model`. Inject an empty string
+    /// so decode succeeds; the run handler resolves empty/"default" → the
+    /// agent's effective model. Returns the original bytes unchanged when the
+    /// body isn't a JSON object or already carries a non-null `model`.
+    static func injectingEmptyModelIfMissing(_ data: Data) -> Data {
+        guard var obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return data
+        }
+        guard obj["model"] == nil || obj["model"] is NSNull else { return data }
+        obj["model"] = ""
+        guard let patched = try? JSONSerialization.data(withJSONObject: obj) else { return data }
+        return patched
+    }
+
     /// POST /agents/{id}/run — run the full agent chat loop server-side.
     ///
     /// Accepts a `ChatCompletionRequest` body. Runs inference with the agent's
@@ -4398,7 +4475,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             requestBodyString = nil
         }
 
-        guard let req = try? JSONDecoder().decode(ChatCompletionRequest.self, from: data) else {
+        // `/agents/{id}/run` does NOT require a `model`: a Mode 2 caller omits
+        // it on purpose because the agent runs its own effective model
+        // server-side. The shared `ChatCompletionRequest` decoder requires
+        // `model`, so inject an empty value when the caller omitted it; the
+        // resolver below maps empty/"default" → the agent's effective model.
+        let runDecodeData = Self.injectingEmptyModelIfMissing(data)
+        guard let req = try? JSONDecoder().decode(ChatCompletionRequest.self, from: runDecodeData) else {
             sendResponse(
                 context: context,
                 version: head.version,
@@ -4559,7 +4642,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
         runRequestTask(priority: .userInitiated) {
             defer { admissionToken.release() }
-            // Resolve model: client sends "default" when no specific model was known
+            // Resolve model: a Mode 2 caller omits `model` (decoded as empty),
+            // and older clients send the "default" sentinel. Both resolve to
+            // the agent's effective model server-side.
             let model: String
             if req.model.isEmpty || req.model == "default" {
                 let agentModel = await MainActor.run { AgentManager.shared.effectiveModel(for: agentId) }
@@ -4568,6 +4653,37 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 model = req.model
             }
             cancelModelBox.value = model
+
+            // No model on the request and none resolvable for the agent: fail
+            // fast with an in-band SSE error (the 200 head is already on the
+            // wire) instead of running the loop with an empty model and hitting
+            // an opaque downstream routing failure. An empty resolution is the
+            // canonical "agent has no model configured" signal. ("default" is
+            // left intact — it resolves to the host's local Foundation model.)
+            if model.isEmpty {
+                let msg =
+                    "This agent has no model configured. Set the agent's default model on the host and try again."
+                RemoteAgentRunLog.serverError(
+                    "run agent=\(agentId.uuidString) FAILED reqModel=\(req.model.isEmpty ? "<omitted>" : req.model) error=no_model_resolved"
+                )
+                hop {
+                    writerBound.value.writeError(msg, context: ctx.value)
+                    writerBound.value.writeEnd(ctx.value)
+                }
+                logSelf.logRequest(
+                    method: "POST",
+                    path: path,
+                    userAgent: logUserAgent,
+                    requestBody: logRequestBody,
+                    responseStatus: 200,
+                    startTime: logStartTime,
+                    errorMessage: msg
+                )
+                return
+            }
+            RemoteAgentRunLog.server(
+                "run start agent=\(agentId.uuidString) model=\(model) reqModel=\(req.model.isEmpty ? "<omitted>" : req.model)"
+            )
 
             // KPI: one agent run initiated via the HTTP endpoint. The
             // per-turn `message_sent` is emitted separately by ChatEngine on
@@ -4925,6 +5041,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                                     ).first ?? AgentLoopToolExecution(result: "")
                                 let execution = interceptAware(call.invocation, single)
                                 if emitAgentToolTrace {
+                                    RemoteAgentRunLog.server(
+                                        "tool completed agent=\(agentId.uuidString) name=\(call.invocation.toolName) "
+                                            + "callId=\(call.callId) isError=\(execution.isError) endRun=\(execution.endRun)"
+                                    )
                                     hop {
                                         writerBound.value.writeAgentToolTrace(
                                             phase: "completed",
@@ -4946,6 +5066,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         }
                         if emitAgentToolTrace {
                             for call in calls {
+                                RemoteAgentRunLog.server(
+                                    "tool started agent=\(agentId.uuidString) name=\(call.invocation.toolName) callId=\(call.callId)"
+                                )
                                 hop {
                                     writerBound.value.writeAgentToolTrace(
                                         phase: "started",
@@ -4976,6 +5099,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     var toolResultsByCallId: [(String, String)] = []
                     for outcome in outcomes {
                         if emitAgentToolTrace {
+                            RemoteAgentRunLog.server(
+                                "tool completed agent=\(agentId.uuidString) name=\(outcome.invocation.toolName) "
+                                    + "callId=\(outcome.callId) isError=\(outcome.wasError)"
+                            )
                             hop {
                                 writerBound.value.writeAgentToolTrace(
                                     phase: "completed",
@@ -5053,8 +5180,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         )
                     }
                 exitState = runResult.exit
+                RemoteAgentRunLog.server(
+                    "run loop done agent=\(agentId.uuidString) model=\(model) exit=\(String(describing: exitState))"
+                )
             } catch {
                 await releaseHostFolder()
+                RemoteAgentRunLog.serverError(
+                    "run loop FAILED agent=\(agentId.uuidString) model=\(model) error=\(error.localizedDescription)"
+                )
                 // SSE response head was already written as 200 — the
                 // failure surfaces as an in-band SSE error chunk. Log
                 // the actual on-wire status (200) so dashboards don't
