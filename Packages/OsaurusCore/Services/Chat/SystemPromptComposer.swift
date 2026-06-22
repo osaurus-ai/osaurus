@@ -899,6 +899,22 @@ public struct SystemPromptComposer: Sendable {
             )
         }
 
+        // Image generation: authoritative directive, schema-gated on the actual
+        // tool. Without it, a persona-led model (e.g. the Default "Osaurus
+        // configuration assistant") intermittently refuses image requests with
+        // "I can't generate images / I'm text-only" even though image_generate is
+        // in its schema. Only rendered when the tool resolved, so it stays
+        // KV-cache stable and never advertises a tool the model can't call.
+        if !effectiveToolsOff, resolvedNames.contains("image_generate") {
+            composer.append(
+                .static(
+                    id: "imageGeneration",
+                    label: L("Image Generation"),
+                    content: SystemPromptTemplates.imageGenerationGuidance
+                )
+            )
+        }
+
         // Agent-loop guidance: short cheat-sheet for the chat-layer-
         // intercepted tools (todo / complete / clarify / share_artifact).
         // Always rendered when any loop tool resolves into the schema:
