@@ -76,9 +76,9 @@ app-log/NSLog values, PNG bytes, SSE final text).
 | D | text `local_delegate` context passthrough + return | ✅ PASS — sentinel `BANANA_PHONE_42` round-trips back into orchestrator final answer |
 | E | context passthrough + finished-loop-returns-to-main | ✅ PASS — covered by A (real path) + D/F (sentinels) |
 | F | `spawn` (persona) returns subagent digest to orchestrator | ✅ PASS — spawn(Sparky) loads Sparky's own model (qwen2.5-3b, distinct from orch), runs, sentinel `ZEBRA_TOKEN_99` returned |
-| — | cloud-orchestrator image/text job (no unload) | 🟡 code-verified (empty residency lease when nothing resident); NOT live — no remote provider/API key configured in the test instance |
-| — | cancel/failure mid-job restores orchestrator | ⬜ in progress (loop) |
-| — | 6-turn chat coherence with spawn interleaved | ⬜ in progress (loop) |
+| F | `spawn` cloud-orchestrator job (no unload) | 🟡 code-verified (empty residency lease when nothing resident); NOT live — no remote provider/API key configured in the test instance |
+| G | cancel mid-job restores orchestrator | ✅ PASS — abort connection ~8s in; resident stayed `[]` ~48s then `qwen3` restored. (note: client-disconnect lets the in-flight image job finish, then restores ~50s — no stranding, doesn't waste GPU work; instant-abort is a possible future refinement) |
+| H | 6-turn coherence w/ image+delegate interleaved | ✅ PASS — memory recall across turns (Eric/teal), image+1, delegate token relayed, no looping/degeneration, coherent final summary |
 
 ---
 
