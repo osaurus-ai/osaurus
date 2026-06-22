@@ -1777,12 +1777,15 @@ extension FloatingInputCard {
                 showsAmount: true
             )
         case .low:
+            // The chip shows session spend, not the balance, so a low balance no
+            // longer escalates the chip itself — the hover popover surfaces it
+            // (amber balance hero) instead. Renders identically to `.healthy`.
             return CreditsChipStyle(
                 iconName: "creditcard",
-                iconColor: amber,
-                textColor: amber,
-                weight: .semibold,
-                pill: (amber.opacity(0.12), amber.opacity(0.3)),
+                iconColor: theme.tertiaryText,
+                textColor: theme.secondaryText,
+                weight: .medium,
+                pill: nil,
                 glow: .clear,
                 showsAmount: true
             )
@@ -1799,22 +1802,19 @@ extension FloatingInputCard {
         }
     }
 
-    /// Tooltip for the balance indicator: explains the chip, folds in the
-    /// this-session spend when a charge has landed, and swaps to a "paused"
-    /// message for frozen accounts. The per-session figure used to sit inline in
-    /// the chip; it now lives here so the visible label stays compact.
+    /// This session's Router spend, formatted for the composer chip. The chip
+    /// surfaces spend; the account balance is shown only in the hover popover.
+    private var sessionSpendDisplay: String {
+        OsaurusRouter.formatMicroUSDPrecise(String(sessionSpendMicro))
+    }
+
+    /// Accessibility text for the credits chip. Describes the session spend the
+    /// chip shows and the tap action; the balance itself lives in the popover.
     private var creditsHelpText: Text {
         if accountService.isFrozen {
             return Text("Account paused - add credits to resume.", bundle: .module)
         }
-        if sessionSpendMicro > 0 {
-            let spent = OsaurusRouter.formatMicroUSDPrecise(String(sessionSpendMicro))
-            return Text(
-                "Your balance. \(spent) spent this session. Click to add credits.",
-                bundle: .module
-            )
-        }
-        return Text("Your balance. Click to add credits.", bundle: .module)
+        return Text("\(sessionSpendDisplay) spent this session. Click to add credits.", bundle: .module)
     }
 
     /// Balance indicator for Osaurus Router sessions. Tapping opens the top-up
@@ -1842,7 +1842,9 @@ extension FloatingInputCard {
                 }
 
                 if style.showsAmount {
-                    Text(verbatim: accountService.formattedBalance)
+                    // Composer shows this session's spend; the router balance is
+                    // surfaced only in the hover popover.
+                    Text(verbatim: sessionSpendDisplay)
                         .font(.system(size: caption - 1, weight: style.weight, design: .monospaced))
                         .foregroundColor(style.textColor)
                         .lineLimit(1)
