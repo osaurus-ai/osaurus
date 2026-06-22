@@ -40,6 +40,10 @@ struct CellRenderingContext {
     var onSpeak: ((UUID) -> Void)? = nil
     /// attachment or shared-artifact id string → full screen preview from ChatView
     var onUserImagePreview: ((String) -> Void)? = nil
+    /// Pasted-content document attachment → read-only preview sheet from ChatView.
+    /// Lets users re-read the long text they pasted (shown as a chip) after the
+    /// message is sent, mirroring the composer's pasted-content chip preview.
+    var onPastedContentPreview: ((Attachment) -> Void)? = nil
     /// Window-local accumulator of `original -> placeholder` pairs
     /// from the Privacy Filter. Used by `NativeMarkdownView` to
     /// inline-highlight matching spans inside user + assistant
@@ -2130,6 +2134,10 @@ final class NativeMessageCellView: NSTableCellView {
 
             for (index, attachment) in documents.enumerated() {
                 guard let chip = stack.arrangedSubviews[index] as? UserDocumentChipView else { continue }
+                // Pasted-content chips are tappable: re-open the read-only
+                // preview sheet so the user can see what they pasted. Other
+                // document chips stay non-interactive.
+                chip.onTap = attachment.isPastedContent ? context.onPastedContentPreview : nil
                 chip.configure(attachment: attachment, theme: theme)
             }
         }
@@ -2574,6 +2582,12 @@ private final class UserDocumentChipView: NSView {
     private let nameField = NSTextField(labelWithString: "")
     private let sizeField = NSTextField(labelWithString: "")
 
+    /// Set for pasted-content chips: tapping the chip re-opens the
+    /// read-only preview sheet. `nil` for plain document chips, which
+    /// stay non-interactive.
+    var onTap: ((Attachment) -> Void)?
+    private var attachment: Attachment?
+
     override var intrinsicContentSize: NSSize {
         let nameW = min(nameField.intrinsicContentSize.width, 130)
         let sizeW = sizeField.intrinsicContentSize.width
@@ -2627,6 +2641,7 @@ private final class UserDocumentChipView: NSView {
     required init?(coder: NSCoder) { fatalError() }
 
     func configure(attachment: Attachment, theme: any ThemeProtocol) {
+        self.attachment = attachment
         layer?.backgroundColor = NSColor(theme.secondaryBackground).withAlphaComponent(0.7).cgColor
 
         let summary = attachment.businessDocumentSummary
@@ -2643,6 +2658,21 @@ private final class UserDocumentChipView: NSView {
         sizeField.textColor = NSColor(theme.tertiaryText)
 
         invalidateIntrinsicContentSize()
+        window?.invalidateCursorRects(for: self)
+    }
+
+    override func resetCursorRects() {
+        if onTap != nil {
+            addCursorRect(bounds, cursor: .pointingHand)
+        }
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        guard let onTap, let attachment else {
+            super.mouseDown(with: event)
+            return
+        }
+        onTap(attachment)
     }
 }
 

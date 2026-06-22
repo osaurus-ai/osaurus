@@ -4380,6 +4380,10 @@ struct ChatView: View {
     @State private var editingTurnId: UUID?
     @State private var editText: String = ""
     @State private var userImagePreview: NSImage?
+    /// Pasted-content attachment whose read-only preview sheet is showing.
+    /// Set when the user taps a pasted-content chip in a sent message;
+    /// cleared on dismiss.
+    @State private var pastedContentPreview: Attachment?
     // Bonjour agent connection
     @State private var pendingDiscoveredAgent: DiscoveredAgent? = nil
     // Minimap
@@ -5526,6 +5530,7 @@ struct ChatView: View {
                 onConfirmEdit: confirmEditAndRegenerate,
                 onCancelEdit: cancelEditing,
                 onUserImagePreview: openUserAttachmentPreview(attachmentId:),
+                onPastedContentPreview: { pastedContentPreview = $0 },
                 onVisibleTopUserTurnChanged: { turnId in
                     activeMinimapTurnId = turnId
                 },
@@ -5592,6 +5597,11 @@ struct ChatView: View {
             if let img = userImagePreview {
                 ImageFullScreenView(image: img, altText: "")
                     .imageFullScreenSheetPresentation()
+            }
+        }
+        .sheet(item: $pastedContentPreview) { attachment in
+            PastedContentSheet(attachment: attachment) {
+                pastedContentPreview = nil
             }
         }
         // re-pin to bottom when any in-chat prompt overlay opens. previously
@@ -5690,6 +5700,7 @@ private struct IsolatedThreadView: View {
     let onConfirmEdit: (() -> Void)?
     let onCancelEdit: (() -> Void)?
     let onUserImagePreview: ((String) -> Void)?
+    var onPastedContentPreview: ((Attachment) -> Void)? = nil
     var onVisibleTopUserTurnChanged: ((UUID?) -> Void)? = nil
     var scrollToTurnId: UUID? = nil
     var scrollToTurnTrigger: Int = 0
@@ -5725,6 +5736,7 @@ private struct IsolatedThreadView: View {
             onConfirmEdit: onConfirmEdit,
             onCancelEdit: onCancelEdit,
             onUserImagePreview: onUserImagePreview,
+            onPastedContentPreview: onPastedContentPreview,
             onVisibleTopUserTurnChanged: onVisibleTopUserTurnChanged,
             scrollToTurnId: scrollToTurnId,
             scrollToTurnTrigger: scrollToTurnTrigger,

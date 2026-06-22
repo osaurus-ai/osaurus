@@ -11629,6 +11629,9 @@
         }
       }
     },
+    "Choose a CSV, TSV, JSON, or JSONL file to import." : {
+
+    },
     "Choose a folder for the AI to work with" : {
       "localizations" : {
         "de" : {
@@ -27471,6 +27474,9 @@
           }
         }
       }
+    },
+    "Import a CSV, TSV, JSON, or JSONL file into the selected table or a new one. You can also drag a file onto this tab." : {
+
     },
     "Import an MLX model from Hugging Face" : {
       "localizations" : {
