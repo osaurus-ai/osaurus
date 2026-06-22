@@ -295,7 +295,7 @@ public struct ScreenContextDistiller: Sendable {
             // Secure fields: never surface value/selection/viewport even if the
             // driver somehow read one (it shouldn't). Defense-in-depth so a
             // password never reaches the model via screen context.
-            let isSecure = CUSecureFieldRole.contains(direct.role)
+            let isSecure = ComputerUseSecureFieldRedaction.isSecureRole(direct.role)
             let viewing = isSecure ? nil : contentValue(direct.viewport, limit: maxViewingChars)
             let value = isSecure ? nil : contentValue(direct.value, limit: maxValueChars)
             let selected = isSecure ? nil : contentValue(direct.selectedText, limit: maxValueChars)
@@ -316,7 +316,7 @@ public struct ScreenContextDistiller: Sendable {
             // Monaco's "editor is not accessible" label, a lone "/" viewport). For
             // an editor/input role, surface just the bare role — the user is
             // typing here, we simply can't read it — instead of dumping the junk.
-            if Self.rawInputRoles.contains(direct.role.lowercased()) {
+            if Self.isRawInputRole(direct.role) {
                 return ScreenContextSnapshot.FocusedElement(
                     role: friendlyRole(direct.role),
                     label: nil,
@@ -331,13 +331,14 @@ public struct ScreenContextDistiller: Sendable {
         guard let element = snapshot.elements.first(where: { $0.focused }) else { return nil }
         // Same secure-field guard on the breadth-limited traversal fallback: a
         // focused password field surfaces only its role/label, never its value.
-        let isSecure = CUSecureFieldRole.contains(element.role)
+        let isSecure = ComputerUseSecureFieldRedaction.isSecureRole(element.role)
         let value = isSecure ? nil : contentValue(element.value, limit: maxValueChars)
         let selected = isSecure ? nil : contentValue(element.selectedText, limit: maxValueChars)
         let label = labelValue(element.label, limit: maxItemChars)
         let placeholder = labelValue(element.placeholder, limit: maxItemChars)
         if value == nil, selected == nil, label == nil, placeholder == nil,
-            !Self.rawInputRoles.contains(element.role.lowercased()) {
+            !Self.isRawInputRole(element.role)
+        {
             return nil
         }
         return ScreenContextSnapshot.FocusedElement(
@@ -510,6 +511,10 @@ public struct ScreenContextDistiller: Sendable {
     ) -> (text: String, rank: ContentRank, weight: Int)? {
         let label = cleaned(element.label, limit: maxItemChars)
         let area = Self.clampedArea(element.w, element.h)
+        if ComputerUseSecureFieldRedaction.isSecureRole(element.role) {
+            guard let label else { return nil }
+            return ("\(label): (hidden)", .input, area)
+        }
         // "Large" = occupies a meaningful fraction of the focused window, the
         // signature of a document/editor body vs. a sidebar label.
         let isLarge = windowArea > 0 && area * 100 >= windowArea * 12
@@ -538,9 +543,6 @@ public struct ScreenContextDistiller: Sendable {
             guard let value = cleaned(element.value, limit: limit) else { return nil }
             if looksLikeBareToken(value) { return nil }
             return (label.map { "\($0): \(value)" } ?? value, .mainContent, area)
-        case "securetextfield":
-            guard let label else { return nil }
-            return ("\(label): (hidden)", .input, area)
         case "textfield", "searchfield", "combobox":
             // Non-focused inputs only matter when they already hold something.
             guard let value = cleaned(element.value, limit: maxValueChars) else { return nil }
@@ -627,8 +629,16 @@ public struct ScreenContextDistiller: Sendable {
     /// Raw (pre-`friendlyRole`) AX roles for text inputs / editors. Used to keep
     /// a "Focused field: <role>" line even when the content is unreadable.
     private static let rawInputRoles: Set<String> = [
-        "textfield", "textarea", "searchfield", "securetextfield", "combobox",
+        "textfield", "textarea", "searchfield", "combobox",
     ]
+
+    private static func isRawInputRole(_ role: String) -> Bool {
+        let lower = role.lowercased()
+        let normalized = lower.hasPrefix("ax") ? String(lower.dropFirst(2)) : lower
+        return rawInputRoles.contains(lower)
+            || rawInputRoles.contains(normalized)
+            || ComputerUseSecureFieldRedaction.isSecureRole(role)
+    }
 
     /// Characters that carry no signal alone: keyboard-shortcut glyphs plus the
     /// brackets/spaces that wrap them in hints like "(⌘J)". A string made only
@@ -892,11 +902,13 @@ public struct ScreenContextDistiller: Sendable {
     ]
 
     private func friendlyRole(_ role: String) -> String {
+        if ComputerUseSecureFieldRedaction.isSecureRole(role) {
+            return "secure field"
+        }
         switch role.lowercased() {
         case "textfield": return "text field"
         case "textarea": return "text area"
         case "searchfield": return "search field"
-        case "securetextfield": return "secure field"
         case "combobox": return "combo box"
         case "popupbutton": return "pop-up button"
         case "statictext", "staticrtext": return "text"
