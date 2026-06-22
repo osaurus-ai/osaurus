@@ -76,3 +76,43 @@ present as callable **schemas** in the chat's `<tools>` block, not just a prompt
   multi-job stress (back-to-back image + text) with no leak / Metal / SSM crash.
 - **F. Models**: 1 cloud + 1 local orchestrator; a local coder model; image models
   (z-image-turbo, flux-schnell, qwen-image, qwen-image-edit, ideogram).
+
+---
+
+## Spawn UX — full spec (Eric, 2026-06-21) — the target flow
+
+The live Codex computer-use test caught that the **main/default chat cannot spawn end-to-end**
+(default agent is locked to an 8-tool baseline + a "configure Osaurus" persona that refuses;
+the delegation tools are built-in but filtered out for the default agent). The HTTP agent-run
+path works because `enrichWithAgentContext` injects the delegation specs; the native chat
+(`ChatView` → `composeChatContext` → `resolveTools`) does not. Required end state:
+
+1. **Main chat can spawn.** A LOCAL main/default chat model can call the spawn/image/text
+   delegation tools. (Master gate = the global Agent Delegation switch, on by default.)
+   - Cloud/API main chat → nothing to unload; the local spawn job still runs and returns.
+   - Local main chat → the spawn runs in the background (load/unload single-residency handoff).
+2. **Tool-use is shown.** The chat shows a tool-usage row ("spawn" / image_generate used) while
+   the bg job runs (loading/unloading/generating progress).
+3. **Result returns inline.** When the bg job finishes, the **generated image renders inline in
+   the main chat** (and text-gen results return to the chat).
+4. **First-use permission popup.** The FIRST time a user triggers spawn, show the standard
+   osaurus tool-permission prompt (Yes / No / **Always Allow**). **Within that same first-time
+   prompt**, let the user pick the **spawned model** — the image-gen model OR the text-gen model
+   (whichever the spawn is). After choosing, the Spawn settings panel **reflects** the chosen
+   default model + the permission decision.
+5. **Settings reflect choices.** The Spawn settings page (`SpawnSettingsView`) shows the
+   chosen default image / text spawn model + the per-job permission state, synced with what was
+   picked in the first-use prompt.
+
+### Current state vs. target
+- ✅ Built/proven: image gen/edit engine + handoff + RAM-safety (HTTP matrix); the 4 UI surfaces
+  render (Codex-verified); per-agent toggle for CUSTOM agents; default-model pickers + Memory
+  Safety in `SpawnSettingsView`; permission defaults (ask/deny/always) exist in config.
+- ❌ To build for the spec above:
+  - Surface delegation tools to the **main/default chat** (not just custom agents) under the
+    global gate (resolveTools default-agent allow-list + composeChatContext for the native chat).
+  - **First-use permission prompt + model picker** (extend the tool-permission dialog to carry a
+    spawn-model selection on first use; persist to `AgentDelegationConfiguration`
+    defaultImage/TextModelId + permissionDefaults).
+  - **Inline image render** in the native chat when a chat-triggered image job completes
+    (`NativeImageJobProgressCenter` → ChatView image card), confirmed live.
