@@ -4519,7 +4519,22 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let model: String
             if req.model.isEmpty || req.model == "default" {
                 let agentModel = await MainActor.run { AgentManager.shared.effectiveModel(for: agentId) }
-                model = agentModel ?? req.model
+                if let agentModel {
+                    model = agentModel
+                } else {
+                    // No configured default model for this agent (e.g. a fresh
+                    // install where the user hasn't pinned one). Fall back to the
+                    // currently-loaded model rather than the literal "default":
+                    // "default" has no ModelInfo, so `resolveContextWindow` would
+                    // collapse the window to the tiny chat-config fallback and the
+                    // agent's own system prompt + tools would spuriously trip
+                    // `.overBudget` (Context window cannot fit … even after
+                    // compaction) on even a one-word message. Mirrors how /health
+                    // reports the active model.
+                    let currentLoaded = await ModelRuntime.shared.cachedModelSummaries()
+                        .first(where: { $0.isCurrent })?.name
+                    model = currentLoaded ?? req.model
+                }
             } else {
                 model = req.model
             }

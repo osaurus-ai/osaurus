@@ -305,3 +305,14 @@ Each gate removes exactly its own tool family and nothing else; `global-off` is 
 ## Known limitation (NOT introduced by this branch): default-agent /agents/{id}/run overflow
 
 `POST /agents/default/run` returns `.overBudget` ("Context window cannot fit this request even after compaction") even for a trivial "hi". Verified PRE-EXISTING: reproduces on the clean binary independent of the BUG E change, and the "hi" overflow was observed before BUG E was even built. The native chat path for the default agent is UNAFFECTED (all the image/edit/delegate/spawn coherence proofs above ran through native chat). Root cause not yet fully verified — likely the heavyweight agent-run enrichment (default config-agent persona + manifest) against the conservative memory-safety window cap (server-runtime memorySafety.slider=2). Tracked as a separate follow-up; deliberately NOT speculatively fixed in this feature branch (would need dedicated investigation per the verify-before-fixing rule). It only gates the HTTP-API E2E of BUG E's default-agent injection, not the chat feature.
+
+## BUG F — default-agent agent-run model not resolving → spurious context overflow (fixed)
+
+The earlier "known limitation" (#74) is now root-caused and fixed. Verified at runtime via instrumentation:
+`[AGENTBUDGET] model=default window=4096 sysChars=9937 toolTokens=1433 effBudget=3481 totalReserved=4787 → historyBudget=0 → .overBudget`.
+
+Root cause: in `/agents/{id}/run`, when `req.model == "default"` and `AgentManager.effectiveModel(for: agentId)` returns nil (the default agent has no pinned model — true on a fresh install, and in this test env), `model` stayed the literal string `"default"`. `AgentLoopBudget.resolveContextWindow("default")` finds no ModelInfo for "default" and collapses the window to the tiny chat-config fallback (4096). The default agent's own system prompt (~2.5k tok) + tools (1433) + response reservation then exceed the 0.85·4096 effective budget, tripping `.overBudget` on even a one-word "hi". Largely a test-config artifact (production users have a configured default model), but a real robustness gap.
+
+Fix: when `effectiveModel` is nil, fall back to the currently-loaded model (`ModelRuntime.cachedModelSummaries().first{ $0.isCurrent }`) — the same model /health reports — instead of the literal "default". Verified post-fix: `model=osaurusai--gemma-4-12b-it-qat-mxfp4 window=128000 effBudget=108800 historyBudget=100787` and the agent-run generated a coherent response (no overflow). This also unblocks the HTTP E2E of BUG E's default-agent delegation injection.
+
+Minor adjacent note (not fixed, harmless): the resolved window came back 128000 (the fallbackContextWindow) rather than gemma's real 262144, i.e. `ModelInfo.load` didn't resolve the lowercased model id to the on-disk dir (case mismatch). Both values are far larger than any prompt here, so it has no functional impact on this path; logged for a future ModelInfo id-normalisation pass.
