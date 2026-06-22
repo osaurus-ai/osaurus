@@ -38,25 +38,13 @@ enum ThemeFilter: String, CaseIterable, Identifiable, Hashable {
 
     var title: String {
         switch self {
-        case .all: return "All"
-        case .builtIn: return "Built-in"
-        case .local: return "Local"
-        case .imported: return "Imported"
-        case .shared: return "Shared"
-        case .needsReview: return "Needs Review"
-        case .duplicates: return "Duplicates"
-        }
-    }
-
-    var icon: String {
-        switch self {
-        case .all: return "square.grid.2x2"
-        case .builtIn: return "shippingbox"
-        case .local: return "paintbrush.pointed"
-        case .imported: return "tray.and.arrow.down"
-        case .shared: return "link"
-        case .needsReview: return "exclamationmark.triangle"
-        case .duplicates: return "doc.on.doc"
+        case .all: return L("All")
+        case .builtIn: return L("Built-in")
+        case .local: return L("Local")
+        case .imported: return L("Imported")
+        case .shared: return L("Shared")
+        case .needsReview: return L("Needs Review")
+        case .duplicates: return L("Duplicates")
         }
     }
 
@@ -64,6 +52,11 @@ enum ThemeFilter: String, CaseIterable, Identifiable, Hashable {
     /// of a neutral count.
     var isAttentionFilter: Bool { self == .needsReview || self == .duplicates }
 }
+
+/// Drives the header `AnimatedTabSelector`, so the Themes filter row matches
+/// the segmented control used by every other settings tab. `title` and the
+/// `Hashable`/`CaseIterable` conformances above satisfy the protocol.
+extension ThemeFilter: AnimatedTabItem {}
 
 /// Precomputed membership used by `themeMatches`. Built once per data change so
 /// the per-theme predicate never rebuilds sets.
@@ -468,73 +461,22 @@ struct ThemesView: View {
     // MARK: - Filter Toolbar
 
     private var filterToolbar: some View {
-        HStack(spacing: 12) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(availableFilters) { filter in
-                        filterChip(filter)
-                    }
-                }
-                .padding(.vertical, 2)
-            }
+        // Mirror the segmented control every other settings tab uses. Neutral
+        // counts ride the `counts` slot; the library-health filters (Needs
+        // Review, Duplicates) ride `badges` so they keep their warning accent.
+        let neutralCounts = filterCounts.filter { !$0.key.isAttentionFilter }
+        let attentionBadges = filterCounts.filter { $0.key.isAttentionFilter && $0.value > 0 }
+        return HStack(spacing: 12) {
+            AnimatedTabSelector(
+                selection: $selectedFilter,
+                tabs: availableFilters,
+                counts: neutralCounts,
+                badges: attentionBadges.isEmpty ? nil : attentionBadges
+            )
 
             Spacer(minLength: 12)
 
             SearchField(text: $searchText, placeholder: "Search themes", width: 220, compact: true)
-        }
-    }
-
-    private func filterChip(_ filter: ThemeFilter) -> some View {
-        let isSelected = selectedFilter == filter
-        let count = filterCounts[filter] ?? 0
-        return Button {
-            withAnimation(theme.animationQuick()) {
-                selectedFilter = filter
-            }
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: filter.icon)
-                    .font(.system(size: 11, weight: .semibold))
-                Text(LocalizedStringKey(filter.title), bundle: .module)
-                    .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
-                    .lineLimit(1)
-                filterCountBadge(filter, count: count, isSelected: isSelected)
-            }
-            .foregroundColor(isSelected ? Color.white : theme.secondaryText)
-            .padding(.horizontal, 11)
-            .padding(.vertical, 7)
-            .background(
-                Capsule()
-                    .fill(isSelected ? theme.accentColor : theme.tertiaryBackground)
-                    .overlay(
-                        Capsule()
-                            .stroke(theme.primaryBorder.opacity(isSelected ? 0 : 0.5), lineWidth: 1)
-                    )
-            )
-            .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .fixedSize()
-    }
-
-    @ViewBuilder
-    private func filterCountBadge(_ filter: ThemeFilter, count: Int, isSelected: Bool) -> some View {
-        if count > 0 {
-            if filter.isAttentionFilter {
-                Text(verbatim: "\(count)")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 1)
-                    .background(
-                        Capsule()
-                            .fill(isSelected ? Color.white.opacity(0.3) : theme.warningColor)
-                    )
-            } else {
-                Text(verbatim: "\(count)")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(isSelected ? Color.white.opacity(0.85) : theme.tertiaryText)
-            }
         }
     }
 
