@@ -287,3 +287,17 @@ Objective SQLite verification (default agent, gemma-4-12b) of the remaining dele
 Net: all four delegation tools (image_generate, image_edit, local_delegate, spawn) produce coherent generated output with NO looping, NO incoherency, NO tag/channel leaks, and clean context pass-off across every handoff.
 
 **BUG E — agent-run vs native-chat delegation surface split (fix landed).** `HTTPHandler.enrichWithAgentContext` gated delegation-spec injection purely on the per-agent `spawnDelegationEnabled` (false for the default agent), while native chat surfaces delegation tools to the default agent on the GLOBAL `agentDelegationEnabled` (piece #1). So `/agents/default/run` silently lacked the delegation tools even with delegation globally on — a real HTTP-API vs chat-UI behaviour split. Fixed to mirror native chat (default agent → global flag; custom agent → per-agent flag). Native-chat non-regression proven (the image_edit/text-spawn/spawn runs above all ran on the BUG E binary). NOTE: full HTTP E2E of the default-agent injection is currently blocked by a separate agent-run context-window overflow on the default (config) agent — tracked as a follow-up; native chat is unaffected.
+
+## Toggle-combination matrix (Eric /loop 2026-06-22) — all gates isolate, no clashes
+
+Deterministic sweep: for each config, restart and read the resolved default-agent delegation-tool set at native resolveTools time (temporary probe, since removed). Config loaded cleanly every time (errs=0 — BUG D lenient decode holds).
+
+| Config | global | image | text | spawnable | Resolved delegation tools |
+|--------|--------|-------|------|-----------|---------------------------|
+| all-on     | on  | on  | on  | [Sparky,Echo] | image_generate, image_edit, local_delegate, spawn |
+| image-off  | on  | OFF | on  | [Sparky,Echo] | local_delegate, spawn |
+| text-off   | on  | on  | OFF | [Sparky,Echo] | image_generate, image_edit, spawn |
+| spawn-off  | on  | on  | on  | []            | image_generate, image_edit, local_delegate |
+| global-off | OFF | on  | on  | [Sparky,Echo] | (none) |
+
+Each gate removes exactly its own tool family and nothing else; `global-off` is the master kill (all delegation tools gone — also the live-proven root of the BUG D intermittency); no toggle interferes with another. The feature is default-off and invisible at baseline, and every combination behaves as specified.
