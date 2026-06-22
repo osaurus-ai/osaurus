@@ -23,6 +23,8 @@
 //
 
 import Foundation
+import MLX
+import MLXLMCommon
 import vMLXFlux
 
 public actor ImageGenerationService {
@@ -263,6 +265,20 @@ public actor ImageGenerationService {
         AsyncThrowingStream { continuation in
             let task = Task {
                 await MetalGate.shared.enterImageGeneration()
+                // Proper GPU handoff barrier. The prior LLM turn's async tail —
+                // the post-generation cache store (held under MLXDiskCacheIOLock,
+                // submits Metal work) and the chat-model teardown's buffer frees —
+                // can still be settling on the shared Metal device after the gen
+                // gate released. vMLXFlux is a second MLX graph; without this it
+                // races them (encoder coalescing / fence-vs-dealloc) and crashes.
+                // Going THROUGH the cache-IO lock waits for any in-flight store to
+                // finish (commit + sync) rather than force-committing a mid-flight
+                // buffer, then `clearCache()` returns freed teardown buffers and the
+                // bracketing syncs drain the device. We hold the exclusive image
+                // gate, so no new producer can start during the barrier.
+                MLXCacheIOLock.withSerializedMLXCacheIO {
+                    Memory.clearCache()
+                }
                 var cancelled = false
                 var produced: [GeneratedImage] = []
                 func cancelRequested() -> Bool {

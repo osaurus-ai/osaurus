@@ -553,8 +553,18 @@ public actor ModelRuntime {
         if currentModelName == name { currentModelName = nil }
 
         Memory.cacheLimit = mlxCacheLimit()
+        // Fully settle the teardown before returning so the NEXT GPU producer
+        // (a model load, image generation, embedding) never overlaps this
+        // model's async buffer frees on the shared Metal device — releasing the
+        // weight arrays above enqueues allocator frees + fences that escape a
+        // single `synchronize` and otherwise race the next producer (observed:
+        // a slow model's unload dealloc colliding with vMLXFlux's weight load,
+        // SIGSEGV in `Fence::wait` vs `MetalAllocator::free`). Drain, return the
+        // freed buffers, then drain again to flush the frees `clearCache` itself
+        // triggers.
         Stream.gpu.synchronize()
         Memory.clearCache()
+        Stream.gpu.synchronize()
     }
 
     /// Evict `other` for the strict-single-model policy WITHOUT cancelling an
