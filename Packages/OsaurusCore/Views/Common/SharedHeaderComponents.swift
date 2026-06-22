@@ -393,10 +393,9 @@ struct AgentPill: View {
         }
     }
 
-    /// True when either half of the pill is hovered. The chrome
-    /// (background, border, shadow) responds to both as a single unit so
-    /// the gear and the main tap area share one capsule highlight.
-    private var isPillHighlighted: Bool { isHovered || isGearHovered }
+    /// The pill highlights on hover of its tap area. The settings gear is now a
+    /// separate sibling button, so it no longer drives the pill's chrome.
+    private var isPillHighlighted: Bool { isHovered }
 
     /// The settings action behind the gear, routed by which kind of agent is
     /// active: remote/relay agents open their connection detail view, local
@@ -411,24 +410,12 @@ struct AgentPill: View {
     private var showsGearButton: Bool { gearAction != nil }
 
     var body: some View {
-        HStack(spacing: 0) {
-            mainTapArea
+        HStack(spacing: 2) {
+            pill
 
             if showsGearButton {
-                gearDivider
-                gearButton
+                settingsButton
             }
-        }
-        .background(pillBackground)
-        .overlay(pillBorder)
-        .shadow(
-            color: isPillHighlighted ? theme.accentColor.opacity(0.1) : .clear,
-            radius: 6,
-            x: 0,
-            y: 2
-        )
-        .popover(isPresented: $isPopoverPresented, arrowEdge: .bottom) {
-            popoverContent
         }
         .onChange(of: openPickerTrigger) { _, _ in
             isPopoverPresented = true
@@ -450,6 +437,46 @@ struct AgentPill: View {
 
     // MARK: - Subviews
 
+    /// The dropdown pill — avatar + name + chevron — carrying the capsule
+    /// chrome and the agent-picker popover. Reads purely as a selector now that
+    /// the gear has moved out to its own button.
+    private var pill: some View {
+        mainTapArea
+            .background(pillBackground)
+            .overlay(pillBorder)
+            .shadow(
+                color: isPillHighlighted ? theme.accentColor.opacity(0.1) : .clear,
+                radius: 6,
+                x: 0,
+                y: 2
+            )
+            .popover(isPresented: $isPopoverPresented, arrowEdge: .bottom) {
+                popoverContent
+            }
+    }
+
+    /// Standalone settings button beside the pill. A plain icon (no Liquid
+    /// Glass capsule) that just tints on hover. Routes to local or remote
+    /// agent settings.
+    private var settingsButton: some View {
+        Button {
+            gearAction?()
+        } label: {
+            Image(systemName: "gearshape")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(isGearHovered ? theme.accentColor : theme.secondaryText)
+                .frame(width: 28, height: 28)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .localizedHelp(isRemoteActive ? "Remote agent settings" : "Edit agent settings")
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.15)) {
+                isGearHovered = hovering
+            }
+        }
+    }
+
     private var mainTapArea: some View {
         Button {
             isPopoverPresented.toggle()
@@ -466,7 +493,7 @@ struct AgentPill: View {
                     .foregroundColor(isHovered ? theme.secondaryText : theme.tertiaryText)
             }
             .padding(.leading, 14)
-            .padding(.trailing, showsGearButton ? 10 : 14)
+            .padding(.trailing, 14)
             .padding(.vertical, 6)
             .contentShape(Rectangle())
         }
@@ -476,32 +503,6 @@ struct AgentPill: View {
                 isHovered = hovering
             }
         }
-    }
-
-    private var gearButton: some View {
-        Button {
-            gearAction?()
-        } label: {
-            Image(systemName: "gearshape")
-                .font(.system(size: 10, weight: .medium))
-                .foregroundColor(isGearHovered ? theme.accentColor : theme.secondaryText)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .localizedHelp(isRemoteActive ? "Remote agent settings" : "Edit agent settings")
-        .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.15)) {
-                isGearHovered = hovering
-            }
-        }
-    }
-
-    private var gearDivider: some View {
-        Rectangle()
-            .fill(theme.primaryBorder.opacity(0.2))
-            .frame(width: 1, height: 16)
     }
 
     // MARK: - Chrome
