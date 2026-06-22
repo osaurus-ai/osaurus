@@ -2838,8 +2838,19 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         // strip). Without this, the explicit injection below would re-add the
         // tools that the per-agent gate just stripped. `specs(forTools:)` still
         // applies the global delegation gating on top.
-        let spawnDelegationEnabled = await MainActor.run {
-            AgentManager.shared.effectiveCapabilities(for: agentUUID).spawnDelegationEnabled
+        // Mirror the authoritative native-chat `resolveTools` surfacing so the
+        // HTTP agent-run path and the in-app chat agree on which agents see the
+        // delegation tools: the DEFAULT agent surfaces them when the GLOBAL
+        // `agentDelegationEnabled` is on (piece #1), and a CUSTOM agent surfaces
+        // them when its per-agent `spawnDelegationEnabled` is on. Without the
+        // default-agent branch, `/agents/default/run` silently lacked
+        // image_generate/image_edit/local_delegate/spawn even with delegation
+        // globally enabled — a surface/behaviour split vs the chat UI.
+        let spawnDelegationEnabled = await MainActor.run { () -> Bool in
+            if agentUUID == Agent.defaultId {
+                return AgentDelegationConfigurationStore.snapshot().agentDelegationEnabled
+            }
+            return AgentManager.shared.effectiveCapabilities(for: agentUUID).spawnDelegationEnabled
         }
         let delegationSpecs =
             spawnDelegationEnabled

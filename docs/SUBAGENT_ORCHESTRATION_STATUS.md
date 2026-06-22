@@ -275,3 +275,15 @@ Method: instead of trusting the (unreliable) Codex GUI observations, mined the c
 - Sequential images, resume-normal-chat-after-image, and image+describe all coherent — no looping, no tag leaks.
 - Prompt-passing fidelity verified clean across all fired sessions (e.g. "a single red apple on a white background", "a blue car") — no corruption/context-bleed into the spawned model.
 - 1/6 transient: the cold-start first request hit "Stopped before completing" (retryable) — UI turn-cancel path (`ChatView.markUnfinishedToolCallsInterrupted`), a Codex-interaction artifact, not a feature defect; the 5 subsequent requests succeeded.
+
+## All-paths coherence sweep (Eric /loop 2026-06-22) — image_edit + text-spawn + spawn
+
+Objective SQLite verification (default agent, gemma-4-12b) of the remaining delegation paths, emphasis on generated-output coherence + context pass-off across the model load/unload handoffs. Note: the Codex GUI cancels slow heavy-model turns (starting a new chat / impatience mid-generation aborts the turn → "Stopped before completing", retryable — a test artifact, not a defect). Fixed by patient single-flow Codex prompts (wait up to 2-3 min, never click/navigate mid-generation).
+
+- **local_delegate (text spawn) — PASS.** "write a haiku via your local delegate" → qwen3-4b returned 3 distinct coherent lines into chat; then "what's my favorite color + city?" correctly recalled "teal / Denver" — context preserved across the delegate model load/unload. 0 loops, 0 tag/channel leaks. Result lean (397 B).
+- **image_edit — PASS (two handoffs).** generate banana (FLUX) → edit to blue background (Qwen-Image-Edit-mflux-q4) → "what did you change?" → "I changed the background color from white to bright blue while preserving the yellow banana." Edited image rendered inline; context survived BOTH the gen and edit handoffs. 0 loops, 0 leaks. Edit result lean (669 B — the BUG C progress-slim covers image_edit too).
+- **spawn — PASS.** spawn(Sparky) → handoff:true → coherent agent intro. 0 leaks.
+
+Net: all four delegation tools (image_generate, image_edit, local_delegate, spawn) produce coherent generated output with NO looping, NO incoherency, NO tag/channel leaks, and clean context pass-off across every handoff.
+
+**BUG E — agent-run vs native-chat delegation surface split (fix landed).** `HTTPHandler.enrichWithAgentContext` gated delegation-spec injection purely on the per-agent `spawnDelegationEnabled` (false for the default agent), while native chat surfaces delegation tools to the default agent on the GLOBAL `agentDelegationEnabled` (piece #1). So `/agents/default/run` silently lacked the delegation tools even with delegation globally on — a real HTTP-API vs chat-UI behaviour split. Fixed to mirror native chat (default agent → global flag; custom agent → per-agent flag). Native-chat non-regression proven (the image_edit/text-spawn/spawn runs above all ran on the BUG E binary). NOTE: full HTTP E2E of the default-agent injection is currently blocked by a separate agent-run context-window overflow on the default (config) agent — tracked as a follow-up; native chat is unaffected.
