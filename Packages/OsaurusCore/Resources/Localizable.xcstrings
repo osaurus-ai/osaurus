@@ -5384,6 +5384,7 @@
       }
     },
     "ALL MODELS" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -46443,6 +46444,7 @@
       }
     },
     "RECOMMENDED" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
