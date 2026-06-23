@@ -384,6 +384,76 @@ struct RemoteAgentRoutingTests {
         #expect(RemoteProviderService.parseAgentMetadata(from: Data("not json".utf8)) == nil)
     }
 
+    // MARK: - Agent metadata decode (Action Bar / quick actions over the wire)
+
+    @Test func parseAgentMetadata_decodesActionBarQuickActions() throws {
+        let json = #"""
+            {
+                "name": "Coco",
+                "avatar": "green",
+                "chat_quick_actions": [
+                    {"id":"11111111-1111-1111-1111-111111111111","icon":"book","text":"Explain","prompt":"Explain "},
+                    {"id":"22222222-2222-2222-2222-222222222222","icon":"doc","text":"Summarize","prompt":"Summarize "}
+                ]
+            }
+            """#
+        let meta = try #require(
+            RemoteProviderService.parseAgentMetadata(from: Data(json.utf8))
+        )
+        let actions = try #require(meta.quickActions)
+        #expect(actions.count == 2)
+        #expect(actions.first?.text == "Explain")
+        #expect(actions.first?.prompt == "Explain ")
+        #expect(actions.last?.icon == "doc")
+    }
+
+    @Test func parseAgentMetadata_dropsBlankQuickActionsAndNilsWhenEmpty() throws {
+        // Entries missing text or prompt are dropped; an all-blank list collapses
+        // to nil so the client falls back to its neutral chat defaults.
+        let json = #"""
+            {
+                "name": "Coco",
+                "chat_quick_actions": [
+                    {"id":"11111111-1111-1111-1111-111111111111","icon":"book","text":"  ","prompt":"x"},
+                    {"id":"22222222-2222-2222-2222-222222222222","icon":"doc","text":"y","prompt":"   "}
+                ]
+            }
+            """#
+        let meta = try #require(
+            RemoteProviderService.parseAgentMetadata(from: Data(json.utf8))
+        )
+        #expect(meta.name == "Coco")
+        #expect(meta.quickActions == nil)
+    }
+
+    @Test func parseAgentMetadata_malformedActionBarDoesNotFailWholeDecode() throws {
+        // A malformed action list must not lose the agent's name/avatar/model —
+        // quick actions decode from a separate envelope and degrade to nil.
+        let json = #"""
+            {
+                "name": "Coco",
+                "avatar": "green",
+                "effective_model": "coco/gemma-3-12b",
+                "chat_quick_actions": "not-an-array"
+            }
+            """#
+        let meta = try #require(
+            RemoteProviderService.parseAgentMetadata(from: Data(json.utf8))
+        )
+        #expect(meta.name == "Coco")
+        #expect(meta.avatar == "green")
+        #expect(meta.effectiveModel == "coco/gemma-3-12b")
+        #expect(meta.quickActions == nil)
+    }
+
+    @Test func parseAgentMetadata_absentActionBarIsNil() throws {
+        let json = #"{"name":"Coco","avatar":"green"}"#
+        let meta = try #require(
+            RemoteProviderService.parseAgentMetadata(from: Data(json.utf8))
+        )
+        #expect(meta.quickActions == nil)
+    }
+
     // MARK: - Connection metadata fidelity (Insights honesty)
 
     @Test func remoteConnectionInfo_mode2_isSecureChannelAgentRun() throws {

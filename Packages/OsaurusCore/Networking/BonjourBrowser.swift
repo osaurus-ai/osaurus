@@ -22,6 +22,25 @@ public struct PairedRelayAgent: Identifiable, Equatable, Sendable {
     public let remoteAgentAddress: String
     /// The local provider ID used to connect to this agent.
     public let providerId: UUID
+    /// Mascot avatar id (e.g. "green") from the persisted `RemoteAgent` record
+    /// (refreshed from the agent's live metadata on connect), so the picker can
+    /// render the agent's own avatar instead of a generic glyph. nil = monogram
+    /// fallback on the name (e.g. a paired agent that hasn't connected yet).
+    public let avatar: String?
+
+    public init(
+        id: UUID,
+        name: String,
+        remoteAgentAddress: String,
+        providerId: UUID,
+        avatar: String? = nil
+    ) {
+        self.id = id
+        self.name = name
+        self.remoteAgentAddress = remoteAgentAddress
+        self.providerId = providerId
+        self.avatar = avatar
+    }
 }
 
 // MARK: - DiscoveredAgent

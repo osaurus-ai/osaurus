@@ -447,7 +447,11 @@ struct FloatingInputCard: View {
     /// In a Mode 2 remote-agent run the context-budget chip is hidden, so the
     /// pinned-model chip (`isModelPinned`) is what keeps the row visible.
     private var showSelectorRow: Bool {
-        pickerItems.count > 1
+        // Hide the whole selector row (pinned model chip + balance) while a
+        // remote agent is still connecting — the chat isn't usable yet — then
+        // ease it back in on connect with the resolved pinned-model chip.
+        guard !remoteConnectionPending else { return false }
+        return pickerItems.count > 1
             || isModelPinned
             || (displayContextTokens > 0 && !isRemoteAgentRun)
             || isSandboxAvailable
@@ -473,6 +477,9 @@ struct FloatingInputCard: View {
                 }
                 .padding(.top, 8)
                 .padding(.horizontal, 20)
+                // Ease the row out while connecting and back in once connected,
+                // so the composer height changes smoothly instead of snapping.
+                .transition(.opacity)
             }
 
             if showVoiceOverlay {
@@ -533,6 +540,9 @@ struct FloatingInputCard: View {
             }
         }
         .animation(.spring(response: 0.3, dampingFraction: 0.85), value: showVoiceOverlay)
+        // Smoothly collapse/reveal the selector row (model chip + balance) as
+        // the remote-agent connection resolves, so the composer doesn't snap.
+        .animation(theme.springAnimation(), value: remoteConnectionPending)
     }
 
     var body: some View {
@@ -1702,7 +1712,9 @@ extension FloatingInputCard {
     /// with the interactive chips on the left.
     @ViewBuilder
     private var metaCluster: some View {
-        let showCredits = showSessionSpend
+        // Hide the balance/credits chip while a remote agent is connecting —
+        // it's not actionable yet and competes with the connect affordance.
+        let showCredits = showSessionSpend && !remoteConnectionPending
         // Mode 2 hides the context-budget chip + popover entirely: a remote
         // agent composes its own system prompt / tools server-side, so a local
         // token breakdown (system prompt, tools, history) doesn't reflect what

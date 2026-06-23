@@ -3196,6 +3196,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         /// mascot (client falls back to the name's initial). User-uploaded
         /// custom images are intentionally not serialized.
         let avatar: String?
+        /// The agent's custom Action Bar (chat quick actions) so a connected
+        /// peer can surface the agent's own prompt shortcuts in the empty
+        /// state. Omitted (nil) when the agent uses the built-in defaults, so
+        /// the client falls back to its neutral chat defaults.
+        let chat_quick_actions: [AgentQuickAction]?
         let default_model: String?
         /// Server-resolved model id, known before the first streamed chunk.
         let effective_model: String?
@@ -4212,6 +4217,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     name: agent.name,
                     description: agent.description,
                     avatar: agent.avatar,
+                    chat_quick_actions: agent.chatQuickActions,
                     default_model: agent.defaultModel,
                     effective_model: modelId,
                     supports_thinking: supportsThinking,
@@ -4360,6 +4366,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 name: agent.name,
                 description: agent.description,
                 avatar: agent.avatar,
+                chat_quick_actions: agent.chatQuickActions,
                 default_model: agent.defaultModel,
                 effective_model: effectiveModelId,
                 supports_thinking: supportsThinking,

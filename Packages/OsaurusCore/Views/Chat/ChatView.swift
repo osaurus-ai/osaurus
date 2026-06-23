@@ -4518,41 +4518,23 @@ struct ChatView: View {
             ?? L("Default")
     }
 
-    /// Friendly name of the selected remote agent (Mode 2) for status copy.
-    private var remoteAgentDisplayName: String {
-        windowState.selectedDiscoveredAgent?.name
-            ?? windowState.selectedRelayAgent?.name
-            ?? L("the agent")
-    }
-
-    /// Compact Mode 2 connection status shown above the composer: a spinner
-    /// while connect + model pin resolve, or an actionable error with Retry on
-    /// failure. Hidden once connected (the pinned model chip then reflects the
-    /// agent's model) and when not in remote-agent mode.
+    /// Compact Mode 2 connection status shown above the composer: an actionable
+    /// error with Retry on failure. The connecting affordance lives in the
+    /// empty-state security badge (which morphs "Securing connection…" -> lock),
+    /// so this row only surfaces on `.failed`; it's empty otherwise and when
+    /// not in remote-agent mode.
     @ViewBuilder
     private var remoteAgentConnectionNotice: some View {
         if windowState.selectedDiscoveredAgentProviderId != nil {
             switch windowState.remoteAgentConnectionPhase {
-            case .connecting:
-                connectingNotice
             case .failed(let message):
                 connectionFailedNotice(message)
-            case .idle, .connected:
+            case .idle, .connected, .connecting:
+                // The connecting affordance now lives in the empty-state
+                // security badge (it morphs "Securing connection…" -> lock),
+                // so there's no separate connecting chip above the composer.
                 EmptyView()
             }
-        }
-    }
-
-    /// "Connecting to <agent>…" chip. Uses the app's themed activity spinner
-    /// (the same `MorphingStatusIcon` used for running tool calls / background
-    /// tasks) instead of a stock `ProgressView`, so the loading affordance
-    /// matches the rest of the chat.
-    private var connectingNotice: some View {
-        remoteAgentNoticeRow(tint: theme.accentColor) {
-            MorphingStatusIcon(state: .active, accentColor: theme.accentColor, size: 14)
-            Text(L("Connecting to \(remoteAgentDisplayName)…"))
-                .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-                .foregroundColor(theme.secondaryText)
         }
     }
 
@@ -5273,6 +5255,7 @@ struct ChatView: View {
         windowState.selectedDiscoveredAgentProviderId = providerId
         windowState.pinnedRemoteAgentEffectiveModel = nil
         windowState.pinnedRemoteAgentAvatar = nil
+        windowState.pinnedRemoteAgentQuickActions = nil
         windowState.refreshPairedRelayAgents()
         session.reset()
         pinRemoteAgentModelAfterConnect(providerId: providerId)
@@ -5317,6 +5300,7 @@ struct ChatView: View {
                 guard windowState.selectedDiscoveredAgentProviderId == providerId else { return }
                 windowState.pinnedRemoteAgentEffectiveModel = metadata?.effectiveModel
                 windowState.pinnedRemoteAgentAvatar = metadata?.avatar
+                windowState.pinnedRemoteAgentQuickActions = metadata?.quickActions
                 // Keep the persisted paired-agent label/avatar honest (no-op for
                 // ephemeral Bonjour peers without a RemoteAgent record).
                 if let address = provider.remoteAgentAddress, !address.isEmpty {
@@ -5355,6 +5339,7 @@ struct ChatView: View {
         windowState.selectedDiscoveredAgentProviderId = relay.providerId
         windowState.pinnedRemoteAgentEffectiveModel = nil
         windowState.pinnedRemoteAgentAvatar = nil
+        windowState.pinnedRemoteAgentQuickActions = nil
         session.reset()
         pinRemoteAgentModelAfterConnect(providerId: relay.providerId)
     }
@@ -5418,7 +5403,9 @@ struct ChatView: View {
             activeDiscoveredAgent: windowState.selectedDiscoveredAgent,
             activeRelayAgent: windowState.selectedRelayAgent,
             remoteAgentAvatar: windowState.pinnedRemoteAgentAvatar,
-            remoteAgentDescription: remoteAgentDescriptionForEmptyState
+            remoteAgentDescription: remoteAgentDescriptionForEmptyState,
+            remoteAgentQuickActions: windowState.pinnedRemoteAgentQuickActions,
+            isConnecting: windowState.remoteAgentConnectionPhase == .connecting
         )
         .transition(.opacity.combined(with: .scale(scale: 0.98)))
         .modifier(
