@@ -422,6 +422,11 @@ struct AgentPill: View {
         }
         .onChange(of: isPopoverPresented) { _, presented in
             if presented {
+                // Lazily begin LAN peer discovery the moment the picker (the
+                // only surface that lists discovered agents) opens, so users
+                // who never open it don't trigger an always-on mDNS browse or
+                // the Local Network permission prompt. Idempotent.
+                BonjourBrowser.shared.startIfNeeded()
                 keyboard.start(
                     itemCount: menuItemCount,
                     initialIndex: initialHighlightIndex,
