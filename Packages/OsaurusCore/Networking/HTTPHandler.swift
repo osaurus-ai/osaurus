@@ -4788,6 +4788,19 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let tools = enrichedReq.tools ?? []
             let resolvedToolChoice = enrichedReq.tool_choice
 
+            // Honor the agent's configured sampling when the request omits it,
+            // matching the in-app Chat and plugin-host surfaces (which apply
+            // `effectiveTemperature` / `effectiveMaxTokens`). The request body
+            // still wins when present; the agent config is the fallback before
+            // the model-bundle default. Resolved once here because the loop's
+            // `modelStep` samples from `req`, not the enriched request.
+            let (effectiveTemperature, effectiveMaxTokens) = await MainActor.run {
+                (
+                    req.temperature ?? AgentManager.shared.effectiveTemperature(for: agentId),
+                    req.resolvedMaxTokens ?? AgentManager.shared.effectiveMaxTokens(for: agentId)
+                )
+            }
+
             let configuredMaxToolAttempts = await MainActor.run {
                 ChatConfigurationStore.load().maxToolAttempts ?? 30
             }
@@ -4815,7 +4828,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     contextWindow: contextWindow,
                     systemPromptChars: sysChars,
                     toolTokens: toolTokens,
-                    maxResponseTokens: req.resolvedMaxTokens
+                    maxResponseTokens: effectiveMaxTokens
                 )
             }()
             // Request-scoped sticky compaction: trims stay monotonic across
@@ -4911,8 +4924,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     var iterationReq = ChatCompletionRequest(
                         model: model,
                         messages: msgs,
-                        temperature: req.temperature,
-                        max_tokens: req.resolvedMaxTokens,
+                        temperature: effectiveTemperature,
+                        max_tokens: effectiveMaxTokens,
                         stream: true,
                         top_p: req.top_p,
                         frequency_penalty: req.frequency_penalty,
