@@ -3,6 +3,25 @@
 Living assessment. Updated as stress tests + fixes land. Honest status only —
 "ready" requires live proof, not code-reading.
 
+## ⛔ CRITICAL crash found + fixed (stress-proving now): image→model-load concurrent-GPU
+Stress testing surfaced a **real SIGABRT crash** — `MTLReleaseAssertionFailure` in
+`-[IOGPUMetalCommandBuffer setCurrentCommandEncoder:]` — on the **image→model-load**
+handoff (e.g. image_edit completes → chat model reloads to summarize). The exclusive
+image MetalGate was released (`ImageGenerationService.exitImageGeneration`) **before**
+vMLXFlux's async Metal tail (VAE decode/teardown) drained, so the next exclusive
+producer (`enterModelLoad`) raced the in-flight command buffer.
+
+This is the **reverse direction** of the BatchEngine drain shipped in vmlx PR #82
+(which fixed chat→image). **Fix applied** (osaurus, ImageGenerationService): the same
+`MLXCacheIOLock`/`Stream.gpu.synchronize` drain barrier right before
+`exitImageGeneration`, covering success/cancel/error paths. Rebuild + stress-proof in
+progress. Until proven, the image path is **NOT production-ready** (intermittent crash
+under repeated/chained image ops).
+
+NOTE: earlier "app DOWN" reads via `/health` were false (the endpoint blocks during GPU
+teardown); the REAL crash was confirmed via `pgrep` + the macOS crash report
+(`osaurus-2026-06-22-203544.ips`).
+
 ## TL;DR
 - The **dangerous** bug (concurrent-GPU crash on chat→image handoff) is **fixed + shipped**
   (vmlx PR #82, merged to canonical, osaurus repinned + rebuilt + verified).
@@ -46,6 +65,19 @@ Living assessment. Updated as stress tests + fixes land. Honest status only —
 - `maxToolAttempts` (the real run cap) lives in chat config.
 - There IS a budget-exhaustion message ("Tool-loop budget of N iterations exhausted
   without a final answer", HTTPHandler:5307) — but it does not point to the setting.
+
+## ⚠️ Test-methodology correction (affects earlier reads)
+- The `/health` endpoint **blocks briefly during post-image GPU teardown**
+  (synchronous `Memory.clearCache` + `Stream.synchronize`), so a health probe fired
+  right after a gen returns a **false "DOWN"** while the process is alive and recovers
+  within seconds. Verified: after a clean single gen, `/health` read "DOWN" but `pgrep`
+  showed the process alive and a retry returned healthy. **Use PNG-count + `pgrep`, not
+  `/health` timing, as the liveness signal for image tests.**
+- A real crash report DID appear once (20:18) — but from an **abnormal path**: killing the
+  stress client mid-image-op orphaned a server-side image job, which then collided with a
+  new request (two concurrent image generations). Flags a latent gap: orphaned/concurrent
+  image jobs can crash (the image lane should be exclusive). Not a normal-operation crash.
+- Re-establishing the chained/repeated verdict with reliable metrics now.
 
 ## Open work to reach production-grade
 1. Isolate + fix the chained/repeated image cancellation (#88).

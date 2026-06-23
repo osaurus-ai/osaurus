@@ -340,6 +340,24 @@ public actor ImageGenerationService {
                     continuation.finish()
                 }
                 if let jobID { self.cancelledJobIDs.remove(jobID) }
+                // Drain the image GPU tail BEFORE releasing the exclusive gate —
+                // symmetric with the entry barrier above and the BatchEngine
+                // stream-finish drain. vMLXFlux submits Metal work (denoise steps,
+                // the terminal VAE decode, teardown buffer frees) asynchronously;
+                // the event stream ending does NOT mean the device is idle. If we
+                // release the gate here while a command buffer is still in flight,
+                // the next exclusive producer — a chat-model reload via
+                // `enterModelLoad`, which happens immediately after an agent-run
+                // image tool returns — starts and races it on the shared Metal
+                // command buffer, aborting with `MTLReleaseAssertionFailure` in
+                // `-[IOGPUMetalCommandBuffer setCurrentCommandEncoder:]` (observed
+                // live on the image_edit → gemma-reload handoff). Going through the
+                // cache-IO lock brackets the work in `Stream.gpu.synchronize`, so
+                // "gate released" provably means "GPU idle". Covers the success,
+                // cancel, and error paths (this runs after the do/catch).
+                MLXCacheIOLock.withSerializedMLXCacheIO {
+                    Memory.clearCache()
+                }
                 await MetalGate.shared.exitImageGeneration()
             }
             continuation.onTermination = { _ in task.cancel() }
