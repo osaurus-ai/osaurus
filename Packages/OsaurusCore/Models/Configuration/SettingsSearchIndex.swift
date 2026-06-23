@@ -191,34 +191,86 @@ public enum SettingsSearchIndex {
             subTab: "Models"
         ),
 
-        // MARK: Server
+        // MARK: Server (subTab values are ServerSettingsSection raw values)
         .init(
             id: "server.connection", tab: .server, section: "Connection",
-            title: "Port & Network", keywords: ["port", "expose", "network", "host", "bind"]
+            title: "Port & Network", keywords: ["port", "expose", "network", "host", "bind"],
+            subTab: "connection"
         ),
         .init(
             id: "server.cors", tab: .server, section: "Connection",
-            title: "Allowed Origins (CORS)", keywords: ["cors", "origins", "cross origin"]
+            title: "Allowed Origins (CORS)", keywords: ["cors", "origins", "cross origin"],
+            subTab: "connection"
         ),
         .init(
             id: "server.auth", tab: .server, section: "Authentication",
-            title: "API Authentication", keywords: ["api key", "auth", "token", "bearer"]
+            title: "API Authentication", keywords: ["api key", "auth", "token", "bearer"],
+            subTab: "authentication"
         ),
         .init(
-            id: "server.generation", tab: .server, section: "Generation Defaults",
-            title: "Generation Defaults", keywords: ["top p", "temperature", "sampling", "defaults"]
+            id: "server.generation", tab: .server, section: "Sampling Defaults",
+            title: "Generation Defaults", keywords: ["top p", "temperature", "sampling", "defaults"],
+            subTab: "sampling"
         ),
         .init(
-            id: "server.residency", tab: .server, section: "Model Residency",
-            title: "Model Residency", keywords: ["eviction", "idle", "keep model loaded", "unload"]
+            id: "server.residency", tab: .server, section: "Model Memory",
+            title: "Model Residency", keywords: ["eviction", "idle", "keep model loaded", "unload"],
+            subTab: "modelMemory"
         ),
         .init(
-            id: "server.concurrency", tab: .server, section: "Concurrency",
-            title: "Concurrency", keywords: ["parallel", "batch", "requests", "threads"]
+            id: "server.concurrency", tab: .server, section: "Concurrency & Batching",
+            title: "Concurrency", keywords: ["parallel", "batch", "requests", "threads"],
+            subTab: "concurrency"
         ),
         .init(
-            id: "server.proxy", tab: .server, section: "Network",
-            title: "Global Proxy", keywords: ["proxy", "http proxy", "socks"]
+            id: "server.proxy", tab: .server, section: "Global Proxy",
+            title: "Global Proxy", keywords: ["proxy", "http proxy", "socks"],
+            subTab: "globalProxy"
+        ),
+        .init(
+            id: "server.cache", tab: .server, section: "Cache",
+            title: "Prompt Cache", keywords: ["cache", "kv cache", "prefix"],
+            subTab: "cache"
+        ),
+        .init(
+            id: "server.memorySafety", tab: .server, section: "Memory Safety",
+            title: "Memory Safety", keywords: ["memory", "ram", "guard", "oom", "limits"],
+            subTab: "memorySafety"
+        ),
+        .init(
+            id: "server.decode", tab: .server, section: "Decode Performance",
+            title: "Decode Performance", keywords: ["decode", "throughput", "speed", "tokens per second"],
+            subTab: "decodePerformance"
+        ),
+        .init(
+            id: "server.speculative", tab: .server, section: "Speculative Decoding",
+            title: "Speculative Decoding", keywords: ["speculative", "mtp", "draft model"],
+            subTab: "speculative"
+        ),
+        .init(
+            id: "server.liveActivity", tab: .server, section: "Live Activity",
+            title: "Live Activity", keywords: ["live activity", "dynamic island", "status"],
+            subTab: "liveActivity"
+        ),
+        .init(
+            id: "server.multimodal", tab: .server, section: "Multimodal",
+            title: "Multimodal", keywords: ["vision", "image", "audio", "multimodal"],
+            subTab: "multimodal"
+        ),
+        .init(
+            id: "server.tools", tab: .server, section: "Tools & Templates",
+            title: "Tools & Templates", keywords: ["tool calling", "templates", "chat template"],
+            subTab: "tools"
+        ),
+        .init(
+            id: "server.power", tab: .server, section: "Power",
+            title: "Power", keywords: ["power", "battery", "low power", "energy"],
+            subTab: "power"
+        ),
+        .init(
+            id: "server.requestLimits", tab: .server, section: "Request Limits",
+            title: "Request Limits", keywords: ["body size", "request limits", "max body", "advanced http"],
+            subTab: "requestLimits"
         ),
 
         // MARK: Permissions / Computer Use / Privacy tabs

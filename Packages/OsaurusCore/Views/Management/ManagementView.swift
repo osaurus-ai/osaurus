@@ -290,10 +290,14 @@ private extension ManagementView {
     /// pane so the destination tab renders normally.
     func handleResultSelected(_ entry: SettingsSearchEntry) {
         searchText = ""
-        // Route inner navigation before the tab appears (e.g. Voice's sub-tabs),
-        // so the destination opens directly on the right section.
+        // Route inner navigation before the tab appears, so the destination
+        // opens directly on the right section.
         if let subTab = entry.subTab {
-            stateManager.voiceSubTabRequest = subTab
+            switch entry.tab {
+            case .voice: stateManager.voiceSubTabRequest = subTab
+            case .server: stateManager.serverSectionRequest = subTab
+            default: break
+            }
         }
         // Arm the landing glow for the specific control; the destination tab
         // scrolls to its anchor and the control breathes once on arrival.

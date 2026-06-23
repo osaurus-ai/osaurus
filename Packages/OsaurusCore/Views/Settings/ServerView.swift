@@ -43,6 +43,7 @@ private nonisolated(unsafe) let sharedByteCountFormatter: ByteCountFormatter = {
 
 struct ServerView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var managementState = ManagementStateManager.shared
     @EnvironmentObject var server: ServerController
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
@@ -50,6 +51,14 @@ struct ServerView: View {
     @State private var selectedTab: ServerTab = .overview
     @State private var searchText: String = ""
     @State private var hasAppeared = false
+
+    /// A settings-search result targeting a Server section opens the Settings
+    /// tab (the inner section scroll + glow is handled by the content view).
+    private func focusSettingsTabIfRequested() {
+        if managementState.serverSectionRequest != nil {
+            selectedTab = .settings
+        }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -74,9 +83,13 @@ struct ServerView: View {
         .background(theme.primaryBackground)
         .environment(\.theme, themeManager.currentTheme)
         .onAppear {
+            focusSettingsTabIfRequested()
             withAnimation(.easeOut(duration: 0.25).delay(0.05)) {
                 hasAppeared = true
             }
+        }
+        .onChange(of: managementState.serverSectionRequest) { _, _ in
+            focusSettingsTabIfRequested()
         }
     }
 
