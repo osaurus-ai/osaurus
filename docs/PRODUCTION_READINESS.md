@@ -102,3 +102,43 @@ teardown); the REAL crash was confirmed via `pgrep` + the macOS crash report
 2. Make image failures return a CLEAR, actionable message (not raw "CancellationError").
 3. Verify the multi-turn DB-persisted image path.
 4. Stress matrix: concurrency, repeated load, RAM safety, every model.
+
+---
+
+## CONVERGED HONEST STATE (after extensive GPU/chained-edit hardening)
+
+### Solid + proven (real usage)
+- Single `image_generate` (6/8 driver models), single `image_edit` (direct API or explicit
+  source path), `spawn`, `local_delegate`, context pass-off — all work.
+- Two separate tools with per-tool default models settable in Settings; direct
+  `/images/{generations,edits}` API falls back to those defaults (model now optional).
+- Concurrent-GPU crash fixes for the SINGLE handoffs: chat→image (vmlx #82, merged) and
+  image→model-load (#89) — proven (6/6 + direct edit→reload). #91 (model-load drain) kept.
+
+### Reverted (made things worse)
+- #92 comprehensive GPU-drain fix: its new MetalGate `modelUnload` lane **deadlocked** with
+  the `agent_single_residency` handoff (image job holds the image gate, then triggers the
+  chat-model unload which waits on that gate → 350s stall). Reverted.
+
+### Remaining residuals (NOT fixed by drain whack-a-mole — need a different approach)
+1. **One-turn chained gen→edit is non-deterministic.** After `image_generate` + the chat-model
+   reload, gemma's iteration-2 generation SOMETIMES hangs (1 gen, no edit, ~450s timeout) and
+   SOMETIMES fires the edit. This is a pre-existing hang in the image→reload→generation
+   handoff, present before any of this session's GPU work; the nudge fixes only improved the
+   tool-selection for the cases that DON'T hang. Drains/reverts did not change it.
+2. **Sustained back-to-back churn crashes.** 4 chained runs with no settling → EXC_BAD_ACCESS
+   in `mlx::core::metal::CommandEncoder` creation (MLX command-buffer race under pathological
+   rapid model churn). Beyond real usage.
+
+### Reliable paths (recommend for product)
+- Image **edit** via the direct `/images/edits` API or as a **separate turn** with an explicit
+  path — both proven reliable, bypass the non-deterministic one-turn handoff.
+- One chained request at a time (avoid rapid back-to-back churn).
+
+### Honest recommendation
+The one-turn-chained-edit hang + the churn crash are NOT solvable by more osaurus-side
+MetalGate drains (this session proved that — multiple drain rounds either didn't help or
+deadlocked). They need a different approach: a vmlx/MLX-level look at the image→model-reload
+generation hang, and/or a residency-handoff redesign (e.g. keep the chat model resident
+during the image job instead of unload/reload, or a global image-job serialize-with-settle).
+That is a design decision for the next session, not autonomous drain iteration.
