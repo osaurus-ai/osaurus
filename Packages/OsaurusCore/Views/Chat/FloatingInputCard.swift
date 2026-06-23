@@ -279,6 +279,8 @@ struct FloatingInputCard: View {
     /// Set on chip tap; cleared on dismiss.
     @State private var pastedContentPreview: Attachment?
     @State private var pastedContentEdit: Attachment?
+    /// Pending image attachment shown full-size when its thumbnail is tapped.
+    @State private var imagePreview: PendingImagePreview?
     /// Character threshold above which clipboard text is converted to a
     /// pasted-content attachment instead of being inlined into the input.
     private static let pastedContentThreshold: Int = 400
@@ -1522,6 +1524,9 @@ extension FloatingInputCard {
                                 withAnimation(theme.springAnimation()) {
                                     pendingAttachments.removeAll { $0.id == attachment.id }
                                 }
+                            },
+                            onTap: {
+                                imagePreview = PendingImagePreview(id: attachment.id, data: data)
                             }
                         )
                     case .imageRef:
@@ -1537,6 +1542,9 @@ extension FloatingInputCard {
                                     withAnimation(theme.springAnimation()) {
                                         pendingAttachments.removeAll { $0.id == attachment.id }
                                     }
+                                },
+                                onTap: {
+                                    imagePreview = PendingImagePreview(id: attachment.id, data: data)
                                 }
                             )
                         }
@@ -1593,6 +1601,11 @@ extension FloatingInputCard {
                     pastedContentEdit = nil
                 }
             )
+        }
+        .sheet(item: $imagePreview) { preview in
+            PendingImagePreviewSheet(imageData: preview.data) {
+                imagePreview = nil
+            }
         }
     }
 
@@ -3868,6 +3881,8 @@ struct CachedImageThumbnail: View {
     let imageData: Data
     let size: CGFloat
     let onRemove: () -> Void
+    /// Tapping the thumbnail (not the remove badge) opens a full-size preview.
+    var onTap: (() -> Void)? = nil
 
     @State private var cachedImage: NSImage?
     @Environment(\.theme) private var theme
@@ -3885,6 +3900,8 @@ struct CachedImageThumbnail: View {
                         RoundedRectangle(cornerRadius: 8, style: .continuous)
                             .strokeBorder(theme.primaryBorder.opacity(0.3), lineWidth: 1)
                     )
+                    .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .modifier(TappableThumbnailModifier(onTap: onTap))
             } else {
                 // Square placeholder — aspect is unknown until decode completes.
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
@@ -3910,6 +3927,49 @@ struct CachedImageThumbnail: View {
         .padding(.trailing, 4)
         .task(id: imageData) {
             cachedImage = NSImage(data: imageData)
+        }
+    }
+}
+
+/// A pending image attachment selected for full-size preview. Carries the raw
+/// bytes (not a decoded `NSImage`) so it stays `Identifiable` and `Equatable`
+/// for `.sheet(item:)`; the sheet decodes lazily.
+private struct PendingImagePreview: Identifiable, Equatable {
+    let id: UUID
+    let data: Data
+}
+
+/// Full-size preview for a composer image attachment, reusing the chat's
+/// zoom/pan/save viewer. Decodes off the initial render so a large pasted image
+/// doesn't stall presentation.
+private struct PendingImagePreviewSheet: View {
+    let imageData: Data
+    let onDismiss: () -> Void
+
+    @State private var image: NSImage?
+
+    var body: some View {
+        ImageFullScreenView(image: image, altText: "", onDismiss: onDismiss)
+            .imageFullScreenSheetPresentation()
+            .task(id: imageData) {
+                image = NSImage(data: imageData)
+            }
+    }
+}
+
+/// Adds the tap-to-preview gesture and pointing-hand cursor to an image
+/// thumbnail only when an `onTap` is supplied, so non-interactive thumbnails
+/// keep the default cursor and hit-testing.
+private struct TappableThumbnailModifier: ViewModifier {
+    let onTap: (() -> Void)?
+
+    func body(content: Content) -> some View {
+        if let onTap {
+            content
+                .onTapGesture { onTap() }
+                .pointingHandCursor()
+        } else {
+            content
         }
     }
 }
