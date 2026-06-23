@@ -20,8 +20,17 @@ the same `MLXCacheIOLock`/`Stream.gpu.synchronize` drain barrier right before
 crash trigger) → **6/6 process survived, 0 crashes, 6/6 PNGs, all responses coherent**,
 no new crash report. Pre-fix the same handoff reliably SIGABRT'd. The drain lives in the
 **shared** image-job wrapper, so image_generate AND image_edit both go through it (build
-closure differs; enter/drain/exit identical). Direct qwen-image-edit→chat handoff
-confirmation in progress.
+closure differs; enter/drain/exit identical).
+
+**EDIT-PATH CONFIRMED:** direct `/images/edits` (real Qwen-Image-Edit, produced an edited
+PNG) immediately followed by a chat model-load — the EXACT original crash scenario — →
+process ALIVE, chat clean ("Hello."), no new crash report. Crash closed on both gen and
+edit handoffs. ✅ **#89 fixed + proven.**
+
+Also discovered: the **direct `/images/edits` + `/images/generations` HTTP API works
+reliably** (accepts `file://` / data-url / base64 sources) and bypasses model
+tool-selection flakiness — a robust path for image edit independent of how well the chat
+model calls the tool.
 
 NOTE: earlier "app DOWN" reads via `/health` were false (the endpoint blocks during GPU
 teardown); the REAL crash was confirmed via `pgrep` + the macOS crash report
@@ -48,9 +57,10 @@ teardown); the REAL crash was confirmed via `pgrep` + the macOS crash report
 | local_delegate | 🟢 Ready | 7×8=56 relayed |
 | Context pass-off (recall generated image) | 🟢 Ready | coherent recall, no re-gen |
 | Delegation default-off + per-agent toggle | 🟢 Ready | opt-in |
-| **Chained gen→edit (one turn)** | 🔴 Investigating | stress repro: 3/3 runs failed, 0 PNGs (cancellation/empty) |
-| **Repeated image load (back-to-back)** | 🔴 Investigating | same repro; isolating degradation vs chaining |
-| Multi-turn DB-persisted image path | ⚪ Unverified | not tested across separate UI turns |
+| **Repeated image load (back-to-back)** | 🟢 Ready (post-fix) | 6/6 handoffs, 0 crashes after #89 drain fix |
+| image_edit (direct API or model-driven) | 🟢 Ready | direct /images/edits → real edited PNG; handoff crash-free |
+| **Chained gen→edit (ONE turn, model-driven)** | 🟡 Works but model-dependent | crash fixed; remaining issue is MODEL tool-selection — gemma-12b loops on image_generate / flakily invokes image_edit (#88). Reliable via direct API, separate turns, or stronger tool-callers |
+| Multi-turn DB-persisted image path | ⚪ Unverified | not tested across separate UI turns (direct image_edit with explicit path works) |
 | Small-qwen image refusal | 🔴 Won't fix | model-level (qwen3-8b/qwen2.5-3b) |
 | R4 channel-marker leak | ⚪ Non-issue | did NOT reproduce (0/3 stress runs) |
 | R6 mid-word seam | ⚪ Likely non-bug | probably client-side SSE concat artifact |
