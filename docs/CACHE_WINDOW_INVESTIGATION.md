@@ -124,3 +124,20 @@ NOTE: the Codex run had collateral damage — it wiped the repo `.git` HEAD/conf
 showed deleted) and replaced the 635-line/34-test AgentTaskStateTests with a 62-line/2-test
 stub. Both repaired: git metadata restored, all 1182 files restored, 34 original tests
 restored + Codex's 2 added.
+
+## ✅ FIXED + PROVEN (chained one-turn gen→edit now works)
+Three layered osaurus-side fixes (NOT a model limitation, NOT cache window):
+1. Softened the "just confirm" steer (display_note + imageGenerationGuidance) → conditional.
+2. Added `nextStepBias()` native-image case → stages an image_edit continuation nudge after
+   image_generate (AgentTaskState.swift).
+3. Promote THAT nudge from a tool-role message to a transient USER turn (AgentToolLoop
+   `appendingTransientNotices`) — gemma underweighted the tool-role notice after a tool
+   result; a user turn is salient enough to trigger the call.
+
+LIVE PROOF (gemma-4-12b, one turn "generate a red cube then edit it green"):
+image_generate → FLUX PNG, then image_edit → a NEW qwen-image-edit PNG (1024×1024, this run),
+process alive. Both tools fired in one turn. Pre-fix: 0 image_edit across many runs.
+
+Minor follow-up: the model sometimes ends with empty final text (no closing confirmation)
+after the edit — cosmetic; the gen+edit work completes. Direct /images/edits API +
+separate-turn editing also remain reliable paths.
