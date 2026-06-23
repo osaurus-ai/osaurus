@@ -41,10 +41,13 @@ teardown); the REAL crash was confirmed via `pgrep` + the macOS crash report
   (vmlx PR #82, merged to canonical, osaurus repinned + rebuilt + verified).
 - **Single** image_generate / image_edit / spawn / local_delegate + context pass-off:
   **proven working** in isolation across many models.
-- **Chained / repeated** image ops (gen→edit in one turn, or many runs back-to-back):
-  **UNDER INVESTIGATION** — a stress repro showed chained gen+edit failing (cancellation /
-  empty / 0 images). This is the current #1 blocker for calling the image path
-  production-grade. Root cause being isolated.
+- **Repeated** image ops (many runs back-to-back): **FIXED + PROVEN** — the failures were
+  the #89 GPU crash (image→model-load drain), now closed; 6/6 handoffs survive.
+- **Chained gen→edit in ONE turn**: **FIXED + PROVEN** — `image_edit` now chains after
+  `image_generate` and produces a real edited PNG on gemma-4-12b. Root cause was NOT a model
+  limit and NOT the cache window (both refuted with instrumentation + Codex); it was three
+  layered osaurus tool-prompt re-injection bugs (steer "just confirm" → no continuation
+  nudge → nudge sent as low-salience tool-role). See `CACHE_WINDOW_INVESTIGATION.md`.
 - Delegation ships **default-OFF** + per-agent opt-in → small blast radius.
 
 ## Capability matrix
@@ -59,7 +62,7 @@ teardown); the REAL crash was confirmed via `pgrep` + the macOS crash report
 | Delegation default-off + per-agent toggle | 🟢 Ready | opt-in |
 | **Repeated image load (back-to-back)** | 🟢 Ready (post-fix) | 6/6 handoffs, 0 crashes after #89 drain fix |
 | image_edit (direct API or model-driven) | 🟢 Ready | direct /images/edits → real edited PNG; handoff crash-free |
-| **Chained gen→edit (ONE turn, model-driven)** | 🟡 Works but model-dependent | crash fixed; remaining issue is MODEL tool-selection — gemma-12b loops on image_generate / flakily invokes image_edit (#88). Reliable via direct API, separate turns, or stronger tool-callers |
+| **Chained gen→edit (ONE turn, model-driven)** | 🟢 Ready (post-fix) | image_edit now chains after image_generate → real edited PNG (gemma-4-12b). 3 layered tool-prompt re-injection fixes (#88). Cosmetic: sometimes no closing text |
 | Multi-turn DB-persisted image path | ⚪ Unverified | not tested across separate UI turns (direct image_edit with explicit path works) |
 | Small-qwen image refusal | 🔴 Won't fix | model-level (qwen3-8b/qwen2.5-3b) |
 | R4 channel-marker leak | ⚪ Non-issue | did NOT reproduce (0/3 stress runs) |
