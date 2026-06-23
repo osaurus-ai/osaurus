@@ -790,18 +790,7 @@ public final class MCPProviderManager: ObservableObject {
         // Store discovered tools
         discoveredTools[providerId] = mcpTools
 
-        // Create, register, and auto-enable tool wrappers
-        var tools: [MCPProviderTool] = []
-        for mcpTool in mcpTools {
-            let tool = MCPProviderTool(
-                mcpTool: mcpTool,
-                providerId: providerId,
-                providerName: provider.name
-            )
-            tools.append(tool)
-            ToolRegistry.shared.registerMCPTool(tool)
-            ToolRegistry.shared.setEnabled(true, for: tool.name)
-        }
+        let tools = registerDiscoveredTools(mcpTools, for: providerId, provider: provider)
         registeredTools[providerId] = tools
 
         // Update state
@@ -812,6 +801,32 @@ public final class MCPProviderManager: ObservableObject {
         }
 
         NotificationCenter.default.post(name: .toolsListChanged, object: nil)
+    }
+
+    /// Wrap each discovered MCP tool and register it with the shared
+    /// `ToolRegistry`, returning the wrappers in discovery order.
+    ///
+    /// `registerMCPTool` auto-enables a tool only on its first registration
+    /// and otherwise preserves the saved enabled state, so a per-tool disable
+    /// survives re-discovery (launch / autoConnect). Do NOT force-enable here:
+    /// that would overwrite the user's choice on every reconnect.
+    @discardableResult
+    internal func registerDiscoveredTools(
+        _ mcpTools: [MCP.Tool],
+        for providerId: UUID,
+        provider: MCPProvider
+    ) -> [MCPProviderTool] {
+        var tools: [MCPProviderTool] = []
+        for mcpTool in mcpTools {
+            let tool = MCPProviderTool(
+                mcpTool: mcpTool,
+                providerId: providerId,
+                providerName: provider.name
+            )
+            tools.append(tool)
+            ToolRegistry.shared.registerMCPTool(tool)
+        }
+        return tools
     }
 
     private func withTimeout<T: Sendable>(seconds: TimeInterval, operation: @escaping @Sendable () async throws -> T)
