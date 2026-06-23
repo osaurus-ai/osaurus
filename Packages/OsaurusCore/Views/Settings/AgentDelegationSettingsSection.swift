@@ -9,6 +9,10 @@ import SwiftUI
 
 struct AgentDelegationSettingsSection: View {
     @ObservedObject private var themeManager = ThemeManager.shared
+    /// Source of the Agent personas offered as `spawn` targets. Observed directly
+    /// so both call sites (Settings + the Spawn & Delegation page) get the list
+    /// without threading it through every initializer.
+    @ObservedObject private var agentManager = AgentManager.shared
 
     @Binding var configuration: AgentDelegationConfiguration
     let modelItems: [ModelPickerItem]
@@ -54,6 +58,28 @@ struct AgentDelegationSettingsSection: View {
                             "Expose delegated local helper jobs to chat models. When off, delegate tools are removed from the model tool list.",
                         isOn: $configuration.agentDelegationEnabled
                     )
+                }
+
+                SettingsDivider()
+
+                SettingsSubsection(label: "Spawnable Agents") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        infoLine(
+                            "Choose which Agent personas the chat model may launch with the spawn tool. Off by default — the spawn tool stays hidden until at least one agent is enabled here."
+                        )
+                        if agentManager.agents.isEmpty {
+                            infoLine("No agents yet — create an Agent persona to make it spawnable.")
+                        } else {
+                            ForEach(agentManager.agents) { agent in
+                                SettingsToggle(
+                                    title: agent.name,
+                                    description: agent.description,
+                                    isOn: spawnableBinding(for: agent.name)
+                                )
+                            }
+                        }
+                    }
+                    .disabled(!configuration.agentDelegationEnabled)
                 }
 
                 SettingsDivider()
@@ -196,12 +222,9 @@ struct AgentDelegationSettingsSection: View {
                             range: 1 ... 8,
                             step: 1
                         )
-                        budgetStepper(
-                            title: "Max Tool Calls",
-                            value: $configuration.budgets.maxToolCalls,
-                            range: 0 ... 32,
-                            step: 1
-                        )
+                        // Note: no "Max Tool Calls" control — spawned subagents are
+                        // text-only (no nested tool calls), so it would be a no-op.
+                        // See AgentDelegationBudgets.maxToolCalls (reserved).
                         budgetStepper(
                             title: "Max Seconds",
                             value: $configuration.budgets.maxElapsedSeconds,
@@ -306,6 +329,26 @@ struct AgentDelegationSettingsSection: View {
     private func normalizedSelection(_ value: String) -> String? {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
+    }
+
+    /// Membership toggle for `spawnableAgentNames`. Case-insensitive to match
+    /// `AgentDelegationConfiguration.isAgentSpawnable`, and de-dupes on insert so a
+    /// rename or a duplicate persona name can't stack entries.
+    private func spawnableBinding(for name: String) -> Binding<Bool> {
+        Binding(
+            get: {
+                configuration.spawnableAgentNames.contains {
+                    $0.caseInsensitiveCompare(name) == .orderedSame
+                }
+            },
+            set: { isOn in
+                var names = configuration.spawnableAgentNames.filter {
+                    $0.caseInsensitiveCompare(name) != .orderedSame
+                }
+                if isOn { names.append(name) }
+                configuration.spawnableAgentNames = names
+            }
+        )
     }
 }
 

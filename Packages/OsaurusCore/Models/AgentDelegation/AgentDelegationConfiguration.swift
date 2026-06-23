@@ -120,6 +120,11 @@ struct AgentDelegationPermissionDefaults: Codable, Equatable, Sendable {
 struct AgentDelegationBudgets: Codable, Equatable, Sendable {
     var maxDelegateTokens: Int
     var maxDelegateTurns: Int
+    /// Reserved. Spawned subagents run text-only (`AgentSubagentRunner` passes
+    /// `tools: nil` and rejects any tool call), so there are no nested tool calls
+    /// to cap and nothing enforces this today. Kept for forward-compat for when a
+    /// subagent kind gains tool use; intentionally NOT surfaced in Settings until
+    /// then so the control isn't a no-op.
     var maxToolCalls: Int
     var maxElapsedSeconds: Int
 
@@ -253,7 +258,11 @@ struct AgentDelegationConfiguration: Codable, Equatable, Sendable {
             imageJobLoadPolicy: imageJobLoadPolicy,
             sharingPolicy: sharingPolicy,
             permissionDefaults: permissionDefaults,
-            budgets: budgets.normalized
+            budgets: budgets.normalized,
+            // Preserve the user's RAM-safety choice across the save/load round-trip.
+            // Omitting this dropped it back to the init default (`true`), making the
+            // toggle un-disableable (the store runs `.normalized` on every save+load).
+            ramSafetyPreflightEnabled: ramSafetyPreflightEnabled
         )
     }
 

@@ -91,4 +91,31 @@ struct AgentDelegationConfigurationTests {
         #expect(decoded.textDelegateLoadPolicy.rawValue == "keep_warm_when_safe")
         #expect(decoded.imageJobLoadPolicy.rawValue == "manual_panel_keeps_image_loaded")
     }
+
+    @Test("normalization preserves a disabled RAM-safety preflight")
+    func normalizationPreservesRamSafetyChoice() {
+        // Regression: `.normalized` previously omitted ramSafetyPreflightEnabled, so
+        // turning it OFF was silently reverted to the init default (true) on every
+        // save/load (the store runs `.normalized` on both). It must survive.
+        var config = AgentDelegationConfiguration(agentDelegationEnabled: true)
+        config.ramSafetyPreflightEnabled = false
+
+        #expect(config.normalized.ramSafetyPreflightEnabled == false)
+
+        // Through a full encode round-trip too (decode then normalize).
+        let data = try! JSONEncoder().encode(config)
+        let decoded = try! JSONDecoder().decode(AgentDelegationConfiguration.self, from: data)
+        #expect(decoded.ramSafetyPreflightEnabled == false)
+        #expect(decoded.normalized.ramSafetyPreflightEnabled == false)
+    }
+
+    @Test("normalization preserves spawnable agent names")
+    func normalizationPreservesSpawnableNames() {
+        var config = AgentDelegationConfiguration(agentDelegationEnabled: true)
+        config.spawnableAgentNames = ["Researcher", "Coder"]
+
+        #expect(config.normalized.spawnableAgentNames == ["Researcher", "Coder"])
+        #expect(config.normalized.anyAgentSpawnable)
+        #expect(config.normalized.isAgentSpawnable("researcher"))  // case-insensitive
+    }
 }
