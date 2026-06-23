@@ -54,7 +54,7 @@ enum ContentBlockKind: Equatable {
     /// Footer row appended to every completed assistant turn.
     /// Replaces the hover-revealed copy/regenerate buttons that used to live in the header,
     /// so moving the mouse over the assistant transcript no longer triggers per-row reconfigures.
-    case assistantActions(turnId: UUID)
+    case assistantActions(turnId: UUID, timestamp: Date)
     /// Shown when the Osaurus Router billed a turn that produced no visible
     /// text (and no reasoning/tools). Surfaces the charge honestly with a Retry
     /// affordance instead of silently dropping the turn. `costMicro` is the raw
@@ -111,8 +111,8 @@ enum ContentBlockKind: Equatable {
         case let (.chart(lSpec), .chart(rSpec)):
             return lSpec == rSpec
 
-        case let (.assistantActions(lId), .assistantActions(rId)):
-            return lId == rId
+        case let (.assistantActions(lId, lTime), .assistantActions(rId, rTime)):
+            return lId == rId && lTime == rTime
 
         case let (
             .emptyResponseNotice(lId, lTokens, lCost, lStatus),
@@ -310,11 +310,11 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
         return ContentBlock(id: "spacer-\(afterTurnId.uuidString)", turnId: turnId, kind: .groupSpacer, position: .only)
     }
 
-    static func assistantActions(turnId: UUID, position: BlockPosition) -> ContentBlock {
+    static func assistantActions(turnId: UUID, timestamp: Date, position: BlockPosition) -> ContentBlock {
         ContentBlock(
             id: "actions-\(turnId.uuidString)",
             turnId: turnId,
-            kind: .assistantActions(turnId: turnId),
+            kind: .assistantActions(turnId: turnId, timestamp: timestamp),
             position: position
         )
     }
@@ -614,7 +614,7 @@ extension ContentBlock {
             if !isStreaming && turn.role == .assistant && isLastInGroup,
                 hasVisibleContent || hasRenderableThinking || hasSharedArtifacts || !(turn.toolCalls ?? []).isEmpty
             {
-                turnBlocks.append(.assistantActions(turnId: turn.id, position: .last))
+                turnBlocks.append(.assistantActions(turnId: turn.id, timestamp: turn.createdAt, position: .last))
             }
 
             blocks.append(contentsOf: assignPositions(to: turnBlocks))
