@@ -95,7 +95,10 @@ struct ConfigurationView: View {
 
     private func matchesSearch(_ texts: [String]) -> Bool {
         guard isSearching else { return true }
-        return texts.contains { SearchService.matches(query: searchText, in: $0) }
+        // Token/substring only (no fuzzy subsequence) so section visibility
+        // aligns with the field-level glow — both key off the same matching,
+        // and prose labels don't trip non-obvious subsequence hits.
+        return texts.contains { SearchService.matches(query: searchText, in: $0, allowFuzzy: false) }
     }
 
     // Per-section search keywords. Each section's visibility gate and the

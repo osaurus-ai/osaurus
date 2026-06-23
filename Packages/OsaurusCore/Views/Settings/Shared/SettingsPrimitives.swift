@@ -85,7 +85,10 @@ private struct SettingsSearchRowHighlightModifier: ViewModifier {
 
     private var isMatch: Bool {
         guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
-        return terms.contains { SearchService.matches(query: query, in: $0) }
+        // Token/substring only (no fuzzy subsequence): these labels are prose,
+        // where subsequence matching produces non-obvious hits that make the
+        // glowing control disagree with what the user typed.
+        return terms.contains { SearchService.matches(query: query, in: $0, allowFuzzy: false) }
     }
 
     func body(content: Content) -> some View {
