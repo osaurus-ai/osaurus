@@ -65,15 +65,34 @@ private struct SettingsSearchHighlightModifier: ViewModifier {
     let active: Bool
     @ObservedObject private var themeManager = ThemeManager.shared
 
+    /// 1 right after a section becomes a match, easing back to 0. Drives a brief
+    /// border/glow flash so the eye catches the freshly-matched card.
+    @State private var pulse: CGFloat = 0
+
+    private var strokeOpacity: Double { active ? 0.7 + 0.25 * Double(pulse) : 0 }
+    private var lineWidth: CGFloat { 1.5 + 1.5 * pulse }
+    private var glowOpacity: Double { active ? 0.18 + 0.22 * Double(pulse) : 0 }
+    private var glowRadius: CGFloat { 7 + 7 * pulse }
+
     func body(content: Content) -> some View {
         let theme = themeManager.currentTheme
         content
             .overlay(
                 RoundedRectangle(cornerRadius: 12)
-                    .strokeBorder(active ? theme.accentColor.opacity(0.7) : .clear, lineWidth: 1.5)
+                    .strokeBorder(theme.accentColor.opacity(strokeOpacity), lineWidth: lineWidth)
             )
-            .shadow(color: active ? theme.accentColor.opacity(0.18) : .clear, radius: 7)
+            .shadow(color: theme.accentColor.opacity(glowOpacity), radius: glowRadius)
             .animation(.easeOut(duration: 0.2), value: active)
+            .onAppear { if active { firePulse() } }
+            .onChange(of: active) { _, isActive in
+                if isActive { firePulse() }
+            }
+    }
+
+    /// Flash to full intensity instantly, then ease back to the resting ring.
+    private func firePulse() {
+        pulse = 1
+        withAnimation(.easeOut(duration: 0.6)) { pulse = 0 }
     }
 }
 
