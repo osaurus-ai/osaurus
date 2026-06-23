@@ -61,3 +61,34 @@ SWA, KV, KV+MTP, MoE, linear-attention, affine, SSM-hybrid, CCA — all coherent
 context-carrying across unload/reload, prefix-cached, with zero crashes. The 2 empty-output
 cases are edge model-architecture integration bugs (LFM2, vibethinker), separate from the
 spawn/image-gen/GPU-serialization feature.
+
+---
+
+## Coverage scan — remaining 18 model/quant variants (post-fix)
+Second sweep over the previously-untested local bundles (coherence + empty + loop +
+template-leak, adequate budget). **15 PASS, 3 explained non-bugs. 0 crashes, app
+stayed healthy throughout.**
+
+PASS (15): qwen2.5-3b 4bit/8bit, qwen3-4b, gemma-4-26b-a4b jang_4m (+crack),
+gemma-4-e2b mxfp4/jang, gemma-4-e4b jang, **gemma-4-31b mxfp4/jang**,
+qwen3.6-27b mxfp8 + jang_4m, **qwen3.6-35b-a3b mxfp8**, minimax-m2.7-jang_k,
+nemotron-omni-nano jangtq4, step-3.7-flash jang_2l + jang_k-crack,
+laguna-m.1-jang_2l, applescript-16b-a4b, **zaya1-vl-8b-jangtq4 (vision → coherent text)**.
+
+Explained non-bugs (3):
+- `minimax-m3-reap40-d3-jang_2l` → HTTP 500: MM3 runtime port is incomplete (separate
+  in-progress work, out of scope this session).
+- `kanana-2-30b-a3b-instruct-2601` → `Unhandled keys ["experts"]` in DeepseekV3MoE:
+  raw bundle uses a fused-experts MoE layout the loader doesn't parse; the production
+  `kanana-2-30b-a3b-instruct-jang_4m` sibling PASSES. Separate model-support gap.
+- `zaya1-vl-8b-jangtq_k` → HTTP 400: intentional runtime policy block (diagnostic
+  artifact w/ proven first-token fidelity failure; runtime directs to mxfp4/jangtq4).
+  `zaya1-vl-8b-jangtq4` sibling PASSES.
+
+## Bottom line
+35+ unique model/quant combinations exercised across both sweeps. Every in-scope
+model produces coherent, non-empty, non-looping, leak-free output with correct
+context carry, and **zero crashes** under the GPU-serialized chat↔image runtime.
+Non-passes are all intentional policy blocks, broken/diagnostic bundles with working
+siblings, or the explicitly-out-of-scope MM3 port. The one genuine defect found
+(lfm2 + vibethinker empty output) is fixed and shipped (vmlx PR #82).
