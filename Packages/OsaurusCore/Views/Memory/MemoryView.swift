@@ -145,6 +145,12 @@ struct MemoryView: View {
                         // just swap the in-memory selection.
                         selectedAgent = newAgent
                     },
+                    onSwitchRemoteAgent: { remoteId in
+                        // Memory has no remote-agent surface of its own, so hand
+                        // off to the Agents tab and let it open the remote detail.
+                        ManagementStateManager.shared.pendingRemoteAgentDetailId = remoteId
+                        ManagementStateManager.shared.selectedTab = .agents
+                    },
                     showSuccess: { msg in
                         showToast(msg)
                     }

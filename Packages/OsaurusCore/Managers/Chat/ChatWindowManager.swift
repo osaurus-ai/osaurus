@@ -327,6 +327,49 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         }
     }
 
+    /// Open (or focus) a chat window and select the paired remote agent that
+    /// owns `providerId`, so the conversation routes to that agent instead of
+    /// whatever the window was last pointed at. Mirrors the toolbar's
+    /// relay-agent picker: we resolve the matching `PairedRelayAgent` from the
+    /// target window's state and post `.chatToolbarSelectRelayAgent`, which the
+    /// window's `ChatView` turns into a real connect via `connectToRelayAgent`.
+    public func openChat(withRemoteAgentProviderId providerId: UUID) {
+        let targetId: UUID
+        let isNewWindow: Bool
+        if let lastId = lastFocusedWindowId, windowStates[lastId] != nil {
+            targetId = lastId
+            isNewWindow = false
+            showWindow(id: lastId)
+        } else if let firstId = windowStates.keys.first {
+            targetId = firstId
+            isNewWindow = false
+            showWindow(id: firstId)
+        } else {
+            targetId = createWindow()
+            isNewWindow = true
+        }
+
+        guard let state = windowStates[targetId] else { return }
+        // Refresh so the relay list reflects the latest paired providers before
+        // we look up the target agent (e.g. just-paired agents).
+        state.refreshPairedRelayAgents()
+        guard let relay = state.pairedRelayAgents.first(where: { $0.providerId == providerId })
+        else { return }
+
+        // A freshly-created window's `ChatView` registers its
+        // `.chatToolbarSelectRelayAgent` listener a runloop turn or two after
+        // creation, so delay the post for new windows. Existing windows are
+        // already listening, so dispatch on the next tick is enough.
+        let delay: TimeInterval = isNewWindow ? 0.35 : 0.0
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+            NotificationCenter.default.post(
+                name: .chatToolbarSelectRelayAgent,
+                object: relay,
+                userInfo: ["windowId": targetId]
+            )
+        }
+    }
+
     /// Find windows by agent ID
     public func findWindows(byAgentId agentId: UUID) -> [ChatWindowInfo] {
         windows.values.filter { $0.agentId == agentId }
