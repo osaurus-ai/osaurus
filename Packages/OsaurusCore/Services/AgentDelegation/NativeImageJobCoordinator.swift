@@ -194,7 +194,10 @@ struct NativeImageJobResult: Sendable, Equatable {
             "already_displayed": true,
             "display_note":
                 "The generated image is already shown to the user in the chat. "
-                + "Do NOT call share_artifact for it — just briefly confirm the image was created.",
+                + "Do NOT call share_artifact for it. If the user asked for a follow-up edit "
+                + "or transformation of this image, continue now by calling image_edit with "
+                + "source_paths set to this result's images[].path; otherwise just briefly "
+                + "confirm the image was created.",
             "unloaded_after_job": unloadedAfterJob,
             "unloaded_chat_models": unloadedChatModels,
             "restored_chat_models": restoredChatModels,
