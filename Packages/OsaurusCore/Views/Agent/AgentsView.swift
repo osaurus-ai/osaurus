@@ -98,6 +98,12 @@ struct AgentsView: View {
                         }
                     },
                     onSwitchAgent: { newAgent in selectedAgent = newAgent },
+                    onSwitchRemoteAgent: { remoteId in
+                        withAnimation(Self.navTransition) {
+                            selectedAgent = nil
+                            selectedRemoteAgentId = remoteId
+                        }
+                    },
                     showSuccess: showSuccess
                 )
                 .id(agent.id)
@@ -114,7 +120,20 @@ struct AgentsView: View {
                         withAnimation(Self.navTransition) { selectedRemoteAgentId = nil }
                         showSuccess("Removed remote agent")
                     },
-                    onChat: { _ in ChatWindowManager.shared.toggleLastFocused() }
+                    onChat: { remote in
+                        ChatWindowManager.shared.openChat(
+                            withRemoteAgentProviderId: remote.providerId
+                        )
+                    },
+                    onSwitchAgent: { newAgent in
+                        withAnimation(Self.navTransition) {
+                            selectedRemoteAgentId = nil
+                            selectedAgent = newAgent
+                        }
+                    },
+                    onSwitchRemoteAgent: { newRemoteId in
+                        selectedRemoteAgentId = newRemoteId
+                    }
                 )
                 .id(remoteId)
                 .transition(.opacity)
@@ -305,7 +324,11 @@ struct AgentsView: View {
             onSelect: {
                 withAnimation(Self.navTransition) { selectedRemoteAgentId = remote.id }
             },
-            onChat: { ChatWindowManager.shared.toggleLastFocused() },
+            onChat: {
+                ChatWindowManager.shared.openChat(
+                    withRemoteAgentProviderId: remote.providerId
+                )
+            },
             onRemove: {
                 _ = remoteAgentManager.remove(id: remote.id)
                 showSuccess("Removed remote agent")
@@ -881,26 +904,6 @@ private enum AgentTab: Hashable {
     case failedPlugin(String)
 }
 
-// MARK: - Tab Bar Preference Keys
-
-/// Reports the natural width of the tab strip's HStack content (i.e. the
-/// width *before* any horizontal scroll clipping). Compared against the
-/// viewport width to decide whether the strip overflows.
-private struct TabBarContentWidthKey: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = max(value, nextValue())
-    }
-}
-
-/// Reports the visible width of the tab strip's ScrollView container.
-private struct TabBarViewportWidthKey: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = max(value, nextValue())
-    }
-}
-
 // MARK: - Agent Detail View
 
 struct AgentDetailView: View {
@@ -920,6 +923,9 @@ struct AgentDetailView: View {
     let onBack: () -> Void
     let onDelete: (Agent) -> Void
     let onSwitchAgent: (Agent) -> Void
+    /// Switch the detail pane to a paired remote agent (selected from the
+    /// shared agent switcher). The parent flips its `selectedRemoteAgentId`.
+    let onSwitchRemoteAgent: (UUID) -> Void
     let showSuccess: (String) -> Void
 
     init(
@@ -927,12 +933,14 @@ struct AgentDetailView: View {
         onBack: @escaping () -> Void,
         onDelete: @escaping (Agent) -> Void,
         onSwitchAgent: @escaping (Agent) -> Void,
+        onSwitchRemoteAgent: @escaping (UUID) -> Void,
         showSuccess: @escaping (String) -> Void
     ) {
         self.agent = agent
         self.onBack = onBack
         self.onDelete = onDelete
         self.onSwitchAgent = onSwitchAgent
+        self.onSwitchRemoteAgent = onSwitchRemoteAgent
         self.showSuccess = showSuccess
     }
 
@@ -1085,13 +1093,6 @@ struct AgentDetailView: View {
     /// still-broken plugin.
     @State private var pendingFailedPluginRetry: String?
     @State private var pendingFailedPluginUninstall: String?
-    /// Captured by `GeometryReader`s wrapped around the tab strip so the
-    /// "scrollable" affordance (right-edge fade + chevron) only renders when
-    /// the tab content actually overflows the viewport AND the user hasn't
-    /// already scrolled to the trailing edge.
-    @State private var tabBarContentWidth: CGFloat = 0
-    @State private var tabBarViewportWidth: CGFloat = 0
-    @State private var tabBarScrollOffset: CGFloat = 0
     /// Bumped on `.toolsListChanged` so plugin tabs re-evaluate after async
     /// `PluginManager.loadAll()` — `PluginManager` is not Observable, so without
     /// this the tab strip can stay empty if the user opened this view before
@@ -1106,14 +1107,6 @@ struct AgentDetailView: View {
     @State private var chatSessions: [ChatSessionData] = []
     @State private var agentPlugins: [PluginManager.LoadedPlugin] = []
     @State private var agentFailedPlugins: [PluginManager.FailedPlugin] = []
-    private var tabsOverflowRight: Bool {
-        // 1pt fudge so pixel-aligned end-of-scroll positions don't leave a
-        // phantom indicator on screen.
-        tabBarContentWidth > tabBarViewportWidth + tabBarScrollOffset + 1
-    }
-    private var tabsOverflowLeft: Bool {
-        tabBarScrollOffset > 1
-    }
 
     private var currentAgent: Agent {
         agentManager.agent(for: agent.id) ?? agent
@@ -1543,90 +1536,42 @@ struct AgentDetailView: View {
     /// Tapping the identity block opens the agent switcher popover; editing the
     /// name / description happens inside the Configure tab's Identity section.
     private var detailHeaderBar: some View {
-        HStack(spacing: 12) {
-            Button(action: onBack) {
+        AgentDetailHeaderBar(
+            onBack: onBack,
+            identity: { identityButton },
+            status: {
+                if let indicator = saveIndicator {
+                    HStack(spacing: 4) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 10))
+                        Text(indicator)
+                            .font(.system(size: 11, weight: .medium))
+                    }
+                    .foregroundColor(theme.successColor)
+                    .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                }
+            },
+            actions: {
                 HStack(spacing: 6) {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 12, weight: .semibold))
-                    Text("Agents", bundle: .module)
-                        .font(.system(size: 13, weight: .medium))
+                    AgentDetailHeaderActionButton(
+                        icon: "square.and.arrow.up",
+                        tint: theme.accentColor,
+                        help: "Share Agent",
+                        action: { showingShareSheet = true }
+                    )
+                    AgentDetailHeaderActionButton(
+                        icon: "trash",
+                        tint: theme.errorColor,
+                        help: "Delete",
+                        action: { showDeleteConfirm = true }
+                    )
                 }
-                .foregroundColor(theme.accentColor)
             }
-            .buttonStyle(PlainButtonStyle())
-
-            // Vertical hairline so the back button reads as distinct from the
-            // identity block even when the agent name is long.
-            Rectangle()
-                .fill(theme.primaryBorder)
-                .frame(width: 1, height: 16)
-                .opacity(0.6)
-
-            identityButton
-
-            Spacer(minLength: 8)
-
-            if let indicator = saveIndicator {
-                HStack(spacing: 4) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 10))
-                    Text(indicator)
-                        .font(.system(size: 11, weight: .medium))
-                }
-                .foregroundColor(theme.successColor)
-                .transition(.opacity.combined(with: .scale(scale: 0.9)))
-            }
-
-            HStack(spacing: 6) {
-                headerActionButton(
-                    icon: "square.and.arrow.up",
-                    tint: theme.accentColor,
-                    help: "Share Agent",
-                    action: { showingShareSheet = true }
-                )
-                headerActionButton(
-                    icon: "trash",
-                    tint: theme.errorColor,
-                    help: "Delete",
-                    action: { showDeleteConfirm = true }
-                )
-            }
-        }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 10)
-        .background(
-            theme.secondaryBackground
-                .overlay(
-                    Rectangle()
-                        .fill(theme.primaryBorder)
-                        .frame(height: 1),
-                    alignment: .bottom
-                )
         )
         .sheet(isPresented: $showingShareSheet) {
             ShareAgentSheet(agent: currentAgent)
                 .environment(\.theme, themeManager.currentTheme)
         }
-    }
-
-    /// 28x28 circular icon button used by the detail header for Share / Delete.
-    /// Background is a 10–12% tint of the foreground color so destructive vs.
-    /// accent intent reads at a glance without shouting.
-    private func headerActionButton(
-        icon: String,
-        tint: Color,
-        help: LocalizedStringKey,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            Image(systemName: icon)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(tint)
-                .frame(width: 28, height: 28)
-                .background(Circle().fill(tint.opacity(0.12)))
-        }
-        .buttonStyle(PlainButtonStyle())
-        .help(Text(help, bundle: .module))
     }
 
     /// Compact tappable identity block (avatar + name + optional description) inside
@@ -1637,39 +1582,13 @@ struct AgentDetailView: View {
         Button {
             showingAgentSwitcher = true
         } label: {
-            HStack(spacing: 10) {
-                AgentAvatarView(
-                    mascotId: avatar,
-                    name: name,
-                    tint: agentColor,
-                    diameter: 28,
-                    monogramFontSize: 13,
-                    borderWidth: 1.5
-                )
-                .animation(.spring(response: 0.3), value: name)
-                .animation(.spring(response: 0.3), value: avatar)
-
-                VStack(alignment: .leading, spacing: 1) {
-                    HStack(spacing: 6) {
-                        Text(name.isEmpty ? L("Untitled Agent") : name)
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundColor(theme.primaryText)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                        Image(systemName: "chevron.down")
-                            .font(.system(size: 8, weight: .semibold))
-                            .foregroundColor(theme.tertiaryText)
-                    }
-                    if !description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        Text(description)
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.tertiaryText)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                    }
-                }
-                .frame(maxWidth: 260, alignment: .leading)
-            }
+            AgentDetailIdentityLabel(
+                mascotId: avatar,
+                name: name,
+                tint: agentColor,
+                subtitle: description,
+                showsChevron: true
+            )
             .contentShape(Rectangle())
         }
         .buttonStyle(PlainButtonStyle())
@@ -1679,102 +1598,28 @@ struct AgentDetailView: View {
         }
     }
 
-    /// Popover content listing every custom agent for quick navigation. Tapping a
-    /// row swaps the detail view to that agent (the parent uses `.id(agent.id)` to
-    /// force a clean state reload). Built-in / Default agent is excluded — it has
-    /// its own settings surface elsewhere and isn't represented in the Agents grid.
+    /// Quick-navigation popover listing every custom local agent AND every
+    /// paired remote agent. Tapping a local row swaps the detail view to that
+    /// agent (the parent uses `.id(agent.id)` to force a clean reload); tapping
+    /// a remote row hands off to `onSwitchRemoteAgent`. Built-in / Default agent
+    /// is excluded — it has its own settings surface and isn't in the grid.
     private var agentSwitcherPopover: some View {
-        let switchableAgents = agentManager.agents
-            .filter { !$0.isBuiltIn }
-
-        return VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 6) {
-                Image(systemName: "person.2.fill")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(theme.tertiaryText)
-                Text("Switch Agent", bundle: .module)
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundColor(theme.tertiaryText)
-                    .tracking(0.5)
-                Spacer()
-                Text("\(switchableAgents.count)", bundle: .module)
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(theme.tertiaryText)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 1)
-                    .background(Capsule().fill(theme.inputBackground))
-            }
-            .padding(.horizontal, 14)
-            .padding(.top, 12)
-            .padding(.bottom, 8)
-
-            Divider().opacity(0.5)
-
-            ScrollView {
-                VStack(spacing: 2) {
-                    ForEach(switchableAgents, id: \.id) { other in
-                        agentSwitcherRow(other)
-                    }
-                }
-                .padding(.vertical, 6)
-                .padding(.horizontal, 6)
-            }
-            .frame(maxHeight: 360)
-        }
-        .frame(width: 280)
-        .background(theme.cardBackground)
-    }
-
-    private func agentSwitcherRow(_ other: Agent) -> some View {
-        let isCurrent = other.id == agent.id
-        let color = agentColorFor(other.name)
-        return Button {
-            showingAgentSwitcher = false
-            if !isCurrent {
+        AgentSwitcherPopover(
+            localAgents: agentManager.agents.filter { !$0.isBuiltIn },
+            remoteAgents: RemoteAgentManager.shared.remoteAgents,
+            currentLocalAgentId: agent.id,
+            currentRemoteAgentId: nil,
+            onSelectLocal: { other in
+                showingAgentSwitcher = false
                 onSwitchAgent(other)
-            }
-        } label: {
-            HStack(spacing: 10) {
-                AgentAvatarView(
-                    mascotId: other.avatar,
-                    name: other.name,
-                    tint: color,
-                    diameter: 26,
-                    customImageURL: other.customAvatarURL,
-                    monogramFontSize: 11,
-                    borderWidth: 1.5
-                )
-
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(other.name.isEmpty ? L("Untitled Agent") : other.name)
-                        .font(.system(size: 12, weight: isCurrent ? .semibold : .medium))
-                        .foregroundColor(theme.primaryText)
-                        .lineLimit(1)
-                    if !other.description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        Text(other.description)
-                            .font(.system(size: 10))
-                            .foregroundColor(theme.tertiaryText)
-                            .lineLimit(1)
-                    }
-                }
-
-                Spacer(minLength: 4)
-
-                if isCurrent {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundColor(theme.accentColor)
-                }
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(isCurrent ? theme.accentColor.opacity(0.10) : Color.clear)
-            )
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
+            },
+            onSelectRemote: { remote in
+                showingAgentSwitcher = false
+                onSwitchRemoteAgent(remote.id)
+            },
+            onDismiss: { showingAgentSwitcher = false }
+        )
+        .environment(\.theme, themeManager.currentTheme)
     }
 
     // MARK: - Tab Bar
@@ -1804,190 +1649,55 @@ struct AgentDetailView: View {
     }
 
     /// Horizontally scrollable tab bar — built-in tabs stay leftmost, then one
-    /// per plugin. Wrapping in `ScrollView(.horizontal)` keeps every tab
-    /// reachable when many plugins are installed; the right-edge fade + chevron
-    /// signal the strip is scrollable when content overflows.
+    /// per plugin, then any failed-plugin warning tabs. The shared
+    /// `AgentDetailTabStrip` owns the scroll / overflow-fade / chevron chrome,
+    /// so this view only maps the agent's tab sources into items.
     private var tabBar: some View {
-        ScrollViewReader { proxy in
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 0) {
-                    // IMPORTANT: read from `currentAgent`, not the captured
-                    // `agent` prop. The prop is frozen at view construction
-                    // and never reflects toggle changes; `currentAgent`
-                    // re-fetches from `AgentManager` so flipping
-                    // `Enable Database` in Configure causes the DB tabs
-                    // (Home/Schema/Data/Views/Activity) to appear here.
-                    ForEach(DetailTab.allTabsForAgent(currentAgent), id: \.self) { tab in
-                        tabButton(for: .builtIn(tab), label: tab.label, icon: tab.icon)
-                            .id(AgentTab.builtIn(tab))
-                    }
-                    ForEach(agentPlugins, id: \.plugin.id) { loaded in
-                        tabButton(
-                            for: .plugin(loaded.plugin.id),
-                            label: loaded.plugin.manifest.name ?? loaded.plugin.id,
-                            icon: "puzzlepiece.extension"
-                        )
-                        .id(AgentTab.plugin(loaded.plugin.id))
-                    }
-                    // Failed plugins surface AFTER successfully loaded ones
-                    // so the warning tabs cluster on the trailing edge of
-                    // the strip — visually obvious without crowding the
-                    // happy-path tabs. Each shows a structured error +
-                    // Retry button via `failedPluginTabContent`.
-                    ForEach(agentFailedPlugins, id: \.pluginId) { failed in
-                        tabButton(
-                            for: .failedPlugin(failed.pluginId),
-                            label: failedPluginTabLabel(for: failed),
-                            icon: "exclamationmark.triangle.fill"
-                        )
-                        .id(AgentTab.failedPlugin(failed.pluginId))
-                    }
-                }
-                .padding(.horizontal, 4)
-                .background(
-                    GeometryReader { inner in
-                        Color.clear.preference(
-                            key: TabBarContentWidthKey.self,
-                            value: inner.size.width
-                        )
-                    }
+        AgentDetailTabStrip(items: tabItems, selection: $selectedTab)
+    }
+
+    /// Built-in + plugin + failed-plugin tabs as `AgentDetailTabStrip` items.
+    /// IMPORTANT: read from `currentAgent`, not the captured `agent` prop — the
+    /// prop is frozen at view construction, while `currentAgent` re-fetches from
+    /// `AgentManager` so flipping `Enable Database` in Configure causes the DB
+    /// tabs (Home/Schema/Data/Views/Activity) to appear here.
+    private var tabItems: [AgentDetailTabItem<AgentTab>] {
+        var items: [AgentDetailTabItem<AgentTab>] = []
+        for tab in DetailTab.allTabsForAgent(currentAgent) {
+            items.append(
+                AgentDetailTabItem(
+                    id: .builtIn(tab),
+                    label: tab.label,
+                    icon: tab.icon,
+                    badgeCount: tabBadgeCount(for: .builtIn(tab))
                 )
-            }
-            .background(
-                GeometryReader { outer in
-                    Color.clear.preference(
-                        key: TabBarViewportWidthKey.self,
-                        value: outer.size.width
-                    )
-                }
             )
-            .onPreferenceChange(TabBarContentWidthKey.self) { tabBarContentWidth = $0 }
-            .onPreferenceChange(TabBarViewportWidthKey.self) { tabBarViewportWidth = $0 }
-            // `onScrollGeometryChange` is the canonical macOS 15+ way to
-            // observe scroll offset; the older GeometryReader-in-named-
-            // coordinate-space pattern is flaky on horizontal AppKit-backed
-            // scroll views and was leaving the trailing indicator stuck on.
-            .onScrollGeometryChange(for: CGFloat.self) { geometry in
-                geometry.contentOffset.x
-            } action: { _, newOffset in
-                tabBarScrollOffset = max(0, newOffset)
-            }
-            // Edge fades on whichever side has off-screen content. `mask`
-            // runs before any overlay, so the chevrons sit ON TOP of the
-            // fades rather than being faded themselves.
-            .mask(tabBarFadeMask)
-            .overlay(alignment: .leading) {
-                if tabsOverflowLeft { scrollMoreChevron(direction: .leading) }
-            }
-            .overlay(alignment: .trailing) {
-                if tabsOverflowRight { scrollMoreChevron(direction: .trailing) }
-            }
-            .animation(.easeOut(duration: 0.2), value: tabsOverflowLeft)
-            .animation(.easeOut(duration: 0.2), value: tabsOverflowRight)
-            // Auto-scroll the active tab into view when it changes (tap or programmatic).
-            .onChange(of: selectedTab) { _, newValue in
-                withAnimation(.easeOut(duration: 0.2)) {
-                    proxy.scrollTo(newValue, anchor: .center)
-                }
-            }
         }
-    }
-
-    /// Linear gradient used as the tab strip's mask. Fades whichever side
-    /// has content scrolled off; both sides can fade at once if the user is
-    /// in the middle of an overflowed strip.
-    private var tabBarFadeMask: LinearGradient {
-        let fadeStart: CGFloat = 0.06  // ~6% of the strip on the leading edge
-        let fadeEnd: CGFloat = 0.94  // ~6% on the trailing edge
-        var stops: [Gradient.Stop] = []
-        stops.append(.init(color: tabsOverflowLeft ? .clear : .black, location: 0.0))
-        if tabsOverflowLeft {
-            stops.append(.init(color: .black, location: fadeStart))
-        }
-        if tabsOverflowRight {
-            stops.append(.init(color: .black, location: fadeEnd))
-        }
-        stops.append(.init(color: tabsOverflowRight ? .clear : .black, location: 1.0))
-        return LinearGradient(stops: stops, startPoint: .leading, endPoint: .trailing)
-    }
-
-    /// Floating "more →"/"← more" affordance pinned to whichever edge has
-    /// off-screen content. Sits above the fade mask so it stays fully opaque,
-    /// and is `allowsHitTesting(false)` so it never swallows tab taps.
-    private func scrollMoreChevron(direction: HorizontalEdge) -> some View {
-        Image(systemName: direction == .leading ? "chevron.left" : "chevron.right")
-            .font(.system(size: 10, weight: .bold))
-            .foregroundColor(theme.accentColor)
-            .frame(width: 20, height: 20)
-            .background(
-                Circle()
-                    .fill(theme.primaryBackground)
-                    .overlay(Circle().strokeBorder(theme.accentColor.opacity(0.25), lineWidth: 1))
+        for loaded in agentPlugins {
+            items.append(
+                AgentDetailTabItem(
+                    id: .plugin(loaded.plugin.id),
+                    label: loaded.plugin.manifest.name ?? loaded.plugin.id,
+                    icon: "puzzlepiece.extension",
+                    badgeCount: tabBadgeCount(for: .plugin(loaded.plugin.id))
+                )
             )
-            .shadow(
-                color: Color.black.opacity(0.08),
-                radius: 4,
-                x: direction == .leading ? 1 : -1,
-                y: 1
+        }
+        // Failed plugins surface AFTER successfully loaded ones so the warning
+        // tabs cluster on the trailing edge of the strip — visually obvious
+        // without crowding the happy-path tabs. Each shows a structured error +
+        // Retry button via `failedPluginTabContent`.
+        for failed in agentFailedPlugins {
+            items.append(
+                AgentDetailTabItem(
+                    id: .failedPlugin(failed.pluginId),
+                    label: failedPluginTabLabel(for: failed),
+                    icon: "exclamationmark.triangle.fill",
+                    isWarning: true
+                )
             )
-            .padding(direction == .leading ? .leading : .trailing, 2)
-            .allowsHitTesting(false)
-            .transition(.opacity.combined(with: .scale(scale: 0.7)))
-    }
-
-    private func tabButton(for tab: AgentTab, label: String, icon: String) -> some View {
-        let isSelected = selectedTab == tab
-        // Failed plugin tabs use the system warning color regardless of
-        // selection state so the user can spot them at a glance even
-        // in a long tab strip; the accent color is reserved for the
-        // happy-path "selected" signal.
-        let isFailed: Bool = {
-            if case .failedPlugin = tab { return true }
-            return false
-        }()
-        let foreground: Color
-        if isFailed {
-            foreground = .orange
-        } else if isSelected {
-            foreground = theme.accentColor
-        } else {
-            foreground = theme.tertiaryText
         }
-        return Button {
-            selectedTab = tab
-        } label: {
-            VStack(spacing: 0) {
-                HStack(spacing: 5) {
-                    Image(systemName: icon)
-                        .font(.system(size: 11, weight: isSelected ? .semibold : .regular))
-
-                    Text(label)
-                        .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
-
-                    if let count = tabBadgeCount(for: tab) {
-                        Text("\(count)", bundle: .module)
-                            .font(.system(size: 9, weight: .bold, design: .rounded))
-                            .foregroundColor(isSelected ? theme.accentColor : theme.tertiaryText)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1)
-                            .background(
-                                Capsule()
-                                    .fill(isSelected ? theme.accentColor.opacity(0.12) : theme.inputBackground)
-                            )
-                    }
-                }
-                .foregroundColor(foreground)
-                .padding(.horizontal, 12)
-                .padding(.top, 10)
-                .padding(.bottom, 8)
-
-                Rectangle()
-                    .fill(isSelected ? (isFailed ? Color.orange : theme.accentColor) : Color.clear)
-                    .frame(height: 2)
-            }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(PlainButtonStyle())
+        return items
     }
 
     private func tabHelperText(_ text: String) -> some View {
@@ -6146,57 +5856,6 @@ private struct AgentConnectionsSection: View {
             _ = InsightsService.shared.focus(accessKeyId: nonce)
         }
         ManagementStateManager.shared.selectedTab = .insights
-    }
-}
-
-// MARK: - Detail Section Component
-
-private struct AgentDetailSection<Content: View>: View {
-    @Environment(\.theme) private var theme
-
-    let title: String
-    let icon: String
-    var subtitle: String? = nil
-    @ViewBuilder let content: () -> Content
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 10) {
-                Image(systemName: icon)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.accentColor)
-                    .frame(width: 20)
-
-                Text(title.uppercased())
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundColor(theme.primaryText)
-                    .tracking(0.5)
-
-                if let subtitle = subtitle {
-                    Text(subtitle)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
-                }
-
-                Spacer()
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 14)
-
-            VStack(alignment: .leading, spacing: 12) {
-                content()
-            }
-            .padding(.horizontal, 16)
-            .padding(.bottom, 16)
-        }
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(theme.cardBorder, lineWidth: 1)
-                )
-        )
     }
 }
 

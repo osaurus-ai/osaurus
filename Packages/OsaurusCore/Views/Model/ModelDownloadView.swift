@@ -246,7 +246,7 @@ struct ModelDownloadView: View {
             .environment(\.theme, themeManager.currentTheme)
         }
         .themedAlert(
-            modelManager.downloadAlert?.title ?? "Model download failed",
+            modelManager.downloadAlert?.title ?? L("Model download failed"),
             isPresented: Binding(
                 get: { modelManager.downloadAlert != nil },
                 set: { if !$0 { modelManager.downloadAlert = nil } }
@@ -255,7 +255,7 @@ struct ModelDownloadView: View {
                 "\(info.message)\n\nDetails (tap Copy to share):\n\(info.details)"
             },
             buttons: [
-                .cancel("Copy details") {
+                .cancel(L("Copy details")) {
                     if let details = modelManager.downloadAlert?.details {
                         let pb = NSPasteboard.general
                         pb.clearContents()
@@ -263,7 +263,7 @@ struct ModelDownloadView: View {
                     }
                     modelManager.downloadAlert = nil
                 },
-                .primary("OK") { modelManager.downloadAlert = nil },
+                .primary(L("OK")) { modelManager.downloadAlert = nil },
             ]
         )
     }

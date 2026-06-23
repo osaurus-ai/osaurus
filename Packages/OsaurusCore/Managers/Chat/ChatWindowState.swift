@@ -96,6 +96,12 @@ final class ChatWindowState: ObservableObject {
     /// the remote name's initial monogram. Cleared when leaving remote-agent mode.
     @Published var pinnedRemoteAgentAvatar: String?
 
+    /// Mode 2 only: the selected remote agent's custom Action Bar (chat quick
+    /// actions), resolved from `GET /agents/{address}` on connect so the empty
+    /// state offers the remote agent's own prompt shortcuts. `nil` falls back to
+    /// the neutral chat defaults. Cleared when leaving remote-agent mode.
+    @Published var pinnedRemoteAgentQuickActions: [AgentQuickAction]?
+
     /// Mode 2 only: lifecycle of the selected remote agent's connection so the
     /// chat can show "connecting"/error and gate the first send until the
     /// provider is connected and its model is pinned (otherwise the first
@@ -279,6 +285,7 @@ final class ChatWindowState: ObservableObject {
         selectedRelayAgent = nil
         pinnedRemoteAgentEffectiveModel = nil
         pinnedRemoteAgentAvatar = nil
+        pinnedRemoteAgentQuickActions = nil
         remoteAgentConnectionPhase = .idle
         agentId = newAgentId
         refreshTheme()
@@ -489,7 +496,8 @@ final class ChatWindowState: ObservableObject {
                 id: agentId,
                 name: provider.name,
                 remoteAgentAddress: relayAddress,
-                providerId: provider.id
+                providerId: provider.id,
+                avatar: RemoteAgentManager.shared.remoteAgent(forProviderId: provider.id)?.avatar
             )
         }
     }
@@ -622,6 +630,7 @@ final class ChatWindowState: ObservableObject {
                         self.selectedDiscoveredAgentProviderId = nil
                         self.pinnedRemoteAgentEffectiveModel = nil
                         self.pinnedRemoteAgentAvatar = nil
+                        self.pinnedRemoteAgentQuickActions = nil
                         self.remoteAgentConnectionPhase = .idle
                         self.refreshPairedRelayAgents()
                         return

@@ -357,16 +357,41 @@ struct AgentPill: View {
         return Bundle.module.image(forResource: "osaurus-avatar-\(avatar)")
     }
 
+    /// A remote agent's mascot (or name monogram) with a small transport badge
+    /// in the bottom-trailing corner (`network` = Bonjour LAN peer, `antenna…` =
+    /// relay-paired). The badge sits in an `.overlay` (outside the avatar's clip)
+    /// so it isn't clipped and doesn't affect layout; `surface` rings it so it
+    /// reads as punched into the host background.
     @ViewBuilder
-    private func remoteAvatar(systemImage: String, size: CGFloat) -> some View {
-        ZStack {
-            Circle()
-                .fill(theme.accentColorLight.opacity(theme.isDark ? 0.18 : 0.12))
-            Image(systemName: systemImage)
-                .font(.system(size: size * 0.42, weight: .semibold))
-                .foregroundColor(theme.accentColorLight)
+    private func remoteBadgedAvatar(
+        mascotId: String?,
+        name: String,
+        badge: String,
+        size: CGFloat,
+        surface: Color
+    ) -> some View {
+        let badgeDiameter = max(9, (size * 0.46).rounded())
+        AgentAvatarView(
+            mascotId: mascotId,
+            name: name,
+            tint: agentColorFor(name),
+            diameter: size,
+            customImageURL: nil,
+            monogramFontSize: size * 0.45,
+            borderWidth: 0
+        )
+        .overlay(alignment: .bottomTrailing) {
+            ZStack {
+                Circle().fill(theme.accentColor)
+                Image(systemName: badge)
+                    .font(.system(size: badgeDiameter * 0.6, weight: .semibold))
+                    .foregroundColor(.white)
+            }
+            .frame(width: badgeDiameter, height: badgeDiameter)
+            .overlay(Circle().strokeBorder(surface, lineWidth: 1.5))
+            .shadow(color: .black.opacity(theme.isDark ? 0.3 : 0.15), radius: 1, y: 0.5)
+            .offset(x: 1, y: 1)
         }
-        .frame(width: size, height: size)
     }
 
     /// Name used to seed the active remote avatar's monogram/tint.
@@ -378,19 +403,24 @@ struct AgentPill: View {
     private var activeAvatar: some View {
         if isRemoteActive {
             // Mirror the chat hero/thread: the remote agent's own mascot,
-            // falling back to a monogram on its name (not a generic glyph).
-            AgentAvatarView(
+            // falling back to a monogram on its name (not a generic glyph),
+            // plus the transport badge so the selected pill reads as remote.
+            remoteBadgedAvatar(
                 mascotId: activeRemoteAgentAvatar,
                 name: remoteAvatarSeedName,
-                tint: agentColorFor(remoteAvatarSeedName),
-                diameter: 20,
-                customImageURL: nil,
-                monogramFontSize: 20 * 0.45,
-                borderWidth: 0
+                badge: activeRemoteBadgeSymbol,
+                size: 20,
+                surface: theme.secondaryBackground
             )
         } else {
             monogramAvatar(for: activeAgent, size: 20)
         }
+    }
+
+    /// Transport glyph for the active remote agent's badge: antenna for a
+    /// relay-paired agent, network for a Bonjour LAN peer.
+    private var activeRemoteBadgeSymbol: String {
+        activeRelayAgent != nil ? "antenna.radiowaves.left.and.right" : "network"
     }
 
     /// The pill highlights on hover of its tap area. The settings gear is now a
@@ -422,6 +452,11 @@ struct AgentPill: View {
         }
         .onChange(of: isPopoverPresented) { _, presented in
             if presented {
+                // Lazily begin LAN peer discovery the moment the picker (the
+                // only surface that lists discovered agents) opens, so users
+                // who never open it don't trigger an always-on mDNS browse or
+                // the Local Network permission prompt. Idempotent.
+                BonjourBrowser.shared.startIfNeeded()
                 keyboard.start(
                     itemCount: menuItemCount,
                     initialIndex: initialHighlightIndex,
@@ -658,7 +693,13 @@ struct AgentPill: View {
                 onSelectDiscoveredAgent?(remote)
             }
         ) {
-            remoteAvatar(systemImage: "network", size: 26)
+            remoteBadgedAvatar(
+                mascotId: nil,
+                name: remote.name,
+                badge: "network",
+                size: 26,
+                surface: theme.cardBackground
+            )
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 4) {
                     Text(remote.name)
@@ -704,7 +745,13 @@ struct AgentPill: View {
                 onSelectRelayAgent?(relay)
             }
         ) {
-            remoteAvatar(systemImage: "antenna.radiowaves.left.and.right", size: 26)
+            remoteBadgedAvatar(
+                mascotId: relay.avatar,
+                name: relay.name,
+                badge: "antenna.radiowaves.left.and.right",
+                size: 26,
+                surface: theme.cardBackground
+            )
             HStack(spacing: 4) {
                 Text(relay.name)
                     .font(.system(size: 12, weight: isCurrent ? .semibold : .medium))

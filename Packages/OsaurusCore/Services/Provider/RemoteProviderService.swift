@@ -4494,6 +4494,10 @@ extension RemoteProviderService {
         public let description: String?
         /// Mascot avatar id (e.g. "green"); nil = monogram fallback.
         public let avatar: String?
+        /// The agent's custom Action Bar (chat quick actions), surfaced in the
+        /// empty state so a remote chat offers the agent's own prompt shortcuts
+        /// instead of the local neutral defaults. nil = agent uses defaults.
+        public let quickActions: [AgentQuickAction]?
     }
 
     /// Fetch a paired/discovered Osaurus agent's *live* metadata (effective
@@ -4545,8 +4549,30 @@ extension RemoteProviderService {
             effectiveModel: model,
             name: (trimmedName?.isEmpty == false) ? trimmedName : nil,
             description: (trimmedDescription?.isEmpty == false) ? trimmedDescription : nil,
-            avatar: (trimmedAvatar?.isEmpty == false) ? trimmedAvatar : nil
+            avatar: (trimmedAvatar?.isEmpty == false) ? trimmedAvatar : nil,
+            quickActions: parseQuickActions(from: data)
         )
+    }
+
+    /// Decode + sanitize the agent's Action Bar (`chat_quick_actions`) from a
+    /// `GET /agents/{id}` body. Uses a standalone envelope (not `AgentInfo`) so a
+    /// malformed list can't fail the whole metadata decode; drops entries with an
+    /// empty text/prompt and caps the count. nil = nothing usable (client falls
+    /// back to its neutral defaults).
+    private static func parseQuickActions(from data: Data) -> [AgentQuickAction]? {
+        struct QuickActionsEnvelope: Decodable { let chat_quick_actions: [AgentQuickAction]? }
+        guard
+            let raw = (try? JSONDecoder().decode(QuickActionsEnvelope.self, from: data))?
+                .chat_quick_actions
+        else { return nil }
+        let sanitized = raw.compactMap { action -> AgentQuickAction? in
+            let text = action.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            let prompt = action.prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty, !prompt.isEmpty else { return nil }
+            return action
+        }
+        let capped = Array(sanitized.prefix(6))
+        return capped.isEmpty ? nil : capped
     }
 
     /// Back-compat thin wrapper: just the live effective model id (used to pin
