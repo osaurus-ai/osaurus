@@ -40,10 +40,10 @@ struct CellRenderingContext {
     var onSpeak: ((UUID) -> Void)? = nil
     /// attachment or shared-artifact id string → full screen preview from ChatView
     var onUserImagePreview: ((String) -> Void)? = nil
-    /// Pasted-content document attachment → read-only preview sheet from ChatView.
-    /// Lets users re-read the long text they pasted (shown as a chip) after the
-    /// message is sent, mirroring the composer's pasted-content chip preview.
-    var onPastedContentPreview: ((Attachment) -> Void)? = nil
+    /// Document attachment (pasted content or an attached file like a PDF/DOCX)
+    /// → read-only preview sheet from ChatView. Lets users re-read the extracted
+    /// text after the message is sent, mirroring the composer's chip preview.
+    var onDocumentPreview: ((Attachment) -> Void)? = nil
     /// Window-local accumulator of `original -> placeholder` pairs
     /// from the Privacy Filter. Used by `NativeMarkdownView` to
     /// inline-highlight matching spans inside user + assistant
@@ -2195,10 +2195,10 @@ final class NativeMessageCellView: NSTableCellView {
 
             for (index, attachment) in documents.enumerated() {
                 guard let chip = stack.arrangedSubviews[index] as? UserDocumentChipView else { continue }
-                // Pasted-content chips are tappable: re-open the read-only
-                // preview sheet so the user can see what they pasted. Other
-                // document chips stay non-interactive.
-                chip.onTap = attachment.isPastedContent ? context.onPastedContentPreview : nil
+                // Every document chip is tappable: re-open the read-only preview
+                // sheet so the user can re-read the file's extracted text (pasted
+                // content or an attached PDF/DOCX) after the message is sent.
+                chip.onTap = context.onDocumentPreview
                 chip.configure(attachment: attachment, theme: theme)
             }
         }

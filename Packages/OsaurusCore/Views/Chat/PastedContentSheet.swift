@@ -18,10 +18,20 @@ struct PastedContentSheet: View {
     @Environment(\.theme) private var theme
     @State private var draft: String = ""
     @State private var didInit: Bool = false
+    /// Cached extracted text for spillover (`documentRef`) attachments, whose
+    /// content lives in the encrypted blob store. Loaded once off the main
+    /// thread so re-reads during layout never touch disk on the main actor.
+    @State private var spilledContent: String = ""
     /// Briefly true after a copy so the button swaps to a checkmark.
     @State private var didCopy: Bool = false
 
-    private var originalContent: String { attachment.loadDocumentContent() ?? "" }
+    /// Inline documents (and all pasted content) carry their text directly, so
+    /// they resolve synchronously with no disk I/O. Spilled documents fall back
+    /// to `spilledContent`, which a `.task` fills off the main thread.
+    private var originalContent: String {
+        if case .document(_, let content, _) = attachment.kind { return content }
+        return spilledContent
+    }
     private var displayedContent: String { isEditable ? draft : originalContent }
     private var isEditable: Bool { onSave != nil }
     private var lineCount: Int {
@@ -48,7 +58,12 @@ struct PastedContentSheet: View {
         }
         .frame(minWidth: 520, idealWidth: 640, minHeight: 480, idealHeight: 640)
         .background(theme.primaryBackground)
-        .onAppear {
+        .task {
+            // Hydrate spilled blobs off the main thread before seeding the draft.
+            if case .documentRef = attachment.kind, spilledContent.isEmpty {
+                let loaded = await Task.detached { attachment.loadDocumentContent() ?? "" }.value
+                spilledContent = loaded
+            }
             if !didInit {
                 draft = originalContent
                 didInit = true
@@ -100,12 +115,26 @@ struct PastedContentSheet: View {
         }
     }
 
+    /// Pasted text keeps its generic "Pasted content" heading; an attached file
+    /// (PDF/DOCX/etc.) shows its filename so the preview is self-identifying.
+    private var titleText: Text {
+        if attachment.isPastedContent {
+            return Text(isEditable ? "Edit pasted content" : "Pasted content", bundle: .module)
+        }
+        if let name = attachment.filename, !name.isEmpty {
+            return Text(verbatim: name)
+        }
+        return Text("Document", bundle: .module)
+    }
+
     private var header: some View {
         HStack(alignment: .top, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
-                Text(isEditable ? "Edit pasted content" : "Pasted content", bundle: .module)
+                titleText
                     .font(theme.font(size: 15, weight: .semibold))
                     .foregroundColor(theme.primaryText)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
                 Text("\(sizeFormatted) · \(lineCount) lines")
                     .font(theme.font(size: 11, weight: .regular))
                     .foregroundColor(theme.secondaryText)
