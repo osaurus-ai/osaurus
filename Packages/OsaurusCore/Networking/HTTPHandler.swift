@@ -2906,6 +2906,24 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         )
     }
 
+    /// Resolve the sampling values the `/agents/{id}/run` loop should use.
+    /// The request body wins when present; the agent's configured value
+    /// (`effectiveTemperature` / `effectiveMaxTokens`) is the fallback before
+    /// the model-bundle default, matching the in-app Chat and plugin-host
+    /// surfaces. A `nil` result means "no explicit value" — the engine then
+    /// applies the bundle default.
+    @MainActor
+    static func resolveAgentSampling(
+        request: ChatCompletionRequest,
+        agentId: UUID
+    ) -> (temperature: Float?, maxTokens: Int?) {
+        let manager = AgentManager.shared
+        return (
+            request.temperature ?? manager.effectiveTemperature(for: agentId),
+            request.resolvedMaxTokens ?? manager.effectiveMaxTokens(for: agentId)
+        )
+    }
+
     private static func mergeAgentContextTools(
         _ agentTools: [Tool],
         clientTools: [Tool]?
@@ -3245,6 +3263,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         /// mascot (client falls back to the name's initial). User-uploaded
         /// custom images are intentionally not serialized.
         let avatar: String?
+        /// The agent's custom Action Bar (chat quick actions) so a connected
+        /// peer can surface the agent's own prompt shortcuts in the empty
+        /// state. Omitted (nil) when the agent uses the built-in defaults, so
+        /// the client falls back to its neutral chat defaults.
+        let chat_quick_actions: [AgentQuickAction]?
         let default_model: String?
         /// Server-resolved model id, known before the first streamed chunk.
         let effective_model: String?
@@ -4261,6 +4284,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     name: agent.name,
                     description: agent.description,
                     avatar: agent.avatar,
+                    chat_quick_actions: agent.chatQuickActions,
                     default_model: agent.defaultModel,
                     effective_model: modelId,
                     supports_thinking: supportsThinking,
@@ -4409,6 +4433,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 name: agent.name,
                 description: agent.description,
                 avatar: agent.avatar,
+                chat_quick_actions: agent.chatQuickActions,
                 default_model: agent.defaultModel,
                 effective_model: effectiveModelId,
                 supports_thinking: supportsThinking,
@@ -4674,6 +4699,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         // loopback caller is unauthenticated under the no-auth-loopback model,
         // so it never receives the host-folder relaxation.
         let isAuthenticatedRemote = !isLoopbackConnection(context)
+        // Stable identity of an authenticated remote caller (for the debounced
+        // host toast in the run task); nil for loopback callers.
+        let peerCallKey: String? = {
+            guard isAuthenticatedRemote else { return nil }
+            let info = inboundConnectionInfo()
+            return info?.accessKeyId ?? info?.audience ?? "peer"
+        }()
 
         hop { writerBound.value.writeHeaders(ctx.value, extraHeaders: cors) }
 
@@ -4691,6 +4723,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
         runRequestTask(priority: .userInitiated) {
             defer { admissionToken.release() }
+            // HTTP inference bypasses the in-app "generating" dot; drive it for
+            // the whole run (incl. remote-peer runs). `defer` balances all exits.
+            ServerController.signalGenerationStart()
+            defer { ServerController.signalGenerationEnd() }
             // Resolve model: a Mode 2 caller omits `model` (decoded as empty),
             // and older clients send the "default" sentinel. Both resolve to
             // the agent's effective model server-side.
@@ -4753,6 +4789,16 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             // per-turn `message_sent` is emitted separately by ChatEngine on
             // the first (user) turn only.
             Task { @MainActor in FeatureTelemetry.agentRun(source: "http_api") }
+
+            // Debounced host toast: a connected peer is driving one of its
+            // agents. Loopback callers (`peerCallKey == nil`) never toast.
+            if let peerCallKey {
+                await MainActor.run {
+                    if let agentName = AgentManager.shared.agent(for: agentId)?.name {
+                        PeerCallNotifier.shared.notifyAgentRun(peerKey: peerCallKey, agentName: agentName)
+                    }
+                }
+            }
 
             // Mount the agent's host workspace folder when an authenticated
             // remote caller drives an agent whose owner granted one. Reachable
@@ -4824,6 +4870,16 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let tools = enrichedReq.tools ?? []
             let resolvedToolChoice = enrichedReq.tool_choice
 
+            // Honor the agent's configured sampling when the request omits it,
+            // matching the in-app Chat and plugin-host surfaces (which apply
+            // `effectiveTemperature` / `effectiveMaxTokens`). The request body
+            // still wins when present; the agent config is the fallback before
+            // the model-bundle default. Resolved once here because the loop's
+            // `modelStep` samples from `req`, not the enriched request.
+            let (effectiveTemperature, effectiveMaxTokens) = await MainActor.run {
+                Self.resolveAgentSampling(request: req, agentId: agentId)
+            }
+
             let configuredMaxToolAttempts = await MainActor.run {
                 ChatConfigurationStore.load().maxToolAttempts ?? 30
             }
@@ -4851,7 +4907,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     contextWindow: contextWindow,
                     systemPromptChars: sysChars,
                     toolTokens: toolTokens,
-                    maxResponseTokens: req.resolvedMaxTokens
+                    maxResponseTokens: effectiveMaxTokens
                 )
             }()
             // Request-scoped sticky compaction: trims stay monotonic across
@@ -4874,6 +4930,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             // the post-batch framing can attach it to the assistant
             // tool_calls message (mirrors the historical loop local).
             var responseContent = ""
+
+            // Host-side Insights enrichment: accumulate the full visible answer
+            // and every executed tool so the `/agents/{id}/run` row isn't empty.
+            // The loop invokes its hooks serially, so these plain vars are
+            // race-free — same capture pattern as `responseContent` above.
+            var loggedResponseText = ""
+            var loggedToolCalls: [ToolCallLog] = []
 
             // Set when a successful `complete`/`clarify` intercept ends the
             // run — the post-loop tail streams this text (the parsed summary
@@ -4940,8 +5003,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     var iterationReq = ChatCompletionRequest(
                         model: model,
                         messages: msgs,
-                        temperature: req.temperature,
-                        max_tokens: req.resolvedMaxTokens,
+                        temperature: effectiveTemperature,
+                        max_tokens: effectiveMaxTokens,
                         stream: true,
                         top_p: req.top_p,
                         frequency_penalty: req.frequency_penalty,
@@ -5008,6 +5071,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                             if StreamingStatsHint.decode(delta) != nil { continue }
                             if StreamingToolHint.isSentinel(delta) { continue }
                             responseContent += delta
+                            loggedResponseText += delta
                             if let chunk = contentCoalescer.append(delta) {
                                 hop {
                                     writerBound.value.writeContent(
@@ -5192,6 +5256,16 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                             )
                         )
                         toolResultsByCallId.append((outcome.callId, outcome.result))
+                        // Host-only: full tool detail (args + result). The peer
+                        // still sees only the sanitized SSE trace emitted above.
+                        loggedToolCalls.append(
+                            ToolCallLog(
+                                name: outcome.invocation.toolName,
+                                arguments: outcome.invocation.jsonArguments,
+                                result: outcome.result,
+                                isError: outcome.wasError
+                            )
+                        )
                     }
 
                     messages.append(
@@ -5211,6 +5285,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 emitFallbackText: { text in
                     // Empty-turn recovery exhausted: stream a visible fallback
                     // so the client never receives an empty assistant message.
+                    if text == AgentToolLoop.emptyToolTaskFallback {
+                        messages.append(ChatMessage(role: "assistant", content: text))
+                        loggedResponseText += text
+                        return
+                    }
                     hop {
                         writerBound.value.writeContent(
                             text,
@@ -5221,6 +5300,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         )
                     }
                     messages.append(ChatMessage(role: "assistant", content: text))
+                    loggedResponseText += text
                 }
             )
 
@@ -5266,8 +5346,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     path: path,
                     userAgent: logUserAgent,
                     requestBody: logRequestBody,
+                    responseBody: loggedResponseText.isEmpty ? nil : loggedResponseText,
                     responseStatus: 200,
                     startTime: logStartTime,
+                    toolCalls: loggedToolCalls.isEmpty ? nil : loggedToolCalls,
                     errorMessage: error.localizedDescription
                 )
                 return
@@ -5292,9 +5374,31 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     path: path,
                     userAgent: logUserAgent,
                     requestBody: logRequestBody,
+                    responseBody: loggedResponseText.isEmpty ? nil : loggedResponseText,
                     responseStatus: 200,
                     startTime: logStartTime,
+                    toolCalls: loggedToolCalls.isEmpty ? nil : loggedToolCalls,
                     errorMessage: AgentToolLoop.overBudgetMessage
+                )
+                return
+            }
+
+            if exitState == .emptyResponseExhausted {
+                hop {
+                    writerBound.value.writeError(AgentToolLoop.emptyToolTaskFallback, context: ctx.value)
+                    writerBound.value.writeEnd(ctx.value)
+                }
+                logSelf.logRequest(
+                    method: "POST",
+                    path: path,
+                    userAgent: logUserAgent,
+                    requestBody: logRequestBody,
+                    responseBody: loggedResponseText.isEmpty ? nil : loggedResponseText,
+                    responseStatus: 200,
+                    startTime: logStartTime,
+                    model: model,
+                    toolCalls: loggedToolCalls.isEmpty ? nil : loggedToolCalls,
+                    errorMessage: AgentToolLoop.emptyToolTaskFallback
                 )
                 return
             }
@@ -5314,6 +5418,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         context: ctx.value
                     )
                 }
+                loggedResponseText += notice
             }
             // A successful `complete`/`clarify` intercept ended the run:
             // stream the parsed summary/question as the final content so
@@ -5329,6 +5434,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         context: ctx.value
                     )
                 }
+                loggedResponseText += text
             }
             hop {
                 writerBound.value.writeFinish(model, responseId: responseId, created: created, context: ctx.value)
@@ -5339,9 +5445,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 path: path,
                 userAgent: logUserAgent,
                 requestBody: logRequestBody,
+                responseBody: loggedResponseText.isEmpty ? nil : loggedResponseText,
                 responseStatus: 200,
                 startTime: logStartTime,
-                model: model
+                model: model,
+                toolCalls: loggedToolCalls.isEmpty ? nil : loggedToolCalls
             )
         }
     }
@@ -7024,6 +7132,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             runRequestTask(priority: .userInitiated) {
                 defer { keepaliveTask.cancel() }
                 defer { HTTPInferenceAdmission.shared.release() }
+                // Same menu-bar "generating" dot for host-side server inference
+                // (incl. remote Mode-1 chat completions over the Secure Channel).
+                ServerController.signalGenerationStart()
+                defer { ServerController.signalGenerationEnd() }
                 let wasResidentBeforeStream = await ModelRuntime.shared.isResident(name: model)
                 var emittedSemanticDelta = false
                 func markSemanticDeltaIfConnected() {
@@ -7076,6 +7188,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     httpTrace.mark("http_stream_chat_ready")
                     if disconnected.value { throw CancellationError() }
                     var accumulatedContent = ""
+                    var accumulatedReasoning = ""
                     var contentCoalescer = Self.StreamDeltaCoalescer(
                         interval: ServerRuntimeSettingsStore.snapshot().generation.streamInterval
                     )
@@ -7088,6 +7201,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         if let reasoning = StreamingReasoningHint.decode(delta) {
                             httpTrace.markFirstSemanticDelta("reasoning")
                             markSemanticDeltaIfConnected()
+                            accumulatedReasoning += reasoning
                             if let pending = contentCoalescer.flush() {
                                 hop {
                                     writerBound.value.writeContent(
@@ -7158,6 +7272,39 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                                 context: ctx.value
                             )
                         }
+                    }
+                    let terminalMessage = ChatMessage(
+                        role: "assistant",
+                        content: accumulatedContent,
+                        tool_calls: nil,
+                        tool_call_id: nil,
+                        reasoning_content: accumulatedReasoning.isEmpty ? nil : accumulatedReasoning
+                    )
+                    if let error = Self.emptyToolTaskCompletionError(
+                        requestMessages: enrichedReq.messages,
+                        responseMessage: terminalMessage
+                    ) {
+                        let message = error.localizedDescription
+                        hop {
+                            writerBound.value.writeError(message, context: ctx.value)
+                            writerBound.value.writeEnd(ctx.value)
+                        }
+                        httpTrace.mark("http_sse_error_written")
+                        httpTrace.emit(finishReason: "error", responseStatus: 200, errorMessage: message)
+                        logSelf.logRequest(
+                            method: "POST",
+                            path: "/chat/completions",
+                            userAgent: logUserAgent,
+                            requestBody: logRequestBody,
+                            responseStatus: 200,
+                            startTime: logStartTime,
+                            model: logModel,
+                            temperature: logTemperature,
+                            maxTokens: logMaxTokens,
+                            finishReason: .error,
+                            errorMessage: message
+                        )
+                        return
                     }
                     let includeUsage = req.stream_options?.include_usage == true
                     let promptTokens = Self.estimatePromptTokens(enrichedReq.messages)
@@ -7392,6 +7539,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             }
             runRequestTask(priority: .userInitiated) {
                 defer { HTTPInferenceAdmission.shared.release() }
+                // Same menu-bar "generating" dot (non-streaming path).
+                ServerController.signalGenerationStart()
+                defer { ServerController.signalGenerationEnd() }
                 do {
                     httpTrace.mark("http_task_start")
                     wasResidentBeforeComplete.value = await ModelRuntime.shared.isResident(name: model)
@@ -7413,6 +7563,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         systemContent: sysContent,
                         tools: enrichedReq.tools ?? []
                     )
+                    if let error = Self.emptyToolTaskCompletionError(
+                        requestMessages: enrichedReq.messages,
+                        responseMessage: resp.choices.first?.message
+                    ) {
+                        throw error
+                    }
                     if persistOnSuccess, let assistantMsg = resp.choices.first?.message {
                         var finalMessages = priorMessages
                         finalMessages.append(assistantMsg)

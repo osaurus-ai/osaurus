@@ -9,14 +9,14 @@ We are actively looking for help with these languages:
 | Language | Code | Status |
 | -------- | ---- | ------ |
 | Spanish | `es` | **Help wanted** |
-| Korean | `ko` | **Help wanted** |
 | Japanese | `ja` | **Help wanted** |
 | Traditional Chinese | `zh-Hant` | **Help wanted** |
 | German | `de` | Maintained |
 | Simplified Chinese | `zh-Hans` | Maintained |
+| Korean | `ko` | Maintained |
 | English | `en` | Source language |
 
-All four "help wanted" locales are already enabled in the Xcode project, so you
+All three "help wanted" locales are already enabled in the Xcode project, so you
 can open the String Catalog editor and start translating immediately -- no setup
 required.
 

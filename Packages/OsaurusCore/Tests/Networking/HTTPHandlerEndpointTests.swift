@@ -264,6 +264,58 @@ struct HTTPHandlerEndpointTests {
         }
     }
 
+    /// The agent's custom Action Bar (chat quick actions) is advertised on
+    /// `GET /agents/{id}` so a connected peer can surface the agent's own
+    /// prompt shortcuts, and the client parser round-trips it into metadata.
+    @Test func getAgent_advertisesActionBarQuickActions() async throws {
+        let server = try await startServer()
+        defer { Task { await server.shutdown() } }
+
+        try await ChatHistoryTestStorage.run {
+            let hostAgentId = UUID()
+            let address = "0xfeed0000000000000000000000000000000000aa"
+            let actions = [
+                AgentQuickAction(icon: "book", text: "Explain", prompt: "Explain "),
+                AgentQuickAction(icon: "doc", text: "Summarize", prompt: "Summarize "),
+            ]
+            let agent = Agent(
+                id: hostAgentId,
+                name: "Action Bar Peer",
+                defaultModel: "fake-metadata-model",
+                chatQuickActions: actions,
+                isBuiltIn: false,
+                agentIndex: 0,
+                agentAddress: address
+            )
+            AgentManager.shared.add(agent)
+            AgentIdentityRegistry.shared.update(
+                addresses: [address],
+                indices: [0],
+                addressByAgentId: [hostAgentId: address]
+            )
+            defer {
+                AgentIdentityRegistry.shared.update(addresses: [], indices: [], addressByAgentId: [:])
+            }
+
+            let (data, resp) = try await URLSession.shared.data(
+                from: URL(string: "http://\(server.host):\(server.port)/agents/\(address)")!
+            )
+            #expect((resp as? HTTPURLResponse)?.statusCode == 200)
+            let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+            let wireActions = obj?["chat_quick_actions"] as? [[String: Any]]
+            #expect(wireActions?.count == 2)
+            #expect(wireActions?.first?["text"] as? String == "Explain")
+            #expect(wireActions?.first?["prompt"] as? String == "Explain ")
+
+            // And the client parser round-trips it back into metadata.
+            let meta = try #require(RemoteProviderService.parseAgentMetadata(from: data))
+            #expect(meta.quickActions?.count == 2)
+            #expect(meta.quickActions?.first?.text == "Explain")
+
+            _ = await AgentManager.shared.delete(id: hostAgentId)
+        }
+    }
+
     // MARK: - Test Server Bootstrap
 
     private struct TestServer {

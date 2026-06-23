@@ -17,6 +17,12 @@
             "value" : "Osaurus"
           }
         },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus"
+          }
+        },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
@@ -38,6 +44,12 @@
         "en" : {
           "stringUnit" : {
             "state" : "new",
+            "value" : "osaurus"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
             "value" : "osaurus"
           }
         },
@@ -65,6 +77,12 @@
             "value" : "Osaurus plugins may use automation to control other applications on your behalf."
           }
         },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 플러그인이 사용자를 대신하여 다른 응용 프로그램을 제어하기 위해 자동화를 사용할 수 있습니다."
+          }
+        },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
@@ -87,6 +105,12 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "Osaurus plugins may access your calendar to read and create events."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 플러그인이 이벤트를 읽고 생성하기 위해 캘린더에 접근할 수 있습니다."
           }
         },
         "zh-Hans" : {
@@ -113,6 +137,12 @@
             "value" : "Osaurus plugins may access your calendar to read and create events."
           }
         },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 플러그인이 이벤트를 읽고 생성하기 위해 캘린더에 접근할 수 있습니다."
+          }
+        },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
@@ -135,6 +165,12 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "Osaurus plugins may access your contacts to search and read contact information."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 플러그인이 연락처 정보를 검색하고 읽기 위해 연락처에 접근할 수 있습니다."
           }
         },
         "zh-Hans" : {
@@ -173,6 +209,12 @@
             "value" : "Osaurus uses the local network to discover and connect to agents running on other devices."
           }
         },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus가 다른 기기에서 실행 중인 에이전트를 검색하고 연결하기 위해 로컬 네트워크를 사용합니다."
+          }
+        },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
@@ -195,6 +237,12 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "Osaurus plugins may access your location to provide location-based services."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 플러그인이 위치 기반 서비스를 제공하기 위해 위치 정보에 접근할 수 있습니다."
           }
         },
         "zh-Hans" : {
@@ -221,6 +269,12 @@
             "value" : "Osaurus plugins may access your location to provide location-based services."
           }
         },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 플러그인이 위치 기반 서비스를 제공하기 위해 위치 정보에 접근할 수 있습니다."
+          }
+        },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
@@ -243,6 +297,12 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "Osaurus uses the microphone for on-device voice transcription with FluidAudio."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus가 FluidAudio를 사용한 온디바이스 음성 텍스트 변환을 위해 마이크를 사용합니다."
           }
         },
         "zh-Hans" : {
@@ -269,6 +329,12 @@
             "value" : "Osaurus plugins may access your reminders to read and create tasks."
           }
         },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 플러그인이 작업을 읽고 생성하기 위해 미리 알림에 접근할 수 있습니다."
+          }
+        },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
@@ -291,6 +357,12 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "Osaurus can capture screenshots and system audio only when you grant Screen Recording access."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus는 화면 기록 접근 권한을 부여한 경우에만 스크린샷 및 시스템 오디오를 캡처할 수 있습니다."
           }
         },
         "zh-Hans" : {

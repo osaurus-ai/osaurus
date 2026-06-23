@@ -53,15 +53,15 @@ enum ExternalModelLocator {
 
         var title: String {
             switch self {
-            case .unreadableRoot: return "Root unreadable"
-            case .malformedCacheFolder: return "Malformed cache folder"
-            case .missingSnapshot: return "Snapshot missing"
-            case .snapshotEscapesRoot: return "Snapshot outside root"
-            case .missingConfig: return "config.json missing"
-            case .missingTokenizer: return "Tokenizer missing"
-            case .missingSafetensors: return "Safetensors missing"
-            case .ggufOnly: return "GGUF-only bundle"
-            case .symlinkEscapesRoot: return "Symlink escapes root"
+            case .unreadableRoot: return L("Root unreadable")
+            case .malformedCacheFolder: return L("Malformed cache folder")
+            case .missingSnapshot: return L("Snapshot missing")
+            case .snapshotEscapesRoot: return L("Snapshot outside root")
+            case .missingConfig: return L("config.json missing")
+            case .missingTokenizer: return L("Tokenizer missing")
+            case .missingSafetensors: return L("Safetensors missing")
+            case .ggufOnly: return L("GGUF-only bundle")
+            case .symlinkEscapesRoot: return L("Symlink escapes root")
             }
         }
     }

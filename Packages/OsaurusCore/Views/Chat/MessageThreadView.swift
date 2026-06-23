@@ -40,7 +40,7 @@ struct MessageThreadView: View {
     var onConfirmEdit: (() -> Void)? = nil
     var onCancelEdit: (() -> Void)? = nil
     var onUserImagePreview: ((String) -> Void)? = nil
-    var onPastedContentPreview: ((Attachment) -> Void)? = nil
+    var onDocumentPreview: ((Attachment) -> Void)? = nil
 
     // Minimap
     var onVisibleTopUserTurnChanged: ((UUID?) -> Void)? = nil
@@ -107,7 +107,7 @@ struct MessageThreadView: View {
             onConfirmEdit: onConfirmEdit,
             onCancelEdit: onCancelEdit,
             onUserImagePreview: onUserImagePreview,
-            onPastedContentPreview: onPastedContentPreview,
+            onDocumentPreview: onDocumentPreview,
             onVisibleTopUserTurnChanged: onVisibleTopUserTurnChanged,
             scrollToTurnId: scrollToTurnId,
             scrollToTurnTrigger: scrollToTurnTrigger,

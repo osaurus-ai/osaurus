@@ -4724,41 +4724,23 @@ struct ChatView: View {
             ?? L("Default")
     }
 
-    /// Friendly name of the selected remote agent (Mode 2) for status copy.
-    private var remoteAgentDisplayName: String {
-        windowState.selectedDiscoveredAgent?.name
-            ?? windowState.selectedRelayAgent?.name
-            ?? L("the agent")
-    }
-
-    /// Compact Mode 2 connection status shown above the composer: a spinner
-    /// while connect + model pin resolve, or an actionable error with Retry on
-    /// failure. Hidden once connected (the pinned model chip then reflects the
-    /// agent's model) and when not in remote-agent mode.
+    /// Compact Mode 2 connection status shown above the composer: an actionable
+    /// error with Retry on failure. The connecting affordance lives in the
+    /// empty-state security badge (which morphs "Securing connection…" -> lock),
+    /// so this row only surfaces on `.failed`; it's empty otherwise and when
+    /// not in remote-agent mode.
     @ViewBuilder
     private var remoteAgentConnectionNotice: some View {
         if windowState.selectedDiscoveredAgentProviderId != nil {
             switch windowState.remoteAgentConnectionPhase {
-            case .connecting:
-                connectingNotice
             case .failed(let message):
                 connectionFailedNotice(message)
-            case .idle, .connected:
+            case .idle, .connected, .connecting:
+                // The connecting affordance now lives in the empty-state
+                // security badge (it morphs "Securing connection…" -> lock),
+                // so there's no separate connecting chip above the composer.
                 EmptyView()
             }
-        }
-    }
-
-    /// "Connecting to <agent>…" chip. Uses the app's themed activity spinner
-    /// (the same `MorphingStatusIcon` used for running tool calls / background
-    /// tasks) instead of a stock `ProgressView`, so the loading affordance
-    /// matches the rest of the chat.
-    private var connectingNotice: some View {
-        remoteAgentNoticeRow(tint: theme.accentColor) {
-            MorphingStatusIcon(state: .active, accentColor: theme.accentColor, size: 14)
-            Text(L("Connecting to \(remoteAgentDisplayName)…"))
-                .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-                .foregroundColor(theme.secondaryText)
         }
     }
 
@@ -5352,7 +5334,16 @@ struct ChatView: View {
             .environment(\.theme, windowState.theme)
         }
         .sheet(item: $pendingDiscoveredAgent) { agent in
-            if agent.address != nil {
+            if agent.isUnverifiableSecureChannelPeer {
+                // Claims encryption (osc=1) but advertised no address to pin —
+                // an inconsistent advertisement (spoof, or a peer that needs to
+                // upgrade / assign an identity). Refuse rather than connect
+                // without any identity verification.
+                UnverifiablePeerSheet(agentName: agent.name) {
+                    pendingDiscoveredAgent = nil
+                }
+                .environment(\.theme, windowState.theme)
+            } else if agent.address != nil {
                 PairingSheet(agent: agent) { apiKey, isPermanent in
                     connectToDiscoveredAgent(agent, token: apiKey, isEphemeral: !isPermanent)
                     pendingDiscoveredAgent = nil
@@ -5429,8 +5420,11 @@ struct ChatView: View {
     }
 
     private func connectToDiscoveredAgent(_ agent: DiscoveredAgent, token: String, isEphemeral: Bool = true) {
-        // Strip trailing dot from mDNS hostnames (e.g. "device.local." -> "device.local")
-        let rawHost = agent.host ?? "localhost"
+        // Prefer the stable `.local` hostname, falling back to the resolved IP
+        // when it's missing (some networks block multicast `.local`
+        // resolution). Strip the trailing dot from mDNS hostnames
+        // (e.g. "device.local." -> "device.local").
+        let rawHost = agent.connectHost ?? "localhost"
         let host = rawHost.hasSuffix(".") ? String(rawHost.dropLast()) : rawHost
         let manager = RemoteProviderManager.shared
 
@@ -5480,6 +5474,7 @@ struct ChatView: View {
         windowState.selectedDiscoveredAgentProviderId = providerId
         windowState.pinnedRemoteAgentEffectiveModel = nil
         windowState.pinnedRemoteAgentAvatar = nil
+        windowState.pinnedRemoteAgentQuickActions = nil
         windowState.refreshPairedRelayAgents()
         session.reset()
         pinRemoteAgentModelAfterConnect(providerId: providerId)
@@ -5524,6 +5519,7 @@ struct ChatView: View {
                 guard windowState.selectedDiscoveredAgentProviderId == providerId else { return }
                 windowState.pinnedRemoteAgentEffectiveModel = metadata?.effectiveModel
                 windowState.pinnedRemoteAgentAvatar = metadata?.avatar
+                windowState.pinnedRemoteAgentQuickActions = metadata?.quickActions
                 // Keep the persisted paired-agent label/avatar honest (no-op for
                 // ephemeral Bonjour peers without a RemoteAgent record).
                 if let address = provider.remoteAgentAddress, !address.isEmpty {
@@ -5562,6 +5558,7 @@ struct ChatView: View {
         windowState.selectedDiscoveredAgentProviderId = relay.providerId
         windowState.pinnedRemoteAgentEffectiveModel = nil
         windowState.pinnedRemoteAgentAvatar = nil
+        windowState.pinnedRemoteAgentQuickActions = nil
         session.reset()
         pinRemoteAgentModelAfterConnect(providerId: relay.providerId)
     }
@@ -5625,7 +5622,9 @@ struct ChatView: View {
             activeDiscoveredAgent: windowState.selectedDiscoveredAgent,
             activeRelayAgent: windowState.selectedRelayAgent,
             remoteAgentAvatar: windowState.pinnedRemoteAgentAvatar,
-            remoteAgentDescription: remoteAgentDescriptionForEmptyState
+            remoteAgentDescription: remoteAgentDescriptionForEmptyState,
+            remoteAgentQuickActions: windowState.pinnedRemoteAgentQuickActions,
+            isConnecting: windowState.remoteAgentConnectionPhase == .connecting
         )
         .transition(.opacity.combined(with: .scale(scale: 0.98)))
         .modifier(
@@ -5737,7 +5736,7 @@ struct ChatView: View {
                 onConfirmEdit: confirmEditAndRegenerate,
                 onCancelEdit: cancelEditing,
                 onUserImagePreview: openUserAttachmentPreview(attachmentId:),
-                onPastedContentPreview: { pastedContentPreview = $0 },
+                onDocumentPreview: { pastedContentPreview = $0 },
                 onVisibleTopUserTurnChanged: { turnId in
                     activeMinimapTurnId = turnId
                 },
@@ -5907,7 +5906,7 @@ private struct IsolatedThreadView: View {
     let onConfirmEdit: (() -> Void)?
     let onCancelEdit: (() -> Void)?
     let onUserImagePreview: ((String) -> Void)?
-    var onPastedContentPreview: ((Attachment) -> Void)? = nil
+    var onDocumentPreview: ((Attachment) -> Void)? = nil
     var onVisibleTopUserTurnChanged: ((UUID?) -> Void)? = nil
     var scrollToTurnId: UUID? = nil
     var scrollToTurnTrigger: Int = 0
@@ -5943,7 +5942,7 @@ private struct IsolatedThreadView: View {
             onConfirmEdit: onConfirmEdit,
             onCancelEdit: onCancelEdit,
             onUserImagePreview: onUserImagePreview,
-            onPastedContentPreview: onPastedContentPreview,
+            onDocumentPreview: onDocumentPreview,
             onVisibleTopUserTurnChanged: onVisibleTopUserTurnChanged,
             scrollToTurnId: scrollToTurnId,
             scrollToTurnTrigger: scrollToTurnTrigger,
@@ -6265,6 +6264,57 @@ extension ChatView {
     }
 }
 
+// MARK: - Unverifiable Peer Sheet
+
+/// Shown when a discovered peer claims Secure Channel support (`osc=1`) but
+/// advertised no crypto address to pin. We refuse the connection rather than
+/// proceed without any identity verification: a genuine, current Osaurus peer
+/// always advertises its address alongside `osc=1`, so this combination means
+/// either a spoofed advertisement or a peer that must upgrade / assign an
+/// identity. Refusal-only — there is no "connect anyway".
+private struct UnverifiablePeerSheet: View {
+    let agentName: String
+    let onClose: () -> Void
+
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.shield.fill")
+                        .font(theme.font(size: 16, weight: .semibold))
+                        .foregroundColor(theme.warningColor)
+                    Text("Can't verify \(agentName)", bundle: .module)
+                        .font(theme.font(size: 16, weight: .semibold))
+                        .foregroundColor(theme.primaryText)
+                }
+
+                Text(
+                    "This agent advertised that it supports encryption but didn't include a verifiable identity, so it can't be paired securely. It may be impersonating another device, or the other device may need to update Osaurus.",
+                    bundle: .module
+                )
+                .font(theme.font(size: 13))
+                .foregroundColor(theme.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+
+            HStack {
+                Spacer()
+                Button {
+                    onClose()
+                } label: {
+                    Text("Close", bundle: .module)
+                }
+                .keyboardShortcut(.defaultAction)
+                .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding(24)
+        .frame(width: 380)
+    }
+}
+
 // MARK: - Bonjour Token Sheet
 
 /// Sheet shown when the user selects a Bonjour-discovered remote agent.
@@ -6343,6 +6393,32 @@ private struct PairingSheet: View {
                 .font(theme.font(size: 13))
                 .foregroundColor(theme.secondaryText)
                 .fixedSize(horizontal: false, vertical: true)
+            }
+
+            // Surface the cryptographic identity that pairing will pin and
+            // verify, so the user confirms *who* they're connecting to rather
+            // than trusting only the (unauthenticated) advertised display name.
+            if let fingerprint = agent.addressFingerprint {
+                HStack(spacing: 8) {
+                    Image(systemName: "checkmark.shield.fill")
+                        .font(theme.font(size: 13))
+                        .foregroundColor(theme.accentColor)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Verifying identity", bundle: .module)
+                            .font(theme.font(size: 11))
+                            .foregroundColor(theme.secondaryText)
+                        Text(fingerprint)
+                            .font(.system(size: 12, design: .monospaced))
+                            .foregroundColor(theme.primaryText)
+                            .textSelection(.enabled)
+                    }
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(theme.accentColor.opacity(0.08))
+                )
             }
 
             if let error = errorMessage {
@@ -6425,6 +6501,7 @@ private enum PairingClient {
         case denied
         case challengeFailed
         case identityMismatch
+        case unverifiablePeer
 
         var errorDescription: String? {
             switch self {
@@ -6436,11 +6513,23 @@ private enum PairingClient {
             case .challengeFailed: return "Could not obtain a pairing challenge from the remote device."
             case .identityMismatch:
                 return "The remote device could not prove it owns the discovered agent identity."
+            case .unverifiablePeer:
+                return
+                    "This agent claims to support encryption but didn't advertise a verifiable identity, so pairing was refused."
             }
         }
     }
 
     static func pair(with agent: DiscoveredAgent) async throws -> (apiKey: String, isPermanent: Bool) {
+        // Defense-in-depth: refuse a peer claiming Secure Channel support
+        // (osc=1) that advertised no address to pin. The address-gated
+        // verification below would otherwise be skipped entirely, leaving the
+        // server unauthenticated. (The sheet routing already diverts these to
+        // a refusal view; this guard fails closed if pair() is ever reached.)
+        guard !agent.isUnverifiableSecureChannelPeer else {
+            throw PairingError.unverifiablePeer
+        }
+
         let context = LAContext()
         context.touchIDAuthenticationAllowableReuseDuration = 300
 
@@ -6453,7 +6542,9 @@ private enum PairingClient {
 
         let connectorAddress = try PairingKey.deriveAddress(masterKey: masterKey)
 
-        let rawHost = agent.host ?? ""
+        // Prefer the `.local` hostname; fall back to the resolved IP when the
+        // peer advertised no hostname (or it can't be resolved on this network).
+        let rawHost = agent.connectHost ?? ""
         guard !rawHost.isEmpty else { throw PairingError.missingHost }
         let host = rawHost.hasSuffix(".") ? String(rawHost.dropLast()) : rawHost
 

@@ -44,7 +44,29 @@ struct ServerSettingsTabContent: View {
     @State private var successMessage: String?
     @State private var activeSection: ServerSettingsSection = .connection
 
+    @ObservedObject private var managementState = ManagementStateManager.shared
+    /// Section that just received a settings-search landing, briefly glowing.
+    @State private var landedSection: ServerSettingsSection?
+    @State private var landedClearTask: Task<Void, Never>?
+
     private var theme: ThemeProtocol { themeManager.currentTheme }
+
+    /// Honour a settings-search result that targets a Server section: scroll to
+    /// it and glow it once. Clears the one-shot request after applying.
+    private func applySectionRequest() {
+        guard let raw = managementState.serverSectionRequest,
+            let section = ServerSettingsSection(rawValue: raw)
+        else { return }
+        managementState.serverSectionRequest = nil
+        activeSection = section
+        landedClearTask?.cancel()
+        landedSection = section
+        landedClearTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 3_200_000_000)
+            guard !Task.isCancelled else { return }
+            if landedSection == section { landedSection = nil }
+        }
+    }
 
     /// Fields that require a NIO restart or a host-side rebind.
     private var pendingRestart: Bool {
@@ -103,10 +125,17 @@ struct ServerSettingsTabContent: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(theme.primaryBackground)
         .onAppear {
+            // Defer a beat so the section scroll runs after first layout.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                applySectionRequest()
+            }
             guard !hasLoaded else { return }
             hasLoaded = true
             draft = server.runtimeSettings
             draftLegacy = server.configuration
+        }
+        .onChange(of: managementState.serverSectionRequest) { _, _ in
+            applySectionRequest()
         }
         .onChange(of: server.runtimeSettings) { _, newValue in
             if !hasUnsavedChanges { draft = newValue }
@@ -142,34 +171,49 @@ struct ServerSettingsTabContent: View {
                 LazyVStack(alignment: .leading, spacing: 24) {
                     ConnectionSection(draft: $draft)
                         .id(ServerSettingsSection.connection)
+                        .settingsSearchHighlight(landedSection == .connection)
                     GlobalProxySection(draft: $draftLegacy)
                         .id(ServerSettingsSection.globalProxy)
+                        .settingsSearchHighlight(landedSection == .globalProxy)
                     AuthenticationSection(draft: $draft)
                         .id(ServerSettingsSection.authentication)
+                        .settingsSearchHighlight(landedSection == .authentication)
                     GenerationDefaultsSection(draft: $draft)
                         .id(ServerSettingsSection.sampling)
+                        .settingsSearchHighlight(landedSection == .sampling)
                     ConcurrencySection(draft: $draft)
                         .id(ServerSettingsSection.concurrency)
+                        .settingsSearchHighlight(landedSection == .concurrency)
                     CacheSection(draft: $draft)
                         .id(ServerSettingsSection.cache)
+                        .settingsSearchHighlight(landedSection == .cache)
                     MemorySafetySection(draft: $draft)
                         .id(ServerSettingsSection.memorySafety)
+                        .settingsSearchHighlight(landedSection == .memorySafety)
                     DecodePerformanceSection(draft: $draft)
                         .id(ServerSettingsSection.decodePerformance)
+                        .settingsSearchHighlight(landedSection == .decodePerformance)
                     MTPSection(draft: $draft)
                         .id(ServerSettingsSection.speculative)
+                        .settingsSearchHighlight(landedSection == .speculative)
                     LiveActivitySection()
                         .id(ServerSettingsSection.liveActivity)
+                        .settingsSearchHighlight(landedSection == .liveActivity)
                     MultimodalSection(draft: $draft)
                         .id(ServerSettingsSection.multimodal)
+                        .settingsSearchHighlight(landedSection == .multimodal)
                     ToolsTemplatesSection(draft: $draft)
                         .id(ServerSettingsSection.tools)
+                        .settingsSearchHighlight(landedSection == .tools)
                     ModelResidencySection(draft: $draftLegacy)
                         .id(ServerSettingsSection.modelMemory)
+                        .settingsSearchHighlight(landedSection == .modelMemory)
                     PowerSection(draft: $draft)
                         .id(ServerSettingsSection.power)
+                        .settingsSearchHighlight(landedSection == .power)
                     AdvancedHTTPSection(draft: $draftLegacy)
                         .id(ServerSettingsSection.requestLimits)
+                        .settingsSearchHighlight(landedSection == .requestLimits)
                 }
                 .padding(.horizontal, 24)
                 .padding(.vertical, 24)

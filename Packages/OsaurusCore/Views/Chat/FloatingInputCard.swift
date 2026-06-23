@@ -288,6 +288,8 @@ struct FloatingInputCard: View {
     /// Set on chip tap; cleared on dismiss.
     @State private var pastedContentPreview: Attachment?
     @State private var pastedContentEdit: Attachment?
+    /// Pending image attachment shown full-size when its thumbnail is tapped.
+    @State private var imagePreview: PendingImagePreview?
     /// Character threshold above which clipboard text is converted to a
     /// pasted-content attachment instead of being inlined into the input.
     private static let pastedContentThreshold: Int = 400
@@ -456,7 +458,11 @@ struct FloatingInputCard: View {
     /// In a Mode 2 remote-agent run the context-budget chip is hidden, so the
     /// pinned-model chip (`isModelPinned`) is what keeps the row visible.
     private var showSelectorRow: Bool {
-        pickerItems.count > 1
+        // Hide the whole selector row (pinned model chip + balance) while a
+        // remote agent is still connecting — the chat isn't usable yet — then
+        // ease it back in on connect with the resolved pinned-model chip.
+        guard !remoteConnectionPending else { return false }
+        return pickerItems.count > 1
             || isModelPinned
             || (displayContextTokens > 0 && !isRemoteAgentRun)
             || isSandboxAvailable
@@ -482,6 +488,9 @@ struct FloatingInputCard: View {
                 }
                 .padding(.top, 8)
                 .padding(.horizontal, 20)
+                // Ease the row out while connecting and back in once connected,
+                // so the composer height changes smoothly instead of snapping.
+                .transition(.opacity)
             }
 
             if showVoiceOverlay {
@@ -542,6 +551,9 @@ struct FloatingInputCard: View {
             }
         }
         .animation(.spring(response: 0.3, dampingFraction: 0.85), value: showVoiceOverlay)
+        // Smoothly collapse/reveal the selector row (model chip + balance) as
+        // the remote-agent connection resolves, so the composer doesn't snap.
+        .animation(theme.springAnimation(), value: remoteConnectionPending)
     }
 
     var body: some View {
@@ -1543,6 +1555,9 @@ extension FloatingInputCard {
                                 withAnimation(theme.springAnimation()) {
                                     pendingAttachments.removeAll { $0.id == attachment.id }
                                 }
+                            },
+                            onTap: {
+                                imagePreview = PendingImagePreview(id: attachment.id, data: data)
                             }
                         )
                     case .imageRef:
@@ -1558,6 +1573,9 @@ extension FloatingInputCard {
                                     withAnimation(theme.springAnimation()) {
                                         pendingAttachments.removeAll { $0.id == attachment.id }
                                     }
+                                },
+                                onTap: {
+                                    imagePreview = PendingImagePreview(id: attachment.id, data: data)
                                 }
                             )
                         }
@@ -1614,6 +1632,11 @@ extension FloatingInputCard {
                     pastedContentEdit = nil
                 }
             )
+        }
+        .sheet(item: $imagePreview) { preview in
+            PendingImagePreviewSheet(imageData: preview.data, imageId: preview.id.uuidString) {
+                imagePreview = nil
+            }
         }
     }
 
@@ -1719,7 +1742,9 @@ extension FloatingInputCard {
     /// with the interactive chips on the left.
     @ViewBuilder
     private var metaCluster: some View {
-        let showCredits = showSessionSpend
+        // Hide the balance/credits chip while a remote agent is connecting —
+        // it's not actionable yet and competes with the connect affordance.
+        let showCredits = showSessionSpend && !remoteConnectionPending
         // Mode 2 hides the context-budget chip + popover entirely: a remote
         // agent composes its own system prompt / tools server-side, so a local
         // token breakdown (system prompt, tools, history) doesn't reflect what
@@ -1794,14 +1819,14 @@ extension FloatingInputCard {
                 showsAmount: true
             )
         case .low:
-            // The chip shows session spend, not the balance, so a low balance no
-            // longer escalates the chip itself — the hover popover surfaces it
-            // (amber balance hero) instead. Renders identically to `.healthy`.
+            // The chip shows the router balance, so a low balance escalates the
+            // chip itself to amber text (no pill) — a gentle nudge that stops
+            // short of the empty-state "Add credits" call to action.
             return CreditsChipStyle(
                 iconName: "creditcard",
-                iconColor: theme.tertiaryText,
-                textColor: theme.secondaryText,
-                weight: .medium,
+                iconColor: amber,
+                textColor: amber,
+                weight: .semibold,
                 pill: nil,
                 glow: .clear,
                 showsAmount: true
@@ -1819,19 +1844,19 @@ extension FloatingInputCard {
         }
     }
 
-    /// This session's Router spend, formatted for the composer chip. The chip
-    /// surfaces spend; the account balance is shown only in the hover popover.
+    /// This session's Router spend, formatted for the hover popover. The chip
+    /// surfaces the account balance; spend is shown only in the popover.
     private var sessionSpendDisplay: String {
         OsaurusRouter.formatMicroUSDPrecise(String(sessionSpendMicro))
     }
 
-    /// Accessibility text for the credits chip. Describes the session spend the
-    /// chip shows and the tap action; the balance itself lives in the popover.
+    /// Accessibility text for the credits chip. Describes the router balance the
+    /// chip shows and the tap action; session spend lives in the popover.
     private var creditsHelpText: Text {
         if accountService.isFrozen {
             return Text("Account paused - add credits to resume.", bundle: .module)
         }
-        return Text("\(sessionSpendDisplay) spent this session. Click to add credits.", bundle: .module)
+        return Text("\(accountService.formattedBalance) router balance. Click to add credits.", bundle: .module)
     }
 
     /// Balance indicator for Osaurus Router sessions. Tapping opens the top-up
@@ -1859,9 +1884,9 @@ extension FloatingInputCard {
                 }
 
                 if style.showsAmount {
-                    // Composer shows this session's spend; the router balance is
-                    // surfaced only in the hover popover.
-                    Text(verbatim: sessionSpendDisplay)
+                    // Composer shows the overall router balance; this session's
+                    // spend is surfaced only in the hover popover.
+                    Text(verbatim: accountService.formattedBalance)
                         .font(.system(size: caption - 1, weight: style.weight, design: .monospaced))
                         .foregroundColor(style.textColor)
                         .lineLimit(1)
@@ -1906,11 +1931,9 @@ extension FloatingInputCard {
         }
         .popover(isPresented: $showBalanceBreakdown, arrowEdge: .top) {
             BalanceBreakdownPopover(
+                sessionSpend: sessionSpendDisplay,
                 balance: accountService.formattedBalance,
                 isAttention: level != .healthy,
-                sessionSpend: sessionSpendMicro > 0
-                    ? OsaurusRouter.formatMicroUSDPrecise(String(sessionSpendMicro))
-                    : nil,
                 isFrozen: accountService.isFrozen
             )
         }
@@ -4228,6 +4251,8 @@ struct CachedImageThumbnail: View {
     let imageData: Data
     let size: CGFloat
     let onRemove: () -> Void
+    /// Tapping the thumbnail (not the remove badge) opens a full-size preview.
+    var onTap: (() -> Void)? = nil
 
     @State private var cachedImage: NSImage?
     @Environment(\.theme) private var theme
@@ -4245,6 +4270,8 @@ struct CachedImageThumbnail: View {
                         RoundedRectangle(cornerRadius: 8, style: .continuous)
                             .strokeBorder(theme.primaryBorder.opacity(0.3), lineWidth: 1)
                     )
+                    .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .modifier(TappableThumbnailModifier(onTap: onTap))
             } else {
                 // Square placeholder — aspect is unknown until decode completes.
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
@@ -4270,6 +4297,55 @@ struct CachedImageThumbnail: View {
         .padding(.trailing, 4)
         .task(id: imageData) {
             cachedImage = NSImage(data: imageData)
+        }
+    }
+}
+
+/// A pending image attachment selected for full-size preview. Carries the raw
+/// bytes (not a decoded `NSImage`) so it stays `Identifiable` and `Equatable`
+/// for `.sheet(item:)`; the sheet decodes lazily.
+private struct PendingImagePreview: Identifiable, Equatable {
+    let id: UUID
+    let data: Data
+}
+
+/// Full-size preview for a composer image attachment, reusing the chat's
+/// zoom/pan/save viewer. Decoding runs off the main thread via `ChatImageCache`
+/// (a full-size image decode/rasterize on the main actor would stall the UI and
+/// trip app-hang reports), so the viewer fills in once the image is ready.
+private struct PendingImagePreviewSheet: View {
+    let imageData: Data
+    let imageId: String
+    let onDismiss: () -> Void
+
+    @State private var image: NSImage?
+
+    var body: some View {
+        ImageFullScreenView(image: image, altText: "", onDismiss: onDismiss)
+            .imageFullScreenSheetPresentation()
+            .task(id: imageId) {
+                if let cached = ChatImageCache.shared.cachedImage(for: imageId) {
+                    image = cached
+                } else {
+                    image = await ChatImageCache.shared.decode(imageData, id: imageId)
+                }
+            }
+    }
+}
+
+/// Adds the tap-to-preview gesture and pointing-hand cursor to an image
+/// thumbnail only when an `onTap` is supplied, so non-interactive thumbnails
+/// keep the default cursor and hit-testing.
+private struct TappableThumbnailModifier: ViewModifier {
+    let onTap: (() -> Void)?
+
+    func body(content: Content) -> some View {
+        if let onTap {
+            content
+                .onTapGesture { onTap() }
+                .pointingHandCursor()
+        } else {
+            content
         }
     }
 }
@@ -4671,7 +4747,11 @@ private struct ContextBreakdownPopover: View {
                 fillsTrack: true
             )
             HStack(spacing: 1) {
-                ForEach(Array(zip(segments, widths)), id: \.0.id) { segment, width in
+                // Positional identity: segment ids mirror prompt-section ids,
+                // which aren't guaranteed unique across the manifest, so keying
+                // by id would risk a duplicate-ID ForEach trap.
+                ForEach(Array(zip(segments, widths).enumerated()), id: \.offset) { _, pair in
+                    let (segment, width) = pair
                     RoundedRectangle(cornerRadius: 2)
                         .fill(color(for: segment.tint).opacity(0.85))
                         .frame(width: width)
@@ -4707,7 +4787,12 @@ private struct ContextBreakdownPopover: View {
 
                     if expanded {
                         VStack(alignment: .leading, spacing: 4) {
-                            ForEach(group.entries) { entry in
+                            // Key by position, not `entry.id`: a prompt section's
+                            // id isn't guaranteed unique across the manifest, and
+                            // duplicate ForEach IDs trap when this list animates
+                            // in on expand. Positional identity is what we want
+                            // for a static, display-only list anyway.
+                            ForEach(Array(group.entries.enumerated()), id: \.offset) { _, entry in
                                 entryRow(entry).padding(.leading, 11)
                             }
                         }
@@ -4722,7 +4807,7 @@ private struct ContextBreakdownPopover: View {
 
     private func entryGroup(_ entries: [ContextBreakdown.Entry], highlightOutput: Bool = false) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            ForEach(entries) { entry in
+            ForEach(Array(entries.enumerated()), id: \.offset) { _, entry in
                 entryRow(entry, highlighted: highlightOutput && entry.id == "output")
             }
         }
@@ -4823,14 +4908,14 @@ private struct ContextBreakdownPopover: View {
 /// balance reads like the Context Budget breakdown beside it. The balance is
 /// the hero figure (paralleling the budget bar) and tints amber when low/empty.
 private struct BalanceBreakdownPopover: View {
+    let sessionSpend: String
     let balance: String
     let isAttention: Bool
-    let sessionSpend: String?
     let isFrozen: Bool
 
     @Environment(\.theme) private var theme
 
-    private var accent: Color { isAttention ? theme.warningColor : theme.accentColor }
+    private var accent: Color { theme.accentColor }
 
     private var footerText: Text {
         isFrozen
@@ -4841,10 +4926,10 @@ private struct BalanceBreakdownPopover: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 6) {
-                Image(systemName: "creditcard")
+                Image(systemName: "chart.bar.fill")
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundColor(theme.secondaryText)
-                Text("Router Balance", bundle: .module)
+                Text("This Session", bundle: .module)
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundColor(theme.secondaryText)
             }
@@ -4856,28 +4941,26 @@ private struct BalanceBreakdownPopover: View {
                 RoundedRectangle(cornerRadius: 2)
                     .fill(accent.opacity(0.85))
                     .frame(width: 3, height: 16)
-                Text(verbatim: balance)
+                Text(verbatim: sessionSpend)
                     .font(.system(size: 15, weight: .semibold, design: .monospaced))
-                    .foregroundColor(isAttention ? theme.warningColor : theme.primaryText)
+                    .foregroundColor(theme.primaryText)
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 12)
             .padding(.bottom, 10)
 
-            if let sessionSpend {
-                divider
-                HStack(spacing: 0) {
-                    Text("Spent this session", bundle: .module)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.secondaryText)
-                    Spacer()
-                    Text(verbatim: sessionSpend)
-                        .font(.system(size: 11, weight: .medium, design: .monospaced))
-                        .foregroundColor(theme.primaryText)
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
+            divider
+            HStack(spacing: 0) {
+                Text("Router balance", bundle: .module)
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.secondaryText)
+                Spacer()
+                Text(verbatim: balance)
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundColor(isAttention ? theme.warningColor : theme.primaryText)
             }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
 
             divider
             footerText

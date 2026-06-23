@@ -3,6 +3,43 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.20.9</title>
+            <pubDate>Tue, 23 Jun 2026 20:52:30 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.20.9</sparkle:version>
+            <sparkle:shortVersionString>0.20.9</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.20.9/Osaurus-0.20.9.dmg" length="54169539" type="application/octet-stream" sparkle:edSignature="zf/b42xE/QmA+HsxrL1r3reHsucRz3DSjSkt4FxywlHMvi0vJFn0MUTp1xJSrNIkmv5qAnaSo4Mtxg4fYD+iBQ=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Add Computer Use regression scorecards (#1648) by @mimeding
+- QoL improvements (#1655) by @RaajeevChandran
+- updated chinese translations (#1659) by @ftzahao
+
+## 🚀 Features
+
+- add Korean (ko) localization (#1660) by @tpae
+
+## 🐛 Bug Fixes
+
+- make agent run honor agent temperature (#1678) by @RaajeevChandran
+- stop wasted iterations on repeated failing capabilities\_load calls (#1679) by @RaajeevChandran
+- persist per tool disable state for MCP provider tools (#1677) by @RaajeevChandran
+- fixed app hangs (#1672) by @RaajeevChandran
+
+## 🧰 Maintenance
+
+- Surface host-side remote-agent (p2p) activity (#1676) by @tpae
+- Polish remote agent connect UX (#1657) by @tpae
+- Harden Bonjour discovery (security, reliability, discoverability) (#1658) by @tpae
+- unify local and remote agent detail views (#1656) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.20.8...0.20.9
+]]></description>
+        </item>
+        <item>
             <title>0.20.8</title>
             <pubDate>Mon, 22 Jun 2026 23:40:42 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>

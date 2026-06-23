@@ -55,8 +55,9 @@ enum ContentBlockKind: Equatable {
     /// Replaces the hover-revealed copy/regenerate buttons that used to live in the header,
     /// so moving the mouse over the assistant transcript no longer triggers per-row reconfigures.
     /// `imageOnly` marks an image-generation result (content is just the rendered
-    /// image), so Insights and Read-aloud — which have nothing to act on — are hidden.
-    case assistantActions(turnId: UUID, imageOnly: Bool)
+    /// image), so Read-aloud and the overflow "…" Inspect — which have nothing to
+    /// act on — are hidden. `timestamp` backs the overflow menu's "arrived at" header.
+    case assistantActions(turnId: UUID, imageOnly: Bool, timestamp: Date)
     /// Shown when the Osaurus Router billed a turn that produced no visible
     /// text (and no reasoning/tools). Surfaces the charge honestly with a Retry
     /// affordance instead of silently dropping the turn. `costMicro` is the raw
@@ -113,8 +114,11 @@ enum ContentBlockKind: Equatable {
         case let (.chart(lSpec), .chart(rSpec)):
             return lSpec == rSpec
 
-        case let (.assistantActions(lId, lImageOnly), .assistantActions(rId, rImageOnly)):
-            return lId == rId && lImageOnly == rImageOnly
+        case let (
+            .assistantActions(lId, lImageOnly, lTime),
+            .assistantActions(rId, rImageOnly, rTime)
+        ):
+            return lId == rId && lImageOnly == rImageOnly && lTime == rTime
 
         case let (
             .emptyResponseNotice(lId, lTokens, lCost, lStatus),
@@ -312,11 +316,13 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
         return ContentBlock(id: "spacer-\(afterTurnId.uuidString)", turnId: turnId, kind: .groupSpacer, position: .only)
     }
 
-    static func assistantActions(turnId: UUID, imageOnly: Bool, position: BlockPosition) -> ContentBlock {
+    static func assistantActions(turnId: UUID, imageOnly: Bool, timestamp: Date, position: BlockPosition)
+        -> ContentBlock
+    {
         ContentBlock(
             id: "actions-\(turnId.uuidString)",
             turnId: turnId,
-            kind: .assistantActions(turnId: turnId, imageOnly: imageOnly),
+            kind: .assistantActions(turnId: turnId, imageOnly: imageOnly, timestamp: timestamp),
             position: position
         )
     }
@@ -617,14 +623,15 @@ extension ContentBlock {
                 hasVisibleContent || hasRenderableThinking || hasSharedArtifacts || !(turn.toolCalls ?? []).isEmpty
             {
                 // An image-generation reply renders as just the produced image, so
-                // Insights (no request log) and Read-aloud (nothing to speak) are
-                // hidden — only Copy and Regenerate stay.
+                // Read-aloud (nothing to speak) and the overflow Inspect (no request
+                // log) are hidden — only Copy and Regenerate stay.
                 let imageOnly =
                     hasVisibleContent && !hasRenderableThinking
                     && (turn.toolCalls ?? []).isEmpty
                     && Self.isImageOnlyContent(turn.visibleContent)
                 turnBlocks.append(
-                    .assistantActions(turnId: turn.id, imageOnly: imageOnly, position: .last)
+                    .assistantActions(
+                        turnId: turn.id, imageOnly: imageOnly, timestamp: turn.createdAt, position: .last)
                 )
             }
 

@@ -39,3 +39,40 @@ Screen-context freezing itself is owned by `ChatView` state (`frozenScreenContex
 and `isScreenContextFrozen`). The Computer Use test pack pins the pure privacy
 path that receives that frozen block; broad `ChatView` UI-state coverage is
 outside this lane.
+
+## Regression scorecards
+
+Computer Use regression scorecards are offline artifacts generated from existing
+`osaurus-evals run --out ...` JSON reports. They do not call a model and do not
+change runtime behavior.
+
+```bash
+swift run --package-path Packages/OsaurusEvals osaurus-evals scorecard \
+  build/evals/computer-use.json \
+  build/evals/computer-use-loop.json
+```
+
+By default, the command writes:
+
+- `build/evals/computer-use-scorecard/scorecard.json`
+- `build/evals/computer-use-scorecard/scorecard.md`
+
+Exit codes are intended for regression gates: `0` means no failed or errored
+Computer Use cases were found, `1` means the reports contain failures or
+errors, and `2` means the scorecard command itself failed.
+
+The scorecard aggregates the `computer_use` and `computer_use_loop` domains:
+
+- pass/fail/skipped/error totals by domain
+- safety gate effect, disposition, and allowlist outcomes
+- confirm/autonomy counts from gate cases and loop telemetry
+- acted-case verify pass/change rates
+- unresolved target, dead-end, blocked, and invalid-action counts
+- privacy-safe evidence references containing case IDs, outcomes, domains, and
+  report paths
+
+The generated Markdown and JSON intentionally omit raw prompts, case notes,
+screen text, final field values, and model-visible content. They keep case IDs,
+domains, outcomes, report paths, model IDs, and run timestamps so the report is
+traceable without exposing captured UI content. Use the source report paths when
+a maintainer needs to inspect full local evidence.

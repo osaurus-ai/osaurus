@@ -91,7 +91,7 @@ struct MessageTableRepresentable: NSViewRepresentable {
     let onConfirmEdit: (() -> Void)?
     let onCancelEdit: (() -> Void)?
     var onUserImagePreview: ((String) -> Void)? = nil
-    var onPastedContentPreview: ((Attachment) -> Void)? = nil
+    var onDocumentPreview: ((Attachment) -> Void)? = nil
 
     // Minimap support
     var onVisibleTopUserTurnChanged: ((UUID?) -> Void)? = nil
@@ -231,7 +231,7 @@ struct MessageTableRepresentable: NSViewRepresentable {
             onDelete: onDelete,
             onSpeak: onSpeak,
             onUserImagePreview: onUserImagePreview,
-            onPastedContentPreview: onPastedContentPreview,
+            onDocumentPreview: onDocumentPreview,
             sessionRedactions: sessionRedactions,
             hasChartBeenDrawn: { [weak coordinator] id in
                 coordinator?.drawnChartBlockIds.contains(id) ?? false
@@ -276,7 +276,7 @@ struct MessageTableRepresentable: NSViewRepresentable {
             onDelete: onDelete,
             onSpeak: onSpeak,
             onUserImagePreview: onUserImagePreview,
-            onPastedContentPreview: onPastedContentPreview,
+            onDocumentPreview: onDocumentPreview,
             sessionRedactions: sessionRedactions
         )
     }

@@ -38,12 +38,16 @@ enum RequestSource: String, Sendable, CaseIterable {
     case chatUI = "Chat UI"
     case httpAPI = "HTTP API"
     case plugin = "Plugin"
+    /// Inbound traffic from another Osaurus peer over the Secure Channel
+    /// (remote chat completions and remote agent runs).
+    case p2p = "P2P"
 
     var displayName: String {
         switch self {
         case .chatUI: return L("Chat UI")
         case .httpAPI: return L("HTTP API")
         case .plugin: return L("Plugin")
+        case .p2p: return L("P2P")
         }
     }
 }

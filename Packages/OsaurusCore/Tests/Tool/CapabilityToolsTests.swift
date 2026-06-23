@@ -322,6 +322,27 @@ struct CapabilitiesLoadToolTests {
         #expect(result.contains("Unknown type"))
     }
 
+    @Test func invalidIdIsNonRetryable() async throws {
+        // The issue's repro: a wrong-prefix id is a deterministic invalid_args
+        // failure. Capability ids are a closed vocabulary, so re-issuing the
+        // identical call cannot succeed — it must NOT be advertised retryable.
+        let tool = CapabilitiesLoadTool()
+        let result = try await tool.execute(argumentsJSON: "{\"ids\": [\"plugin/Scite.AI\"]}")
+        #expect(EnvelopeAssertions.failureKind(result) == "invalid_args")
+        #expect(EnvelopeAssertions.failureRetryable(result) == false)
+    }
+
+    @Test func notFoundIsNonRetryable() async throws {
+        // A not_found capability id is equally deterministic within a turn; the
+        // prior `kind != .rejected` rule wrongly advertised it as retryable.
+        let tool = CapabilitiesLoadTool()
+        let result = try await tool.execute(
+            argumentsJSON: "{\"ids\": [\"skill/zzz_nonexistent_skill\"]}"
+        )
+        #expect(EnvelopeAssertions.failureKind(result) == "not_found")
+        #expect(EnvelopeAssertions.failureRetryable(result) == false)
+    }
+
     @Test func methodNotFoundReturnsError() async throws {
         let tool = CapabilitiesLoadTool()
         let result = try await tool.execute(

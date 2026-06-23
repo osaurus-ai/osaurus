@@ -344,6 +344,24 @@ struct MLXModel: Identifiable, Codable {
     /// For downloaded models, checks vision_config in config.json.
     /// For undownloaded models, checks modelType against VLMTypeRegistry.
     var isVLM: Bool {
+        // Memoize: the `isDownloaded` branch below reads `config.json` off
+        // disk, which trips the main-thread hang watchdog when the grid
+        // evaluates this per row. Bypass the shared cache for pinned
+        // (`rootDirectory`) and external (`bundleDirectory`) bundles, matching
+        // `isDownloaded`, so a same-id Osaurus entry can't shadow their state.
+        let usesSharedCache = rootDirectory == nil && bundleDirectory == nil
+        if usesSharedCache, let cached = MLXModelDownloadCache.cachedVLM(for: id) {
+            return cached
+        }
+        let value = computeIsVLM()
+        if usesSharedCache {
+            MLXModelDownloadCache.setVLM(value, for: id)
+        }
+        return value
+    }
+
+    /// Direct (uncached) VLM detection used by `isVLM`.
+    func computeIsVLM() -> Bool {
         if ModelFamilyNames.isStepFamily(id) || ModelFamilyNames.isStepFamily(name) {
             // Step 3.7 bundles can carry upstream vision metadata, but this
             // Osaurus/vMLX path is the Step text runtime. Keep picker

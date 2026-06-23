@@ -56,6 +56,10 @@ struct OsaurusEvalsCLI {
         case "compat":
             // Pure file aggregation over reports/community/* — no model load.
             exit(runCompat(Array(args.dropFirst())))
+        case "scorecard":
+            // Pure file aggregation over ComputerUse/ComputerUseLoop reports.
+            // No model load, no runtime settings changes.
+            exit(runComputerUseScorecard(Array(args.dropFirst())))
         case "--help", "-h":
             printUsage()
             exit(0)
@@ -669,6 +673,8 @@ struct OsaurusEvalsCLI {
                                               [--fail-on-regression]
                 osaurus-evals matrix <reports-dir> [--out <p>] [--markdown <p>]
                 osaurus-evals compat <community-dir> [--out <p>] [--markdown <p>] [--validate]
+                osaurus-evals scorecard <report.json|reports-dir> [...] [--out-dir <dir>]
+                                        [--out <json>] [--markdown <md>]
 
             FLAGS:
                 --suite <dir>         Required. Directory of *.json eval cases
@@ -745,6 +751,10 @@ struct OsaurusEvalsCLI {
                                       selected search-index lanes in isolated
                                       eval storage and skip plugin-required
                                       cases when no plugin is loaded.
+                scorecard             Reads existing EvalReport JSON artifacts
+                                      and writes privacy-safe Computer Use
+                                      scorecard JSON + Markdown. Defaults to
+                                      build/evals/computer-use-scorecard/.
 
             EXAMPLES:
                 osaurus-evals run --suite Suites/CapabilitySearch --model foundation
@@ -752,6 +762,7 @@ struct OsaurusEvalsCLI {
                 osaurus-evals run --suite Suites/CapabilitySearch --threshold 0.25 --report-forensics
                 osaurus-evals run --suite Suites/CapabilitySearch --fail-on-floor
                 osaurus-evals agent-loop-lab --baseline reports/main-agentloop
+                osaurus-evals scorecard build/evals/computer-use.json build/evals/computer-use-loop.json
             """
         print(usage)
     }

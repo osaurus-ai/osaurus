@@ -242,6 +242,7 @@ struct InsightsDetailPane: View {
         case .chatUI: return "bubble.left.and.bubble.right.fill"
         case .httpAPI: return "network"
         case .plugin: return "puzzlepiece.extension.fill"
+        case .p2p: return "antenna.radiowaves.left.and.right"
         }
     }
 

@@ -161,6 +161,7 @@ struct ThemesView: View {
 
             ZStack {
                 contentView
+                    .settingsLandingAnchor("themes.appearance")
 
                 if let message = toastMessage {
                     VStack {

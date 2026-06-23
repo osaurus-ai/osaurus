@@ -54,6 +54,7 @@ struct ComputerUseSettingsView: View {
                     aboutCard
                     setupCard
                     enableCard
+                        .settingsLandingAnchor("computerUse.enable")
                     consentCard
                     screenContextCard
                     policyCard

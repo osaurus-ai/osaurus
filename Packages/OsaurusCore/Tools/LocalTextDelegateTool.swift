@@ -358,6 +358,14 @@ public final class LocalTextDelegateTool: OsaurusTool, @unchecked Sendable {
                 tool: name,
                 retryable: true
             )
+        case .emptyResponseExhausted:
+            return ToolEnvelope.failure(
+                kind: .executionError,
+                message:
+                    "Local delegate returned empty output after tool execution; the task may be incomplete.",
+                tool: name,
+                retryable: true
+            )
         }
     }
 

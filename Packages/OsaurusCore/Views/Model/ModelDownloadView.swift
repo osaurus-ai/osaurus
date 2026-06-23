@@ -110,6 +110,12 @@ struct ModelDownloadView: View {
     /// buttons; the index is clamped to the model count on every step.
     @State private var topPicksIndex = 0
 
+    /// Which edge arrows the Top Picks carousel can offer, derived from the live
+    /// scroll geometry so each arrow hides the moment there's no room to scroll
+    /// that way (e.g. the right arrow disappears at the far right).
+    @State private var topPicksCanScrollLeft = false
+    @State private var topPicksCanScrollRight = false
+
     /// Cached output of `gridLists`. We used to recompute four filter +
     /// sort passes from a body computed property, which would re-run on
     /// every `modelManager.objectWillChange` publish (one per download
@@ -249,7 +255,7 @@ struct ModelDownloadView: View {
             .environment(\.theme, themeManager.currentTheme)
         }
         .themedAlert(
-            modelManager.downloadAlert?.title ?? "Model download failed",
+            modelManager.downloadAlert?.title ?? L("Model download failed"),
             isPresented: Binding(
                 get: { modelManager.downloadAlert != nil },
                 set: { if !$0 { modelManager.downloadAlert = nil } }
@@ -258,7 +264,7 @@ struct ModelDownloadView: View {
                 "\(info.message)\n\nDetails (tap Copy to share):\n\(info.details)"
             },
             buttons: [
-                .cancel("Copy details") {
+                .cancel(L("Copy details")) {
                     if let details = modelManager.downloadAlert?.details {
                         let pb = NSPasteboard.general
                         pb.clearContents()
@@ -266,7 +272,7 @@ struct ModelDownloadView: View {
                     }
                     modelManager.downloadAlert = nil
                 },
-                .primary("OK") { modelManager.downloadAlert = nil },
+                .primary(L("OK")) { modelManager.downloadAlert = nil },
             ]
         )
     }
@@ -707,8 +713,25 @@ struct ModelDownloadView: View {
                     .padding(.horizontal, 2)
                     .padding(.bottom, 4)
                 }
+                // Derive arrow visibility from the actual scroll position so an
+                // arrow hides the instant there's no more room to scroll its way.
+                // The tolerance absorbs the 2pt content inset (a leading-anchored
+                // scroll to the first card lands at offset ~2, not 0) plus rounding.
+                .onScrollGeometryChange(for: TopPicksScrollEdges.self) { geo in
+                    let edgeTolerance: CGFloat = 4
+                    let maxOffsetX = geo.contentSize.width - geo.containerSize.width
+                    return TopPicksScrollEdges(
+                        canScrollLeft: geo.contentOffset.x > edgeTolerance,
+                        canScrollRight: geo.contentOffset.x < maxOffsetX - edgeTolerance
+                    )
+                } action: { _, edges in
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        topPicksCanScrollLeft = edges.canScrollLeft
+                        topPicksCanScrollRight = edges.canScrollRight
+                    }
+                }
                 .overlay(alignment: .leading) {
-                    if topPicksIndex > 0 {
+                    if topPicksCanScrollLeft {
                         topPicksArrow("chevron.left") {
                             scrollTopPicks(to: topPicksIndex - step, ids: ids, proxy: proxy)
                         }
@@ -717,7 +740,7 @@ struct ModelDownloadView: View {
                     }
                 }
                 .overlay(alignment: .trailing) {
-                    if topPicksIndex < models.count - 1 {
+                    if topPicksCanScrollRight {
                         topPicksArrow("chevron.right") {
                             scrollTopPicks(to: topPicksIndex + step, ids: ids, proxy: proxy)
                         }
@@ -749,6 +772,14 @@ struct ModelDownloadView: View {
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
+    }
+
+    /// Which directions the Top Picks carousel can still scroll, recomputed from
+    /// the live scroll geometry. Equatable so `onScrollGeometryChange` only fires
+    /// the action when an edge actually flips.
+    private struct TopPicksScrollEdges: Equatable {
+        var canScrollLeft = false
+        var canScrollRight = false
     }
 
     private func scrollTopPicks(to index: Int, ids: [String], proxy: ScrollViewProxy) {

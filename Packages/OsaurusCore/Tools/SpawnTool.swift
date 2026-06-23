@@ -224,6 +224,14 @@ public final class SpawnTool: OsaurusTool, @unchecked Sendable {
                 tool: name,
                 retryable: true
             )
+        case .emptyResponseExhausted:
+            return ToolEnvelope.failure(
+                kind: .executionError,
+                message:
+                    "Subagent '\(agentName)' returned empty output after tool execution; the task may be incomplete.",
+                tool: name,
+                retryable: true
+            )
         }
     }
 

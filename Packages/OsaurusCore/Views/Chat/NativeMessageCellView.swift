@@ -40,10 +40,10 @@ struct CellRenderingContext {
     var onSpeak: ((UUID) -> Void)? = nil
     /// attachment or shared-artifact id string → full screen preview from ChatView
     var onUserImagePreview: ((String) -> Void)? = nil
-    /// Pasted-content document attachment → read-only preview sheet from ChatView.
-    /// Lets users re-read the long text they pasted (shown as a chip) after the
-    /// message is sent, mirroring the composer's pasted-content chip preview.
-    var onPastedContentPreview: ((Attachment) -> Void)? = nil
+    /// Document attachment (pasted content or an attached file like a PDF/DOCX)
+    /// → read-only preview sheet from ChatView. Lets users re-read the extracted
+    /// text after the message is sent, mirroring the composer's chip preview.
+    var onDocumentPreview: ((Attachment) -> Void)? = nil
     /// Window-local accumulator of `original -> placeholder` pairs
     /// from the Privacy Filter. Used by `NativeMarkdownView` to
     /// inline-highlight matching spans inside user + assistant
@@ -487,45 +487,55 @@ final class NativeAssistantActionsView: NSView {
     private let copyButton: HeaderCircleActionControl
     private let regenerateButton: HeaderCircleActionControl
     let speakButton: HeaderCircleActionControl
-    /// Opens the Insights tab focused on this turn's request/response log.
-    let insightsButton: HeaderCircleActionControl
+    /// Overflow "…" menu holding the response timestamp and the Inspect action.
+    let overflowButton: HeaderCircleActionControl
 
     private var turnId: UUID = UUID()
+    private var responseTimestamp: Date = Date()
     private var onCopy: ((UUID) -> Void)?
     private var onRegenerate: ((UUID) -> Void)?
     var onSpeak: ((UUID) -> Void)?
+
+    /// Formats the response timestamp for the overflow menu header, e.g.
+    /// "Jun 20, 10:17 PM". Localized template so order/separators follow locale.
+    private static let timestampFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.setLocalizedDateFormatFromTemplate("MMMd jmm")
+        return formatter
+    }()
 
     nonisolated(unsafe) private var ttsObservation: NSObjectProtocol?
     nonisolated(unsafe) private var ttsConfigObservation: NSObjectProtocol?
     private var currentTheme: (any ThemeProtocol)?
     private var speakWidthConstraint: NSLayoutConstraint?
     private var speakLeadingConstraint: NSLayoutConstraint?
-    private var insightsWidthConstraint: NSLayoutConstraint?
-    private var insightsLeadingConstraint: NSLayoutConstraint?
-    /// Image-generation turns render as just the produced image, so Insights
-    /// (no request log) and Read-aloud (nothing to speak) collapse away.
+    private var overflowWidthConstraint: NSLayoutConstraint?
+    private var overflowLeadingConstraint: NSLayoutConstraint?
+    /// Image-generation turns render as just the produced image, so Read-aloud
+    /// (nothing to speak) and the overflow "…" Inspect (no request log) collapse
+    /// away — only Copy and Regenerate stay.
     private var hideSecondaryActions = false
 
     override init(frame: NSRect) {
         let copyControl = HeaderCircleActionControl(action: {})
         let regenControl = HeaderCircleActionControl(action: {})
         let speakControl = HeaderCircleActionControl(action: {})
-        let insightsControl = HeaderCircleActionControl(action: {})
+        let overflowControl = HeaderCircleActionControl(action: {})
         self.copyButton = copyControl
         self.regenerateButton = regenControl
         self.speakButton = speakControl
-        self.insightsButton = insightsControl
+        self.overflowButton = overflowControl
         super.init(frame: frame)
         translatesAutoresizingMaskIntoConstraints = false
 
         copyButton.translatesAutoresizingMaskIntoConstraints = false
         regenerateButton.translatesAutoresizingMaskIntoConstraints = false
         speakButton.translatesAutoresizingMaskIntoConstraints = false
-        insightsButton.translatesAutoresizingMaskIntoConstraints = false
+        overflowButton.translatesAutoresizingMaskIntoConstraints = false
         addSubview(copyButton)
         addSubview(regenerateButton)
         addSubview(speakButton)
-        addSubview(insightsButton)
+        addSubview(overflowButton)
 
         copyButton.setAction { [weak self] in
             guard let self else { return }
@@ -539,31 +549,34 @@ final class NativeAssistantActionsView: NSView {
             guard let self else { return }
             self.onSpeak?(self.turnId)
         }
-        insightsButton.setAction { [weak self] in
+        overflowButton.setAction { [weak self] in
             guard let self else { return }
-            self.openInsights()
+            self.presentOverflowMenu()
         }
 
         let size: CGFloat = 28
-        // Speaker is last; its leading hangs off Insights and collapses to 0
-        // (along with its width) when TTS is disabled so the row tightens up.
+        // Speaker sits between Regenerate and the overflow "…" button. Its
+        // leading hangs off Regenerate and collapses to 0 (along with its width)
+        // when TTS is disabled, so the overflow button slides left to butt
+        // against Regenerate and stays the last button in the row.
         let speakLeading = speakButton.leadingAnchor.constraint(
-            equalTo: insightsButton.trailingAnchor,
+            equalTo: regenerateButton.trailingAnchor,
             constant: 4
         )
         let speakWidth = speakButton.widthAnchor.constraint(equalToConstant: size)
         self.speakLeadingConstraint = speakLeading
         self.speakWidthConstraint = speakWidth
 
-        // Insights collapses (leading + width → 0) for image-only turns so the
-        // row tightens to just Copy / Regenerate.
-        let insightsLeading = insightsButton.leadingAnchor.constraint(
-            equalTo: regenerateButton.trailingAnchor,
+        // Overflow "…" normally follows Speaker and carries the trailing pin, but
+        // collapses (width/leading → 0) for image-only turns the same way Speaker
+        // does for TTS-off, so the row tightens to just Copy / Regenerate.
+        let overflowLeading = overflowButton.leadingAnchor.constraint(
+            equalTo: speakButton.trailingAnchor,
             constant: 4
         )
-        let insightsWidth = insightsButton.widthAnchor.constraint(equalToConstant: size)
-        self.insightsLeadingConstraint = insightsLeading
-        self.insightsWidthConstraint = insightsWidth
+        let overflowWidth = overflowButton.widthAnchor.constraint(equalToConstant: size)
+        self.overflowLeadingConstraint = overflowLeading
+        self.overflowWidthConstraint = overflowWidth
 
         NSLayoutConstraint.activate([
             copyButton.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -576,19 +589,20 @@ final class NativeAssistantActionsView: NSView {
             regenerateButton.widthAnchor.constraint(equalToConstant: size),
             regenerateButton.heightAnchor.constraint(equalToConstant: size),
 
-            insightsLeading,
-            insightsButton.centerYAnchor.constraint(equalTo: centerYAnchor),
-            insightsWidth,
-            insightsButton.heightAnchor.constraint(equalToConstant: size),
-
-            // Speaker follows Insights and carries the trailing pin. When it's
-            // hidden its width/leading collapse to 0, so Insights becomes the
-            // effective last button.
+            // Speaker follows Regenerate. When hidden its width/leading collapse
+            // to 0 so the overflow button becomes the effective third button.
             speakLeading,
             speakButton.centerYAnchor.constraint(equalTo: centerYAnchor),
             speakWidth,
             speakButton.heightAnchor.constraint(equalToConstant: size),
-            speakButton.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor),
+
+            // Overflow "…" is normally last and carries the trailing pin; it
+            // collapses for image-only turns (see overflowLeading/overflowWidth).
+            overflowLeading,
+            overflowButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+            overflowWidth,
+            overflowButton.heightAnchor.constraint(equalToConstant: size),
+            overflowButton.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor),
         ])
 
         ttsObservation = NotificationCenter.default.addObserver(
@@ -625,6 +639,7 @@ final class NativeAssistantActionsView: NSView {
 
     func configure(
         turnId: UUID,
+        timestamp: Date,
         theme: any ThemeProtocol,
         hideSecondaryActions: Bool,
         onCopy: ((UUID) -> Void)?,
@@ -632,6 +647,7 @@ final class NativeAssistantActionsView: NSView {
         onSpeak: ((UUID) -> Void)?
     ) {
         self.turnId = turnId
+        self.responseTimestamp = timestamp
         self.hideSecondaryActions = hideSecondaryActions
         self.onCopy = onCopy
         self.onRegenerate = onRegenerate
@@ -654,23 +670,59 @@ final class NativeAssistantActionsView: NSView {
             theme: theme,
             iconTint: nil
         )
-        insightsButton.setSymbol(
-            SymbolImageCache.image("waveform.path.ecg.magnifyingglass", accessibilityDescription: L("Insights"))?
+        overflowButton.setSymbol(
+            SymbolImageCache.image("ellipsis", accessibilityDescription: L("More"))?
                 .withSymbolConfiguration(cfg),
-            toolTip: L("View in Insights"),
+            toolTip: L("More"),
             theme: theme,
             iconTint: nil
         )
-        applyInsightsVisibility()
         applyTTSVisibility()
+        applyOverflowVisibility()
         refreshSpeakIcon()
     }
 
-    private func applyInsightsVisibility() {
-        let visible = !hideSecondaryActions
-        insightsButton.isHidden = !visible
-        insightsWidthConstraint?.constant = visible ? 28 : 0
-        insightsLeadingConstraint?.constant = visible ? 4 : 0
+    /// Drops a ChatGPT-style overflow menu under the "…" button: a disabled
+    /// header showing when the response arrived, then the Inspect action.
+    private func presentOverflowMenu() {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+
+        let header = NSMenuItem(
+            title: Self.timestampFormatter.string(from: responseTimestamp),
+            action: nil,
+            keyEquivalent: ""
+        )
+        header.isEnabled = false
+        menu.addItem(header)
+        menu.addItem(.separator())
+
+        let inspect = NSMenuItem(
+            title: L("Inspect response"),
+            action: #selector(inspectFromMenu),
+            keyEquivalent: ""
+        )
+        inspect.target = self
+        if let theme = currentTheme {
+            let pointSize = CGFloat(theme.captionSize)
+            let cfg = NSImage.SymbolConfiguration(pointSize: pointSize, weight: .regular)
+            inspect.image = SymbolImageCache.image(
+                "waveform.path.ecg.magnifyingglass",
+                accessibilityDescription: nil
+            )?.withSymbolConfiguration(cfg)
+        }
+        menu.addItem(inspect)
+
+        // Anchor the menu's top-left just under the button's bottom-left so it
+        // opens downward like the ChatGPT overflow menu. The button is a
+        // non-flipped NSView, so its bottom edge is y == 0 and the 4pt gap sits
+        // below it at a negative y.
+        let origin = NSPoint(x: 0, y: -4)
+        menu.popUp(positioning: nil, at: origin, in: overflowButton)
+    }
+
+    @objc private func inspectFromMenu() {
+        openInsights()
     }
 
     /// Opens the Settings → Insights tab, focused on the request/response log
@@ -740,6 +792,15 @@ final class NativeAssistantActionsView: NSView {
         speakButton.isHidden = !visible
         speakWidthConstraint?.constant = visible ? 28 : 0
         speakLeadingConstraint?.constant = visible ? 4 : 0
+    }
+
+    /// Image-only turns have no request log to inspect, so the overflow "…" button
+    /// collapses (width/leading → 0) the same way Speaker does for TTS-off.
+    private func applyOverflowVisibility() {
+        let visible = !hideSecondaryActions
+        overflowButton.isHidden = !visible
+        overflowWidthConstraint?.constant = visible ? 28 : 0
+        overflowLeadingConstraint?.constant = visible ? 4 : 0
     }
 }
 
@@ -1575,10 +1636,11 @@ final class NativeMessageCellView: NSTableCellView {
                 sameKind: sameKind
             )
 
-        case let .assistantActions(turnId, imageOnly):
+        case let .assistantActions(turnId, imageOnly, timestamp):
             configureAsAssistantActions(
                 turnId: turnId,
                 imageOnly: imageOnly,
+                timestamp: timestamp,
                 context: context,
                 sameKind: sameKind
             )
@@ -2164,10 +2226,10 @@ final class NativeMessageCellView: NSTableCellView {
 
             for (index, attachment) in documents.enumerated() {
                 guard let chip = stack.arrangedSubviews[index] as? UserDocumentChipView else { continue }
-                // Pasted-content chips are tappable: re-open the read-only
-                // preview sheet so the user can see what they pasted. Other
-                // document chips stay non-interactive.
-                chip.onTap = attachment.isPastedContent ? context.onPastedContentPreview : nil
+                // Every document chip is tappable: re-open the read-only preview
+                // sheet so the user can re-read the file's extracted text (pasted
+                // content or an attached PDF/DOCX) after the message is sent.
+                chip.onTap = context.onDocumentPreview
                 chip.configure(attachment: attachment, theme: theme)
             }
         }
@@ -2277,6 +2339,7 @@ final class NativeMessageCellView: NSTableCellView {
     private func configureAsAssistantActions(
         turnId: UUID,
         imageOnly: Bool,
+        timestamp: Date,
         context: CellRenderingContext,
         sameKind: Bool
     ) {
@@ -2296,6 +2359,7 @@ final class NativeMessageCellView: NSTableCellView {
         }
         nativeAssistantActionsView?.configure(
             turnId: turnId,
+            timestamp: timestamp,
             theme: context.theme,
             hideSecondaryActions: imageOnly,
             onCopy: context.onCopy,

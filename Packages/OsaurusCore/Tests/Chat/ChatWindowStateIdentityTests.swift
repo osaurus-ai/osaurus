@@ -64,6 +64,7 @@ struct ChatWindowStateIdentityTests {
                 agentDescription: "A friendly remote helper",
                 address: "remote-addr",
                 host: "127.0.0.1",
+                resolvedIP: nil,
                 port: 1234,
                 supportsSecureChannel: true,
                 serviceName: "coco._osaurus._tcp."
