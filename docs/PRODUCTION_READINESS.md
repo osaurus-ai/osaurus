@@ -43,11 +43,11 @@ teardown); the REAL crash was confirmed via `pgrep` + the macOS crash report
   **proven working** in isolation across many models.
 - **Repeated** image ops (many runs back-to-back): **FIXED + PROVEN** — the failures were
   the #89 GPU crash (image→model-load drain), now closed; 6/6 handoffs survive.
-- **Chained gen→edit in ONE turn**: **FIXED + PROVEN** — `image_edit` now chains after
-  `image_generate` and produces a real edited PNG on gemma-4-12b. Root cause was NOT a model
-  limit and NOT the cache window (both refuted with instrumentation + Codex); it was three
-  layered osaurus tool-prompt re-injection bugs (steer "just confirm" → no continuation
-  nudge → nudge sent as low-salience tool-role). See `CACHE_WINDOW_INVESTIGATION.md`.
+- **Chained gen→edit in ONE turn**: **PARTIAL / non-deterministic** (superseded — see
+  "CONVERGED HONEST STATE" at the bottom). The tool-prompt re-injection fixes made the edit
+  CHAIN correctly when the flow doesn't hang; but the image→model-reload→generation handoff
+  has a pre-existing non-deterministic STALL (sometimes 1 gen + hang, no edit). Reliable
+  edit = direct API or a separate turn.
 - Delegation ships **default-OFF** + per-agent opt-in → small blast radius.
 
 ## Capability matrix
@@ -62,7 +62,8 @@ teardown); the REAL crash was confirmed via `pgrep` + the macOS crash report
 | Delegation default-off + per-agent toggle | 🟢 Ready | opt-in |
 | **Repeated image load (back-to-back)** | 🟢 Ready (post-fix) | 6/6 handoffs, 0 crashes after #89 drain fix |
 | image_edit (direct API or model-driven) | 🟢 Ready | direct /images/edits → real edited PNG; handoff crash-free |
-| **Chained gen→edit (ONE turn, model-driven)** | 🟢 Ready (post-fix) | image_edit now chains after image_generate → real edited PNG (gemma-4-12b). 3 layered tool-prompt re-injection fixes (#88). Cosmetic: sometimes no closing text |
+| **Chained gen→edit (ONE turn, model-driven)** | 🟡 Non-deterministic | edit chains when the flow doesn't hang (3 re-injection fixes #88), but a pre-existing image→reload→generation STALL fires intermittently (1 gen, no edit, ~450s). Reliable = direct API / separate turn. See CONVERGED HONEST STATE |
+| **Sustained back-to-back chained churn** | 🔴 Crashes | MLX `CommandEncoder` race under pathological rapid churn (beyond real usage); osaurus drains didn't fix, comprehensive attempt deadlocked (#92 reverted) |
 | Multi-turn DB-persisted image path | ⚪ Unverified | not tested across separate UI turns (direct image_edit with explicit path works) |
 | Small-qwen image refusal | 🔴 Won't fix | model-level (qwen3-8b/qwen2.5-3b) |
 | R4 channel-marker leak | ⚪ Non-issue | did NOT reproduce (0/3 stress runs) |
