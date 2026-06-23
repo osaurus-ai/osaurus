@@ -707,12 +707,14 @@ struct ModelDownloadView: View {
                 }
                 // Derive arrow visibility from the actual scroll position so an
                 // arrow hides the instant there's no more room to scroll its way.
-                // A 1pt tolerance absorbs sub-pixel rounding at the edges.
+                // The tolerance absorbs the 2pt content inset (a leading-anchored
+                // scroll to the first card lands at offset ~2, not 0) plus rounding.
                 .onScrollGeometryChange(for: TopPicksScrollEdges.self) { geo in
+                    let edgeTolerance: CGFloat = 4
                     let maxOffsetX = geo.contentSize.width - geo.containerSize.width
                     return TopPicksScrollEdges(
-                        canScrollLeft: geo.contentOffset.x > 1,
-                        canScrollRight: geo.contentOffset.x < maxOffsetX - 1
+                        canScrollLeft: geo.contentOffset.x > edgeTolerance,
+                        canScrollRight: geo.contentOffset.x < maxOffsetX - edgeTolerance
                     )
                 } action: { _, edges in
                     withAnimation(.easeOut(duration: 0.2)) {
