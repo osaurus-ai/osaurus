@@ -4371,7 +4371,11 @@ private struct ContextBreakdownPopover: View {
                 fillsTrack: true
             )
             HStack(spacing: 1) {
-                ForEach(Array(zip(segments, widths)), id: \.0.id) { segment, width in
+                // Positional identity: segment ids mirror prompt-section ids,
+                // which aren't guaranteed unique across the manifest, so keying
+                // by id would risk a duplicate-ID ForEach trap.
+                ForEach(Array(zip(segments, widths).enumerated()), id: \.offset) { _, pair in
+                    let (segment, width) = pair
                     RoundedRectangle(cornerRadius: 2)
                         .fill(color(for: segment.tint).opacity(0.85))
                         .frame(width: width)
@@ -4407,7 +4411,12 @@ private struct ContextBreakdownPopover: View {
 
                     if expanded {
                         VStack(alignment: .leading, spacing: 4) {
-                            ForEach(group.entries) { entry in
+                            // Key by position, not `entry.id`: a prompt section's
+                            // id isn't guaranteed unique across the manifest, and
+                            // duplicate ForEach IDs trap when this list animates
+                            // in on expand. Positional identity is what we want
+                            // for a static, display-only list anyway.
+                            ForEach(Array(group.entries.enumerated()), id: \.offset) { _, entry in
                                 entryRow(entry).padding(.leading, 11)
                             }
                         }
@@ -4422,7 +4431,7 @@ private struct ContextBreakdownPopover: View {
 
     private func entryGroup(_ entries: [ContextBreakdown.Entry], highlightOutput: Bool = false) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            ForEach(entries) { entry in
+            ForEach(Array(entries.enumerated()), id: \.offset) { _, entry in
                 entryRow(entry, highlighted: highlightOutput && entry.id == "output")
             }
         }
