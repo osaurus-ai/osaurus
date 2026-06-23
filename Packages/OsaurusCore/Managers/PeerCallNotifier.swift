@@ -34,7 +34,7 @@ final class PeerCallNotifier {
         ToastManager.shared.info(
             L("Agent in use"),
             message: String(
-                format: L("A connected peer is running \u{201C}%@\u{201D}."),
+                format: L("A connected peer is running “%@”."),
                 agentName
             )
         )

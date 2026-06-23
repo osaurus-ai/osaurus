@@ -7288,6 +7288,12 @@
             "value" : "Ein verbundener Peer führt „%@“ aus."
           }
         },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "연결된 피어가 “%@”을(를) 실행하고 있습니다."
+          }
+        },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "needs_review",
@@ -7303,6 +7309,12 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Agent wird verwendet"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "에이전트 사용 중"
           }
         },
         "zh-Hans" : {
@@ -59668,6 +59680,12 @@
       "comment" : "Insights source category for inbound peer-to-peer traffic over the Osaurus Secure Channel (remote chat completions and remote agent runs).",
       "localizations" : {
         "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "P2P"
+          }
+        },
+        "ko" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "P2P"
