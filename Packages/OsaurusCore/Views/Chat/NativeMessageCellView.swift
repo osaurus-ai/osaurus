@@ -549,10 +549,12 @@ final class NativeAssistantActionsView: NSView {
         }
 
         let size: CGFloat = 28
-        // Speaker is last; its leading hangs off Insights and collapses to 0
-        // (along with its width) when TTS is disabled so the row tightens up.
+        // Speaker sits between Regenerate and the overflow "…" button. Its
+        // leading hangs off Regenerate and collapses to 0 (along with its width)
+        // when TTS is disabled, so the overflow button slides left to butt
+        // against Regenerate and stays the last button in the row.
         let speakLeading = speakButton.leadingAnchor.constraint(
-            equalTo: overflowButton.trailingAnchor,
+            equalTo: regenerateButton.trailingAnchor,
             constant: 4
         )
         let speakWidth = speakButton.widthAnchor.constraint(equalToConstant: size)
@@ -570,19 +572,19 @@ final class NativeAssistantActionsView: NSView {
             regenerateButton.widthAnchor.constraint(equalToConstant: size),
             regenerateButton.heightAnchor.constraint(equalToConstant: size),
 
-            overflowButton.leadingAnchor.constraint(equalTo: regenerateButton.trailingAnchor, constant: 4),
-            overflowButton.centerYAnchor.constraint(equalTo: centerYAnchor),
-            overflowButton.widthAnchor.constraint(equalToConstant: size),
-            overflowButton.heightAnchor.constraint(equalToConstant: size),
-
-            // Speaker follows Insights and carries the trailing pin. When it's
-            // hidden its width/leading collapse to 0, so Insights becomes the
-            // effective last button.
+            // Speaker follows Regenerate. When hidden its width/leading collapse
+            // to 0 so the overflow button becomes the effective third button.
             speakLeading,
             speakButton.centerYAnchor.constraint(equalTo: centerYAnchor),
             speakWidth,
             speakButton.heightAnchor.constraint(equalToConstant: size),
-            speakButton.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor),
+
+            // Overflow "…" is always last and carries the trailing pin.
+            overflowButton.leadingAnchor.constraint(equalTo: speakButton.trailingAnchor, constant: 4),
+            overflowButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+            overflowButton.widthAnchor.constraint(equalToConstant: size),
+            overflowButton.heightAnchor.constraint(equalToConstant: size),
+            overflowButton.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor),
         ])
 
         ttsObservation = NotificationCenter.default.addObserver(
