@@ -49,50 +49,12 @@ struct SettingsSection<Content: View>: View {
 
 // MARK: - Search Highlight
 
-/// Ambient search query for the settings panel. Field primitives read this so
-/// they can self-highlight when their own label matches — no call site has to
-/// thread the query through. Empty string (the default) disables highlighting,
-/// which keeps these primitives inert everywhere outside settings search.
-private struct SettingsSearchQueryKey: EnvironmentKey {
-    static let defaultValue: String = ""
-}
-
-extension EnvironmentValues {
-    var settingsSearchQuery: String {
-        get { self[SettingsSearchQueryKey.self] }
-        set { self[SettingsSearchQueryKey.self] = newValue }
-    }
-}
-
 extension View {
-    /// Wraps a control in a soft accent glow while it's a live search match —
-    /// no border, just a halo that hugs the control's shape. A no-op when
-    /// `active` is false.
+    /// Wraps a control in a soft accent glow while it's the active search-result
+    /// landing target — no border, just a halo that hugs the control's shape. A
+    /// no-op when `active` is false. Driven by `settingsLandingAnchor`.
     func settingsSearchHighlight(_ active: Bool) -> some View {
         modifier(SettingsSearchHighlightModifier(active: active))
-    }
-
-    /// Self-highlights a settings control when the ambient search query matches
-    /// any of `terms`, reading the query from the environment.
-    func settingsSearchRowHighlight(matching terms: [String]) -> some View {
-        modifier(SettingsSearchRowHighlightModifier(terms: terms))
-    }
-}
-
-private struct SettingsSearchRowHighlightModifier: ViewModifier {
-    let terms: [String]
-    @Environment(\.settingsSearchQuery) private var query
-
-    private var isMatch: Bool {
-        guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
-        // Token/substring only (no fuzzy subsequence): these labels are prose,
-        // where subsequence matching produces non-obvious hits that make the
-        // glowing control disagree with what the user typed.
-        return terms.contains { SearchService.matches(query: query, in: $0, allowFuzzy: false) }
-    }
-
-    func body(content: Content) -> some View {
-        content.settingsSearchHighlight(isMatch)
     }
 }
 
@@ -146,10 +108,9 @@ struct SettingsField<Content: View>: View {
 
     let label: String
     var hint: String? = nil
-    /// Extra terms this field should match during settings search. Defaults to
-    /// the visible label; set it when the searchable keyword differs (e.g. a
-    /// "Randomness" field that should also light up for "Temperature").
-    var searchTerms: [String]? = nil
+    /// Settings-search landing anchor for the control. When a search result
+    /// targets this id, the control scrolls into view and glows.
+    var anchorId: String? = nil
     @ViewBuilder let content: () -> Content
 
     var body: some View {
@@ -160,7 +121,7 @@ struct SettingsField<Content: View>: View {
 
             // Glow the control itself, not the label/hint around it.
             content()
-                .settingsSearchRowHighlight(matching: searchTerms ?? [label])
+                .settingsLandingAnchor(anchorId)
 
             if let hint = hint {
                 Text(LocalizedStringKey(hint), bundle: .module)
@@ -209,6 +170,7 @@ struct StyledSettingsTextField: View {
     @Binding var text: String
     let placeholder: String
     let help: String
+    var anchorId: String? = nil
 
     @State private var isFocused = false
 
@@ -256,7 +218,7 @@ struct StyledSettingsTextField: View {
                             )
                     )
             )
-            .settingsSearchRowHighlight(matching: [label])
+            .settingsLandingAnchor(anchorId)
 
             if !help.isEmpty {
                 Text(LocalizedStringKey(help), bundle: .module)
@@ -280,6 +242,7 @@ struct SettingsSliderField: View {
     let step: Float
     let defaultValue: Float
     let formatString: String
+    var anchorId: String? = nil
 
     @State private var sliderValue: Float = 0
     @State private var isInitialized = false
@@ -348,7 +311,7 @@ struct SettingsSliderField: View {
                             .stroke(themeManager.currentTheme.inputBorder, lineWidth: 1)
                     )
             )
-            .settingsSearchRowHighlight(matching: [label])
+            .settingsLandingAnchor(anchorId)
 
             if !help.isEmpty {
                 Text(LocalizedStringKey(help), bundle: .module)
@@ -384,6 +347,7 @@ struct SettingsStepperField: View {
     let range: ClosedRange<Int>
     let step: Int
     let defaultValue: Int
+    var anchorId: String? = nil
 
     @State private var isFocused = false
 
@@ -474,7 +438,7 @@ struct SettingsStepperField: View {
                             )
                     )
             )
-            .settingsSearchRowHighlight(matching: [label])
+            .settingsLandingAnchor(anchorId)
 
             if !help.isEmpty {
                 Text(LocalizedStringKey(help), bundle: .module)
@@ -504,8 +468,8 @@ struct SettingsToggle: View {
     let title: String
     let description: String
     var badge: String? = nil
-    /// Extra search terms beyond the title; defaults to the title alone.
-    var searchTerms: [String]? = nil
+    /// Settings-search landing anchor for this toggle.
+    var anchorId: String? = nil
     @Binding var isOn: Bool
 
     var body: some View {
@@ -541,7 +505,7 @@ struct SettingsToggle: View {
                         .stroke(themeManager.currentTheme.inputBorder, lineWidth: 1)
                 )
         )
-        .settingsSearchRowHighlight(matching: searchTerms ?? [title])
+        .settingsLandingAnchor(anchorId)
     }
 }
 

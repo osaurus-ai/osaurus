@@ -285,10 +285,19 @@ private extension ManagementView {
         }
     }
 
-    /// Navigate to the tab owning a chosen search result. Clearing the query
-    /// first dismisses the results pane so the destination tab renders normally.
+    /// Navigate to the tab owning a chosen search result, then scroll to and
+    /// glow the matching control. Clearing the query first dismisses the results
+    /// pane so the destination tab renders normally.
     func handleResultSelected(_ entry: SettingsSearchEntry) {
         searchText = ""
+        // Route inner navigation before the tab appears (e.g. Voice's sub-tabs),
+        // so the destination opens directly on the right section.
+        if let subTab = entry.subTab {
+            stateManager.voiceSubTabRequest = subTab
+        }
+        // Arm the landing glow for the specific control; the destination tab
+        // scrolls to its anchor and the control breathes once on arrival.
+        SettingsHighlightCoordinator.shared.request(entry.id)
         withAnimation(.easeOut(duration: 0.2)) {
             stateManager.selectedTab = entry.tab
         }

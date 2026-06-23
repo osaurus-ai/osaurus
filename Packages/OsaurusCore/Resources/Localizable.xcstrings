@@ -1040,7 +1040,7 @@
         }
       }
     },
-    "%@ spent this session. Click to add credits." : {
+    "%@ router balance. Click to add credits." : {
 
     },
     "%@ still can't be opened. Try Reset." : {
@@ -2093,6 +2093,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "已选择 %lld 个"
+          }
+        }
+      }
+    },
+    "%lld settings match \"%@\"" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$lld settings match \"%2$@\""
           }
         }
       }
@@ -28994,6 +29004,9 @@
         }
       }
     },
+    "Inspect response" : {
+
+    },
     "Install" : {
       "localizations" : {
         "de" : {
@@ -34863,6 +34876,9 @@
         }
       }
     },
+    "More" : {
+
+    },
     "Morning Briefing" : {
       "localizations" : {
         "de" : {
@@ -37551,6 +37567,9 @@
           }
         }
       }
+    },
+    "No settings match \"%@\"" : {
+
     },
     "No skills here" : {
       "localizations" : {
@@ -51684,8 +51703,12 @@
         }
       }
     },
+    "Router balance" : {
+
+    },
     "Router Balance" : {
       "comment" : "Header of the chat composer router-balance popover.",
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -58297,6 +58320,7 @@
     },
     "Spent this session" : {
       "comment" : "Row label in the chat composer router-balance popover; the value is the amount spent this session.",
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -62715,6 +62739,9 @@
         }
       }
     },
+    "This Session" : {
+
+    },
     "This text is inserted into the chat input when you select the command. You continue typing after it." : {
       "localizations" : {
         "de" : {
@@ -64300,6 +64327,12 @@
           }
         }
       }
+    },
+    "Try a different term, like “hotkey” or “privacy”." : {
+
+    },
+    "Try a different term, like “hotkey” or “transcription”." : {
+
     },
     "Try adjusting your search terms" : {
       "localizations" : {

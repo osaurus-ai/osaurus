@@ -85,8 +85,25 @@ struct ConfigurationView: View {
     // Search (passed from sidebar)
     @Binding var searchText: String
 
+    /// Drives scroll-to + glow when a settings-search result lands on this tab.
+    @ObservedObject private var highlightCoordinator = SettingsHighlightCoordinator.shared
+
     init(searchText: Binding<String> = .constant("")) {
         self._searchText = searchText
+    }
+
+    /// Scrolls a freshly-landed search target into view. The control itself
+    /// glows via its `settingsLandingAnchor`; this only handles positioning.
+    /// `id` must be one of this tab's anchors (a no-op otherwise, including
+    /// anchors that belong to other tabs).
+    private func scrollToLandingTarget(_ id: String?, proxy: ScrollViewProxy) {
+        guard let id, id.hasPrefix("settings.") else { return }
+        // Defer a beat so the tab's layout settles before scrolling.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            withAnimation(.easeInOut(duration: 0.3)) {
+                proxy.scrollTo(id, anchor: .center)
+            }
+        }
     }
 
     private var isSearching: Bool {
@@ -206,6 +223,7 @@ struct ConfigurationView: View {
                     .animation(.spring(response: 0.4, dampingFraction: 0.8), value: hasAppeared)
 
                 // Scrollable content area
+                ScrollViewReader { proxy in
                 ScrollView {
                     VStack(alignment: .leading, spacing: 24) {
                         // MARK: - General Section
@@ -217,7 +235,7 @@ struct ConfigurationView: View {
                                         .foregroundColor(theme.secondaryText)
 
                                     // Global Hotkey
-                                    SettingsField(label: "Global Hotkey") {
+                                    SettingsField(label: "Global Hotkey", anchorId: "settings.general.hotkey") {
                                         HotkeyRecorder(value: $tempChatHotkey)
                                     }
 
@@ -225,6 +243,7 @@ struct ConfigurationView: View {
                                     SettingsToggle(
                                         title: L("Start at Login"),
                                         description: "Launch Osaurus when you sign in",
+                                        anchorId: "settings.general.login",
                                         isOn: $tempStartAtLogin
                                     )
 
@@ -238,6 +257,7 @@ struct ConfigurationView: View {
                                         title: L("Beta Updates"),
                                         description:
                                             "Receive pre-release updates with new features before they're generally available",
+                                        anchorId: "settings.general.updates",
                                         isOn: $updater.isBetaChannel
                                     )
 
@@ -356,6 +376,7 @@ struct ConfigurationView: View {
                                         title: L("Share Anonymous Usage Data"),
                                         description:
                                             "Send anonymous, aggregated usage analytics to help improve Osaurus. Never includes your chats, prompts, files, or keys. Turn off any time.",
+                                        anchorId: "settings.privacy.usage",
                                         isOn: $tempTelemetryEnabled
                                     )
                                     .onChange(of: tempTelemetryEnabled) { _, newValue in
@@ -366,6 +387,7 @@ struct ConfigurationView: View {
                                         title: L("Send Crash Reports"),
                                         description:
                                             "Send anonymous crash and freeze reports so we can fix what breaks. Never includes your chats, prompts, files, or keys. Turn off any time.",
+                                        anchorId: "settings.privacy.crash",
                                         isOn: $tempCrashReportingEnabled
                                     )
                                     .onChange(of: tempCrashReportingEnabled) { _, newValue in
@@ -401,7 +423,8 @@ struct ConfigurationView: View {
                                                 range: 0 ... 2,
                                                 step: 0.1,
                                                 defaultValue: 0.7,
-                                                formatString: "%.1f"
+                                                formatString: "%.1f",
+                                                anchorId: "settings.chat.temperature"
                                             )
                                             SettingsStepperField(
                                                 label: "Max Tokens",
@@ -409,7 +432,8 @@ struct ConfigurationView: View {
                                                 text: $tempChatMaxTokens,
                                                 range: 1 ... 65536,
                                                 step: 1024,
-                                                defaultValue: 16384
+                                                defaultValue: 16384,
+                                                anchorId: "settings.chat.maxTokens"
                                             )
                                             SettingsStepperField(
                                                 label: "Context Length",
@@ -417,7 +441,8 @@ struct ConfigurationView: View {
                                                 text: $tempChatContextLength,
                                                 range: 2048 ... 256000,
                                                 step: 1024,
-                                                defaultValue: 128000
+                                                defaultValue: 128000,
+                                                anchorId: "settings.chat.contextLength"
                                             )
                                             SettingsSliderField(
                                                 label: "Top P Override",
@@ -426,7 +451,8 @@ struct ConfigurationView: View {
                                                 range: 0 ... 1,
                                                 step: 0.05,
                                                 defaultValue: 1.0,
-                                                formatString: "%.2f"
+                                                formatString: "%.2f",
+                                                anchorId: "settings.chat.topP"
                                             )
                                             SettingsStepperField(
                                                 label: "Max Tool Attempts",
@@ -434,7 +460,8 @@ struct ConfigurationView: View {
                                                 text: $tempChatMaxToolAttempts,
                                                 range: 1 ... 50,
                                                 step: 1,
-                                                defaultValue: 15
+                                                defaultValue: 15,
+                                                anchorId: "settings.chat.toolAttempts"
                                             )
                                         }
                                     }
@@ -655,11 +682,17 @@ struct ConfigurationView: View {
                     .padding(.horizontal, 24)
                     .padding(.vertical, 24)
                     .frame(maxWidth: .infinity)
-                    // Fields self-highlight off the active query rather than the
-                    // whole section card glowing.
-                    .environment(\.settingsSearchQuery, isSearching ? searchText : "")
                 }
                 .opacity(hasAppeared ? 1 : 0)
+                // When a settings-search result lands here, scroll its control
+                // into view (the control glows itself via `settingsLandingAnchor`).
+                .onChange(of: highlightCoordinator.pending) { _, id in
+                    scrollToLandingTarget(id, proxy: proxy)
+                }
+                .onAppear {
+                    scrollToLandingTarget(highlightCoordinator.pending, proxy: proxy)
+                }
+                }
             }
 
             // Success toast overlay

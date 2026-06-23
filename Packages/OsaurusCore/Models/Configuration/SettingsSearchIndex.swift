@@ -29,19 +29,24 @@ public struct SettingsSearchEntry: Identifiable, Sendable, Hashable {
     public let title: String
     /// Extra match terms (synonyms, related words) beyond title/section/tab.
     public let keywords: [String]
+    /// For tabs with their own inner navigation (e.g. Voice), the raw value of
+    /// the sub-tab to open on landing. `nil` for flat tabs.
+    public let subTab: String?
 
     public init(
         id: String,
         tab: ManagementTab,
         section: String = "",
         title: String,
-        keywords: [String] = []
+        keywords: [String] = [],
+        subTab: String? = nil
     ) {
         self.id = id
         self.tab = tab
         self.section = section
         self.title = title
         self.keywords = keywords
+        self.subTab = subTab
     }
 
     /// Breadcrumb shown in results, e.g. ["Voice", "Speech to Text", "Transcription Model"].
@@ -157,28 +162,33 @@ public enum SettingsSearchIndex {
             title: "Terms & Privacy Policy", keywords: ["terms", "privacy policy", "legal", "about"]
         ),
 
-        // MARK: Voice
+        // MARK: Voice (subTab values are VoiceTab raw values)
         .init(
             id: "voice.stt.model", tab: .voice, section: "Speech to Text",
             title: "Transcription Model",
-            keywords: ["transcription", "parakeet", "whisper", "speech recognition", "dictation"]
+            keywords: ["transcription", "parakeet", "whisper", "speech recognition", "dictation"],
+            subTab: "Speech To Text"
         ),
         .init(
             id: "voice.stt.hotkey", tab: .voice, section: "Speech to Text",
-            title: "Dictation Hotkey", keywords: ["push to talk", "voice hotkey", "shortcut"]
+            title: "Dictation Hotkey", keywords: ["push to talk", "voice hotkey", "shortcut"],
+            subTab: "Speech To Text"
         ),
         .init(
-            id: "voice.stt.vad", tab: .voice, section: "Speech to Text",
+            id: "voice.stt.vad", tab: .voice, section: "VAD Mode",
             title: "Voice Activity Detection",
-            keywords: ["vad", "silence", "auto stop", "endpointing"]
+            keywords: ["vad", "silence", "auto stop", "endpointing"],
+            subTab: "VAD Mode"
         ),
         .init(
             id: "voice.tts.voice", tab: .voice, section: "Text to Speech",
-            title: "Spoken Voice", keywords: ["tts", "read aloud", "speech synthesis", "voice"]
+            title: "Spoken Voice", keywords: ["tts", "read aloud", "speech synthesis", "voice"],
+            subTab: "Text To Speech"
         ),
         .init(
             id: "voice.models", tab: .voice, section: "Models",
-            title: "Voice Models", keywords: ["download model", "speech model", "parakeet"]
+            title: "Voice Models", keywords: ["download model", "speech model", "parakeet"],
+            subTab: "Models"
         ),
 
         // MARK: Server
