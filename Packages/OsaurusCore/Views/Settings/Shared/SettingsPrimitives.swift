@@ -17,6 +17,9 @@ struct SettingsSection<Content: View>: View {
 
     let title: String
     let icon: String
+    /// Settings-search landing anchor for section-level results (no single
+    /// control to point at), e.g. Notifications or Legal.
+    var anchorId: String? = nil
     @ViewBuilder let content: () -> Content
 
     var body: some View {
@@ -44,6 +47,7 @@ struct SettingsSection<Content: View>: View {
                         .stroke(themeManager.currentTheme.cardBorder, lineWidth: 1)
                 )
         )
+        .settingsLandingAnchor(anchorId)
     }
 }
 
@@ -138,6 +142,8 @@ struct SettingsSubsection<Content: View>: View {
     @ObservedObject private var themeManager = ThemeManager.shared
 
     let label: String
+    /// Settings-search landing anchor for this subsection.
+    var anchorId: String? = nil
     @ViewBuilder let content: () -> Content
 
     var body: some View {
@@ -158,6 +164,7 @@ struct SettingsSubsection<Content: View>: View {
             content()
                 .padding(.leading, 9)
         }
+        .settingsLandingAnchor(anchorId)
     }
 }
 

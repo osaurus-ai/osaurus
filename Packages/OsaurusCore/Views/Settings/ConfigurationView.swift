@@ -263,7 +263,7 @@ struct ConfigurationView: View {
 
                                     SettingsDivider()
 
-                                    SettingsSubsection(label: "Core Model") {
+                                    SettingsSubsection(label: "Core Model", anchorId: "settings.general.coreModel") {
                                         VStack(alignment: .leading, spacing: 8) {
                                             coreModelPicker
                                             Text(
@@ -278,7 +278,7 @@ struct ConfigurationView: View {
                                     SettingsDivider()
 
                                     // Command Line Tool
-                                    SettingsSubsection(label: "Command Line Tool") {
+                                    SettingsSubsection(label: "Command Line Tool", anchorId: "settings.general.cli") {
                                         VStack(alignment: .leading, spacing: 12) {
                                             Text(
                                                 "Install the `osaurus` CLI into your PATH for terminal access.",
@@ -338,7 +338,7 @@ struct ConfigurationView: View {
                                     SettingsDivider()
 
                                     // Maintenance
-                                    SettingsSubsection(label: "Maintenance") {
+                                    SettingsSubsection(label: "Maintenance", anchorId: "settings.general.reset") {
                                         VStack(alignment: .leading, spacing: 12) {
                                             Text(
                                                 "Troubleshoot or reset the application. A factory reset permanently deletes all data and settings.",
@@ -412,6 +412,7 @@ struct ConfigurationView: View {
                                         placeholder: "Enter the default Osaurus agent's instructions...",
                                         hint: "Optional. Persona for the built-in Osaurus agent."
                                     )
+                                    .settingsLandingAnchor("settings.chat.systemPrompt")
 
                                     // Generation Settings
                                     SettingsSubsection(label: "Generation") {
@@ -555,6 +556,7 @@ struct ConfigurationView: View {
                         // MARK: - Tool Permissions Section
                         if matchesSearch(Self.toolPermissionsKeywords) {
                             ToolPermissionsSection()
+                                .settingsLandingAnchor("settings.toolPermissions")
                         }
 
                         // MARK: - Server settings moved
@@ -577,7 +579,7 @@ struct ConfigurationView: View {
 
                         // MARK: - Notifications Section
                         if matchesSearch(Self.notificationsKeywords) {
-                            SettingsSection(title: "Notifications", icon: "bell") {
+                            SettingsSection(title: "Notifications", icon: "bell", anchorId: "settings.notifications.toasts") {
                                 VStack(alignment: .leading, spacing: 20) {
                                     // Enable Toasts Toggle
                                     SettingsToggle(
@@ -652,7 +654,7 @@ struct ConfigurationView: View {
 
                         // MARK: - Legal Section
                         if matchesSearch(Self.legalKeywords) {
-                            SettingsSection(title: "Legal", icon: "doc.text") {
+                            SettingsSection(title: "Legal", icon: "doc.text", anchorId: "settings.legal") {
                                 VStack(alignment: .leading, spacing: 12) {
                                     Text(
                                         "Review the agreements that govern your use of Osaurus.",
