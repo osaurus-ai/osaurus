@@ -14,7 +14,10 @@ import Foundation
 // MARK: - Requests
 
 struct ImageGenerationRequestDTO: Decodable {
-    let model: String
+    /// Optional: when omitted/empty the handler falls back to the configured
+    /// `defaultImageGenerationModelId` (Settings → Agent Delegation), matching
+    /// the agent `image_generate` tool's default-resolution behavior.
+    let model: String?
     let prompt: String
     let negative_prompt: String?
     let n: Int?
@@ -30,7 +33,10 @@ struct ImageGenerationRequestDTO: Decodable {
 }
 
 struct ImageEditRequestDTO: Decodable {
-    let model: String
+    /// Optional: when omitted/empty the handler falls back to the configured
+    /// `defaultImageEditModelId` (Settings → Agent Delegation), matching the
+    /// agent `image_edit` tool's default-resolution behavior.
+    let model: String?
     let prompt: String
     let image: String?
     let images: [String]?

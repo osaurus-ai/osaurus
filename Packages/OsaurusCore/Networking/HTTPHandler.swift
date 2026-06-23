@@ -6114,9 +6114,27 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 startTime: startTime, userAgent: userAgent, requestBody: bodyString)
             return
         }
+        // Resolve the model: explicit request value wins; otherwise fall back to
+        // the configured default (Settings → Agent Delegation), matching the
+        // agent image_generate tool.
+        let trimmedModel = req.model?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard
+            let modelId =
+                (trimmedModel?.isEmpty == false ? trimmedModel : nil)
+                ?? AgentDelegationConfigurationStore.snapshot().defaultImageGenerationModelId,
+            !modelId.isEmpty
+        else {
+            sendImageError(
+                head: head, context: context, status: .badRequest,
+                message:
+                    "No image model specified and no default image generation model is configured (Settings → Agent Delegation).",
+                path: "/images/generations",
+                startTime: startTime, userAgent: userAgent, requestBody: bodyString)
+            return
+        }
         let (w, h) = Self.resolveImageSize(size: req.size, width: req.width, height: req.height)
         let params = ImageGenerationParameters(
-            model: req.model,
+            model: modelId,
             prompt: req.prompt,
             negativePrompt: req.negative_prompt,
             width: w,
@@ -6168,9 +6186,27 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 startTime: startTime, userAgent: userAgent, requestBody: bodyString)
             return
         }
+        // Resolve the model: explicit request value wins; otherwise fall back to
+        // the configured default edit model (Settings → Agent Delegation),
+        // matching the agent image_edit tool.
+        let trimmedEditModel = req.model?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard
+            let editModelId =
+                (trimmedEditModel?.isEmpty == false ? trimmedEditModel : nil)
+                ?? AgentDelegationConfigurationStore.snapshot().defaultImageEditModelId,
+            !editModelId.isEmpty
+        else {
+            sendImageError(
+                head: head, context: context, status: .badRequest,
+                message:
+                    "No image model specified and no default image edit model is configured (Settings → Agent Delegation).",
+                path: "/images/edits",
+                startTime: startTime, userAgent: userAgent, requestBody: bodyString)
+            return
+        }
         let (w, h) = Self.resolveImageSize(size: req.size, width: req.width, height: req.height)
         let params = ImageEditParameters(
-            model: req.model,
+            model: editModelId,
             prompt: req.prompt,
             sourceImages: sources,
             maskImage: nil,
