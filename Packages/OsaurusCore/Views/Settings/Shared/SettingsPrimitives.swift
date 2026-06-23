@@ -66,36 +66,36 @@ private struct SettingsSearchHighlightModifier: ViewModifier {
     @ObservedObject private var themeManager = ThemeManager.shared
 
     /// 0 at rest, eased up to 1 and gently back to 0 once when a section becomes
-    /// a match — a single soft breath, not a repeating strobe. The model always
-    /// settles at 0, so the glow returns to the steady resting ring gracefully.
+    /// a match — a single soft breath, not a repeating strobe. The steady accent
+    /// border stays put; only this glow breathes, so the motion is easy to see
+    /// yet the model always settles at 0 for a graceful finish.
     @State private var glow: CGFloat = 0
 
     /// Half the breath: rise over `breathDuration`, fall over `breathDuration`.
-    private static let breathDuration: Double = 1.0
-
-    private var strokeOpacity: Double { active ? 0.55 + 0.18 * Double(glow) : 0 }
-    private var glowOpacity: Double { active ? 0.1 + 0.16 * Double(glow) : 0 }
-    private var glowRadius: CGFloat { 5 + 7 * glow }
+    private static let breathDuration: Double = 0.9
 
     func body(content: Content) -> some View {
         let theme = themeManager.currentTheme
         content
+            // Steady ring marks the matched section.
             .overlay(
                 RoundedRectangle(cornerRadius: 12)
-                    .strokeBorder(theme.accentColor.opacity(strokeOpacity), lineWidth: 1.5)
+                    .strokeBorder(theme.accentColor.opacity(active ? 0.7 : 0), lineWidth: 1.5)
             )
-            .shadow(color: theme.accentColor.opacity(glowOpacity), radius: glowRadius)
+            // Glow breathes up from nothing and back, so the pulse is the moving
+            // part rather than a small wobble on an always-present halo.
+            .shadow(color: theme.accentColor.opacity(0.6 * Double(glow)), radius: 4 + 18 * glow)
             .animation(.easeOut(duration: 0.25), value: active)
             .onAppear { if active { firePulse() } }
             .onChange(of: active) { _, isActive in
-                if isActive { firePulse() }
+                if isActive { firePulse() } else { glow = 0 }
             }
     }
 
     /// One smooth breath: ease the glow up, then — on completion — ease it back
-    /// down to the resting ring. Using the completion handler (rather than a
-    /// repeating/autoreversing animation) keeps the model value honest, so the
-    /// glow can't snap or get stuck bright when it finishes.
+    /// down to nothing. Using the completion handler (rather than a repeating /
+    /// autoreversing animation) keeps the model value honest, so the glow can't
+    /// snap or get stuck bright when it finishes.
     private func firePulse() {
         glow = 0
         withAnimation(.easeInOut(duration: Self.breathDuration)) {
