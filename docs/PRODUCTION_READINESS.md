@@ -12,11 +12,16 @@ vMLXFlux's async Metal tail (VAE decode/teardown) drained, so the next exclusive
 producer (`enterModelLoad`) raced the in-flight command buffer.
 
 This is the **reverse direction** of the BatchEngine drain shipped in vmlx PR #82
-(which fixed chat→image). **Fix applied** (osaurus, ImageGenerationService): the same
-`MLXCacheIOLock`/`Stream.gpu.synchronize` drain barrier right before
-`exitImageGeneration`, covering success/cancel/error paths. Rebuild + stress-proof in
-progress. Until proven, the image path is **NOT production-ready** (intermittent crash
-under repeated/chained image ops).
+(which fixed chat→image). **Fix applied + STRESS-PROVEN** (osaurus, ImageGenerationService):
+the same `MLXCacheIOLock`/`Stream.gpu.synchronize` drain barrier right before
+`exitImageGeneration`, covering success/cancel/error paths (commit on feat branch).
+
+**Proof:** post-fix stress of 6 back-to-back image→model-reload handoffs (the exact
+crash trigger) → **6/6 process survived, 0 crashes, 6/6 PNGs, all responses coherent**,
+no new crash report. Pre-fix the same handoff reliably SIGABRT'd. The drain lives in the
+**shared** image-job wrapper, so image_generate AND image_edit both go through it (build
+closure differs; enter/drain/exit identical). Direct qwen-image-edit→chat handoff
+confirmation in progress.
 
 NOTE: earlier "app DOWN" reads via `/health` were false (the endpoint blocks during GPU
 teardown); the REAL crash was confirmed via `pgrep` + the macOS crash report
