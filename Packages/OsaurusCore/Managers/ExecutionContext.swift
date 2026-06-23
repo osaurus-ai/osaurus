@@ -135,13 +135,19 @@ public final class ExecutionContext: ObservableObject {
     private func activateFolderContextIfNeeded() async {
         guard let bookmark = folderBookmark else { return }
         do {
-            var isStale = false
-            let url = try URL(
-                resolvingBookmarkData: bookmark,
-                options: .withSecurityScope,
-                relativeTo: nil,
-                bookmarkDataIsStale: &isStale
-            )
+            // Resolving a security-scoped bookmark does synchronous IPC to the
+            // scoped-bookmarks agent and can take seconds; keep it off the main
+            // actor so it doesn't trip the app-hang watchdog.
+            let (url, isStale) = try await Task.detached(priority: .userInitiated) {
+                var isStale = false
+                let url = try URL(
+                    resolvingBookmarkData: bookmark,
+                    options: .withSecurityScope,
+                    relativeTo: nil,
+                    bookmarkDataIsStale: &isStale
+                )
+                return (url, isStale)
+            }.value
             guard !isStale else {
                 print("[ExecutionContext] Folder bookmark is stale, skipping")
                 return
