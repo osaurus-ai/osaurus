@@ -17,6 +17,8 @@ struct SettingsSection<Content: View>: View {
 
     let title: String
     let icon: String
+    /// Accent ring while this section is a live search match.
+    var isHighlighted: Bool = false
     @ViewBuilder let content: () -> Content
 
     var body: some View {
@@ -44,6 +46,34 @@ struct SettingsSection<Content: View>: View {
                         .stroke(themeManager.currentTheme.cardBorder, lineWidth: 1)
                 )
         )
+        .settingsSearchHighlight(isHighlighted)
+    }
+}
+
+// MARK: - Search Highlight
+
+extension View {
+    /// Draws an accent ring + soft glow around a settings card while it's a live
+    /// search match, so the eye lands on the relevant section. A no-op when
+    /// `active` is false. Tuned to the 12pt card radius shared by every section.
+    func settingsSearchHighlight(_ active: Bool) -> some View {
+        modifier(SettingsSearchHighlightModifier(active: active))
+    }
+}
+
+private struct SettingsSearchHighlightModifier: ViewModifier {
+    let active: Bool
+    @ObservedObject private var themeManager = ThemeManager.shared
+
+    func body(content: Content) -> some View {
+        let theme = themeManager.currentTheme
+        content
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .strokeBorder(active ? theme.accentColor.opacity(0.7) : .clear, lineWidth: 1.5)
+            )
+            .shadow(color: active ? theme.accentColor.opacity(0.18) : .clear, radius: 7)
+            .animation(.easeOut(duration: 0.2), value: active)
     }
 }
 
