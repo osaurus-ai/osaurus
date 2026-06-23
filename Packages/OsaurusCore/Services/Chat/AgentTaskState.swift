@@ -419,9 +419,12 @@ public final class AgentTaskState {
             let joinedPaths = paths.map { "`\($0)`" }.joined(separator: ", ")
             return
                 "The previous `image_generate` result saved image path(s): \(joinedPaths). "
-                + "If the user's request includes a follow-up edit or transformation of that "
-                + "generated image, continue by calling `image_edit` with `source_paths` set "
-                + "to those path value(s). Do not narrate the future edit as the final answer."
+                + "If the user asked for ANY follow-up that modifies, edits, changes, adds to, "
+                + "recolors, or transforms THAT generated image, you MUST call `image_edit` now "
+                + "with `source_paths` set to those path value(s) — do NOT call `image_generate` "
+                + "again (that produces a brand-new unrelated image, not an edit of this one). "
+                + "Only if no such follow-up was requested should you give a brief final "
+                + "confirmation. Do not narrate the edit as the final answer instead of calling the tool."
         case .fileContent, .error, .other:
             return nil
         }
