@@ -58,3 +58,25 @@ prompt yet fall OUTSIDE what the model attends to. That mechanism is NOT capture
 probe. Still to check: (a) the resolved KV cap for the agent run, (b) whether under a
 LARGER preceding conversation the result is evicted, (c) whether max_tokens truncates the
 narration before the image_edit call. Codex second opinion pending on all three.
+
+## RESOLVED — root cause + fix (probe + Codex second opinion, converged)
+The cache-window hypothesis is **REFUTED** by two independent methods:
+- Live probe: the image_generate tool-result (with path) **survives compaction** (imgRes 1→1).
+- Codex traced the KV-cap path (`ModelRuntime.swift:1558-1563,1622-1627,1877-1889`,
+  `ServerRuntimeSettingsStore.defaultMaxKVSize`) and found nothing in the agent-run path
+  exceeding the attended window for this symptom.
+
+**Real root cause = STEERING PROMPT** (both confirmed it):
+- `NativeImageJobCoordinator.toolPayload` `display_note`: "...just briefly confirm the
+  image was created."
+- `SystemPromptTemplates.imageGenerationGuidance` (line 631): "After it's created, just
+  briefly confirm in one sentence."
+- `AgentToolLoop.run` exits on the FIRST final-text response (968-971). So the model obeys
+  "just confirm", emits narration, the loop halts, and `image_edit` never fires.
+- Secondary: omitted `max_tokens` → resolved budget (model `generation_config` override)
+  can truncate the narration mid-word before the tool call ("th" cutoff).
+
+**FIX** (both steers made conditional): "If the user asked for a follow-up edit, continue
+by calling `image_edit` with the saved `images[].path`; otherwise briefly confirm." No
+forced tool calls, no fake guards — fixed at the source. Lesson: this was the "R3"
+display_note over-steer flagged early and wrongly dropped.
