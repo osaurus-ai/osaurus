@@ -1777,14 +1777,14 @@ extension FloatingInputCard {
                 showsAmount: true
             )
         case .low:
-            // The chip shows session spend, not the balance, so a low balance no
-            // longer escalates the chip itself — the hover popover surfaces it
-            // (amber balance hero) instead. Renders identically to `.healthy`.
+            // The chip shows the router balance, so a low balance escalates the
+            // chip itself to amber text (no pill) — a gentle nudge that stops
+            // short of the empty-state "Add credits" call to action.
             return CreditsChipStyle(
                 iconName: "creditcard",
-                iconColor: theme.tertiaryText,
-                textColor: theme.secondaryText,
-                weight: .medium,
+                iconColor: amber,
+                textColor: amber,
+                weight: .semibold,
                 pill: nil,
                 glow: .clear,
                 showsAmount: true
@@ -1802,19 +1802,19 @@ extension FloatingInputCard {
         }
     }
 
-    /// This session's Router spend, formatted for the composer chip. The chip
-    /// surfaces spend; the account balance is shown only in the hover popover.
+    /// This session's Router spend, formatted for the hover popover. The chip
+    /// surfaces the account balance; spend is shown only in the popover.
     private var sessionSpendDisplay: String {
         OsaurusRouter.formatMicroUSDPrecise(String(sessionSpendMicro))
     }
 
-    /// Accessibility text for the credits chip. Describes the session spend the
-    /// chip shows and the tap action; the balance itself lives in the popover.
+    /// Accessibility text for the credits chip. Describes the router balance the
+    /// chip shows and the tap action; session spend lives in the popover.
     private var creditsHelpText: Text {
         if accountService.isFrozen {
             return Text("Account paused - add credits to resume.", bundle: .module)
         }
-        return Text("\(sessionSpendDisplay) spent this session. Click to add credits.", bundle: .module)
+        return Text("\(accountService.formattedBalance) router balance. Click to add credits.", bundle: .module)
     }
 
     /// Balance indicator for Osaurus Router sessions. Tapping opens the top-up
@@ -1842,9 +1842,9 @@ extension FloatingInputCard {
                 }
 
                 if style.showsAmount {
-                    // Composer shows this session's spend; the router balance is
-                    // surfaced only in the hover popover.
-                    Text(verbatim: sessionSpendDisplay)
+                    // Composer shows the overall router balance; this session's
+                    // spend is surfaced only in the hover popover.
+                    Text(verbatim: accountService.formattedBalance)
                         .font(.system(size: caption - 1, weight: style.weight, design: .monospaced))
                         .foregroundColor(style.textColor)
                         .lineLimit(1)
@@ -1889,11 +1889,9 @@ extension FloatingInputCard {
         }
         .popover(isPresented: $showBalanceBreakdown, arrowEdge: .top) {
             BalanceBreakdownPopover(
+                sessionSpend: sessionSpendDisplay,
                 balance: accountService.formattedBalance,
                 isAttention: level != .healthy,
-                sessionSpend: sessionSpendMicro > 0
-                    ? OsaurusRouter.formatMicroUSDPrecise(String(sessionSpendMicro))
-                    : nil,
                 isFrozen: accountService.isFrozen
             )
         }
@@ -4465,14 +4463,14 @@ private struct ContextBreakdownPopover: View {
 /// balance reads like the Context Budget breakdown beside it. The balance is
 /// the hero figure (paralleling the budget bar) and tints amber when low/empty.
 private struct BalanceBreakdownPopover: View {
+    let sessionSpend: String
     let balance: String
     let isAttention: Bool
-    let sessionSpend: String?
     let isFrozen: Bool
 
     @Environment(\.theme) private var theme
 
-    private var accent: Color { isAttention ? theme.warningColor : theme.accentColor }
+    private var accent: Color { theme.accentColor }
 
     private var footerText: Text {
         isFrozen
@@ -4483,10 +4481,10 @@ private struct BalanceBreakdownPopover: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 6) {
-                Image(systemName: "creditcard")
+                Image(systemName: "chart.bar.fill")
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundColor(theme.secondaryText)
-                Text("Router Balance", bundle: .module)
+                Text("This Session", bundle: .module)
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundColor(theme.secondaryText)
             }
@@ -4498,28 +4496,26 @@ private struct BalanceBreakdownPopover: View {
                 RoundedRectangle(cornerRadius: 2)
                     .fill(accent.opacity(0.85))
                     .frame(width: 3, height: 16)
-                Text(verbatim: balance)
+                Text(verbatim: sessionSpend)
                     .font(.system(size: 15, weight: .semibold, design: .monospaced))
-                    .foregroundColor(isAttention ? theme.warningColor : theme.primaryText)
+                    .foregroundColor(theme.primaryText)
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 12)
             .padding(.bottom, 10)
 
-            if let sessionSpend {
-                divider
-                HStack(spacing: 0) {
-                    Text("Spent this session", bundle: .module)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.secondaryText)
-                    Spacer()
-                    Text(verbatim: sessionSpend)
-                        .font(.system(size: 11, weight: .medium, design: .monospaced))
-                        .foregroundColor(theme.primaryText)
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
+            divider
+            HStack(spacing: 0) {
+                Text("Router balance", bundle: .module)
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.secondaryText)
+                Spacer()
+                Text(verbatim: balance)
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundColor(isAttention ? theme.warningColor : theme.primaryText)
             }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
 
             divider
             footerText
