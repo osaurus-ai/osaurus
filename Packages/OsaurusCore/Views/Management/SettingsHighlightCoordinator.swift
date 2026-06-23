@@ -36,11 +36,27 @@ final class SettingsHighlightCoordinator: ObservableObject {
     }
 }
 
+/// The coordinator's current pending anchor, propagated through the environment
+/// so every tab's controls react uniformly. `ManagementView` injects this from
+/// the (observed) coordinator; relying on an `@ObservedObject` inside the
+/// landing modifier alone didn't re-render reliably for tabs that appear after
+/// the pending id is set.
+private struct SettingsLandingPendingKey: EnvironmentKey {
+    static let defaultValue: String? = nil
+}
+
+extension EnvironmentValues {
+    var settingsLandingPending: String? {
+        get { self[SettingsLandingPendingKey.self] }
+        set { self[SettingsLandingPendingKey.self] = newValue }
+    }
+}
+
 extension View {
     /// Marks a settings control as the scroll target + glow recipient for the
     /// landing anchor `id`. Pairs `.id(id)` (so a `ScrollViewReader` can reach
-    /// it) with a glow that fires while this id is the coordinator's pending
-    /// target. A `nil` id is a no-op, so untagged controls are unaffected.
+    /// it) with a glow that fires while this id is the pending landing target.
+    /// A `nil` id is a no-op, so untagged controls are unaffected.
     @ViewBuilder
     func settingsLandingAnchor(_ id: String?) -> some View {
         if let id {
@@ -53,11 +69,11 @@ extension View {
 
 private struct SettingsLandingAnchorModifier: ViewModifier {
     let anchorId: String
-    @ObservedObject private var coordinator = SettingsHighlightCoordinator.shared
+    @Environment(\.settingsLandingPending) private var pending
 
     func body(content: Content) -> some View {
         content
             .id(anchorId)
-            .settingsSearchHighlight(coordinator.pending == anchorId)
+            .settingsSearchHighlight(pending == anchorId)
     }
 }

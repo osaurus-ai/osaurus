@@ -28,6 +28,9 @@ struct ManagementView: View {
     // throttles these into a single coalesced snapshot and hoists
     // the expensive Memory SQLite / Keychain probes off the body.
     @ObservedObject private var badgeStore = ManagementBadgeStore.shared
+    /// Observed so the pending landing anchor reaches every tab via the
+    /// environment, re-rendering their glow targets when a result lands.
+    @ObservedObject private var highlightCoordinator = SettingsHighlightCoordinator.shared
 
     @EnvironmentObject private var updater: UpdaterViewModel
 
@@ -138,6 +141,9 @@ private extension ManagementView {
                 }
             }
             .opacity(hasAppeared ? 1 : 0)
+            // Propagate the pending landing anchor to every tab so the matched
+            // control glows wherever it lives.
+            .environment(\.settingsLandingPending, highlightCoordinator.pending)
         } footer: {
             updateButton
         }
