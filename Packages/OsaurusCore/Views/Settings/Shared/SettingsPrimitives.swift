@@ -65,21 +65,25 @@ private struct SettingsSearchHighlightModifier: ViewModifier {
     let active: Bool
     @ObservedObject private var themeManager = ThemeManager.shared
 
-    /// 1 right after a section becomes a match, easing back to 0. Drives a brief
-    /// border/glow flash so the eye catches the freshly-matched card.
-    @State private var pulse: CGFloat = 0
+    /// Breathes 0→1→0 a couple of times right after a section becomes a match,
+    /// then settles to 0 (the resting ring). Drives a soft glow pulse that runs
+    /// for ~2s so the eye catches the freshly-matched card.
+    @State private var glow: CGFloat = 0
 
-    private var strokeOpacity: Double { active ? 0.7 + 0.25 * Double(pulse) : 0 }
-    private var lineWidth: CGFloat { 1.5 + 1.5 * pulse }
-    private var glowOpacity: Double { active ? 0.18 + 0.22 * Double(pulse) : 0 }
-    private var glowRadius: CGFloat { 7 + 7 * pulse }
+    /// One breath up-and-back; two breaths fill the ~2s attention window.
+    private static let breathDuration: Double = 0.5
+    private static let breathCount = 4  // 4 × 0.5s (autoreversed) = ~2s
+
+    private var strokeOpacity: Double { active ? 0.6 + 0.3 * Double(glow) : 0 }
+    private var glowOpacity: Double { active ? 0.12 + 0.33 * Double(glow) : 0 }
+    private var glowRadius: CGFloat { 6 + 12 * glow }
 
     func body(content: Content) -> some View {
         let theme = themeManager.currentTheme
         content
             .overlay(
                 RoundedRectangle(cornerRadius: 12)
-                    .strokeBorder(theme.accentColor.opacity(strokeOpacity), lineWidth: lineWidth)
+                    .strokeBorder(theme.accentColor.opacity(strokeOpacity), lineWidth: 1.5)
             )
             .shadow(color: theme.accentColor.opacity(glowOpacity), radius: glowRadius)
             .animation(.easeOut(duration: 0.2), value: active)
@@ -89,10 +93,21 @@ private struct SettingsSearchHighlightModifier: ViewModifier {
             }
     }
 
-    /// Flash to full intensity instantly, then ease back to the resting ring.
+    /// Run the breathing glow, then snap the model value back to the resting
+    /// ring so the even-count autoreverse can't leave it stuck bright.
     private func firePulse() {
-        pulse = 1
-        withAnimation(.easeOut(duration: 0.6)) { pulse = 0 }
+        glow = 0
+        withAnimation(
+            .easeInOut(duration: Self.breathDuration)
+                .repeatCount(Self.breathCount, autoreverses: true)
+        ) {
+            glow = 1
+        }
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + Self.breathDuration * Double(Self.breathCount)
+        ) {
+            withAnimation(.easeOut(duration: 0.3)) { glow = 0 }
+        }
     }
 }
 
