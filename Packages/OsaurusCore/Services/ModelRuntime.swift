@@ -1432,24 +1432,9 @@ public actor ModelRuntime {
                     loadConfiguration: mtpPlan.loadConfiguration
                 )
             } catch {
-                // Drain the load's GPU tail before releasing the exclusive gate
-                // even on failure (a partially-evaluated dequant still left work
-                // queued). See the success-path note below.
-                Stream.gpu.synchronize()
                 await MetalGate.shared.exitModelLoad(model: name)
                 throw error
             }
-            // Drain the GPU before releasing the exclusive model-load gate.
-            // `loadModelContainer` dequantizes weights + compiles kernels via MLX
-            // eval, which SUBMITS Metal work that can still be in async flight when
-            // the call returns. Releasing the gate here while that tail is live lets
-            // the next exclusive producer (another model load, or an image job)
-            // start and race the in-flight command buffer — SIGSEGV in
-            // `AGXG17XFamilyCommandBuffer tryCoalescingPreviousComputeCommandEncoder`
-            // (observed under sustained chained gen→edit model churn). Symmetric
-            // with the unload drain and the BatchEngine (#82) / ImageGenerationService
-            // (#89) stream-finish drains: "gate released" must mean "GPU idle".
-            Stream.gpu.synchronize()
             await MetalGate.shared.exitModelLoad(model: name)
             if Task.isCancelled {
                 container.disableCaching()
