@@ -566,12 +566,18 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
         // taught small models to treat misses as wins.
         if sections.isEmpty, let first = failures.first {
             let combined = failures.map(\.message).joined(separator: "\n")
+            // A bad/unknown capability id is deterministic: capability ids are
+            // a closed vocabulary, so re-issuing the identical call cannot
+            // succeed. Mark those (and policy refusals) non-retryable — only a
+            // genuine runtime error is worth retrying as-is. This also keeps
+            // the flag consistent with the deterministic-error replay guard.
+            let deterministicKinds: Set<ToolEnvelope.Kind> = [.rejected, .invalidArgs, .notFound]
             return ToolEnvelope.failure(
                 kind: first.kind,
                 message: combined,
                 field: first.kind == .invalidArgs ? "ids" : nil,
                 tool: name,
-                retryable: first.kind != .rejected
+                retryable: !deterministicKinds.contains(first.kind)
             )
         }
 

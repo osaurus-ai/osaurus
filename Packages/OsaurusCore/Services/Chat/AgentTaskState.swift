@@ -102,15 +102,17 @@ public final class AgentTaskState {
     /// before failing.
     private static let execLikeTools: Set<String> = ["shell_run", "sandbox_exec"]
 
-    /// Folder tools whose `invalid_args` / `not_found` failures are
-    /// DETERMINISTIC given an unchanged filesystem: re-issuing the identical
-    /// call must return the identical error. Their held errors are replayed
-    /// instead of re-executed (observed live: a model repeating the same
-    /// failing `file_edit` 8× until the iteration cap). `shell_run` and
-    /// `db_*` are deliberately excluded — identical re-runs there are
-    /// legitimate retries that may succeed.
+    /// Tools whose `invalid_args` / `not_found` failures are DETERMINISTIC
+    /// given an unchanged filesystem / capability catalog: re-issuing the
+    /// identical call must return the identical error. Their held errors are
+    /// replayed instead of re-executed (observed live: a model repeating the
+    /// same failing `file_edit` 8× until the iteration cap). `capabilities_load`
+    /// qualifies because capability ids are a closed vocabulary — a bad/unknown
+    /// id fails identically on every retry. `shell_run` and `db_*` are
+    /// deliberately excluded — identical re-runs there are legitimate retries
+    /// that may succeed.
     private static let deterministicErrorTools: Set<String> = [
-        "file_read", "file_search", "file_edit",
+        "file_read", "file_search", "file_edit", "capabilities_load",
     ]
 
     /// Error kinds eligible for held-error replay. Both depend only on the
