@@ -43,6 +43,36 @@ it is model-specific, not a pure size or family rule.
 
 | R6 | Successful generations show mid-word text-boundary corruption: `"…on a black bacImage generated successfully"`, `"…on a The image has been generated"` (minimax, laguna, qwen3.6-27b) | **CODE** (text assembly at the tool-call boundary) | The pre-tool-call partial assistant text is cut mid-token and concatenated to the post-tool continuation with no separator. Coherent overall, but a visible seam. Shares a root with R4 (text handling around the image tool call). | **OBSERVED across 3 models — CODE, fix pending** |
 
+## Tool-passing mechanism — CONFIRMED (read AgentToolLoop.swift end-to-end)
+The canonical loop (`Services/Chat/AgentToolLoop.swift`, shared by chat/HTTP/plugin):
+1. `modelStep` classifies the turn: `finalResponse` | `toolCalls([...])` | `emptyResponse` | `retryWithoutCharge`.
+2. On `toolCalls`, HTTP uses slotting mode (`executeBatch`): dedupe → phase-1 serial
+   permission gate (`ToolRegistry.resolvePermissionGate`) → phase-2 parallel execute
+   (`ToolRegistry.execute`) → record in model order.
+3. The tool's **result envelope is the exact string handed to the model**
+   (`AgentLoopToolExecution.result`). For image_generate that envelope = `toolPayload`
+   **including `images[].path`**.
+4. `onBatchComplete` appends the assistant `tool_calls` message + tool-result messages
+   into the surface history; the next iteration's `buildMessages` includes them, so the
+   model sees the result (and the path) on its next step. ← this is the pass-through that
+   makes image_edit chaining work.
+5. Empty turns are not silently dropped: nudge-and-retry up to `maxEmptyTurnRetries` (2),
+   then `emitFallbackText` writes "I wasn't able to generate a response to that. Please
+   try rephrasing your request." (AgentToolLoop:597).
+
+### Correction to R5-family (empty-turn vs hallucinated-refusal)
+- qwen3-8b: hallucinated "image model not installed" text (a real text turn, no tool call).
+- qwen2.5-3b: its "I wasn't able to generate a response…" is the **loop's emptyTurnFallback**,
+  i.e. the model produced an EMPTY turn (EOS, no text/tool) and recovery was exhausted.
+  Both are MODEL failures, via different mechanisms.
+
+## NOT yet verified (so "all issues found" is NOT claimed)
+- R4/R6 ROOT: lives in the surface `modelStep` streaming/delta routing + channel filter —
+  not yet read. Symptom + category known; exact site not pinned.
+- `local_delegate` (local/cloud text delegate tool): untested.
+- Multi-turn DB-persisted image path across SEPARATE user turns (real chat history store):
+  only continuous-run + reconstructed-history were tested.
+
 ## What is PROVEN about the wiring (so refusals can be triaged fast)
 - **SETTINGS are correct on this box**: `agent-delegation.json` has `agentDelegationEnabled:true`,
   `imageDelegationEnabled:true`, `localTextDelegationEnabled:true`, permissionDefaults
