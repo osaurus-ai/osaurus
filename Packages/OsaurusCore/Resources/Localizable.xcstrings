@@ -7279,6 +7279,40 @@
         }
       }
     },
+    "A connected peer is running “%@”." : {
+      "comment" : "In-app toast message shown on the host when a connected remote peer runs one of its agents. %@ is the agent name.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ein verbundener Peer führt „%@“ aus."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "已连接的对等方正在运行“%@”。"
+          }
+        }
+      }
+    },
+    "Agent in use" : {
+      "comment" : "In-app toast title shown on the host when a connected remote peer is driving one of its agents.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Agent wird verwendet"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "代理使用中"
+          }
+        }
+      }
+    },
     "All" : {
       "localizations" : {
         "de" : {
@@ -59626,6 +59660,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "接入一个你已经付费的大脑，或使用 Ollama 在本地运行一个。"
+          }
+        }
+      }
+    },
+    "P2P" : {
+      "comment" : "Insights source category for inbound peer-to-peer traffic over the Osaurus Secure Channel (remote chat completions and remote agent runs).",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "P2P"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "P2P"
           }
         }
       }

@@ -631,6 +631,7 @@ private struct SourceBadge: View {
         case .chatUI: return .pink
         case .httpAPI: return .blue
         case .plugin: return .teal
+        case .p2p: return .purple
         }
     }
 }
@@ -641,6 +642,7 @@ extension RequestSource {
         case .chatUI: return "Chat"
         case .httpAPI: return "HTTP"
         case .plugin: return "Plugin"
+        case .p2p: return "P2P"
         }
     }
 }

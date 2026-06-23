@@ -156,6 +156,8 @@ final class InsightsService: ObservableObject {
                 if log.source != .httpAPI { return false }
             case .plugin:
                 if log.source != .plugin { return false }
+            case .p2p:
+                if log.source != .p2p { return false }
             }
 
             switch method {
@@ -369,6 +371,7 @@ enum SourceFilter: String, CaseIterable {
     case chatUI = "Chat"
     case httpAPI = "HTTP"
     case plugin = "Plugin"
+    case p2p = "P2P"
 
     var displayName: String {
         switch self {
@@ -376,6 +379,7 @@ enum SourceFilter: String, CaseIterable {
         case .chatUI: return L("Chat")
         case .httpAPI: return "HTTP"
         case .plugin: return L("Plugin")
+        case .p2p: return L("P2P")
         }
     }
 }
@@ -624,6 +628,19 @@ extension InsightsService {
         )
     }
 
+    /// Resolve the Insights source category for an HTTP-logged request.
+    /// In-app chat (`method == "CHAT"`) stays `.chatUI`. Anything that arrived
+    /// over the Secure Channel is another Osaurus peer (remote chat completions
+    /// or a remote agent run) and is surfaced under `.p2p`; all other
+    /// local/LAN HTTP traffic remains `.httpAPI`.
+    nonisolated static func inboundSource(
+        method: String,
+        transport: RequestTransport?
+    ) -> RequestSource {
+        if method == "CHAT" { return .chatUI }
+        return transport == .secureChannel ? .p2p : .httpAPI
+    }
+
     /// Logs HTTP requests with optional inference data
     nonisolated static func logAsync(
         method: String,
@@ -644,7 +661,7 @@ extension InsightsService {
         errorMessage: String? = nil,
         connection: RequestConnectionInfo? = nil
     ) {
-        let source: RequestSource = method == "CHAT" ? .chatUI : .httpAPI
+        let source = Self.inboundSource(method: method, transport: connection?.transport)
 
         logRequest(
             source: source,

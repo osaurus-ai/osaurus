@@ -4632,6 +4632,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         // loopback caller is unauthenticated under the no-auth-loopback model,
         // so it never receives the host-folder relaxation.
         let isAuthenticatedRemote = !isLoopbackConnection(context)
+        // Stable identity of an authenticated remote caller (for the debounced
+        // host toast in the run task); nil for loopback callers.
+        let peerCallKey: String? = {
+            guard isAuthenticatedRemote else { return nil }
+            let info = inboundConnectionInfo()
+            return info?.accessKeyId ?? info?.audience ?? "peer"
+        }()
 
         hop { writerBound.value.writeHeaders(ctx.value, extraHeaders: cors) }
 
@@ -4649,6 +4656,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
         runRequestTask(priority: .userInitiated) {
             defer { admissionToken.release() }
+            // HTTP inference bypasses the in-app "generating" dot; drive it for
+            // the whole run (incl. remote-peer runs). `defer` balances all exits.
+            ServerController.signalGenerationStart()
+            defer { ServerController.signalGenerationEnd() }
             // Resolve model: a Mode 2 caller omits `model` (decoded as empty),
             // and older clients send the "default" sentinel. Both resolve to
             // the agent's effective model server-side.
@@ -4696,6 +4707,16 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             // per-turn `message_sent` is emitted separately by ChatEngine on
             // the first (user) turn only.
             Task { @MainActor in FeatureTelemetry.agentRun(source: "http_api") }
+
+            // Debounced host toast: a connected peer is driving one of its
+            // agents. Loopback callers (`peerCallKey == nil`) never toast.
+            if let peerCallKey {
+                await MainActor.run {
+                    if let agentName = AgentManager.shared.agent(for: agentId)?.name {
+                        PeerCallNotifier.shared.notifyAgentRun(peerKey: peerCallKey, agentName: agentName)
+                    }
+                }
+            }
 
             // Mount the agent's host workspace folder when an authenticated
             // remote caller drives an agent whose owner granted one. Reachable
@@ -4817,6 +4838,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             // the post-batch framing can attach it to the assistant
             // tool_calls message (mirrors the historical loop local).
             var responseContent = ""
+
+            // Host-side Insights enrichment: accumulate the full visible answer
+            // and every executed tool so the `/agents/{id}/run` row isn't empty.
+            // The loop invokes its hooks serially, so these plain vars are
+            // race-free — same capture pattern as `responseContent` above.
+            var loggedResponseText = ""
+            var loggedToolCalls: [ToolCallLog] = []
 
             // Set when a successful `complete`/`clarify` intercept ends the
             // run — the post-loop tail streams this text (the parsed summary
@@ -4951,6 +4979,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                             if StreamingStatsHint.decode(delta) != nil { continue }
                             if StreamingToolHint.isSentinel(delta) { continue }
                             responseContent += delta
+                            loggedResponseText += delta
                             if let chunk = contentCoalescer.append(delta) {
                                 hop {
                                     writerBound.value.writeContent(
@@ -5135,6 +5164,16 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                             )
                         )
                         toolResultsByCallId.append((outcome.callId, outcome.result))
+                        // Host-only: full tool detail (args + result). The peer
+                        // still sees only the sanitized SSE trace emitted above.
+                        loggedToolCalls.append(
+                            ToolCallLog(
+                                name: outcome.invocation.toolName,
+                                arguments: outcome.invocation.jsonArguments,
+                                result: outcome.result,
+                                isError: outcome.wasError
+                            )
+                        )
                     }
 
                     messages.append(
@@ -5164,6 +5203,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         )
                     }
                     messages.append(ChatMessage(role: "assistant", content: text))
+                    loggedResponseText += text
                 }
             )
 
@@ -5209,8 +5249,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     path: path,
                     userAgent: logUserAgent,
                     requestBody: logRequestBody,
+                    responseBody: loggedResponseText.isEmpty ? nil : loggedResponseText,
                     responseStatus: 200,
                     startTime: logStartTime,
+                    toolCalls: loggedToolCalls.isEmpty ? nil : loggedToolCalls,
                     errorMessage: error.localizedDescription
                 )
                 return
@@ -5235,8 +5277,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     path: path,
                     userAgent: logUserAgent,
                     requestBody: logRequestBody,
+                    responseBody: loggedResponseText.isEmpty ? nil : loggedResponseText,
                     responseStatus: 200,
                     startTime: logStartTime,
+                    toolCalls: loggedToolCalls.isEmpty ? nil : loggedToolCalls,
                     errorMessage: AgentToolLoop.overBudgetMessage
                 )
                 return
@@ -5257,6 +5301,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         context: ctx.value
                     )
                 }
+                loggedResponseText += notice
             }
             // A successful `complete`/`clarify` intercept ended the run:
             // stream the parsed summary/question as the final content so
@@ -5272,6 +5317,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         context: ctx.value
                     )
                 }
+                loggedResponseText += text
             }
             hop {
                 writerBound.value.writeFinish(model, responseId: responseId, created: created, context: ctx.value)
@@ -5282,9 +5328,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 path: path,
                 userAgent: logUserAgent,
                 requestBody: logRequestBody,
+                responseBody: loggedResponseText.isEmpty ? nil : loggedResponseText,
                 responseStatus: 200,
                 startTime: logStartTime,
-                model: model
+                model: model,
+                toolCalls: loggedToolCalls.isEmpty ? nil : loggedToolCalls
             )
         }
     }
@@ -6489,6 +6537,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             runRequestTask(priority: .userInitiated) {
                 defer { keepaliveTask.cancel() }
                 defer { HTTPInferenceAdmission.shared.release() }
+                // Same menu-bar "generating" dot for host-side server inference
+                // (incl. remote Mode-1 chat completions over the Secure Channel).
+                ServerController.signalGenerationStart()
+                defer { ServerController.signalGenerationEnd() }
                 let wasResidentBeforeStream = await ModelRuntime.shared.isResident(name: model)
                 var emittedSemanticDelta = false
                 func markSemanticDeltaIfConnected() {
@@ -6857,6 +6909,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             }
             runRequestTask(priority: .userInitiated) {
                 defer { HTTPInferenceAdmission.shared.release() }
+                // Same menu-bar "generating" dot (non-streaming path).
+                ServerController.signalGenerationStart()
+                defer { ServerController.signalGenerationEnd() }
                 do {
                     httpTrace.mark("http_task_start")
                     wasResidentBeforeComplete.value = await ModelRuntime.shared.isResident(name: model)
