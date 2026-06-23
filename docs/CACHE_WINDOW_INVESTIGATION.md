@@ -97,3 +97,30 @@ RELIABLE edit paths (proven working): the direct `/images/edits` HTTP API, and e
 a SEPARATE turn with an explicit path. One-turn "generate AND edit" is best-effort and
 model-dependent. Recommend: keep the steer fix; for product UX, drive edit via the direct
 API or a follow-up turn rather than relying on one-turn chaining.
+
+## ACTUAL ROOT CAUSE + FIX (corrected — it is NOT a model limitation)
+My earlier "model orchestration limitation" call was WRONG. Codex (2nd opinion, code-verified)
++ the wiring confirm the real osaurus-side cause:
+
+`AgentTaskState.nextStepBias()` had **no case for native-image tool results**. After an
+`image_generate` result, the loop appended the result but staged **no continuation notice**,
+so the model defaulted to narrating "I'll now edit…" as a final answer — and `AgentToolLoop`
+exits on the first final-text response, so `image_edit` never fired. (Tools WERE re-sent every
+iteration — HTTPHandler:4951-4952 — so it was never missing tools; it was the missing nudge.)
+
+FIX (AgentTaskState.swift): add `ToolResultClass.nativeImageGeneration(paths:)`, track
+`lastToolName`, classify `native_image_generation_job` results, and have `nextStepBias()`
+return a continuation notice after `image_generate` (guarded to image_generate, not
+image_edit → no infinite-edit loop) steering the model to call `image_edit` with
+`source_paths` = the saved path. Injected via the existing transient-notice path
+(`AgentToolLoop` 1155/1221), no forced tool_choice. This is the "re-inject the tool prompt
+after the result" the user identified.
+
+Ruled out with code evidence: tool-call parser after reload (fresh ToolCallProcessor per
+generation), cache/prefix (prompt rebuilt each request), prompt compaction (probe: result
+survives 1→1).
+
+NOTE: the Codex run had collateral damage — it wiped the repo `.git` HEAD/config (1182 files
+showed deleted) and replaced the 635-line/34-test AgentTaskStateTests with a 62-line/2-test
+stub. Both repaired: git metadata restored, all 1182 files restored, 34 original tests
+restored + Codex's 2 added.
