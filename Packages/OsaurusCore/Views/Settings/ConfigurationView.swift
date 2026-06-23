@@ -93,9 +93,52 @@ struct ConfigurationView: View {
         !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    private func matchesSearch(_ texts: String...) -> Bool {
+    private func matchesSearch(_ texts: [String]) -> Bool {
         guard isSearching else { return true }
         return texts.contains { SearchService.matches(query: searchText, in: $0) }
+    }
+
+    // Per-section search keywords. Each section's visibility gate and the
+    // no-results empty state both read from these, so a query that matches no
+    // section reliably surfaces the empty state instead of a blank pane.
+    private static let generalKeywords = [
+        "General", "System", "Hotkey", "Login", "Start at Login", "Beta", "Updates",
+        "Core Model", "CLI", "Command Line", "Install", "Symlink", "Maintenance",
+        "Reset", "Factory Reset", "Wipe",
+    ]
+    private static let privacyKeywords = [
+        "Privacy", "Telemetry", "Analytics", "Usage Data", "Tracking", "Diagnostics",
+    ]
+    private static let chatKeywords = [
+        "Chat", "System Prompt", "Temperature", "Max Tokens", "Context Length", "Top P",
+        "Max Tool Attempts", "Generation", "Memory", "Tools",
+    ]
+    private static let toolPermissionsKeywords = [
+        "Tool Permissions", "Permissions", "Folder", "File", "Shell", "Git", "Write",
+        "Delete", "Move", "Copy",
+    ]
+    private static let serverMovedKeywords = [
+        "Server", "Port", "Network", "Expose", "CORS", "Origins", "Allowed Origins",
+        "Local Inference", "Inference", "Sampling", "Top P", "Eviction", "Idle Residency",
+        "Keep model loaded",
+    ]
+    private static let voiceKeywords = ["Voice", "Parakeet", "Transcription", "Model", "Speech"]
+    private static let notificationsKeywords = [
+        "Notifications", "Toast", "Position", "Timeout", "Alerts", "Concurrent", "Background",
+    ]
+    private static let legalKeywords = [
+        "Legal", "Terms", "Terms of Service", "Privacy", "Privacy Policy", "Policy", "About",
+    ]
+
+    private static let allSearchKeywordGroups: [[String]] = [
+        generalKeywords, privacyKeywords, chatKeywords, toolPermissionsKeywords,
+        serverMovedKeywords, voiceKeywords, notificationsKeywords, legalKeywords,
+    ]
+
+    /// True when an active query matches at least one section. Drives the
+    /// no-results empty state.
+    private var hasAnySearchMatch: Bool {
+        Self.allSearchKeywordGroups.contains { matchesSearch($0) }
     }
 
     /// A tappable legal link styled as a settings row. Opens the canonical
@@ -119,6 +162,37 @@ struct ConfigurationView: View {
         .buttonStyle(.plain)
     }
 
+    /// Shown when an active search matches no settings section, so the detail
+    /// pane never reads as blank/broken. Echoes the query and offers a clear
+    /// action that mirrors the sidebar field's clear button.
+    private var searchEmptyState: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 26))
+                .foregroundColor(theme.tertiaryText)
+            Text("No settings match \"\(searchText)\"", bundle: .module)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundColor(theme.secondaryText)
+                .multilineTextAlignment(.center)
+            Text("Try a different term, like \u{201C}hotkey\u{201D} or \u{201C}privacy\u{201D}.", bundle: .module)
+                .font(.system(size: 12))
+                .foregroundColor(theme.tertiaryText)
+                .multilineTextAlignment(.center)
+            Button {
+                searchText = ""
+            } label: {
+                Text("Clear search", bundle: .module)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(theme.accentColor)
+            }
+            .buttonStyle(.plain)
+            .pointingHandCursor()
+            .padding(.top, 4)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 64)
+    }
+
     var body: some View {
         ZStack {
             VStack(spacing: 0) {
@@ -132,24 +206,7 @@ struct ConfigurationView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 24) {
                         // MARK: - General Section
-                        if matchesSearch(
-                            "General",
-                            "System",
-                            "Hotkey",
-                            "Login",
-                            "Start at Login",
-                            "Beta",
-                            "Updates",
-                            "Core Model",
-                            "CLI",
-                            "Command Line",
-                            "Install",
-                            "Symlink",
-                            "Maintenance",
-                            "Reset",
-                            "Factory Reset",
-                            "Wipe"
-                        ) {
+                        if matchesSearch(Self.generalKeywords) {
                             SettingsSection(title: "General", icon: "gear") {
                                 VStack(alignment: .leading, spacing: 20) {
                                     Text("Application behavior and system integration.", bundle: .module)
@@ -282,14 +339,7 @@ struct ConfigurationView: View {
                         }
 
                         // MARK: - Privacy Section
-                        if matchesSearch(
-                            "Privacy",
-                            "Telemetry",
-                            "Analytics",
-                            "Usage Data",
-                            "Tracking",
-                            "Diagnostics"
-                        ) {
+                        if matchesSearch(Self.privacyKeywords) {
                             SettingsSection(title: "Privacy", icon: "hand.raised") {
                                 VStack(alignment: .leading, spacing: 20) {
                                     Text(
@@ -323,18 +373,7 @@ struct ConfigurationView: View {
                         }
 
                         // MARK: - Chat Section
-                        if matchesSearch(
-                            "Chat",
-                            "System Prompt",
-                            "Temperature",
-                            "Max Tokens",
-                            "Context Length",
-                            "Top P",
-                            "Max Tool Attempts",
-                            "Generation",
-                            "Memory",
-                            "Tools"
-                        ) {
+                        if matchesSearch(Self.chatKeywords) {
                             SettingsSection(title: "Chat", icon: "message") {
                                 VStack(alignment: .leading, spacing: 20) {
                                     Text("Configure how chat mode generates responses.", bundle: .module)
@@ -484,18 +523,7 @@ struct ConfigurationView: View {
                         }
 
                         // MARK: - Tool Permissions Section
-                        if matchesSearch(
-                            "Tool Permissions",
-                            "Permissions",
-                            "Folder",
-                            "File",
-                            "Shell",
-                            "Git",
-                            "Write",
-                            "Delete",
-                            "Move",
-                            "Copy"
-                        ) {
+                        if matchesSearch(Self.toolPermissionsKeywords) {
                             ToolPermissionsSection()
                         }
 
@@ -508,40 +536,17 @@ struct ConfigurationView: View {
                         // `VMLXServerRuntimeSettings`. A small
                         // pointer card surfaces the move when the
                         // user searches for any of those keywords.
-                        if matchesSearch(
-                            "Server",
-                            "Port",
-                            "Network",
-                            "Expose",
-                            "CORS",
-                            "Origins",
-                            "Allowed Origins",
-                            "Local Inference",
-                            "Inference",
-                            "Sampling",
-                            "Top P",
-                            "Eviction",
-                            "Idle Residency",
-                            "Keep model loaded"
-                        ) {
+                        if matchesSearch(Self.serverMovedKeywords) {
                             ServerSettingsMovedNotice()
                         }
 
                         // MARK: - Voice Section
-                        if matchesSearch("Voice", "Parakeet", "Transcription", "Model", "Speech") {
+                        if matchesSearch(Self.voiceKeywords) {
                             VoiceSettingsSection()
                         }
 
                         // MARK: - Notifications Section
-                        if matchesSearch(
-                            "Notifications",
-                            "Toast",
-                            "Position",
-                            "Timeout",
-                            "Alerts",
-                            "Concurrent",
-                            "Background"
-                        ) {
+                        if matchesSearch(Self.notificationsKeywords) {
                             SettingsSection(title: "Notifications", icon: "bell") {
                                 VStack(alignment: .leading, spacing: 20) {
                                     // Enable Toasts Toggle
@@ -616,15 +621,7 @@ struct ConfigurationView: View {
                         }
 
                         // MARK: - Legal Section
-                        if matchesSearch(
-                            "Legal",
-                            "Terms",
-                            "Terms of Service",
-                            "Privacy",
-                            "Privacy Policy",
-                            "Policy",
-                            "About"
-                        ) {
+                        if matchesSearch(Self.legalKeywords) {
                             SettingsSection(title: "Legal", icon: "doc.text") {
                                 VStack(alignment: .leading, spacing: 12) {
                                     Text(
@@ -644,6 +641,11 @@ struct ConfigurationView: View {
                                     )
                                 }
                             }
+                        }
+
+                        // MARK: - No Results
+                        if isSearching && !hasAnySearchMatch {
+                            searchEmptyState
                         }
 
                     }
