@@ -9,7 +9,7 @@ import Foundation
 import SwiftUI
 
 /// Defines all available tabs in the management sidebar.
-public enum ManagementTab: String, CaseIterable, Identifiable {
+public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
     case credits
     case models
     case providers
