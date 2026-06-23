@@ -65,37 +65,22 @@ extension EnvironmentValues {
 }
 
 extension View {
-    /// Draws an accent ring + soft breathing glow around a view while it's a
-    /// live search match. A no-op when `active` is false. `inset` is negative to
-    /// push the ring just outside a tight row's bounds (overlays don't affect
-    /// layout, so this never shifts surrounding content).
-    func settingsSearchHighlight(
-        _ active: Bool,
-        cornerRadius: CGFloat = 10,
-        inset: CGFloat = 0
-    ) -> some View {
-        modifier(
-            SettingsSearchHighlightModifier(active: active, cornerRadius: cornerRadius, inset: inset)
-        )
+    /// Wraps a control in a soft accent glow while it's a live search match —
+    /// no border, just a halo that hugs the control's shape. A no-op when
+    /// `active` is false.
+    func settingsSearchHighlight(_ active: Bool) -> some View {
+        modifier(SettingsSearchHighlightModifier(active: active))
     }
 
-    /// Self-highlights a settings row when the ambient search query matches any
-    /// of `terms`, reading the query from the environment.
-    func settingsSearchRowHighlight(
-        matching terms: [String],
-        cornerRadius: CGFloat = 10,
-        inset: CGFloat = -6
-    ) -> some View {
-        modifier(
-            SettingsSearchRowHighlightModifier(terms: terms, cornerRadius: cornerRadius, inset: inset)
-        )
+    /// Self-highlights a settings control when the ambient search query matches
+    /// any of `terms`, reading the query from the environment.
+    func settingsSearchRowHighlight(matching terms: [String]) -> some View {
+        modifier(SettingsSearchRowHighlightModifier(terms: terms))
     }
 }
 
 private struct SettingsSearchRowHighlightModifier: ViewModifier {
     let terms: [String]
-    let cornerRadius: CGFloat
-    let inset: CGFloat
     @Environment(\.settingsSearchQuery) private var query
 
     private var isMatch: Bool {
@@ -104,37 +89,30 @@ private struct SettingsSearchRowHighlightModifier: ViewModifier {
     }
 
     func body(content: Content) -> some View {
-        content.settingsSearchHighlight(isMatch, cornerRadius: cornerRadius, inset: inset)
+        content.settingsSearchHighlight(isMatch)
     }
 }
 
 private struct SettingsSearchHighlightModifier: ViewModifier {
     let active: Bool
-    let cornerRadius: CGFloat
-    let inset: CGFloat
     @ObservedObject private var themeManager = ThemeManager.shared
 
-    /// 0 at rest, eased up to 1 and gently back to 0 once when the view becomes
-    /// a match — a single soft breath, not a repeating strobe. The steady accent
-    /// ring stays put; only this glow breathes, so the motion is easy to see yet
-    /// the model always settles at 0 for a graceful finish.
+    /// 0 at rest, eased up to 1 and gently back to 0 once when the control
+    /// becomes a match — a single soft breath layered over a faint persistent
+    /// glow, so the matched control stays gently lit without any border.
     @State private var glow: CGFloat = 0
 
     /// Half the breath: rise over `breathDuration`, fall over `breathDuration`.
     private static let breathDuration: Double = 0.9
 
+    private var glowOpacity: Double { active ? 0.22 + 0.5 * Double(glow) : 0 }
+    private var glowRadius: CGFloat { active ? 6 + 14 * glow : 0 }
+
     func body(content: Content) -> some View {
         let theme = themeManager.currentTheme
         content
-            // Steady ring marks the matched row.
-            .overlay(
-                RoundedRectangle(cornerRadius: cornerRadius)
-                    .strokeBorder(theme.accentColor.opacity(active ? 0.7 : 0), lineWidth: 1.5)
-                    .padding(inset)
-            )
-            // Glow breathes up from nothing and back, so the pulse is the moving
-            // part rather than a small wobble on an always-present halo.
-            .shadow(color: theme.accentColor.opacity(0.6 * Double(glow)), radius: 4 + 18 * glow)
+            // The glow follows the control's own (rounded) shape — no ring.
+            .shadow(color: theme.accentColor.opacity(glowOpacity), radius: glowRadius)
             .animation(.easeOut(duration: 0.25), value: active)
             .onAppear { if active { firePulse() } }
             .onChange(of: active) { _, isActive in
@@ -143,9 +121,9 @@ private struct SettingsSearchHighlightModifier: ViewModifier {
     }
 
     /// One smooth breath: ease the glow up, then — on completion — ease it back
-    /// down to nothing. Using the completion handler (rather than a repeating /
-    /// autoreversing animation) keeps the model value honest, so the glow can't
-    /// snap or get stuck bright when it finishes.
+    /// down to the resting glow. Using the completion handler (rather than a
+    /// repeating / autoreversing animation) keeps the model value honest, so the
+    /// glow can't snap or get stuck bright when it finishes.
     private func firePulse() {
         glow = 0
         withAnimation(.easeInOut(duration: Self.breathDuration)) {
@@ -177,7 +155,9 @@ struct SettingsField<Content: View>: View {
                 .font(.system(size: 11, weight: .medium))
                 .foregroundColor(themeManager.currentTheme.secondaryText)
 
+            // Glow the control itself, not the label/hint around it.
             content()
+                .settingsSearchRowHighlight(matching: searchTerms ?? [label])
 
             if let hint = hint {
                 Text(LocalizedStringKey(hint), bundle: .module)
@@ -185,7 +165,6 @@ struct SettingsField<Content: View>: View {
                     .foregroundColor(themeManager.currentTheme.tertiaryText)
             }
         }
-        .settingsSearchRowHighlight(matching: searchTerms ?? [label], cornerRadius: 9, inset: -6)
     }
 }
 
@@ -274,6 +253,7 @@ struct StyledSettingsTextField: View {
                             )
                     )
             )
+            .settingsSearchRowHighlight(matching: [label])
 
             if !help.isEmpty {
                 Text(LocalizedStringKey(help), bundle: .module)
@@ -282,7 +262,6 @@ struct StyledSettingsTextField: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .settingsSearchRowHighlight(matching: [label], cornerRadius: 9, inset: -6)
     }
 }
 
@@ -366,6 +345,7 @@ struct SettingsSliderField: View {
                             .stroke(themeManager.currentTheme.inputBorder, lineWidth: 1)
                     )
             )
+            .settingsSearchRowHighlight(matching: [label])
 
             if !help.isEmpty {
                 Text(LocalizedStringKey(help), bundle: .module)
@@ -387,7 +367,6 @@ struct SettingsSliderField: View {
                 sliderValue = newEffective
             }
         }
-        .settingsSearchRowHighlight(matching: [label], cornerRadius: 9, inset: -6)
     }
 }
 
@@ -492,6 +471,7 @@ struct SettingsStepperField: View {
                             )
                     )
             )
+            .settingsSearchRowHighlight(matching: [label])
 
             if !help.isEmpty {
                 Text(LocalizedStringKey(help), bundle: .module)
@@ -500,7 +480,6 @@ struct SettingsStepperField: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .settingsSearchRowHighlight(matching: [label], cornerRadius: 9, inset: -6)
     }
 
     private func increment() {
@@ -559,7 +538,7 @@ struct SettingsToggle: View {
                         .stroke(themeManager.currentTheme.inputBorder, lineWidth: 1)
                 )
         )
-        .settingsSearchRowHighlight(matching: searchTerms ?? [title], cornerRadius: 12, inset: -3)
+        .settingsSearchRowHighlight(matching: searchTerms ?? [title])
     }
 }
 
