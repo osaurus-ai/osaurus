@@ -111,6 +111,15 @@ final class ToolRegistry: ObservableObject {
 
     @Published private var toolsByName: [String: OsaurusTool] = [:]
     @Published private var configuration: ToolConfiguration = ToolConfigurationStore.load()
+
+    /// Memoized result of `listTools()`. Building it sorts every tool and
+    /// constructs each one's `parameters` JSON schema, which is slow enough to
+    /// trip the main-thread hang watchdog when it runs on render paths (the
+    /// system prompt preview pipeline calls it through an 80 ms debounce).
+    /// Invalidated from `objectWillChange`, so any `@Published` mutation
+    /// (register / unregister / enablement) clears it automatically.
+    private var cachedListTools: [ToolEntry]?
+    private var cacheInvalidations = Set<AnyCancellable>()
     /// Names of tools registered via registerBuiltInTools (always loaded).
     private(set) var builtInToolNames: Set<String> = []
 
@@ -162,6 +171,11 @@ final class ToolRegistry: ObservableObject {
 
     private init() {
         registerBuiltInTools()
+        // Any mutation to a `@Published` store fires `objectWillChange`; drop
+        // the memoized tool list so the next read rebuilds it from fresh state.
+        objectWillChange
+            .sink { [weak self] in self?.cachedListTools = nil }
+            .store(in: &cacheInvalidations)
     }
 
     /// Register built-in tools that are always available.
@@ -969,8 +983,11 @@ final class ToolRegistry: ObservableObject {
     // MARK: - Listing / Enablement
 
     /// Returns all registered tools with global enabled state.
+    /// Memoized via `cachedListTools`; the result is reused until a registry
+    /// mutation invalidates it (see `cachedListTools`).
     func listTools() -> [ToolEntry] {
-        return toolsByName.values
+        if let cached = cachedListTools { return cached }
+        let entries = toolsByName.values
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
             .map { t in
                 ToolEntry(
@@ -980,6 +997,8 @@ final class ToolRegistry: ObservableObject {
                     parameters: t.parameters
                 )
             }
+        cachedListTools = entries
+        return entries
     }
 
     /// Number of registered tools. O(1), and crucially avoids building the
