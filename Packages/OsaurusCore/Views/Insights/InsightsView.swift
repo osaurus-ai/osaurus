@@ -211,7 +211,7 @@ struct InsightsView: View {
             StatPill(
                 icon: "arrow.left.arrow.right",
                 value: "\(stats.totalRequests)",
-                label: "Requests",
+                label: L("Requests"),
                 color: .blue
             )
 
@@ -222,7 +222,7 @@ struct InsightsView: View {
             StatPill(
                 icon: "checkmark.circle.fill",
                 value: stats.formattedSuccessRate,
-                label: "Success",
+                label: L("Success"),
                 color: .green
             )
 
@@ -233,7 +233,7 @@ struct InsightsView: View {
             StatPill(
                 icon: "clock",
                 value: stats.formattedAvgDuration,
-                label: "Avg Time",
+                label: L("Avg Time"),
                 color: .orange
             )
 
@@ -244,7 +244,7 @@ struct InsightsView: View {
             StatPill(
                 icon: "exclamationmark.triangle.fill",
                 value: "\(stats.errorCount)",
-                label: "Errors",
+                label: L("Errors"),
                 color: stats.errorCount > 0 ? .red : Color.gray.opacity(0.5)
             )
 
@@ -257,7 +257,7 @@ struct InsightsView: View {
                 StatPill(
                     icon: "bolt.fill",
                     value: "\(stats.inferenceCount)",
-                    label: "Inferences",
+                    label: L("Inferences"),
                     color: .purple
                 )
 
@@ -268,7 +268,7 @@ struct InsightsView: View {
                 StatPill(
                     icon: "gauge.with.needle",
                     value: stats.formattedAvgSpeed,
-                    label: "Avg Speed",
+                    label: L("Avg Speed"),
                     color: .cyan
                 )
             }

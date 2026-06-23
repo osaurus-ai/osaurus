@@ -130,7 +130,7 @@ struct VoiceView: View {
         if !isSetupComplete {
             return L("Complete setup to enable voice")
         } else if modelManager.downloadedModelsCount > 0 {
-            return "\(modelManager.downloadedModelsCount) models • \(modelManager.totalDownloadedSizeString)"
+            return L("\(modelManager.downloadedModelsCount) models • \(modelManager.totalDownloadedSizeString)")
         } else {
             return L("Voice transcription ready")
         }

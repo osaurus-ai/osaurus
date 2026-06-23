@@ -102,38 +102,44 @@ final class ModelDownloadService: ObservableObject {
         let title: String
         let message: String
         if lower.contains("not enough disk space") || lower.contains("no space") {
-            title = "Not enough disk space"
+            title = L("Not enough disk space")
             message = rawError
         } else if lower.contains("hugging face") || lower.contains("file list") {
-            title = "Repository unavailable"
+            title = L("Repository unavailable")
             message =
-                "Couldn't reach this model on Hugging Face. The repo may be private, gated, removed, or temporarily unreachable."
+                L(
+                    "Couldn't reach this model on Hugging Face. The repo may be private, gated, removed, or temporarily unreachable."
+                )
         } else if lower.hasPrefix("http ") {
-            title = "Repository unavailable"
+            title = L("Repository unavailable")
             message =
-                "Hugging Face responded with \(rawError). Private or gated repos aren't supported yet; otherwise try again in a moment."
+                L(
+                    "Hugging Face responded with \(rawError). Private or gated repos aren't supported yet; otherwise try again in a moment."
+                )
         } else if lower.contains("offline") || lower.contains("internet connection")
             || lower.contains("network") || lower.contains("timed out")
         {
-            title = "Network error"
+            title = L("Network error")
             message = rawError
         } else if isCompatibilityPreflight {
-            title = "Model not runnable"
+            title = L("Model not runnable")
             message = rawError
         } else if lower.contains("size mismatch") {
-            title = "Downloaded file corrupted"
+            title = L("Downloaded file corrupted")
             message =
-                "A file came back at the wrong size, which usually means the connection was interrupted. Retrying should fix this."
+                L(
+                    "A file came back at the wrong size, which usually means the connection was interrupted. Retrying should fix this."
+                )
         } else if lower.contains("download incomplete") {
-            title = "Download incomplete"
+            title = L("Download incomplete")
             message = rawError
         } else if lower.contains("create directory") || lower.contains("couldn't")
             || lower.contains("permission") || lower.contains("read-only")
         {
-            title = "Couldn't save files"
+            title = L("Couldn't save files")
             message = rawError
         } else {
-            title = "Model download failed"
+            title = L("Model download failed")
             message = rawError
         }
 
