@@ -207,7 +207,7 @@ struct ConfigurationView: View {
                     VStack(alignment: .leading, spacing: 24) {
                         // MARK: - General Section
                         if matchesSearch(Self.generalKeywords) {
-                            SettingsSection(title: "General", icon: "gear", isHighlighted: isSearching) {
+                            SettingsSection(title: "General", icon: "gear") {
                                 VStack(alignment: .leading, spacing: 20) {
                                     Text("Application behavior and system integration.", bundle: .module)
                                         .font(.system(size: 12))
@@ -340,7 +340,7 @@ struct ConfigurationView: View {
 
                         // MARK: - Privacy Section
                         if matchesSearch(Self.privacyKeywords) {
-                            SettingsSection(title: "Privacy", icon: "hand.raised", isHighlighted: isSearching) {
+                            SettingsSection(title: "Privacy", icon: "hand.raised") {
                                 VStack(alignment: .leading, spacing: 20) {
                                     Text(
                                         "Control what anonymous data Osaurus collects.",
@@ -374,7 +374,7 @@ struct ConfigurationView: View {
 
                         // MARK: - Chat Section
                         if matchesSearch(Self.chatKeywords) {
-                            SettingsSection(title: "Chat", icon: "message", isHighlighted: isSearching) {
+                            SettingsSection(title: "Chat", icon: "message") {
                                 VStack(alignment: .leading, spacing: 20) {
                                     Text("Configure how chat mode generates responses.", bundle: .module)
                                         .font(.system(size: 12))
@@ -525,7 +525,6 @@ struct ConfigurationView: View {
                         // MARK: - Tool Permissions Section
                         if matchesSearch(Self.toolPermissionsKeywords) {
                             ToolPermissionsSection()
-                                .settingsSearchHighlight(isSearching)
                         }
 
                         // MARK: - Server settings moved
@@ -539,18 +538,16 @@ struct ConfigurationView: View {
                         // user searches for any of those keywords.
                         if matchesSearch(Self.serverMovedKeywords) {
                             ServerSettingsMovedNotice()
-                                .settingsSearchHighlight(isSearching)
                         }
 
                         // MARK: - Voice Section
                         if matchesSearch(Self.voiceKeywords) {
                             VoiceSettingsSection()
-                                .settingsSearchHighlight(isSearching)
                         }
 
                         // MARK: - Notifications Section
                         if matchesSearch(Self.notificationsKeywords) {
-                            SettingsSection(title: "Notifications", icon: "bell", isHighlighted: isSearching) {
+                            SettingsSection(title: "Notifications", icon: "bell") {
                                 VStack(alignment: .leading, spacing: 20) {
                                     // Enable Toasts Toggle
                                     SettingsToggle(
@@ -625,7 +622,7 @@ struct ConfigurationView: View {
 
                         // MARK: - Legal Section
                         if matchesSearch(Self.legalKeywords) {
-                            SettingsSection(title: "Legal", icon: "doc.text", isHighlighted: isSearching) {
+                            SettingsSection(title: "Legal", icon: "doc.text") {
                                 VStack(alignment: .leading, spacing: 12) {
                                     Text(
                                         "Review the agreements that govern your use of Osaurus.",
@@ -655,6 +652,9 @@ struct ConfigurationView: View {
                     .padding(.horizontal, 24)
                     .padding(.vertical, 24)
                     .frame(maxWidth: .infinity)
+                    // Fields self-highlight off the active query rather than the
+                    // whole section card glowing.
+                    .environment(\.settingsSearchQuery, isSearching ? searchText : "")
                 }
                 .opacity(hasAppeared ? 1 : 0)
             }

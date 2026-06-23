@@ -17,8 +17,6 @@ struct SettingsSection<Content: View>: View {
 
     let title: String
     let icon: String
-    /// Accent ring while this section is a live search match.
-    var isHighlighted: Bool = false
     @ViewBuilder let content: () -> Content
 
     var body: some View {
@@ -46,29 +44,80 @@ struct SettingsSection<Content: View>: View {
                         .stroke(themeManager.currentTheme.cardBorder, lineWidth: 1)
                 )
         )
-        .settingsSearchHighlight(isHighlighted)
     }
 }
 
 // MARK: - Search Highlight
 
+/// Ambient search query for the settings panel. Field primitives read this so
+/// they can self-highlight when their own label matches — no call site has to
+/// thread the query through. Empty string (the default) disables highlighting,
+/// which keeps these primitives inert everywhere outside settings search.
+private struct SettingsSearchQueryKey: EnvironmentKey {
+    static let defaultValue: String = ""
+}
+
+extension EnvironmentValues {
+    var settingsSearchQuery: String {
+        get { self[SettingsSearchQueryKey.self] }
+        set { self[SettingsSearchQueryKey.self] = newValue }
+    }
+}
+
 extension View {
-    /// Draws an accent ring + soft glow around a settings card while it's a live
-    /// search match, so the eye lands on the relevant section. A no-op when
-    /// `active` is false. Tuned to the 12pt card radius shared by every section.
-    func settingsSearchHighlight(_ active: Bool) -> some View {
-        modifier(SettingsSearchHighlightModifier(active: active))
+    /// Draws an accent ring + soft breathing glow around a view while it's a
+    /// live search match. A no-op when `active` is false. `inset` is negative to
+    /// push the ring just outside a tight row's bounds (overlays don't affect
+    /// layout, so this never shifts surrounding content).
+    func settingsSearchHighlight(
+        _ active: Bool,
+        cornerRadius: CGFloat = 10,
+        inset: CGFloat = 0
+    ) -> some View {
+        modifier(
+            SettingsSearchHighlightModifier(active: active, cornerRadius: cornerRadius, inset: inset)
+        )
+    }
+
+    /// Self-highlights a settings row when the ambient search query matches any
+    /// of `terms`, reading the query from the environment.
+    func settingsSearchRowHighlight(
+        matching terms: [String],
+        cornerRadius: CGFloat = 10,
+        inset: CGFloat = -6
+    ) -> some View {
+        modifier(
+            SettingsSearchRowHighlightModifier(terms: terms, cornerRadius: cornerRadius, inset: inset)
+        )
+    }
+}
+
+private struct SettingsSearchRowHighlightModifier: ViewModifier {
+    let terms: [String]
+    let cornerRadius: CGFloat
+    let inset: CGFloat
+    @Environment(\.settingsSearchQuery) private var query
+
+    private var isMatch: Bool {
+        guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+        return terms.contains { SearchService.matches(query: query, in: $0) }
+    }
+
+    func body(content: Content) -> some View {
+        content.settingsSearchHighlight(isMatch, cornerRadius: cornerRadius, inset: inset)
     }
 }
 
 private struct SettingsSearchHighlightModifier: ViewModifier {
     let active: Bool
+    let cornerRadius: CGFloat
+    let inset: CGFloat
     @ObservedObject private var themeManager = ThemeManager.shared
 
-    /// 0 at rest, eased up to 1 and gently back to 0 once when a section becomes
+    /// 0 at rest, eased up to 1 and gently back to 0 once when the view becomes
     /// a match — a single soft breath, not a repeating strobe. The steady accent
-    /// border stays put; only this glow breathes, so the motion is easy to see
-    /// yet the model always settles at 0 for a graceful finish.
+    /// ring stays put; only this glow breathes, so the motion is easy to see yet
+    /// the model always settles at 0 for a graceful finish.
     @State private var glow: CGFloat = 0
 
     /// Half the breath: rise over `breathDuration`, fall over `breathDuration`.
@@ -77,10 +126,11 @@ private struct SettingsSearchHighlightModifier: ViewModifier {
     func body(content: Content) -> some View {
         let theme = themeManager.currentTheme
         content
-            // Steady ring marks the matched section.
+            // Steady ring marks the matched row.
             .overlay(
-                RoundedRectangle(cornerRadius: 12)
+                RoundedRectangle(cornerRadius: cornerRadius)
                     .strokeBorder(theme.accentColor.opacity(active ? 0.7 : 0), lineWidth: 1.5)
+                    .padding(inset)
             )
             // Glow breathes up from nothing and back, so the pulse is the moving
             // part rather than a small wobble on an always-present halo.
@@ -115,6 +165,10 @@ struct SettingsField<Content: View>: View {
 
     let label: String
     var hint: String? = nil
+    /// Extra terms this field should match during settings search. Defaults to
+    /// the visible label; set it when the searchable keyword differs (e.g. a
+    /// "Randomness" field that should also light up for "Temperature").
+    var searchTerms: [String]? = nil
     @ViewBuilder let content: () -> Content
 
     var body: some View {
@@ -131,6 +185,7 @@ struct SettingsField<Content: View>: View {
                     .foregroundColor(themeManager.currentTheme.tertiaryText)
             }
         }
+        .settingsSearchRowHighlight(matching: searchTerms ?? [label], cornerRadius: 9, inset: -6)
     }
 }
 
@@ -227,6 +282,7 @@ struct StyledSettingsTextField: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
+        .settingsSearchRowHighlight(matching: [label], cornerRadius: 9, inset: -6)
     }
 }
 
@@ -331,6 +387,7 @@ struct SettingsSliderField: View {
                 sliderValue = newEffective
             }
         }
+        .settingsSearchRowHighlight(matching: [label], cornerRadius: 9, inset: -6)
     }
 }
 
@@ -443,6 +500,7 @@ struct SettingsStepperField: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
+        .settingsSearchRowHighlight(matching: [label], cornerRadius: 9, inset: -6)
     }
 
     private func increment() {
@@ -464,6 +522,8 @@ struct SettingsToggle: View {
     let title: String
     let description: String
     var badge: String? = nil
+    /// Extra search terms beyond the title; defaults to the title alone.
+    var searchTerms: [String]? = nil
     @Binding var isOn: Bool
 
     var body: some View {
@@ -499,6 +559,7 @@ struct SettingsToggle: View {
                         .stroke(themeManager.currentTheme.inputBorder, lineWidth: 1)
                 )
         )
+        .settingsSearchRowHighlight(matching: searchTerms ?? [title], cornerRadius: 12, inset: -3)
     }
 }
 
