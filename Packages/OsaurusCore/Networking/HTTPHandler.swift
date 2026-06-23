@@ -2857,6 +2857,24 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         )
     }
 
+    /// Resolve the sampling values the `/agents/{id}/run` loop should use.
+    /// The request body wins when present; the agent's configured value
+    /// (`effectiveTemperature` / `effectiveMaxTokens`) is the fallback before
+    /// the model-bundle default, matching the in-app Chat and plugin-host
+    /// surfaces. A `nil` result means "no explicit value" — the engine then
+    /// applies the bundle default.
+    @MainActor
+    static func resolveAgentSampling(
+        request: ChatCompletionRequest,
+        agentId: UUID
+    ) -> (temperature: Float?, maxTokens: Int?) {
+        let manager = AgentManager.shared
+        return (
+            request.temperature ?? manager.effectiveTemperature(for: agentId),
+            request.resolvedMaxTokens ?? manager.effectiveMaxTokens(for: agentId)
+        )
+    }
+
     private static func mergeAgentContextTools(
         _ agentTools: [Tool],
         clientTools: [Tool]?
@@ -4795,10 +4813,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             // the model-bundle default. Resolved once here because the loop's
             // `modelStep` samples from `req`, not the enriched request.
             let (effectiveTemperature, effectiveMaxTokens) = await MainActor.run {
-                (
-                    req.temperature ?? AgentManager.shared.effectiveTemperature(for: agentId),
-                    req.resolvedMaxTokens ?? AgentManager.shared.effectiveMaxTokens(for: agentId)
-                )
+                Self.resolveAgentSampling(request: req, agentId: agentId)
             }
 
             let configuredMaxToolAttempts = await MainActor.run {
