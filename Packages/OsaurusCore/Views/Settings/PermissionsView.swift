@@ -64,6 +64,7 @@ struct PermissionsView: View {
                             SystemPermissionRow(permission: permission)
                         }
                     }
+                    .settingsLandingAnchor("permissions.tools")
                 }
                 .padding(.horizontal, 24)
                 .padding(.vertical, 24)

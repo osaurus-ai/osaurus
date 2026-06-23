@@ -137,6 +137,7 @@ struct PrivacyView: View {
                             .padding(.horizontal, 24)
                             .padding(.vertical, 24)
                             .frame(maxWidth: .infinity, alignment: .top)
+                            .settingsLandingAnchor("privacy.tab")
                     }
                 }
             }

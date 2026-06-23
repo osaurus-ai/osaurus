@@ -178,6 +178,7 @@ struct MemoryView: View {
                             }
 
                             tabContent
+                                .settingsLandingAnchor("memory.settings")
                         }
                     }
                 }

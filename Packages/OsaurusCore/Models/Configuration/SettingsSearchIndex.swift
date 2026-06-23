@@ -286,19 +286,18 @@ public enum SettingsSearchIndex {
         ),
         .init(
             id: "privacy.tab", tab: .privacy,
-            title: "Privacy Controls",
-            keywords: ["telemetry", "analytics", "crash reports", "data", "tracking"]
+            title: "Privacy Filter",
+            keywords: ["redaction", "filter", "scrub", "mask", "sensitive data", "custom rules", "pii"]
         ),
 
         // MARK: Identity / Storage / Themes / Memory
         .init(
-            id: "identity.mnemonic", tab: .identity,
-            title: "Master Recovery Phrase",
-            keywords: ["mnemonic", "seed phrase", "recovery", "keys", "identity"]
-        ),
-        .init(
-            id: "identity.agentKeys", tab: .identity,
-            title: "Agent Keys", keywords: ["agent key", "signing", "cryptographic identity"]
+            id: "identity.keys", tab: .identity,
+            title: "Identity & Recovery",
+            keywords: [
+                "mnemonic", "seed phrase", "recovery phrase", "agent keys", "signing",
+                "cryptographic identity", "keys",
+            ]
         ),
         .init(
             id: "storage.location", tab: .storage,
