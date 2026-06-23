@@ -1015,8 +1015,10 @@ struct MLXBatchAdapter {
                 toolChoice: toolChoice,
                 trace: trace
             )
+            Stream.gpu.synchronize()
             await MetalGate.shared.exitGeneration(model: modelName)
         } catch {
+            Stream.gpu.synchronize()
             await MetalGate.shared.exitGeneration(model: modelName)
             if let soloLease { await soloLease.release() }
             throw error
