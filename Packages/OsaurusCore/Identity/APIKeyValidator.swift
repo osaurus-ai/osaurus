@@ -123,7 +123,7 @@ public struct APIKeyValidator: Sendable {
             }
         }
 
-        return .valid(issuer: recoveredAddress, audience: payload.aud)
+        return .valid(issuer: recoveredAddress, audience: payload.aud, keyNonce: payload.nonce)
     }
 
     /// Whether the given audience is the master address (an unrestricted,

@@ -20,19 +20,25 @@ public struct ActionPreview: Sendable, Equatable {
     public let targetLabel: String?
     public let effect: EffectClass
     public let note: String?
+    /// The full text payload for type/set actions, shown expandably on the
+    /// confirm card so a long string isn't hidden behind the feed's 40-char
+    /// truncation. `nil` for actions that type nothing.
+    public let typedText: String?
 
     public init(
         appName: String?,
         actionLabel: String,
         targetLabel: String?,
         effect: EffectClass,
-        note: String?
+        note: String?,
+        typedText: String? = nil
     ) {
         self.appName = appName
         self.actionLabel = actionLabel
         self.targetLabel = targetLabel
         self.effect = effect
         self.note = note
+        self.typedText = typedText
     }
 
     /// One-line summary for the feed / prompt.
@@ -83,7 +89,8 @@ public struct HardwiredGate: ComputerUseGating {
                 actionLabel: action.feedLabel,
                 targetLabel: targetLabel,
                 effect: effect,
-                note: action.note
+                note: action.note,
+                typedText: action.typedTextForPreview
             )
         )
     }

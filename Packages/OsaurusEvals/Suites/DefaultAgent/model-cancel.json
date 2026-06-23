@@ -1,0 +1,18 @@
+{
+  "id": "default_agent.model-cancel",
+  "domain": "default_agent",
+  "label": "default agent • cancel an in-flight model download",
+  "query": "Cancel the download for the model mlx-community/Some-Big-Model-32B-4bit.",
+  "notes": "action 'cancel' with the model id. Cancel is a no-op for an id that isn't downloading; the selection assertion matches the emitted call and proves the model distinguishes cancel from delete.",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": ["osaurus_model"],
+      "mustNotCallTools": ["capabilities_discover", "capabilities_load"],
+      "argsMustContain": [
+        { "tool": "osaurus_model", "args": { "action": "cancel", "id": "Some-Big-Model-32B-4bit" } }
+      ],
+      "maxIterations": 4
+    }
+  }
+}

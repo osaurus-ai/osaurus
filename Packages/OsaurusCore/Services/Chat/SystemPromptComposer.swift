@@ -30,10 +30,7 @@ public struct SystemPromptComposer: Sendable {
     }
 
     public func render() -> String {
-        sections
-            .map { $0.content.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-            .joined(separator: "\n\n")
+        PromptRenderer.render(sections)
     }
 
     public func manifest() -> PromptManifest {
@@ -47,13 +44,13 @@ public struct SystemPromptComposer: Sendable {
     public mutating func appendBasePrompt(systemPrompt: String) {
         append(
             .static(
-                id: "platform",
+                id: PromptSectionID.platform,
                 label: L("Platform"),
                 content: SystemPromptTemplates.platformIdentity
             )
         )
         let effective = SystemPromptTemplates.effectivePersona(systemPrompt)
-        append(.static(id: "persona", label: L("Persona"), content: effective))
+        append(.static(id: PromptSectionID.persona, label: L("Persona"), content: effective))
     }
 
     // MARK: - Memory Assembly
@@ -1463,7 +1460,7 @@ public struct SystemPromptComposer: Sendable {
     /// users who never enable the feature.
     static let agentDBToolNames: Set<String> = [
         "db_schema", "db_create_table", "db_alter_table", "db_migrate",
-        "db_insert", "db_upsert", "db_update", "db_delete", "db_restore",
+        "db_insert", "db_upsert", "db_import", "db_update", "db_delete", "db_restore",
         "db_query", "db_execute",
         // Saved views (spec §6.3 / phase 2).
         "db_define_view", "db_run_view", "db_list_views", "db_drop_view",
@@ -2005,15 +2002,17 @@ public struct SystemPromptComposer: Sendable {
             }
         }
 
-        // Phase C default-agent surface:
-        //   * For the Default agent, hard-restrict to the 8-tool baseline
-        //     (3 reads + 2 discovery + 3 agent-loop). Writes are NOT in
-        //     the turn-1 schema — they enter only via `capabilities_load`,
-        //     which `additionalToolNames` carries above.
+        // Default-agent configure surface:
+        //   * For the Default agent, hard-restrict to the consolidated
+        //     configure surface (`osaurus_status` / `osaurus_list` /
+        //     `osaurus_describe` reads + the per-domain `osaurus_*` write
+        //     tools) plus the agent-loop tools. The writes load DIRECTLY —
+        //     the Default agent does not use `capabilities_discover` /
+        //     `capabilities_load`. `additionalToolNames` still unions in so a
+        //     custom-agent-style mid-session load never gets stripped here.
         //   * For every other agent, strip the configure tools wholesale.
-        //     Even if a registration path leaks `osaurus_provider_add`
-        //     into the schema, the strip filter keeps the model from
-        //     seeing it.
+        //     Even if a registration path leaks `osaurus_provider` into the
+        //     schema, the strip filter keeps the model from seeing it.
         if snapshot.agentId == Agent.defaultId {
             var allowed = ToolRegistry.defaultAgentAllowedToolNames
                 .union(additionalToolNames)
@@ -2174,6 +2173,42 @@ public struct SystemPromptComposer: Sendable {
 
         let original = existing.content ?? ""
         let prefixed = "[Memory]\n\(trimmed)\n[/Memory]\n\n\(original)"
+        messages[idx] = ChatMessage(
+            role: existing.role,
+            content: prefixed,
+            tool_calls: existing.tool_calls,
+            tool_call_id: existing.tool_call_id
+        )
+    }
+
+    /// Prepend a frozen screen-context block (already rendered by
+    /// `ScreenContextSnapshot.render()`, tags and all) to the latest user
+    /// message. Placed on the user turn — not the system prompt — for two
+    /// reasons that mirror `injectMemoryPrefix`:
+    ///   1. the system prefix stays byte-stable so the paged KV cache reuses
+    ///      the conversation prefix, and
+    ///   2. the Privacy Filter only scans the latest user turn
+    ///      (`latestUserTurnSegments()`) and skips `system`, so riding on the
+    ///      user message is what actually routes the snapshot through PII
+    ///      scrubbing before a cloud send.
+    /// No-op when the block is nil/blank, no user message exists, or the
+    /// latest user message is multimodal (we leave `contentParts`-bearing
+    /// messages alone to avoid silently dropping images).
+    static func injectScreenContextPrefix(
+        _ block: String?,
+        into messages: inout [ChatMessage]
+    ) {
+        guard let block,
+            case let trimmed = block.trimmingCharacters(in: .whitespacesAndNewlines),
+            !trimmed.isEmpty,
+            let idx = messages.lastIndex(where: { $0.role == "user" })
+        else { return }
+
+        let existing = messages[idx]
+        guard existing.contentParts == nil else { return }
+
+        let original = existing.content ?? ""
+        let prefixed = original.isEmpty ? trimmed : "\(trimmed)\n\n\(original)"
         messages[idx] = ChatMessage(
             role: existing.role,
             content: prefixed,

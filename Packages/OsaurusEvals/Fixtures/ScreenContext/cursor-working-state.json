@@ -1,0 +1,36 @@
+{
+  "_comment": "Synthetic Cursor/VS-Code working-state scene. Monaco's buffer is inaccessible (the sentinel), so the code body is the AX ceiling — behavior comes from the reliable layer instead: the title names the unsaved active file ('● AgentLoop.swift — osaurus') and the bottom status bar carries the git branch, problems count, language, and cursor position. A top-left 'Explorer' panel label is single-token chrome that must stay dropped. Proves the 'Active:'/'Status:' behavior extraction composes a useful read of what the user is doing even when no code/message text is accessible.",
+  "apps": [
+    { "pid": 701, "bundleId": "com.todesktop.230313mzl4w4u92", "name": "Cursor", "active": true, "hidden": false }
+  ],
+  "activeWindow": {
+    "pid": 701, "app": "Cursor", "title": "● AgentLoop.swift — osaurus", "x": 0, "y": 0, "w": 1600, "h": 1000
+  },
+  "windowsByPid": {
+    "701": [
+      { "windowId": 1, "title": "● AgentLoop.swift — osaurus", "focused": true, "minimized": false, "x": 0, "y": 0, "w": 1600, "h": 1000 }
+    ]
+  },
+  "snapshot": {
+    "app": "Cursor",
+    "focusedWindow": "● AgentLoop.swift — osaurus",
+    "truncated": false,
+    "windows": [
+      { "id": 1, "title": "● AgentLoop.swift — osaurus", "focused": true, "x": 0, "y": 0, "w": 1600, "h": 1000 }
+    ],
+    "elements": [
+      { "id": "ed", "role": "textarea", "label": "The editor is not accessible at this time. To enable screen reader optimized mode, use Shift+Option+F1", "value": "The editor is not accessible at this time. To enable screen reader optimized mode, use Shift+Option+F1", "focused": true, "enabled": true, "x": 380, "y": 80, "w": 1100, "h": 840, "actions": [] },
+      { "id": "explorer", "role": "statictext", "value": "Explorer", "focused": false, "enabled": true, "x": 20, "y": 60, "w": 120, "h": 20, "actions": [] },
+      { "id": "branch", "role": "statictext", "value": "feature/screen-context", "focused": false, "enabled": true, "x": 20, "y": 980, "w": 180, "h": 18, "actions": [] },
+      { "id": "problems", "role": "statictext", "value": "3 errors, 1 warning", "focused": false, "enabled": true, "x": 220, "y": 980, "w": 160, "h": 18, "actions": [] },
+      { "id": "lang", "role": "statictext", "value": "Swift", "focused": false, "enabled": true, "x": 1380, "y": 980, "w": 60, "h": 18, "actions": [] },
+      { "id": "pos", "role": "statictext", "value": "Ln 42, Col 8", "focused": false, "enabled": true, "x": 1460, "y": 980, "w": 110, "h": 18, "actions": [] }
+    ]
+  },
+  "focusedContent": {
+    "role": "textarea",
+    "label": "The editor is not accessible at this time. To enable screen reader optimized mode, use Shift+Option+F1",
+    "value": "The editor is not accessible at this time. To enable screen reader optimized mode, use Shift+Option+F1",
+    "viewport": "/"
+  }
+}

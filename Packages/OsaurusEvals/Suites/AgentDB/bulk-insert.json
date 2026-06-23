@@ -1,0 +1,41 @@
+{
+  "id": "agentdb.bulk-insert",
+  "domain": "agent_loop",
+  "label": "agentdb • insert many rows in a single db_insert(rows[]) call",
+  "query": "Create a table named scores with columns name (TEXT) and points (INTEGER). Then insert these six players in ONE db_insert call using its rows array (do not call db_insert once per player): Ana 10, Ben 20, Cy 30, Dee 40, Eli 50, Fay 60. Finally, query the table to compute the total points and tell me the total.",
+  "notes": "WS2 proof: the rows[] batch form of db_insert collapses six rows into one tool call. toolUsageAudit caps db_insert at a single call, so a per-row loop fails even though the data-movement relief would otherwise refund the extra steps. dbState verifies the rows actually persisted (6 rows, SUM(points)=210).",
+  "fixtures": {
+    "agentCapabilities": {
+      "dbEnabled": true
+    }
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 10,
+      "mustCallTools": [
+        "db_create_table",
+        "db_insert",
+        "db_query"
+      ],
+      "toolUsageAudit": [
+        {
+          "tool": "db_insert",
+          "maxCalls": 1
+        }
+      ],
+      "dbState": [
+        {
+          "sql": "SELECT COUNT(*) FROM scores",
+          "expectFirstValue": "6"
+        },
+        {
+          "sql": "SELECT SUM(points) FROM scores",
+          "expectFirstValue": "210"
+        }
+      ],
+      "finalTextContains": [
+        "210"
+      ]
+    }
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "id": "default_agent.read-describe-agent",
+  "domain": "default_agent",
+  "label": "default agent • describe one agent (scope + id args)",
+  "query": "Show me the full configuration for the agent with id c4e90a72-3d18-4b6f-95a2-1f8c0e5d73a6.",
+  "notes": "Read for a specific entity → osaurus_describe with scope 'agents' and the given id. The id does not exist in the isolated eval store, so the tool returns a typed not-found error; the assertion scores the SELECTION (right tool + scope), which the model emits before seeing the result.",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": ["osaurus_describe"],
+      "mustNotCallTools": ["capabilities_discover", "capabilities_load"],
+      "argsMustContain": [
+        { "tool": "osaurus_describe", "args": { "scope": "agents" } }
+      ],
+      "maxIterations": 3
+    }
+  }
+}

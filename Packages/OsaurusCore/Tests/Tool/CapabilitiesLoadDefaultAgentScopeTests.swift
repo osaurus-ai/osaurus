@@ -2,7 +2,12 @@
 //  CapabilitiesLoadDefaultAgentScopeTests.swift
 //  OsaurusCoreTests
 //
-//  Verifies the default-agent gate inside `CapabilitiesLoadTool`:
+//  Verifies the default-agent gate inside `CapabilitiesLoadTool`. This is
+//  now DEFENSE-IN-DEPTH: the Default agent loads its consolidated configure
+//  tools directly and no longer carries `capabilities_load` in its schema,
+//  so it cannot reach this tool through the normal path. The internal gate
+//  remains as a belt-and-suspenders guard against any future regression that
+//  re-exposes the loader to the Default agent, and these tests lock it down:
 //
 //   * Loading a non-configure tool (e.g. `sandbox_exec`) from the
 //     default agent returns the routing-hint error and does NOT

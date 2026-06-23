@@ -88,34 +88,73 @@ struct ConfigureAIStateDownloadTests {
     }
 
     /// `cancelLocalDownload()` must both reset the download state AND
-    /// pop the substate back to the picker. The previous UX left the
-    /// user on the dead downloading screen even after dismissing the
-    /// failure alert — issue #1071.
-    @Test func cancelLocalDownload_returnsToPickerAndResetsState() {
+    /// pop the screen back home. The previous UX left the user on the dead
+    /// downloading screen even after dismissing the failure alert — issue #1071.
+    @Test func cancelLocalDownload_returnsHomeAndResetsState() {
         let (state, model) = makeStateWithModel()
         defer { clear(model) }
 
-        state.localSubstate = .downloading
+        state.screen = .downloading
         ModelManager.shared.downloadService.downloadStates[model.id] = .downloading(progress: 0.3)
 
         state.cancelLocalDownload()
 
-        #expect(state.localSubstate == .picker)
+        #expect(state.screen == .home)
         let after = ModelManager.shared.downloadService.downloadStates[model.id]
         #expect(after == .notStarted)
     }
 
-    @Test func localPathStaysAvailableAt24GBAndBelow() {
-        #expect(ConfigureAIState.isLocalTabAvailable(totalMemoryGB: 24) == true)
-        #expect(ConfigureAIState.isLocalTabAvailable(totalMemoryGB: 8) == true)
-
+    /// The step is local-first: a fresh state lands on the home screen with the
+    /// local card selected (hosted off), so the recommended "Run on your Mac"
+    /// card is the default and the Osaurus Router stays gated behind an explicit
+    /// Cloud choice.
+    @Test func defaultsToLocalHomeScreen() {
         let state = ConfigureAIState()
-        #expect(state.availablePaths(totalMemoryGB: 24) == [.local, .apiProvider])
-        #expect(state.availablePaths(totalMemoryGB: 8) == [.local, .apiProvider])
+        #expect(state.screen == .home)
+        #expect(state.isHostedSelected == false)
+        #expect(state.apiSubstate == .picker)
+        #expect(state.selectedBrainSource == nil)
 
-        state.selectedPath = .local
-        state.applyDefaultPathIfNeeded(totalMemoryGB: 24)
-        #expect(state.selectedPath == .local)
+        // `ensureLocalSelection` pre-picks a model without flipping to hosted.
+        state.ensureLocalSelection(totalMemoryGB: 24)
+        #expect(state.isHostedSelected == false)
+        #expect(state.screen == .home)
+    }
+
+    /// The router gate in `finishOnboarding` keys off `selectedBrainSource`:
+    /// hosted -> router enabled, everything else -> disabled. Confirm the home
+    /// card selectors feed that signal correctly.
+    @Test func selectingHostedVsLocalDrivesBrainSourceForRouterGate() {
+        let state = ConfigureAIState()
+
+        // Tapping the cloud card selects hosted (radio).
+        state.selectHostedOsaurus()
+        #expect(state.isHostedSelected == true)
+
+        // Tapping the local card flips back to local.
+        state.selectLocalBrain()
+        #expect(state.isHostedSelected == false)
+
+        // Committing hosted records the hosted brain source -> router enabled.
+        state.selectHostedAndContinue(onComplete: {})
+        #expect(state.selectedBrainSource == .hostedOsaurus)
+    }
+
+    /// Drilling into bring-your-own-key drops the hosted selection so the
+    /// footer Continue doesn't advance the hosted path, and backing out returns
+    /// to the home screen.
+    @Test func byokDrillInAndBackReturnsHome() {
+        let state = ConfigureAIState()
+        state.selectHostedOsaurus()
+        #expect(state.isHostedSelected == true)
+
+        state.showBYOK()
+        #expect(state.screen == .byok)
+        #expect(state.apiSubstate == .picker)
+        #expect(state.isHostedSelected == false)
+
+        state.popBYOKToHome()
+        #expect(state.screen == .home)
     }
 
     @Test func ensureLocalSelectionDoesNotDeadEndWhenAllCuratedModelsAreTooLarge() {
@@ -188,5 +227,85 @@ struct ConfigureAIStateDownloadTests {
         // Provider-key brain source -> the captured provider id.
         state.selectedBrainSource = .providerKey(.openai)
         #expect(state.providerModelPinTarget == providerId)
+    }
+
+    // MARK: - Model chooser modal
+
+    /// Build a throwaway in-memory model so a test can move the draft to a
+    /// different selection than the seeded one.
+    private func makeModel(_ tag: String) -> MLXModel {
+        MLXModel(
+            id: "cfg-ai/\(tag)-\(UUID().uuidString)",
+            name: "Test \(tag)",
+            description: "",
+            downloadURL: "https://example.com/\(tag)",
+            rootDirectory: FileManager.default.temporaryDirectory
+        )
+    }
+
+    /// Opening the chooser seeds the draft from the current selection (so the
+    /// active model is pre-highlighted) and flips the dialog open.
+    @Test func openModelChooser_seedsDraftFromSelectionAndOpens() {
+        let (state, model) = makeStateWithModel()
+        defer { clear(model) }
+
+        #expect(state.isChoosingModel == false)
+        #expect(state.draftModel == nil)
+
+        state.openModelChooser()
+
+        #expect(state.isChoosingModel == true)
+        #expect(state.draftModel?.id == model.id)
+    }
+
+    /// Tapping a row only moves the draft — it does not commit the selection or
+    /// close the dialog, so users can browse freely before deciding.
+    @Test func selectDraftModel_updatesDraftWithoutCommitting() {
+        let (state, model) = makeStateWithModel()
+        defer { clear(model) }
+
+        state.openModelChooser()
+        let other = makeModel("other")
+        state.selectDraftModel(other)
+
+        #expect(state.draftModel?.id == other.id)
+        #expect(state.selectedModel?.id == model.id)
+        #expect(state.isChoosingModel == true)
+    }
+
+    /// "Use this model" applies the draft as the active local brain (which also
+    /// clears any hosted selection) and closes the dialog.
+    @Test func commitModelChooser_appliesDraftClearsHostedAndCloses() {
+        let (state, model) = makeStateWithModel()
+        defer { clear(model) }
+
+        // User had the cloud card selected before opening the chooser.
+        state.selectHostedOsaurus()
+        #expect(state.isHostedSelected == true)
+
+        state.openModelChooser()
+        let picked = makeModel("picked")
+        state.selectDraftModel(picked)
+        state.commitModelChooser()
+
+        #expect(state.selectedModel?.id == picked.id)
+        #expect(state.isHostedSelected == false)
+        #expect(state.isChoosingModel == false)
+        #expect(state.draftModel?.id == picked.id)
+    }
+
+    /// Cancel / X / Esc / scrim-tap all route here: the dialog closes and the
+    /// committed selection is untouched even though the draft had moved.
+    @Test func cancelModelChooser_closesWithoutChangingSelection() {
+        let (state, model) = makeStateWithModel()
+        defer { clear(model) }
+
+        state.openModelChooser()
+        state.selectDraftModel(makeModel("other"))
+
+        state.cancelModelChooser()
+
+        #expect(state.isChoosingModel == false)
+        #expect(state.selectedModel?.id == model.id)
     }
 }

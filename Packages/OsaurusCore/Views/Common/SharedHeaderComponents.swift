@@ -213,10 +213,20 @@ struct AgentPill: View {
     var pairedRelayAgents: [PairedRelayAgent] = []
     var onSelectRelayAgent: ((PairedRelayAgent) -> Void)? = nil
     var activeRelayAgent: PairedRelayAgent? = nil
+    /// Mascot avatar id of the active remote agent (Mode 2), surfaced from its
+    /// live metadata over the Secure Channel. nil → monogram on the remote
+    /// name, so the connected pill matches the chat hero/thread identity.
+    var activeRemoteAgentAvatar: String? = nil
     /// Optional callback to open the active agent's settings via the inline
     /// gear button. When `nil`, the gear is hidden entirely so the pill
     /// collapses back to its original single-button form.
     var onOpenActiveAgentSettings: (() -> Void)? = nil
+    /// Optional callback to open the active *remote* agent's detail/settings
+    /// view (connection, activity, source). When a discovered/relay agent is
+    /// active the gear routes here instead of `onOpenActiveAgentSettings`, so
+    /// remote settings live in the same toolbar slot as local ones rather than
+    /// floating inline beside the chat hero.
+    var onOpenRemoteAgentSettings: (() -> Void)? = nil
     /// Increment to programmatically open the agent picker popover (e.g. from
     /// the `/agent` slash command). Each change pops the popover open.
     var openPickerTrigger: Int = 0
@@ -359,48 +369,53 @@ struct AgentPill: View {
         .frame(width: size, height: size)
     }
 
+    /// Name used to seed the active remote avatar's monogram/tint.
+    private var remoteAvatarSeedName: String {
+        activeRelayAgent?.name ?? activeDiscoveredAgent?.name ?? L("Remote Agent")
+    }
+
     @ViewBuilder
     private var activeAvatar: some View {
-        if activeDiscoveredAgent != nil {
-            remoteAvatar(systemImage: "network", size: 20)
-        } else if activeRelayAgent != nil {
-            remoteAvatar(systemImage: "antenna.radiowaves.left.and.right", size: 20)
+        if isRemoteActive {
+            // Mirror the chat hero/thread: the remote agent's own mascot,
+            // falling back to a monogram on its name (not a generic glyph).
+            AgentAvatarView(
+                mascotId: activeRemoteAgentAvatar,
+                name: remoteAvatarSeedName,
+                tint: agentColorFor(remoteAvatarSeedName),
+                diameter: 20,
+                customImageURL: nil,
+                monogramFontSize: 20 * 0.45,
+                borderWidth: 0
+            )
         } else {
             monogramAvatar(for: activeAgent, size: 20)
         }
     }
 
-    /// True when either half of the pill is hovered. The chrome
-    /// (background, border, shadow) responds to both as a single unit so
-    /// the gear and the main tap area share one capsule highlight.
-    private var isPillHighlighted: Bool { isHovered || isGearHovered }
+    /// The pill highlights on hover of its tap area. The settings gear is now a
+    /// separate sibling button, so it no longer drives the pill's chrome.
+    private var isPillHighlighted: Bool { isHovered }
 
-    /// Whether the inline gear button should render. Remote/relay agents
-    /// don't have local config to edit, so we keep the pill compact in
-    /// that case regardless of whether a callback was supplied.
-    private var showsGearButton: Bool {
-        onOpenActiveAgentSettings != nil && !isRemoteActive
+    /// The settings action behind the gear, routed by which kind of agent is
+    /// active: remote/relay agents open their connection detail view, local
+    /// agents open their editable config. `nil` hides the gear (no destination).
+    private var gearAction: (() -> Void)? {
+        isRemoteActive ? onOpenRemoteAgentSettings : onOpenActiveAgentSettings
     }
 
+    /// Whether the inline gear button should render. Either way the gear lives
+    /// in the pill so settings sit in one consistent toolbar slot regardless of
+    /// which kind of agent is active.
+    private var showsGearButton: Bool { gearAction != nil }
+
     var body: some View {
-        HStack(spacing: 0) {
-            mainTapArea
+        HStack(spacing: 2) {
+            pill
 
             if showsGearButton {
-                gearDivider
-                gearButton
+                settingsButton
             }
-        }
-        .background(pillBackground)
-        .overlay(pillBorder)
-        .shadow(
-            color: isPillHighlighted ? theme.accentColor.opacity(0.1) : .clear,
-            radius: 6,
-            x: 0,
-            y: 2
-        )
-        .popover(isPresented: $isPopoverPresented, arrowEdge: .bottom) {
-            popoverContent
         }
         .onChange(of: openPickerTrigger) { _, _ in
             isPopoverPresented = true
@@ -422,6 +437,46 @@ struct AgentPill: View {
 
     // MARK: - Subviews
 
+    /// The dropdown pill — avatar + name + chevron — carrying the capsule
+    /// chrome and the agent-picker popover. Reads purely as a selector now that
+    /// the gear has moved out to its own button.
+    private var pill: some View {
+        mainTapArea
+            .background(pillBackground)
+            .overlay(pillBorder)
+            .shadow(
+                color: isPillHighlighted ? theme.accentColor.opacity(0.1) : .clear,
+                radius: 6,
+                x: 0,
+                y: 2
+            )
+            .popover(isPresented: $isPopoverPresented, arrowEdge: .bottom) {
+                popoverContent
+            }
+    }
+
+    /// Standalone settings button beside the pill. A plain icon (no Liquid
+    /// Glass capsule) that just tints on hover. Routes to local or remote
+    /// agent settings.
+    private var settingsButton: some View {
+        Button {
+            gearAction?()
+        } label: {
+            Image(systemName: "gearshape")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(isGearHovered ? theme.accentColor : theme.secondaryText)
+                .frame(width: 28, height: 28)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .localizedHelp(isRemoteActive ? "Remote agent settings" : "Edit agent settings")
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.15)) {
+                isGearHovered = hovering
+            }
+        }
+    }
+
     private var mainTapArea: some View {
         Button {
             isPopoverPresented.toggle()
@@ -438,7 +493,7 @@ struct AgentPill: View {
                     .foregroundColor(isHovered ? theme.secondaryText : theme.tertiaryText)
             }
             .padding(.leading, 14)
-            .padding(.trailing, showsGearButton ? 10 : 14)
+            .padding(.trailing, 14)
             .padding(.vertical, 6)
             .contentShape(Rectangle())
         }
@@ -448,32 +503,6 @@ struct AgentPill: View {
                 isHovered = hovering
             }
         }
-    }
-
-    private var gearButton: some View {
-        Button {
-            onOpenActiveAgentSettings?()
-        } label: {
-            Image(systemName: "gearshape")
-                .font(.system(size: 10, weight: .medium))
-                .foregroundColor(isGearHovered ? theme.accentColor : theme.secondaryText)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .localizedHelp("Edit agent settings")
-        .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.15)) {
-                isGearHovered = hovering
-            }
-        }
-    }
-
-    private var gearDivider: some View {
-        Rectangle()
-            .fill(theme.primaryBorder.opacity(0.2))
-            .frame(width: 1, height: 16)
     }
 
     // MARK: - Chrome

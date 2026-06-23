@@ -183,7 +183,7 @@ public struct MemoryManagementConsoleService: Sendable {
                 itemId: itemId,
                 mutation: .disable,
                 changed: changed,
-                message: changed ? "Pinned fact disabled." : "Pinned fact was not found."
+                message: changed ? L("Pinned fact disabled.") : L("Pinned fact was not found.")
             )
 
         case .episode:
@@ -207,7 +207,7 @@ public struct MemoryManagementConsoleService: Sendable {
                 itemId: itemId,
                 mutation: .disable,
                 changed: changed,
-                message: changed ? "Episode disabled." : "Episode was not found."
+                message: changed ? L("Episode disabled.") : L("Episode was not found.")
             )
 
         case .transcriptTurn:
@@ -215,7 +215,7 @@ public struct MemoryManagementConsoleService: Sendable {
                 itemId: itemId,
                 mutation: .disable,
                 changed: false,
-                message: "Transcript turns do not have a disabled state. Use Forget to remove the row."
+                message: L("Transcript turns do not have a disabled state. Use Forget to remove the row.")
             )
         }
     }
@@ -233,7 +233,7 @@ public struct MemoryManagementConsoleService: Sendable {
                     itemId: itemId,
                     mutation: .forget,
                     changed: false,
-                    message: "Pinned fact was not found."
+                    message: L("Pinned fact was not found.")
                 )
             }
             try db.deletePinnedFact(id: parsed.storageId)
@@ -243,7 +243,7 @@ public struct MemoryManagementConsoleService: Sendable {
                 itemId: itemId,
                 mutation: .forget,
                 changed: true,
-                message: "Pinned fact forgotten."
+                message: L("Pinned fact forgotten.")
             )
 
         case .episode:
@@ -256,7 +256,7 @@ public struct MemoryManagementConsoleService: Sendable {
                     itemId: itemId,
                     mutation: .forget,
                     changed: false,
-                    message: "Episode was not found."
+                    message: L("Episode was not found.")
                 )
             }
             try db.deleteEpisode(id: episodeId)
@@ -267,7 +267,7 @@ public struct MemoryManagementConsoleService: Sendable {
                 itemId: itemId,
                 mutation: .forget,
                 changed: true,
-                message: "Episode forgotten."
+                message: L("Episode forgotten.")
             )
 
         case .transcriptTurn:
@@ -288,7 +288,7 @@ public struct MemoryManagementConsoleService: Sendable {
                 itemId: itemId,
                 mutation: .forget,
                 changed: changed,
-                message: changed ? "Transcript turn forgotten." : "Transcript turn was not found."
+                message: changed ? L("Transcript turn forgotten.") : L("Transcript turn was not found.")
             )
         }
     }

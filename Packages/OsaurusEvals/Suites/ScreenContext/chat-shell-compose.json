@@ -1,0 +1,24 @@
+{
+  "id": "screen_context.chat-shell-compose",
+  "domain": "screen_context",
+  "label": "Screen context • Slack-like shell focused draft",
+  "query": "(ambient capture)",
+  "notes": "Generic Electron chat-shell shape: a Slack-like channel title is parsed as active context, the focused composer draft and selection surface, and message rows remain on-screen content.",
+  "fixtures": {},
+  "expect": {
+    "screenContext": {
+      "fixture": "chat-shell-compose.json",
+      "focusedRoleEquals": "text field",
+      "selectedTextContains": "fixture owner",
+      "gistContains": ["In ChatDesk"],
+      "mustContain": [
+        "In ChatDesk",
+        "Active: channel release-room",
+        "Focused field: text field \"Message release-room\"",
+        "Selected text:",
+        "release checklist"
+      ],
+      "mustNotContain": ["Threads"]
+    }
+  }
+}

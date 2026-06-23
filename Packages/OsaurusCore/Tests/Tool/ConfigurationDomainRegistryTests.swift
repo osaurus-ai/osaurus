@@ -96,15 +96,14 @@ struct ConfigurationDomainRegistryTests {
         ConfigurationDomainBootstrap.registerBuiltIns()
 
         let configureWrites = ToolRegistry.configureWriteToolNames
-        // Provider, model, MCP, plugin, schedule, agent domains all
-        // contribute. Snapshot a couple of representative tools — one
-        // per domain — to lock the surface contract.
-        #expect(configureWrites.contains("osaurus_provider_add"))
-        #expect(configureWrites.contains("osaurus_model_download"))
-        #expect(configureWrites.contains("osaurus_mcp_add"))
-        #expect(configureWrites.contains("osaurus_plugin_install"))
-        #expect(configureWrites.contains("osaurus_schedule_create"))
-        #expect(configureWrites.contains("osaurus_agent_create"))
+        // Provider, model, MCP, plugin, schedule, agent domains each
+        // contribute exactly one consolidated `osaurus_*` write tool.
+        #expect(configureWrites.contains("osaurus_provider"))
+        #expect(configureWrites.contains("osaurus_model"))
+        #expect(configureWrites.contains("osaurus_mcp"))
+        #expect(configureWrites.contains("osaurus_plugin"))
+        #expect(configureWrites.contains("osaurus_schedule"))
+        #expect(configureWrites.contains("osaurus_agent"))
 
         let configureAll = ToolRegistry.configureToolNames
         #expect(configureAll.isSuperset(of: configureWrites))
@@ -127,31 +126,45 @@ struct ConfigurationDomainRegistryTests {
         ConfigurationDomainBootstrap.registerBuiltIns()
 
         let builtIn = ToolRegistry.shared.builtInToolNames
-        // The provider/model/etc. tools must end up flagged built-in
-        // so the always-loaded baseline + capability infrastructure
+        // The consolidated provider/model/etc. tools must end up flagged
+        // built-in so the Default-agent baseline + capability infrastructure
         // can reach them.
-        #expect(builtIn.contains("osaurus_provider_add"))
-        #expect(builtIn.contains("osaurus_model_download"))
-        #expect(builtIn.contains("osaurus_schedule_create"))
-        #expect(builtIn.contains("osaurus_agent_activate"))
+        #expect(builtIn.contains("osaurus_provider"))
+        #expect(builtIn.contains("osaurus_model"))
+        #expect(builtIn.contains("osaurus_schedule"))
+        #expect(builtIn.contains("osaurus_agent"))
     }
 
     @Test
-    func defaultAgentAllowedToolNames_isExactlyEightNames() {
-        // The 8-tool default-agent baseline is a hard product contract.
-        // Adding to or removing from this set changes the model's
-        // first-turn schema and must be reviewed deliberately.
-        #expect(ToolRegistry.defaultAgentAllowedToolNames.count == 8)
+    func defaultAgentAllowedToolNames_isTheConsolidatedConfigureSurfacePlusLoop() {
+        // The Default-agent baseline is a hard product contract: the
+        // consolidated configure surface (3 reads + 6 per-domain writes)
+        // plus the three agent-loop tools, and NOTHING else. In particular
+        // the capability-search gateway is no longer part of it. Changing
+        // this set changes the model's first-turn schema and must be
+        // reviewed deliberately.
+        ConfigurationDomainBootstrap._resetForTests()
+        ConfigurationDomainBootstrap.registerBuiltIns()
+        defer { ConfigurationDomainBootstrap._resetForTests() }
+
         let expected: Set<String> = [
             "osaurus_status",
             "osaurus_list",
             "osaurus_describe",
-            "capabilities_discover",
-            "capabilities_load",
+            "osaurus_provider",
+            "osaurus_model",
+            "osaurus_mcp",
+            "osaurus_plugin",
+            "osaurus_schedule",
+            "osaurus_agent",
             "todo",
             "complete",
             "clarify",
         ]
         #expect(ToolRegistry.defaultAgentAllowedToolNames == expected)
+        // The capability-search gateway is explicitly NOT in the Default
+        // agent's surface anymore (it stays available to custom agents).
+        #expect(!ToolRegistry.defaultAgentAllowedToolNames.contains("capabilities_discover"))
+        #expect(!ToolRegistry.defaultAgentAllowedToolNames.contains("capabilities_load"))
     }
 }

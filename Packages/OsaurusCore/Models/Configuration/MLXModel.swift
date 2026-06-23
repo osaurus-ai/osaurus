@@ -130,6 +130,34 @@ struct MLXModel: Identifiable, Codable {
         )
     }
 
+    /// A jargon-light version of `name` for first-run surfaces (the onboarding
+    /// model chooser). The HF-derived `name` carries technical tokens —
+    /// instruction-tuned (`it`), quant/precision (`MXFP8`, `MXFP4`, `qat`,
+    /// `4bit`, `bf16`, `JANGTQ`, `JANG_4M`), MoE active-params (`A1B`/`A4B`),
+    /// and speculative-decode (`MTP`) — which make the title read like a
+    /// filename. Stripping them yields a product-style title ("Gemma 4 12B").
+    /// The dropped precision is re-surfaced as a separate chip in the chooser so
+    /// same-size variants stay distinguishable. Falls back to `name` when
+    /// stripping would leave nothing.
+    var simplifiedName: String {
+        func isJargon(_ token: String) -> Bool {
+            let t = token.lowercased()
+            if t == "it" || t == "qat" || t == "mtp" { return true }
+            // Precision / quantization tokens.
+            if t.range(of: #"^mxfp\d+$"#, options: .regularExpression) != nil { return true }
+            if t.range(of: #"^\d+-?bit$"#, options: .regularExpression) != nil { return true }
+            if t == "fp16" || t == "bf16" || t == "fp32" { return true }
+            if t.range(of: #"^jangtq\d*$"#, options: .regularExpression) != nil { return true }
+            if t.range(of: #"^jang_?\d+[a-z]?$"#, options: .regularExpression) != nil { return true }
+            // MoE active-parameter token (e.g. "A1B", "A4B", "A3B").
+            if t.range(of: #"^a\d+b$"#, options: .regularExpression) != nil { return true }
+            return false
+        }
+        let kept = name.split(separator: " ").map(String.init).filter { !isJargon($0) }
+        let result = kept.joined(separator: " ").trimmingCharacters(in: .whitespaces)
+        return result.isEmpty ? name : result
+    }
+
     /// Formatted download size string (e.g., "3.9 GB").
     ///
     /// Uses the value-type `ByteCountFormatStyle` rather than allocating a

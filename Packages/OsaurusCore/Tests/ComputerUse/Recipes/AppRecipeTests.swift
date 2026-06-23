@@ -105,6 +105,9 @@ final class RecipeClassifierTests: XCTestCase {
 
     func testDialogDontSaveEscalatesViaUniversalRecipe() {
         let action = click("Don't Save")
+        // App-agnostic vocabulary now treats the bare commit token ("save") as
+        // an `edit` (so it confirms under balanced rather than auto-running),
+        // but it does NOT know "Don't Save" discards work — that stays edit.
         XCTAssertEqual(
             EffectClassifier.classify(
                 action: action,
@@ -112,8 +115,10 @@ final class RecipeClassifierTests: XCTestCase {
                 resolvedLabel: "Don't Save",
                 appName: "Notes"
             ),
-            .navigate
+            .edit
         )
+        // The universal dialog recipe is what recognizes "Don't Save" as a
+        // discard and escalates it the rest of the way to consequential.
         XCTAssertEqual(
             EffectClassifier.classify(
                 action: action,

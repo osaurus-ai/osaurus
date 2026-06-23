@@ -2,19 +2,18 @@
 //  MCPProviderConfigurationDomain.swift
 //  osaurus
 //
-//  Default-agent configure tools for remote MCP (Model Context Protocol)
-//  tool providers:
-//   - osaurus_mcp_add     — register an HTTP MCP server
-//   - osaurus_mcp_remove  — delete a registered MCP server
-//   - osaurus_mcp_enable  — enable / disable a registered MCP server
+//  Default-agent configure tool for remote MCP (Model Context Protocol)
+//  tool providers. One tool, `osaurus_mcp`, fans out across three actions:
+//   - add     — register an HTTP MCP server
+//   - remove  — delete a registered MCP server
+//   - enable  — enable / disable a registered MCP server
 //
 //  Scope is intentionally narrow and HTTP-only. stdio MCP servers launch
 //  local subprocesses (`npx`, `uvx`, …) and carry real trust weight, so
 //  they stay in Settings → Tools → Remote rather than chat. Secrets
 //  (bearer tokens, OAuth) NEVER travel through chat: when a server needs
 //  auth the tool registers it and returns `needs_secrets: true`, directing
-//  the user to finish in Settings → Tools → Remote (same pattern as the
-//  plugin domain's `needs_secrets`).
+//  the user to finish in Settings → Tools → Remote.
 //
 
 import Foundation
@@ -37,46 +36,61 @@ enum MCPProviderConfigurationDomain {
             "disable an mcp provider",
         ],
         tools: [
-            OsaurusMCPAddTool(),
-            OsaurusMCPRemoveTool(),
-            OsaurusMCPEnableTool(),
+            OsaurusMCPTool()
         ],
         writeToolNames: [
-            "osaurus_mcp_add",
-            "osaurus_mcp_remove",
-            "osaurus_mcp_enable",
+            "osaurus_mcp"
         ]
     )
 }
 
-// MARK: - osaurus_mcp_add
+// MARK: - osaurus_mcp
 
-public final class OsaurusMCPAddTool: OsaurusTool, PermissionedTool, @unchecked Sendable {
-    public let name = "osaurus_mcp_add"
+public final class OsaurusMCPTool: OsaurusTool, PermissionedTool, @unchecked Sendable {
+    public let name = "osaurus_mcp"
     public let description =
-        "Register a remote HTTP MCP (Model Context Protocol) tool server. Requires `name` and `url` "
-        + "(an https endpoint). Optional `auth` ∈ {none, bearer, oauth}; defaults to `none`. When the "
-        + "server needs a bearer token or OAuth, the response carries `needs_secrets: true` — direct the "
-        + "user to Settings → Tools → Remote to enter the secret. Never accept secrets as tool arguments. "
-        + "stdio (local subprocess) servers are not supported here — use Settings → Tools → Remote."
+        "Manage remote HTTP MCP tool servers. `action`: add (needs `name` + `url`; optional `auth` ∈ "
+        + "{none, bearer, oauth}; when auth is needed the response carries `needs_secrets: true` — send the "
+        + "user to Settings → Tools → Remote, never accept secrets as arguments), remove (needs `id`), "
+        + "enable (needs `id`; connects the server), disable (needs `id`; disconnects it). stdio servers are "
+        + "not supported here."
     public let parameters: JSONValue? = .object([
         "type": .string("object"),
         "additionalProperties": .bool(false),
         "properties": .object([
+            "action": .object([
+                "type": .string("string"),
+                "enum": .array([
+                    .string("add"), .string("remove"), .string("enable"), .string("disable"),
+                ]),
+                "description": .string("Operation to perform."),
+            ]),
+            "id": .object([
+                "type": .string("string"),
+                "description": .string("MCP server UUID. Required for remove / enable / disable."),
+            ]),
             "name": .object([
                 "type": .string("string"),
-                "description": .string("Display name for the MCP server."),
+                "description": .string("Display name. Required for add."),
             ]),
             "url": .object([
                 "type": .string("string"),
-                "description": .string("HTTP(S) endpoint URL of the MCP server."),
+                "description": .string("HTTP(S) endpoint URL. Required for add."),
             ]),
             "auth": .object([
                 "type": .string("string"),
-                "description": .string("Auth strategy: none (default), bearer, or oauth."),
+                "enum": .array([.string("none"), .string("bearer"), .string("oauth")]),
+                "description": .string("Auth strategy for add. Defaults to none."),
+            ]),
+            "enabled": .object([
+                "type": .string("boolean"),
+                "description": .string(
+                    "Optional override for enable/disable: defaults to true for `enable`, false for "
+                        + "`disable`. Pass explicitly only to flip the opposite way."
+                ),
             ]),
         ]),
-        "required": .array([.string("name"), .string("url")]),
+        "required": .array([.string("action")]),
     ])
 
     public var requirements: [String] { [ConfigurationToolBase.requirement] }
@@ -90,7 +104,18 @@ public final class OsaurusMCPAddTool: OsaurusTool, PermissionedTool, @unchecked 
         }
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
         guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
+        let actionReq = requireAction(args, allowed: ["add", "remove", "enable", "disable"])
+        guard case .value(let action) = actionReq else { return actionReq.failureEnvelope ?? "" }
 
+        switch action {
+        case "add": return await handleAdd(args)
+        case "remove": return await handleRemove(args)
+        case "enable", "disable": return await handleEnable(args, action: action)
+        default: return actionReq.failureEnvelope ?? ""
+        }
+    }
+
+    private func handleAdd(_ args: [String: Any]) async -> String {
         let nameReq = requireString(args, "name", expected: "display name", tool: name)
         guard case .value(let displayName) = nameReq else { return nameReq.failureEnvelope ?? "" }
 
@@ -131,8 +156,7 @@ public final class OsaurusMCPAddTool: OsaurusTool, PermissionedTool, @unchecked 
                 authType: authType,
                 transport: .http
             )
-            // Secrets are never accepted via chat — `token: nil`. For
-            // bearer/oauth the user finishes in Settings → Tools → Remote.
+            // Secrets are never accepted via chat — `token: nil`.
             MCPProviderManager.shared.addProvider(provider, token: nil)
             return provider.id
         }
@@ -168,32 +192,8 @@ public final class OsaurusMCPAddTool: OsaurusTool, PermissionedTool, @unchecked 
         }
         return ToolEnvelope.success(tool: name, result: result)
     }
-}
 
-// MARK: - osaurus_mcp_remove
-
-public final class OsaurusMCPRemoveTool: OsaurusTool, PermissionedTool, @unchecked Sendable {
-    public let name = "osaurus_mcp_remove"
-    public let description =
-        "Remove a registered MCP server by `id` (its UUID). Disconnects it and clears its keychain secrets."
-    public let parameters: JSONValue? = .object([
-        "type": .string("object"),
-        "additionalProperties": .bool(false),
-        "properties": .object(["id": .object(["type": .string("string")])]),
-        "required": .array([.string("id")]),
-    ])
-
-    public var requirements: [String] { [ConfigurationToolBase.requirement] }
-    var defaultPermissionPolicy: ToolPermissionPolicy { ConfigurationToolBase.defaultPolicy }
-
-    public init() {}
-
-    public func execute(argumentsJSON: String) async throws -> String {
-        if let gate = ConfigurationToolBase.defaultAgentGateFailure(tool: name) {
-            return gate
-        }
-        let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
-        guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
+    private func handleRemove(_ args: [String: Any]) async -> String {
         let idReq = requireString(args, "id", expected: "MCP provider UUID", tool: name)
         guard case .value(let idStr) = idReq else { return idReq.failureEnvelope ?? "" }
         guard let id = UUID(uuidString: idStr) else {
@@ -223,36 +223,8 @@ public final class OsaurusMCPRemoveTool: OsaurusTool, PermissionedTool, @uncheck
             result: ["provider_id": id.uuidString, "status": "removed"]
         )
     }
-}
 
-// MARK: - osaurus_mcp_enable
-
-public final class OsaurusMCPEnableTool: OsaurusTool, PermissionedTool, @unchecked Sendable {
-    public let name = "osaurus_mcp_enable"
-    public let description =
-        "Enable or disable a registered MCP server by `id`. Pass `enabled: true` to connect, "
-        + "`enabled: false` to disconnect."
-    public let parameters: JSONValue? = .object([
-        "type": .string("object"),
-        "additionalProperties": .bool(false),
-        "properties": .object([
-            "id": .object(["type": .string("string")]),
-            "enabled": .object(["type": .string("boolean")]),
-        ]),
-        "required": .array([.string("id"), .string("enabled")]),
-    ])
-
-    public var requirements: [String] { [ConfigurationToolBase.requirement] }
-    var defaultPermissionPolicy: ToolPermissionPolicy { ConfigurationToolBase.defaultPolicy }
-
-    public init() {}
-
-    public func execute(argumentsJSON: String) async throws -> String {
-        if let gate = ConfigurationToolBase.defaultAgentGateFailure(tool: name) {
-            return gate
-        }
-        let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
-        guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
+    private func handleEnable(_ args: [String: Any], action: String) async -> String {
         let idReq = requireString(args, "id", expected: "MCP provider UUID", tool: name)
         guard case .value(let idStr) = idReq else { return idReq.failureEnvelope ?? "" }
         guard let id = UUID(uuidString: idStr) else {
@@ -263,14 +235,11 @@ public final class OsaurusMCPEnableTool: OsaurusTool, PermissionedTool, @uncheck
                 tool: name
             )
         }
-        guard let enabled = args["enabled"] as? Bool else {
-            return ToolEnvelope.failure(
-                kind: .invalidArgs,
-                message: "`enabled` (boolean) is required.",
-                field: "enabled",
-                tool: name
-            )
-        }
+        // The action carries the intent (`enable`→connect, `disable`→disconnect);
+        // an explicit `enabled` boolean overrides it so a single action can still
+        // flip either way. This lets a model say `action: disable` directly
+        // instead of discovering the `enable` + `enabled:false` idiom.
+        let enabled = coerceBool(args["enabled"]) ?? (action == "enable")
 
         let found: Bool = await MainActor.run {
             guard MCPProviderManager.shared.configuration.provider(id: id) != nil else { return false }
@@ -287,10 +256,7 @@ public final class OsaurusMCPEnableTool: OsaurusTool, PermissionedTool, @uncheck
         }
         return ToolEnvelope.success(
             tool: name,
-            result: [
-                "provider_id": id.uuidString,
-                "status": enabled ? "enabled" : "disabled",
-            ]
+            result: ["provider_id": id.uuidString, "status": enabled ? "enabled" : "disabled"]
         )
     }
 }

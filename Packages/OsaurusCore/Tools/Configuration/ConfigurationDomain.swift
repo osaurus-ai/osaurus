@@ -77,7 +77,7 @@ final class ConfigurationDomainRegistry: ObservableObject {
     /// Register a configurable domain. Idempotent on `id`. Adds every
     /// tool to `ToolRegistry` as a built-in and seeds the search index
     /// with the domain's user-language hints so phrases like
-    /// "connect anthropic" can rank `osaurus_provider_add` even when
+    /// "connect anthropic" can rank `osaurus_provider` even when
     /// neither term appears in the raw tool description.
     func register(_ domain: ConfigurationDomain) {
         if registeredIds.contains(domain.id) {

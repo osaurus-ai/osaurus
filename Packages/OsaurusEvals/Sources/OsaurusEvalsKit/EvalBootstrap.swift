@@ -138,11 +138,60 @@ public enum EvalBootstrap {
         for plan: EvalBootstrapPlan
     ) -> URL? {
         guard plan.usesIsolatedSearchStorage else { return nil }
+        return isolateRootWithExternalModelsManifest(symlinkTools: plan.loadInstalledPlugins)
+    }
+
+    /// Isolate **configuration** storage for the `default_agent` domain.
+    ///
+    /// Default-agent eval cases drive the real multi-turn loop, which
+    /// EXECUTES the consolidated configure write tools (`osaurus_agent`,
+    /// `osaurus_provider`, `osaurus_mcp`, `osaurus_schedule`, …) through the
+    /// live `ToolRegistry`. Run unguarded, an `osaurus_agent create` would
+    /// add a junk agent to the developer's real `~/.osaurus`, an
+    /// `osaurus_schedule create` would register a schedule that later fires,
+    /// and so on. Isolating the root to a fresh temp dir keeps the real
+    /// config pristine — every executed write lands in the throwaway root —
+    /// while the external-models manifest symlink keeps the local MLX run
+    /// model resolvable (Foundation needs no manifest).
+    ///
+    /// Must run AFTER `configureIsolatedSearchStorageIfNeeded` so a mixed
+    /// suite that also loads plugins keeps that path's `Tools` symlink: when
+    /// the root is already isolated this only installs the credential-sheet
+    /// bypass and returns nil (no double-isolation).
+    ///
+    /// `MODEL` must be local MLX or `foundation`; a remote run/judge model
+    /// would need provider credentials that live in the (now-isolated, empty)
+    /// config root. That matches the plan's local-MLX + Foundation matrix.
+    @discardableResult
+    public static func configureIsolatedConfigStorageIfNeeded(isolate: Bool) -> URL? {
+        guard isolate else { return nil }
+
+        // `osaurus_provider` add / set_credentials open an AppKit credential
+        // sheet via `ProviderCredentialPromptService`. A headless eval run
+        // has no UI loop to dismiss it, so resolve every request as
+        // `.cancelled`: the model's tool CALL (what the matrix scores) is
+        // still recorded, and nothing is written to Keychain. Production code
+        // leaves this hook nil; the eval CLI process is torn down after the
+        // run, so the override never leaks into a real session.
+        ProviderCredentialPromptService.bypassUI = { _ in .cancelled }
+
+        return isolateRootWithExternalModelsManifest(symlinkTools: false)
+    }
+
+    /// Shared isolation primitive: create a fresh temp root, symlink the real
+    /// external-models manifest in (so HF-cache / LM-Studio MLX models stay
+    /// resolvable), optionally symlink the real `Tools` dir (plugin
+    /// discovery), point `OsaurusPaths.root` at it, and seed the DEBUG
+    /// storage key. Returns the temp root, or nil when the root is ALREADY
+    /// overridden — the first isolation owns the symlinks; a second caller
+    /// must not clobber them with a fresh (symlink-less) root.
+    private static func isolateRootWithExternalModelsManifest(symlinkTools: Bool) -> URL? {
+        guard OsaurusPaths.overrideRoot == nil else { return nil }
 
         // Resolve the REAL plugin install dir before overriding the root —
         // `OsaurusPaths.tools()` is `root()/Tools`, so we have to capture it
         // while `root()` still points at `~/.osaurus`.
-        let realToolsDir = plan.loadInstalledPlugins ? OsaurusPaths.tools() : nil
+        let realToolsDir = symlinkTools ? OsaurusPaths.tools() : nil
 
         // Same capture-before-override rule for the external-models manifest
         // (`root()/cache/external-models.json`): the id -> absolute bundle-path
@@ -151,8 +200,8 @@ public enum EvalBootstrap {
         // eval whose `--model` lives only in `~/.cache/huggingface/hub` (e.g.
         // `mlx-community/Qwen3-4B-4bit`) is reachable ONLY through this manifest;
         // under the isolated temp root it is absent, so an LLM run on the
-        // isolated path (CapabilityClaims) would route the model to `.none` and
-        // error every case with `modelNotFound`.
+        // isolated path (CapabilityClaims / default_agent) would route the
+        // model to `.none` and error every case with `modelNotFound`.
         let realExternalModelsManifest = OsaurusPaths.externalModelsManifestFile()
 
         let root = FileManager.default.temporaryDirectory
@@ -206,6 +255,11 @@ public enum EvalBootstrap {
     }
 
     public static func run(_ plan: EvalBootstrapPlan) async {
+        // Make the self-declared KV-cache regime real before any model loads
+        // (so a "memory-only" run truly disables the disk-L2 lane instead of
+        // inheriting the disk-L2 default). Process-local; never persisted.
+        applyKVRegimeOverrideIfRequested()
+
         // Colocate the MLX Metal shader library beside this CLI binary
         // before any local model load. No-op for remote-only runs and
         // when the metallib is already present (see MLXMetallibBootstrap).
@@ -219,6 +273,130 @@ public enum EvalBootstrap {
         if !plan.searchIndexScope.isEmpty {
             await initializeSearchIndices(plan.searchIndexScope)
         }
+    }
+
+    /// Sentinel disk-KV directory that can never be a writable directory
+    /// (`/dev/null` is a character device, so no subdirectory under it can be
+    /// created or written). Pointing the cache disk dir here trips the
+    /// documented memory-only degradation in
+    /// `ModelRuntime.buildCacheCoordinatorConfig` (`!diskDirUsable` →
+    /// `enableDiskCache = false`) WITHOUT disabling the in-memory prefix lane.
+    static let memoryOnlyKVSentinelDir = "/dev/null/osaurus-evals-memory-only-kv"
+
+    /// Wire the self-declared `OSAURUS_EVALS_KV_REGIME` provenance label to the
+    /// ACTUAL runtime cache config so a "memory-only" run really runs
+    /// memory-only (disk-L2 off) rather than silently inheriting the disk-L2
+    /// default. Applied process-locally via `overrideSnapshotInMemory` so it
+    /// never persists to the user's saved server settings. Unknown labels stay
+    /// provenance-only (no runtime change). This keeps the recorded regime
+    /// honest — the column in `history.jsonl` now matches what actually ran.
+    ///
+    /// IMPORTANT — why we move the disk *directory* rather than flip
+    /// `blockDisk.enabled`: `buildCacheCoordinatorConfig` rebuilds the cache
+    /// from `settings.resolvedMemorySafetyPlan(host:).cache`, and that resolved
+    /// plan FORCES `blockDisk.enabled = true` whenever `prefix.enabled` is on
+    /// (vmlx `ServerRuntimeSettings.resolvedMemorySafetyPlan`, the shipped
+    /// prefix→L2-spillover coupling). So toggling the `.enabled` flag here is
+    /// silently overwritten and the disk-L2 lane still writes `kv_v2`. The
+    /// resolved plan does NOT touch the disk *directory*, so redirecting it to
+    /// an unwritable sentinel is the only honest, prefix-preserving way to get
+    /// the documented memory-only regime — the same regime the committed
+    /// `perf-ram-baseline.md` (Qwen) was measured under.
+    static func applyKVRegimeOverrideIfRequested() {
+        let env = ProcessInfo.processInfo.environment
+        let regimeRaw = env["OSAURUS_EVALS_KV_REGIME"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        // Orthogonal paged-KV A/B knob: engages vmlx's paged prefix-cache lane
+        // (`usePagedCache = prefix.enabled && pagedKV.enabled`). vmlx ships
+        // `VMLXPagedKVCacheSettings.enabled = false`, so without this the eval
+        // decode never exercises the paged path and the pagedStats prefix-hit
+        // counters stay 0.
+        //
+        // NOTE: for rotating-window families (e.g. Gemma-4) this knob is a
+        // structural no-op — `BatchEngine` flags the heterogeneous cache
+        // `isPagedIncompatible`, the paged tier is skipped, and the prefix
+        // counter reads 0/0 by design (their reuse lane is disk-L2, not paged).
+        // Still effective for pure full-attention families. Full trace:
+        // `perf-gemma4-12b-mxfp8-baseline.md` Lever 1.
+        let pagedRaw = env["OSAURUS_EVALS_PAGED_KV"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        // Bounded disk-L2 cap A/B knob (GB). The disk-L2 lane is Gemma-4's only
+        // reuse lane, but its resolved-default cap is 10 GB — too high for a
+        // host without tens of GB free (Lever 2 wrote 9.6 GB in ~90 s before it
+        // tripped the cap). `DiskCache._evictIfNeededLocked` enforces the cap
+        // SYNCHRONOUSLY after every store, so a low cap (e.g. 2) bounds growth
+        // to ≤ cap + one entry — making a SAFE disk-L2 reuse A/B possible.
+        let diskCapRaw = env["OSAURUS_EVALS_DISK_L2_CAP_GB"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard
+            (regimeRaw?.isEmpty == false) || (pagedRaw?.isEmpty == false)
+                || (diskCapRaw?.isEmpty == false)
+        else { return }
+
+        var settings = ServerRuntimeSettingsStore.snapshot()
+        let before = settings
+        var notes: [String] = []
+
+        switch regimeRaw {
+        case "memory-only", "memory", "mem":
+            // Redirect BOTH disk-KV lanes to an unwritable sentinel so the disk
+            // dir resolves as non-writable and the coordinator degrades to
+            // memory-only. `prefix.enabled` stays on, so in-memory prefix reuse
+            // (the warm-prefill / TTFT-collapse signal) is preserved — this is
+            // the supported "disk dir unwritable" degradation, not a settings
+            // hack the resolved plan can undo.
+            settings.cache.blockDisk.directory = Self.memoryOnlyKVSentinelDir
+            settings.cache.legacyDisk.directory = Self.memoryOnlyKVSentinelDir
+            notes.append("regime=memory-only (blockDisk.dir=\(Self.memoryOnlyKVSentinelDir))")
+        case "disk-l2", "disk", "block-disk", "disk+memory":
+            // Explicitly engage the disk-L2 spillover lane (this is also the
+            // resolved-plan default when prefix is on, but stating it keeps the
+            // provenance label honest against the runtime).
+            settings.cache.blockDisk.enabled = true
+            notes.append("regime=disk-l2 (blockDisk.enabled=true)")
+        case .some(let other) where !other.isEmpty:
+            notes.append("regime='\(other)' provenance-only (no runtime change)")
+        default:
+            break
+        }
+
+        switch pagedRaw {
+        case "on", "1", "true", "enabled":
+            settings.cache.pagedKV.enabled = true
+            notes.append("pagedKV.enabled=true")
+        case "off", "0", "false", "disabled":
+            settings.cache.pagedKV.enabled = false
+            notes.append("pagedKV.enabled=false")
+        case .some(let other) where !other.isEmpty:
+            notes.append("pagedKV='\(other)' ignored (use on/off)")
+        default:
+            break
+        }
+
+        if let diskCapRaw, !diskCapRaw.isEmpty {
+            if let capGB = Double(diskCapRaw), capGB > 0 {
+                // `blockDisk.maxSizeGB` flows to `CacheCoordinatorConfig.diskCacheMaxGB`
+                // → `DiskCache.maxSizeBytes`, enforced after every store. Bounds
+                // the disk-L2 lane for a safe reuse A/B on a constrained host.
+                settings.cache.blockDisk.maxSizeGB = capGB
+                notes.append("blockDisk.maxSizeGB=\(capGB)")
+            } else {
+                notes.append("diskL2Cap='\(diskCapRaw)' ignored (use a positive GB number)")
+            }
+        }
+
+        guard settings != before else {
+            if !notes.isEmpty {
+                FileHandle.standardError.write(
+                    Data("[evals] KV override (no-op): \(notes.joined(separator: "; "))\n".utf8)
+                )
+            }
+            return
+        }
+        ServerRuntimeSettingsStore.overrideSnapshotInMemory(settings)
+        FileHandle.standardError.write(
+            Data("[evals] KV override → \(notes.joined(separator: "; ")) (process-local)\n".utf8)
+        )
     }
 
     /// Bring up the search indices used by `CapabilitySearchEvaluator`
@@ -300,6 +478,13 @@ public extension EvalSuite {
             methods: needsMethods,
             skills: needsSkills
         )
+    }
+
+    /// True when any selected case targets the `default_agent` domain, which
+    /// executes real configure write tools and therefore needs config-storage
+    /// isolation (see `EvalBootstrap.configureIsolatedConfigStorageIfNeeded`).
+    func selectedCasesIncludeDefaultAgent(filter: String?) -> Bool {
+        selectedCases(filter: filter).contains { $0.domain == "default_agent" }
     }
 
     private func selectedCases(filter: String?) -> [EvalCase] {

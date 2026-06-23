@@ -7,9 +7,15 @@ let package = Package(
     products: [
         .library(name: "OsaurusRepository", targets: ["OsaurusRepository"])
     ],
+    dependencies: [
+        .package(path: "../OsaurusNetworking")
+    ],
     targets: [
         .target(
             name: "OsaurusRepository",
+            dependencies: [
+                .product(name: "OsaurusNetworking", package: "OsaurusNetworking")
+            ],
             path: ".",
             exclude: ["Tests"]
         ),

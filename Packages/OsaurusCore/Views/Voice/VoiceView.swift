@@ -207,24 +207,12 @@ private struct VoiceModelsTab: View {
     @Environment(\.theme) private var theme
     @ObservedObject private var modelManager = SpeechModelManager.shared
 
-    @State private var searchText: String = ""
-
-    /// Single-pass output of the filter + partition step. Used to
-    /// be three independent computed properties (`filteredModels`,
-    /// `recommendedModels`, `otherModels`) that each walked
-    /// `availableModels` per body render. With download progress
-    /// republishing `modelManager.objectWillChange` at high frequency
-    /// during model setup, that meant 3 full-list passes per progress
-    /// chunk on top of the per-keystroke search work.
-    @State private var partitioned: PartitionedModels = PartitionedModels(
-        recommended: [],
-        other: []
-    )
-
-    private struct PartitionedModels {
-        var recommended: [SpeechModel]
-        var other: [SpeechModel]
-    }
+    /// All available speech models as a single flat list, recommended first so
+    /// the default model stays on top. The list is short enough that the old
+    /// search field + Recommended/All-Models section split were just noise.
+    /// Recomputed off `objectWillChange` rather than per body render so the
+    /// high-frequency download-progress publishes don't re-walk it each frame.
+    @State private var orderedModels: [SpeechModel] = []
 
     var body: some View {
         ScrollView {
@@ -235,87 +223,28 @@ private struct VoiceModelsTab: View {
                         .padding(.horizontal, 24)
                 }
 
-                // Search
-                SearchField(text: $searchText, placeholder: "Search models")
-                    .padding(.horizontal, 24)
-
-                // Recommended section
-                if !partitioned.recommended.isEmpty {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("RECOMMENDED", bundle: .module)
-                            .font(.system(size: 11, weight: .bold))
-                            .foregroundColor(theme.secondaryText)
-                            .tracking(0.5)
-                            .padding(.horizontal, 24)
-
-                        VStack(spacing: 12) {
-                            ForEach(partitioned.recommended) { model in
-                                SpeechModelRow(model: model)
-                            }
-                        }
-                        .padding(.horizontal, 24)
+                VStack(spacing: 12) {
+                    ForEach(orderedModels) { model in
+                        SpeechModelRow(model: model)
                     }
                 }
-
-                // Other models section
-                if !partitioned.other.isEmpty {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("ALL MODELS", bundle: .module)
-                            .font(.system(size: 11, weight: .bold))
-                            .foregroundColor(theme.secondaryText)
-                            .tracking(0.5)
-                            .padding(.horizontal, 24)
-
-                        VStack(spacing: 12) {
-                            ForEach(partitioned.other) { model in
-                                SpeechModelRow(model: model)
-                            }
-                        }
-                        .padding(.horizontal, 24)
-                    }
-                }
+                .padding(.horizontal, 24)
 
                 Spacer(minLength: 24)
             }
             .padding(.top, 16)
         }
-        .onAppear { refreshPartition() }
-        .task(id: searchText) {
-            // Debounce search input so partition doesn't run on every
-            // keystroke. 150 ms matches the equivalent debounce in
-            // ModelDownloadView and keeps the UI feeling live.
-            try? await Task.sleep(for: .milliseconds(150))
-            if !Task.isCancelled { refreshPartition() }
-        }
+        .onAppear { refreshModels() }
         .onReceive(modelManager.objectWillChange) { _ in
-            // SpeechModelManager publishes per download progress chunk.
-            // Refresh on every publish — the single-pass walk is cheap
-            // (small fixed list); the win is collapsing three full
-            // passes per body into one.
-            refreshPartition()
+            // SpeechModelManager publishes per download progress chunk; the
+            // single ordering pass over the small list is cheap.
+            refreshModels()
         }
     }
 
-    private func refreshPartition() {
-        let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        var recommended: [SpeechModel] = []
-        var other: [SpeechModel] = []
-        recommended.reserveCapacity(modelManager.availableModels.count)
-        other.reserveCapacity(modelManager.availableModels.count)
-        for model in modelManager.availableModels {
-            if !trimmed.isEmpty {
-                let match =
-                    SearchService.matches(query: trimmed, in: model.name)
-                    || SearchService.matches(query: trimmed, in: model.description)
-                if !match { continue }
-            }
-            if model.isRecommended {
-                recommended.append(model)
-            } else {
-                other.append(model)
-            }
-        }
-        partitioned = PartitionedModels(recommended: recommended, other: other)
+    private func refreshModels() {
+        let all = modelManager.availableModels
+        orderedModels = all.filter { $0.isRecommended } + all.filter { !$0.isRecommended }
     }
 }
 

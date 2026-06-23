@@ -35,6 +35,9 @@ public struct CUElement: Sendable, Equatable, Codable {
     public let roleDescription: String?
     public let label: String?
     public let value: String?
+    /// The element's currently selected substring, when any. Populated only
+    /// for text-bearing roles (and never for secure fields).
+    public let selectedText: String?
     public let placeholder: String?
     public let path: String?
     public let windowId: Int?
@@ -52,6 +55,7 @@ public struct CUElement: Sendable, Equatable, Codable {
         roleDescription: String? = nil,
         label: String? = nil,
         value: String? = nil,
+        selectedText: String? = nil,
         placeholder: String? = nil,
         path: String? = nil,
         windowId: Int? = nil,
@@ -68,6 +72,7 @@ public struct CUElement: Sendable, Equatable, Codable {
         self.roleDescription = roleDescription
         self.label = label
         self.value = value
+        self.selectedText = selectedText
         self.placeholder = placeholder
         self.path = path
         self.windowId = windowId
@@ -163,6 +168,43 @@ public struct CUSnapshot: Sendable {
     }
 
     public var focusedWindowId: Int? { windows.first(where: { $0.focused })?.id }
+}
+
+// MARK: - Focused content (screen context)
+
+/// A direct read of the user's focused UI element, captured independently of
+/// the breadth-limited snapshot traversal so the "what am I looking at" signal
+/// survives chrome-heavy apps (Xcode/Cursor) whose navigator/inspector would
+/// otherwise exhaust a bounded element budget before the editor is reached.
+public struct CUFocusedContent: Sendable, Equatable, Codable {
+    /// Friendly-normalized role (e.g. `textarea`, `textfield`, `searchfield`).
+    public let role: String
+    public let label: String?
+    public let placeholder: String?
+    /// The element's value (capped at read time for huge documents). `nil` for
+    /// secure fields — their contents are never read.
+    public let value: String?
+    /// The currently selected substring, when any.
+    public let selectedText: String?
+    /// A cursor-centered / visible slice of `value` for large text areas — the
+    /// "what I'm looking at" window, distinct from the whole document.
+    public let viewport: String?
+
+    public init(
+        role: String,
+        label: String? = nil,
+        placeholder: String? = nil,
+        value: String? = nil,
+        selectedText: String? = nil,
+        viewport: String? = nil
+    ) {
+        self.role = role
+        self.label = label
+        self.placeholder = placeholder
+        self.value = value
+        self.selectedText = selectedText
+        self.viewport = viewport
+    }
 }
 
 // MARK: - App / window listings
@@ -381,13 +423,13 @@ public enum MacDriverError: Error, Sendable, Equatable {
     public var message: String {
         switch self {
         case .accessibilityNotGranted:
-            return "Accessibility permission is required to perceive and control apps."
+            return L("Accessibility permission is required to perceive and control apps.")
         case .screenRecordingNotGranted:
-            return "Screen Recording permission is required for screenshot (som/vision) capture."
+            return L("Screen Recording permission is required for screenshot (som/vision) capture.")
         case .appNotFound(let id):
-            return "Application not found: \(id)"
+            return L("Application not found: \(id)")
         case .captureFailed(let m):
-            return "Capture failed: \(m)"
+            return L("Capture failed: \(m)")
         case .other(let m):
             return m
         }
@@ -411,16 +453,28 @@ public protocol MacDriver: Sendable {
     /// The user's current frontmost window (for context, never to raise).
     func activeWindow() async -> CUActiveWindow?
 
+    /// A direct read of the focused UI element's text content (value,
+    /// selection, and a viewport slice), independent of `capture`'s element
+    /// budget. Returns nil when nothing is focused or AX can't read it. Has a
+    /// default no-op so conformers that don't perceive text (e.g. scripted
+    /// loop drivers) need not implement it.
+    func focusedContent(pid: Int32) async -> CUFocusedContent?
+
     /// Launch (or attach to) an app, backgrounded by default.
     func open(identifier: String, background: Bool) async -> Result<CUAppInfo, MacDriverError>
 
-    /// Perceive an app at a given tier.
+    /// Perceive an app at a given tier. `interactiveOnly` controls whether the
+    /// AX traversal keeps only actionable elements (buttons, fields, …) or also
+    /// includes passive content roles like `statictext` — the latter is what
+    /// the screen-context distiller needs to surface real on-screen text rather
+    /// than UI chrome.
     func capture(
         pid: Int32,
         tier: CaptureTier,
         windowId: Int?,
         maxElements: Int?,
-        focusedWindowOnly: Bool
+        focusedWindowOnly: Bool,
+        interactiveOnly: Bool
     ) async -> CUSnapshot
 
     /// Server-side element query (a filtered capture). Always ax-tier.
@@ -449,13 +503,19 @@ public protocol MacDriver: Sendable {
 // MARK: - Convenience overloads
 
 extension MacDriver {
+    /// Default: no direct focused-content read. The native driver, the mock,
+    /// and the fixture replay driver override this; scripted drivers that only
+    /// model actionable controls fall back to the snapshot's focused element.
+    public func focusedContent(pid: Int32) async -> CUFocusedContent? { nil }
+
     public func capture(pid: Int32, tier: CaptureTier) async -> CUSnapshot {
         await capture(
             pid: pid,
             tier: tier,
             windowId: nil,
             maxElements: nil,
-            focusedWindowOnly: false
+            focusedWindowOnly: false,
+            interactiveOnly: true
         )
     }
 

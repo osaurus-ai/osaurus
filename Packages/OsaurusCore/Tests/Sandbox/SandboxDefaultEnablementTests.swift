@@ -4,9 +4,9 @@
 //
 //  Covers the "sandbox enabled by default" behavior:
 //
-//   * The built-in Default agent resolves to sandbox-ON when it has no
-//     stored `autonomousExec` and the sandbox is supported, OFF when the
-//     sandbox is unavailable, and honors an explicit disable.
+//   * The built-in Default agent is configuration-only and resolves to
+//     sandbox-OFF regardless of stored config or sandbox availability — it
+//     never runs autonomous code execution.
 //   * Newly created custom agents are seeded ON (where supported).
 //   * Lazy provisioning: with the toggle on but the sandbox never set up,
 //     `registerTools` drops the `sandbox_init_pending` placeholder into the
@@ -68,12 +68,15 @@ struct SandboxDefaultEnablementTests {
     // MARK: - Default agent
 
     @Test
-    func effectiveAutonomousExec_defaultAgent_defaultsOnWhenAvailableAndUnconfigured() async {
+    func effectiveAutonomousExec_defaultAgent_offConfigOnlyEvenWhenAvailable() async {
         await SandboxTestLock.runWithStoragePaths {
             self.withDefaultAgentConfig(autonomousExec: nil) {
                 self.withAvailability(.available) {
+                    // The Default agent is configuration-only: it never runs
+                    // autonomous exec, so the sandbox is off even on a
+                    // supported machine with no stored override.
                     let config = AgentManager.shared.effectiveAutonomousExec(for: Agent.defaultId)
-                    #expect(config?.enabled == true)
+                    #expect(config == nil)
                 }
             }
         }
@@ -85,8 +88,8 @@ struct SandboxDefaultEnablementTests {
             self.withDefaultAgentConfig(autonomousExec: nil) {
                 self.withAvailability(.unavailable(reason: "test")) {
                     let config = AgentManager.shared.effectiveAutonomousExec(for: Agent.defaultId)
-                    // No synthesized default on unsupported machines — the chip
-                    // is hidden and the VM can't run there.
+                    // Off regardless: config-only short-circuits before the
+                    // availability check, and the VM can't run here anyway.
                     #expect(config == nil)
                 }
             }
@@ -94,14 +97,15 @@ struct SandboxDefaultEnablementTests {
     }
 
     @Test
-    func effectiveAutonomousExec_defaultAgent_explicitDisableWinsOverComputedDefault() async {
+    func effectiveAutonomousExec_defaultAgent_ignoresStoredEnabled() async {
         await SandboxTestLock.runWithStoragePaths {
-            // The user turned the chip OFF — persisted as enabled:false. That
-            // explicit choice must survive even on a supported machine.
-            self.withDefaultAgentConfig(autonomousExec: AutonomousExecConfig(enabled: false)) {
+            // Even a stored enabled:true is ignored for the configuration-only
+            // Default agent — it always resolves to off (no sandbox chip is
+            // shown for it, so there's no way to opt back in either).
+            self.withDefaultAgentConfig(autonomousExec: AutonomousExecConfig(enabled: true)) {
                 self.withAvailability(.available) {
                     let config = AgentManager.shared.effectiveAutonomousExec(for: Agent.defaultId)
-                    #expect(config?.enabled == false)
+                    #expect(config == nil)
                 }
             }
         }

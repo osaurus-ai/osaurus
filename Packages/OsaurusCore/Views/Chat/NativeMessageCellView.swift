@@ -40,6 +40,10 @@ struct CellRenderingContext {
     var onSpeak: ((UUID) -> Void)? = nil
     /// attachment or shared-artifact id string → full screen preview from ChatView
     var onUserImagePreview: ((String) -> Void)? = nil
+    /// Pasted-content document attachment → read-only preview sheet from ChatView.
+    /// Lets users re-read the long text they pasted (shown as a chip) after the
+    /// message is sent, mirroring the composer's pasted-content chip preview.
+    var onPastedContentPreview: ((Attachment) -> Void)? = nil
     /// Window-local accumulator of `original -> placeholder` pairs
     /// from the Privacy Filter. Used by `NativeMarkdownView` to
     /// inline-highlight matching spans inside user + assistant
@@ -1473,10 +1477,13 @@ final class NativeMessageCellView: NSTableCellView {
                     let textH = mv.measuredHeight(for: max(bubbleW - 24, 100))
                     containerH = 10 + textH + 6
                 }
-                return ceil(max(attachOffset + containerH + 8, 56))
+                // + actions footer reserved below the bubble, then a small
+                // bottom margin so the next (assistant) cell sits close.
+                let footer = NativeCellHeightEstimator.userActionsFooterHeight
+                return ceil(max(attachOffset + containerH + footer + 2, 56))
             }
             // Attachment-only (no text bubble)
-            return ceil(max(8 + userAttachmentsHeight + 8, 56))
+            return ceil(max(8 + userAttachmentsHeight + NativeCellHeightEstimator.userActionsFooterHeight + 2, 56))
         }
 
         var widthPin: NSLayoutConstraint?
@@ -1604,7 +1611,7 @@ final class NativeMessageCellView: NSTableCellView {
             v.leadingAnchor.constraint(equalTo: leadingAnchor),
             v.trailingAnchor.constraint(equalTo: trailingAnchor),
             v.topAnchor.constraint(equalTo: topAnchor),
-            v.heightAnchor.constraint(equalToConstant: 16),
+            v.heightAnchor.constraint(equalToConstant: 8),
         ])
         spacerView = v
     }
@@ -2021,19 +2028,22 @@ final class NativeMessageCellView: NSTableCellView {
                 userTextView = nil
             }
 
-            // Hover action buttons + redaction badge both anchor off
-            // the same view: the bubble when present, the first
-            // attachment stack otherwise. Captured once so the two
-            // layouts stay in sync if we ever reorder the stack.
+            // The hover action buttons anchor off the bubble when present,
+            // or the first attachment stack otherwise — sitting just below it.
             let anchorView = userMessageContainer ?? userImageStack ?? userDocumentStack
             if let anchorView {
                 let hv = NativeHeaderView()
                 hv.translatesAutoresizingMaskIntoConstraints = false
                 addSubview(hv)
                 NSLayoutConstraint.activate([
-                    hv.trailingAnchor.constraint(equalTo: anchorView.leadingAnchor, constant: -8),
-                    hv.centerYAnchor.constraint(equalTo: anchorView.centerYAnchor),
-                    hv.heightAnchor.constraint(equalToConstant: 28),
+                    // Actions sit below the bubble, right-aligned with it
+                    // (ChatGPT-style), rather than floating off its left edge.
+                    hv.trailingAnchor.constraint(equalTo: anchorView.trailingAnchor),
+                    hv.topAnchor.constraint(
+                        equalTo: anchorView.bottomAnchor,
+                        constant: NativeCellHeightEstimator.userActionsTopGap
+                    ),
+                    hv.heightAnchor.constraint(equalToConstant: NativeCellHeightEstimator.userActionsRowHeight),
                     hv.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 8),
                 ])
                 nativeHeaderView = hv
@@ -2154,6 +2164,10 @@ final class NativeMessageCellView: NSTableCellView {
 
             for (index, attachment) in documents.enumerated() {
                 guard let chip = stack.arrangedSubviews[index] as? UserDocumentChipView else { continue }
+                // Pasted-content chips are tappable: re-open the read-only
+                // preview sheet so the user can see what they pasted. Other
+                // document chips stay non-interactive.
+                chip.onTap = attachment.isPastedContent ? context.onPastedContentPreview : nil
                 chip.configure(attachment: attachment, theme: theme)
             }
         }
@@ -2460,6 +2474,11 @@ final class NativeMessageCellView: NSTableCellView {
         spacerView?.removeFromSuperview(); spacerView = nil
         nativeHeaderView?.removeFromSuperview(); nativeHeaderView = nil
         nativeHeaderHeightConstraint = nil
+        // Detach the redaction hover controller (and its text view's
+        // `.mouseMoved` tracking flag) deterministically before dropping
+        // the view — this cell-reuse path otherwise bypasses
+        // `NativeMarkdownView`'s own teardown (issue #1632 launch SIGABRT).
+        nativeMarkdownView?.tearDownForReuse()
         nativeMarkdownView?.removeFromSuperview(); nativeMarkdownView = nil
         nativeThinkingView?.removeFromSuperview(); nativeThinkingView = nil
         // Coordinator-cached views: only call `removeFromSuperview` if
@@ -2483,6 +2502,9 @@ final class NativeMessageCellView: NSTableCellView {
         nativeStatsView?.removeFromSuperview(); nativeStatsView = nil
         nativeAssistantActionsView?.removeFromSuperview(); nativeAssistantActionsView = nil
         nativeEmptyNoticeView?.removeFromSuperview(); nativeEmptyNoticeView = nil
+        // User messages carry outbound redactions (PII the user typed), so
+        // the user text view has the same hover controller to tear down.
+        userTextView?.tearDownForReuse()
         userMessageContainer?.removeFromSuperview(); userMessageContainer = nil
         userTextView = nil
         userInlineEditView = nil
@@ -2592,6 +2614,12 @@ private final class UserDocumentChipView: NSView {
     private let nameField = NSTextField(labelWithString: "")
     private let sizeField = NSTextField(labelWithString: "")
 
+    /// Set for pasted-content chips: tapping the chip re-opens the
+    /// read-only preview sheet. `nil` for plain document chips, which
+    /// stay non-interactive.
+    var onTap: ((Attachment) -> Void)?
+    private var attachment: Attachment?
+
     override var intrinsicContentSize: NSSize {
         let nameW = min(nameField.intrinsicContentSize.width, 130)
         let sizeW = sizeField.intrinsicContentSize.width
@@ -2645,6 +2673,7 @@ private final class UserDocumentChipView: NSView {
     required init?(coder: NSCoder) { fatalError() }
 
     func configure(attachment: Attachment, theme: any ThemeProtocol) {
+        self.attachment = attachment
         layer?.backgroundColor = NSColor(theme.secondaryBackground).withAlphaComponent(0.7).cgColor
 
         let summary = attachment.businessDocumentSummary
@@ -2661,6 +2690,42 @@ private final class UserDocumentChipView: NSView {
         sizeField.textColor = NSColor(theme.tertiaryText)
 
         invalidateIntrinsicContentSize()
+    }
+
+    // Tracking-area + `cursorUpdate` rather than `resetCursorRects`: cursor
+    // rects are unreliable for a subview nested inside the message
+    // `NSTableView`/scroll view, but a `.cursorUpdate` tracking area pushes
+    // the pointing hand reliably on hover. Gated on `onTap` so plain
+    // (non-tappable) document chips keep the arrow cursor.
+    private var cursorTrackingArea: NSTrackingArea?
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let cursorTrackingArea { removeTrackingArea(cursorTrackingArea) }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.cursorUpdate, .activeInKeyWindow, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        cursorTrackingArea = area
+    }
+
+    override func cursorUpdate(with event: NSEvent) {
+        if onTap != nil {
+            NSCursor.pointingHand.set()
+        } else {
+            super.cursorUpdate(with: event)
+        }
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        guard let onTap, let attachment else {
+            super.mouseDown(with: event)
+            return
+        }
+        onTap(attachment)
     }
 }
 
@@ -2708,6 +2773,14 @@ extension ContentBlockKind {
 /// Used by the NSTableView height delegate as a fast path.
 enum NativeCellHeightEstimator {
 
+    /// Height of the user-message action row (copy / edit / delete) reserved
+    /// below the bubble, plus its gap to the bubble. Matches the constraints
+    /// installed in `configureAsUserMessage`; shared so the live fit
+    /// (`measureFittedRowHeight`) and the upfront estimate stay in lockstep.
+    static let userActionsRowHeight: CGFloat = 28
+    static let userActionsTopGap: CGFloat = 8
+    static var userActionsFooterHeight: CGFloat { userActionsRowHeight + userActionsTopGap }
+
     /// Inner height of the assistant header row (avatar + name + actions),
     /// without the 12pt top/bottom cell padding. Must match the constraints
     /// installed by `configureAsHeader`.
@@ -2728,7 +2801,7 @@ enum NativeCellHeightEstimator {
     ) -> CGFloat {
         switch block.kind {
         case .groupSpacer:
-            return 16
+            return 8
 
         case .header:
             // 12 top + header content + 12 bottom; content grows with avatar size
@@ -2799,7 +2872,13 @@ enum NativeCellHeightEstimator {
                 h += 10 + textH + 6
             }
 
-            h += 8  // bottom margin
+            // Actions footer (copy / edit / delete) reserved below the bubble,
+            // matching the constraints in `configureAsUserMessage`.
+            if !text.isEmpty || docCount > 0 || imageCount > 0 {
+                h += userActionsFooterHeight
+            }
+
+            h += 2  // small bottom margin — keep the assistant reply close
             return max(h, 48)
 
         case let .toolCallGroup(calls):

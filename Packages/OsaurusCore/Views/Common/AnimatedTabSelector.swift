@@ -19,6 +19,10 @@ protocol AnimatedTabItem: Hashable, CaseIterable {
 struct AnimatedTabSelector<Tab: AnimatedTabItem>: View where Tab.AllCases: RandomAccessCollection {
     @Environment(\.theme) private var theme
     @Binding var selection: Tab
+    /// Tabs to render, in order. Defaults to every case; callers with a
+    /// dynamic subset (e.g. Themes only shows filters that have results) pass
+    /// their own list so empty tabs don't clutter the selector.
+    let tabs: [Tab]
     let counts: [Tab: Int]?
     let badges: [Tab: Int]?
 
@@ -26,17 +30,19 @@ struct AnimatedTabSelector<Tab: AnimatedTabItem>: View where Tab.AllCases: Rando
 
     init(
         selection: Binding<Tab>,
+        tabs: [Tab]? = nil,
         counts: [Tab: Int]? = nil,
         badges: [Tab: Int]? = nil
     ) {
         self._selection = selection
+        self.tabs = tabs ?? Array(Tab.allCases)
         self.counts = counts
         self.badges = badges
     }
 
     var body: some View {
         HStack(spacing: 4) {
-            ForEach(Array(Tab.allCases), id: \.self) { tab in
+            ForEach(tabs, id: \.self) { tab in
                 AnimatedTabButton(
                     tab: tab,
                     isSelected: selection == tab,

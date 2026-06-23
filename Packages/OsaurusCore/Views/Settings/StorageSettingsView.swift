@@ -567,18 +567,22 @@ public struct StorageSettingsView: View {
     private var rotateAlertMessage: String {
         if hasExportedBackupThisSession {
             return
-                "A new 256-bit key will be generated and every encrypted database + file under ~/.osaurus will be re-encrypted against it. The old key is destroyed — backups made under the old key will no longer be readable on this Mac."
+                L(
+                    "A new 256-bit key will be generated and every encrypted database + file under ~/.osaurus will be re-encrypted against it. The old key is destroyed — backups made under the old key will no longer be readable on this Mac."
+                )
         }
         return
-            "A new 256-bit key will be generated and every encrypted database + file under ~/.osaurus will be re-encrypted against it. The old key is destroyed — backups made under the old key will no longer be readable on this Mac. We strongly recommend exporting a plaintext backup first."
+            L(
+                "A new 256-bit key will be generated and every encrypted database + file under ~/.osaurus will be re-encrypted against it. The old key is destroyed — backups made under the old key will no longer be readable on this Mac. We strongly recommend exporting a plaintext backup first."
+            )
     }
 
     private var postureTitle: String {
         switch posture {
-        case .empty: return "No local data yet"
-        case .plaintext: return "Stored as plaintext"
-        case .encrypted: return "Encrypted with SQLCipher"
-        case .mixed: return "Migration in progress"
+        case .empty: return L("No local data yet")
+        case .plaintext: return L("Stored as plaintext")
+        case .encrypted: return L("Encrypted with SQLCipher")
+        case .mixed: return L("Migration in progress")
         }
     }
 
@@ -586,14 +590,14 @@ public struct StorageSettingsView: View {
         switch posture {
         case .empty:
             return desiredEncrypted
-                ? "New data will be encrypted with SQLCipher."
-                : "New data will be stored as plaintext, protected by FileVault."
+                ? L("New data will be encrypted with SQLCipher.")
+                : L("New data will be stored as plaintext, protected by FileVault.")
         case .plaintext:
-            return "Your databases are not encrypted by Osaurus. macOS FileVault protects them at rest."
+            return L("Your databases are not encrypted by Osaurus. macOS FileVault protects them at rest.")
         case .encrypted:
-            return "Your databases are encrypted with a 256-bit key in your macOS Keychain."
+            return L("Your databases are encrypted with a 256-bit key in your macOS Keychain.")
         case .mixed:
-            return "Some stores are still converting. Reopen this panel in a moment to confirm."
+            return L("Some stores are still converting. Reopen this panel in a moment to confirm.")
         }
     }
 

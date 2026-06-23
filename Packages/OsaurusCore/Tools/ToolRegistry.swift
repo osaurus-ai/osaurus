@@ -204,6 +204,7 @@ final class ToolRegistry: ObservableObject {
             DBMigrateTool(),
             DBInsertTool(),
             DBUpsertTool(),
+            DBImportTool(),
             DBUpdateTool(),
             DBDeleteTool(),
             DBRestoreTool(),
@@ -223,8 +224,10 @@ final class ToolRegistry: ObservableObject {
             NotifyTool(),
             // Default-agent generic reads (Phase C). Always loaded; the
             // composer further restricts visibility to the default
-            // agent only. The matching writes live under
-            // `ConfigurationDomainRegistry` and load on demand via
+            // agent only. The matching consolidated writes live under
+            // `ConfigurationDomainRegistry`: the Default agent receives
+            // them DIRECTLY (see `defaultAgentAllowedToolNames`), while
+            // custom agents reach them on demand via
             // `capabilities_discover` / `capabilities_load`.
             OsaurusStatusTool(),
             OsaurusListTool(),
@@ -252,7 +255,40 @@ final class ToolRegistry: ObservableObject {
         if configChanged {
             ToolConfigurationStore.save(configuration)
         }
+
+        // for tool in Self.agentChannelTools {
+        //     registerNativeDynamicTool(tool)
+        // }
     }
+
+    private static let agentChannelTools: [OsaurusTool] = [
+        // First-party Agent Channel tools. Discord is the first executable
+        // channel driver, but the model-facing action vocabulary is shared
+        // by future Slack, Telegram, and custom JSON channel connections.
+        AgentChannelListConnectionsTool(),
+        AgentChannelDiagnosticsTool(),
+        AgentChannelListSpacesTool(),
+        AgentChannelListRoomsTool(),
+        AgentChannelReadMessagesTool(),
+        AgentChannelReadThreadTool(),
+        AgentChannelSearchMessagesTool(),
+        AgentChannelDraftMessageTool(),
+        AgentChannelSendMessageTool(),
+        AgentChannelReplyThreadTool(),
+    ]
+
+    nonisolated static let agentChannelToolNames: Set<String> = [
+        "agent_channel_list_connections",
+        "agent_channel_diagnostics",
+        "agent_channel_list_spaces",
+        "agent_channel_list_rooms",
+        "agent_channel_read_messages",
+        "agent_channel_read_thread",
+        "agent_channel_search_messages",
+        "agent_channel_draft_message",
+        "agent_channel_send_message",
+        "agent_channel_reply_thread",
+    ]
 
     /// Register a plain (non-bucketed) tool. Used by built-in registration
     /// and folder-tool installation; sandbox / MCP / plugin paths use the
@@ -348,15 +384,44 @@ final class ToolRegistry: ObservableObject {
     /// arbitrary shell commands. These names refuse with a structured
     /// envelope regardless of registration state and are hidden from
     /// `/mcp/tools` listings.
-    public nonisolated static let externallyDeniedToolNames: Set<String> = [
+    nonisolated public static let externallyDeniedToolNames: Set<String> = [
         "file_write", "file_edit", "shell_run", "git_commit", "file_undo",
+        "agent_channel_list_connections", "agent_channel_diagnostics",
+        "agent_channel_list_spaces", "agent_channel_list_rooms",
+        "agent_channel_read_messages", "agent_channel_read_thread",
+        "agent_channel_search_messages", "agent_channel_draft_message",
+        "agent_channel_send_message", "agent_channel_reply_thread",
+    ]
+
+    /// Subset of `externallyDeniedToolNames` that an AUTHENTICATED,
+    /// folder-bounded remote agent run may use (gated on
+    /// `ChatExecutionContext.authenticatedHostFolderRoot`). Host *file*
+    /// mutation is permitted — confined to the granted folder by the folder
+    /// tools' own captured root — so a paired peer can have the agent create
+    /// or edit files in the folder its owner chose. `shell_run` /
+    /// `git_commit` / `file_undo` are deliberately NOT here: they stay denied
+    /// on every external surface regardless of authentication.
+    nonisolated static let hostFolderAllowedWhenAuthenticated: Set<String> = [
+        "file_write", "file_edit",
     ]
 
     /// Whether `name` is blocked for the current execution because an
     /// external surface (`ChatExecutionContext.isExternalSurface`) is
-    /// driving the call.
+    /// driving the call. An authenticated, folder-bounded remote agent run
+    /// (`authenticatedHostFolderRoot` set) is allowed the host file tools in
+    /// `hostFolderAllowedWhenAuthenticated`; the `/mcp/call` bridge, loopback,
+    /// plaintext, and cross-agent callers never set that task-local, so they
+    /// remain fully denied.
     nonisolated static func isDeniedForCurrentSurface(_ name: String) -> Bool {
-        ChatExecutionContext.isExternalSurface && externallyDeniedToolNames.contains(name)
+        guard ChatExecutionContext.isExternalSurface,
+            externallyDeniedToolNames.contains(name)
+        else { return false }
+        if ChatExecutionContext.authenticatedHostFolderRoot != nil,
+            hostFolderAllowedWhenAuthenticated.contains(name)
+        {
+            return false
+        }
+        return true
     }
 
     /// The structured refusal handed to external callers for denied
@@ -365,7 +430,7 @@ final class ToolRegistry: ObservableObject {
         ToolEnvelope.failure(
             kind: .rejected,
             message:
-                "'\(tool)' is not available to external callers. Folder write and shell tools can only run from the Osaurus app.",
+                "'\(tool)' is not available to external callers. This tool can only run from the Osaurus app.",
             tool: tool
         )
     }
@@ -387,7 +452,7 @@ final class ToolRegistry: ObservableObject {
                 code: 3,
                 userInfo: [
                     NSLocalizedDescriptionKey:
-                        "'\(name)' is not available to external callers. Folder write and shell tools can only run from the Osaurus app."
+                        "'\(name)' is not available to external callers. This tool can only run from the Osaurus app."
                 ]
             )
         }
@@ -807,30 +872,38 @@ final class ToolRegistry: ObservableObject {
             return raw
         }
 
-        let cap = ToolOutputCaps.universalResult
-        let isEnvelope = ToolEnvelope.isSuccess(raw) || ToolEnvelope.isError(raw)
+        // Lossless formatting compaction at ingest. Runs AFTER the
+        // secret-prompt guard (the marker must reach the chat loop byte-exact)
+        // and BEFORE the cap, so an external pretty-JSON payload that crushes
+        // back under the cap avoids truncation entirely. Meaning-preserving and
+        // deterministic, so the KV-prefix stays byte-stable. See
+        // `ToolOutputCompressor`.
+        let payload = ToolOutputCompressor.compact(raw)
 
-        if raw.count <= cap {
-            return isEnvelope ? raw : ToolEnvelope.success(tool: tool, text: raw)
+        let cap = ToolOutputCaps.universalResult
+        let isEnvelope = ToolEnvelope.isSuccess(payload) || ToolEnvelope.isError(payload)
+
+        if payload.count <= cap {
+            return isEnvelope ? payload : ToolEnvelope.success(tool: tool, text: payload)
         }
 
         // Head-biased: at the registry backstop the front of an oversized
         // payload is what identifies it (the recovery hint rides in the
         // envelope, not the marker).
-        let truncatedContent = HeadTailTruncation.apply(raw, cap: cap, headFraction: 2.0 / 3.0)
+        let truncatedContent = HeadTailTruncation.apply(payload, cap: cap, headFraction: 2.0 / 3.0)
         let hint =
             "Output exceeded the per-call cap and was truncated (head and tail kept). "
             + "Re-run with narrower arguments — filters, `max_results`, line ranges, or "
             + "head/tail options — to retrieve the missing region."
 
-        if ToolEnvelope.isError(raw) {
+        if ToolEnvelope.isError(payload) {
             return ToolEnvelope.failure(
                 kind: .executionError,
                 message: "Tool '\(tool)' failed and its error output exceeded the per-call cap. " + hint,
                 tool: tool,
                 metadata: [
                     "truncated": true,
-                    "original_chars": raw.count,
+                    "original_chars": payload.count,
                     "content": truncatedContent,
                 ]
             )
@@ -840,7 +913,7 @@ final class ToolRegistry: ObservableObject {
             result: [
                 "kind": "truncated_output",
                 "truncated": true,
-                "original_chars": raw.count,
+                "original_chars": payload.count,
                 "content": truncatedContent,
             ] as [String: Any],
             warnings: [hint]
@@ -1195,6 +1268,33 @@ final class ToolRegistry: ObservableObject {
 
     // MARK: - Plugin Tool Registration
 
+    /// Register a first-party native tool that should be loaded on demand
+    /// instead of joining the always-loaded built-in baseline. This is for
+    /// system-owned dynamic surfaces such as Agent Channels; plugin-owned tools
+    /// must use `registerPluginTool(_:)` so ownership diagnostics stay correct.
+    func registerNativeDynamicTool(_ tool: OsaurusTool) {
+        let firstTime =
+            toolsByName[tool.name] == nil
+            && !configuration.enabled.keys.contains(tool.name)
+        toolsByName[tool.name] = tool
+        sandboxToolNames.remove(tool.name)
+        builtInSandboxToolNames.remove(tool.name)
+        mcpToolNames.remove(tool.name)
+        pluginToolNames.remove(tool.name)
+        if firstTime {
+            setEnabled(true, for: tool.name)
+        }
+        Task {
+            await ToolIndexService.shared.onToolRegistered(
+                name: tool.name,
+                description: tool.description,
+                runtime: .native,
+                tokenCount: Self.estimateTokenCount(tool),
+                parameters: tool.parameters
+            )
+        }
+    }
+
     /// Register a tool from a native dylib plugin.
     /// Auto-enables the tool on first registration so it is immediately usable;
     /// subsequent registrations (e.g. hot-reload) preserve the user's choice.
@@ -1508,6 +1608,7 @@ final class ToolRegistry: ObservableObject {
     /// Returns the plugin or provider name that a tool belongs to, if any.
     func groupName(for toolName: String) -> String? {
         guard let tool = toolsByName[toolName] else { return nil }
+        if Self.agentChannelToolNames.contains(toolName) { return "agent_channels" }
         if let ext = tool as? ExternalTool { return ext.pluginId }
         if let mcp = tool as? MCPProviderTool { return mcp.providerName }
         if let sandbox = tool as? SandboxPluginTool { return sandbox.plugin.id }
@@ -1517,6 +1618,7 @@ final class ToolRegistry: ObservableObject {
     private func availabilityRuntimeLabel(for toolName: String, builtIn: Bool) -> String {
         if isSandboxTool(toolName) { return L("sandbox") }
         if isMCPTool(toolName) { return "mcp" }
+        if Self.agentChannelToolNames.contains(toolName) { return L("native") }
         if isPluginTool(toolName) { return L("plugin") }
         if builtIn { return L("builtin") }
         return L("native")
@@ -1613,19 +1715,18 @@ final class ToolRegistry: ObservableObject {
 
 // MARK: - Configure tool name sets (default-agent surface)
 //
-// Single source of truth for which tools the default agent sees in
-// its turn-1 schema and which `osaurus_*_<verb>` writes are loaded on
-// demand via `capabilities_load`. The write set is derived from
+// Single source of truth for the consolidated `osaurus_*` configure
+// surface. The write set is derived from
 // `ConfigurationDomainRegistry.shared.domains` (computed property —
 // stays in sync as new domains register without touching this file).
+// The Default agent loads these directly in its turn-1 schema.
 //
 // These sets are read by:
-//  - `SystemPromptComposer.resolveTools` to allowlist for the default
-//    agent and exclude from non-default agents
-//  - `CapabilitiesDiscoverTool` to scope FTS5 results for the default
-//    agent
-//  - `CapabilitiesLoadTool` to refuse non-configure tool loads from
-//    the default agent
+//  - `SystemPromptComposer.resolveTools` to allowlist the configure
+//    tools for the Default agent and strip them from every other agent
+//  - `CapabilitiesDiscoverTool` / `CapabilitiesLoadTool` to scope FTS5
+//    results and gate loads for *custom* agents (the Default agent no
+//    longer uses capability search — it gets these tools directly)
 
 extension ToolRegistry {
     /// Write tools across every registered `ConfigurationDomain`.
@@ -1652,19 +1753,16 @@ extension ToolRegistry {
         ])
     }
 
-    /// Fixed turn-1 schema for the default agent. Eight names: three
-    /// reads, two discovery tools (gateway to every write), three
-    /// agent-loop tools (`todo` / `complete` / `clarify`). Writes are
-    /// not here — they enter the schema only via
-    /// `capabilities_load`. Stable across sessions for KV-cache reuse.
-    static let defaultAgentAllowedToolNames: Set<String> = [
-        "osaurus_status",
-        "osaurus_list",
-        "osaurus_describe",
-        "capabilities_discover",
-        "capabilities_load",
-        "todo",
-        "complete",
-        "clarify",
-    ]
+    /// Turn-1 schema for the Default (configuration) agent: the consolidated
+    /// configure surface — the three generic reads (`osaurus_status` /
+    /// `osaurus_list` / `osaurus_describe`) plus the per-domain `osaurus_*`
+    /// write tools — together with the agent-loop tools (`todo` / `complete` /
+    /// `clarify`). The Default agent loads its write tools **directly**; it
+    /// does NOT use `capabilities_discover` / `capabilities_load` (those stay
+    /// available to custom agents). Computed from the live domain registry so
+    /// a newly registered domain expands the set automatically, and stable
+    /// across a session for KV-cache reuse.
+    static var defaultAgentAllowedToolNames: Set<String> {
+        configureToolNames.union(["todo", "complete", "clarify"])
+    }
 }

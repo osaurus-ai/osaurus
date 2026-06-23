@@ -13,6 +13,7 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
     public let role: MessageRole
     public var content: String
     public var attachments: [Attachment]
+    public var sharedArtifacts: [SharedArtifact]
     public var toolCalls: [ToolCall]?
     public var toolCallId: String?
     public var toolResults: [String: String]
@@ -50,6 +51,7 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         role: MessageRole,
         content: String,
         attachments: [Attachment] = [],
+        sharedArtifacts: [SharedArtifact] = [],
         toolCalls: [ToolCall]? = nil,
         toolCallId: String? = nil,
         toolResults: [String: String] = [:],
@@ -68,6 +70,7 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         self.role = role
         self.content = content
         self.attachments = attachments
+        self.sharedArtifacts = sharedArtifacts
         self.toolCalls = toolCalls
         self.toolCallId = toolCallId
         self.toolResults = toolResults
@@ -110,6 +113,7 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
             let legacyImages = try container.decodeIfPresent([Data].self, forKey: .attachedImages) ?? []
             attachments = legacyImages.map { .image($0) }
         }
+        sharedArtifacts = try container.decodeIfPresent([SharedArtifact].self, forKey: .sharedArtifacts) ?? []
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -118,6 +122,9 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         try container.encode(role, forKey: .role)
         try container.encode(content, forKey: .content)
         try container.encode(attachments, forKey: .attachments)
+        if !sharedArtifacts.isEmpty {
+            try container.encode(sharedArtifacts, forKey: .sharedArtifacts)
+        }
         try container.encodeIfPresent(toolCalls, forKey: .toolCalls)
         try container.encodeIfPresent(toolCallId, forKey: .toolCallId)
         try container.encode(toolResults, forKey: .toolResults)
@@ -137,6 +144,7 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case id, role, content, attachments
+        case sharedArtifacts
         case attachedImages  // legacy key for reading old sessions
         case toolCalls, toolCallId, toolResults, toolCallDurations, thinking
         case thinkingDuration
@@ -156,6 +164,7 @@ extension ChatTurnData {
         self.role = turn.role
         self.content = turn.content
         self.attachments = turn.attachments
+        self.sharedArtifacts = turn.sharedArtifacts
         self.toolCalls = turn.toolCalls
         self.toolCallId = turn.toolCallId
         self.toolResults = turn.toolResults
@@ -179,6 +188,7 @@ extension ChatTurn {
             role: data.role,
             content: data.content,
             attachments: data.attachments,
+            sharedArtifacts: data.sharedArtifacts,
             id: data.id,
             createdAt: data.createdAt ?? Date()
         )

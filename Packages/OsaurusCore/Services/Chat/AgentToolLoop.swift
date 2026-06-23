@@ -62,18 +62,29 @@ struct AgentLoopPolicy: Sendable {
     /// firing, so it nags at most once per threshold window.
     var todoStalenessThreshold: Int = 4
 
+    /// Hard cap on "data-movement" iterations that are refunded instead of
+    /// charged against `maxIterations`. An iteration qualifies only when
+    /// EVERY tool call in it is a *successful* bulk DB load (`db_import`, or
+    /// `db_insert`/`db_upsert` with `rows[]`). 0 disables the relief (the
+    /// default, so non-agent surfaces and tests are unaffected). Set > 0 on
+    /// agent-run surfaces; it is naturally scoped to DB-enabled agents
+    /// because only they can land a successful `db_*` bulk call.
+    var maxDataMovementSteps: Int = 0
+
     init(
         maxIterations: Int,
         budgetWarningThreshold: Int = 3,
         stopOnToolRejection: Bool,
         dedupeNoticeEnabled: Bool,
-        todoStalenessThreshold: Int = 4
+        todoStalenessThreshold: Int = 4,
+        maxDataMovementSteps: Int = 0
     ) {
         self.maxIterations = max(1, maxIterations)
         self.budgetWarningThreshold = budgetWarningThreshold
         self.stopOnToolRejection = stopOnToolRejection
         self.dedupeNoticeEnabled = dedupeNoticeEnabled
         self.todoStalenessThreshold = max(1, todoStalenessThreshold)
+        self.maxDataMovementSteps = max(0, maxDataMovementSteps)
     }
 }
 
@@ -591,6 +602,54 @@ enum AgentToolLoop {
         "[System Notice] Tool call budget: \(remaining) of \(maxIterations) remaining. Wrap up your current work and provide a summary."
     }
 
+    /// Staged once per run, the first time a data-movement step is refunded,
+    /// so the model learns it can lean on bulk loads without burning budget.
+    static func dataMovementReliefNotice(cap: Int) -> String {
+        "[System Notice] Bulk data-movement steps (db_import, or db_insert/db_upsert with `rows[]`) don't count against your tool-call budget — up to \(cap) such steps. Prefer them for loading or moving large data."
+    }
+
+    /// True when `outcome` is a successful bulk DB load that should be
+    /// refunded by the data-movement budget rather than charged against
+    /// `maxIterations`. Deduped replays and failures never qualify.
+    static func isSuccessfulDataMovement(_ outcome: AgentLoopToolOutcome) -> Bool {
+        guard !outcome.wasError, !outcome.wasDeduped else { return false }
+        guard
+            isDataMovementCall(
+                name: outcome.invocation.toolName,
+                argsJSON: outcome.invocation.jsonArguments
+            )
+        else { return false }
+        return envelopeReportsSuccess(outcome.result)
+    }
+
+    /// A data-movement call is `db_import`, or `db_insert`/`db_upsert` in
+    /// their bulk (`rows[]`) form. Single-row writes are organic agent work
+    /// and stay on the normal budget.
+    static func isDataMovementCall(name: String, argsJSON: String) -> Bool {
+        switch name {
+        case "db_import":
+            return true
+        case "db_insert", "db_upsert":
+            guard let data = argsJSON.data(using: .utf8),
+                let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                let rows = obj["rows"] as? [Any]
+            else { return false }
+            return !rows.isEmpty
+        default:
+            return false
+        }
+    }
+
+    /// Parse a tool-result envelope and report whether it was a success
+    /// (`"ok": true`). A failure envelope (e.g. quota exceeded) must NOT be
+    /// refunded.
+    static func envelopeReportsSuccess(_ result: String) -> Bool {
+        guard let data = result.data(using: .utf8),
+            let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return false }
+        return (obj["ok"] as? Bool) == true
+    }
+
     /// Shared user-facing text for the `.overBudget` exit: the request
     /// cannot fit the model's context window even after every compaction
     /// lever was exhausted. Each surface wraps this in its own envelope
@@ -873,6 +932,11 @@ enum AgentToolLoop {
         // Last iteration that carried a `todo` call (0 = run start), for
         // the staleness check below.
         var lastTodoIteration = 0
+        // Data-movement relief bookkeeping: how many bulk-load iterations
+        // have been refunded so far, and whether we've told the model about
+        // the relief yet (staged once per run).
+        var dataMovementStepsUsed = 0
+        var announcedDataMovementRelief = false
 
         while iteration < policy.maxIterations {
             if await hooks.isCancelled() {
@@ -1177,6 +1241,29 @@ enum AgentToolLoop {
                 }
 
                 await hooks.onBatchComplete(outcomes)
+
+                // Data-movement relief: when an iteration's tool calls
+                // are ALL successful bulk loads (db_import / bulk
+                // db_insert|db_upsert), it's real progress that shouldn't
+                // spend the model's reasoning budget. Refund the iteration and
+                // charge a separate, hard-capped budget instead so a large
+                // ingest doesn't starve the agent of steps to actually reason
+                // over the data it just loaded.
+                if policy.maxDataMovementSteps > 0,
+                    dataMovementStepsUsed < policy.maxDataMovementSteps,
+                    !outcomes.isEmpty,
+                    outcomes.allSatisfy({ Self.isSuccessfulDataMovement($0) })
+                {
+                    dataMovementStepsUsed += 1
+                    iteration -= 1
+                    if !announcedDataMovementRelief {
+                        announcedDataMovementRelief = true
+                        pendingStateNotice = Self.dataMovementReliefNotice(
+                            cap: policy.maxDataMovementSteps
+                        )
+                    }
+                    continue
+                }
 
                 // Per-iteration budget bookkeeping: one decrement per model
                 // step regardless of how many tools the batch ran.

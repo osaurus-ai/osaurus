@@ -117,7 +117,7 @@ struct RedactionReviewSheet: View {
     private func row(for entity: DetectedEntity) -> some View {
         let isSelected = state.selectedEntityID == entity.id
         return HStack(alignment: .center, spacing: 12) {
-            Image(systemName: icon(for: entity.category))
+            Image(systemName: entity.category.reviewIcon)
                 .font(.system(size: 14, weight: .medium))
                 .foregroundColor(theme.accentColor)
                 .frame(width: 22, height: 22)
@@ -137,7 +137,7 @@ struct RedactionReviewSheet: View {
                     .lineLimit(2)
                     .truncationMode(.middle)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                Text(verbatim: "\(localizedCategory(entity.category))  →  \(entity.placeholder.token)")
+                Text(verbatim: "\(entity.category.localizedName)  →  \(entity.placeholder.token)")
                     .font(.system(size: 11))
                     .foregroundColor(theme.secondaryText)
                     .lineLimit(1)
@@ -291,31 +291,6 @@ struct RedactionReviewSheet: View {
         )
     }
 
-    private func icon(for category: EntityCategory) -> String {
-        switch category {
-        case .accountNumber: return "creditcard.fill"
-        case .address: return "house.fill"
-        case .email: return "envelope.fill"
-        case .person: return "person.fill"
-        case .phone: return "phone.fill"
-        case .url: return "link"
-        case .date: return "calendar"
-        case .secret: return "key.fill"
-        }
-    }
-
-    private func localizedCategory(_ category: EntityCategory) -> String {
-        switch category {
-        case .accountNumber: return String(localized: "privacy.category.accountNumber", bundle: .module)
-        case .address: return String(localized: "privacy.category.address", bundle: .module)
-        case .email: return String(localized: "privacy.category.email", bundle: .module)
-        case .person: return String(localized: "privacy.category.person", bundle: .module)
-        case .phone: return String(localized: "privacy.category.phone", bundle: .module)
-        case .url: return String(localized: "privacy.category.url", bundle: .module)
-        case .date: return String(localized: "privacy.category.date", bundle: .module)
-        case .secret: return String(localized: "privacy.category.secret", bundle: .module)
-        }
-    }
 }
 
 // MARK: - Context Preview
@@ -366,7 +341,7 @@ private struct ContextPreview: View {
 
     private func header(for entity: DetectedEntity) -> some View {
         HStack(spacing: 10) {
-            Image(systemName: icon(for: entity.category))
+            Image(systemName: entity.category.reviewIcon)
                 .font(.system(size: 14, weight: .medium))
                 .foregroundColor(theme.accentColor)
                 .frame(width: 26, height: 26)
@@ -382,7 +357,7 @@ private struct ContextPreview: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                 HStack(spacing: 6) {
-                    Text(localizedCategory(entity.category))
+                    Text(entity.category.localizedName)
                         .font(.system(size: 11))
                         .foregroundColor(theme.secondaryText)
                     Image(systemName: "arrow.right")
@@ -492,8 +467,16 @@ private struct ContextPreview: View {
         }
     }
 
-    private func icon(for category: EntityCategory) -> String {
-        switch category {
+}
+
+// MARK: - Category Icon
+
+private extension EntityCategory {
+    /// SF Symbol shown next to each detected category in the review
+    /// sheet. View-only presentation, so it stays out of the core
+    /// `EntityCategory` model and file-local to the only consumer.
+    var reviewIcon: String {
+        switch self {
         case .accountNumber: return "creditcard.fill"
         case .address: return "house.fill"
         case .email: return "envelope.fill"
@@ -502,19 +485,6 @@ private struct ContextPreview: View {
         case .url: return "link"
         case .date: return "calendar"
         case .secret: return "key.fill"
-        }
-    }
-
-    private func localizedCategory(_ category: EntityCategory) -> String {
-        switch category {
-        case .accountNumber: return String(localized: "privacy.category.accountNumber", bundle: .module)
-        case .address: return String(localized: "privacy.category.address", bundle: .module)
-        case .email: return String(localized: "privacy.category.email", bundle: .module)
-        case .person: return String(localized: "privacy.category.person", bundle: .module)
-        case .phone: return String(localized: "privacy.category.phone", bundle: .module)
-        case .url: return String(localized: "privacy.category.url", bundle: .module)
-        case .date: return String(localized: "privacy.category.date", bundle: .module)
-        case .secret: return String(localized: "privacy.category.secret", bundle: .module)
         }
     }
 }

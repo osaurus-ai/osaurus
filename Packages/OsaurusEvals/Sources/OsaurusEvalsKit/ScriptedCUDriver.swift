@@ -160,7 +160,8 @@ public actor ScriptedCUDriver: MacDriver {
         tier: CaptureTier,
         windowId: Int?,
         maxElements: Int?,
-        focusedWindowOnly: Bool
+        focusedWindowOnly: Bool,
+        interactiveOnly: Bool
     ) async -> CUSnapshot {
         makeSnapshot(tier: tier)
     }

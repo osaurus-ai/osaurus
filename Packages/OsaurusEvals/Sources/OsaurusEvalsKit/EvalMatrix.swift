@@ -34,6 +34,19 @@ public struct EvalMatrixModelColumn: Sendable, Codable, Equatable {
     /// Peak-of-peak physical footprint (MB) across telemetered rows —
     /// the headline RAM number the AGENTS.md gate reads.
     public let peakPhysFootprintMb: Double?
+    /// Mean of per-case mean CPU utilization (%) across telemetered rows —
+    /// sustained HOST overhead during model-driven cases (GPU compute is not
+    /// CPU on Apple silicon).
+    public let meanCpuPercent: Double?
+    /// Peak-of-peak instantaneous CPU utilization (%) across telemetered rows.
+    public let peakCpuPercent: Double?
+    /// Mean estimated context tokens per task (prompt + tool schema, summed
+    /// across model steps) across telemetered rows — the headline
+    /// context-cost number the optimization loop drives down. Deterministic
+    /// and provider-independent, so local and frontier columns compare 1:1.
+    public let meanPromptTokensPerTask: Double?
+    /// Mean estimated total tokens per task (input + output) across rows.
+    public let meanTotalTokensPerTask: Double?
     /// Run provenance for this model's reports (hardware, OS, build, judge,
     /// catalog hash). nil for older reports; carried through so the history
     /// log and the crowdsourced compatibility leaderboard stay attributable.
@@ -48,6 +61,10 @@ public struct EvalMatrixModelColumn: Sendable, Codable, Equatable {
         meanDecodeTokensPerSecond: Double?,
         meanTtftMs: Double?,
         peakPhysFootprintMb: Double?,
+        meanCpuPercent: Double? = nil,
+        peakCpuPercent: Double? = nil,
+        meanPromptTokensPerTask: Double? = nil,
+        meanTotalTokensPerTask: Double? = nil,
         environment: RunEnvironment? = nil
     ) {
         self.modelId = modelId
@@ -58,6 +75,10 @@ public struct EvalMatrixModelColumn: Sendable, Codable, Equatable {
         self.meanDecodeTokensPerSecond = meanDecodeTokensPerSecond
         self.meanTtftMs = meanTtftMs
         self.peakPhysFootprintMb = peakPhysFootprintMb
+        self.meanCpuPercent = meanCpuPercent
+        self.peakCpuPercent = peakCpuPercent
+        self.meanPromptTokensPerTask = meanPromptTokensPerTask
+        self.meanTotalTokensPerTask = meanTotalTokensPerTask
         self.environment = environment
     }
 }
@@ -120,6 +141,26 @@ public struct EvalMatrix: Sendable, Codable, Equatable {
                 + models.map { $0.peakPhysFootprintMb.map { String(format: "%.0f", $0) } ?? "—" }
                 .joined(separator: " | ") + " |"
         )
+        lines.append(
+            "| CPU % (mean) | "
+                + models.map { $0.meanCpuPercent.map { String(format: "%.0f", $0) } ?? "—" }
+                .joined(separator: " | ") + " |"
+        )
+        lines.append(
+            "| CPU % (peak) | "
+                + models.map { $0.peakCpuPercent.map { String(format: "%.0f", $0) } ?? "—" }
+                .joined(separator: " | ") + " |"
+        )
+        lines.append(
+            "| ctx tok/task (mean) | "
+                + models.map { $0.meanPromptTokensPerTask.map { String(format: "%.0f", $0) } ?? "—" }
+                .joined(separator: " | ") + " |"
+        )
+        lines.append(
+            "| total tok/task (mean) | "
+                + models.map { $0.meanTotalTokensPerTask.map { String(format: "%.0f", $0) } ?? "—" }
+                .joined(separator: " | ") + " |"
+        )
         let envRows = models.compactMap { col -> String? in
             guard let env = col.environment else { return nil }
             return "- `\(shortModel(col.modelId))` — \(env.summary)"
@@ -140,6 +181,8 @@ public struct EvalMatrix: Sendable, Codable, Equatable {
             var perf: [String] = []
             if let d = col.meanDecodeTokensPerSecond { perf.append(String(format: "%.1f tok/s", d)) }
             if let r = col.peakPhysFootprintMb { perf.append(String(format: "%.0fMB", r)) }
+            if let c = col.meanCpuPercent { perf.append(String(format: "%.0f%% CPU", c)) }
+            if let ctx = col.meanPromptTokensPerTask { perf.append(String(format: "%.0f ctx tok", ctx)) }
             let perfStr = perf.isEmpty ? "" : "  [\(perf.joined(separator: ", "))]"
             lines.append("  \(shortModel(col.modelId)): \(col.totalPassed)/\(col.totalScored)\(perfStr)")
         }
@@ -221,6 +264,9 @@ public enum EvalMatrixBuilder {
             let decodes = telem.compactMap(\.decodeTokensPerSecond)
             let ttfts = telem.compactMap(\.ttftMs)
             let rams = telem.compactMap(\.peakPhysFootprintMb)
+            let cpus = telem.compactMap(\.meanCpuPercent)
+            let promptToks = telem.compactMap(\.promptTokensTotal)
+            let totalToks = telem.compactMap(\.totalModelTokens)
             return EvalMatrixModelColumn(
                 modelId: modelId,
                 startedAt: startedByModel[modelId],
@@ -230,6 +276,12 @@ public enum EvalMatrixBuilder {
                 meanDecodeTokensPerSecond: decodes.isEmpty ? nil : decodes.reduce(0, +) / Double(decodes.count),
                 meanTtftMs: ttfts.isEmpty ? nil : ttfts.reduce(0, +) / Double(ttfts.count),
                 peakPhysFootprintMb: rams.max(),
+                meanCpuPercent: cpus.isEmpty ? nil : cpus.reduce(0, +) / Double(cpus.count),
+                peakCpuPercent: telem.compactMap(\.peakCpuPercent).max(),
+                meanPromptTokensPerTask: promptToks.isEmpty
+                    ? nil : Double(promptToks.reduce(0, +)) / Double(promptToks.count),
+                meanTotalTokensPerTask: totalToks.isEmpty
+                    ? nil : Double(totalToks.reduce(0, +)) / Double(totalToks.count),
                 environment: envByModel[modelId]
             )
         }

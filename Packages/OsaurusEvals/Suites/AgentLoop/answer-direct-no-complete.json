@@ -1,0 +1,19 @@
+{
+  "id": "agent_loop.answer-direct-no-complete",
+  "domain": "agent_loop",
+  "label": "agent loop • answer a direct question in plain text, no todo/complete",
+  "query": "What's the difference between TCP and UDP? Keep it to a few sentences.",
+  "notes": "Direct, single-step question that needs no tools. The contract: the model ANSWERS the user in plain text rather than scaffolding a trivial ask with `todo` or ending the turn with a bare `complete()` (\"done\" banner). mustNotCallTools pins no todo/complete/clarify; the rubric pins a real, direct answer. NOTE: a `complete` ending is mapped to exit=finalResponse (tool- and text-completion score identically), so mustNotCallTools — not allowedExits — is the guard against bare-complete. Off-CI (needs a model).",
+  "fixtures": {},
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 4,
+      "allowedExits": ["finalResponse"],
+      "mustNotCallTools": ["todo", "complete", "clarify"],
+      "rubric": [
+        "Directly answers the question in prose: TCP is connection-oriented, reliable, and ordered, while UDP is connectionless, unreliable, and lower-latency.",
+        "Delivers the answer as the assistant's own message and does not end by merely announcing completion or status (e.g. just saying \"done\")."
+      ]
+    }
+  }
+}

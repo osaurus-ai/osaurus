@@ -253,8 +253,10 @@ extension OsaurusEvalsCLI {
                 return 0
             }
             FileHandle.standardError.write(
-                Data((["[compat] contribution validation failed:"] + problems.map { "  - \($0)" })
-                    .joined(separator: "\n").appending("\n").utf8)
+                Data(
+                    (["[compat] contribution validation failed:"] + problems.map { "  - \($0)" })
+                        .joined(separator: "\n").appending("\n").utf8
+                )
             )
             return 1
         }

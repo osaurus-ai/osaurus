@@ -176,21 +176,31 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         guard StorageKeyManager.shared.isStorageReadyForWrites else { return }
         didPrewarmChatView = true
 
-        let windowState = ChatWindowState(
-            windowId: UUID(),
-            agentId: AgentManager.shared.activeAgentId
-        )
-        let chatView = ChatView(windowState: windowState)
-            .environment(\.theme, windowState.theme)
-        let hostingController = NSHostingController(rootView: chatView)
-        // Forcing layout evaluates the SwiftUI body once, which realizes the
-        // metadata. The controller is never attached to a visible window, so
-        // `onAppear` / `task` side effects don't fire.
-        hostingController.view.layoutSubtreeIfNeeded()
+        // Wrap the throwaway view tree in an autorelease pool so its teardown
+        // — including SwiftUI's `dismantleNSView` (which clears the prewarmed
+        // message table's hover closures) and the release of every cell's
+        // tracking areas — is drained deterministically when this call
+        // returns, instead of deferring to a later pool drain during the
+        // sensitive launch window where the tracking-area SIGABRT was seen
+        // (issue #1632).
+        autoreleasepool {
+            let windowState = ChatWindowState(
+                windowId: UUID(),
+                agentId: AgentManager.shared.activeAgentId
+            )
+            let chatView = ChatView(windowState: windowState)
+                .environment(\.theme, windowState.theme)
+            let hostingController = NSHostingController(rootView: chatView)
+            // Forcing layout evaluates the SwiftUI body once, which realizes
+            // the metadata. The controller is never attached to a visible
+            // window, so `onAppear` / `task` side effects don't fire.
+            hostingController.view.layoutSubtreeIfNeeded()
 
-        // Tear the throwaway state down so its session/observers don't linger;
-        // `deinit` removes the notification observers as it deallocates.
-        windowState.cleanup()
+            // Tear the throwaway state down so its session/observers don't
+            // linger; `deinit` removes the notification observers as it
+            // deallocates.
+            windowState.cleanup()
+        }
         print("[ChatWindowManager] Prewarmed ChatView metadata")
     }
 
@@ -877,14 +887,9 @@ private struct ChatToolbarAgentView: View {
                 )
             },
             activeRelayAgent: windowState.selectedRelayAgent,
-            onOpenActiveAgentSettings: {
-                let active = windowState.agents.first { $0.id == windowState.agentId }
-                let deeplinkId = (active?.isBuiltIn == false) ? active?.id : nil
-                AppDelegate.shared?.showManagementWindow(
-                    initialTab: .agents,
-                    deeplinkAgentId: deeplinkId
-                )
-            },
+            activeRemoteAgentAvatar: windowState.pinnedRemoteAgentAvatar,
+            onOpenActiveAgentSettings: { openActiveAgentSettings() },
+            onOpenRemoteAgentSettings: { openRemoteAgentSettings() },
             openPickerTrigger: openPickerTrigger
         )
         .environment(\.theme, windowState.theme)
@@ -894,6 +899,31 @@ private struct ChatToolbarAgentView: View {
             else { return }
             openPickerTrigger &+= 1
         }
+    }
+
+    /// Deep-link the management window to the active local agent's config.
+    /// Built-in agents have no editable record, so they open the Agents tab
+    /// without a selection.
+    private func openActiveAgentSettings() {
+        let active = windowState.agents.first { $0.id == windowState.agentId }
+        let deeplinkId = (active?.isBuiltIn == false) ? active?.id : nil
+        AppDelegate.shared?.showManagementWindow(
+            initialTab: .agents,
+            deeplinkAgentId: deeplinkId
+        )
+    }
+
+    /// Deep-link the management window to the active remote agent's detail view.
+    /// Resolves the chat's remote target → persisted `RemoteAgent` id; ephemeral
+    /// peers with no record fall back to the Agents tab.
+    private func openRemoteAgentSettings() {
+        let remoteId = windowState.selectedDiscoveredAgentProviderId.flatMap {
+            RemoteAgentManager.shared.remoteAgentDetailId(forProviderId: $0)
+        }
+        AppDelegate.shared?.showManagementWindow(
+            initialTab: .agents,
+            deeplinkRemoteAgentId: remoteId
+        )
     }
 }
 

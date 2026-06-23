@@ -31,6 +31,13 @@ reports whether a structured emitter is registered for a typed PDF/PPTX
 document; on current main it returns `missingEmitter`, keeping fake binary
 packages off the text-only `file_write` path.
 
+Business Document Studio is the format-neutral orchestration layer above these
+services. It parses through `DocumentFormatRegistry`, returns bounded CSV,
+workbook, PDF/PPTX, rich-text, or text previews, reports export availability,
+contains explicit export destinations when a caller supplies an allowed
+directory, and rejects text-fallback writes to structured package extensions.
+It does not add a default agent tool or an arbitrary-path HTTP file endpoint.
+
 Tool exposure stays narrow. Folder plugin hints only bias installed spreadsheet
 plugins, preflight injection respects installed plugin ids and per-agent
 allowlists, and default-agent `capabilities_load` cannot load plugin tools.
@@ -50,6 +57,7 @@ No workbook writer is added to the default schema.
 | XLSX bounds | Empty exports, whitespace-only exports, overlong cell text, invalid names/references, non-finite numbers, and ZIP32 overflows are rejected before package write | `XLSXEmitterTests`, `XLSXAdapterTests` |
 | PDF/PPTX creation diagnostics | Typed PDF/PPTX workflows report registered emitters or `missingEmitter` and do not route creation through text writes | `PDFPPTXWorkflowServiceTests` |
 | Workbook workflow | Workbook inspection reports sheet/cell/formula/merged-range counts, validation reason codes, and missing-emitter state before export | `WorkbookWorkflowServiceTests` |
+| Business Document Studio | Unified inspect/export path wraps CSV/TSV, XLSX, PDF/PPTX, rich text, and text fallback workflows without adding default tools or unsafe package-shaped text writes | `BusinessDocumentStudioServiceTests` |
 | Tool exposure | XLSX plugin injection is bias-only, installed-plugin gated, and allowlist-respecting | `PreflightCapabilitySearchTests.folderInjection_*`, `FolderPluginHintsTests` |
 
 ## Follow-Up Lanes

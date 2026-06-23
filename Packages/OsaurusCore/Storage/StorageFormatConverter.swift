@@ -166,11 +166,16 @@ public enum StorageFormatConverter {
 
     // MARK: - Atomic swap
 
-    /// Atomically replace `dst` with `src`, dropping `dst`'s stale sidecars
-    /// first so a `-wal` from the previous format can't re-attach.
+    /// Atomically replace `dst` with `src`, then drop the previous format's
+    /// stale `-wal`/`-shm` so they can't re-attach to the freshly swapped file.
+    ///
+    /// The replace happens FIRST: deleting `dst`'s sidecars beforehand left a
+    /// (tiny) crash window where the original had already lost its WAL but had
+    /// not yet been replaced. Convergence holds the `StorageMutationGate` across
+    /// this whole call, so nothing can open `dst` between the replace and the
+    /// sidecar cleanup — re-attach is still impossible, but the window is gone.
     private static func swap(from src: String, to dst: String) throws {
         let fm = FileManager.default
-        StorageFile.removeSidecars(for: dst)
         let dstURL = URL(fileURLWithPath: dst)
         let srcURL = URL(fileURLWithPath: src)
         do {
@@ -182,6 +187,10 @@ public enum StorageFormatConverter {
         } catch {
             throw StorageConversionError.replaceFailed(error.localizedDescription)
         }
+        // Now that the new file is in place, drop the old (previous-format)
+        // sidecars left next to `dst` and any sidecars the export produced
+        // next to `src`.
+        StorageFile.removeSidecars(for: dst)
         StorageFile.removeSidecars(for: src)
     }
 }

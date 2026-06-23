@@ -34,6 +34,20 @@ private final class SendableStringBox: @unchecked Sendable {
     }
 }
 
+/// Thread-safe holder for the inbound request's attribution metadata
+/// (paired-key nonce + audience + transport). The auth gate sets it on the
+/// event loop; the request log can be emitted off-loop from inside
+/// `runRequestTask`, where touching the `NIOLoopBound` `RequestState` would
+/// trap — so the snapshot is read through this lock instead.
+private final class SendableConnectionBox: @unchecked Sendable {
+    private var _value: RequestConnectionInfo?
+    private let _lock = NSLock()
+    var value: RequestConnectionInfo? {
+        get { _lock.withLock { _value } }
+        set { _lock.withLock { _value = newValue } }
+    }
+}
+
 private final class ChannelCloseFutureBox: @unchecked Sendable {
     private var future: EventLoopFuture<Void>?
     private let lock = NSLock()
@@ -179,6 +193,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     private let _isChannelActive = SendableBool(false)
     private let requestTasks = HTTPRequestTaskRegistry()
     private let channelCloseFuture = ChannelCloseFutureBox()
+    /// Off-loop-readable mirror of the current request's inbound attribution
+    /// (set by the auth gate, cleared on each `.head`). See
+    /// `SendableConnectionBox` for why this isn't read off the `RequestState`.
+    private let _inboundConnection = SendableConnectionBox()
     private static let openResponsesContextStore = OpenResponsesContextStore()
 
     /// Internal marker header stamped by `RelayTunnelManager` on every request
@@ -312,6 +330,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             stateRef.value.isSecureChannel = false
             stateRef.value.authedAudience = nil
             stateRef.value.authedScopeIsMaster = false
+            // Clear last request's attribution so a keep-alive connection's
+            // next (possibly loopback / public) request can't inherit it.
+            _inboundConnection.value = nil
             // Detect relay-proxied traffic before computing CORS / loopback
             // trust so the relay marker can strip loopback privileges.
             stateRef.value.isRelayOrigin =
@@ -477,13 +498,22 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 } else {
                     let result = apiKeyValidator.validate(rawKey: token)
                     switch result {
-                    case .valid(_, let audience):
+                    case .valid(_, let audience, let keyNonce):
                         message = ""
                         // Record the key's scope so agent-addressing routes can
                         // confine an agent-scoped key to its own agent.
                         stateRef.value.authedAudience = audience.lowercased()
                         stateRef.value.authedScopeIsMaster =
                             apiKeyValidator.isMasterScoped(audience: audience)
+                        // Snapshot the attribution into the off-loop-readable box
+                        // (read by the possibly-off-loop request log) so inbound
+                        // `.httpAPI` traffic is tied to this paired key. Built
+                        // here where audience + nonce + transport are all known.
+                        _inboundConnection.value = RequestConnectionInfo(
+                            transport: stateRef.value.isSecureChannel ? .secureChannel : .direct,
+                            accessKeyId: keyNonce,
+                            audience: audience.lowercased()
+                        )
                     case .expired:
                         message = "Access key has expired"
                     case .revoked:
@@ -3043,8 +3073,27 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
             let skipExtraction = req.skip_extraction ?? false
 
+            // I3 — agent-id canonicalization. Recall and the per-agent
+            // vector index key off Swift's (uppercase) `UUID.uuidString`, so
+            // a lowercase UUID ingested verbatim would write where recall
+            // never reads. Canonicalize a valid UUID to its uppercase form;
+            // pass non-UUID ids through unchanged.
+            let canonicalAgentId = UUID(uuidString: req.agent_id)?.uuidString ?? req.agent_id
+
             do {
                 try db.deleteTranscriptForConversation(req.conversation_id)
+
+                // I1 — idempotency. `episodes` has no `UNIQUE(conversation_id)`,
+                // so re-ingesting the same conversation (e.g. re-running a
+                // LoCoMo session) would otherwise stack duplicate episodes and
+                // pending signals. Clearing both first makes a re-ingest fully
+                // replace the conversation's prior memory state. Only when we
+                // actually run the extraction pipeline — `skip_extraction`
+                // callers explicitly want transcript-only storage untouched.
+                if !skipExtraction {
+                    try db.deletePendingSignalsForConversation(req.conversation_id)
+                    try db.deleteEpisodesForConversation(req.conversation_id)
+                }
 
                 for (i, turn) in req.turns.enumerated() {
                     let turnDate = turn.date ?? req.session_date
@@ -3061,10 +3110,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                             role: role,
                             content: content,
                             tokenCount: tokens,
-                            agentId: req.agent_id
+                            agentId: canonicalAgentId
                         )
                         try db.insertTranscriptTurn(
-                            agentId: req.agent_id,
+                            agentId: canonicalAgentId,
                             conversationId: req.conversation_id,
                             chunkIndex: chunkIndex,
                             role: role,
@@ -3079,7 +3128,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         await MemoryService.shared.bufferTurn(
                             userMessage: turn.user,
                             assistantMessage: turn.assistant,
-                            agentId: req.agent_id,
+                            agentId: canonicalAgentId,
                             conversationId: req.conversation_id,
                             sessionDate: turnDate
                         )
@@ -3121,15 +3170,39 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
             // Ingestion always implies "I'm done with this conversation
             // batch": flush distillation immediately so callers (benchmarks,
-            // bulk imports) don't have to wait for the debounce.
+            // bulk imports) don't have to wait for the debounce. We now
+            // *await* the outcome (forcing an on-demand cold load if the core
+            // model isn't resident) and report it, instead of the old
+            // fire-and-forget `flushSession` that returned `{"status":"ok"}`
+            // even when the residency gate silently skipped distillation
+            // entirely (issue #1632). The response is only written after the
+            // distill resolves; cold loads can take tens of seconds, so the
+            // benchmark client allows a long (300s) timeout.
+            var distillation: DistillOutcome? = nil
             if !skipExtraction {
-                await MemoryService.shared.flushSession(
-                    agentId: req.agent_id,
-                    conversationId: req.conversation_id
+                distillation = await MemoryService.shared.flushSessionAndWait(
+                    agentId: canonicalAgentId,
+                    conversationId: req.conversation_id,
+                    sessionDate: req.session_date
                 )
             }
 
-            let responseBody = "{\"status\":\"ok\",\"turns_ingested\":\(req.turns.count)}"
+            // Build via JSONSerialization so the distillation detail string
+            // (which can carry an arbitrary error message) is always escaped.
+            var payload: [String: Any] = [
+                "status": "ok",
+                "turns_ingested": req.turns.count,
+            ]
+            if let distillation {
+                payload["distillation"] = distillation.apiStatus
+                if let episodeId = distillation.episodeId {
+                    payload["episode_id"] = episodeId
+                }
+            }
+            let responseBody: String =
+                (try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]))
+                .flatMap { String(data: $0, encoding: .utf8) }
+                ?? "{\"status\":\"ok\",\"turns_ingested\":\(req.turns.count)}"
             var headers: [(String, String)] = [("Content-Type", "application/json")]
             headers.append(contentsOf: cors)
             let headersCopy = headers
@@ -3167,6 +3240,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let id: String
         let name: String
         let description: String
+        /// Mascot avatar identifier (e.g. "green") so paired peers can render
+        /// the agent's own avatar instead of a generic monogram. nil = no
+        /// mascot (client falls back to the name's initial). User-uploaded
+        /// custom images are intentionally not serialized.
+        let avatar: String?
         let default_model: String?
         /// Server-resolved model id, known before the first streamed chunk.
         let effective_model: String?
@@ -4150,10 +4228,18 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             }
 
             let db = MemoryDatabase.shared
+            // `memory_entry_count` reflects *stored memory* — distilled
+            // episodes plus active pinned facts — not just pinned facts.
+            // Counting only pinned facts read 0 for an agent whose sessions
+            // distilled into episodes but produced no pinned candidates
+            // (issue #1632 U3: "memory_entry_count stays 0").
             var memoryCounts: [String: Int] = [:]
-            if db.isOpen, let counts = try? db.agentIdsWithPinnedFacts() {
-                for (agentId, count) in counts {
-                    memoryCounts[agentId] = count
+            if db.isOpen {
+                if let pinned = try? db.agentIdsWithPinnedFacts() {
+                    for (agentId, count) in pinned { memoryCounts[agentId, default: 0] += count }
+                }
+                if let episodes = try? db.agentIdsWithEpisodes() {
+                    for (agentId, count) in episodes { memoryCounts[agentId, default: 0] += count }
                 }
             }
 
@@ -4174,6 +4260,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     id: agent.id.uuidString,
                     name: agent.name,
                     description: agent.description,
+                    avatar: agent.avatar,
                     default_model: agent.defaultModel,
                     effective_model: modelId,
                     supports_thinking: supportsThinking,
@@ -4257,6 +4344,27 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             return
         }
 
+        // Confine agent-scoped keys to their own agent: a key minted by
+        // `/pair` / `/pair-invite` for agent A must not read another agent's
+        // metadata (name, description, effective_model). Mirrors the
+        // `/agents/{id}/run` scope gate. Loopback callers (authedAudience ==
+        // nil) and master-scoped keys are unaffected. Read `stateRef` here on
+        // the event loop, before the detached `runRequestTask`.
+        if let rejection = agentScopeRejection(forAgentId: agentId) {
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(
+                    context: ctx.value,
+                    version: head.version,
+                    status: .forbidden,
+                    headers: headers,
+                    body: #"{"error":"\#(rejection.code)","message":"\#(rejection.message)"}"#
+                )
+            }
+            return
+        }
+
         runRequestTask(priority: .userInitiated) {
             // Built-in agents are not exposed via HTTP — return 404 (not 403)
             // so external clients learn the id is unreachable but cannot
@@ -4287,16 +4395,26 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let supportsVision = effectiveModelId.map { VLMDetection.isVLM(modelId: $0) } ?? false
             let supportsThinking =
                 effectiveModelId.flatMap { ModelProfileRegistry.profile(for: $0)?.thinkingOption } != nil
+            // Same stored-memory count as the `/agents` listing (episodes +
+            // pinned facts) instead of the pre-fix hardcoded 0 (issue #1632 U3).
+            let memoryEntryCount: Int = {
+                let db = MemoryDatabase.shared
+                guard db.isOpen else { return 0 }
+                let episodes = (try? db.episodeCount(agentId: agent.id.uuidString)) ?? 0
+                let pinned = (try? db.pinnedFactCount(agentId: agent.id.uuidString)) ?? 0
+                return episodes + pinned
+            }()
             let item = AgentListItem(
                 id: agent.id.uuidString,
                 name: agent.name,
                 description: agent.description,
+                avatar: agent.avatar,
                 default_model: agent.defaultModel,
                 effective_model: effectiveModelId,
                 supports_thinking: supportsThinking,
                 supports_vision: supportsVision,
                 is_built_in: agent.isBuiltIn,
-                memory_entry_count: 0,
+                memory_entry_count: memoryEntryCount,
                 created_at: formatter.string(from: agent.createdAt),
                 updated_at: formatter.string(from: agent.updatedAt)
             )
@@ -4326,12 +4444,54 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         }
     }
 
+    /// Resolve a per-agent host workspace folder (`Agent.hostWorkspaceBookmark`)
+    /// into a live `FolderContext` and begin security-scoped access. Returns
+    /// nil when the agent has no folder configured, the bookmark is
+    /// stale/unresolvable (folder moved or deleted), or access can't be
+    /// started. A non-nil result means the caller now HOLDS security-scoped
+    /// access and MUST balance it with `stopAccessingSecurityScopedResource()`
+    /// on the returned URL once the run finishes.
+    private static func resolveAgentHostFolder(
+        agentId: UUID
+    ) async -> (url: URL, context: FolderContext)? {
+        let bookmark = await MainActor.run {
+            AgentManager.shared.agent(for: agentId)?.hostWorkspaceBookmark
+        }
+        guard let bookmark,
+            let url = FolderContextService.resolveSecurityScopedURL(from: bookmark),
+            url.startAccessingSecurityScopedResource()
+        else { return nil }
+        let context = await FolderContextService.shared.buildContext(from: url)
+        return (url, context)
+    }
+
+    /// Make a `/agents/{id}/run` body decodable when the caller omitted the
+    /// `model` key. Mode 2 callers intentionally do not send a model (the agent
+    /// runs its own effective model server-side), but the shared
+    /// `ChatCompletionRequest` decoder requires `model`. Inject an empty string
+    /// so decode succeeds; the run handler resolves empty/"default" → the
+    /// agent's effective model. Returns the original bytes unchanged when the
+    /// body isn't a JSON object or already carries a non-null `model`.
+    static func injectingEmptyModelIfMissing(_ data: Data) -> Data {
+        guard var obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return data
+        }
+        guard obj["model"] == nil || obj["model"] is NSNull else { return data }
+        obj["model"] = ""
+        guard let patched = try? JSONSerialization.data(withJSONObject: obj) else { return data }
+        return patched
+    }
+
     /// POST /agents/{id}/run — run the full agent chat loop server-side.
     ///
     /// Accepts a `ChatCompletionRequest` body. Runs inference with the agent's
     /// system prompt and executes any tool calls locally on the server, looping
     /// until the model produces a final text response. Streams SSE text deltas
     /// back to the caller — tool invocations are never forwarded to the client.
+    /// When the agent has a host workspace folder configured and the caller is
+    /// an authenticated remote (Secure Channel, agent-scoped), the run also
+    /// gets host file tools (`file_read`/`file_write`/`file_edit`) confined to
+    /// that folder.
     private func handleAgentRunEndpoint(
         head: HTTPRequestHead,
         context: ChannelHandlerContext,
@@ -4364,7 +4524,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             requestBodyString = nil
         }
 
-        guard let req = try? JSONDecoder().decode(ChatCompletionRequest.self, from: data) else {
+        // `/agents/{id}/run` does NOT require a `model`: a Mode 2 caller omits
+        // it on purpose because the agent runs its own effective model
+        // server-side. The shared `ChatCompletionRequest` decoder requires
+        // `model`, so inject an empty value when the caller omitted it; the
+        // resolver below maps empty/"default" → the agent's effective model.
+        let runDecodeData = Self.injectingEmptyModelIfMissing(data)
+        guard let req = try? JSONDecoder().decode(ChatCompletionRequest.self, from: runDecodeData) else {
             sendResponse(
                 context: context,
                 version: head.version,
@@ -4494,10 +4660,20 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
         let responseId = Self.shortId(prefix: "chatcmpl-", length: 12)
         let created = Int(Date().timeIntervalSince1970)
-        // Local Osaurus agent runs need visible tool progress during prefill/tool
-        // waits. The emitted chunk is sanitized: phase, tool name, call id, error
-        // state, and end-run status only; raw tool arguments/results stay hidden.
-        let emitAgentToolTrace = isLoopbackConnection(context)
+        // Agent runs need visible tool progress during prefill/tool waits. The
+        // emitted chunk is sanitized: phase, tool name, call id, error state,
+        // and end-run status only; raw tool arguments/results stay hidden. Every
+        // caller that reaches here is either loopback (trusted same machine) or
+        // a Secure-Channel-authenticated remote (the non-loopback plaintext path
+        // was rejected above), so streaming the sanitized trace is safe in both
+        // cases — and it lets a remote observer watch a file being written, not
+        // just the final prose.
+        let emitAgentToolTrace = true
+        // Host file tools are mounted only for an AUTHENTICATED REMOTE caller
+        // (Secure Channel, agent-scoped — enforced by the gates above). A
+        // loopback caller is unauthenticated under the no-auth-loopback model,
+        // so it never receives the host-folder relaxation.
+        let isAuthenticatedRemote = !isLoopbackConnection(context)
 
         hop { writerBound.value.writeHeaders(ctx.value, extraHeaders: cors) }
 
@@ -4515,7 +4691,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
         runRequestTask(priority: .userInitiated) {
             defer { admissionToken.release() }
-            // Resolve model: client sends "default" when no specific model was known
+            // Resolve model: a Mode 2 caller omits `model` (decoded as empty),
+            // and older clients send the "default" sentinel. Both resolve to
+            // the agent's effective model server-side.
             let model: String
             if req.model.isEmpty || req.model == "default" {
                 let agentModel = await MainActor.run { AgentManager.shared.effectiveModel(for: agentId) }
@@ -4540,13 +4718,89 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             }
             cancelModelBox.value = model
 
+            // No model on the request and none resolvable for the agent: fail
+            // fast with an in-band SSE error (the 200 head is already on the
+            // wire) instead of running the loop with an empty model and hitting
+            // an opaque downstream routing failure. An empty resolution is the
+            // canonical "agent has no model configured" signal. ("default" is
+            // left intact — it resolves to the host's local Foundation model.)
+            if model.isEmpty {
+                let msg =
+                    "This agent has no model configured. Set the agent's default model on the host and try again."
+                RemoteAgentRunLog.serverError(
+                    "run agent=\(agentId.uuidString) FAILED reqModel=\(req.model.isEmpty ? "<omitted>" : req.model) error=no_model_resolved"
+                )
+                hop {
+                    writerBound.value.writeError(msg, context: ctx.value)
+                    writerBound.value.writeEnd(ctx.value)
+                }
+                logSelf.logRequest(
+                    method: "POST",
+                    path: path,
+                    userAgent: logUserAgent,
+                    requestBody: logRequestBody,
+                    responseStatus: 200,
+                    startTime: logStartTime,
+                    errorMessage: msg
+                )
+                return
+            }
+            RemoteAgentRunLog.server(
+                "run start agent=\(agentId.uuidString) model=\(model) reqModel=\(req.model.isEmpty ? "<omitted>" : req.model)"
+            )
+
             // KPI: one agent run initiated via the HTTP endpoint. The
             // per-turn `message_sent` is emitted separately by ChatEngine on
             // the first (user) turn only.
             Task { @MainActor in FeatureTelemetry.agentRun(source: "http_api") }
 
-            let executionMode = await MainActor.run {
-                let autonomousEnabled = AgentManager.shared.effectiveAutonomousExec(for: agentId)?.enabled == true
+            // Mount the agent's host workspace folder when an authenticated
+            // remote caller drives an agent whose owner granted one. Reachable
+            // only past the secure-transport + built-in + agent-scope gates, so
+            // the caller is paired and confined to THIS agent. When mounted, the
+            // run gets host file tools confined to the folder (see the deny-list
+            // relaxation gated on `authenticatedHostFolderRoot`); otherwise it
+            // falls back to sandbox/none. Loopback callers never mount it.
+            let hostFolder: (url: URL, context: FolderContext)? =
+                isAuthenticatedRemote
+                ? await Self.resolveAgentHostFolder(agentId: agentId)
+                : nil
+            // Snapshot/restore the process-wide folder-tool registration around
+            // the run (mirrors `AgentLoopEvaluator`) so a concurrent in-app
+            // folder session is restored afterward, serialized via
+            // `HostFolderRunGate` so two host-folder runs can't corrupt the
+            // single global registration.
+            let priorFolderContext: FolderContext? = await { () -> FolderContext? in
+                guard let hostFolder else { return nil }
+                await HostFolderRunGate.shared.acquire()
+                return await MainActor.run {
+                    let prior = FolderToolManager.shared.registeredContext
+                    FolderToolManager.shared.registerFolderTools(for: hostFolder.context)
+                    return prior
+                }
+            }()
+            let releaseHostFolder: @Sendable () async -> Void = {
+                guard let hostFolder else { return }
+                await MainActor.run {
+                    FolderToolManager.shared.unregisterFolderTools()
+                    if let priorFolderContext {
+                        FolderToolManager.shared.registerFolderTools(for: priorFolderContext)
+                    }
+                }
+                hostFolder.url.stopAccessingSecurityScopedResource()
+                await HostFolderRunGate.shared.release()
+            }
+
+            let executionMode: ExecutionMode = await MainActor.run {
+                if let hostFolder {
+                    // Host-files feature: full host read+write confined to the
+                    // granted folder. Prefer plain `.hostFolder` over the
+                    // sandbox-combined mode (which makes the host read-only) so
+                    // the agent can actually create/edit files as intended.
+                    return .hostFolder(hostFolder.context)
+                }
+                let autonomousEnabled =
+                    AgentManager.shared.effectiveAutonomousExec(for: agentId)?.enabled == true
                 return ToolRegistry.shared.resolveExecutionMode(
                     folderContext: nil,
                     autonomousEnabled: autonomousEnabled
@@ -4851,6 +5105,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                                     ).first ?? AgentLoopToolExecution(result: "")
                                 let execution = interceptAware(call.invocation, single)
                                 if emitAgentToolTrace {
+                                    RemoteAgentRunLog.server(
+                                        "tool completed agent=\(agentId.uuidString) name=\(call.invocation.toolName) "
+                                            + "callId=\(call.callId) isError=\(execution.isError) endRun=\(execution.endRun)"
+                                    )
                                     hop {
                                         writerBound.value.writeAgentToolTrace(
                                             phase: "completed",
@@ -4872,6 +5130,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         }
                         if emitAgentToolTrace {
                             for call in calls {
+                                RemoteAgentRunLog.server(
+                                    "tool started agent=\(agentId.uuidString) name=\(call.invocation.toolName) callId=\(call.callId)"
+                                )
                                 hop {
                                     writerBound.value.writeAgentToolTrace(
                                         phase: "started",
@@ -4902,6 +5163,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     var toolResultsByCallId: [(String, String)] = []
                     for outcome in outcomes {
                         if emitAgentToolTrace {
+                            RemoteAgentRunLog.server(
+                                "tool completed agent=\(agentId.uuidString) name=\(outcome.invocation.toolName) "
+                                    + "callId=\(outcome.callId) isError=\(outcome.wasError)"
+                            )
                             hop {
                                 writerBound.value.writeAgentToolTrace(
                                     phase: "completed",
@@ -4961,17 +5226,33 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
             let exitState: AgentToolLoop.Exit
             do {
-                let runResult = try await AgentToolLoop.run(
-                    policy: AgentLoopPolicy(
-                        maxIterations: maxIterations,
-                        stopOnToolRejection: false,
-                        dedupeNoticeEnabled: false
-                    ),
-                    state: taskState,
-                    hooks: hooks
-                )
+                // Bind the host-folder root for the whole loop so the deny-list
+                // relaxation (`isDeniedForCurrentSurface`) and the host file
+                // tools see it; `nil` when no folder is mounted, leaving the
+                // external-surface denial fully intact. Child tasks spawned by
+                // the parallel batch executor inherit the task-local.
+                let runResult = try await ChatExecutionContext.$authenticatedHostFolderRoot
+                    .withValue(hostFolder?.url) {
+                        try await AgentToolLoop.run(
+                            policy: AgentLoopPolicy(
+                                maxIterations: maxIterations,
+                                stopOnToolRejection: false,
+                                dedupeNoticeEnabled: false,
+                                maxDataMovementSteps: min(16, maxIterations)
+                            ),
+                            state: taskState,
+                            hooks: hooks
+                        )
+                    }
                 exitState = runResult.exit
+                RemoteAgentRunLog.server(
+                    "run loop done agent=\(agentId.uuidString) model=\(model) exit=\(String(describing: exitState))"
+                )
             } catch {
+                await releaseHostFolder()
+                RemoteAgentRunLog.serverError(
+                    "run loop FAILED agent=\(agentId.uuidString) model=\(model) error=\(error.localizedDescription)"
+                )
                 // SSE response head was already written as 200 — the
                 // failure surfaces as an in-band SSE error chunk. Log
                 // the actual on-wire status (200) so dashboards don't
@@ -4991,6 +5272,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 )
                 return
             }
+            // Tools have finished executing (the loop is done); release the
+            // host folder before streaming the tail so the gate isn't held
+            // across the final prose write. Runs exactly once per request —
+            // the catch path above returns after its own release.
+            await releaseHostFolder()
 
             // Even fully-compacted history can't fit the window: the
             // driver ended the run before sending a doomed request.
@@ -10759,7 +11045,18 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             maxTokens: maxTokens,
             toolCalls: toolCalls,
             finishReason: finishReason,
-            errorMessage: errorMessage
+            errorMessage: errorMessage,
+            connection: inboundConnectionInfo()
         )
+    }
+
+    /// Attribution metadata for an inbound request, built by the auth gate and
+    /// read through the off-loop-safe box. Lets the host's Remote Connections
+    /// view tie `.httpAPI` traffic to a specific paired access key (by nonce)
+    /// and shows the transport (Secure Channel vs direct) in Insights. Returns
+    /// nil for loopback / public routes that carried no token.
+    private func inboundConnectionInfo() -> RequestConnectionInfo? {
+        let info = _inboundConnection.value
+        return (info?.isEmpty == true) ? nil : info
     }
 }

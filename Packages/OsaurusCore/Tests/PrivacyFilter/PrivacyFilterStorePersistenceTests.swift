@@ -80,7 +80,6 @@ struct PrivacyFilterStorePersistenceTests {
         config.enabled = true
         config.skipCodeBlocks = false
         config.alwaysApproveByDefault = true
-        config.confidenceThreshold = 0.75
         config.builtinPatternEnabled[.url] = false
         PrivacyFilterStore.save(config)
 
@@ -89,7 +88,6 @@ struct PrivacyFilterStorePersistenceTests {
         #expect(reloaded.enabled == true)
         #expect(reloaded.skipCodeBlocks == false)
         #expect(reloaded.alwaysApproveByDefault == true)
-        #expect(abs(reloaded.confidenceThreshold - 0.75) < 0.001)
         #expect(reloaded.isBuiltinPatternEnabled(.url) == false)
     }
 

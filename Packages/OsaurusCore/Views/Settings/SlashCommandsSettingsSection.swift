@@ -291,7 +291,7 @@ struct SlashCommandEditorSheet: View {
                                 .font(.system(size: 10))
                                 .foregroundColor(theme.tertiaryText)
                         }
-                        TextField("/command-name", text: $name)
+                        TextField(L("/command-name"), text: $name)
                             .textFieldStyle(.plain)
                             .font(.system(size: 13, design: .monospaced))
                             .foregroundColor(theme.primaryText)

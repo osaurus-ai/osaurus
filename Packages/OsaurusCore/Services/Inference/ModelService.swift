@@ -61,6 +61,12 @@ struct GenerationParameters: Sendable {
     /// the same logical request can be deduped server-side and billed once.
     /// Local services and other remotes ignore it.
     let idempotencyKey: String?
+    /// True when the request targets a paired/discovered remote Osaurus *agent*
+    /// (Mode 2). `RemoteProviderService` uses this to route `.osaurus` providers
+    /// to `/agents/{address}/run` (the agent runs fully server-side) rather than
+    /// the plain OpenAI-compatible `/chat/completions` inference path (Mode 1).
+    /// Ignored by local services and non-Osaurus remotes.
+    let runAsRemoteAgent: Bool
 
     init(
         temperature: Float?,
@@ -78,7 +84,8 @@ struct GenerationParameters: Sendable {
         modelOptions: [String: ModelOptionValue] = [:],
         sessionId: String? = nil,
         ttftTrace: TTFTTrace? = nil,
-        idempotencyKey: String? = nil
+        idempotencyKey: String? = nil,
+        runAsRemoteAgent: Bool = false
     ) {
         self.temperature = temperature
         self.maxTokens = maxTokens
@@ -96,6 +103,7 @@ struct GenerationParameters: Sendable {
         self.sessionId = sessionId
         self.ttftTrace = ttftTrace
         self.idempotencyKey = idempotencyKey
+        self.runAsRemoteAgent = runAsRemoteAgent
     }
 }
 
@@ -187,6 +195,48 @@ public enum StreamingToolHint: Sendable {
     public static func decodeArgs(_ delta: String) -> String? {
         guard delta.hasPrefix(argsPrefix) else { return nil }
         return String(delta.dropFirst(argsPrefix.count))
+    }
+}
+
+/// In-band signaling for the server-side agent tool loop's sanitized
+/// `osaurus_agent_tool` trace, so a Mode 2 client observing a REMOTE agent
+/// run can show tool progress (a transient "running <tool>" chip) during the
+/// otherwise-silent remote tool-execution phase instead of just seeing final
+/// prose. Shares the `\u{FFFE}` sentinel so the generic sentinel passthrough in
+/// `ChatEngine` forwards it without counting it as visible tokens. The payload
+/// mirrors the writer's sanitized trace — phase, tool name, call id, and
+/// error/end flags only; never raw tool arguments or results.
+public enum StreamingAgentToolHint: Sendable {
+    private static let prefix = "\u{FFFE}agenttool:"
+
+    public struct Trace: Codable, Sendable, Equatable {
+        public let phase: String
+        public let name: String
+        public let callId: String?
+        public let isError: Bool
+        public let endRun: Bool
+
+        public init(phase: String, name: String, callId: String?, isError: Bool, endRun: Bool) {
+            self.phase = phase
+            self.name = name
+            self.callId = callId
+            self.isError = isError
+            self.endRun = endRun
+        }
+    }
+
+    public static func encode(_ trace: Trace) -> String {
+        let json =
+            (try? JSONEncoder().encode(trace))
+            .map { String(decoding: $0, as: UTF8.self) } ?? "{}"
+        return prefix + json
+    }
+
+    public static func decode(_ delta: String) -> Trace? {
+        guard delta.hasPrefix(prefix) else { return nil }
+        let json = String(delta.dropFirst(prefix.count))
+        guard let data = json.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(Trace.self, from: data)
     }
 }
 

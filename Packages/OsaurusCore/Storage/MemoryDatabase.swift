@@ -49,7 +49,7 @@ public enum MemoryDatabaseError: Error, LocalizedError {
 public final class MemoryDatabase: @unchecked Sendable {
     public static let shared = MemoryDatabase()
 
-    private static let schemaVersion = 9
+    private static let schemaVersion = 10
 
     nonisolated(unsafe) private static let iso8601Formatter: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()
@@ -198,7 +198,7 @@ public final class MemoryDatabase: @unchecked Sendable {
 
     /// Highest schema version this build knows how to produce. Opening a DB
     /// stamped newer than this is refused (forward-version fail-fast).
-    private static let latestSchemaVersion = 9
+    private static let latestSchemaVersion = 10
 
     private func runMigrations() throws {
         let currentVersion = try getSchemaVersion()
@@ -231,6 +231,11 @@ public final class MemoryDatabase: @unchecked Sendable {
         if currentVersion < 9 {
             // Same self-managed BEGIN/COMMIT as v7/v8 — do not double-wrap.
             try migrateToV9()
+        }
+        if currentVersion < 10 {
+            // Single `ALTER TABLE ... ADD COLUMN`; no rebuild/rename, so it
+            // owns its own (trivial) statement and stamps the version itself.
+            try migrateToV10()
         }
     }
 
@@ -520,6 +525,45 @@ public final class MemoryDatabase: @unchecked Sendable {
         MemoryLogger.database.info("Running v9 migration (rename-free orphan signal_type drop)")
         try dropOrphanSignalTypeColumnIfPresent()
         try setSchemaVersion(9)
+    }
+
+    /// V10 migration: add `pending_signals.attempts` to back the
+    /// distillation retry cap + dead-letter (issue #1632). A session that
+    /// never yields a parseable episode used to be retried on every launch,
+    /// ingest, and debounce forever (the 108 error / 5 empty
+    /// `processing_log` rows). The distiller now bumps `attempts` on each
+    /// retryable failure and flips the rows to `status='dead_letter'` once
+    /// they exceed `MemoryConfiguration.distillMaxAttempts`, dropping them
+    /// out of `loadPendingSignals` / `pendingConversations`.
+    ///
+    /// Implemented as a guarded `ADD COLUMN` rather than the v7-v9
+    /// copy-out/copy-back rebuild: `ADD COLUMN` does not RENAME the table,
+    /// so it can't be tripped by unrelated stale views/triggers. The
+    /// column-presence check keeps it idempotent for fresh installs (which
+    /// already created the canonical table at v5) and for re-runs.
+    private func migrateToV10() throws {
+        MemoryLogger.database.info("Running v10 migration (pending_signals.attempts + dead-letter)")
+        if !pendingSignalsHasColumn("attempts") {
+            try executeRaw(
+                "ALTER TABLE pending_signals ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0"
+            )
+        }
+        try setSchemaVersion(10)
+    }
+
+    /// Whether `pending_signals` currently has `column`. Cheap
+    /// `PRAGMA table_info` scan; used by `migrateToV10` to stay idempotent.
+    private func pendingSignalsHasColumn(_ column: String) -> Bool {
+        var found = false
+        try? executeRaw("PRAGMA table_info(pending_signals)") { stmt in
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                if String(cString: sqlite3_column_text(stmt, 1)) == column {
+                    found = true
+                    break
+                }
+            }
+        }
+        return found
     }
 
     /// Detect and drop the orphan `pending_signals.signal_type` column if it
@@ -1515,6 +1559,32 @@ public final class MemoryDatabase: @unchecked Sendable {
         return results
     }
 
+    /// Per-agent count of active episodes. Combined with
+    /// `agentIdsWithPinnedFacts` so the `/agents` listing's
+    /// `memory_entry_count` reflects *stored memory* (a distilled episode
+    /// counts even when it yielded zero pinned candidates) instead of only
+    /// active pinned facts (issue #1632 U3 — "memory_entry_count stays 0").
+    public func agentIdsWithEpisodes() throws -> [(agentId: String, count: Int)] {
+        var results: [(String, Int)] = []
+        try prepareAndExecute(
+            """
+            SELECT agent_id, COUNT(*) FROM episodes
+            WHERE status = 'active'
+            GROUP BY agent_id
+            ORDER BY 2 DESC
+            """,
+            bind: { _ in },
+            process: { stmt in
+                while sqlite3_step(stmt) == SQLITE_ROW {
+                    let id = String(cString: sqlite3_column_text(stmt, 0))
+                    let count = Int(sqlite3_column_int(stmt, 1))
+                    results.append((id, count))
+                }
+            }
+        )
+        return results
+    }
+
     private static let pinnedColumns =
         "id, agent_id, content, salience, source_count, source_episode_id, last_used, use_count, status, created_at, tags_csv"
 
@@ -1576,8 +1646,17 @@ public final class MemoryDatabase: @unchecked Sendable {
         return Int(sqlite3_last_insert_rowid(db))
     }
 
-    /// Atomically insert an episode and mark its pending signals as processed.
-    public func insertEpisodeAndMarkProcessed(_ ep: Episode) throws -> Int {
+    /// Atomically insert an episode and mark exactly the signals folded
+    /// into it as processed.
+    ///
+    /// `signalIds` are the primary keys snapshotted by the distiller before
+    /// the LLM call. Marking only those (rather than every `status='pending'`
+    /// row for the conversation) means a turn buffered *while the LLM call
+    /// was in flight* survives as `pending` and lands in the next episode,
+    /// instead of being silently marked processed without ever appearing in
+    /// any episode (issue #1632 D2). An empty `signalIds` is treated as "mark
+    /// nothing" rather than "mark all".
+    public func insertEpisodeAndMarkProcessed(_ ep: Episode, signalIds: [Int]) throws -> Int {
         try inTransaction { _ in
             var rowid: Int = 0
             var stmt: OpaquePointer?
@@ -1612,13 +1691,18 @@ public final class MemoryDatabase: @unchecked Sendable {
             sqlite3_finalize(s)
             rowid = Int(sqlite3_last_insert_rowid(self.db))
 
+            guard !signalIds.isEmpty else { return rowid }
+
+            let placeholders = signalIds.indices.map { "?\($0 + 1)" }.joined(separator: ", ")
             var clear: OpaquePointer?
             let clearSQL =
-                "UPDATE pending_signals SET status = 'processed' WHERE conversation_id = ?1 AND status = 'pending'"
+                "UPDATE pending_signals SET status = 'processed' WHERE id IN (\(placeholders))"
             guard sqlite3_prepare_v2(self.db, clearSQL, -1, &clear, nil) == SQLITE_OK, let c = clear else {
                 throw MemoryDatabaseError.failedToPrepare(String(cString: sqlite3_errmsg(self.db)))
             }
-            Self.bindText(c, index: 1, value: ep.conversationId)
+            for (i, id) in signalIds.enumerated() {
+                sqlite3_bind_int(c, Int32(i + 1), Int32(id))
+            }
             _ = sqlite3_step(c)
             sqlite3_finalize(c)
             return rowid
@@ -2375,6 +2459,96 @@ public final class MemoryDatabase: @unchecked Sendable {
     public func markSignalsProcessed(conversationId: String) throws {
         _ = try executeUpdate(
             "UPDATE pending_signals SET status = 'processed' WHERE conversation_id = ?1 AND status = 'pending'"
+        ) { stmt in
+            Self.bindText(stmt, index: 1, value: conversationId)
+        }
+    }
+
+    /// Set `status` on exactly the given signal ids. Used by the distiller
+    /// to clear only the signals that were folded into an episode (or a
+    /// terminal empty result) without touching turns buffered after the
+    /// snapshot (issue #1632 D2). No-op for an empty id list.
+    public func markSignals(ids: [Int], status: String) throws {
+        guard !ids.isEmpty else { return }
+        let placeholders = ids.indices.map { "?\($0 + 2)" }.joined(separator: ", ")
+        _ = try executeUpdate(
+            "UPDATE pending_signals SET status = ?1 WHERE id IN (\(placeholders))"
+        ) { stmt in
+            Self.bindText(stmt, index: 1, value: status)
+            for (i, id) in ids.enumerated() {
+                sqlite3_bind_int(stmt, Int32(i + 2), Int32(id))
+            }
+        }
+    }
+
+    /// Record one failed distillation attempt for `ids` and dead-letter
+    /// them once they exceed `maxAttempts`. Returns the new max attempt
+    /// count across the ids and whether they were dead-lettered.
+    ///
+    /// Dead-lettered rows (`status='dead_letter'`) drop out of
+    /// `loadPendingSignals` / `pendingConversations`, so a session that
+    /// keeps failing stops re-distilling on every launch/ingest/debounce
+    /// forever (issue #1632 D1). Only `pending` rows are dead-lettered, so
+    /// a concurrently-processed row is never clobbered.
+    @discardableResult
+    public func recordDistillFailure(
+        ids: [Int],
+        maxAttempts: Int
+    ) throws -> (attempts: Int, deadLettered: Bool) {
+        guard !ids.isEmpty else { return (0, false) }
+        let placeholders = ids.indices.map { "?\($0 + 1)" }.joined(separator: ", ")
+        let bindIds: (OpaquePointer) -> Void = { stmt in
+            for (i, id) in ids.enumerated() {
+                sqlite3_bind_int(stmt, Int32(i + 1), Int32(id))
+            }
+        }
+
+        _ = try executeUpdate(
+            "UPDATE pending_signals SET attempts = attempts + 1 WHERE id IN (\(placeholders)) AND status = 'pending'",
+            bind: bindIds
+        )
+
+        var maxSoFar = 0
+        try prepareAndExecute(
+            "SELECT COALESCE(MAX(attempts), 0) FROM pending_signals WHERE id IN (\(placeholders))",
+            bind: bindIds,
+            process: { stmt in
+                if sqlite3_step(stmt) == SQLITE_ROW { maxSoFar = Int(sqlite3_column_int(stmt, 0)) }
+            }
+        )
+
+        let deadLettered = maxSoFar >= maxAttempts
+        if deadLettered {
+            _ = try executeUpdate(
+                "UPDATE pending_signals SET status = 'dead_letter' WHERE id IN (\(placeholders)) AND status = 'pending'",
+                bind: bindIds
+            )
+        }
+        return (maxSoFar, deadLettered)
+    }
+
+    /// Delete every pending signal for a conversation regardless of status.
+    /// Used by `/memory/ingest` to make re-ingesting a `conversation_id`
+    /// idempotent (issue #1632 I1) — a fresh ingest fully replaces the
+    /// prior buffered state instead of stacking duplicate signals.
+    public func deletePendingSignalsForConversation(_ conversationId: String) throws {
+        _ = try executeUpdate(
+            "DELETE FROM pending_signals WHERE conversation_id = ?1"
+        ) { stmt in
+            Self.bindText(stmt, index: 1, value: conversationId)
+        }
+    }
+
+    /// Delete every episode for a conversation. Paired with
+    /// `deletePendingSignalsForConversation` so a re-ingested
+    /// `conversation_id` yields exactly one active episode instead of a
+    /// duplicate per run (`episodes` has no `UNIQUE(conversation_id)`).
+    /// Mirrors `deleteEpisode(id:)` semantics (FTS stays trigger-synced;
+    /// any stale vector-index rows resolve to a missing SQL row and are
+    /// filtered on read, same as the consolidator's merge path).
+    public func deleteEpisodesForConversation(_ conversationId: String) throws {
+        _ = try executeUpdate(
+            "DELETE FROM episodes WHERE conversation_id = ?1"
         ) { stmt in
             Self.bindText(stmt, index: 1, value: conversationId)
         }

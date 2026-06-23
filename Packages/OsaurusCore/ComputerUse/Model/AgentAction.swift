@@ -189,6 +189,18 @@ public struct AgentAction: Sendable, Equatable {
         }
     }
 
+    /// The full text payload a confirm card can show expandably (the feed label
+    /// truncates it at 40 chars). `nil` for verbs that carry no typed payload.
+    public var typedTextForPreview: String? {
+        switch verb {
+        case .type, .setValue:
+            guard let text, !text.isEmpty else { return nil }
+            return text
+        default:
+            return nil
+        }
+    }
+
     private var targetLabel: String { Self.label(for: target) }
     private var destinationLabel: String { Self.label(for: to) }
 

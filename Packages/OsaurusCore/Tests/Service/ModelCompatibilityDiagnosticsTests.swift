@@ -130,13 +130,17 @@ struct ModelCompatibilityDiagnosticsTests {
         #expect(report.preflight.status == .supported)
         #expect(report.preflight.reason == .localBundleReady)
         #expect(report.preflight.blocksRuntimeLoad == false)
-        #expect(report.evidence.contains {
-            $0.source == "tokenizer_config.json" && $0.key == "chat_template"
-                && $0.value == "present"
-        })
-        #expect(report.evidence.contains {
-            $0.source == "generation_config.json" && $0.key == "top_k" && $0.value == "20"
-        })
+        #expect(
+            report.evidence.contains {
+                $0.source == "tokenizer_config.json" && $0.key == "chat_template"
+                    && $0.value == "present"
+            }
+        )
+        #expect(
+            report.evidence.contains {
+                $0.source == "generation_config.json" && $0.key == "top_k" && $0.value == "20"
+            }
+        )
     }
 
     @Test func hunyuanDenseConfig_reportsUnsupportedFamily() {
@@ -231,10 +235,12 @@ struct ModelCompatibilityDiagnosticsTests {
         #expect(report.preflight.status == .partial)
         #expect(report.preflight.blocksRuntimeLoad)
         #expect(report.featureHooks.isEmpty)
-        #expect(report.evidence.contains {
-            $0.source == "generation_config.json" && $0.key == "keys"
-                && $0.value.contains("speculative_decoding")
-        })
+        #expect(
+            report.evidence.contains {
+                $0.source == "generation_config.json" && $0.key == "keys"
+                    && $0.value.contains("speculative_decoding")
+            }
+        )
     }
 
     @Test func dflashGenerationConfigReference_reportsPartialEvenWhenModelTypeIsGeneric() {

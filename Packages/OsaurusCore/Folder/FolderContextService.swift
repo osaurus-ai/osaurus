@@ -105,6 +105,39 @@ public final class FolderContextService: ObservableObject {
         UserDefaults.standard.removeObject(forKey: bookmarkKey)
     }
 
+    // MARK: - Per-agent bookmark helpers
+
+    /// Create a security-scoped bookmark for `url`, suitable for persisting on
+    /// an `Agent` (`Agent.hostWorkspaceBookmark`) so a host-folder grant
+    /// survives relaunch. Mirrors the bookmark `setFolder` creates, but does
+    /// not mutate the process-wide folder context. Returns nil if the bookmark
+    /// can't be created.
+    public nonisolated static func makeSecurityScopedBookmark(for url: URL) -> Data? {
+        try? url.bookmarkData(
+            options: .withSecurityScope,
+            includingResourceValuesForKeys: nil,
+            relativeTo: nil
+        )
+    }
+
+    /// Resolve a persisted security-scoped bookmark back to a URL without
+    /// touching the global folder context. The caller MUST balance a
+    /// successful `startAccessingSecurityScopedResource()` on the returned URL
+    /// with `stopAccessingSecurityScopedResource()`. Returns nil when the
+    /// bookmark can't be resolved (e.g. the folder was deleted) or is stale.
+    public nonisolated static func resolveSecurityScopedURL(from bookmark: Data) -> URL? {
+        var isStale = false
+        guard
+            let url = try? URL(
+                resolvingBookmarkData: bookmark,
+                options: .withSecurityScope,
+                relativeTo: nil,
+                bookmarkDataIsStale: &isStale
+            ), !isStale
+        else { return nil }
+        return url
+    }
+
     // MARK: - Eval-harness activation (module-internal)
 
     /// Activate an already-built context as the process-wide folder

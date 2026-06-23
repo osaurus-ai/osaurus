@@ -206,6 +206,17 @@ public final class CrashReportingService {
             // available on macOS; everything performance-related is off.
             options.enableCrashHandler = true
             options.enableAppHangTracking = true
+            // The SDK's 2s default fires on transient, non-fully-blocking
+            // stalls — a few dropped frames during heavy SwiftUI updates or
+            // model metadata loads — which dominate the issue stream as
+            // low-actionability noise (the captured stack is just wherever the
+            // main thread was sampled, not a real blocking call). On iOS the
+            // SDK can split fully- from non-fully-blocking hangs and drop the
+            // latter via `enableReportNonFullyBlockingAppHangs`, but that
+            // differentiation does not exist on macOS. Raising the threshold is
+            // the macOS-equivalent lever: 3s still catches genuine multi-second
+            // freezes while filtering out the brief churn.
+            options.appHangTimeoutInterval = 3.0
             options.enableWatchdogTerminationTracking = false
             options.enableAutoPerformanceTracing = false
             options.tracesSampleRate = 0.0

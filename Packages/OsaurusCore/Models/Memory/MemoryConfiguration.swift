@@ -28,7 +28,13 @@ public enum MemoryExtractionMode: String, Codable, Sendable {
 /// Strategy for the per-turn relevance gate that decides whether memory
 /// should be injected at all.
 public enum MemoryRelevanceGateMode: String, Codable, Sendable {
-    /// Always inject (legacy behavior; not recommended).
+    /// Always consider memory for every turn (the gate returns `.episode`
+    /// unconditionally). Bypasses the heuristic so recall is never silently
+    /// skipped — set this in the persisted memory config
+    /// (`relevanceGateMode: "off"`) when verifying that stored memory is
+    /// actually retrievable (issue #1632 U2). Heavier per-turn than
+    /// `.heuristic`; intended for testing / always-on recall rather than the
+    /// default chat path.
     case off
     /// Cheap rule-based check: pronouns referencing prior context, entity
     /// hits in the graph, temporal markers, and identity-curious phrases.
@@ -88,6 +94,23 @@ public struct MemoryConfiguration: Codable, Equatable, Sendable {
     /// Minimum combined (user+assistant) char count before distillation
     /// considers a turn worth processing.
     public static let distillNoveltyMinChars = 80
+    /// Max distillation attempts before a session's pending signals are
+    /// dead-lettered (`status='dead_letter'`) so an unparseable / repeatedly
+    /// failing session stops re-distilling on every launch/ingest/debounce
+    /// forever (root cause of the "108 error / 5 empty" `processing_log`
+    /// rows in issue #1632). Transient skips (no core model, breaker open,
+    /// model unavailable) and cancellations deliberately do NOT count toward
+    /// this cap — they stay `pending` and recover once the model is ready.
+    public static let distillMaxAttempts = 3
+    /// Cap on conversation turns folded into a single distillation prompt.
+    /// Oversized sessions are clamped (opening head + most-recent tail) so
+    /// the prompt can't overflow a small core model's context and get stuck
+    /// erroring. Identity-bearing opening turns are preserved via the head.
+    public static let distillMaxTurns = 80
+    /// Per-message character clamp inside the distillation prompt. Long
+    /// individual turns are truncated so one giant paste can't blow the
+    /// context budget on its own.
+    public static let distillMaxTurnChars = 2000
     /// Salience half-life in days, used by the consolidator's decay step.
     public static let salienceHalfLifeDays: Double = 30
     /// Number of episodes a candidate must appear in before the
@@ -199,8 +222,16 @@ public enum MemoryConfigurationStore: Sendable {
         OsaurusPaths.ensureExistsSilent(url.deletingLastPathComponent())
         do {
             let data = try encoder.encode(validated)
-            try data.write(to: url, options: .atomic)
+            // Update the cache before the write so in-process reads see the new
+            // value immediately; the disk write then lands off the main thread.
+            // Tests run against an override root and write synchronously.
             lock.withLock { $0 = validated }
+            ConfigDiskWriter.write(
+                data,
+                to: url,
+                synchronous: OsaurusPaths.overrideRoot != nil,
+                onError: { MemoryLogger.config.error("Failed to save config: \($0.localizedDescription)") }
+            )
         } catch {
             MemoryLogger.config.error("Failed to save config: \(error)")
         }

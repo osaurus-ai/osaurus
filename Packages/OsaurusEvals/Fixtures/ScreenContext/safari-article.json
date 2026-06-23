@@ -1,0 +1,33 @@
+{
+  "apps": [
+    { "pid": 303, "bundleId": "com.apple.Safari", "name": "Safari", "active": true, "hidden": false }
+  ],
+  "activeWindow": {
+    "pid": 303,
+    "app": "Safari",
+    "title": "Understanding macOS Accessibility — Example Blog",
+    "x": 0, "y": 0, "w": 1400, "h": 900
+  },
+  "windowsByPid": {
+    "303": [
+      { "windowId": 1, "title": "Understanding macOS Accessibility — Example Blog", "focused": true, "minimized": false, "x": 0, "y": 0, "w": 1400, "h": 900 }
+    ]
+  },
+  "snapshot": {
+    "app": "Safari",
+    "focusedWindow": "Understanding macOS Accessibility — Example Blog",
+    "truncated": false,
+    "windows": [
+      { "id": 1, "title": "Understanding macOS Accessibility — Example Blog", "focused": true, "x": 0, "y": 0, "w": 1400, "h": 900 }
+    ],
+    "elements": [
+      { "id": "title", "role": "heading", "value": "Understanding macOS Accessibility", "focused": false, "enabled": true, "x": 250, "y": 90, "w": 900, "h": 48, "actions": [] },
+      { "id": "body", "role": "statictext", "value": "The accessibility tree exposes every on-screen element so assistive tools — and Osaurus — can read what the user sees without taking screenshots. This article walks through AXUIElement, focused-element reads, selected-text ranges, and the visible character range used to build a viewport of what the reader is looking at.", "focused": false, "enabled": true, "x": 250, "y": 150, "w": 900, "h": 620, "actions": [] },
+      { "id": "nav1", "role": "statictext", "value": "Reading List", "focused": false, "enabled": true, "x": 20, "y": 120, "w": 160, "h": 20, "actions": [] },
+      { "id": "nav2", "role": "statictext", "value": "Downloads", "focused": false, "enabled": true, "x": 20, "y": 150, "w": 160, "h": 20, "actions": [] },
+      { "id": "ver1", "role": "statictext", "label": "Safari version", "value": "16.5", "focused": false, "enabled": true, "x": 20, "y": 200, "w": 120, "h": 18, "actions": [] },
+      { "id": "ver2", "role": "statictext", "label": "WebKit build", "value": "2.1", "focused": false, "enabled": true, "x": 20, "y": 224, "w": 120, "h": 18, "actions": [] }
+    ]
+  },
+  "focusedContent": null
+}

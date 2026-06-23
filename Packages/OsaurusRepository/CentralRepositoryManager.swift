@@ -151,7 +151,7 @@ public final class CentralRepositoryManager: @unchecked Sendable {
     private func downloadFile(from url: URL, to destination: URL) throws {
         let outcome = SyncDownloadOutcome()
         let semaphore = DispatchSemaphore(value: 0)
-        URLSession.shared.downloadTask(with: url) { tempURL, response, error in
+        RepositoryGlobalProxySettings.sharedSession().downloadTask(with: url) { tempURL, response, error in
             defer { semaphore.signal() }
             if let error {
                 outcome.error = error

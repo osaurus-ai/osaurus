@@ -2,15 +2,11 @@
 //  ModelConfigurationDomain.swift
 //  osaurus
 //
-//  Default-agent configure tools for local MLX models:
-//   - osaurus_model_download
-//   - osaurus_model_cancel_download
-//   - osaurus_model_delete
-//
-//  Downloads are async by design — the tool returns immediately with
-//  `status: "started"` and the model is expected to poll
-//  `osaurus_status` / `osaurus_list({scope: 'models'})` to track
-//  progress.
+//  Default-agent configure tool for local MLX models. One tool,
+//  `osaurus_model`, fans out across three actions:
+//   - download  (async; returns `status: "started"`, poll osaurus_status)
+//   - cancel    (cancel an in-flight download)
+//   - delete    (remove a downloaded model from disk)
 //
 
 import Foundation
@@ -34,36 +30,41 @@ enum ModelConfigurationDomain {
             "delete the old Llama model",
         ],
         tools: [
-            OsaurusModelDownloadTool(),
-            OsaurusModelCancelDownloadTool(),
-            OsaurusModelDeleteTool(),
+            OsaurusModelTool()
         ],
         writeToolNames: [
-            "osaurus_model_download",
-            "osaurus_model_cancel_download",
-            "osaurus_model_delete",
+            "osaurus_model"
         ]
     )
 }
 
-// MARK: - osaurus_model_download
+// MARK: - osaurus_model
 
-public final class OsaurusModelDownloadTool: OsaurusTool, PermissionedTool, @unchecked Sendable {
-    public let name = "osaurus_model_download"
+public final class OsaurusModelTool: OsaurusTool, PermissionedTool, @unchecked Sendable {
+    public let name = "osaurus_model"
     public let description =
-        "Start downloading an MLX-compatible model from Hugging Face. Pass `repo_id` "
-        + "(e.g. `mlx-community/Qwen2.5-7B-Instruct-4bit`). Returns immediately; "
-        + "poll osaurus_status / osaurus_list(scope='models') to track progress."
+        "Manage local MLX models. `action`: download (needs `repo_id`, e.g. "
+        + "`mlx-community/Qwen2.5-7B-Instruct-4bit`; returns immediately — poll osaurus_status), "
+        + "cancel (needs `id`), delete (needs `id`; cancel an in-flight download first)."
     public let parameters: JSONValue? = .object([
         "type": .string("object"),
         "additionalProperties": .bool(false),
         "properties": .object([
+            "action": .object([
+                "type": .string("string"),
+                "enum": .array([.string("download"), .string("cancel"), .string("delete")]),
+                "description": .string("Operation to perform."),
+            ]),
             "repo_id": .object([
                 "type": .string("string"),
-                "description": .string("Hugging Face repo id, e.g. `mlx-community/Llama-3.1-8B-Instruct-4bit`."),
-            ])
+                "description": .string("Hugging Face repo id. Required for download."),
+            ]),
+            "id": .object([
+                "type": .string("string"),
+                "description": .string("Model id. Required for cancel / delete."),
+            ]),
         ]),
-        "required": .array([.string("repo_id")]),
+        "required": .array([.string("action")]),
     ])
 
     public var requirements: [String] { [ConfigurationToolBase.requirement] }
@@ -77,7 +78,18 @@ public final class OsaurusModelDownloadTool: OsaurusTool, PermissionedTool, @unc
         }
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
         guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
+        let actionReq = requireAction(args, allowed: ["download", "cancel", "delete"])
+        guard case .value(let action) = actionReq else { return actionReq.failureEnvelope ?? "" }
 
+        switch action {
+        case "download": return await handleDownload(args)
+        case "cancel": return await handleCancel(args)
+        case "delete": return await handleDelete(args)
+        default: return actionReq.failureEnvelope ?? ""
+        }
+    }
+
+    private func handleDownload(_ args: [String: Any]) async -> String {
         let req = requireString(args, "repo_id", expected: "Hugging Face repo id", tool: name)
         guard case .value(let repoId) = req else { return req.failureEnvelope ?? "" }
 
@@ -104,32 +116,8 @@ public final class OsaurusModelDownloadTool: OsaurusTool, PermissionedTool, @unc
             ]
         )
     }
-}
 
-// MARK: - osaurus_model_cancel_download
-
-public final class OsaurusModelCancelDownloadTool: OsaurusTool, PermissionedTool, @unchecked Sendable {
-    public let name = "osaurus_model_cancel_download"
-    public let description =
-        "Cancel an in-flight model download. Pass the `id` returned by osaurus_model_download or osaurus_list."
-    public let parameters: JSONValue? = .object([
-        "type": .string("object"),
-        "additionalProperties": .bool(false),
-        "properties": .object(["id": .object(["type": .string("string")])]),
-        "required": .array([.string("id")]),
-    ])
-
-    public var requirements: [String] { [ConfigurationToolBase.requirement] }
-    var defaultPermissionPolicy: ToolPermissionPolicy { ConfigurationToolBase.defaultPolicy }
-
-    public init() {}
-
-    public func execute(argumentsJSON: String) async throws -> String {
-        if let gate = ConfigurationToolBase.defaultAgentGateFailure(tool: name) {
-            return gate
-        }
-        let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
-        guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
+    private func handleCancel(_ args: [String: Any]) async -> String {
         let req = requireString(args, "id", expected: "Model id", tool: name)
         guard case .value(let modelId) = req else { return req.failureEnvelope ?? "" }
 
@@ -140,33 +128,8 @@ public final class OsaurusModelCancelDownloadTool: OsaurusTool, PermissionedTool
             result: ["model_id": modelId, "status": "cancel_requested"]
         )
     }
-}
 
-// MARK: - osaurus_model_delete
-
-public final class OsaurusModelDeleteTool: OsaurusTool, PermissionedTool, @unchecked Sendable {
-    public let name = "osaurus_model_delete"
-    public let description =
-        "Delete a downloaded MLX model from disk. Refuses if the model is currently downloading; "
-        + "cancel first via osaurus_model_cancel_download."
-    public let parameters: JSONValue? = .object([
-        "type": .string("object"),
-        "additionalProperties": .bool(false),
-        "properties": .object(["id": .object(["type": .string("string")])]),
-        "required": .array([.string("id")]),
-    ])
-
-    public var requirements: [String] { [ConfigurationToolBase.requirement] }
-    var defaultPermissionPolicy: ToolPermissionPolicy { ConfigurationToolBase.defaultPolicy }
-
-    public init() {}
-
-    public func execute(argumentsJSON: String) async throws -> String {
-        if let gate = ConfigurationToolBase.defaultAgentGateFailure(tool: name) {
-            return gate
-        }
-        let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
-        guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
+    private func handleDelete(_ args: [String: Any]) async -> String {
         let req = requireString(args, "id", expected: "Model id", tool: name)
         guard case .value(let modelId) = req else { return req.failureEnvelope ?? "" }
 
@@ -199,7 +162,7 @@ public final class OsaurusModelDeleteTool: OsaurusTool, PermissionedTool, @unche
                         kind: .executionError,
                         message:
                             "Model `\(modelId)` is currently downloading. "
-                            + "Call osaurus_model_cancel_download first, then retry.",
+                            + "Call osaurus_model({action: 'cancel', id: '\(modelId)'}) first, then retry.",
                         tool: name,
                         retryable: true
                     )

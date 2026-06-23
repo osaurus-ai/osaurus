@@ -1,0 +1,18 @@
+{
+  "id": "default_agent.model-delete",
+  "domain": "default_agent",
+  "label": "default agent • delete a local model by id",
+  "query": "Delete the local model mlx-community/Old-Unused-Model-7B-4bit to free up disk space.",
+  "notes": "action 'delete' with the model id. The id is not installed in the isolated store, so the tool returns a typed not-found error (no deletion); the selection assertion matches the emitted call.",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": ["osaurus_model"],
+      "mustNotCallTools": ["capabilities_discover", "capabilities_load"],
+      "argsMustContain": [
+        { "tool": "osaurus_model", "args": { "action": "delete", "id": "Old-Unused-Model-7B-4bit" } }
+      ],
+      "maxIterations": 4
+    }
+  }
+}

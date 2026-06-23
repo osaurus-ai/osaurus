@@ -904,6 +904,18 @@ final class NativeMarkdownView: NSView {
 
     // MARK: - Cleanup
 
+    /// Deterministic teardown for the owning cell's `removeAllContentViews`.
+    /// AppKit recycles message cells aggressively and a `NativeMarkdownView`
+    /// can linger in an autorelease pool after `removeFromSuperview`, so
+    /// relying on dealloc to detach the redaction hover controller (and
+    /// clear the text view's `.mouseMoved` tracking flag) is too late —
+    /// exactly the teardown window where the launch SIGABRT was observed.
+    /// Calling this before dropping the view releases the hover area +
+    /// closures synchronously.
+    func tearDownForReuse() {
+        removeTextView()
+    }
+
     private func removeTextView() {
         fader.reset()
         hoverController?.detach()

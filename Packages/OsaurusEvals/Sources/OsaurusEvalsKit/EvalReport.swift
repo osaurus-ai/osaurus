@@ -48,9 +48,36 @@ public struct EvalCaseTelemetry: Sendable, Codable {
     public let ttftMs: Double?
     /// Total generated tokens across all model steps.
     public let completionTokens: Int?
+    /// Estimated INPUT (prompt + tool-schema) tokens summed across every
+    /// model step — the context-cost signal the optimization loop drives
+    /// down. Computed deterministically at compose time via `TokenEstimator`
+    /// (chars/4 + per-message overhead), so unlike the runtime-only
+    /// decode/completion counters it is provider-independent and
+    /// reproducible: a local MLX run and a remote frontier run on the same
+    /// case are directly comparable. nil on rows that made no model call.
+    public let promptTokensTotal: Int?
+    /// Largest single-step input estimate — the context-window high-water
+    /// mark (what has to fit the budget at the worst moment of the run).
+    public let peakContextTokens: Int?
+    /// Estimated total model tokens (`promptTokensTotal + completionTokens`).
+    /// nil unless both were measured. The headline cost number; pair it with
+    /// pass rate to read "same answers, fewer tokens".
+    public let totalModelTokens: Int?
+    /// Number of model steps (loop iterations that called the model).
+    /// `promptTokensTotal / modelSteps` is the mean per-step context size.
+    public let modelSteps: Int?
     /// Peak physical footprint (Activity-Monitor "Memory") sampled across
     /// the case, in megabytes — the value the AGENTS.md RAM gate reads.
     public let peakPhysFootprintMb: Double?
+    /// Mean process CPU utilization (% of a single core; >100% when multiple
+    /// cores are busy) across the case window. On Apple silicon MLX decode is
+    /// GPU-bound, so this is HOST overhead — tokenizer, sampler, JSON, stream
+    /// plumbing, harness orchestration — not the model's matmuls. A high
+    /// value is an optimization target in its own right, not GPU compute.
+    public let meanCpuPercent: Double?
+    /// Peak instantaneous process CPU utilization (%) across the sampling
+    /// ticks — the burst, vs the sustained `meanCpuPercent`.
+    public let peakCpuPercent: Double?
     /// KV prefix-cache hits gained during this case (after − before from
     /// `ModelRuntime.batchDiagnosticsSnapshot`). A positive value on a
     /// multi-step agent_loop case is the prefix-reuse proof — for
@@ -69,27 +96,58 @@ public struct EvalCaseTelemetry: Sendable, Codable {
     /// is the SSM analog of a cold prefill; rising re-derives with flat
     /// hits means the companion cache isn't being reused.
     public let ssmCompanionReDerivesDelta: Int?
+    /// Disk-L2 (block-disk) KV-cache hits gained during this case. The eval
+    /// path exercises the `~/.osaurus/cache/kv_v2` lane, so this is a REAL
+    /// runtime counter (not a paged-only concept): a hit proves a prefix was
+    /// restored from the on-disk KV store rather than re-prefilled. Within a
+    /// single run the in-memory cache usually serves a shared prefix first,
+    /// so hits typically appear across runs (warm disk, cold memory).
+    public let diskL2HitsDelta: Int?
+    /// Disk-L2 KV-cache misses gained during this case (prefix not found on
+    /// disk → had to prefill + store).
+    public let diskL2MissesDelta: Int?
+    /// Disk-L2 KV-cache stores gained during this case — proves the disk
+    /// lane is actively persisting prefixes for later reuse.
+    public let diskL2StoresDelta: Int?
 
     public init(
         decodeTokensPerSecond: Double? = nil,
         prefillTokensPerSecond: Double? = nil,
         ttftMs: Double? = nil,
         completionTokens: Int? = nil,
+        promptTokensTotal: Int? = nil,
+        peakContextTokens: Int? = nil,
+        totalModelTokens: Int? = nil,
+        modelSteps: Int? = nil,
         peakPhysFootprintMb: Double? = nil,
+        meanCpuPercent: Double? = nil,
+        peakCpuPercent: Double? = nil,
         kvPrefixHitsDelta: Int? = nil,
         kvPrefixMissesDelta: Int? = nil,
         ssmCompanionHitsDelta: Int? = nil,
-        ssmCompanionReDerivesDelta: Int? = nil
+        ssmCompanionReDerivesDelta: Int? = nil,
+        diskL2HitsDelta: Int? = nil,
+        diskL2MissesDelta: Int? = nil,
+        diskL2StoresDelta: Int? = nil
     ) {
         self.decodeTokensPerSecond = decodeTokensPerSecond
         self.prefillTokensPerSecond = prefillTokensPerSecond
         self.ttftMs = ttftMs
         self.completionTokens = completionTokens
+        self.promptTokensTotal = promptTokensTotal
+        self.peakContextTokens = peakContextTokens
+        self.totalModelTokens = totalModelTokens
+        self.modelSteps = modelSteps
         self.peakPhysFootprintMb = peakPhysFootprintMb
+        self.meanCpuPercent = meanCpuPercent
+        self.peakCpuPercent = peakCpuPercent
         self.kvPrefixHitsDelta = kvPrefixHitsDelta
         self.kvPrefixMissesDelta = kvPrefixMissesDelta
         self.ssmCompanionHitsDelta = ssmCompanionHitsDelta
         self.ssmCompanionReDerivesDelta = ssmCompanionReDerivesDelta
+        self.diskL2HitsDelta = diskL2HitsDelta
+        self.diskL2MissesDelta = diskL2MissesDelta
+        self.diskL2StoresDelta = diskL2StoresDelta
     }
 
     /// True when no field carries a measurement — used to avoid emitting
@@ -97,9 +155,13 @@ public struct EvalCaseTelemetry: Sendable, Codable {
     public var isEmpty: Bool {
         decodeTokensPerSecond == nil && prefillTokensPerSecond == nil
             && ttftMs == nil && completionTokens == nil
-            && peakPhysFootprintMb == nil && kvPrefixHitsDelta == nil
+            && promptTokensTotal == nil && peakContextTokens == nil
+            && totalModelTokens == nil && modelSteps == nil
+            && peakPhysFootprintMb == nil && meanCpuPercent == nil
+            && peakCpuPercent == nil && kvPrefixHitsDelta == nil
             && kvPrefixMissesDelta == nil && ssmCompanionHitsDelta == nil
-            && ssmCompanionReDerivesDelta == nil
+            && ssmCompanionReDerivesDelta == nil && diskL2HitsDelta == nil
+            && diskL2MissesDelta == nil && diskL2StoresDelta == nil
     }
 }
 
@@ -352,6 +414,13 @@ public struct EvalReport: Sendable, Codable {
         if let ttft = t.ttftMs { parts.append(String(format: "TTFT %.0fms", ttft)) }
         if let p = t.prefillTokensPerSecond { parts.append(String(format: "prefill %.0f tok/s", p)) }
         if let ram = t.peakPhysFootprintMb { parts.append(String(format: "peakRAM %.0fMB", ram)) }
+        if let cpu = t.meanCpuPercent {
+            if let peak = t.peakCpuPercent, peak > cpu + 1 {
+                parts.append(String(format: "CPU %.0f%%/peak %.0f%%", cpu, peak))
+            } else {
+                parts.append(String(format: "CPU %.0f%%", cpu))
+            }
+        }
         if let hits = t.kvPrefixHitsDelta {
             let misses = t.kvPrefixMissesDelta ?? 0
             parts.append("KV +\(hits)hit/+\(misses)miss")
@@ -360,6 +429,20 @@ public struct EvalReport: Sendable, Codable {
             let red = t.ssmCompanionReDerivesDelta ?? 0
             parts.append("SSM +\(ssmHits)hit/+\(red)rederive")
         }
+        if let l2Hits = t.diskL2HitsDelta {
+            let stores = t.diskL2StoresDelta ?? 0
+            if l2Hits != 0 || stores != 0 {
+                parts.append("L2 +\(l2Hits)hit/+\(stores)store")
+            }
+        }
+        if let prompt = t.promptTokensTotal {
+            if let steps = t.modelSteps, steps > 0 {
+                parts.append("ctx \(prompt) in/\(steps) step(s)")
+            } else {
+                parts.append("ctx \(prompt) in")
+            }
+        }
+        if let peak = t.peakContextTokens { parts.append("peakCtx \(peak)") }
         if let tokens = t.completionTokens { parts.append("\(tokens) tok") }
         return parts.isEmpty ? nil : "perf: " + parts.joined(separator: "  ")
     }
@@ -402,14 +485,38 @@ public struct EvalReport: Sendable, Codable {
             let mean = prefills.reduce(0, +) / Double(prefills.count)
             lines.append(String(format: "  prefill tok/s  mean=%.0f  (n=%d)", mean, prefills.count))
         }
+        let promptToks = telemetered.compactMap(\.promptTokensTotal)
+        if !promptToks.isEmpty {
+            let mean = promptToks.reduce(0, +) / promptToks.count
+            lines.append(
+                "  ctx tok/task   mean=\(mean)  min=\(promptToks.min() ?? 0)  "
+                    + "max=\(promptToks.max() ?? 0)  (n=\(promptToks.count))"
+            )
+        }
         let rams = telemetered.compactMap(\.peakPhysFootprintMb)
         if !rams.isEmpty {
             lines.append(String(format: "  peak RAM MB    max=%.0f  (n=%d)", rams.max() ?? 0, rams.count))
+        }
+        let cpus = telemetered.compactMap(\.meanCpuPercent)
+        if !cpus.isEmpty {
+            let mean = cpus.reduce(0, +) / Double(cpus.count)
+            let peak = telemetered.compactMap(\.peakCpuPercent).max() ?? mean
+            lines.append(
+                String(format: "  CPU %%          mean=%.0f  peak=%.0f  (n=%d)", mean, peak, cpus.count)
+            )
         }
         let kvHits = telemetered.compactMap(\.kvPrefixHitsDelta).reduce(0, +)
         let kvMisses = telemetered.compactMap(\.kvPrefixMissesDelta).reduce(0, +)
         if kvHits != 0 || kvMisses != 0 {
             lines.append("  KV prefix      +\(kvHits) hits  +\(kvMisses) misses (suite-wide delta)")
+        }
+        let l2Hits = telemetered.compactMap(\.diskL2HitsDelta).reduce(0, +)
+        let l2Misses = telemetered.compactMap(\.diskL2MissesDelta).reduce(0, +)
+        let l2Stores = telemetered.compactMap(\.diskL2StoresDelta).reduce(0, +)
+        if l2Hits != 0 || l2Misses != 0 || l2Stores != 0 {
+            lines.append(
+                "  KV disk-L2     +\(l2Hits) hits  +\(l2Misses) misses  +\(l2Stores) stores (suite-wide delta)"
+            )
         }
         return lines
     }

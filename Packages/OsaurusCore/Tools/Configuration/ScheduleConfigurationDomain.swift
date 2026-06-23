@@ -2,16 +2,17 @@
 //  ScheduleConfigurationDomain.swift
 //  osaurus
 //
-//  Default-agent configure tools for ScheduleManager:
-//   - osaurus_schedule_create
-//   - osaurus_schedule_update
-//   - osaurus_schedule_delete
-//   - osaurus_schedule_enable
+//  Default-agent configure tool for ScheduleManager. One tool,
+//  `osaurus_schedule`, fans out across four actions:
+//   - create
+//   - update
+//   - delete
+//   - enable
 //
 //  Schedules created from chat run without a security-scoped folder
 //  context — if the user needs that, the tool tells them to use the
-//  Schedules tab. `agent_id` is required and must be a custom agent
-//  (built-ins are refused).
+//  Schedules tab. `agent_id` is required for create and must be a custom
+//  agent (built-ins are refused).
 //
 
 import Foundation
@@ -37,16 +38,10 @@ enum ScheduleConfigurationDomain {
             "delete the weekly report schedule",
         ],
         tools: [
-            OsaurusScheduleCreateTool(),
-            OsaurusScheduleUpdateTool(),
-            OsaurusScheduleDeleteTool(),
-            OsaurusScheduleEnableTool(),
+            OsaurusScheduleTool()
         ],
         writeToolNames: [
-            "osaurus_schedule_create",
-            "osaurus_schedule_update",
-            "osaurus_schedule_delete",
-            "osaurus_schedule_enable",
+            "osaurus_schedule"
         ]
     )
 }
@@ -62,7 +57,7 @@ enum ScheduleFrequencyParseOutcome {
     case failureEnvelope(String)
 }
 
-private enum ScheduleFrequencyParsing {
+enum ScheduleFrequencyParsing {
     /// Parse a flat `(frequency, value, time_of_day)` triple into a
     /// `ScheduleFrequency`. Returns a `ToolEnvelope.failure` JSON string
     /// on error so callers can `return` it directly.
@@ -125,15 +120,21 @@ private enum ScheduleFrequencyParsing {
             return .parsed(.daily(hour: t.0, minute: t.1))
         case "weekly":
             let weekdays = ["SUN": 1, "MON": 2, "TUE": 3, "WED": 4, "THU": 5, "FRI": 6, "SAT": 7]
-            guard let v = value?.uppercased(), let day = weekdays[v],
+            // Accept full names ("Monday"), abbreviations ("MON"), and plurals
+            // ("Mondays") by normalizing to the first three uppercased letters —
+            // every English weekday is uniquely keyed by its 3-letter prefix. A
+            // model naturally emits "Monday", so rejecting anything but "MON"
+            // sends it into a retry loop it can't escape.
+            let normalizedDay = value.map { String($0.uppercased().prefix(3)) }
+            guard let key = normalizedDay, let day = weekdays[key],
                 let t = parseTime(timeOfDay)
             else {
                 return .failureEnvelope(
                     ToolEnvelope.failure(
                         kind: .invalidArgs,
                         message:
-                            "`frequency: 'weekly'` requires `frequency_value` ∈ {MON..SUN} and "
-                            + "`frequency_time_of_day` = `HH:mm`.",
+                            "`frequency: 'weekly'` requires `frequency_value` = a weekday "
+                            + "(MON..SUN or a full name like Monday) and `frequency_time_of_day` = `HH:mm`.",
                         tool: toolName
                     )
                 )
@@ -208,45 +209,56 @@ private enum ScheduleFrequencyParsing {
     }
 }
 
-// MARK: - shared schema
+private let scheduleFrequencyValues: [String] = [
+    "once", "every_n_minutes", "hourly", "daily", "weekly", "monthly", "yearly", "cron",
+]
 
 private let scheduleFrequencyDescription =
-    "One of: once, every_n_minutes, hourly, daily, weekly, monthly, yearly, cron. "
-    + "Use `frequency_value` and `frequency_time_of_day` to fill in the details "
-    + "(see tool description for the table)."
+    "How often the run fires. Pair with `frequency_value` / `frequency_time_of_day`: "
+    + "once=ISO8601 datetime; every_n_minutes=int>=5; hourly=none; daily=`HH:mm`; "
+    + "weekly=MON..SUN + `HH:mm`; monthly=1..28 + `HH:mm`; yearly=`MM-DD` + `HH:mm`; cron=expression."
 
-// MARK: - osaurus_schedule_create
+// MARK: - osaurus_schedule
 
-public final class OsaurusScheduleCreateTool: OsaurusTool, PermissionedTool, @unchecked Sendable {
-    public let name = "osaurus_schedule_create"
+public final class OsaurusScheduleTool: OsaurusTool, PermissionedTool, @unchecked Sendable {
+    public let name = "osaurus_schedule"
     public let description =
-        "Create a scheduled agent run. Requires `name`, `instructions`, `agent_id`, `frequency`. "
-        + "Frequency table:\n"
-        + "- once: frequency_value=ISO8601 datetime\n"
-        + "- every_n_minutes: frequency_value=integer>=5\n"
-        + "- hourly: no extra fields\n"
-        + "- daily: frequency_time_of_day=`HH:mm`\n"
-        + "- weekly: frequency_value=MON..SUN, frequency_time_of_day=`HH:mm`\n"
-        + "- monthly: frequency_value=day of month 1..28, frequency_time_of_day=`HH:mm`\n"
-        + "- yearly: frequency_value=`MM-DD`, frequency_time_of_day=`HH:mm`\n"
-        + "- cron: frequency_value=cron expression\n"
-        + "Chat-created schedules do not attach a folder context — direct the user to the Schedules tab if they need one."
+        "Manage scheduled agent runs. `action`: create (needs `name`, `instructions`, `agent_id` of a custom "
+        + "agent, `frequency`), update (needs `id`; other fields patch), delete (needs `id`), enable (needs "
+        + "`id`; resumes the schedule), disable (needs `id`; pauses it). Chat-created schedules attach no "
+        + "folder context — point the user to the Schedules tab if they need one."
     public let parameters: JSONValue? = .object([
         "type": .string("object"),
         "additionalProperties": .bool(false),
         "properties": .object([
+            "action": .object([
+                "type": .string("string"),
+                "enum": .array([
+                    .string("create"), .string("update"), .string("delete"),
+                    .string("enable"), .string("disable"),
+                ]),
+                "description": .string("Operation to perform."),
+            ]),
+            "id": .object([
+                "type": .string("string"),
+                "description": .string("Schedule UUID. Required for update / delete / enable / disable."),
+            ]),
             "name": .object(["type": .string("string")]),
             "instructions": .object(["type": .string("string")]),
-            "agent_id": .object(["type": .string("string")]),
+            "agent_id": .object([
+                "type": .string("string"),
+                "description": .string("UUID of a custom agent. Required for create."),
+            ]),
             "frequency": .object([
                 "type": .string("string"),
+                "enum": .array(scheduleFrequencyValues.map { .string($0) }),
                 "description": .string(scheduleFrequencyDescription),
             ]),
             "frequency_value": .object(["type": .string("string")]),
             "frequency_time_of_day": .object(["type": .string("string")]),
-            "is_enabled": .object(["type": .string("boolean")]),
+            "enabled": .object(["type": .string("boolean")]),
         ]),
-        "required": .array([.string("name"), .string("instructions"), .string("agent_id"), .string("frequency")]),
+        "required": .array([.string("action")]),
     ])
 
     public var requirements: [String] { [ConfigurationToolBase.requirement] }
@@ -260,7 +272,22 @@ public final class OsaurusScheduleCreateTool: OsaurusTool, PermissionedTool, @un
         }
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
         guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
+        let actionReq = requireAction(
+            args,
+            allowed: ["create", "update", "delete", "enable", "disable"]
+        )
+        guard case .value(let action) = actionReq else { return actionReq.failureEnvelope ?? "" }
 
+        switch action {
+        case "create": return await handleCreate(args)
+        case "update": return await handleUpdate(args)
+        case "delete": return await handleDelete(args)
+        case "enable", "disable": return await handleEnable(args, action: action)
+        default: return actionReq.failureEnvelope ?? ""
+        }
+    }
+
+    private func handleCreate(_ args: [String: Any]) async -> String {
         let nameReq = requireString(args, "name", expected: "non-empty display name", tool: name)
         guard case .value(let scheduleName) = nameReq else { return nameReq.failureEnvelope ?? "" }
         let instrReq = requireString(args, "instructions", expected: "non-empty instructions", tool: name)
@@ -280,7 +307,8 @@ public final class OsaurusScheduleCreateTool: OsaurusTool, PermissionedTool, @un
                 kind: .invalidArgs,
                 message:
                     "Schedules cannot target the Default agent. "
-                    + "Create or pick a custom agent with osaurus_agent_create / osaurus_list({scope:'agents'}).",
+                    + "Create or pick a custom agent with osaurus_agent({action: 'create'}) / "
+                    + "osaurus_list({scope:'agents'}).",
                 field: "agent_id",
                 tool: name,
                 retryable: false
@@ -303,9 +331,9 @@ public final class OsaurusScheduleCreateTool: OsaurusTool, PermissionedTool, @un
         case .failureEnvelope(let envelope): return envelope
         }
 
-        let isEnabled = coerceBool(args["is_enabled"]) ?? true
+        let isEnabled = coerceBool(args["enabled"]) ?? true
 
-        let envelope: String = await MainActor.run {
+        return await MainActor.run {
             guard AgentManager.shared.agent(for: agentId) != nil else {
                 return ToolEnvelope.failure(
                     kind: .invalidArgs,
@@ -334,55 +362,13 @@ public final class OsaurusScheduleCreateTool: OsaurusTool, PermissionedTool, @un
                 ]
             )
         }
-        return envelope
     }
-}
 
-// MARK: - osaurus_schedule_update
-
-public final class OsaurusScheduleUpdateTool: OsaurusTool, PermissionedTool, @unchecked Sendable {
-    public let name = "osaurus_schedule_update"
-    public let description =
-        "Update an existing schedule by `id`. All other fields are optional patches. "
-        + "Frequency follows the same table as osaurus_schedule_create."
-    public let parameters: JSONValue? = .object([
-        "type": .string("object"),
-        "additionalProperties": .bool(false),
-        "properties": .object([
-            "id": .object(["type": .string("string")]),
-            "name": .object(["type": .string("string")]),
-            "instructions": .object(["type": .string("string")]),
-            "frequency": .object([
-                "type": .string("string"),
-                "description": .string(scheduleFrequencyDescription),
-            ]),
-            "frequency_value": .object(["type": .string("string")]),
-            "frequency_time_of_day": .object(["type": .string("string")]),
-            "is_enabled": .object(["type": .string("boolean")]),
-        ]),
-        "required": .array([.string("id")]),
-    ])
-
-    public var requirements: [String] { [ConfigurationToolBase.requirement] }
-    var defaultPermissionPolicy: ToolPermissionPolicy { ConfigurationToolBase.defaultPolicy }
-
-    public init() {}
-
-    public func execute(argumentsJSON: String) async throws -> String {
-        if let gate = ConfigurationToolBase.defaultAgentGateFailure(tool: name) {
-            return gate
-        }
-        let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
-        guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
-
+    private func handleUpdate(_ args: [String: Any]) async -> String {
         let idReq = requireString(args, "id", expected: "schedule UUID", tool: name)
         guard case .value(let idStr) = idReq else { return idReq.failureEnvelope ?? "" }
         guard let id = UUID(uuidString: idStr) else {
-            return ToolEnvelope.failure(
-                kind: .invalidArgs,
-                message: "`id` must be a valid UUID.",
-                tool: name
-            )
+            return ToolEnvelope.failure(kind: .invalidArgs, message: "`id` must be a valid UUID.", tool: name)
         }
 
         // If a frequency patch is provided, parse early so we surface a
@@ -403,7 +389,13 @@ public final class OsaurusScheduleUpdateTool: OsaurusTool, PermissionedTool, @un
             }
         }
 
-        let outcome: String = await MainActor.run {
+        // Extract patch values into Sendable locals before the @MainActor hop;
+        // capturing the raw `args` dictionary there trips the concurrency checker.
+        let newName = args["name"] as? String
+        let newInstructions = args["instructions"] as? String
+        let newEnabled = coerceBool(args["enabled"])
+
+        return await MainActor.run {
             guard var schedule = ScheduleManager.shared.schedule(for: id) else {
                 return ToolEnvelope.failure(
                     kind: .invalidArgs,
@@ -412,10 +404,10 @@ public final class OsaurusScheduleUpdateTool: OsaurusTool, PermissionedTool, @un
                     tool: name
                 )
             }
-            if let v = args["name"] as? String { schedule.name = v }
-            if let v = args["instructions"] as? String { schedule.instructions = v }
+            if let v = newName { schedule.name = v }
+            if let v = newInstructions { schedule.instructions = v }
             if let f = newFrequency { schedule.frequency = f }
-            if let b = self.coerceBool(args["is_enabled"]) { schedule.isEnabled = b }
+            if let b = newEnabled { schedule.isEnabled = b }
 
             ScheduleManager.shared.update(schedule)
             return ToolEnvelope.success(
@@ -423,42 +415,13 @@ public final class OsaurusScheduleUpdateTool: OsaurusTool, PermissionedTool, @un
                 result: ["schedule_id": schedule.id.uuidString, "status": "updated"]
             )
         }
-        return outcome
     }
-}
 
-// MARK: - osaurus_schedule_delete
-
-public final class OsaurusScheduleDeleteTool: OsaurusTool, PermissionedTool, @unchecked Sendable {
-    public let name = "osaurus_schedule_delete"
-    public let description = "Delete a schedule by `id`."
-    public let parameters: JSONValue? = .object([
-        "type": .string("object"),
-        "additionalProperties": .bool(false),
-        "properties": .object(["id": .object(["type": .string("string")])]),
-        "required": .array([.string("id")]),
-    ])
-
-    public var requirements: [String] { [ConfigurationToolBase.requirement] }
-    var defaultPermissionPolicy: ToolPermissionPolicy { ConfigurationToolBase.defaultPolicy }
-
-    public init() {}
-
-    public func execute(argumentsJSON: String) async throws -> String {
-        if let gate = ConfigurationToolBase.defaultAgentGateFailure(tool: name) {
-            return gate
-        }
-        let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
-        guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
-
+    private func handleDelete(_ args: [String: Any]) async -> String {
         let idReq = requireString(args, "id", expected: "schedule UUID", tool: name)
         guard case .value(let idStr) = idReq else { return idReq.failureEnvelope ?? "" }
         guard let id = UUID(uuidString: idStr) else {
-            return ToolEnvelope.failure(
-                kind: .invalidArgs,
-                message: "`id` must be a valid UUID.",
-                tool: name
-            )
+            return ToolEnvelope.failure(kind: .invalidArgs, message: "`id` must be a valid UUID.", tool: name)
         }
 
         let deleted: Bool = await MainActor.run { ScheduleManager.shared.delete(id: id) }
@@ -475,53 +438,17 @@ public final class OsaurusScheduleDeleteTool: OsaurusTool, PermissionedTool, @un
             result: ["schedule_id": id.uuidString, "status": "deleted"]
         )
     }
-}
 
-// MARK: - osaurus_schedule_enable
-
-public final class OsaurusScheduleEnableTool: OsaurusTool, PermissionedTool, @unchecked Sendable {
-    public let name = "osaurus_schedule_enable"
-    public let description =
-        "Enable or disable a schedule without rewriting it. Requires `id` and `enabled` (boolean)."
-    public let parameters: JSONValue? = .object([
-        "type": .string("object"),
-        "additionalProperties": .bool(false),
-        "properties": .object([
-            "id": .object(["type": .string("string")]),
-            "enabled": .object(["type": .string("boolean")]),
-        ]),
-        "required": .array([.string("id"), .string("enabled")]),
-    ])
-
-    public var requirements: [String] { [ConfigurationToolBase.requirement] }
-    var defaultPermissionPolicy: ToolPermissionPolicy { ConfigurationToolBase.defaultPolicy }
-
-    public init() {}
-
-    public func execute(argumentsJSON: String) async throws -> String {
-        if let gate = ConfigurationToolBase.defaultAgentGateFailure(tool: name) {
-            return gate
-        }
-        let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
-        guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
-
+    private func handleEnable(_ args: [String: Any], action: String) async -> String {
         let idReq = requireString(args, "id", expected: "schedule UUID", tool: name)
         guard case .value(let idStr) = idReq else { return idReq.failureEnvelope ?? "" }
         guard let id = UUID(uuidString: idStr) else {
-            return ToolEnvelope.failure(
-                kind: .invalidArgs,
-                message: "`id` must be a valid UUID.",
-                tool: name
-            )
+            return ToolEnvelope.failure(kind: .invalidArgs, message: "`id` must be a valid UUID.", tool: name)
         }
-        guard let enabled = coerceBool(args["enabled"]) else {
-            return ToolEnvelope.failure(
-                kind: .invalidArgs,
-                message: "`enabled` must be a boolean.",
-                field: "enabled",
-                tool: name
-            )
-        }
+        // The action carries the intent (`enable`→resume, `disable`→pause); an
+        // explicit `enabled` boolean overrides it. Lets a model say
+        // `action: disable` directly instead of `enable` + `enabled:false`.
+        let enabled = coerceBool(args["enabled"]) ?? (action == "enable")
 
         let ok: Bool = await MainActor.run {
             guard ScheduleManager.shared.schedule(for: id) != nil else { return false }

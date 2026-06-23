@@ -2,20 +2,23 @@
 //  ConfigureToolExposureTests.swift
 //  OsaurusCoreTests
 //
-//  Phase C composer contract:
+//  Composer contract for the Default (configuration) agent's tool surface
+//  after the consolidation:
 //
 //   * For the Default agent (`Agent.defaultId`), `resolveTools` returns
-//     exactly the 8-tool baseline (`defaultAgentAllowedToolNames`):
-//     3 reads + 2 discovery + 3 agent-loop. Writes are NOT in this
-//     set — they enter the schema only via `capabilities_load`'s
-//     `additionalToolNames` carve-out.
-//   * For every other agent, every `configure_*` tool is stripped
-//     from the resolved schema, even when a registration path leaks
-//     them into the always-loaded surface.
+//     EXACTLY `defaultAgentAllowedToolNames` — the consolidated configure
+//     surface (`osaurus_status` / `osaurus_list` / `osaurus_describe` reads
+//     + the per-domain `osaurus_*` write tools) plus the three agent-loop
+//     tools. The writes load DIRECTLY (no `capabilities_load` step), and the
+//     capability-search gateway (`capabilities_discover` /
+//     `capabilities_load`) is NOT present for the Default agent.
+//   * For every other agent, every configure tool (reads + writes) is
+//     stripped from the resolved schema, even when a registration path leaks
+//     one into the always-loaded surface.
 //
-//  Tests build an `AgentConfigSnapshot` directly so we can pin the
-//  agent id deterministically without provisioning custom agents
-//  through `AgentManager`.
+//  Tests build an `AgentConfigSnapshot` directly so we can pin the agent id
+//  deterministically without provisioning custom agents through
+//  `AgentManager`.
 //
 
 import Foundation
@@ -46,7 +49,7 @@ struct ConfigureToolExposureTests {
     }
 
     @Test
-    func defaultAgent_seesExactlyEightToolBaseline() async {
+    func defaultAgent_seesExactlyConsolidatedConfigureSurface() async {
         Self.ensureBootstrapped()
         let snapshot = Self.makeSnapshot(agentId: Agent.defaultId)
         let tools = SystemPromptComposer.resolveTools(
@@ -55,10 +58,13 @@ struct ConfigureToolExposureTests {
         )
         let names = Set(tools.map { $0.function.name })
         #expect(names == ToolRegistry.defaultAgentAllowedToolNames)
+        // Structural: the allowed set is the configure surface (reads +
+        // writes) plus exactly the three agent-loop tools, with no overlap.
+        #expect(names.count == ToolRegistry.configureToolNames.count + 3)
     }
 
     @Test
-    func defaultAgent_excludesEveryConfigureWrite() async {
+    func defaultAgent_includesEveryConsolidatedWriteDirectly() async {
         Self.ensureBootstrapped()
         let snapshot = Self.makeSnapshot(agentId: Agent.defaultId)
         let tools = SystemPromptComposer.resolveTools(
@@ -66,26 +72,75 @@ struct ConfigureToolExposureTests {
             executionMode: .none
         )
         let names = Set(tools.map { $0.function.name })
+        // The consolidated writes are now loaded DIRECTLY — no capability
+        // search round-trip. Each per-domain tool must be in the schema.
         for write in ToolRegistry.configureWriteToolNames {
-            #expect(!names.contains(write), "configure write \(write) leaked into default-agent schema")
+            #expect(names.contains(write), "consolidated write \(write) missing from default-agent schema")
         }
+        // And the three generic reads.
+        #expect(names.contains("osaurus_status"))
+        #expect(names.contains("osaurus_list"))
+        #expect(names.contains("osaurus_describe"))
     }
 
     @Test
-    func defaultAgent_canLoadWritesViaAdditionalToolNames() async {
-        // capabilities_load carries the loaded write through the
-        // `additionalToolNames` parameter; the composer must let
-        // that carve-out into the schema even though the write isn't
-        // in `defaultAgentAllowedToolNames`.
+    func defaultAgent_includesTheConsolidatedSixWrites() async {
         Self.ensureBootstrapped()
         let snapshot = Self.makeSnapshot(agentId: Agent.defaultId)
         let tools = SystemPromptComposer.resolveTools(
             snapshot: snapshot,
-            executionMode: .none,
-            additionalToolNames: ["osaurus_provider_add"]
+            executionMode: .none
         )
         let names = Set(tools.map { $0.function.name })
-        #expect(names.contains("osaurus_provider_add"))
+        let expectedWrites: Set<String> = [
+            "osaurus_provider", "osaurus_model", "osaurus_mcp",
+            "osaurus_plugin", "osaurus_schedule", "osaurus_agent",
+        ]
+        #expect(
+            expectedWrites.isSubset(of: names),
+            "expected the six consolidated write tools; got \(names.sorted())"
+        )
+        // The pre-consolidation write set is gone — no `osaurus_*_<verb>`.
+        #expect(!names.contains("osaurus_provider_add"))
+        #expect(!names.contains("osaurus_model_download"))
+        #expect(!names.contains("osaurus_schedule_create"))
+    }
+
+    @Test
+    func defaultAgent_excludesCapabilitySearchGateway() async {
+        Self.ensureBootstrapped()
+        let snapshot = Self.makeSnapshot(agentId: Agent.defaultId)
+        let tools = SystemPromptComposer.resolveTools(
+            snapshot: snapshot,
+            executionMode: .none
+        )
+        let names = Set(tools.map { $0.function.name })
+        // The Default agent no longer uses capability search — it loads its
+        // configure tools directly. Those tools stay available to custom
+        // agents, but must not appear in the Default agent's schema.
+        #expect(!names.contains("capabilities_discover"))
+        #expect(!names.contains("capabilities_load"))
+    }
+
+    @Test
+    func defaultAgent_excludesNonConfigureCapabilities() async {
+        Self.ensureBootstrapped()
+        let snapshot = Self.makeSnapshot(agentId: Agent.defaultId)
+        let tools = SystemPromptComposer.resolveTools(
+            snapshot: snapshot,
+            executionMode: .none
+        )
+        let names = Set(tools.map { $0.function.name })
+        // Hard isolation: folder / sandbox / db / chart / speak / memory /
+        // scheduler / computer-use families never reach the Default agent,
+        // regardless of what else is registered globally.
+        for forbidden in [
+            "file_read", "file_write", "sandbox_exec", "db_query",
+            "render_chart", "speak", "search_memory", "schedule_next_run",
+            "computer_use",
+        ] {
+            #expect(!names.contains(forbidden), "\(forbidden) leaked into default-agent schema")
+        }
     }
 
     @Test

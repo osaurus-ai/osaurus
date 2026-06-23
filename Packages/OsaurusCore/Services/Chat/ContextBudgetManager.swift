@@ -25,7 +25,7 @@ public struct ContextBreakdown: Equatable, Sendable {
     }
 
     public enum Tint: String, Sendable {
-        case purple, blue, orange, green, gray, cyan, teal, indigo
+        case purple, blue, orange, green, gray, cyan, teal, indigo, pink
     }
 
     /// Prompt sections + tools
@@ -53,6 +53,7 @@ public struct ContextBreakdown: Equatable, Sendable {
         case "codeStyle", "riskAware": return .gray
         case "sandbox": return .teal
         case "memory": return .blue
+        case "screenContext": return .pink
         case "preflight": return .cyan
         case "skills": return .orange
         default: return .gray
@@ -65,6 +66,7 @@ public struct ContextBreakdown: Equatable, Sendable {
     /// here and surfaced as its own entry.
     static func from(
         context composed: ComposedContext,
+        screenContextTokens: Int = 0,
         conversationTokens: Int = 0,
         inputTokens: Int = 0,
         outputTokens: Int = 0
@@ -74,6 +76,7 @@ public struct ContextBreakdown: Equatable, Sendable {
             manifest: composed.manifest,
             toolTokens: composed.toolTokens,
             memoryTokens: memoryTokens,
+            screenContextTokens: screenContextTokens,
             conversationTokens: conversationTokens,
             inputTokens: inputTokens,
             outputTokens: outputTokens
@@ -90,6 +93,7 @@ public struct ContextBreakdown: Equatable, Sendable {
         manifest: PromptManifest,
         toolTokens: Int = 0,
         memoryTokens: Int = 0,
+        screenContextTokens: Int = 0,
         conversationTokens: Int = 0,
         inputTokens: Int = 0,
         outputTokens: Int = 0
@@ -99,6 +103,16 @@ public struct ContextBreakdown: Equatable, Sendable {
             .map { Entry(id: $0.id, label: $0.label, tokens: $0.estimatedTokens, tint: tint(for: $0.id)) }
         if memoryTokens > 0 {
             ctx.append(Entry(id: "memory", label: L("Memory"), tokens: memoryTokens, tint: tint(for: "memory")))
+        }
+        if screenContextTokens > 0 {
+            ctx.append(
+                Entry(
+                    id: "screenContext",
+                    label: L("Screen Context"),
+                    tokens: screenContextTokens,
+                    tint: tint(for: "screenContext")
+                )
+            )
         }
         if toolTokens > 0 {
             ctx.append(Entry(id: "tools", label: L("Tools"), tokens: toolTokens, tint: .orange))
@@ -789,6 +803,21 @@ final class ContextBudgetTracker {
             cumulativeOutputTokens += ContextBudgetManager.estimateOutputTokens(for: turn)
         }
         breakdown?.setTokens(for: "conversation", in: \.messages, tokens: tokens, label: L("Conversation"), tint: .gray)
+    }
+
+    /// Set the screen-context row — the frozen `[Screen Context]` block that
+    /// rides on the latest user message (mirrors how the Memory row is
+    /// surfaced separately from Conversation). Counted once here so the live
+    /// conversation total, measured before the prefix is injected, doesn't
+    /// double-count it.
+    func updateScreenContext(tokens: Int) {
+        breakdown?.setTokens(
+            for: "screenContext",
+            in: \.context,
+            tokens: tokens,
+            label: L("Screen Context"),
+            tint: .pink
+        )
     }
 
     /// Surface history compaction in the context popover: `savedTokens` is

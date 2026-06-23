@@ -39,9 +39,14 @@ public actor RedactionMap {
     /// per matched token.
     private var reverse: [String: String] = [:]
 
-    /// Monotonic per-category counters. `intern` reads-then-bumps so
-    /// indices are 1-based and contiguous within a category.
-    private var counters: [EntityCategory: Int] = [:]
+    /// Monotonic counters keyed by the placeholder's EFFECTIVE PREFIX
+    /// (category default like `PHONE`, or a custom rule label like
+    /// `CUSTOMER`). `intern` reads-then-bumps so indices are 1-based
+    /// and contiguous within a prefix. Keying by prefix (not category)
+    /// guarantees token uniqueness even when two custom rules in
+    /// different categories share a label — they'd otherwise both mint
+    /// `[LABEL_1]` for distinct originals and collide in `reverse`.
+    private var counters: [String: Int] = [:]
 
     public init(conversationID: UUID) {
         self.conversationID = conversationID
@@ -54,13 +59,18 @@ public actor RedactionMap {
     /// of category, since the original is the dictionary key), the
     /// existing placeholder is returned. Otherwise a fresh
     /// `[CATEGORY_N]` placeholder is minted.
-    public func intern(_ original: String, as category: EntityCategory) -> Placeholder {
+    public func intern(
+        _ original: String,
+        as category: EntityCategory,
+        label: String? = nil
+    ) -> Placeholder {
         if let existing = forward[original] {
             return existing
         }
-        let next = (counters[category] ?? 0) + 1
-        counters[category] = next
-        let placeholder = Placeholder(category: category, index: next)
+        let prefix = label ?? category.prefix
+        let next = (counters[prefix] ?? 0) + 1
+        counters[prefix] = next
+        let placeholder = Placeholder(category: category, index: next, prefixOverride: label)
         forward[original] = placeholder
         reverse[placeholder.token] = original
         return placeholder
@@ -73,7 +83,7 @@ public actor RedactionMap {
     /// one hop and preserves the per-pair semantics (idempotent on
     /// repeat originals, monotonic category counters).
     public func internBatch(
-        _ items: [(original: String, category: EntityCategory)]
+        _ items: [(original: String, category: EntityCategory, label: String?)]
     ) -> [Placeholder] {
         var placeholders: [Placeholder] = []
         placeholders.reserveCapacity(items.count)
@@ -82,9 +92,14 @@ public actor RedactionMap {
                 placeholders.append(existing)
                 continue
             }
-            let next = (counters[item.category] ?? 0) + 1
-            counters[item.category] = next
-            let placeholder = Placeholder(category: item.category, index: next)
+            let prefix = item.label ?? item.category.prefix
+            let next = (counters[prefix] ?? 0) + 1
+            counters[prefix] = next
+            let placeholder = Placeholder(
+                category: item.category,
+                index: next,
+                prefixOverride: item.label
+            )
             forward[item.original] = placeholder
             reverse[placeholder.token] = item.original
             placeholders.append(placeholder)
@@ -120,9 +135,9 @@ public actor RedactionMap {
         }
     }
 
-    /// Snapshot of the per-category counters. Captured pre-detection
+    /// Snapshot of the per-prefix counters. Captured pre-detection
     /// and replayed via `rollbackToSnapshot` on a canceled review.
-    public var counterSnapshot: [EntityCategory: Int] {
+    public var counterSnapshot: [String: Int] {
         counters
     }
 
@@ -135,7 +150,7 @@ public actor RedactionMap {
     /// is gated on a successful send.
     public func rollbackToSnapshot(
         removingOriginals originals: Set<String>,
-        counters snapshot: [EntityCategory: Int]
+        counters snapshot: [String: Int]
     ) {
         removeOriginals(originals)
         counters = snapshot

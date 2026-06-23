@@ -1,0 +1,18 @@
+{
+  "id": "default_agent.schedule-delete",
+  "domain": "default_agent",
+  "label": "default agent • delete a schedule by id",
+  "query": "Delete the schedule with id 5a8d3c20-1f74-4e69-b302-9c7a1e5d806f.",
+  "notes": "action 'delete' with id. Unknown id → typed not-found error (no mutation); the selection assertion matches the emitted call.",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": ["osaurus_schedule"],
+      "mustNotCallTools": ["capabilities_discover", "capabilities_load"],
+      "argsMustContain": [
+        { "tool": "osaurus_schedule", "args": { "action": "delete" } }
+      ],
+      "maxIterations": 4
+    }
+  }
+}

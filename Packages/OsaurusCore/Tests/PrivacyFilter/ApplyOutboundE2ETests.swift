@@ -56,7 +56,9 @@ struct ApplyOutboundE2ETests {
         // through `internBatch` the same way the engine's loop
         // does. `DetectedEntity.approved == true` is the contract
         // `applyingScrub` looks for.
-        let internItems = regexMatches.map { (original: $0.original, category: $0.category) }
+        let internItems = regexMatches.map {
+            (original: $0.original, category: $0.category, label: $0.label)
+        }
         let placeholders = await map.internBatch(internItems)
         var approved: [DetectedEntity] = []
         for (i, match) in regexMatches.enumerated() {
@@ -150,7 +152,9 @@ struct ApplyOutboundE2ETests {
 
         let text = "phone \(phone) email \(email)"
         let regex = RegexEntityDetector.detect(in: text, ruleset: .allBuiltins())
-        let internItems = regex.map { (original: $0.original, category: $0.category) }
+        let internItems = regex.map {
+            (original: $0.original, category: $0.category, label: $0.label)
+        }
         let placeholders = await map.internBatch(internItems)
 
         // Mark email as un-approved (the user untoggled it in the

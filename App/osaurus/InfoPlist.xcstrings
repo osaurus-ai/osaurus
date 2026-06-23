@@ -276,6 +276,30 @@
           }
         }
       }
+    },
+    "NSScreenCaptureUsageDescription" : {
+      "comment" : "Privacy - Screen Capture Usage Description",
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus kann Screenshots und Systemaudio nur erfassen, wenn du den Zugriff auf Bildschirmaufnahme erlaubst."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Osaurus can capture screenshots and system audio only when you grant Screen Recording access."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "只有在你授予屏幕录制访问权限时，Osaurus 才能捕获屏幕截图和系统音频。"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

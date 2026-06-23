@@ -553,8 +553,8 @@ public final class AgentManager: ObservableObject {
 // MARK: - Agent Configuration Helpers
 
 extension AgentManager {
-    /// Whether the sandbox (autonomous exec) toggle should default ON for the
-    /// built-in Default agent and newly created custom agents.
+    /// Whether the sandbox (autonomous exec) toggle should default ON for
+    /// newly created custom agents.
     ///
     /// Gated on sandbox availability: the chat chip is hidden and the Linux VM
     /// cannot run on unsupported machines (pre-macOS 26), so defaulting on
@@ -568,11 +568,12 @@ extension AgentManager {
         SandboxManager.State.shared.availability.isAvailable
     }
 
-    /// The `autonomousExec` to apply when an agent has made no explicit choice
-    /// and the sandbox defaults ON: enabled where supported, else `nil` (off).
-    /// Used both as the Default agent's computed default (when nothing is
-    /// stored) and to seed newly created custom agents. Never applied on
-    /// edit/import/duplicate, which must preserve the source agent's value.
+    /// The `autonomousExec` to seed onto a newly created custom agent when it
+    /// has made no explicit choice and the sandbox defaults ON: enabled where
+    /// supported, else `nil` (off). Never applied on edit/import/duplicate,
+    /// which must preserve the source agent's value. (The built-in Default
+    /// agent is configuration-only and never uses the sandbox — see
+    /// `effectiveAutonomousExec`.)
     @MainActor
     public static var sandboxDefaultAutonomousExec: AutonomousExecConfig? {
         sandboxEnabledByDefault ? AutonomousExecConfig(enabled: true) : nil
@@ -580,22 +581,21 @@ extension AgentManager {
 
     /// Get the effective sandbox execution config for an agent.
     ///
-    /// The sandbox toggle defaults ON for the built-in Default agent on
-    /// machines where the sandbox is supported: when the Default agent has no
-    /// explicitly stored `autonomousExec` (the user has never touched the
-    /// chip), we synthesize an enabled config. An explicit choice — turning
-    /// the chip off — persists `enabled: false`, which then wins over this
-    /// computed default. Custom agents carry their own persisted value (seeded
-    /// ON at creation for new agents, left untouched for existing ones), so
-    /// they are returned as-is.
+    /// The built-in Default ("Osaurus") agent is configuration-only: it never
+    /// runs autonomous exec, so it always resolves to `nil` (off) regardless
+    /// of any stored value or sandbox availability. Custom agents carry their
+    /// own persisted value (seeded ON at creation for new agents where the
+    /// sandbox is supported, left untouched for existing ones), so they are
+    /// returned as-is.
     public func effectiveAutonomousExec(for agentId: UUID) -> AutonomousExecConfig? {
         guard let agent = agent(for: agentId) else {
             return nil
         }
 
+        // Single resolution point, so hard-off here also stops
+        // `SandboxToolRegistrar` from provisioning a VM for the Default agent.
         if agent.id == Agent.defaultId {
-            return DefaultAgentConfigurationStore.load().autonomousExec
-                ?? Self.sandboxDefaultAutonomousExec
+            return nil
         }
 
         return agent.autonomousExec

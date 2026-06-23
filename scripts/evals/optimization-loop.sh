@@ -65,7 +65,7 @@ DET_SUITES=(
 )
 # Suites that drive a model (or the sandbox VM) — run PER model.
 LLM_SUITES=(
-  AgentLoop AgentLoopFrontier CapabilityClaims ComputerUseLoop SandboxFrontier
+  AgentLoop AgentLoopFrontier CapabilityClaims ComputerUseLoop DefaultAgent SandboxFrontier
 )
 
 log() { printf '[opt-loop] %s\n' "$*"; }

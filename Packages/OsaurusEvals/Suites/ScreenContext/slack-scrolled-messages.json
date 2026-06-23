@@ -1,0 +1,27 @@
+{
+  "id": "screen_context.slack-scrolled-messages",
+  "domain": "screen_context",
+  "label": "Screen context • Slack scrolled messages surface",
+  "query": "(ambient capture)",
+  "notes": "A scrolled chat scene with no focused composer and a real Slack title ('engineering (Channel) - Osaurus - Slack'): the active channel surfaces as behavior ('Active: channel engineering' parsed from the '(Channel)' title), the message rows inside the scroll area surface as content, while single-token sidebar chrome (Threads / Drafts) and icon buttons stay dropped.",
+  "fixtures": {},
+  "expect": {
+    "screenContext": {
+      "fixture": "slack-scrolled-messages.json",
+      "gistContains": ["In Slack"],
+      "mustContain": [
+        "In Slack",
+        "Active: channel engineering",
+        "On screen:",
+        "Alice: pushed the AXWebArea readiness fix",
+        "Carol: yes, only the web case waits"
+      ],
+      "mustNotContain": ["Threads", "Drafts", "New message"],
+      "rubric": [
+        "Indicates the user is reading a Slack engineering channel discussion",
+        "Surfaces the recent message lines as on-screen content",
+        "Does not surface single-token sidebar labels as content"
+      ]
+    }
+  }
+}

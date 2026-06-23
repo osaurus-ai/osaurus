@@ -2,11 +2,12 @@
 //  ProviderConfigurationDomain.swift
 //  osaurus
 //
-//  Default-agent configure tools for cloud LLM providers:
-//   - osaurus_provider_add            (opens credential sheet)
-//   - osaurus_provider_update         (non-secret fields only)
-//   - osaurus_provider_remove
-//   - osaurus_provider_set_credentials (key rotation)
+//  Default-agent configure tool for cloud LLM providers. One tool,
+//  `osaurus_provider`, fans out across four actions:
+//   - add             (opens a credential sheet)
+//   - update          (non-secret fields only)
+//   - remove
+//   - set_credentials (key rotation)
 //
 //  Security principle: no secret ever appears in tool arguments or
 //  tool results. The model sends only `name` + `provider` (the preset
@@ -15,10 +16,11 @@
 //  writes directly to Keychain. The success envelope carries only
 //  `provider_id` + status — never the secret.
 //
-//  Add and set_credentials set `bypassRegistryTimeout = true` so the
-//  user has uncapped time to interact with the sheet. The 120-second
-//  registry timeout would otherwise abort the call before the user
-//  finishes typing.
+//  `add` and `set_credentials` rely on `bypassRegistryTimeout = true`
+//  so the user has uncapped time to interact with the sheet; the
+//  120-second registry timeout would otherwise abort the call before
+//  the user finishes typing. The tool still checks `Task.isCancelled`
+//  so a cancelled chat turn dismisses the sheet.
 //
 
 import Foundation
@@ -31,7 +33,7 @@ enum ProviderConfigurationDomain {
             "Cloud LLM providers (Anthropic, OpenAI, Gemini, Codex OAuth, Azure, "
             + "OpenRouter, DeepSeek, xAI, Venice, Ollama, custom).",
         menuHint:
-            "add / update / remove cloud providers — Anthropic, OpenAI, Codex OAuth, "
+            "add / update / remove / rotate-key cloud providers — Anthropic, OpenAI, Codex OAuth, "
             + "Gemini, Azure, OpenRouter (OAuth), DeepSeek, xAI, Venice, Ollama, custom",
         searchKeywords: [
             "provider", "providers", "cloud", "api key", "key", "credentials",
@@ -56,27 +58,21 @@ enum ProviderConfigurationDomain {
             "update the host for my custom provider",
         ],
         tools: [
-            OsaurusProviderAddTool(),
-            OsaurusProviderUpdateTool(),
-            OsaurusProviderRemoveTool(),
-            OsaurusProviderSetCredentialsTool(),
+            OsaurusProviderTool()
         ],
         writeToolNames: [
-            "osaurus_provider_add",
-            "osaurus_provider_update",
-            "osaurus_provider_remove",
-            "osaurus_provider_set_credentials",
+            "osaurus_provider"
         ]
     )
 }
 
 // MARK: - Shared helpers
 
-/// Resolution outcome for the `provider` / legacy `provider_type` argument.
-/// `.preset` is the canonical chat-tool path; the other two cases carry
-/// the special storage paths that have no `ProviderPreset` case
-/// (`.codexOAuth` uses the OpenAI brand but a distinct OAuth flow, and
-/// `.osaurusAgent` is a peer agent rather than a third-party vendor).
+/// Resolution outcome for the `provider` argument. `.preset` is the
+/// canonical chat-tool path; the other two cases carry the special storage
+/// paths that have no `ProviderPreset` case (`.codexOAuth` uses the OpenAI
+/// brand but a distinct OAuth flow, and `.osaurusAgent` is a peer agent
+/// rather than a third-party vendor).
 internal enum ProviderToolResolution {
     case preset(ProviderPreset)
     case codexOAuth
@@ -93,9 +89,8 @@ internal enum ProviderToolResolution {
 }
 
 internal enum ProviderToolShared {
-    /// Chat-friendly provider ids the model can pass via the canonical
-    /// `provider` argument (and the deprecated `provider_type` alias).
-    /// New ids should be added here first.
+    /// Chat-friendly provider ids the model can pass via the `provider`
+    /// argument. New ids should be added here first.
     static let providerAliases: [String: ProviderToolResolution] = [
         "anthropic": .preset(.anthropic),
         "openai": .preset(.openai),
@@ -114,8 +109,8 @@ internal enum ProviderToolShared {
     ]
 
     /// Canonical list of chat-friendly ids surfaced in the tool schema
-    /// description and error messages. Kept in display order rather
-    /// than alphabetical so the most common vendors appear first.
+    /// `enum`, description, and error messages. Kept in display order
+    /// rather than alphabetical so the most common vendors appear first.
     static let canonicalIds: [String] = [
         "anthropic", "openai", "codex_oauth", "azure_openai", "google",
         "xai", "deepseek", "venice", "openrouter", "ollama",
@@ -133,47 +128,68 @@ internal enum ProviderToolShared {
     }
 }
 
-// MARK: - osaurus_provider_add
+// MARK: - osaurus_provider
 
-public final class OsaurusProviderAddTool: OsaurusTool, PermissionedTool, @unchecked Sendable {
-    public let name = "osaurus_provider_add"
+public final class OsaurusProviderTool: OsaurusTool, PermissionedTool, @unchecked Sendable {
+    public let name = "osaurus_provider"
     public let description =
-        "Add a cloud LLM provider. Pass `name` and `provider` "
-        + "(anthropic, openai, codex_oauth, azure_openai, google, xai, deepseek, "
-        + "venice, openrouter, ollama, custom, osaurus_agent). "
-        + "DO NOT pass API keys here — a secure sheet opens so the user can paste / sign in. "
-        + "The tool waits for the user (the sheet can take several minutes)."
+        "Manage cloud LLM providers. `action`: add (opens a secure sheet so the user pastes / signs in — "
+        + "never pass API keys), update (non-secret fields), remove, set_credentials (rotate the key via the "
+        + "same sheet). `add` needs `name` + `provider`; the rest need `id`."
     public let parameters: JSONValue? = .object([
         "type": .string("object"),
         "additionalProperties": .bool(false),
         "properties": .object([
-            "name": .object(["type": .string("string")]),
+            "action": .object([
+                "type": .string("string"),
+                "enum": .array([
+                    .string("add"), .string("update"), .string("remove"), .string("set_credentials"),
+                ]),
+                "description": .string("Operation to perform."),
+            ]),
+            "id": .object([
+                "type": .string("string"),
+                "description": .string("Provider UUID. Required for update / remove / set_credentials."),
+            ]),
+            "name": .object([
+                "type": .string("string"),
+                "description": .string("Display name. Required for add."),
+            ]),
             "provider": .object([
                 "type": .string("string"),
+                "enum": .array(ProviderToolShared.canonicalIds.map { .string($0) }),
                 "description": .string(
-                    "One of: anthropic, openai, codex_oauth, azure_openai, google, xai, "
-                        + "deepseek, venice, openrouter, ollama, custom, osaurus_agent. "
-                        + "`openrouter` opens a browser-based OAuth flow that mints an API key."
-                ),
-            ]),
-            "provider_type": .object([
-                "type": .string("string"),
-                "description": .string(
-                    "Deprecated alias for `provider`. Older callers may still send this."
+                    "Provider preset. Required for add. `openrouter` opens a browser OAuth flow."
                 ),
             ]),
             "host": .object([
                 "type": .string("string"),
-                "description": .string("Override host. Optional for managed vendors."),
+                "description": .string("Override host. Optional."),
+            ]),
+            "enabled": .object(["type": .string("boolean")]),
+            "auto_connect": .object(["type": .string("boolean")]),
+            "port": .object(["type": .string("integer")]),
+            "base_path": .object([
+                "type": .string("string"),
+                "description": .string("API base path (e.g. /v1)."),
+            ]),
+            "timeout": .object([
+                "type": .string("integer"),
+                "description": .string("Request timeout in seconds."),
+            ]),
+            "manual_model_ids": .object([
+                "type": .string("string"),
+                "description": .string(
+                    "Comma/newline-separated model ids (Azure: deployment names). Replaces the existing list."
+                ),
             ]),
         ]),
-        "required": .array([.string("name"), .string("provider")]),
+        "required": .array([.string("action")]),
     ])
 
-    /// The credential sheet is user-paced — letting the registry's
-    /// 120s wall-clock budget time us out would break the flow. The
-    /// tool still checks `Task.isCancelled` so a cancelled chat turn
-    /// dismisses the sheet via `ProviderCredentialPromptService.cancel()`.
+    /// `add` / `set_credentials` open a user-paced credential sheet, so the
+    /// whole tool opts out of the registry's 120s wall-clock budget. The
+    /// fast actions (`update` / `remove`) complete well within it anyway.
     public var bypassRegistryTimeout: Bool { true }
 
     public var requirements: [String] { [ConfigurationToolBase.requirement] }
@@ -187,18 +203,28 @@ public final class OsaurusProviderAddTool: OsaurusTool, PermissionedTool, @unche
         }
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
         guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
+        let actionReq = requireAction(args, allowed: ["add", "update", "remove", "set_credentials"])
+        guard case .value(let action) = actionReq else { return actionReq.failureEnvelope ?? "" }
 
+        switch action {
+        case "add": return await handleAdd(args)
+        case "update": return await handleUpdate(args)
+        case "remove": return await handleRemove(args)
+        case "set_credentials": return await handleSetCredentials(args)
+        default: return actionReq.failureEnvelope ?? ""
+        }
+    }
+
+    // MARK: add
+
+    private func handleAdd(_ args: [String: Any]) async -> String {
         let nameReq = requireString(args, "name", expected: "display name", tool: name)
         guard case .value(let displayName) = nameReq else { return nameReq.failureEnvelope ?? "" }
 
-        // Accept canonical `provider` and back-compat `provider_type`. The
-        // model picks the field; we just need *one* of them to resolve.
-        let rawProvider = (args["provider"] as? String) ?? (args["provider_type"] as? String)
-        guard let raw = rawProvider, !raw.isEmpty else {
+        guard let raw = args["provider"] as? String, !raw.isEmpty else {
             return ToolEnvelope.failure(
                 kind: .invalidArgs,
-                message:
-                    "`provider` is required. One of: "
+                message: "`provider` is required for action `add`. One of: "
                     + ProviderToolShared.canonicalIdsList + ".",
                 field: "provider",
                 tool: name
@@ -207,9 +233,7 @@ public final class OsaurusProviderAddTool: OsaurusTool, PermissionedTool, @unche
         guard let resolution = ProviderToolShared.resolve(raw) else {
             return ToolEnvelope.failure(
                 kind: .invalidArgs,
-                message:
-                    "`provider` must be one of: "
-                    + ProviderToolShared.canonicalIdsList + ".",
+                message: "`provider` must be one of: " + ProviderToolShared.canonicalIdsList + ".",
                 field: "provider",
                 tool: name
             )
@@ -292,228 +316,29 @@ public final class OsaurusProviderAddTool: OsaurusTool, PermissionedTool, @unche
         }
     }
 
-    private func makeRequest(
-        resolution: ProviderToolResolution,
-        displayName: String
-    ) -> ProviderCredentialRequest {
-        switch resolution {
-        case .preset(let preset):
-            return ProviderCredentialRequest(
-                preset: preset,
-                providerName: displayName,
-                mode: .addNew
-            )
-        case .codexOAuth:
-            return ProviderCredentialRequest(
-                providerType: .openAICodex,
-                providerName: displayName,
-                mode: .addNew
-            )
-        case .osaurusAgent:
-            return ProviderCredentialRequest(
-                providerType: .osaurus,
-                providerName: displayName,
-                mode: .addNew
-            )
-        }
-    }
+    // MARK: update
 
-    @MainActor
-    private func buildAndAdd(
-        displayName: String,
-        resolution: ProviderToolResolution,
-        storageAuthType: RemoteProviderAuthType,
-        hostOverride: String?,
-        extraHeaders: [String: String]?,
-        apiKey: String?,
-        oauthTokens: RemoteProviderOAuthTokens?
-    ) -> UUID {
-        if case .codexOAuth = resolution {
-            let provider = OpenAICodexOAuthService.makeProvider()
-            RemoteProviderManager.shared.addProvider(
-                provider,
-                apiKey: apiKey,
-                oauthTokens: oauthTokens
-            )
-            if provider.name != displayName {
-                var renamed = provider
-                renamed.name = displayName
-                RemoteProviderManager.shared.updateProvider(renamed, apiKey: nil, oauthTokens: nil)
-            }
-            return provider.id
-        }
-
-        let defaults = endpointDefaults(for: resolution)
-        let providerType = resolution.providerType
-        let extras = extraHeaders ?? [:]
-
-        // The credential sheet collects non-secret extras (host, deployment,
-        // …) keyed by the catalog field id. Reserved keys map onto explicit
-        // `RemoteProvider` fields below — anything else passes through as a
-        // custom header for `.openaiLegacy` providers. Treating "host" and
-        // "deployment" as reserved keeps custom/Azure flows from leaking
-        // endpoint info into the headers map.
-        let sheetHost = extras["host"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let host: String
-        if let override = hostOverride, !override.isEmpty {
-            host = override
-        } else if !sheetHost.isEmpty {
-            host = sheetHost
-        } else {
-            host = defaults.host
-        }
-
-        var headers: [String: String] = [:]
-        if providerType == .openaiLegacy {
-            for (k, v) in extras where !Self.reservedExtraKeys.contains(k) {
-                headers[k] = v
-            }
-        }
-
-        // Azure routes requests through deployment names rather than model
-        // names, so the Settings UI persists the deployment list in
-        // `manualModelIds`. Mirror that here — accept comma/newline-separated
-        // values so a single tool call can register multiple deployments,
-        // matching the in-app flow.
-        var manualModelIds: [String] = []
-        if providerType == .azureOpenAI {
-            let raw = extras["deployment"] ?? ""
-            manualModelIds = Self.parseManualModelIds(raw)
-        }
-
-        let provider = RemoteProvider(
-            name: displayName,
-            host: host,
-            providerProtocol: defaults.providerProtocol,
-            port: defaults.port,
-            basePath: defaults.basePath,
-            customHeaders: headers,
-            authType: storageAuthType,
-            providerType: providerType,
-            enabled: true,
-            autoConnect: true,
-            timeout: 60,
-            manualModelIds: manualModelIds
-        )
-        RemoteProviderManager.shared.addProvider(
-            provider,
-            apiKey: apiKey,
-            oauthTokens: oauthTokens
-        )
-        return provider.id
-    }
-
-    /// Extra-field keys that map to explicit `RemoteProvider` columns rather
-    /// than free-form `customHeaders`. Kept here (rather than on the catalog
-    /// entry) because the mapping is provider-shape specific. Exposed
-    /// `internal` so tests can assert the contract without copy-pasting it.
-    static let reservedExtraKeys: Set<String> = ["host", "deployment"]
-
-    /// Split a comma/newline-separated list of deployment names into a
-    /// deduped, trimmed, order-preserving array. Mirrors the parser in
-    /// `RemoteProviderEditSheet` so chat-driven Azure providers persist
-    /// identically to those configured via Settings.
-    static func parseManualModelIds(_ text: String) -> [String] {
-        var seen = Set<String>()
-        var values: [String] = []
-        for part in text.split(whereSeparator: { $0 == "\n" || $0 == "," }) {
-            let value = String(part).trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !value.isEmpty else { continue }
-            let key = value.lowercased()
-            guard !seen.contains(key) else { continue }
-            seen.insert(key)
-            values.append(value)
-        }
-        return values
-    }
-
-    /// Vendor host/protocol/basePath sourced from `preset.configuration`,
-    /// with explicit fall-backs for the two non-preset resolutions
-    /// (`codexOAuth` flows through `OpenAICodexOAuthService.makeProvider()`
-    /// and never reaches this helper; `osaurusAgent` defaults match the
-    /// pairing port).
-    private func endpointDefaults(
-        for resolution: ProviderToolResolution
-    ) -> (
-        host: String,
-        providerProtocol: RemoteProviderProtocol,
-        port: Int?,
-        basePath: String
-    ) {
-        switch resolution {
-        case .preset(let preset):
-            let cfg = preset.configuration
-            return (cfg.host, cfg.providerProtocol, cfg.port, cfg.basePath)
-        case .codexOAuth:
-            return ("chatgpt.com", .https, nil, "/backend-api")
-        case .osaurusAgent:
-            return ("localhost", .http, 8080, "/v1")
-        }
-    }
-}
-
-// MARK: - osaurus_provider_update
-
-public final class OsaurusProviderUpdateTool: OsaurusTool, PermissionedTool, @unchecked Sendable {
-    public let name = "osaurus_provider_update"
-    public let description =
-        "Update non-secret fields of an existing provider. Requires `id`. Optional: `name`, `host`, "
-        + "`enabled`, `auto_connect`, `port`, `base_path`, `timeout` (seconds), and `manual_model_ids` "
-        + "(comma/newline-separated; for Azure these are deployment names). To rotate the API key "
-        + "or OAuth tokens, call osaurus_provider_set_credentials instead."
-    public let parameters: JSONValue? = .object([
-        "type": .string("object"),
-        "additionalProperties": .bool(false),
-        "properties": .object([
-            "id": .object(["type": .string("string")]),
-            "name": .object(["type": .string("string")]),
-            "host": .object(["type": .string("string")]),
-            "enabled": .object(["type": .string("boolean")]),
-            "auto_connect": .object(["type": .string("boolean")]),
-            "port": .object([
-                "type": .string("integer"),
-                "description": .string("Override port. Omit to keep the current value."),
-            ]),
-            "base_path": .object([
-                "type": .string("string"),
-                "description": .string("API base path (e.g. /v1). Omit to keep the current value."),
-            ]),
-            "timeout": .object([
-                "type": .string("integer"),
-                "description": .string("Request timeout in seconds."),
-            ]),
-            "manual_model_ids": .object([
-                "type": .string("string"),
-                "description": .string(
-                    "Comma/newline-separated model ids (Azure: deployment names). Replaces the existing list."
-                ),
-            ]),
-        ]),
-        "required": .array([.string("id")]),
-    ])
-
-    public var requirements: [String] { [ConfigurationToolBase.requirement] }
-    var defaultPermissionPolicy: ToolPermissionPolicy { ConfigurationToolBase.defaultPolicy }
-
-    public init() {}
-
-    public func execute(argumentsJSON: String) async throws -> String {
-        if let gate = ConfigurationToolBase.defaultAgentGateFailure(tool: name) {
-            return gate
-        }
-        let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
-        guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
+    private func handleUpdate(_ args: [String: Any]) async -> String {
         let idReq = requireString(args, "id", expected: "provider UUID", tool: name)
         guard case .value(let idStr) = idReq else { return idReq.failureEnvelope ?? "" }
         guard let id = UUID(uuidString: idStr) else {
-            return ToolEnvelope.failure(
-                kind: .invalidArgs,
-                message: "`id` must be a valid UUID.",
-                tool: name
-            )
+            return ToolEnvelope.failure(kind: .invalidArgs, message: "`id` must be a valid UUID.", tool: name)
         }
 
-        let outcome: String = await MainActor.run {
+        // Pull every patch value into Sendable locals before crossing onto the
+        // main actor — capturing the `[String: Any]` directly trips the
+        // concurrency checker (task-isolated dictionary in a @MainActor closure).
+        let newName = args["name"] as? String
+        let newHost = args["host"] as? String
+        let newEnabled = coerceBool(args["enabled"])
+        let newAutoConnect = coerceBool(args["auto_connect"])
+        let newPort = coerceInt(args["port"])
+        let newBasePath = args["base_path"] as? String
+        let newTimeout = coerceInt(args["timeout"])
+        let newManualModelIds = (args["manual_model_ids"] as? String)
+            .map(OsaurusProviderTool.parseManualModelIds)
+
+        return await MainActor.run {
             let mgr = RemoteProviderManager.shared
             guard var provider = mgr.configuration.providers.first(where: { $0.id == id }) else {
                 return ToolEnvelope.failure(
@@ -523,65 +348,34 @@ public final class OsaurusProviderUpdateTool: OsaurusTool, PermissionedTool, @un
                     tool: name
                 )
             }
-            if let v = args["name"] as? String { provider.name = v }
-            if let v = args["host"] as? String { provider.host = v }
-            if let b = self.coerceBool(args["enabled"]) { provider.enabled = b }
-            if let b = self.coerceBool(args["auto_connect"]) { provider.autoConnect = b }
-            if let p = self.coerceInt(args["port"]) { provider.port = p }
-            if let v = args["base_path"] as? String { provider.basePath = v }
-            if let t = self.coerceInt(args["timeout"]) { provider.timeout = TimeInterval(t) }
-            if let raw = args["manual_model_ids"] as? String {
-                provider.manualModelIds = OsaurusProviderAddTool.parseManualModelIds(raw)
-            }
+            if let v = newName { provider.name = v }
+            if let v = newHost { provider.host = v }
+            if let b = newEnabled { provider.enabled = b }
+            if let b = newAutoConnect { provider.autoConnect = b }
+            if let p = newPort { provider.port = p }
+            if let v = newBasePath { provider.basePath = v }
+            if let t = newTimeout { provider.timeout = TimeInterval(t) }
+            if let ids = newManualModelIds { provider.manualModelIds = ids }
             mgr.updateProvider(provider, apiKey: nil, oauthTokens: nil)
             return ToolEnvelope.success(
                 tool: name,
                 result: ["provider_id": id.uuidString, "status": "updated"]
             )
         }
-        return outcome
     }
-}
 
-// MARK: - osaurus_provider_remove
+    // MARK: remove
 
-public final class OsaurusProviderRemoveTool: OsaurusTool, PermissionedTool, @unchecked Sendable {
-    public let name = "osaurus_provider_remove"
-    public let description =
-        "Remove a provider by `id`. Its Keychain entries (API key + OAuth tokens) are cleaned up automatically."
-    public let parameters: JSONValue? = .object([
-        "type": .string("object"),
-        "additionalProperties": .bool(false),
-        "properties": .object(["id": .object(["type": .string("string")])]),
-        "required": .array([.string("id")]),
-    ])
-
-    public var requirements: [String] { [ConfigurationToolBase.requirement] }
-    var defaultPermissionPolicy: ToolPermissionPolicy { ConfigurationToolBase.defaultPolicy }
-
-    public init() {}
-
-    public func execute(argumentsJSON: String) async throws -> String {
-        if let gate = ConfigurationToolBase.defaultAgentGateFailure(tool: name) {
-            return gate
-        }
-        let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
-        guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
+    private func handleRemove(_ args: [String: Any]) async -> String {
         let idReq = requireString(args, "id", expected: "provider UUID", tool: name)
         guard case .value(let idStr) = idReq else { return idReq.failureEnvelope ?? "" }
         guard let id = UUID(uuidString: idStr) else {
-            return ToolEnvelope.failure(
-                kind: .invalidArgs,
-                message: "`id` must be a valid UUID.",
-                tool: name
-            )
+            return ToolEnvelope.failure(kind: .invalidArgs, message: "`id` must be a valid UUID.", tool: name)
         }
 
         let removed: Bool = await MainActor.run {
             let mgr = RemoteProviderManager.shared
-            guard mgr.configuration.providers.contains(where: { $0.id == id }) else {
-                return false
-            }
+            guard mgr.configuration.providers.contains(where: { $0.id == id }) else { return false }
             mgr.removeProvider(id: id)
             return true
         }
@@ -598,43 +392,14 @@ public final class OsaurusProviderRemoveTool: OsaurusTool, PermissionedTool, @un
             result: ["provider_id": id.uuidString, "status": "removed"]
         )
     }
-}
 
-// MARK: - osaurus_provider_set_credentials
+    // MARK: set_credentials
 
-public final class OsaurusProviderSetCredentialsTool: OsaurusTool, PermissionedTool, @unchecked Sendable {
-    public let name = "osaurus_provider_set_credentials"
-    public let description =
-        "Re-enter credentials for an existing provider (key rotation / fix wrong key). "
-        + "Opens the same secure sheet as osaurus_provider_add."
-    public let parameters: JSONValue? = .object([
-        "type": .string("object"),
-        "additionalProperties": .bool(false),
-        "properties": .object(["id": .object(["type": .string("string")])]),
-        "required": .array([.string("id")]),
-    ])
-
-    public var bypassRegistryTimeout: Bool { true }
-
-    public var requirements: [String] { [ConfigurationToolBase.requirement] }
-    var defaultPermissionPolicy: ToolPermissionPolicy { ConfigurationToolBase.defaultPolicy }
-
-    public init() {}
-
-    public func execute(argumentsJSON: String) async throws -> String {
-        if let gate = ConfigurationToolBase.defaultAgentGateFailure(tool: name) {
-            return gate
-        }
-        let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
-        guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
+    private func handleSetCredentials(_ args: [String: Any]) async -> String {
         let idReq = requireString(args, "id", expected: "provider UUID", tool: name)
         guard case .value(let idStr) = idReq else { return idReq.failureEnvelope ?? "" }
         guard let id = UUID(uuidString: idStr) else {
-            return ToolEnvelope.failure(
-                kind: .invalidArgs,
-                message: "`id` must be a valid UUID.",
-                tool: name
-            )
+            return ToolEnvelope.failure(kind: .invalidArgs, message: "`id` must be a valid UUID.", tool: name)
         }
 
         let lookup: (provider: RemoteProvider, displayName: String)? = await MainActor.run {
@@ -682,6 +447,131 @@ public final class OsaurusProviderSetCredentialsTool: OsaurusTool, PermissionedT
                 tool: name,
                 result: ["provider_id": id.uuidString, "status": "credentials_updated", "auth_mode": "oauth"]
             )
+        }
+    }
+
+    // MARK: - add helpers
+
+    private func makeRequest(
+        resolution: ProviderToolResolution,
+        displayName: String
+    ) -> ProviderCredentialRequest {
+        switch resolution {
+        case .preset(let preset):
+            return ProviderCredentialRequest(preset: preset, providerName: displayName, mode: .addNew)
+        case .codexOAuth:
+            return ProviderCredentialRequest(providerType: .openAICodex, providerName: displayName, mode: .addNew)
+        case .osaurusAgent:
+            return ProviderCredentialRequest(providerType: .osaurus, providerName: displayName, mode: .addNew)
+        }
+    }
+
+    @MainActor
+    private func buildAndAdd(
+        displayName: String,
+        resolution: ProviderToolResolution,
+        storageAuthType: RemoteProviderAuthType,
+        hostOverride: String?,
+        extraHeaders: [String: String]?,
+        apiKey: String?,
+        oauthTokens: RemoteProviderOAuthTokens?
+    ) -> UUID {
+        if case .codexOAuth = resolution {
+            let provider = OpenAICodexOAuthService.makeProvider()
+            RemoteProviderManager.shared.addProvider(provider, apiKey: apiKey, oauthTokens: oauthTokens)
+            if provider.name != displayName {
+                var renamed = provider
+                renamed.name = displayName
+                RemoteProviderManager.shared.updateProvider(renamed, apiKey: nil, oauthTokens: nil)
+            }
+            return provider.id
+        }
+
+        let defaults = endpointDefaults(for: resolution)
+        let providerType = resolution.providerType
+        let extras = extraHeaders ?? [:]
+
+        // The credential sheet collects non-secret extras (host, deployment,
+        // …) keyed by the catalog field id. Reserved keys map onto explicit
+        // `RemoteProvider` fields below — anything else passes through as a
+        // custom header for `.openaiLegacy` providers.
+        let sheetHost = extras["host"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let host: String
+        if let override = hostOverride, !override.isEmpty {
+            host = override
+        } else if !sheetHost.isEmpty {
+            host = sheetHost
+        } else {
+            host = defaults.host
+        }
+
+        var headers: [String: String] = [:]
+        if providerType == .openaiLegacy {
+            for (k, v) in extras where !Self.reservedExtraKeys.contains(k) {
+                headers[k] = v
+            }
+        }
+
+        // Azure routes requests through deployment names rather than model
+        // names, so the Settings UI persists the deployment list in
+        // `manualModelIds`. Mirror that here.
+        var manualModelIds: [String] = []
+        if providerType == .azureOpenAI {
+            let raw = extras["deployment"] ?? ""
+            manualModelIds = Self.parseManualModelIds(raw)
+        }
+
+        let provider = RemoteProvider(
+            name: displayName,
+            host: host,
+            providerProtocol: defaults.providerProtocol,
+            port: defaults.port,
+            basePath: defaults.basePath,
+            customHeaders: headers,
+            authType: storageAuthType,
+            providerType: providerType,
+            enabled: true,
+            autoConnect: true,
+            timeout: 60,
+            manualModelIds: manualModelIds
+        )
+        RemoteProviderManager.shared.addProvider(provider, apiKey: apiKey, oauthTokens: oauthTokens)
+        return provider.id
+    }
+
+    /// Extra-field keys that map to explicit `RemoteProvider` columns rather
+    /// than free-form `customHeaders`. Exposed `internal` so tests can assert
+    /// the contract without copy-pasting it.
+    static let reservedExtraKeys: Set<String> = ["host", "deployment"]
+
+    /// Split a comma/newline-separated list of deployment names into a
+    /// deduped, trimmed, order-preserving array. Mirrors the parser in
+    /// `RemoteProviderEditSheet`.
+    static func parseManualModelIds(_ text: String) -> [String] {
+        var seen = Set<String>()
+        var values: [String] = []
+        for part in text.split(whereSeparator: { $0 == "\n" || $0 == "," }) {
+            let value = String(part).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !value.isEmpty else { continue }
+            let key = value.lowercased()
+            guard !seen.contains(key) else { continue }
+            seen.insert(key)
+            values.append(value)
+        }
+        return values
+    }
+
+    private func endpointDefaults(
+        for resolution: ProviderToolResolution
+    ) -> (host: String, providerProtocol: RemoteProviderProtocol, port: Int?, basePath: String) {
+        switch resolution {
+        case .preset(let preset):
+            let cfg = preset.configuration
+            return (cfg.host, cfg.providerProtocol, cfg.port, cfg.basePath)
+        case .codexOAuth:
+            return ("chatgpt.com", .https, nil, "/backend-api")
+        case .osaurusAgent:
+            return ("localhost", .http, 8080, "/v1")
         }
     }
 }

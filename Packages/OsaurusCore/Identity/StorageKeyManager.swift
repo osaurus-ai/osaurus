@@ -369,6 +369,7 @@ public final class StorageKeyManager: @unchecked Sendable {
         if fm.fileExists(atPath: provisionedMarkerFile().path) { return true }
         let encryptedArtifacts = [
             OsaurusPaths.chatHistoryDatabaseFile(),
+            OsaurusPaths.agentChannelMessagesDatabaseFile(),
             OsaurusPaths.memoryDatabaseFile(),
             OsaurusPaths.methodsDatabaseFile(),
             OsaurusPaths.toolIndexDatabaseFile(),

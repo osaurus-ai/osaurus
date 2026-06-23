@@ -7,8 +7,11 @@
 //  `Driver/Mac/*` classes, returning the harness's `CU…` contract types. No
 //  JSON marshalling, no PluginManager / ExternalPlugin.
 //
-//  All AX / input / screenshot work hops to the main actor, matching the
-//  driver's original main-thread affinity.
+//  AX reads and input synthesis run on a dedicated serial background queue
+//  (`AccessibilityManager.runOffMain`) so slow cross-process AX IPC and the
+//  per-character input sleeps never block the UI thread. Only `narrate` stays
+//  on the main actor (it mutates `AutomationSession` UI state); screenshots use
+//  async ScreenCaptureKit.
 //
 
 import AppKit
@@ -22,7 +25,7 @@ public struct NativeMacDriver: MacDriver {
     // MARK: Availability
 
     public func availability() async -> MacDriverAvailability {
-        await MainActor.run {
+        await AccessibilityManager.runOffMain {
             MacDriverAvailability(
                 accessibility: AXIsProcessTrusted(),
                 screenRecording: CGPreflightScreenCaptureAccess(),
@@ -34,7 +37,7 @@ public struct NativeMacDriver: MacDriver {
     // MARK: Perceive (read-only)
 
     public func listApps() async -> [CUAppListing] {
-        await MainActor.run {
+        await AccessibilityManager.runOffMain {
             listRunningApps().apps.map {
                 CUAppListing(
                     pid: $0.pid,
@@ -48,7 +51,7 @@ public struct NativeMacDriver: MacDriver {
     }
 
     public func listWindows(pid: Int32) async -> [CUWindowInfo] {
-        await MainActor.run {
+        await AccessibilityManager.runOffMain {
             listWindowsForPid(pid).windows.map {
                 CUWindowInfo(
                     windowId: $0.windowId,
@@ -65,7 +68,7 @@ public struct NativeMacDriver: MacDriver {
     }
 
     public func activeWindow() async -> CUActiveWindow? {
-        await MainActor.run {
+        await AccessibilityManager.runOffMain {
             guard let info = getActiveWindow() else { return nil }
             return CUActiveWindow(
                 pid: info.pid,
@@ -75,6 +78,20 @@ public struct NativeMacDriver: MacDriver {
                 y: info.y,
                 w: info.w,
                 h: info.h
+            )
+        }
+    }
+
+    public func focusedContent(pid: Int32) async -> CUFocusedContent? {
+        await AccessibilityManager.runOffMain {
+            guard let info = computeFocusedContent(pid: pid) else { return nil }
+            return CUFocusedContent(
+                role: info.role,
+                label: info.label,
+                placeholder: info.placeholder,
+                value: info.value,
+                selectedText: info.selectedText,
+                viewport: info.viewport
             )
         }
     }
@@ -109,14 +126,21 @@ public struct NativeMacDriver: MacDriver {
         tier: CaptureTier,
         windowId: Int?,
         maxElements: Int?,
-        focusedWindowOnly: Bool
+        focusedWindowOnly: Bool,
+        interactiveOnly: Bool
     ) async -> CUSnapshot {
         switch tier {
         case .ax:
-            let snapshot = await MainActor.run { () -> TraversalResult in
+            // Electron/Chromium build their AX tree asynchronously after
+            // `AXManualAccessibility` flips, so wait for it before this one-shot
+            // traverse (Cocoa apps + already-built trees return immediately).
+            // Without this the first read of Slack/Chrome/VS Code is empty.
+            await AccessibilityManager.shared.prepareAndAwaitTree(pid: pid)
+            let snapshot = await AccessibilityManager.runOffMain { () -> TraversalResult in
                 var filter = ElementFilter(pid: pid)
                 if let maxElements { filter.maxElements = maxElements }
                 if focusedWindowOnly { filter.focusedWindowOnly = true }
+                filter.interactiveOnly = interactiveOnly
                 return AccessibilityManager.shared.traverse(filter: filter)
             }
             return mapSnapshot(snapshot, tier: .ax, image: nil)
@@ -141,7 +165,7 @@ public struct NativeMacDriver: MacDriver {
         enabledOnly: Bool,
         limit: Int
     ) async -> CUSnapshot {
-        await MainActor.run {
+        await AccessibilityManager.runOffMain {
             var filter = ElementFilter(pid: pid)
             filter.roles = roles
             filter.maxDepth = 25
@@ -161,7 +185,7 @@ public struct NativeMacDriver: MacDriver {
     // MARK: Act — element-addressed
 
     public func perform(_ action: CUElementAction) async -> CUActionResult {
-        await MainActor.run {
+        await AccessibilityManager.runOffMain {
             switch action {
             case let .click(id, button, doubleClick):
                 let r: ElementActionResult
@@ -236,7 +260,7 @@ public struct NativeMacDriver: MacDriver {
     // MARK: Act — coordinate-addressed
 
     public func coordinate(_ action: CUCoordinateAction) async -> CUActionResult {
-        await MainActor.run {
+        await AccessibilityManager.runOffMain {
             switch action {
             case let .click(x, y, button, doubleClick, pid):
                 let point = CGPoint(x: x, y: y)
@@ -340,6 +364,7 @@ private func mapSnapshot(
                 roleDescription: $0.roleDescription,
                 label: $0.label,
                 value: $0.value,
+                selectedText: $0.selectedText,
                 placeholder: $0.placeholder,
                 path: $0.path,
                 windowId: $0.windowId,

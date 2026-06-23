@@ -86,3 +86,39 @@ public final class FolderToolManager {
         Task { await FileOperationLog.shared.setRootPath(nil) }
     }
 }
+
+/// Serializes remote agent runs (`/agents/{id}/run`) that mount a per-agent
+/// host workspace folder. Folder tools register process-wide in the single
+/// global `ToolRegistry` (one `file_write` bound to one root at a time), and
+/// the run uses snapshot/restore around that registration. Without this gate,
+/// two concurrent host-folder runs would interleave register/restore and
+/// corrupt the registration (e.g. leaving a finished run's tools registered).
+/// A run holds the gate for its full duration; this is acceptable for a
+/// personal device where simultaneous host-folder remote runs are rare. The
+/// run's client-disconnect cancellation + iteration cap bound how long the
+/// gate is held.
+actor HostFolderRunGate {
+    static let shared = HostFolderRunGate()
+
+    private var busy = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func acquire() async {
+        if !busy {
+            busy = true
+            return
+        }
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            waiters.append(continuation)
+        }
+    }
+
+    func release() {
+        if waiters.isEmpty {
+            busy = false
+        } else {
+            let next = waiters.removeFirst()
+            next.resume()
+        }
+    }
+}

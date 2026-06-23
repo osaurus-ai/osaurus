@@ -36,6 +36,14 @@ struct OsaurusEvalsCLI {
         switch command {
         case "run":
             await runCommand(Array(args.dropFirst()))
+        case "capture-screen":
+            // Local-only AX capture (NativeMacDriver) → ScreenContextFixture
+            // JSON. No model/MLX load, so a plain exit (no Metal teardown) is
+            // correct and fast.
+            let captureExit = await runCaptureScreen(Array(args.dropFirst()))
+            fflush(stdout)
+            fflush(stderr)
+            exit(captureExit)
         case "agent-loop-lab":
             let labExitCode = await runAgentLoopLab(Array(args.dropFirst()))
             await shutdownAndExit(labExitCode)
@@ -104,6 +112,13 @@ struct OsaurusEvalsCLI {
             preference: opts.pluginBootstrapPreference
         )
         _ = EvalBootstrap.configureIsolatedSearchStorageIfNeeded(for: bootstrapPlan)
+        // Default-agent cases EXECUTE real configure write tools; isolate the
+        // config root (after the search-isolation call so a mixed suite keeps
+        // its plugin `Tools` symlink) so writes never touch the real
+        // `~/.osaurus`. No-op for suites without `default_agent` cases.
+        _ = EvalBootstrap.configureIsolatedConfigStorageIfNeeded(
+            isolate: suite.selectedCasesIncludeDefaultAgent(filter: opts.filter)
+        )
         let startupWatchdog =
             bootstrapPlan.requiresWork
             ? makeStartupWatchdog(options: opts, suite: suite)
@@ -648,6 +663,7 @@ struct OsaurusEvalsCLI {
                 osaurus-evals run --suite <dir> [--model <id>] [--filter <substr>] [--out <path>]
                                               [--threshold <float>] [--report-forensics]
                                               [--startup-timeout <seconds>]
+                osaurus-evals capture-screen [--app <name>] [--out <path>]
                 osaurus-evals agent-loop-lab --baseline <path> [--suite <dir> ...] [--model <id>]
                 osaurus-evals diff <baseline> <current> [--out <p>] [--markdown <p>]
                                               [--fail-on-regression]

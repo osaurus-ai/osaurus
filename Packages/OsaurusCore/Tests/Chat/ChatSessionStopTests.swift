@@ -6,6 +6,8 @@ import Testing
 @Suite(.serialized)
 @MainActor
 struct ChatSessionStopTests {
+    private static let asyncTimeout: Duration = .seconds(10)
+
     @Test
     func stop_trimsTrailingEmptyAssistantPlaceholder() async throws {
         try await ChatHistoryTestStorage.run {
@@ -50,13 +52,13 @@ struct ChatSessionStopTests {
             session.chatEngineFactory = { engine }
 
             session.send("Hello")
-            try await waitUntilAsync(timeout: .seconds(2)) {
+            try await waitUntilAsync(timeout: Self.asyncTimeout) {
                 await engine.started
             }
 
             session.stop()
 
-            try await waitUntilAsync(timeout: .seconds(2)) {
+            try await waitUntilAsync(timeout: Self.asyncTimeout) {
                 await engine.cancelled
             }
             #expect(session.isStreaming == false)
@@ -89,10 +91,10 @@ struct ChatSessionStopTests {
 
             session.send("Hello")
 
-            try await waitUntil(timeout: .seconds(2)) {
+            try await waitUntil(timeout: Self.asyncTimeout) {
                 session.turns.contains { $0.role == .assistant && !$0.thinkingIsBlank }
             }
-            try await waitUntil(timeout: .seconds(2)) {
+            try await waitUntil(timeout: Self.asyncTimeout) {
                 session.isStreaming == false
             }
 

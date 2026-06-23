@@ -170,3 +170,9 @@ default.profraw
 
 # Local secrets
 App/osaurus/Secrets.xcconfig
+
+# OsaurusEvals screen_context: real-app captures (made by `make
+# evals-capture-screen`) contain your actual on-screen code/text, so the
+# `local/` dir stays local. Committed synthetic fixtures live alongside it in
+# Packages/OsaurusEvals/Fixtures/ScreenContext/*.json.
+Packages/OsaurusEvals/Fixtures/ScreenContext/local/

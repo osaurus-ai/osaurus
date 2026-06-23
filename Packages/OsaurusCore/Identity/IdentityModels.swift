@@ -250,7 +250,13 @@ public enum AccessKeyValidationResult: Sendable {
     /// `audience` is the validated key's `aud` claim (the agent or master
     /// address the key is scoped to). Callers use it to enforce that an
     /// agent-scoped key only reaches its own agent's routes.
-    case valid(issuer: OsaurusID, audience: OsaurusID)
+    ///
+    /// `keyNonce` is the matched key's `nonce` claim — the stable per-key
+    /// identifier recoverable from the token itself (the local
+    /// `AccessKeyInfo.id` UUID is not, since it's minted randomly). Inbound
+    /// request logging stamps it so the host's Remote Connections view can
+    /// attribute per-connection usage; correlate with `AccessKeyInfo.nonce`.
+    case valid(issuer: OsaurusID, audience: OsaurusID, keyNonce: String)
     case invalid(reason: String)
     case expired
     case revoked

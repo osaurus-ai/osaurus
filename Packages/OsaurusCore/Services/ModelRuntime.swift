@@ -287,6 +287,16 @@ public actor ModelRuntime {
         }
         let box = OutBox()
 
+        // Serialize the audio-encoder `MLX.eval` against every other GPU
+        // producer (generation, embedding, model load) through the shared
+        // Metal gate, owner `gen:<model>` — the same gate
+        // `MLXBatchAdapter.prepareInput` takes for its in-generation
+        // preencode. Without it, a live-voice attach landing while a chat
+        // generation is in flight runs two unsynchronized command buffers and
+        // trips `AGXG17XFamilyCommandBuffer` asserts (issue #1632). Balanced
+        // on every exit path below.
+        await MetalGate.shared.enterGeneration(model: holder.name)
+
         do {
             try await holder.container.perform { context in
                 guard let omni = context.model as? NemotronHOmni else {
@@ -337,6 +347,7 @@ public actor ModelRuntime {
                 )
             }
         } catch {
+            await MetalGate.shared.exitGeneration(model: holder.name)
             await soloLease.release()
             await ModelLease.shared.release(holder.name)
             await scheduleIdleResidency(for: holder.name)
@@ -349,6 +360,7 @@ public actor ModelRuntime {
             )
         }
 
+        await MetalGate.shared.exitGeneration(model: holder.name)
         await soloLease.release()
         await ModelLease.shared.release(holder.name)
         await scheduleIdleResidency(for: holder.name)
@@ -1617,7 +1629,85 @@ public actor ModelRuntime {
             config.enableDiskCache = false
             config.diskCacheDir = nil
         }
+        applyHostAwareDiskCacheCeiling(to: &config, diskCacheDir: diskCacheDir)
         return config
+    }
+
+    /// Bound the L2 disk-cache cap to a fraction of CURRENT free disk so a
+    /// constrained volume can't be driven into disk pressure by the KV cache.
+    ///
+    /// Why: the resolved cap is vmlx's `diskCacheMaxGB` default (10 GB) unless
+    /// the user/profile set one. On a host with tens-of-GB free that 10 GB cap
+    /// can consume most of the volume on big-model agentic runs (see
+    /// `perf-gemma4-12b-mxfp8-baseline.md` Lever 2/5: 9.6 GB written in ~90 s).
+    /// vmlx's own `LOW-SPEC-HOST-GUIDANCE` already recommends host-relative caps
+    /// (4 GB low-spec, 8–16 GB only when > 200 GB free) — this enforces that
+    /// shape automatically.
+    ///
+    /// Invariant: the disk cache may never use more than `freeFraction` of the
+    /// free bytes observed at load. On a healthy host (free ≥ cap / freeFraction,
+    /// i.e. ≥ ~40 GB for the 10 GB default at 0.25) the configured cap is the
+    /// min term and the cap is UNCHANGED → no reuse loss where there's room. If
+    /// even the bounded cap falls below a useful floor, the disk tier is
+    /// disabled rather than left to thrash a near-full volume. Free-space is
+    /// unknowable on some volumes (`volumeFreeBytes == nil`) → leave the
+    /// configured cap as-is rather than guess.
+    private nonisolated static func applyHostAwareDiskCacheCeiling(
+        to config: inout CacheCoordinatorConfig,
+        diskCacheDir: URL?,
+        freeFraction: Double = 0.25,
+        minUsefulGB: Double = 1.0
+    ) {
+        guard config.enableDiskCache, let diskCacheDir,
+            let freeBytes = OsaurusPaths.volumeFreeBytes(forPath: diskCacheDir.path),
+            freeBytes > 0
+        else { return }
+
+        let freeGB = Double(freeBytes) / 1_073_741_824.0
+        let configuredCapGB = Double(config.diskCacheMaxGB)
+        let decision = hostAwareDiskCacheDecision(
+            configuredCapGB: configuredCapGB,
+            freeBytes: freeBytes,
+            freeFraction: freeFraction,
+            minUsefulGB: minUsefulGB
+        )
+
+        if !decision.enabled {
+            genLog.notice(
+                "buildCacheCoordinatorConfig: disabling disk-L2 — only \(String(format: "%.1f", freeGB), privacy: .public) GB free (below host-aware floor of \(String(format: "%.1f", minUsefulGB / freeFraction), privacy: .public) GB)"
+            )
+            config.enableDiskCache = false
+            config.diskCacheDir = nil
+        } else if decision.capGB < configuredCapGB {
+            genLog.notice(
+                "buildCacheCoordinatorConfig: disk-L2 cap \(String(format: "%.1f", configuredCapGB), privacy: .public)→\(String(format: "%.1f", decision.capGB), privacy: .public) GB (host-aware, \(String(format: "%.1f", freeGB), privacy: .public) GB free)"
+            )
+            config.diskCacheMaxGB = Float(decision.capGB)
+        }
+    }
+
+    /// Pure host-aware disk-cap decision (no I/O), extracted so the policy is
+    /// unit-testable. Returns whether the disk tier stays enabled and the
+    /// resulting cap in GB.
+    ///
+    /// - `freeBytes <= 0` (unknown free space) → leave the configured cap as-is.
+    /// - cap is bounded to `freeFraction` of free disk (the cache may never use
+    ///   more than that fraction of what was free at load).
+    /// - if the bounded cap is below `minUsefulGB`, the tier is disabled rather
+    ///   than left to thrash a near-full volume.
+    /// - on a healthy host (free ≥ configuredCap / freeFraction) the configured
+    ///   cap is the min term → returned UNCHANGED (no reuse loss).
+    nonisolated static func hostAwareDiskCacheDecision(
+        configuredCapGB: Double,
+        freeBytes: Int64,
+        freeFraction: Double = 0.25,
+        minUsefulGB: Double = 1.0
+    ) -> (enabled: Bool, capGB: Double) {
+        guard freeBytes > 0 else { return (true, configuredCapGB) }
+        let freeGB = Double(freeBytes) / 1_073_741_824.0
+        let safeCapGB = min(configuredCapGB, freeGB * freeFraction)
+        if safeCapGB < minUsefulGB { return (false, configuredCapGB) }
+        return (true, safeCapGB)
     }
 
     nonisolated static func cacheDiskDirectoryOverride(
@@ -2215,9 +2305,17 @@ public actor ModelRuntime {
         )
         let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
         let producerTask = Task {
-            // Chat UI streaming should execute a parsed tool call immediately.
-            // Continuing to drain model text after the tool event can leak the
-            // model's pseudo-tool prose before the app renders/runs the tool.
+            // Chat UI streaming should execute a parsed tool call as soon as
+            // the model finishes the step. We surface the tool hints
+            // immediately, then keep draining ONLY to forward the step's
+            // end-of-generation `.completionInfo` (decode/prefill tok/s + token
+            // count) before finishing-by-throw — otherwise a step that ends in
+            // a tool call (the common agentic case) drops its decode stats,
+            // which is why tool-call turns historically reported 0 completion
+            // tokens / no tok/s in both the OpenAI `usage` and the eval
+            // telemetry. Post-tool model text is still suppressed (never
+            // yielded once a tool is pending), preserving the no-leak intent.
+            var pendingTool: ServiceToolInvocation?
             do {
                 for try await ev in events {
                     if case .completionInfo(
@@ -2236,6 +2334,14 @@ public actor ModelRuntime {
                                 prefillTokensPerSecond: promptTokensPerSecond
                             )
                         )
+                        // End-of-generation stats are the terminal event. If a
+                        // tool call is pending, the stats have now been
+                        // forwarded — finish-by-throw so the consumer dispatches
+                        // the tool, with the decode telemetry already delivered.
+                        if let tool = pendingTool {
+                            continuation.finish(throwing: tool)
+                            return
+                        }
                         continue
                     }
 
@@ -2245,26 +2351,42 @@ public actor ModelRuntime {
                     }
                     switch ev {
                     case .tokens(let s):
-                        if !s.isEmpty { continuation.yield(s) }
+                        // Suppress model text once a tool call is pending so the
+                        // pseudo-tool prose never leaks to the UI/consumer.
+                        if pendingTool == nil, !s.isEmpty { continuation.yield(s) }
                     case .reasoning(let s):
-                        if !s.isEmpty { continuation.yield(StreamingReasoningHint.encode(s)) }
+                        if pendingTool == nil, !s.isEmpty {
+                            continuation.yield(StreamingReasoningHint.encode(s))
+                        }
                     case .prefillProgress(let progress):
-                        continuation.yield(StreamingPrefillProgressHint.encode(progress))
+                        if pendingTool == nil {
+                            continuation.yield(StreamingPrefillProgressHint.encode(progress))
+                        }
                     case .toolInvocation(let name, let argsJSON):
-                        continuation.yield(StreamingToolHint.encode(name))
-                        continuation.yield(StreamingToolHint.encodeArgs(argsJSON))
-                        continuation.finish(
-                            throwing: ServiceToolInvocation(
+                        // Surface the first tool call's hints immediately, then
+                        // keep draining for its trailing `.completionInfo`
+                        // before throwing (see comment above). Arity is
+                        // unchanged: only the first tool is dispatched per step.
+                        if pendingTool == nil {
+                            continuation.yield(StreamingToolHint.encode(name))
+                            continuation.yield(StreamingToolHint.encodeArgs(argsJSON))
+                            pendingTool = ServiceToolInvocation(
                                 toolName: name,
                                 jsonArguments: argsJSON
                             )
-                        )
-                        return
+                        }
                     case .completionInfo:
                         continue
                     }
                 }
-                continuation.finish()
+                // Stream ended (natural EOS). If the generator never emitted a
+                // trailing `.completionInfo` after the tool call, throw now so
+                // the tool is still dispatched (just without decode stats).
+                if let tool = pendingTool {
+                    continuation.finish(throwing: tool)
+                } else {
+                    continuation.finish()
+                }
             } catch {
                 if Task.isCancelled {
                     continuation.finish()

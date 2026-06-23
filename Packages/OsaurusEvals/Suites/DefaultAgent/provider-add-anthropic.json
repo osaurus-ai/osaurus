@@ -1,0 +1,18 @@
+{
+  "id": "default_agent.provider-add-anthropic",
+  "domain": "default_agent",
+  "label": "default agent • add Anthropic provider (action + provider enum)",
+  "query": "Add Anthropic as a cloud provider and call it \"Claude\".",
+  "notes": "Consolidated write selection: osaurus_provider with action 'add' and provider 'anthropic'. In the eval the credential sheet is bypassed (resolves cancelled) so no Keychain write happens; the assertion scores the model's tool CALL, recorded before the result. No secret should ever appear in the arguments.",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": ["osaurus_provider"],
+      "mustNotCallTools": ["capabilities_discover", "capabilities_load"],
+      "argsMustContain": [
+        { "tool": "osaurus_provider", "args": { "action": "add", "provider": "anthropic" } }
+      ],
+      "maxIterations": 4
+    }
+  }
+}

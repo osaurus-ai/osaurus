@@ -195,6 +195,12 @@ The chat-layer wrapper surfaces a differentiated error envelope per failure mode
 | File existed but the host-side copy threw       | `execution_error` carrying the FS error (disk full, perms) and the source path. |
 | `path` and `content` both empty / missing       | `invalid_args` reminding the model to pass at least one. Empty-string filler in optional fields is treated as absent on entry. |
 
+## `/screenshot` — Capturing the Current Screen
+
+`/screenshot` is a **local slash command**, not a model-callable tool. It captures the current main display as a PNG and writes it directly into the same chat artifact store used by `share_artifact`. The chat renders the artifact card from local session metadata; screenshot bytes, base64, tool-call history, and artifact host paths are not sent to the model.
+
+The command requires macOS **Screen Recording** permission. If Screen Recording access is missing, the chat shows a local error toast telling the user to grant the permission in System Settings. The command is unavailable to HTTP, MCP, plugin, and other external tool surfaces, and it does not automatically notify artifact-handler plugins. It attaches the screenshot for the user to inspect; it does not make the image available for model vision analysis.
+
 ---
 
 ## Headless / HTTP / Plugin Use

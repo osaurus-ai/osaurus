@@ -1,0 +1,71 @@
+{
+  "id": "agentdb.daily-github-analyst",
+  "domain": "agent_loop",
+  "label": "agentdb • reference flow: seed yesterday, import today, trend, deliver",
+  "query": "You are a daily GitHub analyst. Your agent database already holds yesterday's star snapshot in a table repo_stats(day, repo, stars). Today's snapshot is in the file stars_today.csv in your working folder (columns: day, repo, stars). Do the following: (1) import stars_today.csv into the repo_stats table; (2) define a saved view named star_trend that returns each day with the total stars across all repos as columns (day, total), ordered by day, and run it; (3) share a concise markdown artifact named star_trend.md that states today's total stars and how it changed versus yesterday.",
+  "notes": "End-to-end reference flow for the Agent DB superpowers, built from EXISTING tools: db_import (acquire today's file) -> db_define_view + db_run_view (SQL trend) -> share_artifact (deliver). seedSql stages yesterday (total 150) into a table shaped like a real db_create_table table (id PK + _created_at/_updated_at/_deleted_at) so db_import/db_schema compose with it the way they would on a table the agent created on day 1 — a bare `CREATE TABLE` would lack the system columns the typed tools stamp/read. The today fixture adds 130+45=175 (delta +25). dbState verifies the numbers against the base table (saved views are stored definitions, not real SQL views, so the assertions don't depend on the view object). mustCallToolsInOrder pins acquire -> derive -> deliver; mustNotCallTools forbids the per-row db_insert fallback. selfScheduling is enabled so the model MAY also notify, but only share_artifact is required.",
+  "fixtures": {
+    "agentCapabilities": {
+      "dbEnabled": true,
+      "selfSchedulingEnabled": true
+    },
+    "workspaceFiles": [
+      {
+        "path": "stars_today.csv",
+        "contentsFromFixture": "stars-today.csv"
+      }
+    ],
+    "seedSql": [
+      "CREATE TABLE repo_stats (id INTEGER PRIMARY KEY AUTOINCREMENT, day TEXT, repo TEXT, stars INTEGER, _created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')), _updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now')), _deleted_at INTEGER);",
+      "INSERT INTO repo_stats (day, repo, stars) VALUES ('2026-06-20','repoA',100),('2026-06-20','repoB',50);"
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 18,
+      "mustCallTools": [
+        "db_import",
+        "db_define_view",
+        "db_run_view",
+        "share_artifact"
+      ],
+      "mustCallToolsInOrder": [
+        "db_import",
+        "db_define_view",
+        "db_run_view",
+        "share_artifact"
+      ],
+      "mustNotCallTools": [
+        "db_insert"
+      ],
+      "dbState": [
+        {
+          "sql": "SELECT COUNT(*) FROM repo_stats",
+          "expectFirstValue": "4"
+        },
+        {
+          "sql": "SELECT SUM(stars) FROM repo_stats WHERE day = '2026-06-21'",
+          "expectFirstValue": "175"
+        },
+        {
+          "sql": "SELECT day, SUM(stars) AS total FROM repo_stats GROUP BY day ORDER BY day",
+          "expectRowCountEquals": 2,
+          "expectColumns": [
+            "day",
+            "total"
+          ],
+          "expectValues": [
+            "2026-06-20",
+            "150"
+          ]
+        }
+      ],
+      "artifactShared": {
+        "filenameContains": "trend"
+      },
+      "finalTextContains": [
+        "175"
+      ]
+    }
+  }
+}

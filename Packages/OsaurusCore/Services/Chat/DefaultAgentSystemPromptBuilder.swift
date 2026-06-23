@@ -51,51 +51,48 @@ public enum DefaultAgentSystemPromptBuilder {
     }
 
     private static func build(from domains: [ConfigurationDomain]) -> String {
+        // Write tools are listed straight from the registry (sorted for a
+        // byte-stable, KV-cacheable prefix). Each tool's own schema carries its
+        // `action` enum and per-action required fields, so the prompt only needs
+        // to name the tools — not restate their parameters.
+        let writeTools =
+            Set(domains.flatMap { $0.writeToolNames })
+            .sorted()
+            .map { "`\($0)`" }
+            .joined(separator: ", ")
+
         var lines: [String] = []
-        lines.append("# Osaurus Configuration Agent")
+        lines.append("# Configuring Osaurus")
         lines.append("")
         lines.append(
-            "You are the user's first stop for configuring Osaurus. "
-                + "Your job is to help them connect cloud providers, install local models, "
-                + "set up plugins / schedules / custom agents — anything they need to get the "
-                + "most out of Osaurus. You guide; you do not silently change things."
+            "You help the user configure Osaurus, and nothing else. Read current state with "
+                + "`osaurus_status`, `osaurus_list`, and `osaurus_describe`. Make changes by calling "
+                + "the matching tool below with an `action` (each tool's schema lists its actions and "
+                + "required fields)."
         )
         lines.append("")
-        lines.append("**Configurable domains:**")
-        if domains.isEmpty {
-            lines.append("- (no configuration domains registered yet)")
+        if writeTools.isEmpty {
+            lines.append("Change tools: (none registered yet)")
         } else {
-            for domain in domains {
-                lines.append(
-                    "- **\(domain.id)** — \(domain.summary) "
-                        + "(\(domain.menuHint))"
-                )
-            }
+            lines.append("Change tools: \(writeTools).")
         }
         lines.append("")
-        lines.append("**Reading state** — always available, call directly:")
-        lines.append("- `osaurus_status` — one-shot overview + suggested next steps")
-        lines.append("- `osaurus_list({scope, filter?})` — list items in a scope")
-        lines.append("- `osaurus_describe({scope, id})` — full detail for one item")
+        lines.append("Rules:")
+        lines.append("- The user confirms every change. Say what you'll do, then call the tool.")
+        lines.append(
+            "- Secrets (API keys, tokens) go through a native sheet straight to Keychain — never put "
+                + "them in your messages or tool arguments."
+        )
+        lines.append(
+            "- Your own persona, model, and temperature are set in Settings → Chat, not through these tools."
+        )
         lines.append("")
-        lines.append("**Performing writes** — writes are NOT in your default schema. To call a write:")
         lines.append(
-            "1. `capabilities_discover({query: \"<verb> <noun>\"})` — e.g. \"add provider\", \"install plugin\", \"download model\", \"create schedule\", \"create agent\"."
+            "Out of scope: you only configure Osaurus. For anything else — coding, web search, reading "
+                + "or writing files, or other chat tasks — offer to create a fitting agent with "
+                + "`osaurus_agent` (action `create`) or switch to an existing one with `osaurus_agent` "
+                + "(action `activate`); the user can also pick one from the agent menu."
         )
-        lines.append(
-            "2. `capabilities_load({ids: [\"tool/<name>\"]})` — injects the write tool's spec into your schema."
-        )
-        lines.append("3. Call the loaded tool with `snake_case` arguments.")
-        lines.append("")
-        lines.append("**Rules:**")
-        lines.append(
-            "- Secrets (API keys, OAuth tokens) NEVER appear in your messages or tool args. They flow through a native sheet directly to Keychain."
-        )
-        lines.append(
-            "- You cannot self-configure. Default-agent settings (persona, model, temperature) are user-edited in Settings → Chat."
-        )
-        lines.append("- Out of scope: server settings, memory, privacy filter, themes, watchers, sandbox internals.")
-        lines.append("- Never invent tool names — `osaurus_*_<verb>` writes only come from `capabilities_discover`.")
         lines.append("")
         return lines.joined(separator: "\n")
     }

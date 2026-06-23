@@ -521,13 +521,13 @@ private extension SandboxView {
     func preflightSummary(_ report: SandboxProvisioningReport) -> String {
         switch report.overallReadiness {
         case .ready:
-            return "Host paths and permissions are ready for sandbox tooling."
+            return L("Host paths and permissions are ready for sandbox tooling.")
         case .needsSetup:
-            return "\(report.warningFindings.count) setup finding(s) need attention before tools are fully ready."
+            return L("\(report.warningFindings.count) setup finding(s) need attention before tools are fully ready.")
         case .blocked:
-            return "\(report.blockingFindings.count) blocking finding(s) must be fixed before provisioning."
+            return L("\(report.blockingFindings.count) blocking finding(s) must be fixed before provisioning.")
         case .unproven:
-            return "One or more checks could not be proven; copy the report for support or CI proof."
+            return L("One or more checks could not be proven; copy the report for support or CI proof.")
         }
     }
 

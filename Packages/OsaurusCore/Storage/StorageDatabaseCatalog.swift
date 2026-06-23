@@ -37,6 +37,7 @@ public enum StorageDatabaseCatalog {
     public static func databaseTargets() -> [DatabaseTarget] {
         var targets: [DatabaseTarget] = [
             .init(label: "chat history", path: OsaurusPaths.chatHistoryDatabaseFile().path),
+            .init(label: "agent channels", path: OsaurusPaths.agentChannelMessagesDatabaseFile().path),
             .init(label: "memory", path: OsaurusPaths.memoryDatabaseFile().path),
             .init(label: "methods", path: OsaurusPaths.methodsDatabaseFile().path),
             .init(label: "tool index", path: OsaurusPaths.toolIndexDatabaseFile().path),

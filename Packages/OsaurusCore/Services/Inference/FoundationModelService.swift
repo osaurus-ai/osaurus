@@ -58,9 +58,12 @@ actor FoundationModelService: ToolCapableService {
     /// Real on-device context window of the system default model, in tokens,
     /// or `nil` when Foundation Models is unavailable on this device/OS.
     ///
-    /// `SystemLanguageModel.contextSize` is `@backDeployed(before: macOS 26.4)`,
-    /// so the property works all the way back to the framework's macOS 26.0
-    /// floor — we read the *true* window instead of assuming 4096. The value is
+    /// `SystemLanguageModel.contextSize` is `@backDeployed(before: macOS 26.4)`:
+    /// it back-deploys to the 26.0 runtime floor, but the *declaration* only ships
+    /// in the macOS 26.4+ SDK, so referencing it fails to compile on older SDKs
+    /// (≤ 26.2). The `HAS_FM_CONTEXT_SIZE` compilation condition — defined in
+    /// Package.swift when building against a 26.4+ SDK — gates the read; on older
+    /// SDKs we fall back to `nil` (window unknown). When present the value is the
     /// device + OS constant for the life of the process (4096 on the macOS 26.x
     /// baseline, 8192 on 27.0+ hardware), so it's memoized once: `ContextSizeResolver`
     /// is a pure, synchronous function called during UI layout and must not pay a
@@ -72,7 +75,9 @@ actor FoundationModelService: ToolCapableService {
             if #available(macOS 26.0, *) {
                 let model = SystemLanguageModel.default
                 guard model.isAvailable else { return nil }
-                return model.contextSize
+                #if HAS_FM_CONTEXT_SIZE
+                    return model.contextSize
+                #endif
             }
         #endif
         return nil

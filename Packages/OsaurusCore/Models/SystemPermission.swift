@@ -97,7 +97,7 @@ enum SystemPermission: String, CaseIterable, Codable, Sendable {
         case .microphone:
             return L("Allows voice transcription using the microphone for speech-to-text.")
         case .screenRecording:
-            return L("Allows capturing system audio for transcription. Screen content is not recorded.")
+            return L("Allows capturing screenshots and system audio when you approve those features.")
         }
     }
 

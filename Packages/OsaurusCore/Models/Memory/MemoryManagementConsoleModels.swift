@@ -246,9 +246,9 @@ public struct MemoryStorageHealth: Sendable {
 
         public var displayName: String {
             switch self {
-            case .healthy: return "Healthy"
-            case .degraded: return "Needs attention"
-            case .unavailable: return "Unavailable"
+            case .healthy: return L("Healthy")
+            case .degraded: return L("Needs attention")
+            case .unavailable: return L("Unavailable")
             }
         }
     }

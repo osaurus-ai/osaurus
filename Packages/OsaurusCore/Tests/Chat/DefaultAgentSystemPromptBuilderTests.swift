@@ -2,10 +2,12 @@
 //  DefaultAgentSystemPromptBuilderTests.swift
 //  OsaurusCoreTests
 //
-//  Verifies that the default-agent system prompt addendum is derived
-//  from the live `ConfigurationDomainRegistry` (single source of truth)
-//  and stays byte-stable across calls within the same generation so
-//  the KV-cache reuse story holds.
+//  Verifies the simplified default-agent system prompt addendum: it is
+//  derived from the live `ConfigurationDomainRegistry` (single source of
+//  truth — it lists the registered domains' consolidated write tools), it
+//  teaches DIRECT action-tool use (no capability-search protocol), it routes
+//  out-of-scope asks to `osaurus_agent`, and it stays byte-stable across
+//  calls within the same generation so the KV-cache reuse story holds.
 //
 //  Tests use `_renderForTests` for byte-level assertions against an
 //  arbitrary domain list (no shared-cache mutation) and the live
@@ -21,54 +23,51 @@ import Testing
 @MainActor
 struct DefaultAgentSystemPromptBuilderTests {
 
-    private static func probe(id: String, summary: String, menuHint: String) -> ConfigurationDomain {
+    private static func probe(id: String, writeToolNames: [String] = []) -> ConfigurationDomain {
         ConfigurationDomain(
             id: id,
             displayName: id.capitalized,
-            summary: summary,
-            menuHint: menuHint,
+            summary: "Summary for \(id).",
+            menuHint: "do / things",
             searchKeywords: [],
             exampleQueries: [],
             tools: [],
-            writeToolNames: []
+            writeToolNames: Set(writeToolNames)
         )
     }
 
     @Test
-    func render_listsEveryRegisteredDomain() {
+    func render_listsEveryDomainWriteTool() {
         let domains = [
-            Self.probe(id: "providers", summary: "Connect cloud LLMs.", menuHint: "add / update / remove"),
-            Self.probe(id: "models", summary: "Local MLX models.", menuHint: "download / cancel / delete"),
+            Self.probe(id: "providers", writeToolNames: ["osaurus_provider"]),
+            Self.probe(id: "models", writeToolNames: ["osaurus_model"]),
         ]
         let rendered = DefaultAgentSystemPromptBuilder._renderForTests(domains: domains)
 
-        #expect(rendered.contains("**providers**"))
-        #expect(rendered.contains("Connect cloud LLMs."))
-        #expect(rendered.contains("add / update / remove"))
-
-        #expect(rendered.contains("**models**"))
-        #expect(rendered.contains("Local MLX models."))
-        #expect(rendered.contains("download / cancel / delete"))
+        // The consolidated write tools are surfaced directly (sorted, in
+        // backticks) so the model knows exactly which tools exist.
+        #expect(rendered.contains("`osaurus_provider`"))
+        #expect(rendered.contains("`osaurus_model`"))
+        #expect(rendered.contains("Change tools:"))
     }
 
     @Test
-    func render_explainsSearchLoadCallPattern() {
+    func render_teachesDirectActionToolsNotCapabilitySearch() {
         let rendered = DefaultAgentSystemPromptBuilder._renderForTests(
-            domains: [Self.probe(id: "providers", summary: "S", menuHint: "H")]
+            domains: [Self.probe(id: "providers", writeToolNames: ["osaurus_provider"])]
         )
-        // The default-agent's "I can't see the write tool" recovery
-        // loop depends on these three sentences being present so the
-        // model knows to call capabilities_discover → capabilities_load
-        // → write tool rather than fabricate a name.
-        #expect(rendered.contains("capabilities_discover"))
-        #expect(rendered.contains("capabilities_load"))
-        #expect(rendered.contains("Performing writes"))
+        // The Default agent loads its writes directly — the prompt must tell
+        // it to pick an `action`, and must NOT resurrect the old
+        // discover/load protocol.
+        #expect(rendered.contains("action"))
+        #expect(!rendered.contains("capabilities_discover"))
+        #expect(!rendered.contains("capabilities_load"))
     }
 
     @Test
     func render_listsAlwaysAvailableReadTools() {
         let rendered = DefaultAgentSystemPromptBuilder._renderForTests(
-            domains: [Self.probe(id: "providers", summary: "S", menuHint: "H")]
+            domains: [Self.probe(id: "providers", writeToolNames: ["osaurus_provider"])]
         )
         #expect(rendered.contains("osaurus_status"))
         #expect(rendered.contains("osaurus_list"))
@@ -76,9 +75,22 @@ struct DefaultAgentSystemPromptBuilderTests {
     }
 
     @Test
+    func render_routesOutOfScopeToAgentTool() {
+        let rendered = DefaultAgentSystemPromptBuilder._renderForTests(
+            domains: [Self.probe(id: "providers", writeToolNames: ["osaurus_provider"])]
+        )
+        // Out-of-scope asks must be handed off to creating/switching an agent
+        // via `osaurus_agent`, not refused flatly.
+        #expect(rendered.contains("Out of scope"))
+        #expect(rendered.contains("osaurus_agent"))
+        #expect(rendered.contains("create"))
+        #expect(rendered.contains("activate"))
+    }
+
+    @Test
     func render_handlesEmptyRegistry() {
         let rendered = DefaultAgentSystemPromptBuilder._renderForTests(domains: [])
-        #expect(rendered.contains("no configuration domains registered yet"))
+        #expect(rendered.contains("none registered yet"))
     }
 
     @Test
@@ -113,26 +125,25 @@ struct DefaultAgentSystemPromptBuilderTests {
         }
 
         let beforeRender = DefaultAgentSystemPromptBuilder.render()
+        let probeWrite = "osaurus_probe_\(UUID().uuidString.prefix(6))"
         registry.register(
             Self.probe(
                 id: "probe-new-\(UUID().uuidString.prefix(6))",
-                summary: "Newly registered probe domain.",
-                menuHint: "do new things"
+                writeToolNames: [probeWrite]
             )
         )
         let afterRender = DefaultAgentSystemPromptBuilder.render()
         #expect(beforeRender != afterRender)
-        #expect(afterRender.contains("Newly registered probe domain."))
+        #expect(afterRender.contains(probeWrite))
     }
 
     @Test
     func render_warnsAboutSecretsNotInChatContext() {
         let rendered = DefaultAgentSystemPromptBuilder._renderForTests(
-            domains: [Self.probe(id: "providers", summary: "S", menuHint: "H")]
+            domains: [Self.probe(id: "providers", writeToolNames: ["osaurus_provider"])]
         )
-        // Phase C security invariant: the model is explicitly told not
-        // to echo secrets. The string is matched loosely because the
-        // exact phrasing may be tuned over time.
+        // Security invariant: the model is explicitly told not to echo
+        // secrets. Matched loosely because the exact phrasing may be tuned.
         #expect(rendered.lowercased().contains("secret"))
         #expect(rendered.contains("Keychain"))
     }

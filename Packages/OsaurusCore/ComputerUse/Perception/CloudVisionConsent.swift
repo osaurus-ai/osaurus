@@ -21,6 +21,7 @@ public final class CloudVisionConsent: ObservableObject {
     public static let shared = CloudVisionConsent()
 
     private let defaultsKey = "ai.osaurus.computeruse.cloudVisionConsent"
+    private let piiOnlyKey = "ai.osaurus.computeruse.cloudVisionPIIOnly"
     private let defaults: UserDefaults
 
     /// Persisted opt-in. Default `false` — pixels never leave the device until
@@ -28,14 +29,30 @@ public final class CloudVisionConsent: ObservableObject {
     @Published public private(set) var isPersistentlyGranted: Bool
     /// This-launch-only grant; never written to disk.
     @Published public private(set) var isSessionGranted: Bool = false
+    /// When `true`, a consented cloud screenshot masks only detected sensitive
+    /// text (`.pii`) instead of every recognized region (`.allText`). Default
+    /// `false` (`.allText`) so the safest redaction is the out-of-box behavior;
+    /// the user opts into the less-strict mode knowingly.
+    @Published public private(set) var masksOnlyDetectedPII: Bool
 
     public init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         self.isPersistentlyGranted = defaults.bool(forKey: defaultsKey)
+        self.masksOnlyDetectedPII = defaults.bool(forKey: piiOnlyKey)
     }
 
     /// The single value the router consults.
     public var isGranted: Bool { isPersistentlyGranted || isSessionGranted }
+
+    /// The redaction mode a consented cloud screenshot uses, derived from the
+    /// user's preference. `.allText` by default (mask everything).
+    public var scrubMode: ScrubMode { masksOnlyDetectedPII ? .pii : .allText }
+
+    /// Bindable setter for the redaction-mode preference.
+    public func setMasksOnlyDetectedPII(_ on: Bool) {
+        masksOnlyDetectedPII = on
+        defaults.set(on, forKey: piiOnlyKey)
+    }
 
     public func grantPersistently() {
         isPersistentlyGranted = true

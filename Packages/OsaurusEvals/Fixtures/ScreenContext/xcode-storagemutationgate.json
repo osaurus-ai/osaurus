@@ -1,0 +1,44 @@
+{
+  "apps": [
+    { "pid": 101, "bundleId": "com.apple.dt.Xcode", "name": "Xcode", "active": true, "hidden": false }
+  ],
+  "activeWindow": {
+    "pid": 101,
+    "app": "Xcode",
+    "title": "osaurus — StorageMutationGate.swift",
+    "x": 0, "y": 0, "w": 1400, "h": 900
+  },
+  "windowsByPid": {
+    "101": [
+      { "windowId": 1, "title": "osaurus — StorageMutationGate.swift", "focused": true, "minimized": false, "x": 0, "y": 0, "w": 1400, "h": 900 }
+    ]
+  },
+  "snapshot": {
+    "app": "Xcode",
+    "focusedWindow": "osaurus — StorageMutationGate.swift",
+    "truncated": false,
+    "windows": [
+      { "id": 1, "title": "osaurus — StorageMutationGate.swift", "focused": true, "x": 0, "y": 0, "w": 1400, "h": 900 }
+    ],
+    "elements": [
+      { "id": "editor", "role": "textarea", "label": "StorageMutationGate.swift", "value": "import Foundation\n\nstruct StorageMutationGate {\n    let isEnabled: Bool\n    let isClosed: Bool\n\n    func gate(_ mutation: StorageMutation) throws {\n        guard isEnabled else { return }\n        if isClosed { throw StorageError.gateClosed }\n        try mutation.apply()\n    }\n}", "focused": true, "enabled": true, "x": 360, "y": 80, "w": 960, "h": 760, "actions": [] },
+      { "id": "v1", "role": "statictext", "label": "swift-argument-parser version", "value": "9.15.0", "focused": false, "enabled": true, "x": 60, "y": 120, "w": 120, "h": 18, "actions": [] },
+      { "id": "v2", "role": "statictext", "label": "swift-collections version", "value": "0.3.11", "focused": false, "enabled": true, "x": 60, "y": 144, "w": 120, "h": 18, "actions": [] },
+      { "id": "v3", "role": "statictext", "label": "swift-nio version", "value": "1.2.0", "focused": false, "enabled": true, "x": 60, "y": 168, "w": 120, "h": 18, "actions": [] },
+      { "id": "v4", "role": "statictext", "label": "swift-syntax version", "value": "5.9.2", "focused": false, "enabled": true, "x": 60, "y": 192, "w": 120, "h": 18, "actions": [] },
+      { "id": "v5", "role": "statictext", "label": "swift-log version", "value": "2.0.1", "focused": false, "enabled": true, "x": 60, "y": 216, "w": 120, "h": 18, "actions": [] },
+      { "id": "v6", "role": "statictext", "label": "swift-metrics version", "value": "0.0.5", "focused": false, "enabled": true, "x": 60, "y": 240, "w": 120, "h": 18, "actions": [] },
+      { "id": "v7", "role": "statictext", "label": "swift-tools version", "value": "13.0.0", "focused": false, "enabled": true, "x": 60, "y": 264, "w": 120, "h": 18, "actions": [] },
+      { "id": "v8", "role": "statictext", "label": "swift-crypto version", "value": "1.1.4", "focused": false, "enabled": true, "x": 60, "y": 288, "w": 120, "h": 18, "actions": [] },
+      { "id": "section", "role": "statictext", "value": "Package Dependencies", "focused": false, "enabled": true, "x": 40, "y": 96, "w": 200, "h": 20, "actions": [] },
+      { "id": "pkg", "role": "statictext", "value": "swift-argument-parser", "focused": false, "enabled": true, "x": 40, "y": 100, "w": 200, "h": 20, "actions": [] }
+    ]
+  },
+  "focusedContent": {
+    "role": "textarea",
+    "label": "StorageMutationGate.swift",
+    "value": "import Foundation\n\nstruct StorageMutationGate {\n    let isEnabled: Bool\n    let isClosed: Bool\n\n    func gate(_ mutation: StorageMutation) throws {\n        guard isEnabled else { return }\n        if isClosed { throw StorageError.gateClosed }\n        try mutation.apply()\n    }\n}",
+    "selectedText": "throw StorageError.gateClosed",
+    "viewport": "func gate(_ mutation: StorageMutation) throws {\n    guard isEnabled else { return }\n    if isClosed { throw StorageError.gateClosed }\n    try mutation.apply()\n}"
+  }
+}

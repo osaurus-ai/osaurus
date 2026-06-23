@@ -1,0 +1,36 @@
+{
+  "apps": [
+    { "pid": 505, "bundleId": "com.example.ChatDesk", "name": "ChatDesk", "active": true, "hidden": false }
+  ],
+  "activeWindow": {
+    "pid": 505,
+    "app": "ChatDesk",
+    "title": "release-room (Channel) - Synthetic Workspace - ChatDesk",
+    "x": 0, "y": 0, "w": 1400, "h": 900
+  },
+  "windowsByPid": {
+    "505": [
+      { "windowId": 1, "title": "release-room (Channel) - Synthetic Workspace - ChatDesk", "focused": true, "minimized": false, "x": 0, "y": 0, "w": 1400, "h": 900 }
+    ]
+  },
+  "snapshot": {
+    "app": "ChatDesk",
+    "focusedWindow": "release-room (Channel) - Synthetic Workspace - ChatDesk",
+    "truncated": false,
+    "windows": [
+      { "id": 1, "title": "release-room (Channel) - Synthetic Workspace - ChatDesk", "focused": true, "x": 0, "y": 0, "w": 1400, "h": 900 }
+    ],
+    "elements": [
+      { "id": "side1", "role": "statictext", "value": "Threads", "focused": false, "enabled": true, "x": 24, "y": 120, "w": 120, "h": 18, "actions": [] },
+      { "id": "msg1", "role": "statictext", "value": "Ari Example: release checklist is ready for review", "focused": false, "enabled": true, "x": 300, "y": 190, "w": 760, "h": 22, "actions": [] },
+      { "id": "msg2", "role": "statictext", "value": "Blair Example: please confirm the rollback owner", "focused": false, "enabled": true, "x": 300, "y": 226, "w": 760, "h": 22, "actions": [] },
+      { "id": "composer", "role": "textfield", "label": "Message release-room", "value": "Confirmed: the fixture owner is listed in the checklist.", "selectedText": "fixture owner", "focused": true, "enabled": true, "x": 300, "y": 816, "w": 760, "h": 42, "actions": [] }
+    ]
+  },
+  "focusedContent": {
+    "role": "textfield",
+    "label": "Message release-room",
+    "value": "Confirmed: the fixture owner is listed in the checklist.",
+    "selectedText": "fixture owner"
+  }
+}

@@ -1,0 +1,41 @@
+{
+  "id": "agentdb.softdelete-restore",
+  "domain": "agent_loop",
+  "label": "agentdb • soft-delete then restore a row",
+  "query": "Create a table named reminders with a single column text (TEXT). Insert three reminders with the values 'a', 'b', and 'c'. Soft-delete the reminder whose text is 'b'. Then restore it. Finally, confirm that all three reminders are active again and tell me how many active reminders there are.",
+  "notes": "Soft-delete contract proof: db_delete sets _deleted_at (recoverable) and db_restore clears it. mustCallToolsInOrder pins delete-before-restore. dbState reads the per-eval-agent DB: after the restore all three rows are active (_deleted_at IS NULL), and none are hard-deleted (total still 3).",
+  "fixtures": {
+    "agentCapabilities": {
+      "dbEnabled": true
+    }
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 14,
+      "mustCallTools": [
+        "db_create_table",
+        "db_insert",
+        "db_delete",
+        "db_restore",
+        "db_query"
+      ],
+      "mustCallToolsInOrder": [
+        "db_delete",
+        "db_restore"
+      ],
+      "dbState": [
+        {
+          "sql": "SELECT COUNT(*) FROM reminders WHERE _deleted_at IS NULL",
+          "expectFirstValue": "3"
+        },
+        {
+          "sql": "SELECT COUNT(*) FROM reminders",
+          "expectFirstValue": "3"
+        }
+      ],
+      "finalTextContains": [
+        "3"
+      ]
+    }
+  }
+}

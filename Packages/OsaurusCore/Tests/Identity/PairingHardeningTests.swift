@@ -160,7 +160,7 @@ struct MultiAgentValidatorTests {
         )
 
         let result = validator.validate(rawKey: token)
-        guard case .valid(let issuer, let audience) = result else {
+        guard case .valid(let issuer, let audience, _) = result else {
             Issue.record("Agent-scoped paired key should validate, got \(result)")
             return
         }

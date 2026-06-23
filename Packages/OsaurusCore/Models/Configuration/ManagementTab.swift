@@ -15,6 +15,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable {
     case providers
     case agents
     case plugins
+    case channels
     case sandbox
     case tools
     case skills
@@ -36,6 +37,10 @@ public enum ManagementTab: String, CaseIterable, Identifiable {
 
     public var id: String { rawValue }
 
+    public static var visibleCases: [ManagementTab] {
+        allCases.filter { $0 != .channels }
+    }
+
     /// Resolves a sidebar tab id, including the legacy `"dashboard"` raw value.
     public static func resolved(from rawValue: String) -> ManagementTab? {
         switch rawValue {
@@ -51,6 +56,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable {
         case .providers: "cloud.fill"
         case .agents: "person.2.fill"
         case .plugins: "puzzlepiece.extension.fill"
+        case .channels: "bubble.left.and.bubble.right.fill"
         case .sandbox: "shippingbox.fill"
         case .tools: "wrench.and.screwdriver.fill"
         case .skills: "sparkles"
@@ -79,6 +85,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable {
         case .providers: L("Providers")
         case .agents: L("Agents")
         case .plugins: L("Plugins")
+        case .channels: L("Channels")
         case .sandbox: L("Sandbox")
         case .tools: L("Tools")
         case .skills: L("Skills")

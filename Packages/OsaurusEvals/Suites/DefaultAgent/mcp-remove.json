@@ -1,0 +1,18 @@
+{
+  "id": "default_agent.mcp-remove",
+  "domain": "default_agent",
+  "label": "default agent • remove an MCP server by id",
+  "query": "Remove the MCP server with id 3c9d1a86-2e57-4f04-b8a3-6d1f0c9e5b27.",
+  "notes": "action 'remove' with id. Unknown id → typed not-found error (no mutation); the selection assertion matches the emitted call.",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": ["osaurus_mcp"],
+      "mustNotCallTools": ["capabilities_discover", "capabilities_load"],
+      "argsMustContain": [
+        { "tool": "osaurus_mcp", "args": { "action": "remove" } }
+      ],
+      "maxIterations": 4
+    }
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "id": "default_agent.agent-delete",
+  "domain": "default_agent",
+  "label": "default agent • delete an agent by id",
+  "query": "Delete the agent with id d7c2a401-9b6e-4f38-8a15-3e0c9d27b6f4.",
+  "notes": "action 'delete' with id. Unknown id → typed not-found error (no mutation). The selection assertion pins action 'delete'.",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": ["osaurus_agent"],
+      "mustNotCallTools": ["capabilities_discover", "capabilities_load"],
+      "argsMustContain": [
+        { "tool": "osaurus_agent", "args": { "action": "delete" } }
+      ],
+      "maxIterations": 4
+    }
+  }
+}

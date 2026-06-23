@@ -159,6 +159,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             NSApp.setActivationPolicy(hideDockIcon ? .accessory : .regular)
         }
 
+        // Consolidate any agent records stranded in the legacy `Personas/`
+        // directory into `agents/` before the first agent load. Enabling a
+        // per-agent Database (or writing a custom avatar) creates `agents/`,
+        // which used to flip path resolution away from `Personas/` and make
+        // those agents vanish from Settings. Idempotent + conflict-safe.
+        OsaurusPaths.migrateLegacyPersonasIfNeeded()
+
         // Make MLX C++ errors recoverable instead of process-fatal. Must run
         // before any model load can call into MLX so the first forward pass
         // is already protected. See `MLXErrorRecovery` for the rationale and
@@ -170,9 +177,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         DocumentAdaptersBootstrap.registerBuiltIns()
 
         // Register every default-agent configure-tool domain. This is what
-        // wires `osaurus_provider_add`, `osaurus_model_download`, etc. into
-        // `ToolRegistry` and feeds the system-prompt domain menu. Adding a
-        // new domain is one new file under `Tools/Configuration/` plus one
+        // wires the consolidated `osaurus_provider`, `osaurus_model`, etc.
+        // into `ToolRegistry` and feeds the system-prompt domain menu. Adding
+        // a new domain is one new file under `Tools/Configuration/` plus one
         // register call in `ConfigurationDomainBootstrap`.
         ConfigurationDomainBootstrap.registerBuiltIns()
 
@@ -233,6 +240,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
 
         // Set up observers for server state changes
         setupObservers()
+
+        // Start tracking the user's most-recently-active (non-Osaurus) app so
+        // the opt-in screen-context snapshot can recover "what they were doing"
+        // even when Osaurus is itself frontmost at send time. Cheap: a single
+        // NSWorkspace activation observer.
+        FrontmostAppTracker.shared.start()
 
         // Set up distributed control listeners (local-only management)
         setupControlNotifications()
@@ -2048,8 +2061,15 @@ extension AppDelegate {
         initialTab: ManagementTab? = nil,
         deeplinkModelId: String? = nil,
         deeplinkFile: String? = nil,
-        deeplinkAgentId: UUID? = nil
+        deeplinkAgentId: UUID? = nil,
+        deeplinkRemoteAgentId: UUID? = nil
     ) {
+        // Remote-agent detail navigation rides the shared management state
+        // (mirrors `pendingPluginDetailId`) so it works for both a freshly
+        // created window and a reused one without rebuilding the SwiftUI graph.
+        if let deeplinkRemoteAgentId {
+            ManagementStateManager.shared.pendingRemoteAgentDetailId = deeplinkRemoteAgentId
+        }
         closePopoverAndPerform { [weak self] in
             guard let self = self else { return }
             // Reopening a reused window doesn't rebuild the SwiftUI graph, so

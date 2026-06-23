@@ -1,0 +1,37 @@
+{
+  "apps": [
+    { "pid": 502, "bundleId": "com.apple.finder", "name": "Finder", "active": true, "hidden": false }
+  ],
+  "activeWindow": {
+    "pid": 502,
+    "app": "Finder",
+    "title": "Design Assets",
+    "x": 20, "y": 40, "w": 1120, "h": 760
+  },
+  "windowsByPid": {
+    "502": [
+      { "windowId": 1, "title": "Design Assets", "focused": true, "minimized": false, "x": 20, "y": 40, "w": 1120, "h": 760 }
+    ]
+  },
+  "snapshot": {
+    "app": "Finder",
+    "focusedWindow": "Design Assets",
+    "truncated": false,
+    "windows": [
+      { "id": 1, "title": "Design Assets", "focused": true, "x": 20, "y": 40, "w": 1120, "h": 760 }
+    ],
+    "elements": [
+      { "id": "sidebar", "role": "statictext", "value": "Favorites", "focused": false, "enabled": true, "x": 42, "y": 120, "w": 120, "h": 18, "actions": [] },
+      { "id": "folder", "role": "statictext", "value": "Design Assets", "focused": false, "enabled": true, "x": 280, "y": 92, "w": 180, "h": 22, "actions": [] },
+      { "id": "file1", "role": "statictext", "value": "Synthetic Strategy Brief.pdf", "focused": false, "enabled": true, "x": 300, "y": 170, "w": 260, "h": 22, "actions": [] },
+      { "id": "file2", "role": "statictext", "value": "Fixture Screenshot Set", "focused": false, "enabled": true, "x": 300, "y": 210, "w": 260, "h": 22, "actions": [] },
+      { "id": "file3", "role": "statictext", "value": "Archive Notes", "focused": false, "enabled": true, "x": 300, "y": 250, "w": 260, "h": 22, "actions": [] },
+      { "id": "outline", "role": "outline", "label": "Files", "selectedText": "Synthetic Strategy Brief.pdf", "focused": true, "enabled": true, "x": 250, "y": 130, "w": 780, "h": 560, "actions": [] }
+    ]
+  },
+  "focusedContent": {
+    "role": "outline",
+    "label": "Files",
+    "selectedText": "Synthetic Strategy Brief.pdf"
+  }
+}

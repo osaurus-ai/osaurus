@@ -1,0 +1,18 @@
+{
+  "id": "default_agent.mcp-disable",
+  "domain": "default_agent",
+  "label": "default agent • disable an MCP server (disable action)",
+  "query": "Disable the MCP server 4f2b7e91-8c03-4a65-9d17-5e0a2c8f6b34 for now.",
+  "notes": "\"Disable\" maps directly to action 'disable' on the consolidated osaurus_mcp tool (a first-class action alongside enable, so the model never has to discover the 'enable' + enabled:false idiom — the eval matrix surfaced that older shape sending small models into a self-correction loop). Unknown id → typed not-found error. The selection assertion pins the 'disable' action, not the literal UUID (small models mis-transcribe 32-hex-digit ids).",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": ["osaurus_mcp"],
+      "mustNotCallTools": ["capabilities_discover", "capabilities_load"],
+      "argsMustContain": [
+        { "tool": "osaurus_mcp", "args": { "action": "disable" } }
+      ],
+      "maxIterations": 4
+    }
+  }
+}

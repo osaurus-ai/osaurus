@@ -33,7 +33,15 @@ enum ServerConfigurationStore {
         do {
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            try encoder.encode(configuration).write(to: url, options: [.atomic])
+            let data = try encoder.encode(configuration)
+            // Persist off the main thread. Tests (override directory / root)
+            // read the file back immediately, so they write synchronously.
+            ConfigDiskWriter.write(
+                data,
+                to: url,
+                synchronous: overrideDirectory != nil || OsaurusPaths.overrideRoot != nil,
+                onError: { print("[Osaurus] Failed to save ServerConfiguration: \($0)") }
+            )
         } catch {
             print("[Osaurus] Failed to save ServerConfiguration: \(error)")
         }

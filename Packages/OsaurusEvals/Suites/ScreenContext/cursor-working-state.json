@@ -1,0 +1,36 @@
+{
+  "id": "screen_context.cursor-working-state",
+  "domain": "screen_context",
+  "label": "Screen context • Cursor working state: active file + git branch/problems/position",
+  "query": "(ambient capture)",
+  "notes": "Behavior signals for an Electron editor whose buffer is inaccessible (Monaco sentinel). The code body is the AX ceiling and must stay absent, but the reliable layer still names what the user is doing: 'Active: editing AgentLoop.swift' from the (unsaved-marked) title and a 'Status:' line composed from the bottom status bar — git branch, problems count, language, and cursor position, left-to-right. The single-token 'Explorer' panel label stays out of 'On screen', and neither the sentinel nor a phantom 'Viewing:' appears.",
+  "fixtures": {},
+  "expect": {
+    "screenContext": {
+      "fixture": "cursor-working-state.json",
+      "focusedRoleEquals": "text area",
+      "gistContains": ["In Cursor"],
+      "mustContain": [
+        "In Cursor",
+        "Active: editing AgentLoop.swift",
+        "Status:",
+        "feature/screen-context",
+        "3 errors, 1 warning",
+        "Ln 42, Col 8"
+      ],
+      "mustNotContain": [
+        "not accessible",
+        "screen reader optimized",
+        "Viewing:",
+        "Shift+Option",
+        "Explorer"
+      ],
+      "orderedContains": [["feature/screen-context", "3 errors, 1 warning", "Ln 42, Col 8"]],
+      "rubric": [
+        "Indicates the user is editing the file AgentLoop.swift in Cursor",
+        "Surfaces the git branch, problem count, and cursor position as working status",
+        "Does not present the 'editor is not accessible' sentinel as content"
+      ]
+    }
+  }
+}

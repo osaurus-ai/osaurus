@@ -2,18 +2,16 @@
 //  PrivacyView.swift
 //  osaurus / PrivacyFilter
 //
-//  Top-level "Privacy" management tab. Two visual modes, switched on
-//  `PrivacyFilterModelDownloader.shared.state`:
+//  Top-level "Privacy" management tab. Always renders
+//  `ManagerHeaderWithTabs` + four sub-tabs (Overview / Rules /
+//  Providers / Model) so the surface scans like Server and Voice
+//  instead of a long card scroll.
 //
-//    • Pre-install: a full-viewport hero (`PrivacyInstallHero`) styled
-//      like `SettingsEmptyState` so the empty/onboarding language
-//      matches the rest of the app (Schedules, Watchers, Skills).
-//      Sub-tabs are deliberately NOT rendered yet — the settings are
-//      meaningless without a working classifier and would clutter the
-//      install path.
-//    • Post-install: `ManagerHeaderWithTabs` + four sub-tabs
-//      (Overview / Rules / Providers / Model) so the surface scans
-//      like Server and Voice instead of a 7-card scroll.
+//  The on-device AI model is OPTIONAL: the regex / preset / custom-rule
+//  layer works with zero download, so the panel is never gated on the
+//  bundle. The install + status UI lives in the Model tab, and the
+//  AI-detection toggle in Overview is the only control that needs the
+//  bundle (disabled with an Install link until the model verifies).
 //
 //  Persistence: `save()` is intentionally synchronous now. The previous
 //  `Task.detached { ... }` hop let the master toggle race app quit,
@@ -87,11 +85,29 @@ struct PrivacyView: View {
     @State private var selectedTab: PrivacyTab = .overview
 
     /// True when the detection model is fully installed + verified.
-    /// Drives the entire view's mode switch — pre-install gets the
-    /// install hero; post-install gets the tabbed settings surface.
+    /// Gates only the model-dependent affordances: the AI-detection
+    /// toggle, the Model tab's installed/empty state, and whether the
+    /// dry-run tester may use the model. The tabbed surface itself
+    /// always renders since the regex layer needs no bundle.
     private var isModelReady: Bool {
         if case .ready = downloader.state { return true }
         return false
+    }
+
+    /// Tabs whose content is a centered full-screen state rather than a
+    /// scrollable card list: the Providers empty state and the
+    /// not-yet-installed Model hero. These fill the content area
+    /// (bypassing the scroll view + insets) so the shared
+    /// `SettingsEmptyState` centers like every other settings tab.
+    private var isFullBleedTab: Bool {
+        switch selectedTab {
+        case .providers:
+            return providerManager.configuration.providers.isEmpty
+        case .model:
+            return !isModelReady
+        default:
+            return false
+        }
     }
 
     var body: some View {
@@ -101,22 +117,30 @@ struct PrivacyView: View {
                 .offset(y: hasAppeared ? 0 : -10)
                 .animation(.spring(response: 0.4, dampingFraction: 0.8), value: hasAppeared)
 
-            if isModelReady {
-                ScrollView {
+            // The tabbed surface is ALWAYS shown now — the regex /
+            // custom-rule layer works without the on-device model, so
+            // gating the whole panel on `isModelReady` would have
+            // hidden the rules a no-download user can fully use. The
+            // model's install / status UI lives in the Model tab.
+            //
+            // Full-bleed tabs (the Providers empty state, the
+            // not-yet-installed Model hero) fill the content area so
+            // their centered `SettingsEmptyState` reads like the rest
+            // of the app; the card-list tabs scroll under 24pt insets.
+            Group {
+                if isFullBleedTab {
                     selectedTabContent
-                        .padding(.horizontal, 24)
-                        .padding(.vertical, 24)
-                        .frame(maxWidth: .infinity, alignment: .top)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    ScrollView {
+                        selectedTabContent
+                            .padding(.horizontal, 24)
+                            .padding(.vertical, 24)
+                            .frame(maxWidth: .infinity, alignment: .top)
+                    }
                 }
-                .opacity(hasAppeared ? 1 : 0)
-            } else {
-                PrivacyInstallHero(
-                    state: downloader.state,
-                    hasAppeared: hasAppeared,
-                    onPrimary: { handlePrimaryInstallAction() },
-                    onCancel: { downloader.cancel() }
-                )
             }
+            .opacity(hasAppeared ? 1 : 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(theme.primaryBackground)
@@ -161,26 +185,17 @@ struct PrivacyView: View {
 
     // MARK: - Header
 
-    /// Two-shape header: pre-install uses the simpler title + subtitle
-    /// (no actions, no tabs); post-install promotes to the tabbed
-    /// header so users can jump between Overview/Rules/Providers/Model
-    /// without scrolling.
-    @ViewBuilder
+    /// Tabbed header so users can jump between
+    /// Overview/Rules/Providers/Model without scrolling. No header
+    /// actions today — install/verify/remove all live in the Model tab.
     private var headerView: some View {
-        if isModelReady {
-            ManagerHeaderWithTabs(
-                title: L("Privacy"),
-                subtitle: L("Redact sensitive content before it leaves your Mac, then restore it on responses.")
-            ) {
-                EmptyView()
-            } tabsRow: {
-                HeaderTabsRow(selection: $selectedTab)
-            }
-        } else {
-            ManagerHeader(
-                title: L("Privacy"),
-                subtitle: L("Redact sensitive content before it leaves your Mac, then restore it on responses.")
-            )
+        ManagerHeaderWithTabs(
+            title: L("Privacy"),
+            subtitle: L("Redact sensitive content before it leaves your Mac, then restore it on responses.")
+        ) {
+            EmptyView()
+        } tabsRow: {
+            HeaderTabsRow(selection: $selectedTab)
         }
     }
 
@@ -193,6 +208,8 @@ struct PrivacyView: View {
             PrivacyOverviewTab(
                 configuration: $configuration,
                 save: save,
+                isModelReady: isModelReady,
+                onInstallModel: { selectedTab = .model },
                 forgetActionMessage: forgetActionMessage,
                 forgetAllRedactions: forgetAllRedactions
             )
@@ -201,6 +218,7 @@ struct PrivacyView: View {
                 configuration: $configuration,
                 save: save,
                 saveDebounced: saveDebounced,
+                isModelReady: isModelReady,
                 presetsExpanded: $presetsExpanded,
                 customRuleEditorContext: $customRuleEditorContext,
                 onDeleteCustomRule: deleteCustomRule(id:),
@@ -211,13 +229,27 @@ struct PrivacyView: View {
                 providers: providerManager.configuration.providers,
                 configuration: $configuration,
                 save: save,
-                saveDebounced: saveDebounced
+                saveDebounced: saveDebounced,
+                hasAppeared: hasAppeared,
+                onOpenProviders: { ManagementStateManager.shared.selectedTab = .providers }
             )
         case .model:
-            PrivacyModelTab(
-                onReverify: downloader.reverify,
-                onRemove: downloader.remove
-            )
+            if isModelReady {
+                PrivacyModelTab(
+                    onReverify: downloader.reverify,
+                    onRemove: removeModelAndDisableAI
+                )
+            } else {
+                // Not installed yet: the install hero now lives inside
+                // the Model tab (it used to gate the entire panel).
+                // Everything else in Privacy works without it.
+                PrivacyInstallHero(
+                    state: downloader.state,
+                    hasAppeared: hasAppeared,
+                    onPrimary: { handlePrimaryInstallAction() },
+                    onCancel: { downloader.cancel() }
+                )
+            }
         }
     }
 
@@ -272,6 +304,21 @@ struct PrivacyView: View {
         }
     }
 
+    // MARK: - Model removal
+
+    /// Remove the on-disk bundle AND flip `aiDetectionEnabled` off in
+    /// one motion. Leaving AI detection on with no model would trap
+    /// every cloud send in the pipeline's fail-closed `engineUnavailable`
+    /// branch; turning it off drops cleanly to the regex-only path the
+    /// rest of Privacy already supports.
+    private func removeModelAndDisableAI() {
+        if configuration.aiDetectionEnabled {
+            configuration.aiDetectionEnabled = false
+            save()
+        }
+        downloader.remove()
+    }
+
     // MARK: - Persistence
 
     /// Synchronous on purpose. The previous `Task.detached { ... }`
@@ -308,7 +355,7 @@ struct PrivacyView: View {
 
 // MARK: - Privacy Tab
 
-/// The four sub-sections shown post-install. Providers stays in the
+/// The four sub-sections of the Privacy tab. Providers stays in the
 /// list even when zero remote providers are configured — the tab
 /// surfaces an empty state pointing the user at the Remote Providers
 /// manager rather than silently disappearing. Keeps the tab count
@@ -333,14 +380,15 @@ private enum PrivacyTab: String, CaseIterable, AnimatedTabItem {
     }
 }
 
-// MARK: - Install Hero (pre-install empty state)
+// MARK: - Install Hero (Model-tab empty state)
 
-/// Centered hero matching `SettingsEmptyState` visual weight: 88pt
-/// glowing accent circle, 22pt rounded bold title, 14pt secondary
-/// subtitle, 3 benefit bullets, prominent CTA. The download state
-/// machine (idle → enumerating → downloading → verifying → ready /
-/// failed) is folded INTO the same hero rather than swapping cards,
-/// so the user never sees layout jank as install progresses.
+/// Model-tab state for when the on-device bundle isn't installed yet.
+/// Idle / failed reuse the shared `SettingsEmptyState` (glowing icon,
+/// benefit cards, primary CTA) so the prompt matches every other empty
+/// settings tab; the active download states (enumerating → downloading
+/// → verifying) render a compact centered progress card with a Cancel
+/// action. `.ready` draws nothing — the parent swaps in
+/// `PrivacyModelTab` once the bundle verifies.
 private struct PrivacyInstallHero: View {
     @Environment(\.theme) private var theme
     let state: PrivacyFilterDownloadState
@@ -348,195 +396,145 @@ private struct PrivacyInstallHero: View {
     let onPrimary: () -> Void
     let onCancel: () -> Void
 
-    @State private var glowIntensity: CGFloat = 0.6
-
     var body: some View {
-        VStack(spacing: 24) {
-            Spacer()
-
-            glowingIcon
-                .opacity(hasAppeared ? 1 : 0)
-                .scaleEffect(hasAppeared ? 1 : 0.85)
-                .animation(.spring(response: 0.5, dampingFraction: 0.7).delay(0.1), value: hasAppeared)
-
-            VStack(spacing: 8) {
-                Text(LocalizedStringKey(title), bundle: .module)
-                    .font(.system(size: 22, weight: .bold, design: .rounded))
-                    .foregroundColor(theme.primaryText)
-                    .multilineTextAlignment(.center)
-
-                Text(LocalizedStringKey(subtitle), bundle: .module)
-                    .font(.system(size: 14))
-                    .foregroundColor(theme.secondaryText)
-                    .multilineTextAlignment(.center)
-                    .lineLimit(3)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .frame(maxWidth: 540)
-            .opacity(hasAppeared ? 1 : 0)
-            .offset(y: hasAppeared ? 0 : 15)
-            .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.2), value: hasAppeared)
-
-            benefitsRow
-                .opacity(hasAppeared ? 1 : 0)
-                .offset(y: hasAppeared ? 0 : 20)
-                .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.3), value: hasAppeared)
-
-            VStack(spacing: 12) {
-                primaryAction
-                progressRow
-                footnote
-            }
-            .frame(maxWidth: 540)
-            .opacity(hasAppeared ? 1 : 0)
-            .offset(y: hasAppeared ? 0 : 10)
-            .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.4), value: hasAppeared)
-
-            Spacer()
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(.horizontal, 32)
-        .onAppear {
-            withAnimation(.easeInOut(duration: 2).repeatForever(autoreverses: true)) {
-                glowIntensity = 1.0
-            }
-        }
-    }
-
-    // MARK: - Hero parts
-
-    private var glowingIcon: some View {
-        ZStack {
-            Circle()
-                .fill(accentColor)
-                .frame(width: 88, height: 88)
-                .blur(radius: 25)
-                .opacity(glowIntensity * 0.25)
-
-            Circle()
-                .fill(accentColor)
-                .frame(width: 88, height: 88)
-                .blur(radius: 12)
-                .opacity(glowIntensity * 0.15)
-
-            Circle()
-                .fill(
-                    LinearGradient(
-                        colors: [accentColor.opacity(0.18), accentColor.opacity(0.06)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-                .frame(width: 88, height: 88)
-
-            Image(systemName: icon)
-                .font(.system(size: 36, weight: .medium))
-                .foregroundStyle(
-                    LinearGradient(
-                        colors: [accentColor, accentColor.opacity(0.7)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-        }
-    }
-
-    private var benefitsRow: some View {
-        HStack(spacing: 12) {
-            benefitCard(
-                icon: "wand.and.stars",
-                title: L("On-device detection"),
-                description: L("Runs locally — none of your text touches an external model.")
-            )
-            benefitCard(
-                icon: "checkmark.shield",
-                title: L("Review redactions"),
-                description: L("Approve every match before sending, or auto-approve once you trust the picks.")
-            )
-            benefitCard(
-                icon: "arrow.uturn.backward.circle",
-                title: L("Live unscrub"),
-                description: L("Streaming replies are restored on the fly so chat reads naturally.")
-            )
-        }
-        .frame(maxWidth: 660)
-    }
-
-    private func benefitCard(icon: String, title: String, description: String) -> some View {
-        VStack(spacing: 10) {
-            Image(systemName: icon)
-                .font(.system(size: 18, weight: .medium))
-                .foregroundColor(theme.accentColor)
-                .frame(width: 36, height: 36)
-                .background(Circle().fill(theme.accentColor.opacity(0.1)))
-
-            VStack(spacing: 4) {
-                Text(LocalizedStringKey(title), bundle: .module)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-                Text(LocalizedStringKey(description), bundle: .module)
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.secondaryText)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .top)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 16)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(theme.secondaryBackground.opacity(0.5))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(theme.cardBorder.opacity(0.5), lineWidth: 1)
-                )
-        )
-    }
-
-    @ViewBuilder
-    private var primaryAction: some View {
         switch state {
-        case .idle:
-            actionButton(title: L("Install"), icon: "arrow.down.circle.fill", primary: true, action: onPrimary)
-        case .failed:
-            actionButton(title: L("Retry"), icon: "arrow.clockwise", primary: true, action: onPrimary)
+        case .idle, .failed:
+            staticState
         case .enumerating, .downloading, .verifying:
-            actionButton(title: L("Cancel"), icon: "xmark", primary: false, action: onCancel)
+            progressState
         case .ready:
             EmptyView()
         }
     }
 
-    private func actionButton(title: String, icon: String, primary: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Label {
-                Text(LocalizedStringKey(title), bundle: .module)
-                    .font(.system(size: 13, weight: .semibold))
-            } icon: {
-                Image(systemName: icon)
+    // MARK: - Idle / failed (shared empty state)
+
+    private var staticState: some View {
+        SettingsEmptyState(
+            icon: heroIcon,
+            title: heroTitleKey,
+            subtitle: heroSubtitle,
+            examples: benefits,
+            primaryAction: .init(
+                title: primaryActionTitle,
+                icon: primaryActionIcon,
+                handler: onPrimary
+            ),
+            hasAppeared: hasAppeared
+        )
+    }
+
+    private var benefits: [SettingsEmptyState.Example] {
+        [
+            .init(
+                icon: "wand.and.stars",
+                title: L("On-device detection"),
+                description: L("Runs locally — none of your text touches an external model.")
+            ),
+            .init(
+                icon: "checkmark.shield",
+                title: L("Review redactions"),
+                description: L("Approve every match before sending, or auto-approve once you trust the picks.")
+            ),
+            .init(
+                icon: "arrow.uturn.backward.circle",
+                title: L("Live unscrub"),
+                description: L("Streaming replies are restored on the fly so chat reads naturally.")
+            ),
+        ]
+    }
+
+    private var heroIcon: String {
+        if case .failed = state { return "exclamationmark.triangle.fill" }
+        return "hand.raised.fill"
+    }
+
+    private var heroTitleKey: String {
+        if case .failed = state { return "privacy.install.title.failed" }
+        return "privacy.install.title"
+    }
+
+    /// Failed surfaces the specific failure reason (falling back to the
+    /// generic copy) so the user can act on it; idle shows the pitch.
+    private var heroSubtitle: String {
+        if case .failed(let detail) = state {
+            return detail.isEmpty ? "privacy.install.subtitle.failed" : detail
+        }
+        return "privacy.install.subtitle"
+    }
+
+    private var primaryActionTitle: String {
+        if case .failed = state { return L("Retry") }
+        return L("Install")
+    }
+
+    private var primaryActionIcon: String {
+        if case .failed = state { return "arrow.clockwise" }
+        return "arrow.down.circle.fill"
+    }
+
+    // MARK: - Active download (compact progress card)
+
+    private var progressState: some View {
+        VStack(spacing: 24) {
+            Spacer()
+
+            VStack(spacing: 16) {
+                progressHeader
+                progressDetail
+                Button(action: onCancel) {
+                    Text("Cancel", bundle: .module)
+                }
+                .buttonStyle(SettingsButtonStyle())
             }
-            .foregroundColor(primary ? .white : theme.primaryText)
-            .padding(.horizontal, 20)
-            .padding(.vertical, 10)
+            .frame(maxWidth: 460)
+            .padding(24)
             .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(primary ? theme.accentColor : theme.tertiaryBackground)
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(theme.cardBackground)
                     .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(primary ? Color.clear : theme.inputBorder, lineWidth: 1)
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(theme.cardBorder, lineWidth: 1)
                     )
             )
+
+            Spacer()
         }
-        .buttonStyle(PlainButtonStyle())
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.horizontal, 32)
+    }
+
+    private var progressHeader: some View {
+        VStack(spacing: 10) {
+            ZStack {
+                Circle()
+                    .fill(theme.accentColor.opacity(0.12))
+                    .frame(width: 56, height: 56)
+                if case .downloading = state {
+                    Image(systemName: "arrow.down.circle.fill")
+                        .font(.system(size: 24, weight: .medium))
+                        .foregroundColor(theme.accentColor)
+                } else {
+                    ProgressView()
+                        .controlSize(.small)
+                        .tint(theme.accentColor)
+                }
+            }
+            Text(LocalizedStringKey(progressTitleKey), bundle: .module)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundColor(theme.primaryText)
+                .multilineTextAlignment(.center)
+            Text(LocalizedStringKey(progressSubtitleKey), bundle: .module)
+                .font(.system(size: 12))
+                .foregroundColor(theme.secondaryText)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 
     @ViewBuilder
-    private var progressRow: some View {
-        switch state {
-        case .downloading(let index, let count, let fileName, let downloaded, let total):
+    private var progressDetail: some View {
+        if case .downloading(let index, let count, let fileName, let downloaded, let total) = state {
             VStack(alignment: .leading, spacing: 6) {
                 let fraction: Double = total > 0 ? Double(downloaded) / Double(total) : 0
                 ProgressView(value: fraction, total: 1.0)
@@ -553,97 +551,30 @@ private struct PrivacyInstallHero: View {
                         .font(.system(size: 10, weight: .medium))
                         .foregroundColor(theme.tertiaryText)
                 }
-            }
-        case .enumerating, .verifying:
-            HStack(spacing: 8) {
-                ProgressView()
-                    .controlSize(.small)
-                Text(LocalizedStringKey(subtitle), bundle: .module)
-                    .font(.system(size: 11))
+                Text("The model is large; keep this window open while it downloads.", bundle: .module)
+                    .font(.system(size: 10))
                     .foregroundColor(theme.tertiaryText)
-            }
-        case .idle, .failed, .ready:
-            EmptyView()
-        }
-    }
-
-    @ViewBuilder
-    private var footnote: some View {
-        if case .failed(let detail) = state {
-            HStack(alignment: .top, spacing: 6) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(theme.warningColor)
-                Text(verbatim: detail)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.secondaryText)
                     .fixedSize(horizontal: false, vertical: true)
             }
-        } else if case .idle = state {
-            footnoteRow(
-                icon: "info.circle",
-                text: L(
-                    "About 2.8 GB. The detection model runs entirely on your Mac — no third-party traffic for detection."
-                )
-            )
-        } else if case .downloading = state {
-            footnoteRow(
-                icon: "info.circle",
-                text: L("The model is large; keep this window open while it downloads.")
-            )
+            .frame(maxWidth: .infinity)
         }
     }
 
-    private func footnoteRow(icon: String, text: String) -> some View {
-        HStack(alignment: .top, spacing: 6) {
-            Image(systemName: icon)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(theme.tertiaryText)
-            Text(LocalizedStringKey(text), bundle: .module)
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-
-    // MARK: - State derivations
-
-    private var icon: String {
+    private var progressTitleKey: String {
         switch state {
-        case .idle: return "hand.raised.fill"
-        case .enumerating, .downloading, .verifying: return "arrow.down.circle.fill"
-        case .failed: return "exclamationmark.triangle.fill"
-        case .ready: return "checkmark.seal.fill"
-        }
-    }
-
-    private var accentColor: Color {
-        switch state {
-        case .failed: return theme.warningColor
-        case .ready: return theme.successColor
-        default: return theme.accentColor
-        }
-    }
-
-    private var title: String {
-        switch state {
-        case .idle: return "privacy.install.title"
         case .enumerating: return "privacy.install.title.enumerating"
         case .downloading: return "privacy.install.title.downloading"
         case .verifying: return "privacy.install.title.verifying"
-        case .failed: return "privacy.install.title.failed"
-        case .ready: return "privacy.install.title.ready"
+        default: return "privacy.install.title"
         }
     }
 
-    private var subtitle: String {
+    private var progressSubtitleKey: String {
         switch state {
-        case .idle: return "privacy.install.subtitle"
         case .enumerating: return "privacy.install.subtitle.enumerating"
         case .downloading: return "privacy.install.subtitle.downloading"
         case .verifying: return "privacy.install.subtitle.verifying"
-        case .failed: return "privacy.install.subtitle.failed"
-        case .ready: return "privacy.install.subtitle.ready"
+        default: return "privacy.install.subtitle"
         }
     }
 
@@ -658,13 +589,21 @@ private struct PrivacyInstallHero: View {
 // MARK: - Overview Tab
 
 /// The "what does the filter actually do" tab: master enable toggle,
-/// review behavior (always-approve / skip code), confidence threshold,
-/// and the conversation-level Forget Redactions verb. These are the
-/// most-touched controls so they live one tap away from the header.
+/// the AI-detection layer toggle, review behavior (always-approve /
+/// skip code), and the conversation-level Forget Redactions verb.
+/// These are the most-touched controls so they live one tap away
+/// from the header.
 private struct PrivacyOverviewTab: View {
     @Environment(\.theme) private var theme
     @Binding var configuration: PrivacyFilterConfiguration
     let save: () -> Void
+    /// Whether the on-device detection model is installed + verified.
+    /// Gates the AI-detection toggle: AI can't be turned on without
+    /// the bundle (an AI-on + no-model state would fail-close every
+    /// cloud send), so when this is false we show an install prompt.
+    let isModelReady: Bool
+    /// Jump to the Model tab so the user can install the bundle.
+    let onInstallModel: () -> Void
     /// Read-only — the parent owns this `@State` and re-renders the
     /// tab when it changes; the tab never writes back to it.
     let forgetActionMessage: String?
@@ -673,51 +612,57 @@ private struct PrivacyOverviewTab: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 24) {
             SettingsSection(title: L("Filter"), icon: "lock.shield.fill") {
-                SettingsToggle(
-                    title: L("Scrub PII before sending to cloud providers"),
-                    description: L(
-                        "Detects PII in your messages and asks you to review before any cloud-bound request. Local models (MLX, Foundation) and on-device tools bypass the filter."
-                    ),
-                    isOn: Binding(
-                        get: { configuration.enabled },
-                        set: { newValue in
-                            configuration.enabled = newValue
-                            save()
-                        }
-                    )
-                )
+                SettingsSubsection(label: "Detection") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        SettingsToggle(
+                            title: L("Scrub PII before sending to cloud providers"),
+                            description: L(
+                                "Detects PII in your messages and asks you to review before any cloud-bound request. Local models (MLX, Foundation) and on-device tools bypass the filter."
+                            ),
+                            isOn: Binding(
+                                get: { configuration.enabled },
+                                set: { newValue in
+                                    configuration.enabled = newValue
+                                    save()
+                                }
+                            )
+                        )
 
-                SettingsToggle(
-                    title: L("Skip Code Blocks"),
-                    description: L("Don't scan fenced (```) or inline (`) code spans."),
-                    isOn: Binding(
-                        get: { configuration.skipCodeBlocks },
-                        set: { newValue in
-                            configuration.skipCodeBlocks = newValue
-                            save()
-                        }
-                    )
-                )
+                        aiDetectionRow
 
-                SettingsToggle(
-                    title: L("Always Approve by Default"),
-                    description: L("Skip the review sheet — still redact, just don't ask each turn."),
-                    isOn: Binding(
-                        get: { configuration.alwaysApproveByDefault },
-                        set: { newValue in
-                            configuration.alwaysApproveByDefault = newValue
-                            save()
+                        if configuration.enabled && !hasActiveDetector {
+                            noDetectorNote
                         }
-                    )
-                )
+                    }
+                }
 
-                // Intentionally hidden until the underlying classifier
-                // exposes a threshold knob. `confidenceThreshold` is
-                // persisted (so a future build can round-trip the
-                // user's choice without a migration) but
-                // `PrivacyFilterEngine.detect` doesn't read it today,
-                // so surfacing a slider that does nothing is worse
-                // than not surfacing it at all.
+                SettingsSubsection(label: "Review") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        SettingsToggle(
+                            title: L("Skip Code Blocks"),
+                            description: L("Don't scan fenced (```) or inline (`) code spans."),
+                            isOn: Binding(
+                                get: { configuration.skipCodeBlocks },
+                                set: { newValue in
+                                    configuration.skipCodeBlocks = newValue
+                                    save()
+                                }
+                            )
+                        )
+
+                        SettingsToggle(
+                            title: L("Always Approve by Default"),
+                            description: L("Skip the review sheet — still redact, just don't ask each turn."),
+                            isOn: Binding(
+                                get: { configuration.alwaysApproveByDefault },
+                                set: { newValue in
+                                    configuration.alwaysApproveByDefault = newValue
+                                    save()
+                                }
+                            )
+                        )
+                    }
+                }
             }
 
             SettingsSection(
@@ -727,6 +672,97 @@ private struct PrivacyOverviewTab: View {
                 forgetCard
             }
         }
+    }
+
+    // MARK: - AI detection layer
+
+    /// When the model is installed: a normal toggle for the AI layer.
+    /// When it isn't: a disabled-looking row with an Install affordance
+    /// pointing at the Model tab — you can't enable AI without the
+    /// bundle.
+    @ViewBuilder
+    private var aiDetectionRow: some View {
+        if isModelReady {
+            SettingsToggle(
+                title: L("AI detection (on-device model)"),
+                description: L(
+                    "Use the on-device model to catch names, addresses, dates, and free-form secrets that pattern rules miss. Runs locally; pattern rules in the Rules tab work without it."
+                ),
+                isOn: Binding(
+                    get: { configuration.aiDetectionEnabled },
+                    set: { newValue in
+                        configuration.aiDetectionEnabled = newValue
+                        save()
+                    }
+                )
+            )
+        } else {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("AI detection (on-device model)", bundle: .module)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(theme.primaryText)
+                    Text(
+                        "Install the ~2.8 GB on-device model to also catch names, addresses, dates, and secrets. Pattern rules in the Rules tab already work without it.",
+                        bundle: .module
+                    )
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.tertiaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer()
+                Button(action: onInstallModel) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.down.circle")
+                        Text("Install", bundle: .module)
+                    }
+                }
+                .buttonStyle(SettingsButtonStyle())
+            }
+            .settingsRowCard()
+        }
+    }
+
+    /// True when at least one detection source would actually run for
+    /// an outbound send: the AI layer (model installed + enabled) or
+    /// any active regex source (a built-in category, an enabled preset,
+    /// or an enabled custom rule).
+    private var hasActiveDetector: Bool {
+        if isModelReady && configuration.aiDetectionEnabled { return true }
+        let anyBuiltin = PrivacyFilterConfiguration.builtinPatternCategories
+            .contains { configuration.isBuiltinPatternEnabled($0) }
+        if anyBuiltin { return true }
+        let anyPreset = PrivacyRulePresets.all.contains { configuration.isPresetEnabled($0.id) }
+        if anyPreset { return true }
+        return configuration.customRules.contains { $0.enabled }
+    }
+
+    /// Real informational note (not a gate): the filter is on but no
+    /// detector would fire, so nothing gets redacted. Points the user
+    /// at the two ways to fix it.
+    private var noDetectorNote: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(theme.warningColor)
+            Text(
+                "Privacy Filter is on, but no detector is active. Turn on AI detection above, or enable a pattern in the Rules tab — otherwise messages send unredacted.",
+                bundle: .module
+            )
+            .font(.system(size: 11))
+            .foregroundColor(theme.secondaryText)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(theme.warningColor.opacity(0.1))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(theme.warningColor.opacity(0.3), lineWidth: 1)
+                )
+        )
     }
 
     private var forgetCard: some View {
@@ -743,7 +779,7 @@ private struct PrivacyOverviewTab: View {
                 Button(action: forgetAllRedactions) {
                     Text("Forget Redactions in Every Conversation", bundle: .module)
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(SettingsButtonStyle())
                 Spacer()
                 if let message = forgetActionMessage {
                     Text(LocalizedStringKey(message), bundle: .module)
@@ -752,15 +788,7 @@ private struct PrivacyOverviewTab: View {
                 }
             }
         }
-        .padding(14)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(theme.inputBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(theme.inputBorder, lineWidth: 1)
-                )
-        )
+        .settingsRowCard()
     }
 }
 
@@ -780,6 +808,10 @@ private struct PrivacyRulesTab: View {
     /// JSON write instead of four. Falls through to `save` on
     /// `onDisappear` / quit.
     let saveDebounced: () -> Void
+    /// Lets the dry-run tester include the on-device model's spans
+    /// when it's installed + loaded (otherwise it previews the regex
+    /// layer alone).
+    let isModelReady: Bool
     @Binding var presetsExpanded: Bool
     @Binding var customRuleEditorContext: CustomRuleEditorContext?
     let onDeleteCustomRule: (UUID) -> Void
@@ -790,6 +822,7 @@ private struct PrivacyRulesTab: View {
             detectionPatternsSection
             presetRulesSection
             customRulesSection
+            PrivacyDryRunTester(configuration: configuration, isModelReady: isModelReady)
         }
     }
 
@@ -941,15 +974,7 @@ private struct PrivacyRulesTab: View {
             .labelsHidden()
             .toggleStyle(.switch)
         }
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(theme.inputBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(theme.inputBorder, lineWidth: 1)
-                )
-        )
+        .settingsRowCard()
     }
 
     private func presetTitleKey(_ id: String) -> String { "privacy.presets.\(id).title" }
@@ -961,7 +986,7 @@ private struct PrivacyRulesTab: View {
         SettingsSection(title: L("Custom Rules"), icon: "wand.and.rays") {
             VStack(alignment: .leading, spacing: 10) {
                 Text(
-                    "Define your own regex patterns — internal codenames, customer IDs, anything Osaurus's built-ins don't cover. Bad patterns are validated before save.",
+                    "Catch internal codenames, customer IDs, or anything the built-ins miss. Build a rule with no regex, or write your own pattern.",
                     bundle: .module
                 )
                 .font(.system(size: 11))
@@ -976,15 +1001,7 @@ private struct PrivacyRulesTab: View {
                         Spacer()
                         addCustomRuleButton
                     }
-                    .padding(10)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(theme.inputBackground)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .stroke(theme.inputBorder, lineWidth: 1)
-                            )
-                    )
+                    .settingsRowCard()
                 } else {
                     VStack(spacing: 8) {
                         ForEach(configuration.customRules) { rule in
@@ -1009,7 +1026,36 @@ private struct PrivacyRulesTab: View {
                 Text("Add Rule", bundle: .module)
             }
         }
-        .buttonStyle(.borderedProminent)
+        .buttonStyle(SettingsButtonStyle(isPrimary: true))
+    }
+
+    /// Compact icon-tile button for the per-row Edit/Delete actions.
+    /// Matches the app's tertiary icon-tile language (28pt rounded
+    /// surface) instead of system `.bordered` buttons; `destructive`
+    /// swaps the neutral chrome for a tinted error treatment.
+    private func ruleRowIconButton(
+        systemName: String,
+        destructive: Bool = false,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(destructive ? theme.errorColor : theme.secondaryText)
+                .frame(width: 28, height: 28)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(destructive ? theme.errorColor.opacity(0.10) : theme.tertiaryBackground)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(
+                                    destructive ? theme.errorColor.opacity(0.25) : theme.inputBorder,
+                                    lineWidth: 1
+                                )
+                        )
+                )
+        }
+        .buttonStyle(.plain)
     }
 
     private func customRuleRow(_ rule: PrivacyRule) -> some View {
@@ -1041,34 +1087,18 @@ private struct PrivacyRulesTab: View {
                 .labelsHidden()
                 .toggleStyle(.switch)
 
-                Button {
+                ruleRowIconButton(systemName: "pencil") {
                     customRuleEditorContext = CustomRuleEditorContext(rule: rule)
-                } label: {
-                    Image(systemName: "pencil")
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
                 .localizedHelp("Edit this rule.")
 
-                Button(role: .destructive) {
+                ruleRowIconButton(systemName: "trash", destructive: true) {
                     onDeleteCustomRule(rule.id)
-                } label: {
-                    Image(systemName: "trash")
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
                 .localizedHelp("Delete this rule.")
             }
         }
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(theme.inputBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(theme.inputBorder, lineWidth: 1)
-                )
-        )
+        .settingsRowCard()
     }
 }
 
@@ -1088,6 +1118,11 @@ private struct PrivacyProvidersTab: View {
     /// handful of providers in a row doesn't issue a JSON write
     /// per toggle.
     let saveDebounced: () -> Void
+    /// Drives the shared empty state's entrance animation in step with
+    /// the rest of the panel.
+    let hasAppeared: Bool
+    /// Jump to the Remote Providers manager so the user can add one.
+    let onOpenProviders: () -> Void
 
     var body: some View {
         if providers.isEmpty {
@@ -1106,30 +1141,18 @@ private struct PrivacyProvidersTab: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 16) {
-            Spacer().frame(height: 40)
-            ZStack {
-                Circle()
-                    .fill(theme.accentColor.opacity(0.12))
-                    .frame(width: 72, height: 72)
-                Image(systemName: "cloud.fill")
-                    .font(.system(size: 30, weight: .medium))
-                    .foregroundColor(theme.accentColor)
-            }
-            VStack(spacing: 6) {
-                Text("privacy.providers.empty.title", bundle: .module)
-                    .font(.system(size: 18, weight: .semibold, design: .rounded))
-                    .foregroundColor(theme.primaryText)
-                Text("privacy.providers.empty.subtitle", bundle: .module)
-                    .font(.system(size: 13))
-                    .foregroundColor(theme.secondaryText)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .frame(maxWidth: 420)
-            Spacer().frame(height: 40)
-        }
-        .frame(maxWidth: .infinity)
+        SettingsEmptyState(
+            icon: "cloud.fill",
+            title: "privacy.providers.empty.title",
+            subtitle: "privacy.providers.empty.subtitle",
+            examples: [],
+            primaryAction: .init(
+                title: L("Open Remote Providers"),
+                icon: "cloud.fill",
+                handler: onOpenProviders
+            ),
+            hasAppeared: hasAppeared
+        )
     }
 
     private func providerToggleRow(_ provider: RemoteProvider) -> some View {
@@ -1193,7 +1216,7 @@ private struct PrivacyModelTab: View {
                                 Text("Re-verify", bundle: .module)
                             }
                         }
-                        .buttonStyle(.bordered)
+                        .buttonStyle(SettingsButtonStyle())
                         .localizedHelp("Re-run the model bundle SHA-256 verification.")
 
                         // Destructive action lives in the same row as
@@ -1211,21 +1234,13 @@ private struct PrivacyModelTab: View {
                                 Text("Remove", bundle: .module)
                             }
                         }
-                        .buttonStyle(.bordered)
+                        .buttonStyle(SettingsButtonStyle(isDestructive: true))
                         .localizedHelp(
                             "Delete the on-disk model bundle. You'll need to re-download it from the Install button to use the Privacy Filter again."
                         )
                     }
                 }
-                .padding(14)
-                .background(
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(theme.inputBackground)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10)
-                                .stroke(theme.inputBorder, lineWidth: 1)
-                        )
-                )
+                .settingsRowCard()
             }
         }
         .confirmationDialog(
@@ -1251,36 +1266,216 @@ private struct PrivacyModelTab: View {
     }
 }
 
+// MARK: - Dry-run Tester
+
+/// All-rules dry-run tester. Paste sample text and preview exactly
+/// what the live configuration would redact — the deterministic regex
+/// layer always, plus the on-device model when it's installed + the
+/// user has AI detection on. Runs the real `PrivacyFilterEngine.detect`
+/// against a throwaway `RedactionMap` so the previewed placeholder
+/// tokens match what an actual send would mint.
+private struct PrivacyDryRunTester: View {
+    @Environment(\.theme) private var theme
+    let configuration: PrivacyFilterConfiguration
+    let isModelReady: Bool
+
+    @State private var sample: String = ""
+    @State private var results: [DetectedEntity] = []
+    @State private var didRun: Bool = false
+    @State private var isRunning: Bool = false
+
+    var body: some View {
+        SettingsSection(title: L("Test Your Rules"), icon: "play.circle.fill") {
+            VStack(alignment: .leading, spacing: 10) {
+                Text(
+                    "Paste sample text to preview exactly what Osaurus would redact with your current rules — before anything reaches a provider.",
+                    bundle: .module
+                )
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
+                .fixedSize(horizontal: false, vertical: true)
+
+                TextField(L("Paste text to test…"), text: $sample, axis: .vertical)
+                    .lineLimit(3 ... 8)
+                    .font(.system(size: 12, design: .monospaced))
+                    .textFieldStyle(.roundedBorder)
+
+                HStack(spacing: 10) {
+                    Button(action: runTest) {
+                        Text("Run test", bundle: .module)
+                    }
+                    .buttonStyle(SettingsButtonStyle(isPrimary: true))
+                    .disabled(sample.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isRunning)
+
+                    if isRunning {
+                        ProgressView().controlSize(.small)
+                    }
+                    Spacer()
+                    Text(verbatim: layerNote)
+                        .font(.system(size: 10))
+                        .foregroundColor(theme.tertiaryText)
+                }
+
+                if didRun {
+                    resultsView
+                }
+            }
+        }
+    }
+
+    /// Which detection layers the next run will use, so the user isn't
+    /// surprised that model-only categories (names, addresses) don't
+    /// appear when AI detection is off or the bundle isn't installed.
+    private var layerNote: String {
+        if configuration.aiDetectionEnabled && isModelReady {
+            return L("Using AI + pattern rules")
+        }
+        return L("Using pattern rules only")
+    }
+
+    @ViewBuilder
+    private var resultsView: some View {
+        Divider().padding(.vertical, 2)
+        if results.isEmpty {
+            HStack(spacing: 6) {
+                Image(systemName: "checkmark.circle")
+                    .foregroundColor(theme.tertiaryText)
+                Text("No matches — nothing would be redacted.", bundle: .module)
+                    .font(.system(size: 12))
+                    .foregroundColor(theme.tertiaryText)
+            }
+        } else {
+            VStack(alignment: .leading, spacing: 10) {
+                Text(verbatim: summaryText)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+                ForEach(EntityCategory.allCases, id: \.self) { category in
+                    let items = uniqueResults.filter { $0.category == category }
+                    if !items.isEmpty {
+                        categoryGroup(category: category, items: items)
+                    }
+                }
+            }
+        }
+    }
+
+    private func categoryGroup(category: EntityCategory, items: [DetectedEntity]) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            PrivacyCategoryBadge(category: category)
+            ForEach(items) { item in
+                HStack(spacing: 6) {
+                    Text(verbatim: item.original)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundColor(theme.primaryText)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Image(systemName: "arrow.right")
+                        .font(.system(size: 9))
+                        .foregroundColor(theme.tertiaryText)
+                    Text(verbatim: item.placeholder.token)
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundColor(theme.accentColor)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .settingsRowCard()
+    }
+
+    /// De-duplicate by minted token: the same original appearing twice
+    /// in the sample interns to one placeholder, so show it once.
+    private var uniqueResults: [DetectedEntity] {
+        var seen = Set<String>()
+        var out: [DetectedEntity] = []
+        for entity in results where seen.insert(entity.placeholder.token).inserted {
+            out.append(entity)
+        }
+        return out
+    }
+
+    private var summaryText: String {
+        let count = uniqueResults.count
+        let format = String(
+            localized: "\(count) item(s) would be redacted",
+            bundle: .module,
+            comment: "Dry-run match count"
+        )
+        return format
+    }
+
+    private func runTest() {
+        let text = sample
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        isRunning = true
+        Task { @MainActor in
+            let map = RedactionMap(conversationID: UUID())
+            let ruleset = RegexEntityDetector.EffectiveRuleSet.build(from: configuration)
+            // Only ask for the model when it's actually loaded so the
+            // tester never triggers a 2.8 GB download or throws
+            // `.notLoaded`; otherwise preview the regex layer alone.
+            let modelLoaded = PrivacyFilterEngine.shared.isLoaded
+            let useModel = configuration.aiDetectionEnabled && isModelReady && modelLoaded
+            let detected =
+                (try? await PrivacyFilterEngine.shared.detect(
+                    in: text,
+                    map: map,
+                    skipCodeBlocks: configuration.skipCodeBlocks,
+                    ruleset: ruleset,
+                    useModel: useModel
+                )) ?? []
+            results = detected
+            didRun = true
+            isRunning = false
+        }
+    }
+}
+
+// MARK: - Card Surface
+
+private extension View {
+    /// Canonical Privacy card chrome: the same 10pt rounded
+    /// `inputBackground` + 1pt `inputBorder` surface the shared
+    /// `SettingsToggle` uses, so every hand-rolled Privacy card matches
+    /// the toggles and each other. 12pt inner padding.
+    func settingsRowCard() -> some View {
+        modifier(PrivacySettingsRowCard())
+    }
+}
+
+private struct PrivacySettingsRowCard: ViewModifier {
+    @Environment(\.theme) private var theme
+
+    func body(content: Content) -> some View {
+        content
+            .padding(12)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(theme.inputBackground)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(theme.inputBorder, lineWidth: 1)
+                    )
+            )
+    }
+}
+
 // MARK: - Category Badge
 
-/// Tiny accent pill used in rule rows (preset + custom). Factored out
-/// of the old in-line helper so both `PrivacyRulesTab.presetRow` and
-/// `customRuleRow` use the same component without re-passing a theme
-/// instance.
+/// Tiny accent pill used in rule rows (preset + custom) and the dry-run
+/// tester. Factored out of the old in-line helper so every call site
+/// uses the same component without re-passing a theme instance.
 private struct PrivacyCategoryBadge: View {
     @Environment(\.theme) private var theme
     let category: EntityCategory
 
     var body: some View {
-        Text(LocalizedStringKey(key), bundle: .module)
-            .font(.system(size: 9, weight: .semibold))
-            .padding(.horizontal, 6)
+        Text(LocalizedStringKey(category.localizationKey), bundle: .module)
+            .font(.system(size: 10, weight: .semibold))
+            .padding(.horizontal, 7)
             .padding(.vertical, 2)
             .foregroundColor(theme.accentColor)
             .background(Capsule().fill(theme.accentColor.opacity(0.12)))
-    }
-
-    private var key: String {
-        switch category {
-        case .accountNumber: return "privacy.category.accountNumber"
-        case .address: return "privacy.category.address"
-        case .email: return "privacy.category.email"
-        case .person: return "privacy.category.person"
-        case .phone: return "privacy.category.phone"
-        case .url: return "privacy.category.url"
-        case .date: return "privacy.category.date"
-        case .secret: return "privacy.category.secret"
-        }
+            .overlay(Capsule().stroke(theme.accentColor.opacity(0.25), lineWidth: 0.5))
     }
 }
 

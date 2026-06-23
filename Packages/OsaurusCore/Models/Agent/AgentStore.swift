@@ -13,6 +13,11 @@ public enum AgentStore {
 
     /// Load all agents sorted by name, including built-ins
     public static func loadAll() -> [Agent] {
+        // Consolidate any records stranded in the legacy `Personas/` directory
+        // before resolving where to read from — enabling a per-agent Database
+        // or writing a custom avatar creates `agents/`, which flips path
+        // resolution away from `Personas/`. Idempotent + conflict-safe.
+        OsaurusPaths.migrateLegacyPersonasIfNeeded()
         var agents = Agent.builtInAgents
         let directory = agentsDirectory()
         OsaurusPaths.ensureExistsSilent(directory)

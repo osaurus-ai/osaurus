@@ -1,0 +1,18 @@
+{
+  "id": "default_agent.provider-update-host",
+  "domain": "default_agent",
+  "label": "default agent • update a provider's non-secret field",
+  "query": "Change the host for my custom provider 7e1a9c35-0b42-4d69-8f17-3a6c2e9d5b08 to https://api.internal.example.",
+  "notes": "A non-secret field change maps to action 'update' (not set_credentials, which is for keys). Unknown id → typed not-found error (no mutation). The selection assertion pins the 'update' action (not the literal UUID — small models mis-transcribe ids), proving the model separates non-secret patches from credential rotation.",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": ["osaurus_provider"],
+      "mustNotCallTools": ["capabilities_discover", "capabilities_load"],
+      "argsMustContain": [
+        { "tool": "osaurus_provider", "args": { "action": "update" } }
+      ],
+      "maxIterations": 4
+    }
+  }
+}

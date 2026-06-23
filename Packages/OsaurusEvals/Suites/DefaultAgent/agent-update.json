@@ -1,0 +1,18 @@
+{
+  "id": "default_agent.agent-update",
+  "domain": "default_agent",
+  "label": "default agent • update an agent by id",
+  "query": "Rename the agent 2a9f4c7d-1e83-4b56-9d02-7f1a6c3e8b45 to \"Helper\".",
+  "notes": "action 'update' with id (+ name patch). Unknown id → typed not-found error (no mutation). The selection assertion pins action 'update', distinguishing a patch from create.",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": ["osaurus_agent"],
+      "mustNotCallTools": ["capabilities_discover", "capabilities_load"],
+      "argsMustContain": [
+        { "tool": "osaurus_agent", "args": { "action": "update" } }
+      ],
+      "maxIterations": 4
+    }
+  }
+}
