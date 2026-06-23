@@ -70,12 +70,16 @@ public final class FolderContextService: ObservableObject {
         clearFolderInternal(unregisterTools: true)
 
         do {
-            // Create security-scoped bookmark
-            let bookmarkData = try url.bookmarkData(
-                options: .withSecurityScope,
-                includingResourceValuesForKeys: nil,
-                relativeTo: nil
-            )
+            // Creating a security-scoped bookmark does synchronous IPC and can
+            // stall for seconds; keep it off the main actor so it doesn't trip
+            // the app-hang watchdog.
+            let bookmarkData = try await Task.detached(priority: .userInitiated) {
+                try url.bookmarkData(
+                    options: .withSecurityScope,
+                    includingResourceValuesForKeys: nil,
+                    relativeTo: nil
+                )
+            }.value
 
             // Save bookmark to UserDefaults
             UserDefaults.standard.set(bookmarkData, forKey: bookmarkKey)
@@ -337,35 +341,41 @@ public final class FolderContextService: ObservableObject {
             return
         }
 
-        do {
-            var isStale = false
-            let url = try URL(
-                resolvingBookmarkData: bookmarkData,
-                options: .withSecurityScope,
-                relativeTo: nil,
-                bookmarkDataIsStale: &isStale
-            )
+        // Called from `init`. Resolving the bookmark does synchronous IPC to
+        // the scoped-bookmarks agent, so push it off the main actor and apply
+        // the result back on main once it resolves.
+        Task {
+            let resolved: (url: URL, isStale: Bool)
+            do {
+                resolved = try await Task.detached(priority: .userInitiated) {
+                    var isStale = false
+                    let url = try URL(
+                        resolvingBookmarkData: bookmarkData,
+                        options: .withSecurityScope,
+                        relativeTo: nil,
+                        bookmarkDataIsStale: &isStale
+                    )
+                    return (url, isStale)
+                }.value
+            } catch {
+                UserDefaults.standard.removeObject(forKey: bookmarkKey)
+                return
+            }
 
-            if isStale {
+            if resolved.isStale {
                 // Bookmark is stale, need to recreate it
                 UserDefaults.standard.removeObject(forKey: bookmarkKey)
                 return
             }
 
-            guard url.startAccessingSecurityScopedResource() else { return }
+            guard resolved.url.startAccessingSecurityScopedResource() else { return }
 
-            securityScopedResource = url
+            securityScopedResource = resolved.url
 
-            // Build context asynchronously (already on MainActor)
-            Task {
-                let context = await buildContext(from: url)
-                self.currentContext = context
-                self.hasActiveFolder = true
-                FolderToolManager.shared.registerFolderTools(for: context)
-            }
-
-        } catch {
-            UserDefaults.standard.removeObject(forKey: bookmarkKey)
+            let context = await buildContext(from: resolved.url)
+            self.currentContext = context
+            self.hasActiveFolder = true
+            FolderToolManager.shared.registerFolderTools(for: context)
         }
     }
 
