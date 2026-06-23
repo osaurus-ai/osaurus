@@ -452,3 +452,12 @@ Full matrix on the fixed binary (load -> chat -> image handoff [unload/context-s
 - lfm2.5-8b-a1b: UP, but EMPTY output — reproduces with NO image/handoff at all (empty on first chat), so it is a PRE-EXISTING model/template issue, NOT the handoff. Tracked separately.
 
 Conclusion: the three-part GPU serialization (BatchEngine finishSlot drain + image-gen MLXCacheIOLock barrier + ModelRuntime.unload teardown drain) makes the chat<->image handoff completely secure (no concurrent-GPU crash for any model) and smooth (context preserved, coherent, no looping/leaks caused by the handoff). lfm2 empty-output is a separate model bug.
+
+### ✅ Merged-branch E2E (2026-06-22) — secure + smooth + delegation all hold
+
+On the merged binary (vmlx 4453909e + BatchEngine drain + merged osaurus):
+- **Secure:** gemma-4-12b, qwen3-8b, minimax-m2.7 all survive the load→chat→image-handoff cycle — **0 new crash reports** (minimax-m2.7 included; the merge did not regress the GPU fix).
+- **Smooth:** coherent chat through the handoff ("Codeword RAVEN-9 recorded", "RAVEN-9 is secure", "RAVEN-9 acknowledged").
+- **Delegation:** BUG E + BUG F fixes survived the merge (verified present). local_delegate fires + returns a coherent haiku when a chat model is loaded. (The batched-E2E "empty" was a test-sequencing artifact: the matrix's image handoffs unload the chat model, so the BUG-F loaded-model fallback had nothing to resolve — production always has a configured default model; warming a model immediately before the delegate call resolves it.)
+
+Net: the reconciled branch (main + spawn/image-gen + GPU serialization) builds clean and is secure+smooth across the model set. Remaining items unchanged: the vmlx BatchEngine drain needs canonical landing for durability; lfm2 empty output (#78) is a separate pre-existing model bug.
