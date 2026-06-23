@@ -14,6 +14,10 @@ import NIOHTTP1
 
 extension HTTPHandler {
 
+    static let emptyToolTaskCompletionMessage = AgentToolLoop.emptyToolTaskFallback
+
+    private static let emptyToolTaskCompletionDomain = "OsaurusEmptyToolTaskCompletion"
+
     /// Wire flavor for the JSON error body. Each flavor uses the envelope
     /// shape its protocol's clients expect.
     enum HTTPErrorFlavor {
@@ -49,6 +53,9 @@ extension HTTPHandler {
         if error is CancellationError {
             return HTTPResponseStatus(statusCode: 499, reasonPhrase: "Client Closed Request")
         }
+        if (error as NSError).domain == emptyToolTaskCompletionDomain {
+            return .serviceUnavailable
+        }
         if error is ModelRuntime.LoadRefusedError {
             return .serviceUnavailable
         }
@@ -65,6 +72,9 @@ extension HTTPHandler {
         if error is CancellationError {
             return "request_cancelled"
         }
+        if (error as NSError).domain == emptyToolTaskCompletionDomain {
+            return "server_error"
+        }
         if error is ModelRuntime.LoadRefusedError {
             return "insufficient_resources"
         }
@@ -75,6 +85,35 @@ extension HTTPHandler {
             return "invalid_request_error"
         }
         return "internal_error"
+    }
+
+    static func emptyToolTaskCompletionError(
+        requestMessages: [ChatMessage],
+        responseMessage: ChatMessage?
+    ) -> Error? {
+        guard requestContainsToolTaskHistory(requestMessages),
+            assistantResponseIsEmptyNoTool(responseMessage)
+        else { return nil }
+        return NSError(
+            domain: emptyToolTaskCompletionDomain,
+            code: 503,
+            userInfo: [NSLocalizedDescriptionKey: emptyToolTaskCompletionMessage]
+        )
+    }
+
+    private static func requestContainsToolTaskHistory(_ messages: [ChatMessage]) -> Bool {
+        messages.contains { message in
+            message.role == "tool" || !(message.tool_calls?.isEmpty ?? true)
+        }
+    }
+
+    private static func assistantResponseIsEmptyNoTool(_ message: ChatMessage?) -> Bool {
+        guard let message, message.role == "assistant" else { return false }
+        let contentEmpty = (message.content ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let reasoningEmpty =
+            (message.reasoning_content ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let toolCallsEmpty = message.tool_calls?.isEmpty ?? true
+        return contentEmpty && reasoningEmpty && toolCallsEmpty
     }
 
     static func anthropicErrorType(for error: Error) -> String {

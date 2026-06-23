@@ -564,6 +564,9 @@ enum AgentToolLoop {
         /// surface emits a distinct "context cannot fit" envelope instead
         /// of sending a doomed request.
         case overBudget
+        /// Empty-turn recovery exhausted after at least one tool result had
+        /// already landed, so the task may be truncated rather than merely blank.
+        case emptyResponseExhausted
     }
 
     struct RunResult: Equatable, Sendable {
@@ -595,6 +598,9 @@ enum AgentToolLoop {
     /// an empty turn never surfaces as a silent "No visible text was produced".
     static let emptyTurnFallback =
         "I wasn't able to generate a response to that. Please try rephrasing your request."
+
+    static let emptyToolTaskFallback =
+        "The model returned empty output after tool execution. The agent task may be incomplete; retry with less context or continue from the latest tool result."
 
     /// The iteration-budget warning staged when the remaining budget
     /// drops to the policy threshold.
@@ -937,6 +943,7 @@ enum AgentToolLoop {
         // the relief yet (staged once per run).
         var dataMovementStepsUsed = 0
         var announcedDataMovementRelief = false
+        var completedToolWork = false
 
         while iteration < policy.maxIterations {
             if await hooks.isCancelled() {
@@ -990,6 +997,10 @@ enum AgentToolLoop {
                     // Not charged against the tool-iteration budget.
                     iteration -= 1
                     continue
+                }
+                if completedToolWork {
+                    await hooks.emitFallbackText?(Self.emptyToolTaskFallback)
+                    return RunResult(exit: .emptyResponseExhausted, iterations: iteration)
                 }
                 // Recovery exhausted: guarantee a visible message instead of
                 // a silent dead-end, then end the run.
@@ -1241,6 +1252,9 @@ enum AgentToolLoop {
                 }
 
                 await hooks.onBatchComplete(outcomes)
+                if !outcomes.isEmpty {
+                    completedToolWork = true
+                }
 
                 // Data-movement relief: when an iteration's tool calls
                 // are ALL successful bulk loads (db_import / bulk

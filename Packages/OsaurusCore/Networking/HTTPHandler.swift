@@ -5221,6 +5221,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 emitFallbackText: { text in
                     // Empty-turn recovery exhausted: stream a visible fallback
                     // so the client never receives an empty assistant message.
+                    if text == AgentToolLoop.emptyToolTaskFallback {
+                        messages.append(ChatMessage(role: "assistant", content: text))
+                        loggedResponseText += text
+                        return
+                    }
                     hop {
                         writerBound.value.writeContent(
                             text,
@@ -5310,6 +5315,26 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     startTime: logStartTime,
                     toolCalls: loggedToolCalls.isEmpty ? nil : loggedToolCalls,
                     errorMessage: AgentToolLoop.overBudgetMessage
+                )
+                return
+            }
+
+            if exitState == .emptyResponseExhausted {
+                hop {
+                    writerBound.value.writeError(AgentToolLoop.emptyToolTaskFallback, context: ctx.value)
+                    writerBound.value.writeEnd(ctx.value)
+                }
+                logSelf.logRequest(
+                    method: "POST",
+                    path: path,
+                    userAgent: logUserAgent,
+                    requestBody: logRequestBody,
+                    responseBody: loggedResponseText.isEmpty ? nil : loggedResponseText,
+                    responseStatus: 200,
+                    startTime: logStartTime,
+                    model: model,
+                    toolCalls: loggedToolCalls.isEmpty ? nil : loggedToolCalls,
+                    errorMessage: AgentToolLoop.emptyToolTaskFallback
                 )
                 return
             }
@@ -6621,6 +6646,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     httpTrace.mark("http_stream_chat_ready")
                     if disconnected.value { throw CancellationError() }
                     var accumulatedContent = ""
+                    var accumulatedReasoning = ""
                     var contentCoalescer = Self.StreamDeltaCoalescer(
                         interval: ServerRuntimeSettingsStore.snapshot().generation.streamInterval
                     )
@@ -6633,6 +6659,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         if let reasoning = StreamingReasoningHint.decode(delta) {
                             httpTrace.markFirstSemanticDelta("reasoning")
                             markSemanticDeltaIfConnected()
+                            accumulatedReasoning += reasoning
                             if let pending = contentCoalescer.flush() {
                                 hop {
                                     writerBound.value.writeContent(
@@ -6703,6 +6730,39 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                                 context: ctx.value
                             )
                         }
+                    }
+                    let terminalMessage = ChatMessage(
+                        role: "assistant",
+                        content: accumulatedContent,
+                        tool_calls: nil,
+                        tool_call_id: nil,
+                        reasoning_content: accumulatedReasoning.isEmpty ? nil : accumulatedReasoning
+                    )
+                    if let error = Self.emptyToolTaskCompletionError(
+                        requestMessages: enrichedReq.messages,
+                        responseMessage: terminalMessage
+                    ) {
+                        let message = error.localizedDescription
+                        hop {
+                            writerBound.value.writeError(message, context: ctx.value)
+                            writerBound.value.writeEnd(ctx.value)
+                        }
+                        httpTrace.mark("http_sse_error_written")
+                        httpTrace.emit(finishReason: "error", responseStatus: 200, errorMessage: message)
+                        logSelf.logRequest(
+                            method: "POST",
+                            path: "/chat/completions",
+                            userAgent: logUserAgent,
+                            requestBody: logRequestBody,
+                            responseStatus: 200,
+                            startTime: logStartTime,
+                            model: logModel,
+                            temperature: logTemperature,
+                            maxTokens: logMaxTokens,
+                            finishReason: .error,
+                            errorMessage: message
+                        )
+                        return
                     }
                     let includeUsage = req.stream_options?.include_usage == true
                     let promptTokens = Self.estimatePromptTokens(enrichedReq.messages)
@@ -6961,6 +7021,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         systemContent: sysContent,
                         tools: enrichedReq.tools ?? []
                     )
+                    if let error = Self.emptyToolTaskCompletionError(
+                        requestMessages: enrichedReq.messages,
+                        responseMessage: resp.choices.first?.message
+                    ) {
+                        throw error
+                    }
                     if persistOnSuccess, let assistantMsg = resp.choices.first?.message {
                         var finalMessages = priorMessages
                         finalMessages.append(assistantMsg)
