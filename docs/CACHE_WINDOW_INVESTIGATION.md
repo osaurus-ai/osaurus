@@ -80,3 +80,20 @@ The cache-window hypothesis is **REFUTED** by two independent methods:
 by calling `image_edit` with the saved `images[].path`; otherwise briefly confirm." No
 forced tool calls, no fake guards — fixed at the source. Lesson: this was the "R3"
 display_note over-steer flagged early and wrongly dropped.
+
+## Live validation of the steer fix — HONEST result
+Rebuilt with the conditional steer + tested chained gen→edit in ONE turn:
+- gemma-4-12b (max_tokens=800): generated once, then stopped — **0 image_edit**.
+- qwen3.6-27b (max_tokens=1200): narrated a plan ("I'll set up a checklist and then
+  generate…"), turn ended — **0 image_edit**.
+
+CONCLUSION: the steer fix is the CORRECT root-cause fix (the "just confirm" steer was
+genuinely counterproductive; probe+Codex agree the model had the path), but it does NOT
+by itself make one-turn chaining reliable on these local models. Both models
+narrate/plan/stop rather than emit the sequential second tool call — a MODEL ORCHESTRATION
+limitation, not a single flippable osaurus bug.
+
+RELIABLE edit paths (proven working): the direct `/images/edits` HTTP API, and editing in
+a SEPARATE turn with an explicit path. One-turn "generate AND edit" is best-effort and
+model-dependent. Recommend: keep the steer fix; for product UX, drive edit via the direct
+API or a follow-up turn rather than relying on one-turn chaining.
