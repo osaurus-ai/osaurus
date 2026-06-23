@@ -622,7 +622,13 @@ struct RuntimePolicySourceTests {
         // plus the Gemma nested-object tool-call argument parse fix
         // (vmlx-swift#76): GemmaFunctionParser now recurses into `{...}` values
         // so object-typed tool parameters arrive as objects, not raw strings.
-        let expectedRuntimeHardenedRevision = "4453909ef453f9235fd7e65986ca3ffc62ff904d"
+        // plus vmlx-swift#82: BatchEngine drains the GPU (Stream().synchronize)
+        // before finishing the stream so the chat→image handoff cannot race the
+        // async eval tail (fixes the concurrent-GPU SIGSEGV/commit-assert), and
+        // JangLoader loads a standalone chat_template.jinja when
+        // tokenizer_config.json carries no inline template (fixes empty output
+        // on LFM2.5 + VibeThinker bundles).
+        let expectedRuntimeHardenedRevision = "6b77b1ee682d81b3f84d84ac455de565fea3f348"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
         let appRevision = try Self.vmlxPinRevision(in: appResolved)
