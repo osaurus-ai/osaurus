@@ -3,6 +3,38 @@
 Living assessment. Updated as stress tests + fixes land. Honest status only —
 "ready" requires live proof, not code-reading.
 
+## Cohesion pass + production gate (2026-06-23)
+
+A full settings/agent-loop cohesion audit (3 parallel reviewers) found the two-tool
+separation, per-tool default-model resolution (agent path AND direct `/images` API),
+the shared GPU-drain, and the agent-loop steering all already cohesive. It surfaced
+**three wiring gaps, now fixed** (commit "Wire up 3 delegation-settings cohesion gaps"):
+
+1. **`spawnableAgentNames` had no UI** → `spawn` was unreachable from Settings (the
+   How-It-Works blurb advertised it and `SpawnTool` pointed at a control that didn't
+   exist). Added a "Spawnable Agents" subsection (per-persona toggles). **Live A/B
+   proven**: with the list populated, `spawn` is in the model's injected tool set;
+   emptied, `spawn` drops out while `image_generate`/`image_edit`/`local_delegate`
+   remain — i.e. availability is gated precisely by the field the UI now writes.
+2. **`ramSafetyPreflightEnabled` was dropped by `.normalized`** → turning the RAM-safety
+   preflight OFF was silently reverted on every save/load (the store normalizes on both).
+   Now preserved through normalize. Regression test added (runs in CI `test-core`).
+3. **`budgets.maxToolCalls` was a no-op UI knob** → spawned subagents are text-only
+   (`AgentSubagentRunner` passes `tools:nil`), so nothing could enforce it. Removed the
+   stepper; field kept reserved/forward-compat.
+
+**Live stress on the rebuilt binary (fresh dev app, :1337), 0 crashes throughout (6→6):**
+- Direct `/v1/images/generations`: 5/5 (17–31s), real PNGs, process alive.
+- Direct `/v1/images/edits`: 3/3 (Qwen-Image-Edit, ~224s each — slow but clean), real PNGs.
+- Agent-loop `image_generate` (tool-driven via `/agents/run`): fired + PNG + coherent text.
+- Context pass-off: follow-up turn recalled the image coherently, no spurious re-gen.
+- Existing persisted config (carrying the old `maxToolCalls`) loads cleanly → back-compat.
+
+Residuals unchanged and still bound "production quality" (see CONVERGED HONEST STATE):
+one-turn chained gen→edit is non-deterministic and sustained back-to-back churn can crash
+in MLX `CommandEncoder` — both need a vmlx/residency-level change, NOT more osaurus drains.
+Reliable product paths remain: direct `/images` API + separate-turn editing.
+
 ## ⛔ CRITICAL crash found + fixed (stress-proving now): image→model-load concurrent-GPU
 Stress testing surfaced a **real SIGABRT crash** — `MTLReleaseAssertionFailure` in
 `-[IOGPUMetalCommandBuffer setCurrentCommandEncoder:]` — on the **image→model-load**
