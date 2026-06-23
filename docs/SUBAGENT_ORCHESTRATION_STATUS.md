@@ -44,6 +44,22 @@ for LLM-only; the crash is purely the two-graph boundary.
 
 ---
 
+## 🔄 Reconciliation with main (2026-06-22) — merged + building clean
+
+Our branch had diverged from `main` (107 ahead / 43 behind). Reconciled:
+- **Merged `origin/main` → `feat/image-generation-vmlxflux`** (merge commit `753a5de4`), bringing all 43 main commits: release 0.20.8, **app-hang fixes (#1638)**, computer-use hardening, privacy filter, agent-db upgrade, **gemma-4-12b optimization (#1614)**, and **vmlx pin bumped `d35c0744` → `4453909e`**.
+- **5 conflicts resolved keeping BOTH sides** (UI/prompt): SystemPromptComposer (our spawn-delegation gate + main's configure-surface), AgentsView (`spawnDelegationEnabled` + main's `order`), ChatView (main's `modelSupportsImages` helper with our `imageEdit` check re-added), FloatingInputCard (our image-composer branch wrapping main's reorganized chip row), Localizable.xcstrings (took main's; our strings fall back to English base).
+- **vmlx diff confirmed:** main's newer `4453909e` STILL lacks the `BatchEngine.finishSlot` drain (its only 2 new commits #79/#80 don't touch it) → the concurrent-GPU bug is unpatched upstream; the drain re-applied onto 4453909e.
+- **Merged branch BUILD SUCCEEDED**, no errors. GPU fixes survived the merge. Pushed.
+
+### 📋 Things to address / fix (live list)
+1. ✅ Merge main + resolve conflicts (753a5de4).
+2. ✅ Build merged branch (succeeded).
+3. 🔄 Live E2E re-test merged branch — model matrix (secure+smooth) + delegation paths coherence (in progress).
+4. ⚠️ **Durability (only non-durable item):** `BatchEngine.finishSlot` drain lives in the ephemeral build checkout (4453909e) + the DO_NOT_PUSH local vmlx fork. To survive clean rebuilds it must land on canonical `osaurus-ai/vmlx-swift` (on top of 4453909e) + osaurus repin. Everything else (2 osaurus-side GPU fixes) is committed.
+5. ⚠️ lfm2.5-8b-a1b empty output (#78) — pre-existing model/template bug (empty with NO image involved), not the handoff.
+6. (verify) main's app-hang/agent-db/computer-use changes don't regress spawn/image-gen — covered by build success + the E2E pass.
+
 ## ✅ Current state (2026-06-21)
 
 Spawn is a **tool** the orchestrator chat (local OR cloud) calls to run a bounded
