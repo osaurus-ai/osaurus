@@ -39,3 +39,22 @@ Open sub-questions:
   the trim-drops-the-tool-result hypothesis against the real code + propose the fix.
 - Next concrete step on our side: instrument/observe the resolved window + whether the
   image tool-result message survives into iteration 2.
+
+## Probe result (instrumented build, live chained run)
+```
+iter1: msgs 2→2  imgRes 0→0   (pre-image)
+iter2: msgs 4→4  imgRes 1→1   (post image_generate)  overBudget=false
+```
+**Prompt-compaction does NOT drop the image tool-result** (imgRes survives 1→1, nothing
+trimmed). The run then ended with gemma NARRATING "Now I will update the image to change
+th…" (truncated) and **0 image_edit invocations**. So in this minimal case the failure is
+MODEL tool-selection / possible max_tokens truncation BEFORE the tool call — NOT
+prompt-compaction dropping the path.
+
+### Caveat — the probe measures the PROMPT, not the KV cap
+"Cache window" most likely means the **KV-cache cap** (the model's actual attention
+window / TurboQuant-or-slider KV limit), where the image result can be present in the
+prompt yet fall OUTSIDE what the model attends to. That mechanism is NOT captured by this
+probe. Still to check: (a) the resolved KV cap for the agent run, (b) whether under a
+LARGER preceding conversation the result is evicted, (c) whether max_tokens truncates the
+narration before the image_edit call. Codex second opinion pending on all three.
