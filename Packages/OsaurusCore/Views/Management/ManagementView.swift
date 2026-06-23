@@ -77,7 +77,6 @@ struct ManagementView: View {
             .overlay(ThemedAlertHost(scope: .management))
             .onAppear(perform: handleAppear)
             .onChange(of: stateManager.selectedTab) { handleTabChange(to: $1) }
-            .onChange(of: searchText) { handleSearchChange(to: $1) }
             // The pairing deeplink router publishes an invite here when an
             // `osaurus://...?pair=...` URL is opened. Forwarding it through
             // a local @State (`presentingInvite`) gives the sheet a stable
@@ -116,14 +115,29 @@ struct ManagementView: View {
 
 private extension ManagementView {
 
+    var isSearching: Bool {
+        !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     var sidebarNavigation: some View {
         SidebarNavigation(
             selection: selectedTabBinding,
             searchText: $searchText,
             items: sidebarItems
         ) { tabId in
-            contentView(for: tabId)
-                .opacity(hasAppeared ? 1 : 0)
+            Group {
+                // A live query takes over the content pane with cross-tab
+                // results; selecting one navigates to its tab (and clears
+                // the query). Otherwise show the selected tab as usual.
+                if isSearching {
+                    SettingsSearchResultsView(query: searchText) { entry in
+                        handleResultSelected(entry)
+                    }
+                } else {
+                    contentView(for: tabId)
+                }
+            }
+            .opacity(hasAppeared ? 1 : 0)
         } footer: {
             updateButton
         }
@@ -264,18 +278,19 @@ private extension ManagementView {
             message: "management.tab \(newTab.rawValue)"
         )
 
-        // Clear search when navigating away from settings
-        if newTab != .settings && !searchText.isEmpty {
+        // Changing tabs exits search so the chosen tab shows in full (the
+        // cross-tab results pane only stands in while a query is active).
+        if !searchText.isEmpty {
             searchText = ""
         }
     }
 
-    func handleSearchChange(to newValue: String) {
-        // Auto-navigate to settings when searching
-        if !newValue.isEmpty && stateManager.selectedTab != .settings {
-            withAnimation(.easeOut(duration: 0.2)) {
-                stateManager.selectedTab = .settings
-            }
+    /// Navigate to the tab owning a chosen search result. Clearing the query
+    /// first dismisses the results pane so the destination tab renders normally.
+    func handleResultSelected(_ entry: SettingsSearchEntry) {
+        searchText = ""
+        withAnimation(.easeOut(duration: 0.2)) {
+            stateManager.selectedTab = entry.tab
         }
     }
 }
