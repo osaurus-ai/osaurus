@@ -140,16 +140,6 @@ public actor MetalGate {
         release("load:\(model)")
     }
 
-    // MARK: - Model unload / eviction (buffer teardown) — exclusive
-
-    public func enterModelUnload(model: String) async {
-        await acquire("unload:\(model)", shared: false)
-    }
-
-    public func exitModelUnload(model: String) {
-        release("unload:\(model)")
-    }
-
     // MARK: - Image generation (vMLXFlux engine) — exclusive
 
     /// The native image engine (vMLXFlux) is a second MLX graph on the same Metal

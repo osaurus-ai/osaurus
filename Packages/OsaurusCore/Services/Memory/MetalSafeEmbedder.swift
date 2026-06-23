@@ -8,7 +8,6 @@
 //
 
 import Foundation
-import MLX
 import MLXEmbedders
 import MLXLMCommon
 import VecturaKit
@@ -28,11 +27,9 @@ public actor MetalSafeEmbedder: VecturaEmbedder {
         await MetalGate.shared.enterEmbedding()
         do {
             let result = try await inner.embed(texts: texts)
-            Stream.gpu.synchronize()
             await MetalGate.shared.exitEmbedding()
             return result
         } catch {
-            Stream.gpu.synchronize()
             await MetalGate.shared.exitEmbedding()
             throw error
         }
@@ -42,11 +39,9 @@ public actor MetalSafeEmbedder: VecturaEmbedder {
         await MetalGate.shared.enterEmbedding()
         do {
             let result = try await inner.embed(text: text)
-            Stream.gpu.synchronize()
             await MetalGate.shared.exitEmbedding()
             return result
         } catch {
-            Stream.gpu.synchronize()
             await MetalGate.shared.exitEmbedding()
             throw error
         }

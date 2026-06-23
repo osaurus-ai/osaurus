@@ -347,7 +347,6 @@ public actor ModelRuntime {
                 )
             }
         } catch {
-            Stream.gpu.synchronize()
             await MetalGate.shared.exitGeneration(model: holder.name)
             await soloLease.release()
             await ModelLease.shared.release(holder.name)
@@ -361,7 +360,6 @@ public actor ModelRuntime {
             )
         }
 
-        Stream.gpu.synchronize()
         await MetalGate.shared.exitGeneration(model: holder.name)
         await soloLease.release()
         await ModelLease.shared.release(holder.name)
@@ -543,7 +541,6 @@ public actor ModelRuntime {
     /// stream lifetime (see `generateEventStream`), so this guarantees we
     /// never free buffers that an active Metal command buffer still references.
     func unload(name: String) async {
-        await MetalGate.shared.enterModelUnload(model: name)
         await ModelResidencyManager.shared.cancel(modelName: name)
 
         // Shut the BatchEngine first so its scheduling loop stops issuing
@@ -580,7 +577,6 @@ public actor ModelRuntime {
         Stream.gpu.synchronize()
         Memory.clearCache()
         Stream.gpu.synchronize()
-        await MetalGate.shared.exitModelUnload(model: name)
     }
 
     /// Evict `other` for the strict-single-model policy WITHOUT cancelling an

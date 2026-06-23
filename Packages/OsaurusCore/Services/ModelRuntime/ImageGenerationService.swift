@@ -56,15 +56,10 @@ public actor ImageGenerationService {
     /// pressure handoffs. Manual image-panel flows may choose to keep the
     /// engine warm and skip this through `AgentDelegationImageLoadPolicy`.
     public func unload() async {
-        await MetalGate.shared.enterImageGeneration()
         if let engine {
             await engine.unload()
         }
-        MLXCacheIOLock.withSerializedMLXCacheIO {
-            Memory.clearCache()
-        }
         loadedDirectoryName = nil
-        await MetalGate.shared.exitImageGeneration()
     }
 
     // MARK: - Model store root
@@ -268,7 +263,7 @@ public actor ImageGenerationService {
         _ build: @escaping @Sendable (FluxEngine, URL) async throws -> [AsyncThrowingStream<ImageGenEvent, Error>]
     ) -> AsyncThrowingStream<ImageGenerationEvent, Error> {
         AsyncThrowingStream { continuation in
-            _ = Task {
+            let task = Task {
                 await MetalGate.shared.enterImageGeneration()
                 // Proper GPU handoff barrier. The prior LLM turn's async tail —
                 // the post-generation cache store (held under MLXDiskCacheIOLock,
@@ -365,10 +360,7 @@ public actor ImageGenerationService {
                 }
                 await MetalGate.shared.exitImageGeneration()
             }
-            continuation.onTermination = { @Sendable _ in
-                guard let jobID else { return }
-                Task { await self.cancel(jobID: jobID) }
-            }
+            continuation.onTermination = { _ in task.cancel() }
         }
     }
 
