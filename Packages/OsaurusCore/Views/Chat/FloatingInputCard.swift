@@ -1603,7 +1603,7 @@ extension FloatingInputCard {
             )
         }
         .sheet(item: $imagePreview) { preview in
-            PendingImagePreviewSheet(imageData: preview.data) {
+            PendingImagePreviewSheet(imageData: preview.data, imageId: preview.id.uuidString) {
                 imagePreview = nil
             }
         }
@@ -3940,10 +3940,12 @@ private struct PendingImagePreview: Identifiable, Equatable {
 }
 
 /// Full-size preview for a composer image attachment, reusing the chat's
-/// zoom/pan/save viewer. Decodes off the initial render so a large pasted image
-/// doesn't stall presentation.
+/// zoom/pan/save viewer. Decoding runs off the main thread via `ChatImageCache`
+/// (a full-size image decode/rasterize on the main actor would stall the UI and
+/// trip app-hang reports), so the viewer fills in once the image is ready.
 private struct PendingImagePreviewSheet: View {
     let imageData: Data
+    let imageId: String
     let onDismiss: () -> Void
 
     @State private var image: NSImage?
@@ -3951,8 +3953,12 @@ private struct PendingImagePreviewSheet: View {
     var body: some View {
         ImageFullScreenView(image: image, altText: "", onDismiss: onDismiss)
             .imageFullScreenSheetPresentation()
-            .task(id: imageData) {
-                image = NSImage(data: imageData)
+            .task(id: imageId) {
+                if let cached = ChatImageCache.shared.cachedImage(for: imageId) {
+                    image = cached
+                } else {
+                    image = await ChatImageCache.shared.decode(imageData, id: imageId)
+                }
             }
     }
 }
