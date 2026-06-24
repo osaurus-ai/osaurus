@@ -143,6 +143,7 @@ final class NativeFileDiffView: NSView {
     override init(frame: NSRect) {
         super.init(frame: frame)
         buildViews()
+        Self.liveViews.add(self)
         Self.installClickMonitorOnce()
     }
 
@@ -150,34 +151,33 @@ final class NativeFileDiffView: NSView {
 
     // MARK: - Debug click monitor (temporary)
 
-    /// One global left-mouse-down monitor that logs the hit-tested view for
-    /// every click, so a "frozen" click reveals where the event actually lands
-    /// (button vs body vs cell vs elsewhere). Remove with the debug logging.
+    nonisolated(unsafe) private static let liveViews = NSHashTable<NativeFileDiffView>.weakObjects()
+
+    /// One global left-mouse-down monitor. For each live diff card in the
+    /// clicked window it logs the header button's frame in WINDOW coords (via
+    /// convert(_:to:nil), which is title-bar safe) and whether the click falls
+    /// inside it — so a "frozen" click reveals whether the button is simply not
+    /// where it's drawn. Remove with the debug logging.
     nonisolated(unsafe) private static var clickMonitorInstalled = false
     private static func installClickMonitorOnce() {
         guard !clickMonitorInstalled else { return }
         clickMonitorInstalled = true
         NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { event in
-            if let cv = event.window?.contentView {
-                // hitTest takes a point in the receiver's SUPERVIEW coords;
-                // locationInWindow is already in that space for the contentView.
-                let hit = cv.hitTest(event.locationInWindow)
-                var chain = ""
-                var v = hit
-                var depth = 0
-                while let cur = v, depth < 6 {
-                    chain += (chain.isEmpty ? "" : " < ") + String(describing: type(of: cur))
-                    v = cur.superview
-                    depth += 1
-                }
+            let loc = event.locationInWindow
+            FileDiffDebugLog.log("CLICK loc=\(Int(loc.x)),\(Int(loc.y))")
+            for dv in Self.liveViews.allObjects where dv.window === event.window && dv.window != nil {
+                let btn = dv.headerButton.convert(dv.headerButton.bounds, to: nil)
+                let card = dv.convert(dv.bounds, to: nil)
                 FileDiffDebugLog.log(
-                    "CLICK loc=\(Int(event.locationInWindow.x)),\(Int(event.locationInWindow.y)) hit=\(chain.isEmpty ? "nil" : chain)"
+                    "  diffCard collapsed=\(dv.isCollapsed) cardWin=\(rectStr(card)) headerBtnWin=\(rectStr(btn)) clickInBtn=\(btn.contains(loc)) clickInCard=\(card.contains(loc))"
                 )
-            } else {
-                FileDiffDebugLog.log("CLICK (no window/contentView)")
             }
             return event
         }
+    }
+
+    private static func rectStr(_ r: NSRect) -> String {
+        "(\(Int(r.minX)),\(Int(r.minY)) \(Int(r.width))x\(Int(r.height)))"
     }
 
     // MARK: Configure
