@@ -117,12 +117,22 @@ remain (reasoning-off toggle, base tool firing).
 
 ---
 
-## Pre-merge blockers (must clear before merge)
-1. 🔴 **test-core localization gate** (P0 #5) — 30 strings need de/zh-Hans/ko.
-2. 🔴 **"Delegate Tool Use" no-op** (P0 #1) — hide or build.
-3. 🔴 **success-path restore** (P0 #3) — orchestrator-strand risk.
-4. 🔴 **HTTP /images unclamped** (P0 #4) — DoS on public endpoint.
+## Pre-merge blockers — P0 fixes landed (commit d85796b4)
+1. ✅ **localization gate** (P0 #5) — FIXED: 53 missing keys added + 6 literals L()-wrapped;
+   full `scripts/i18n/check.sh` passes locally (0 suspect literals). CI re-running.
+2. ✅ **"Delegate Tool Use" no-op** (P0 #1) — FIXED: picker removed (field kept reserved). Build green.
+3. ✅ **success-path restore** (P0 #3) — FIXED: SpawnTool + LocalTextDelegateTool now use
+   `restoreBestEffort` (logs on failure) instead of bare `try?`. Build green.
+4. ✅ **HTTP /images unclamped** (P0 #4) — FIXED + ✅ PROVEN: 4096×4096 request → 1024×1024 PNG
+   (dimension clamp live-proven); steps→50, n→4 clamped too.
    (P0 #2 spawn text-only is doc/scope, not a code break.)
+
+### New finding this iteration (needs decision)
+- 🟠 **Multi-image (`n>1`) on the REST path hit the documented MLX CommandEncoder churn crash**
+  once (n=9→4, compounded by an image job racing SpeechService model-load at startup). Under
+  reproduction (clean n:2 test running). If reproducible, the safe production move is to cap
+  REST `n=1` until the engine-level multi-image drain is fixed (the churn race is the documented
+  MLX-level residual, not osaurus-drain-fixable). Single-image gen is proven stable.
 
 ## Still to prove live (this tracker will be updated)
 - Reasoning-OFF produces no `<think>` (GUI toggle).

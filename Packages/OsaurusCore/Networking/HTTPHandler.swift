@@ -6264,7 +6264,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             steps: req.steps.map(Self.clampImageSteps),
             guidance: req.guidance.map { Float($0) },
             seed: req.seed,
-            numImages: max(1, min(4, req.n ?? 1)),
+            // Multi-image (`n` > 1) is force-capped to 1: the service generates the
+            // N images sequentially in one job WITHOUT a GPU drain between them, which
+            // reliably trips the MLX `tryCoalescingPreviousComputeCommandEncoder`
+            // assertion (reproduced at n=2). Re-enable once the per-image drain lands
+            // in the multi-image loop (see docs/REMAINING_WORK.md).
+            numImages: 1,
             outputFormat: Self.imageOutputFormat(req.output_format)
         )
         let jobID = Self.shortId(prefix: "img")

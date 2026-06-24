@@ -105,7 +105,10 @@ public final class NativeImageGenerateTool: OsaurusTool, @unchecked Sendable {
             steps: optionalIntValue(args["steps"]).map { min(50, max(1, $0)) },
             guidance: optionalFloatValue(args["guidance"]).map { min(20, max(0, $0)) },
             seed: optionalUInt64Value(args["seed"]),
-            numImages: optionalIntValue(args["num_images"]) ?? 1,
+            // Force single-image: multi-image (n>1) sequential generation trips the
+            // MLX CommandEncoder race (no per-image drain). See HTTPHandler image
+            // handler + docs/REMAINING_WORK.md. Re-enable when the drain lands.
+            numImages: 1,
             outputFormat: .png,
             context: NativeImageJobContext.current()
         )
