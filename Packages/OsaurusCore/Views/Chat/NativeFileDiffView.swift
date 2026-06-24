@@ -141,6 +141,10 @@ final class NativeFileDiffView: NSView {
         let diffChanged = diff != lastDiff
         let themeChanged = themeId != lastThemeId
 
+        FileDiffDebugLog.log(
+            "VIEW.configure file=\(diff.fileName) collapsed=\(collapsed) (was \(isCollapsed)) diffChanged=\(diffChanged) width=\(Int(width))"
+        )
+
         lastDiff = diff
         lastWidth = width
         lastThemeId = themeId
@@ -208,19 +212,6 @@ final class NativeFileDiffView: NSView {
         }
         fileLabel.lineBreakMode = .byTruncatingMiddle
 
-        // Transparent toggle overlay spanning the full header. Added before the
-        // action buttons so they sit in front and keep their own clicks, while
-        // every other point (icon, labels, empty space) toggles the card.
-        headerButton.translatesAutoresizingMaskIntoConstraints = false
-        headerButton.title = ""
-        headerButton.isBordered = false
-        headerButton.bezelStyle = .inline
-        headerButton.isTransparent = true
-        headerButton.focusRingType = .none
-        headerButton.target = self
-        headerButton.action = #selector(toggleCollapse)
-        headerView.addSubview(headerButton)
-
         copyButton.translatesAutoresizingMaskIntoConstraints = false
         copyButton.title = ""
         copyButton.image = SymbolImageCache.image("doc.on.doc", accessibilityDescription: nil)
@@ -239,11 +230,24 @@ final class NativeFileDiffView: NSView {
         collapseButton.alphaValue = 0.55
         headerView.addSubview(collapseButton)
 
+        // Transparent toggle overlay over the header up to the action buttons,
+        // added last so it sits in front of the icon/labels and captures their
+        // clicks while copy / collapse keep their own.
+        headerButton.translatesAutoresizingMaskIntoConstraints = false
+        headerButton.title = ""
+        headerButton.isBordered = false
+        headerButton.bezelStyle = .inline
+        headerButton.isTransparent = true
+        headerButton.focusRingType = .none
+        headerButton.target = self
+        headerButton.action = #selector(toggleCollapse)
+        headerView.addSubview(headerButton)
+
         NSLayoutConstraint.activate([
             headerButton.leadingAnchor.constraint(equalTo: headerView.leadingAnchor),
-            headerButton.trailingAnchor.constraint(equalTo: headerView.trailingAnchor),
             headerButton.topAnchor.constraint(equalTo: headerView.topAnchor),
             headerButton.bottomAnchor.constraint(equalTo: headerView.bottomAnchor),
+            headerButton.trailingAnchor.constraint(equalTo: copyButton.leadingAnchor),
         ])
 
         NSLayoutConstraint.activate([
@@ -264,16 +268,10 @@ final class NativeFileDiffView: NSView {
             removedLabel.leadingAnchor.constraint(equalTo: addedLabel.trailingAnchor, constant: 5),
             removedLabel.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
 
-            // Copy sits immediately after the diff counts.
-            copyButton.leadingAnchor.constraint(equalTo: removedLabel.trailingAnchor, constant: 8),
-            copyButton.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
-            copyButton.widthAnchor.constraint(equalToConstant: 20),
-            copyButton.heightAnchor.constraint(equalToConstant: 20),
-
-            previewBadge.leadingAnchor.constraint(equalTo: copyButton.trailingAnchor, constant: 8),
+            previewBadge.leadingAnchor.constraint(equalTo: removedLabel.trailingAnchor, constant: 8),
             previewBadge.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
             previewBadge.trailingAnchor.constraint(
-                lessThanOrEqualTo: collapseButton.leadingAnchor,
+                lessThanOrEqualTo: copyButton.leadingAnchor,
                 constant: -8
             ),
 
@@ -281,9 +279,14 @@ final class NativeFileDiffView: NSView {
             collapseButton.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
             collapseButton.widthAnchor.constraint(equalToConstant: 20),
             collapseButton.heightAnchor.constraint(equalToConstant: 20),
+
+            copyButton.trailingAnchor.constraint(equalTo: collapseButton.leadingAnchor, constant: -4),
+            copyButton.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
+            copyButton.widthAnchor.constraint(equalToConstant: 20),
+            copyButton.heightAnchor.constraint(equalToConstant: 20),
         ])
 
-        // Keep the file name from shoving the counts / copy off to the side.
+        // Keep the file name from shoving the counts off the trailing edge.
         fileLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         addedLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         removedLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
@@ -464,12 +467,16 @@ final class NativeFileDiffView: NSView {
     }
 
     private func layoutBody(width: CGFloat, collapsed: Bool, theme: any ThemeProtocol) {
-        guard let tv = diffTextView, let tc = tv.textContainer, let lm = tv.layoutManager else { return }
+        guard let tv = diffTextView, let tc = tv.textContainer, let lm = tv.layoutManager else {
+            FileDiffDebugLog.log("VIEW.layoutBody EARLY-RETURN (no textview) collapsed=\(collapsed)")
+            return
+        }
         tv.isHidden = collapsed
         diffBackground?.isHidden = collapsed
         if collapsed {
             bodyHeightConstraint?.constant = 0
             invalidateIntrinsicContentSize()
+            FileDiffDebugLog.log("VIEW.layoutBody collapsed bodyHeight=0")
             onHeightChanged?()
             return
         }
@@ -480,6 +487,7 @@ final class NativeFileDiffView: NSView {
         bodyHeightConstraint?.constant = h
         diffBackground?.needsDisplay = true
         invalidateIntrinsicContentSize()
+        FileDiffDebugLog.log("VIEW.layoutBody expanded innerW=\(Int(innerW)) bodyHeight=\(Int(h))")
         onHeightChanged?()
     }
 
@@ -522,6 +530,9 @@ final class NativeFileDiffView: NSView {
     // MARK: - Actions
 
     @objc private func toggleCollapse() {
+        FileDiffDebugLog.log(
+            "VIEW.toggleCollapse fired file=\(lastDiff?.fileName ?? "?") isCollapsed=\(isCollapsed) hasCallback=\(onToggleCollapse != nil)"
+        )
         // Notify the coordinator only — it flips the shared expand store and
         // reconfigures this cell, which re-lays-out and re-measures. Mirrors the
         // tool-call group's toggle exactly (no local synchronous relayout, which

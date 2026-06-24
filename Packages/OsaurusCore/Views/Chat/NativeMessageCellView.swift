@@ -2506,11 +2506,27 @@ final class NativeMessageCellView: NSTableCellView {
         // with inverted meaning — presence marks a card the user has collapsed.
         // The height estimator applies the same inversion.
         let collapsed = context.expandedIds.contains(blockId)
-        nativeFileDiffView?.onToggleCollapse = { context.onToggleExpand(blockId) }
+        FileDiffDebugLog.log(
+            "CELL.configureAsFileDiff block=\(blockId) collapsed=\(collapsed) sameKind=\(sameKind) reuse=\(nativeFileDiffView != nil)"
+        )
+        nativeFileDiffView?.onToggleCollapse = {
+            FileDiffDebugLog.log("CELL.onToggleCollapse -> onToggleExpand block=\(blockId)")
+            context.onToggleExpand(blockId)
+        }
         nativeFileDiffView?.onHeightChanged = { [weak self] in
-            guard let self, let dv = self.nativeFileDiffView else { return }
-            guard self.currentBlockId == blockId else { return }
-            context.onHeightMeasured?(dv.measuredCardHeight(outerWidth: context.width) + 12, blockId)
+            guard let self, let dv = self.nativeFileDiffView else {
+                FileDiffDebugLog.log("CELL.onHeightChanged SKIP (no self/view) block=\(blockId)")
+                return
+            }
+            guard self.currentBlockId == blockId else {
+                FileDiffDebugLog.log(
+                    "CELL.onHeightChanged SKIP (blockId mismatch current=\(self.currentBlockId ?? "nil") want=\(blockId))"
+                )
+                return
+            }
+            let h = dv.measuredCardHeight(outerWidth: context.width) + 12
+            FileDiffDebugLog.log("CELL.onHeightChanged report h=\(Int(h)) block=\(blockId)")
+            context.onHeightMeasured?(h, blockId)
         }
         nativeFileDiffView?.configure(
             diff: diff,
