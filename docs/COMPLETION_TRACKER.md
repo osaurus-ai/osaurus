@@ -1,0 +1,127 @@
+# Image / Spawn / Delegation — Completion Tracker (living, pre-merge)
+
+The single "what is actually proven" list for PR #1682. Updated continuously as
+verification runs. Companion to `REMAINING_WORK.md` (what's still broken/to-build).
+
+**Status legend:** ✅ PROVEN (live evidence on the merged binary) · 🟢 VERIFIED
+(static/diff/build, no live run needed) · 🟡 PARTIAL/non-deterministic · 🔴 BROKEN /
+blocks merge · ⚪ NOT YET TESTED.
+
+Branch: `feat/image-generation-vmlxflux` @ merge `6d5f8e8f` (+docs). Binary:
+Release, rebuilt 2026-06-23. Test root: `/tmp/osaurus-spawn-test` :1337.
+
+_Last updated: 2026-06-23._
+
+---
+
+## 0. BASE CHAT — NO REGRESSION (highest priority: must not break main chat)
+
+| Check | Status | Evidence |
+|---|---|---|
+| System-prompt additions are gated (image guidance, manifest group, delegation tools) | 🟢 VERIFIED | `SystemPromptComposer` diff: every add behind `resolvedNames.contains("image_generate")` / `imageDelegationActive` / `agentDelegationEnabled` |
+| With delegation OFF, base-chat tool set has NO spawn/image/delegate tools | ✅ PROVEN | live tool-enumeration probe → only `share_artifact`; spawn/image_generate/image_edit/local_delegate all absent |
+| Base chat text response normal (delegation OFF) | ✅ PROVEN | "what is photosynthesis" → coherent |
+| Base chat multi-turn context carry (delegation OFF) | ✅ PROVEN | "fav number 42 ×2" → "84" |
+| Tool-loop / nextStepBias image cases gated | 🟢 VERIFIED | `AgentToolLoop`/`AgentTaskState` diff: image bias guarded on `lastToolName=="image_generate"` + `isNativeImageGenerateToolResult`; base chat falls to unchanged path |
+| Reasoning-off path untouched by feature | 🟢 VERIFIED | feature diff modifies no reasoning logic |
+| osaurus-side context-window / KV-budget untouched for base chat | 🟢 VERIFIED | only `AgentSubagentRunner`/`LocalTextDelegateTool` (subagent path) touch `resolveContextWindow`/budget; base path unchanged |
+| Swift jinja fixes + gemma parsers untouched | 🟢 VERIFIED | `JangLoader`/`ToolCallProcessor` not in the modified-file set (live in pinned vmlx `6b77b1ee`) |
+| Model load/unload still works (with #91 GPU-settle barrier) | ⚪ + ✅ partial | barrier is general safety; base chat loaded qwen3-4b + gemma-4-12b fine this session |
+| Reasoning-OFF produces no `<think>` (live, GUI toggle) | ⚪ NOT YET TESTED | needs Codex computer-use toggle pass |
+| Base-chat tool firing (a non-delegation tool actually called) | ⚪ NOT YET TESTED | |
+
+**Verdict so far: base chat with delegation OFF is behaviorally identical to main**
+(static gating verified + live tool-list + text + context proven). Two live checks
+remain (reasoning-off toggle, base tool firing).
+
+---
+
+## 1. IMAGE GENERATION
+
+| Capability | Status | Evidence |
+|---|---|---|
+| `image_generate` tool — two-tool separation, schema, per-tool default model | 🟢 VERIFIED | cohesion audit (3 reviewers); both agent path + `/v1/images` API resolve `defaultImageGenerationModelId` |
+| Direct `/v1/images/generations` | ✅ PROVEN | 5/5 (17–31s), real PNGs, 0 crashes |
+| Agent-loop `image_generate` (tool-driven via `/agents/run`) | ✅ PROVEN | fired + PNG + coherent text (199s) |
+| GPU-safety chat→image (vmlx #82 drain) | 🟢 VERIFIED | `finishSlot` `Stream().synchronize()` present in pinned engine (verified authoritative checkout) |
+| GPU-safety image→model-load (#89) + model-load (#91) drains | 🟢 VERIFIED + ✅ | in shared `drive()`; 0 crashes across 8 ops + agent loop |
+| HTTP input clamping (width/height/steps/n) | 🔴 BROKEN | unclamped — DoS risk (REMAINING_WORK P0 #4) |
+
+## 2. IMAGE EDITING
+
+| Capability | Status | Evidence |
+|---|---|---|
+| `image_edit` tool — distinct schema (source_paths, strength), source loaded+staged | 🟢 VERIFIED | cohesion audit |
+| Direct `/v1/images/edits` | ✅ PROVEN | 3/3 (Qwen-Image-Edit ~224s each), real edited PNGs, 0 crashes |
+| Edited output return shape == generate | 🟢 VERIFIED | shared `toolPayload` |
+| Chained one-turn gen→edit (model-driven) | 🟡 PARTIAL | non-deterministic handoff stall (documented residual); reliable = separate-turn / direct API |
+| jpeg/webp output | 🔴 BROKEN | accepted but only PNG written (REMAINING_WORK P1 #8) |
+| `/v1/images/upscale` | 🔴 BROKEN | reachable but `notImplemented` stub (REMAINING_WORK P1 #7) |
+
+## 3. SPAWN (Agent personas)
+
+| Capability | Status | Evidence |
+|---|---|---|
+| `spawn` registered iff `spawnableAgentNames` non-empty (the gate the UI feeds) | ✅ PROVEN | A/B: populated → spawn in tool set; emptied → only spawn drops, others stay |
+| New "Spawnable Agents" UI writes the field; live without restart | ✅ PROVEN (write) / 🟢 VERIFIED (no-restart) | A/B used the field; store.save updates snapshot + posts notification |
+| Spawn executes to a digest (real handoff) | 🟢 prior-session | #59/#66 proven; this session gemma chose not to delegate (model choice, not wiring) |
+| Spawned persona is text-only (no tools) — vs design doc | 🔴 GAP | contradicts design (REMAINING_WORK P0 #2) |
+| Stale spawnableAgentNames on rename/delete | 🔴 GAP | silent privilege re-grant (REMAINING_WORK P1 #6) |
+
+## 4. LOCAL TEXT DELEGATE
+
+| Capability | Status | Evidence |
+|---|---|---|
+| `local_delegate` tool gated on `textDelegationToolAvailable` | 🟢 VERIFIED | cohesion audit |
+| Executes to a compact digest | 🟢 prior-session | STATUS doc live-proofs (sentinel round-trips) |
+| "Delegate Tool Use" permission picker | 🔴 BROKEN | live UI no-op — read by zero runtime paths (REMAINING_WORK P0 #1) |
+| Orchestrator restore on success path | 🔴 GAP | bare `try?` can strand chat model unloaded (REMAINING_WORK P0 #3) |
+
+## 5. CONTEXT PASS-OFF
+
+| Capability | Status | Evidence |
+|---|---|---|
+| Recall a generated image in a follow-up turn (no spurious re-gen) | ✅ PROVEN | follow-up recalled the lighthouse coherently, 0 new PNGs |
+
+## 6. SETTINGS (each AgentDelegation knob)
+
+| Setting | Wired? | Proven? |
+|---|---|---|
+| `agentDelegationEnabled` (master) | 🟢 gates everything | ✅ OFF → no delegation tools (live) |
+| `imageDelegationEnabled` → `imageDelegationActive` | 🟢 | ✅ A/B (image tools present when on) |
+| `localTextDelegationEnabled` / `cloudTextDelegationEnabled` → `textDelegationToolAvailable` | 🟢 | ⚪ on/off matrix pending (Codex) |
+| `spawnableAgentNames` → `anyAgentSpawnable` | 🟢 | ✅ A/B |
+| `defaultImageGenerationModelId` / `defaultImageEditModelId` | 🟢 both paths | 🟢 cohesion audit |
+| `permissionDefaults.{imageGenerate,imageEdit,localTextDelegate}` | 🟢 | 🟢 BUG D guard + tests |
+| `permissionDefaults.localTextDelegateToolUse` ("Delegate Tool Use") | 🔴 | no-op (P0 #1) |
+| `ramSafetyPreflightEnabled` | 🟢 (fixed this session) | ✅ regression test + normalize fix |
+| `budgets.{maxDelegateTokens,maxDelegateTurns,maxElapsedSeconds}` | 🟢 enforced | 🟢 cohesion audit |
+| `budgets.maxToolCalls` | reserved (UI removed) | 🟢 documented |
+| Pairwise setting on/off clash matrix | ⚪ | pending Codex close-inspection |
+
+## 7. MERGE INTEGRATION (vs main)
+
+| Item | Status | Evidence |
+|---|---|---|
+| Reconcile assistantActions (Insights→overflow menu, imageOnly) | 🟢 VERIFIED | build green; smoke (chat + image) no crash |
+| `.emptyResponseExhausted` in delegate tools | 🟢 VERIFIED | build green (note: unreachable for text-only subagents — P2 #12) |
+| ConfigurationView type-check extraction | 🟢 VERIFIED | build green |
+| `matchesSearch` array fix | 🟢 VERIFIED | build green |
+| Release build | ✅ SUCCEEDED | |
+| CI: shellcheck/swiftlint/test-cli | ✅ pass | |
+| CI: test-core | 🔴 BLOCKED | localization gate — 30 unlocalized strings (REMAINING_WORK P0 #5) |
+
+---
+
+## Pre-merge blockers (must clear before merge)
+1. 🔴 **test-core localization gate** (P0 #5) — 30 strings need de/zh-Hans/ko.
+2. 🔴 **"Delegate Tool Use" no-op** (P0 #1) — hide or build.
+3. 🔴 **success-path restore** (P0 #3) — orchestrator-strand risk.
+4. 🔴 **HTTP /images unclamped** (P0 #4) — DoS on public endpoint.
+   (P0 #2 spawn text-only is doc/scope, not a code break.)
+
+## Still to prove live (this tracker will be updated)
+- Reasoning-OFF produces no `<think>` (GUI toggle).
+- Base-chat non-delegation tool actually fires.
+- Setting on/off pairwise clash matrix (Codex).
+- Spawn execution to digest on the merged binary.
