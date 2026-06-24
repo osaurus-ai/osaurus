@@ -627,8 +627,15 @@ struct RuntimePolicySourceTests {
         // async eval tail (fixes the concurrent-GPU SIGSEGV/commit-assert), and
         // JangLoader loads a standalone chat_template.jinja when
         // tokenizer_config.json carries no inline template (fixes empty output
-        // on LFM2.5 + VibeThinker bundles).
-        let expectedRuntimeHardenedRevision = "6b77b1ee682d81b3f84d84ac455de565fea3f348"
+        // on LFM2.5 + VibeThinker bundles),
+        // plus vmlx-swift#84: Mistral3/Pixtral VLM bundles in the standard
+        // Hugging Face layout (flat top-level rope_theta, and image-processor
+        // params split across preprocessor_config.json + processor_config.json)
+        // now load instead of fatally crashing at model-load — the language
+        // attention falls back to flat rope_theta and the processor config
+        // accepts both nested and flat image-processor layouts (fixes the
+        // Sentry EXC_BREAKPOINT on Mistral-Small / Ministral / Pixtral).
+        let expectedRuntimeHardenedRevision = "29d05174151894f2a4072c93079736860480ae4e"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
         let appRevision = try Self.vmlxPinRevision(in: appResolved)

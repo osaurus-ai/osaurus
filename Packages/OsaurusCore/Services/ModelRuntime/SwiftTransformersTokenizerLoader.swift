@@ -374,6 +374,29 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
                 addGenerationPrompt: addGenerationPrompt
             )
         }
+        // Mistral 3.x packs (e.g. mlx-community Mistral-Small-3.1/3.2) ship only
+        // the HF vision chat_template ([SYSTEM_PROMPT]/[INST]/[IMG], no tools) or
+        // a bare tokenizer, so the bridge otherwise prompts without
+        // [AVAILABLE_TOOLS] (tools never ground -> the model emits a foreign
+        // ChatML/Hermes format) and may mis-route to a ChatML fallback. Apply the
+        // complete native Mistral template so reasoning / tools / vision all work
+        // natively. Detected by Mistral's tekken special tokens, not by name.
+        let hasMistralSentinel =
+            upstream.convertTokenToId("[INST]") != nil
+            && upstream.convertTokenToId("[SYSTEM_PROMPT]") != nil
+            && upstream.convertTokenToId("[AVAILABLE_TOOLS]") != nil
+        if hasMistralSentinel,
+            (env["VMLX_CHAT_TEMPLATE_FALLBACK_DISABLE"] ?? "0") != "1"
+        {
+            return try fallback(
+                label: "Mistral3CompleteMinimal",
+                template: MLXLMCommon.ChatTemplateFallbacks.mistral3CompleteMinimal,
+                messages: messages,
+                tools: chatTemplateTools,
+                additionalContext: adjustedContext,
+                addGenerationPrompt: addGenerationPrompt
+            )
+        }
         if modelTypeIsNemotron,
             !(chatTemplateTools?.isEmpty ?? true),
             (env["VMLX_CHAT_TEMPLATE_FALLBACK_DISABLE"] ?? "0") != "1"
