@@ -69,6 +69,23 @@ final class DiffBackgroundView: NSView {
     }
 }
 
+// MARK: - DiffLoggingButton (temporary diagnostic)
+
+/// NSButton that logs when it receives a mouseDown / hitTest, so we can tell
+/// whether a "frozen" click reaches the button at all (event delivery) versus
+/// the action failing to fire (tracking abort). Remove with the debug logging.
+final class DiffLoggingButton: NSButton {
+    var debugName = "button"
+
+    override func mouseDown(with event: NSEvent) {
+        FileDiffDebugLog.log(
+            "BUTTON.mouseDown \(debugName) received enabled=\(isEnabled) hidden=\(isHidden) window=\(window != nil)"
+        )
+        super.mouseDown(with: event)
+        FileDiffDebugLog.log("BUTTON.mouseDown \(debugName) returned (super handled tracking)")
+    }
+}
+
 // MARK: - NativeFileDiffView
 
 final class NativeFileDiffView: NSView {
@@ -92,7 +109,7 @@ final class NativeFileDiffView: NSView {
     /// the card on click. Mirrors `NativeToolCallRowView.headerButton` — an
     /// NSButton handles repeated clicks reliably inside a table cell, unlike a
     /// view's `mouseDown`.
-    private let headerButton = NSButton()
+    private let headerButton = DiffLoggingButton()
     /// Literal "</>" code glyph — drawn as text so it renders regardless of SF
     /// Symbol availability, shown before the file name in every state.
     private let iconLabel = NSTextField(labelWithString: "</>")
@@ -101,7 +118,7 @@ final class NativeFileDiffView: NSView {
     private let removedLabel = NSTextField(labelWithString: "")
     private let previewBadge = NSTextField(labelWithString: "")
     private let copyButton = NSButton()
-    private let collapseButton = NSButton()
+    private let collapseButton = DiffLoggingButton()
     private var diffBackground: DiffBackgroundView?
     private var diffTextView: CodeNSTextView?
     private var bodyHeightConstraint: NSLayoutConstraint?
@@ -221,6 +238,7 @@ final class NativeFileDiffView: NSView {
         copyButton.alphaValue = 0.55
         headerView.addSubview(copyButton)
 
+        collapseButton.debugName = "chevron"
         collapseButton.translatesAutoresizingMaskIntoConstraints = false
         collapseButton.title = ""
         collapseButton.image = SymbolImageCache.image("chevron.down", accessibilityDescription: nil)
@@ -233,6 +251,7 @@ final class NativeFileDiffView: NSView {
         // Transparent toggle overlay over the header up to the action buttons,
         // added last so it sits in front of the icon/labels and captures their
         // clicks while copy / collapse keep their own.
+        headerButton.debugName = "header"
         headerButton.translatesAutoresizingMaskIntoConstraints = false
         headerButton.title = ""
         headerButton.isBordered = false
