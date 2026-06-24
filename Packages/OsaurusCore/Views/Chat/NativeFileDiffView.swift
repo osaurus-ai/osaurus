@@ -69,31 +69,6 @@ final class DiffBackgroundView: NSView {
     }
 }
 
-// MARK: - ClickableHeaderView
-
-/// Header row that toggles the diff card on click. The two action buttons keep
-/// their own click handling; every other point in the header (icon, labels,
-/// empty space) routes to `onClick`, so tapping the collapsed card expands it.
-final class ClickableHeaderView: NSView {
-    var onClick: (() -> Void)?
-    /// Subviews that should receive their own clicks instead of toggling.
-    var passthroughControls: [NSView] = []
-
-    override func hitTest(_ point: NSPoint) -> NSView? {
-        let pInSelf = convert(point, from: superview)
-        for control in passthroughControls {
-            if let hit = control.hitTest(pInSelf) { return hit }
-        }
-        return NSPointInRect(pInSelf, bounds) ? self : nil
-    }
-
-    override func mouseDown(with event: NSEvent) { onClick?() }
-
-    override func resetCursorRects() {
-        addCursorRect(bounds, cursor: .pointingHand)
-    }
-}
-
 // MARK: - NativeFileDiffView
 
 final class NativeFileDiffView: NSView {
@@ -117,7 +92,12 @@ final class NativeFileDiffView: NSView {
 
     // MARK: Subviews
 
-    private let headerView = ClickableHeaderView()
+    private let headerView = NSView()
+    /// Transparent overlay covering the header up to the action buttons; toggles
+    /// the card on click. Mirrors `NativeToolCallRowView.headerButton` — an
+    /// NSButton handles repeated clicks reliably inside a table cell, unlike a
+    /// view's `mouseDown`.
+    private let headerButton = NSButton()
     /// Literal "</>" code glyph — drawn as text so it renders regardless of SF
     /// Symbol availability, shown before the file name in every state.
     private let iconLabel = NSTextField(labelWithString: "</>")
@@ -214,7 +194,6 @@ final class NativeFileDiffView: NSView {
 
         headerView.translatesAutoresizingMaskIntoConstraints = false
         headerView.wantsLayer = true
-        headerView.onClick = { [weak self] in self?.onToggleCollapse?() }
         addSubview(headerView)
 
         iconLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -250,9 +229,25 @@ final class NativeFileDiffView: NSView {
         collapseButton.alphaValue = 0.55
         headerView.addSubview(collapseButton)
 
-        // Action buttons keep their own click handling; the rest of the header
-        // toggles the card.
-        headerView.passthroughControls = [copyButton, collapseButton]
+        // Transparent toggle overlay over the header up to the action buttons,
+        // added last so it sits in front of the icon/labels and captures their
+        // clicks while copy / collapse keep their own.
+        headerButton.translatesAutoresizingMaskIntoConstraints = false
+        headerButton.title = ""
+        headerButton.isBordered = false
+        headerButton.bezelStyle = .inline
+        headerButton.isTransparent = true
+        headerButton.focusRingType = .none
+        headerButton.target = self
+        headerButton.action = #selector(toggleCollapse)
+        headerView.addSubview(headerButton)
+
+        NSLayoutConstraint.activate([
+            headerButton.leadingAnchor.constraint(equalTo: headerView.leadingAnchor),
+            headerButton.topAnchor.constraint(equalTo: headerView.topAnchor),
+            headerButton.bottomAnchor.constraint(equalTo: headerView.bottomAnchor),
+            headerButton.trailingAnchor.constraint(equalTo: copyButton.leadingAnchor),
+        ])
 
         NSLayoutConstraint.activate([
             headerView.leadingAnchor.constraint(equalTo: leadingAnchor),
