@@ -27,11 +27,15 @@ _Last updated: 2026-06-23._
 | osaurus-side context-window / KV-budget untouched for base chat | 🟢 VERIFIED | only `AgentSubagentRunner`/`LocalTextDelegateTool` (subagent path) touch `resolveContextWindow`/budget; base path unchanged |
 | Swift jinja fixes + gemma parsers untouched | 🟢 VERIFIED | `JangLoader`/`ToolCallProcessor` not in the modified-file set (live in pinned vmlx `6b77b1ee`) |
 | Model load/unload still works (with #91 GPU-settle barrier) | ⚪ + ✅ partial | barrier is general safety; base chat loaded qwen3-4b + gemma-4-12b fine this session |
+| No sub-toggle leaks a tool when master OFF (clash matrix C1) | ✅ PROVEN | master OFF + image+local+spawnable all ON → all 4 delegation tools ABSENT |
+| Codex independent gate-composition proof | ✅ SAFE | Codex (constrained) traced every predicate ANDs with `agentDelegationEnabled`; cited file:lines; verdict SAFE |
 | Reasoning-OFF produces no `<think>` (live, GUI toggle) | ⚪ NOT YET TESTED | needs Codex computer-use toggle pass |
 | Base-chat tool firing (a non-delegation tool actually called) | ⚪ NOT YET TESTED | |
 
-**Verdict so far: base chat with delegation OFF is behaviorally identical to main**
-(static gating verified + live tool-list + text + context proven). Two live checks
+**Verdict: base chat with delegation OFF is behaviorally identical to main — DUAL-CONFIRMED**
+(static gating + Codex gate-composition proof + live tool-list + text + context + clash-matrix
+C1). Only observable base-chat effect: with an image job in-flight, a base-chat request waits
+for the broadened MetalGate (deliberate #91 RAM-safety, not a regression). Two minor live checks
 remain (reasoning-off toggle, base tool firing).
 
 ---
@@ -89,7 +93,7 @@ remain (reasoning-off toggle, base tool firing).
 |---|---|---|
 | `agentDelegationEnabled` (master) | 🟢 gates everything | ✅ OFF → no delegation tools (live) |
 | `imageDelegationEnabled` → `imageDelegationActive` | 🟢 | ✅ A/B (image tools present when on) |
-| `localTextDelegationEnabled` / `cloudTextDelegationEnabled` → `textDelegationToolAvailable` | 🟢 | ⚪ on/off matrix pending (Codex) |
+| `localTextDelegationEnabled` / `cloudTextDelegationEnabled` → `textDelegationToolAvailable` | 🟢 | ✅ C3 local ON → `local_delegate` present; C4 local OFF → absent |
 | `spawnableAgentNames` → `anyAgentSpawnable` | 🟢 | ✅ A/B |
 | `defaultImageGenerationModelId` / `defaultImageEditModelId` | 🟢 both paths | 🟢 cohesion audit |
 | `permissionDefaults.{imageGenerate,imageEdit,localTextDelegate}` | 🟢 | 🟢 BUG D guard + tests |
@@ -97,7 +101,7 @@ remain (reasoning-off toggle, base tool firing).
 | `ramSafetyPreflightEnabled` | 🟢 (fixed this session) | ✅ regression test + normalize fix |
 | `budgets.{maxDelegateTokens,maxDelegateTurns,maxElapsedSeconds}` | 🟢 enforced | 🟢 cohesion audit |
 | `budgets.maxToolCalls` | reserved (UI removed) | 🟢 documented |
-| Pairwise setting on/off clash matrix | ⚪ | pending Codex close-inspection |
+| Pairwise setting on/off clash matrix | ✅ PROVEN | C1 (master OFF overrides all) / C3 (all ON → all present) / C4 (image ON, local+spawn OFF → only image) all matched; + Codex static gate proof |
 
 ## 7. MERGE INTEGRATION (vs main)
 
@@ -123,5 +127,6 @@ remain (reasoning-off toggle, base tool firing).
 ## Still to prove live (this tracker will be updated)
 - Reasoning-OFF produces no `<think>` (GUI toggle).
 - Base-chat non-delegation tool actually fires.
-- Setting on/off pairwise clash matrix (Codex).
-- Spawn execution to digest on the merged binary.
+- Spawn execution to digest on the merged binary (model chose not to delegate this session).
+- ~~Setting on/off pairwise clash matrix~~ ✅ DONE (C1/C3/C4 + Codex).
+- ~~Base-chat-no-regression core~~ ✅ DONE (dual-confirmed).
