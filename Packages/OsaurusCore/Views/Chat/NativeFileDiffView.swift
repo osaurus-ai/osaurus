@@ -69,23 +69,6 @@ final class DiffBackgroundView: NSView {
     }
 }
 
-// MARK: - DiffLoggingButton (temporary diagnostic)
-
-/// NSButton that logs when it receives a mouseDown / hitTest, so we can tell
-/// whether a "frozen" click reaches the button at all (event delivery) versus
-/// the action failing to fire (tracking abort). Remove with the debug logging.
-final class DiffLoggingButton: NSButton {
-    var debugName = "button"
-
-    override func mouseDown(with event: NSEvent) {
-        FileDiffDebugLog.log(
-            "BUTTON.mouseDown \(debugName) received enabled=\(isEnabled) hidden=\(isHidden) window=\(window != nil)"
-        )
-        super.mouseDown(with: event)
-        FileDiffDebugLog.log("BUTTON.mouseDown \(debugName) returned (super handled tracking)")
-    }
-}
-
 // MARK: - NativeFileDiffView
 
 final class NativeFileDiffView: NSView {
@@ -109,7 +92,7 @@ final class NativeFileDiffView: NSView {
     /// the card on click. Mirrors `NativeToolCallRowView.headerButton` — an
     /// NSButton handles repeated clicks reliably inside a table cell, unlike a
     /// view's `mouseDown`.
-    private let headerButton = DiffLoggingButton()
+    private let headerButton = NSButton()
     /// Literal "</>" code glyph — drawn as text so it renders regardless of SF
     /// Symbol availability, shown before the file name in every state.
     private let iconLabel = NSTextField(labelWithString: "</>")
@@ -118,7 +101,7 @@ final class NativeFileDiffView: NSView {
     private let removedLabel = NSTextField(labelWithString: "")
     private let previewBadge = NSTextField(labelWithString: "")
     private let copyButton = NSButton()
-    private let collapseButton = DiffLoggingButton()
+    private let collapseButton = NSButton()
     private var diffBackground: DiffBackgroundView?
     private var diffTextView: CodeNSTextView?
     private var bodyHeightConstraint: NSLayoutConstraint?
@@ -143,75 +126,9 @@ final class NativeFileDiffView: NSView {
     override init(frame: NSRect) {
         super.init(frame: frame)
         buildViews()
-        Self.liveViews.add(self)
-        Self.installClickMonitorOnce()
     }
 
     required init?(coder: NSCoder) { fatalError() }
-
-    // MARK: - Debug click monitor (temporary)
-
-    nonisolated(unsafe) private static let liveViews = NSHashTable<NativeFileDiffView>.weakObjects()
-
-    /// One global left-mouse-down monitor that dumps everything needed to
-    /// diagnose a "frozen" click in a single capture: the true hit-test chain
-    /// (from the window frame view, which uses window-base coords so it's
-    /// title-bar safe), and for every live diff card its geometry/state and
-    /// whether the click lands inside its controls. Remove with the debug logging.
-    nonisolated(unsafe) private static var clickMonitorInstalled = false
-    private static func installClickMonitorOnce() {
-        guard !clickMonitorInstalled else { return }
-        clickMonitorInstalled = true
-        NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { event in
-            let loc = event.locationInWindow
-            // The window frame view (contentView.superview) uses window-base
-            // coords == locationInWindow, so this hit-test is correct.
-            let frameView = event.window?.contentView?.superview ?? event.window?.contentView
-            let hit = frameView?.hitTest(loc)
-            var chain = ""
-            var v = hit
-            var depth = 0
-            while let cur = v, depth < 10 {
-                let f = cur.convert(cur.bounds, to: nil)
-                chain += (chain.isEmpty ? "" : "\n      < ")
-                    + "\(type(of: cur)) \(rectStr(f)) hidden=\(cur.isHidden)"
-                v = cur.superview
-                depth += 1
-            }
-            FileDiffDebugLog.log("CLICK loc=\(Int(loc.x)),\(Int(loc.y))\n  HITCHAIN: \(chain.isEmpty ? "nil" : chain)")
-
-            for dv in Self.liveViews.allObjects where dv.window != nil {
-                let sameWindow = dv.window === event.window
-                let card = dv.convert(dv.bounds, to: nil)
-                let header = dv.headerButton.convert(dv.headerButton.bounds, to: nil)
-                let chevron = dv.collapseButton.convert(dv.collapseButton.bounds, to: nil)
-                let copy = dv.copyButton.convert(dv.copyButton.bounds, to: nil)
-                let bodyFrame = dv.diffTextView.map { $0.convert($0.bounds, to: nil) } ?? .zero
-                // Walk the cell/row-view enclosure to detect frame desync.
-                let cellV = dv.superview
-                let rowV = cellV?.superview
-                let cellF = cellV.map { $0.convert($0.bounds, to: nil) } ?? .zero
-                let rowF = rowV.map { $0.convert($0.bounds, to: nil) } ?? .zero
-                FileDiffDebugLog.log(
-                    """
-                      DIFFCARD sameWin=\(sameWindow) collapsed=\(dv.isCollapsed) cardHidden=\(dv.isHidden)
-                        card=\(rectStr(card)) intrinsicH=\(Int(dv.intrinsicContentSize.height)) bodyConstraint=\(Int(dv.bodyHeightConstraint?.constant ?? -1))
-                        headerBtn=\(rectStr(header)) hidden=\(dv.headerButton.isHidden) enabled=\(dv.headerButton.isEnabled)
-                        chevronBtn=\(rectStr(chevron)) hidden=\(dv.collapseButton.isHidden)
-                        copyBtn=\(rectStr(copy))
-                        body(textView)=\(rectStr(bodyFrame)) hidden=\(dv.diffTextView?.isHidden ?? true)
-                        cell=\(type(of: cellV)) \(rectStr(cellF))  rowView=\(type(of: rowV)) \(rectStr(rowF))
-                        clickInCard=\(card.contains(loc)) clickInHeaderBtn=\(header.contains(loc)) clickInChevron=\(chevron.contains(loc)) clickInBody=\(bodyFrame.contains(loc))
-                    """
-                )
-            }
-            return event
-        }
-    }
-
-    private static func rectStr(_ r: NSRect) -> String {
-        "(\(Int(r.minX)),\(Int(r.minY)) \(Int(r.width))x\(Int(r.height)))"
-    }
 
     // MARK: Configure
 
@@ -223,10 +140,6 @@ final class NativeFileDiffView: NSView {
         // SwiftUI update wiped the height cache without a fresh measurement.
         let diffChanged = diff != lastDiff
         let themeChanged = themeId != lastThemeId
-
-        FileDiffDebugLog.log(
-            "VIEW.configure file=\(diff.fileName) collapsed=\(collapsed) (was \(isCollapsed)) diffChanged=\(diffChanged) width=\(Int(width))"
-        )
 
         lastDiff = diff
         lastWidth = width
@@ -304,7 +217,6 @@ final class NativeFileDiffView: NSView {
         copyButton.alphaValue = 0.55
         headerView.addSubview(copyButton)
 
-        collapseButton.debugName = "chevron"
         collapseButton.translatesAutoresizingMaskIntoConstraints = false
         collapseButton.title = ""
         collapseButton.image = SymbolImageCache.image("chevron.down", accessibilityDescription: nil)
@@ -317,7 +229,6 @@ final class NativeFileDiffView: NSView {
         // Transparent toggle overlay over the header up to the action buttons,
         // added last so it sits in front of the icon/labels and captures their
         // clicks while copy / collapse keep their own.
-        headerButton.debugName = "header"
         headerButton.translatesAutoresizingMaskIntoConstraints = false
         headerButton.title = ""
         headerButton.isBordered = false
@@ -553,7 +464,6 @@ final class NativeFileDiffView: NSView {
 
     private func layoutBody(width: CGFloat, collapsed: Bool, theme: any ThemeProtocol) {
         guard let tv = diffTextView, let tc = tv.textContainer, let lm = tv.layoutManager else {
-            FileDiffDebugLog.log("VIEW.layoutBody EARLY-RETURN (no textview) collapsed=\(collapsed)")
             return
         }
         tv.isHidden = collapsed
@@ -561,7 +471,6 @@ final class NativeFileDiffView: NSView {
         if collapsed {
             bodyHeightConstraint?.constant = 0
             invalidateIntrinsicContentSize()
-            FileDiffDebugLog.log("VIEW.layoutBody collapsed bodyHeight=0")
             onHeightChanged?()
             return
         }
@@ -572,7 +481,6 @@ final class NativeFileDiffView: NSView {
         bodyHeightConstraint?.constant = h
         diffBackground?.needsDisplay = true
         invalidateIntrinsicContentSize()
-        FileDiffDebugLog.log("VIEW.layoutBody expanded innerW=\(Int(innerW)) bodyHeight=\(Int(h))")
         onHeightChanged?()
     }
 
@@ -615,9 +523,6 @@ final class NativeFileDiffView: NSView {
     // MARK: - Actions
 
     @objc private func toggleCollapse() {
-        FileDiffDebugLog.log(
-            "VIEW.toggleCollapse fired file=\(lastDiff?.fileName ?? "?") isCollapsed=\(isCollapsed) hasCallback=\(onToggleCollapse != nil)"
-        )
         // Notify the coordinator only — it flips the shared expand store and
         // reconfigures this cell, which re-lays-out and re-measures. Mirrors the
         // tool-call group's toggle exactly (no local synchronous relayout, which

@@ -570,14 +570,8 @@ extension MessageTableRepresentable {
         /// Called by a cell proxy when the user toggles an expand/collapse item.
         /// Forwards the toggle to the session store and invalidates the row height.
         func toggleExpand(id: String, sessionStore: ExpandedBlocksStore) {
-            let isDiff = id.hasPrefix("filediff-")
             sessionStore.toggle(id)
             expandedIds = sessionStore.expandedIds
-            if isDiff {
-                FileDiffDebugLog.log(
-                    "COORD.toggleExpand id=\(id) nowContains=\(expandedIds.contains(id)) (collapsed=\(expandedIds.contains(id)))"
-                )
-            }
 
             // find row: block id (thinking, etc.) or tool call id inside a toolCallGroup block
             let row = blockIds.firstIndex(where: { bid in
@@ -593,11 +587,6 @@ extension MessageTableRepresentable {
                 let blockId = blockIds[row]
                 heightCache.removeValue(forKey: blockId)
                 let cell = tableView?.view(atColumn: 0, row: row, makeIfNecessary: false) as? NativeMessageCellView
-                if isDiff {
-                    FileDiffDebugLog.log(
-                        "COORD.toggleExpand foundRow=\(row) cellPresent=\(cell != nil)"
-                    )
-                }
                 if let cell, let block = blockLookup[blockId] {
                     configureCell(cell, with: block)
                 }
@@ -1226,10 +1215,8 @@ extension MessageTableRepresentable {
                 let block = blockLookup[blockIds[row]]
             else { return 44 }
 
-            let isDiff = block.id.hasPrefix("filediff-")
             // return cached height if we have it
             if let cached = heightCache[block.id] {
-                if isDiff { FileDiffDebugLog.log("COORD.heightOfRow row=\(row) CACHED=\(Int(cached))") }
                 return cached
             }
 
@@ -1243,31 +1230,16 @@ extension MessageTableRepresentable {
                 isExpanded: isExpanded
             )
             heightCache[block.id] = h
-            if isDiff {
-                FileDiffDebugLog.log(
-                    "COORD.heightOfRow row=\(row) ESTIMATE=\(Int(h)) isExpanded(contains)=\(isExpanded)"
-                )
-            }
             return h
         }
 
         /// Called by a cell after it has been laid out to update the height cache.
         /// Triggers a height invalidation if the actual height differs from the estimate.
         func reportMeasuredHeight(_ height: CGFloat, forBlockId blockId: String, row: Int) {
-            guard let tv = tableView, row < tv.numberOfRows else {
-                if blockId.hasPrefix("filediff-") {
-                    FileDiffDebugLog.log("COORD.reportMeasuredHeight SKIP (no tv/row oob) block=\(blockId)")
-                }
-                return
-            }
+            guard let tv = tableView, row < tv.numberOfRows else { return }
             let existing = heightCache[blockId]
             let delta = abs((existing ?? 0) - height)
             heightCache[blockId] = height
-            if blockId.hasPrefix("filediff-") {
-                FileDiffDebugLog.log(
-                    "COORD.reportMeasuredHeight row=\(row) h=\(Int(height)) existing=\(Int(existing ?? 0)) delta=\(Int(delta)) willNote=\(delta > 0.5)"
-                )
-            }
             // 2pt was too coarse — short rows (user bubble + corner stroke) looked clipped before the next scroll
             if delta > 0.5 {
                 NSAnimationContext.beginGrouping()
