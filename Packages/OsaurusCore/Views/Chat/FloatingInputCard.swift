@@ -4582,6 +4582,15 @@ private struct BudgetGroup: Identifiable {
     var isExpandable: Bool { entries.count > 1 }
 }
 
+/// Reports the natural height of the context-budget popover content so it
+/// can size its scroll container to fit (see `resolvedHeight`).
+private struct ContextPopoverHeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
 private struct ContextBreakdownPopover: View {
     let breakdown: ContextBreakdown
     let maxTokens: Int?
@@ -4593,6 +4602,20 @@ private struct ContextBreakdownPopover: View {
     /// Which multi-entry groups are drilled open. Starts empty so the popover
     /// opens in its compact, grouped form.
     @State private var expandedGroups: Set<String> = []
+
+    /// Measured natural height of the popover content, fed back via a
+    /// preference to size the scroll container (see `resolvedHeight`).
+    @State private var measuredContentHeight: CGFloat = 0
+
+    /// Cap on the popover height; longer breakdowns scroll past this.
+    private let maxPopoverHeight: CGFloat = 420
+
+    /// Scroll-container height: nil until measured (use the content's
+    /// natural size), then clamped to `maxPopoverHeight`.
+    private var resolvedHeight: CGFloat? {
+        guard measuredContentHeight > 0 else { return nil }
+        return min(measuredContentHeight, maxPopoverHeight)
+    }
 
     /// Each row's share of the *current* total, not of the model's full
     /// window — the window is typically so large (e.g. 262k) that share-of-
@@ -4683,6 +4706,29 @@ private struct ContextBreakdownPopover: View {
     // MARK: - Body
 
     var body: some View {
+        // A height-capped ScrollView, not a free-growing column: the popover
+        // hugs its content, but a long "System Prompt" drill-down scrolls
+        // instead of resizing the NSPopover window — an animated/oversized
+        // popover resize crashes AppKit (EXC_BAD_ACCESS).
+        ScrollView(.vertical, showsIndicators: false) {
+            contentStack
+                .background(
+                    GeometryReader { proxy in
+                        Color.clear.preference(
+                            key: ContextPopoverHeightKey.self,
+                            value: proxy.size.height
+                        )
+                    }
+                )
+        }
+        .frame(width: 240, height: resolvedHeight)
+        .onPreferenceChange(ContextPopoverHeightKey.self) { measuredContentHeight = $0 }
+        .popoverCard()
+    }
+
+    /// The popover's content column. Extracted so `body` can wrap it in a
+    /// height-bounded `ScrollView` (see `resolvedHeight`).
+    private var contentStack: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 6) {
                 Text("Context Budget", bundle: .module)
@@ -4724,8 +4770,6 @@ private struct ContextBreakdownPopover: View {
             divider
             totalRow.padding(.horizontal, 12).padding(.vertical, 8)
         }
-        .frame(width: 240)
-        .popoverCard()
     }
 
     // MARK: - Stacked Bar
@@ -4773,12 +4817,12 @@ private struct ContextBreakdownPopover: View {
                 if group.isExpandable {
                     let expanded = expandedGroups.contains(group.id)
                     Button {
-                        withAnimation(.easeInOut(duration: 0.15)) {
-                            if expanded {
-                                expandedGroups.remove(group.id)
-                            } else {
-                                expandedGroups.insert(group.id)
-                            }
+                        // No withAnimation: animating the popover resize
+                        // crashes AppKit (see `body`). Snap the size instead.
+                        if expanded {
+                            expandedGroups.remove(group.id)
+                        } else {
+                            expandedGroups.insert(group.id)
                         }
                     } label: {
                         groupHeader(group, expanded: expanded)
@@ -4788,15 +4832,14 @@ private struct ContextBreakdownPopover: View {
                     if expanded {
                         VStack(alignment: .leading, spacing: 4) {
                             // Key by position, not `entry.id`: a prompt section's
-                            // id isn't guaranteed unique across the manifest, and
-                            // duplicate ForEach IDs trap when this list animates
-                            // in on expand. Positional identity is what we want
-                            // for a static, display-only list anyway.
+                            // id isn't guaranteed unique across the manifest, so
+                            // duplicate ForEach IDs would trap. Positional
+                            // identity is what we want for a static,
+                            // display-only list anyway.
                             ForEach(Array(group.entries.enumerated()), id: \.offset) { _, entry in
                                 entryRow(entry).padding(.leading, 11)
                             }
                         }
-                        .transition(.opacity.combined(with: .move(edge: .top)))
                     }
                 } else if let entry = group.entries.first {
                     entryRow(entry)
