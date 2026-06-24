@@ -208,6 +208,19 @@ final class NativeFileDiffView: NSView {
         }
         fileLabel.lineBreakMode = .byTruncatingMiddle
 
+        // Transparent toggle overlay spanning the full header. Added before the
+        // action buttons so they sit in front and keep their own clicks, while
+        // every other point (icon, labels, empty space) toggles the card.
+        headerButton.translatesAutoresizingMaskIntoConstraints = false
+        headerButton.title = ""
+        headerButton.isBordered = false
+        headerButton.bezelStyle = .inline
+        headerButton.isTransparent = true
+        headerButton.focusRingType = .none
+        headerButton.target = self
+        headerButton.action = #selector(toggleCollapse)
+        headerView.addSubview(headerButton)
+
         copyButton.translatesAutoresizingMaskIntoConstraints = false
         copyButton.title = ""
         copyButton.image = SymbolImageCache.image("doc.on.doc", accessibilityDescription: nil)
@@ -226,24 +239,11 @@ final class NativeFileDiffView: NSView {
         collapseButton.alphaValue = 0.55
         headerView.addSubview(collapseButton)
 
-        // Transparent toggle overlay over the header up to the action buttons,
-        // added last so it sits in front of the icon/labels and captures their
-        // clicks while copy / collapse keep their own.
-        headerButton.translatesAutoresizingMaskIntoConstraints = false
-        headerButton.title = ""
-        headerButton.isBordered = false
-        headerButton.bezelStyle = .inline
-        headerButton.isTransparent = true
-        headerButton.focusRingType = .none
-        headerButton.target = self
-        headerButton.action = #selector(toggleCollapse)
-        headerView.addSubview(headerButton)
-
         NSLayoutConstraint.activate([
             headerButton.leadingAnchor.constraint(equalTo: headerView.leadingAnchor),
+            headerButton.trailingAnchor.constraint(equalTo: headerView.trailingAnchor),
             headerButton.topAnchor.constraint(equalTo: headerView.topAnchor),
             headerButton.bottomAnchor.constraint(equalTo: headerView.bottomAnchor),
-            headerButton.trailingAnchor.constraint(equalTo: copyButton.leadingAnchor),
         ])
 
         NSLayoutConstraint.activate([
@@ -264,10 +264,16 @@ final class NativeFileDiffView: NSView {
             removedLabel.leadingAnchor.constraint(equalTo: addedLabel.trailingAnchor, constant: 5),
             removedLabel.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
 
-            previewBadge.leadingAnchor.constraint(equalTo: removedLabel.trailingAnchor, constant: 8),
+            // Copy sits immediately after the diff counts.
+            copyButton.leadingAnchor.constraint(equalTo: removedLabel.trailingAnchor, constant: 8),
+            copyButton.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
+            copyButton.widthAnchor.constraint(equalToConstant: 20),
+            copyButton.heightAnchor.constraint(equalToConstant: 20),
+
+            previewBadge.leadingAnchor.constraint(equalTo: copyButton.trailingAnchor, constant: 8),
             previewBadge.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
             previewBadge.trailingAnchor.constraint(
-                lessThanOrEqualTo: copyButton.leadingAnchor,
+                lessThanOrEqualTo: collapseButton.leadingAnchor,
                 constant: -8
             ),
 
@@ -275,14 +281,9 @@ final class NativeFileDiffView: NSView {
             collapseButton.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
             collapseButton.widthAnchor.constraint(equalToConstant: 20),
             collapseButton.heightAnchor.constraint(equalToConstant: 20),
-
-            copyButton.trailingAnchor.constraint(equalTo: collapseButton.leadingAnchor, constant: -4),
-            copyButton.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
-            copyButton.widthAnchor.constraint(equalToConstant: 20),
-            copyButton.heightAnchor.constraint(equalToConstant: 20),
         ])
 
-        // Keep the file name from shoving the counts off the trailing edge.
+        // Keep the file name from shoving the counts / copy off to the side.
         fileLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         addedLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         removedLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
