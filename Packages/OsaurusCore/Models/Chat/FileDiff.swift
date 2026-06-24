@@ -53,7 +53,9 @@ struct FileDiff: Equatable {
     // MARK: - Parsing
 
     /// Tool names whose success envelope carries a renderable diff.
-    static let diffProducingToolNames: Set<String> = ["file_write", "file_edit"]
+    static let diffProducingToolNames: Set<String> = [
+        "file_write", "file_edit", "sandbox_write_file",
+    ]
 
     /// Builds a `FileDiff` from a `file_write` / `file_edit` success envelope.
     /// Returns nil for error envelopes or results without a `diff` field.

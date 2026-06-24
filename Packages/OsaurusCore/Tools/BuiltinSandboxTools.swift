@@ -1630,6 +1630,9 @@ private struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
         )
         guard case .value(let content) = contentReq else { return contentReq.failureEnvelope ?? "" }
 
+        // Capture the pre-write content so the chat can render a diff card.
+        let before = await readForDiff(resolved: resolved)
+
         let dir = (resolved as NSString).deletingLastPathComponent
         _ = try await SandboxToolCommandRunnerRegistry.shared.execAsAgent(
             agentName,
@@ -1651,7 +1654,12 @@ private struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
         }
         return sandboxSuccess(
             tool: name,
-            result: ["path": resolved, "size": content.count]
+            result: writeResult(
+                resolved: resolved,
+                before: before,
+                after: content,
+                extra: ["size": content.count]
+            )
         )
     }
 
@@ -1687,6 +1695,9 @@ private struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
             allowEmpty: true
         )
         guard case .value(let newString) = newReq else { return newReq.failureEnvelope ?? "" }
+
+        // Capture pre-edit content for the diff card (best-effort).
+        let before = await readForDiff(resolved: resolved)
 
         let tmpDir = "\(home)/.tmp"
         _ = try await SandboxToolCommandRunnerRegistry.shared.execAsAgent(
@@ -1750,13 +1761,61 @@ private struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
             )
         }
 
+        // Read the applied result so the diff reflects what's actually on disk.
+        let after = await readForDiff(resolved: resolved)?.content
         return sandboxSuccess(
             tool: name,
-            result: [
-                "path": resolved,
-                "summary": result.stdout.trimmingCharacters(in: .whitespacesAndNewlines),
-            ]
+            result: writeResult(
+                resolved: resolved,
+                before: before,
+                after: after,
+                extra: ["summary": result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)]
+            )
         )
+    }
+
+    /// Best-effort read of the current file for diffing. Returns nil on any exec
+    /// failure — the diff is non-essential and must never block a write. The
+    /// command prints a `1`/`0` existence marker line, then the raw contents.
+    private func readForDiff(resolved: String) async -> (existed: Bool, content: String)? {
+        let command = "if [ -f '\(resolved)' ]; then echo 1; cat '\(resolved)'; else echo 0; fi"
+        guard
+            let result = try? await SandboxToolCommandRunnerRegistry.shared.execAsAgent(
+                agentName,
+                command: command
+            ),
+            result.succeeded,
+            let newline = result.stdout.firstIndex(of: "\n")
+        else { return nil }
+        let existed = String(result.stdout[..<newline]) == "1"
+        let content = String(result.stdout[result.stdout.index(after: newline)...])
+        return (existed, content)
+    }
+
+    /// Assembles the success-result dict, attaching a unified diff when both the
+    /// before and after contents were captured. Keeps the existing model-facing
+    /// fields (`size` / `summary`) via `extra`.
+    private func writeResult(
+        resolved: String,
+        before: (existed: Bool, content: String)?,
+        after: String?,
+        extra: [String: Any]
+    ) -> [String: Any] {
+        var dict: [String: Any] = ["path": resolved]
+        dict.merge(extra) { _, new in new }
+        if let before, let after {
+            let diff = WorkspaceWriteSafety.unifiedDiffText(
+                old: before.content,
+                new: after,
+                path: resolved,
+                existed: before.existed
+            )
+            dict["diff"] = diff.text
+            dict["diff_truncated"] = diff.truncated
+            dict["dry_run"] = false
+            dict["action"] = before.existed ? "update" : "create"
+        }
+        return dict
     }
 }
 
