@@ -2509,7 +2509,7 @@ final class NativeMessageCellView: NSTableCellView {
         nativeFileDiffView?.onHeightChanged = { [weak self] in
             guard let self, let dv = self.nativeFileDiffView else { return }
             guard self.currentBlockId == blockId else { return }
-            context.onHeightMeasured?(dv.measureHeight(outerWidth: context.width, collapsed: collapsed) + 12, blockId)
+            context.onHeightMeasured?(dv.measuredCardHeight(outerWidth: context.width) + 12, blockId)
         }
         nativeFileDiffView?.configure(
             diff: diff,
@@ -2520,7 +2520,7 @@ final class NativeMessageCellView: NSTableCellView {
         DispatchQueue.main.async { [weak self] in
             guard let self, let dv = self.nativeFileDiffView else { return }
             guard self.currentBlockId == blockId else { return }
-            context.onHeightMeasured?(dv.measureHeight(outerWidth: context.width, collapsed: collapsed) + 12, blockId)
+            context.onHeightMeasured?(dv.measuredCardHeight(outerWidth: context.width) + 12, blockId)
         }
     }
 
@@ -3015,8 +3015,8 @@ enum NativeCellHeightEstimator {
         case let .fileDiff(diff):
             // Diff cards reuse `expandedIds` with inverted meaning, so
             // `isExpanded == true` here marks a card the user collapsed.
-            // configureAsFileDiff reports measureHeight(...) + 12 for the cell
-            // top/bottom inset — match that.
+            // configureAsFileDiff reports measuredCardHeight(...) + 12 for the
+            // cell top/bottom inset — match that.
             let header = NativeFileDiffView.headerHeight
             if isExpanded { return header + 12 }
             let innerW = max(width - 32 - 14 - 8, 100)

@@ -123,6 +123,7 @@ final class NativeFileDiffView: NSView {
     private var lastDiff: FileDiff?
     private var lastWidth: CGFloat = 0
     private var lastThemeId = ""
+    private var lastTheme: (any ThemeProtocol)?
     private var isCollapsed = false
     private var copyResetTask: Task<Void, Never>?
 
@@ -139,16 +140,17 @@ final class NativeFileDiffView: NSView {
 
     func configure(diff: FileDiff, collapsed: Bool, width: CGFloat, theme: any ThemeProtocol) {
         let themeId = "\(theme.monoFontName)|\(theme.codeSize)|\(theme.isDark)"
+        // Only the expensive syntax-highlight pass is gated; header styling and
+        // layout always run so every reconfigure reports an accurate height —
+        // an early return here let the row get stuck after a few toggles when a
+        // SwiftUI update wiped the height cache without a fresh measurement.
         let diffChanged = diff != lastDiff
-        let widthChanged = abs(width - lastWidth) > 0.5
         let themeChanged = themeId != lastThemeId
-        let collapseChanged = collapsed != isCollapsed
-
-        guard diffChanged || widthChanged || themeChanged || collapseChanged else { return }
 
         lastDiff = diff
         lastWidth = width
         lastThemeId = themeId
+        lastTheme = theme
         isCollapsed = collapsed
 
         applyHeaderStyling(diff: diff, theme: theme)
@@ -163,9 +165,11 @@ final class NativeFileDiffView: NSView {
 
     /// TextKit-only height for the cell's height cache — never calls
     /// `layoutSubtreeIfNeeded()` (re-entering AppKit layout mid-reconfigure is
-    /// what the chart / tool-group height paths guard against).
-    func measureHeight(outerWidth: CGFloat, collapsed: Bool) -> CGFloat {
-        if collapsed { return Self.headerHeight }
+    /// what the chart / tool-group height paths guard against). Uses the view's
+    /// own `isCollapsed` so a local toggle reports the correct height without the
+    /// caller threading a (potentially stale) collapsed flag.
+    func measuredCardHeight(outerWidth: CGFloat) -> CGFloat {
+        if isCollapsed { return Self.headerHeight }
         guard let tv = diffTextView, let tc = tv.textContainer, let lm = tv.layoutManager else {
             return Self.headerHeight + 40
         }
@@ -524,6 +528,16 @@ final class NativeFileDiffView: NSView {
     // MARK: - Actions
 
     @objc private func toggleCollapse() {
+        // Flip and relayout immediately so the toggle never depends on the
+        // coordinator's reconfigure round-trip (which could no-op or race),
+        // then persist the new state to the shared expand store.
+        guard let theme = lastTheme else {
+            onToggleCollapse?()
+            return
+        }
+        isCollapsed.toggle()
+        updateCollapseChevron(theme: theme)
+        layoutBody(width: lastWidth, collapsed: isCollapsed, theme: theme)
         onToggleCollapse?()
     }
 
