@@ -2490,13 +2490,14 @@ final class NativeMessageCellView: NSTableCellView {
             let dv = NativeFileDiffView()
             dv.translatesAutoresizingMaskIntoConstraints = false
             addSubview(dv)
-            let bottomToCell = dv.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6)
-            bottomToCell.priority = NSLayoutConstraint.Priority(250)
+            // Top/leading/trailing only — no bottom-to-cell constraint. The card
+            // sizes via its intrinsicContentSize, exactly like the tool-call
+            // group view; a bottom constraint fought the collapse/expand height
+            // changes and left the row stuck after a few toggles.
             NSLayoutConstraint.activate([
                 dv.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
                 dv.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
                 dv.topAnchor.constraint(equalTo: topAnchor, constant: 6),
-                bottomToCell,
             ])
             nativeFileDiffView = dv
         }
@@ -2517,11 +2518,6 @@ final class NativeMessageCellView: NSTableCellView {
             width: context.width,
             theme: context.theme
         )
-        DispatchQueue.main.async { [weak self] in
-            guard let self, let dv = self.nativeFileDiffView else { return }
-            guard self.currentBlockId == blockId else { return }
-            context.onHeightMeasured?(dv.measuredCardHeight(outerWidth: context.width) + 12, blockId)
-        }
     }
 
     // MARK: - Unsupported (should never appear; zero-height placeholder)

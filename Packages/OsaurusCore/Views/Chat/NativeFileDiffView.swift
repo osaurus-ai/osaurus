@@ -76,11 +76,6 @@ final class NativeFileDiffView: NSView {
     override var acceptsFirstResponder: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
-    override func hitTest(_ point: NSPoint) -> NSView? {
-        if let sub = super.hitTest(point) { return sub }
-        return NSPointInRect(point, bounds) ? self : nil
-    }
-
     // MARK: Layout constants
 
     /// Left text inset leaves room past the 3pt accent bar.
@@ -123,7 +118,6 @@ final class NativeFileDiffView: NSView {
     private var lastDiff: FileDiff?
     private var lastWidth: CGFloat = 0
     private var lastThemeId = ""
-    private var lastTheme: (any ThemeProtocol)?
     private var isCollapsed = false
     private var copyResetTask: Task<Void, Never>?
 
@@ -150,7 +144,6 @@ final class NativeFileDiffView: NSView {
         lastDiff = diff
         lastWidth = width
         lastThemeId = themeId
-        lastTheme = theme
         isCollapsed = collapsed
 
         applyHeaderStyling(diff: diff, theme: theme)
@@ -528,16 +521,10 @@ final class NativeFileDiffView: NSView {
     // MARK: - Actions
 
     @objc private func toggleCollapse() {
-        // Flip and relayout immediately so the toggle never depends on the
-        // coordinator's reconfigure round-trip (which could no-op or race),
-        // then persist the new state to the shared expand store.
-        guard let theme = lastTheme else {
-            onToggleCollapse?()
-            return
-        }
-        isCollapsed.toggle()
-        updateCollapseChevron(theme: theme)
-        layoutBody(width: lastWidth, collapsed: isCollapsed, theme: theme)
+        // Notify the coordinator only — it flips the shared expand store and
+        // reconfigures this cell, which re-lays-out and re-measures. Mirrors the
+        // tool-call group's toggle exactly (no local synchronous relayout, which
+        // re-entered table layout from inside the button action).
         onToggleCollapse?()
     }
 
