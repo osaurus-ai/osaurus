@@ -1380,6 +1380,7 @@
 
     },
     "%@ spent this session. Click to add credits." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -4643,6 +4644,29 @@
         }
       }
     },
+    "A connected peer is running “%@”." : {
+      "comment" : "In-app toast message shown on the host when a connected remote peer runs one of its agents. %@ is the agent name.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ein verbundener Peer führt „%@“ aus."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "연결된 피어가 “%@”을(를) 실행하고 있습니다."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "已连接的对等方正在运行“%@”。"
+          }
+        }
+      }
+    },
     "A device wants to pair with **%@**.\nAllow this device to connect?" : {
       "localizations" : {
         "de" : {
@@ -6878,6 +6902,29 @@
         }
       }
     },
+    "Agent in use" : {
+      "comment" : "In-app toast title shown on the host when a connected remote peer is driving one of its agents.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Agent wird verwendet"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "에이전트 사용 중"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "代理使用中"
+          }
+        }
+      }
+    },
     "Agent Loop" : {
       "localizations" : {
         "de" : {
@@ -7275,52 +7322,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "服务器向 OpenAI / Ollama / Anthropic 客户端报告的别名。"
-          }
-        }
-      }
-    },
-    "A connected peer is running “%@”." : {
-      "comment" : "In-app toast message shown on the host when a connected remote peer runs one of its agents. %@ is the agent name.",
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Ein verbundener Peer führt „%@“ aus."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "연결된 피어가 “%@”을(를) 실행하고 있습니다."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "已连接的对等方正在运行“%@”。"
-          }
-        }
-      }
-    },
-    "Agent in use" : {
-      "comment" : "In-app toast title shown on the host when a connected remote peer is driving one of its agents.",
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Agent wird verwendet"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "에이전트 사용 중"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "代理使用中"
           }
         }
       }
@@ -56294,6 +56295,29 @@
         }
       }
     },
+    "P2P" : {
+      "comment" : "Insights source category for inbound peer-to-peer traffic over the Osaurus Secure Channel (remote chat completions and remote agent runs).",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "P2P"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "P2P"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "P2P"
+          }
+        }
+      }
+    },
     "Pace incoming tokens at a steady rate so streaming looks like a typewriter across all providers. Disable to render tokens as soon as they arrive — useful with very fast remote providers that you'd rather see complete instantly." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -59676,29 +59700,6 @@
         }
       }
     },
-    "P2P" : {
-      "comment" : "Insights source category for inbound peer-to-peer traffic over the Osaurus Secure Channel (remote chat completions and remote agent runs).",
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "P2P"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "P2P"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "P2P"
-          }
-        }
-      }
-    },
     "plugin" : {
       "localizations" : {
         "de" : {
@@ -60911,6 +60912,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "隐私优先的AI"
+          }
+        }
+      }
+    },
+    "preview" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vorschau"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "미리보기"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "预览"
           }
         }
       }
