@@ -381,10 +381,26 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
         // ChatML/Hermes format) and may mis-route to a ChatML fallback. Apply the
         // complete native Mistral template so reasoning / tools / vision all work
         // natively. Detected by Mistral's tekken special tokens, not by name.
+        //
+        // `convertTokenToId` is NOT a reliable presence test: BPE/Unigram
+        // tokenizers return the unknown-token id for any absent token (see
+        // BPETokenizer `tokensToIds[token] ?? unknownTokenId`), so `!= nil` is
+        // true for every string on a tokenizer that declares an <unk> (e.g. a
+        // Gemma SentencePiece pack). Require each tekken token to round-trip —
+        // `convertIdToToken(convertTokenToId(t)) == t` — which only holds when
+        // the token genuinely exists in the vocab (unk-mapped strings decode
+        // back to "<unk>", not to themselves).
+        func hasExactToken(_ token: String) -> Bool {
+            guard let id = upstream.convertTokenToId(token),
+                upstream.convertIdToToken(id) == token
+            else { return false }
+            return true
+        }
         let hasMistralSentinel =
-            upstream.convertTokenToId("[INST]") != nil
-            && upstream.convertTokenToId("[SYSTEM_PROMPT]") != nil
-            && upstream.convertTokenToId("[AVAILABLE_TOOLS]") != nil
+            hasExactToken("[INST]")
+            && hasExactToken("[SYSTEM_PROMPT]")
+            && hasExactToken("[AVAILABLE_TOOLS]")
+            && hasExactToken("[TOOL_CALLS]")
         if hasMistralSentinel,
             (env["VMLX_CHAT_TEMPLATE_FALLBACK_DISABLE"] ?? "0") != "1"
         {
