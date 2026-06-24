@@ -1475,6 +1475,24 @@ final class NativeMessageCellView: NSTableCellView {
     }
     required init?(coder: NSCoder) { fatalError() }
 
+    override func viewDidMoveToSuperview() {
+        super.viewDidMoveToSuperview()
+        // NSTableView frames each cell to its row when the row is first laid
+        // out, but we report measured heights asynchronously (after layout),
+        // so a later noteHeightOfRows resizes the NSTableRowView without
+        // re-framing the cell. The cell then lags its row — even ending up 0pt
+        // tall after a collapse. The content still *draws* (clipsToBounds is
+        // false), so this stayed invisible for every non-interactive cell. But
+        // a 0-height cell returns nil from hitTest before it ever consults its
+        // subviews, so the file-diff card stopped receiving clicks after a
+        // toggle/scroll. Pin the cell to fill its row so its frame always
+        // tracks the row height and hit-testing keeps working.
+        if let row = superview {
+            autoresizingMask = [.width, .height]
+            frame = row.bounds
+        }
+    }
+
     override func layout() {
         super.layout()
     }
@@ -2490,17 +2508,13 @@ final class NativeMessageCellView: NSTableCellView {
             let dv = NativeFileDiffView()
             dv.translatesAutoresizingMaskIntoConstraints = false
             addSubview(dv)
-            // Bottom-to-cell constraint is REQUIRED for hit-testing: without it
-            // the card is pinned top-only and the cell has nothing defining its
-            // height, so a post-scroll Auto Layout pass collapses the cell to
-            // height 0. A zero-height cell drops out of the hit-test path and
-            // clicks fall through to the bare NSTableRowView — the diff stopped
-            // toggling after scrolling. Pin the card's bottom so the cell height
-            // tracks the card. Priority < the card's required body height so a
-            // transient row/content mismatch (right after a toggle, before
-            // onHeightMeasured updates the row) resolves without a hard conflict.
+            // Weak bottom-to-cell pin (matches the chart/artifact cells): the
+            // card sizes to its own intrinsicContentSize, and this just keeps
+            // the cell content anchored. The cell tracks the row height via
+            // viewDidMoveToSuperview, so this constraint must NOT be strong
+            // enough to stretch the card to fill the row.
             let bottomToCell = dv.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6)
-            bottomToCell.priority = NSLayoutConstraint.Priority(999)
+            bottomToCell.priority = NSLayoutConstraint.Priority(250)
             NSLayoutConstraint.activate([
                 dv.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
                 dv.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
