@@ -655,7 +655,7 @@ struct AgentTaskStateTests {
 
     // MARK: - Native image generation → follow-up edit bias (#88)
 
-    @Test func nativeImageResultBiasesFollowUpEditToSavedPath() {
+    @Test func nativeImageResultBiasesFollowUpEditToSavedPath() throws {
         let state = AgentTaskState()
         let envelope = ToolEnvelope.success(
             tool: "image_generate",
