@@ -153,23 +153,56 @@ final class NativeFileDiffView: NSView {
 
     nonisolated(unsafe) private static let liveViews = NSHashTable<NativeFileDiffView>.weakObjects()
 
-    /// One global left-mouse-down monitor. For each live diff card in the
-    /// clicked window it logs the header button's frame in WINDOW coords (via
-    /// convert(_:to:nil), which is title-bar safe) and whether the click falls
-    /// inside it — so a "frozen" click reveals whether the button is simply not
-    /// where it's drawn. Remove with the debug logging.
+    /// One global left-mouse-down monitor that dumps everything needed to
+    /// diagnose a "frozen" click in a single capture: the true hit-test chain
+    /// (from the window frame view, which uses window-base coords so it's
+    /// title-bar safe), and for every live diff card its geometry/state and
+    /// whether the click lands inside its controls. Remove with the debug logging.
     nonisolated(unsafe) private static var clickMonitorInstalled = false
     private static func installClickMonitorOnce() {
         guard !clickMonitorInstalled else { return }
         clickMonitorInstalled = true
         NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { event in
             let loc = event.locationInWindow
-            FileDiffDebugLog.log("CLICK loc=\(Int(loc.x)),\(Int(loc.y))")
-            for dv in Self.liveViews.allObjects where dv.window === event.window && dv.window != nil {
-                let btn = dv.headerButton.convert(dv.headerButton.bounds, to: nil)
+            // The window frame view (contentView.superview) uses window-base
+            // coords == locationInWindow, so this hit-test is correct.
+            let frameView = event.window?.contentView?.superview ?? event.window?.contentView
+            let hit = frameView?.hitTest(loc)
+            var chain = ""
+            var v = hit
+            var depth = 0
+            while let cur = v, depth < 10 {
+                let f = cur.convert(cur.bounds, to: nil)
+                chain += (chain.isEmpty ? "" : "\n      < ")
+                    + "\(type(of: cur)) \(rectStr(f)) hidden=\(cur.isHidden)"
+                v = cur.superview
+                depth += 1
+            }
+            FileDiffDebugLog.log("CLICK loc=\(Int(loc.x)),\(Int(loc.y))\n  HITCHAIN: \(chain.isEmpty ? "nil" : chain)")
+
+            for dv in Self.liveViews.allObjects where dv.window != nil {
+                let sameWindow = dv.window === event.window
                 let card = dv.convert(dv.bounds, to: nil)
+                let header = dv.headerButton.convert(dv.headerButton.bounds, to: nil)
+                let chevron = dv.collapseButton.convert(dv.collapseButton.bounds, to: nil)
+                let copy = dv.copyButton.convert(dv.copyButton.bounds, to: nil)
+                let bodyFrame = dv.diffTextView.map { $0.convert($0.bounds, to: nil) } ?? .zero
+                // Walk the cell/row-view enclosure to detect frame desync.
+                let cellV = dv.superview
+                let rowV = cellV?.superview
+                let cellF = cellV.map { $0.convert($0.bounds, to: nil) } ?? .zero
+                let rowF = rowV.map { $0.convert($0.bounds, to: nil) } ?? .zero
                 FileDiffDebugLog.log(
-                    "  diffCard collapsed=\(dv.isCollapsed) cardWin=\(rectStr(card)) headerBtnWin=\(rectStr(btn)) clickInBtn=\(btn.contains(loc)) clickInCard=\(card.contains(loc))"
+                    """
+                      DIFFCARD sameWin=\(sameWindow) collapsed=\(dv.isCollapsed) cardHidden=\(dv.isHidden)
+                        card=\(rectStr(card)) intrinsicH=\(Int(dv.intrinsicContentSize.height)) bodyConstraint=\(Int(dv.bodyHeightConstraint?.constant ?? -1))
+                        headerBtn=\(rectStr(header)) hidden=\(dv.headerButton.isHidden) enabled=\(dv.headerButton.isEnabled)
+                        chevronBtn=\(rectStr(chevron)) hidden=\(dv.collapseButton.isHidden)
+                        copyBtn=\(rectStr(copy))
+                        body(textView)=\(rectStr(bodyFrame)) hidden=\(dv.diffTextView?.isHidden ?? true)
+                        cell=\(type(of: cellV)) \(rectStr(cellF))  rowView=\(type(of: rowV)) \(rectStr(rowF))
+                        clickInCard=\(card.contains(loc)) clickInHeaderBtn=\(header.contains(loc)) clickInChevron=\(chevron.contains(loc)) clickInBody=\(bodyFrame.contains(loc))
+                    """
                 )
             }
             return event

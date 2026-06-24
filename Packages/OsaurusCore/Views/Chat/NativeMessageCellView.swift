@@ -2593,6 +2593,9 @@ final class NativeMessageCellView: NSTableCellView {
         // content — visible as charts bleeding through unrelated rows once
         // the user starts scrolling and recycling kicks in.
         detachIfStillParented(nativeChartView); nativeChartView = nil
+        if nativeFileDiffView != nil {
+            FileDiffDebugLog.log("CELL.removeAllContentViews tearing down fileDiff (was block=\(currentBlockId ?? "nil"))")
+        }
         nativeFileDiffView?.removeFromSuperview(); nativeFileDiffView = nil
         nativeStatsView?.removeFromSuperview(); nativeStatsView = nil
         nativeAssistantActionsView?.removeFromSuperview(); nativeAssistantActionsView = nil
