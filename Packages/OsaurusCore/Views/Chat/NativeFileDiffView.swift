@@ -143,9 +143,33 @@ final class NativeFileDiffView: NSView {
     override init(frame: NSRect) {
         super.init(frame: frame)
         buildViews()
+        Self.installClickMonitorOnce()
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    // MARK: - Debug click monitor (temporary)
+
+    /// One global left-mouse-down monitor that logs the hit-tested view for
+    /// every click, so a "frozen" click reveals where the event actually lands
+    /// (button vs body vs cell vs elsewhere). Remove with the debug logging.
+    nonisolated(unsafe) private static var clickMonitorInstalled = false
+    private static func installClickMonitorOnce() {
+        guard !clickMonitorInstalled else { return }
+        clickMonitorInstalled = true
+        NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { event in
+            if let cv = event.window?.contentView {
+                let p = cv.convert(event.locationInWindow, from: nil)
+                let hit = cv.hitTest(p)
+                FileDiffDebugLog.log(
+                    "CLICK loc=\(Int(event.locationInWindow.x)),\(Int(event.locationInWindow.y)) hit=\(hit.map { String(describing: type(of: $0)) } ?? "nil")"
+                )
+            } else {
+                FileDiffDebugLog.log("CLICK (no window/contentView)")
+            }
+            return event
+        }
+    }
 
     // MARK: Configure
 
