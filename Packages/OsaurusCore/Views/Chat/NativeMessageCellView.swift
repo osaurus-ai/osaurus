@@ -2490,14 +2490,22 @@ final class NativeMessageCellView: NSTableCellView {
             let dv = NativeFileDiffView()
             dv.translatesAutoresizingMaskIntoConstraints = false
             addSubview(dv)
-            // Top/leading/trailing only — no bottom-to-cell constraint. The card
-            // sizes via its intrinsicContentSize, exactly like the tool-call
-            // group view; a bottom constraint fought the collapse/expand height
-            // changes and left the row stuck after a few toggles.
+            // Bottom-to-cell constraint is REQUIRED for hit-testing: without it
+            // the card is pinned top-only and the cell has nothing defining its
+            // height, so a post-scroll Auto Layout pass collapses the cell to
+            // height 0. A zero-height cell drops out of the hit-test path and
+            // clicks fall through to the bare NSTableRowView — the diff stopped
+            // toggling after scrolling. Pin the card's bottom so the cell height
+            // tracks the card. Priority < the card's required body height so a
+            // transient row/content mismatch (right after a toggle, before
+            // onHeightMeasured updates the row) resolves without a hard conflict.
+            let bottomToCell = dv.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6)
+            bottomToCell.priority = NSLayoutConstraint.Priority(999)
             NSLayoutConstraint.activate([
                 dv.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
                 dv.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
                 dv.topAnchor.constraint(equalTo: topAnchor, constant: 6),
+                bottomToCell,
             ])
             nativeFileDiffView = dv
         }
