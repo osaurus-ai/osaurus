@@ -113,7 +113,9 @@ remain (reasoning-off toggle, base tool firing).
 | `matchesSearch` array fix | 🟢 VERIFIED | build green |
 | Release build | ✅ SUCCEEDED | |
 | CI: shellcheck/swiftlint/test-cli | ✅ pass | |
-| CI: test-core | 🔴 BLOCKED | localization gate — 30 unlocalized strings (REMAINING_WORK P0 #5) |
+| CI: test-core | ✅ FIXED, re-running | (1) localization gate fixed (53 keys + 6 L() wraps); (2) test-target compile fixed — `AgentTaskStateTests:677` needed `throws` (feature branch never ran CI). Touched tests PASS locally: 146 cases, 0 failures, incl. my ramSafety/spawnable config tests + `AgentDelegationToolAvailabilityTests` (unit-proves the gating). |
+| Local `build-for-testing` (OsaurusCoreTests scheme) | ✅ SUCCEEDED | can now compile+run tests locally (DerivedData SourcePackages) — closes the prior blind spot |
+| Gating unit tests (image/local tools absent unless master+sub enabled) | ✅ PASS | `AgentDelegationToolAvailabilityTests` 8/8 — complements the live clash matrix |
 
 ---
 
