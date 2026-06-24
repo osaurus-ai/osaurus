@@ -139,4 +139,18 @@ public actor MetalGate {
     public func exitModelLoad(model: String) {
         release("load:\(model)")
     }
+
+    // MARK: - Image generation (vMLXFlux engine) — exclusive
+
+    /// The native image engine (vMLXFlux) is a second MLX graph on the same Metal
+    /// device. Like embedding and model load it must not overlap any other GPU
+    /// producer, so it acquires the gate as its own exclusive owner, held across
+    /// the entire vMLXFlux event-stream drain (including the terminal VAE decode).
+    public func enterImageGeneration() async {
+        await acquire("image", shared: false)
+    }
+
+    public func exitImageGeneration() {
+        release("image")
+    }
 }

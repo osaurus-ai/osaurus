@@ -757,7 +757,8 @@ extension AgentManager {
             speakEnabled: agent.settings.speakEnabled,
             searchMemoryEnabled: agent.settings.searchMemoryEnabled,
             selfSchedulingEnabled: agent.settings.selfSchedulingEnabled,
-            computerUseEnabled: agent.settings.computerUseEnabled
+            computerUseEnabled: agent.settings.computerUseEnabled,
+            spawnDelegationEnabled: agent.settings.spawnDelegationEnabled
         )
     }
 

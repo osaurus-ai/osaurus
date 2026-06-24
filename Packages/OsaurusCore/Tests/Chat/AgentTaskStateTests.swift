@@ -652,4 +652,57 @@ struct AgentTaskStateTests {
         // The dedupe path still declines to short-circuit non-read tools.
         #expect(state.heldResult(name: "sandbox_exec", argsJSON: args) == nil)
     }
+
+    // MARK: - Native image generation → follow-up edit bias (#88)
+
+    @Test func nativeImageResultBiasesFollowUpEditToSavedPath() throws {
+        let state = AgentTaskState()
+        let envelope = ToolEnvelope.success(
+            tool: "image_generate",
+            result: [
+                "kind": "native_image_generation_job",
+                "status": "completed",
+                "images": [
+                    [
+                        "path": "/tmp/osaurus-images/generated-cube.png",
+                        "url": "file:///tmp/osaurus-images/generated-cube.png",
+                        "seed": 123,
+                    ]
+                ],
+            ] as [String: Any]
+        )
+
+        state.record(name: "image_generate", argsJSON: #"{"prompt":"make a red cube"}"#, result: envelope)
+
+        let bias = try #require(state.nextStepBias())
+        #expect(bias.contains("image_edit"))
+        #expect(bias.contains("/tmp/osaurus-images/generated-cube.png"))
+        #expect(bias.contains("source_paths"))
+    }
+
+    @Test func nativeImageEditResultDoesNotBiasAnotherEdit() {
+        let state = AgentTaskState()
+        let envelope = ToolEnvelope.success(
+            tool: "image_edit",
+            result: [
+                "kind": "native_image_generation_job",
+                "status": "completed",
+                "images": [
+                    [
+                        "path": "/tmp/osaurus-images/edited-cube.png",
+                        "url": "file:///tmp/osaurus-images/edited-cube.png",
+                        "seed": 456,
+                    ]
+                ],
+            ] as [String: Any]
+        )
+
+        state.record(
+            name: "image_edit",
+            argsJSON: #"{"source_paths":["/tmp/osaurus-images/generated-cube.png"],"prompt":"make it green"}"#,
+            result: envelope
+        )
+
+        #expect(state.nextStepBias() == nil)
+    }
 }

@@ -8,6 +8,9 @@
 //
 
 import Foundation
+import os
+
+private let toolResolveLog = Logger(subsystem: "ai.osaurus", category: "ToolResolve")
 
 // MARK: - SystemPromptComposer
 
@@ -893,6 +896,22 @@ public struct SystemPromptComposer: Sendable {
             )
         }
 
+        // Image generation: authoritative directive, schema-gated on the actual
+        // tool. Without it, a persona-led model (e.g. the Default "Osaurus
+        // configuration assistant") intermittently refuses image requests with
+        // "I can't generate images / I'm text-only" even though image_generate is
+        // in its schema. Only rendered when the tool resolved, so it stays
+        // KV-cache stable and never advertises a tool the model can't call.
+        if !effectiveToolsOff, resolvedNames.contains("image_generate") {
+            composer.append(
+                .static(
+                    id: "imageGeneration",
+                    label: L("Image Generation"),
+                    content: SystemPromptTemplates.imageGenerationGuidance
+                )
+            )
+        }
+
         // Agent-loop guidance: short cheat-sheet for the chat-layer-
         // intercepted tools (todo / complete / clarify / share_artifact).
         // Always rendered when any loop tool resolves into the schema:
@@ -1227,6 +1246,34 @@ public struct SystemPromptComposer: Sendable {
                 skills: (skillsByGroup[groupId] ?? []).sorted { $0.name < $1.name },
                 tools: (toolsByGroup[groupId] ?? []).sorted { $0.name < $1.name }
             )
+        }
+
+        // Native image generation/editing are built-in tools, so they never
+        // show up in the dynamic-tool walk above. When the user has enabled
+        // Image Jobs, surface them as their own group so the model is told
+        // outright that it can create/edit images — otherwise the compacted
+        // baseline skeleton is the only hint and small models reach for the
+        // search tool instead.
+        if AgentDelegationConfigurationStore.snapshot().imageDelegationActive {
+            let imageCaps =
+                ToolRegistry.shared.listTools()
+                .filter { ToolRegistry.agentDelegationImageToolNames.contains($0.name) }
+                .sorted { $0.name < $1.name }
+                .map {
+                    SystemPromptTemplates.ManifestCapability(
+                        name: $0.name,
+                        description: $0.description
+                    )
+                }
+            if !imageCaps.isEmpty {
+                groups.append(
+                    SystemPromptTemplates.ManifestPluginGroup(
+                        pluginDisplay: "Image Generation",
+                        skills: [],
+                        tools: imageCaps
+                    )
+                )
+            }
         }
 
         // Trailing synthetic group for standalone (non-plugin) skills,
@@ -1940,6 +1987,21 @@ public struct SystemPromptComposer: Sendable {
             byName.removeValue(forKey: ComputerUseTool.toolName)
         }
 
+        // Spawn / agent delegation gate. For CUSTOM agents this is an
+        // AUTHORITATIVE per-agent gate, same as Computer Use: the spawn /
+        // local_delegate / image_generate / image_edit tools are stripped unless
+        // the agent's `spawnDelegationEnabled` is on (ANDs with the global
+        // `AgentDelegationConfiguration` family gates applied in alwaysLoadedSpecs).
+        // The DEFAULT / main chat is EXEMPT here — it is governed by the global
+        // Agent Delegation switch in the default-agent surface below (the user's
+        // main chat spawns when delegation is globally on; the first actual call
+        // prompts for permission + model). So we never strip it for the default agent.
+        if snapshot.agentId != Agent.defaultId, !snapshot.spawnDelegationEnabled {
+            for name in ToolRegistry.agentDelegationAllToolNames {
+                byName.removeValue(forKey: name)
+            }
+        }
+
         // Default-agent configure surface:
         //   * For the Default agent, hard-restrict to the consolidated
         //     configure surface (`osaurus_status` / `osaurus_list` /
@@ -1952,8 +2014,17 @@ public struct SystemPromptComposer: Sendable {
         //     Even if a registration path leaks `osaurus_provider` into the
         //     schema, the strip filter keeps the model from seeing it.
         if snapshot.agentId == Agent.defaultId {
-            let allowed = ToolRegistry.defaultAgentAllowedToolNames
+            var allowed = ToolRegistry.defaultAgentAllowedToolNames
                 .union(additionalToolNames)
+            // Spawn UX: the main/default chat may call the delegation tools
+            // (image_generate / image_edit / spawn / local_delegate) when the
+            // global Agent Delegation switch is on. They survive the filter only
+            // if still in `byName` — i.e. the global family gates (applied in
+            // alwaysLoadedSpecs) allowed them. The first actual call prompts for
+            // permission + spawn-model choice.
+            if AgentDelegationConfigurationStore.snapshot().agentDelegationEnabled {
+                allowed.formUnion(ToolRegistry.agentDelegationAllToolNames)
+            }
             byName = byName.filter { allowed.contains($0.key) }
         } else {
             for name in ToolRegistry.configureToolNames {
@@ -1980,7 +2051,18 @@ public struct SystemPromptComposer: Sendable {
             byName = byName.filter { allowed.contains($0.key) }
         }
 
-        return canonicalToolOrder(Array(byName.values))
+        let resolved = canonicalToolOrder(Array(byName.values))
+
+        // Debug aid for the image-delegation tool surfacing: confirms whether
+        // `image_generate` actually reached the model's schema and what the
+        // delegation gate evaluated to at compose time.
+        let imageActive = AgentDelegationConfigurationStore.snapshot().imageDelegationActive
+        let hasImageGenerate = resolved.contains { $0.function.name == "image_generate" }
+        toolResolveLog.debug(
+            "resolveTools agent=\(snapshot.agentId.uuidString, privacy: .public) imageDelegationActive=\(imageActive, privacy: .public) image_generate_in_schema=\(hasImageGenerate, privacy: .public) toolCount=\(resolved.count, privacy: .public)"
+        )
+
+        return resolved
     }
 
     /// Stable order:

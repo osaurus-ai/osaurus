@@ -753,6 +753,15 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
                 )
             )
         }
+        guard !availability.reasonCodes.contains(.disabled) else {
+            return .failure(
+                LoadFailure(
+                    kind: .rejected,
+                    message:
+                        "Tool '\(toolId)' is disabled. availability: \(availability.compactSummary)"
+                )
+            )
+        }
         // Built-in tools are always loaded via alwaysLoadedSpecs, so skip the
         // enabled check — rejecting them here is misleading since they're callable.
         guard isEnabled || isBuiltIn else {

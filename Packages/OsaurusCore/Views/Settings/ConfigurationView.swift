@@ -40,6 +40,7 @@ struct ConfigurationView: View {
     @State private var tempCoreModelProvider: String = ""
     @State private var tempCoreModelName: String = ""
     @State private var coreModelPickerItems: [ModelPickerItem] = []
+    @State private var agentDelegationConfiguration = AgentDelegationConfigurationStore.snapshot()
     @State private var tempEnableClipboardMonitoring: Bool = false
     /// Smooth streaming: pace the visible reveal at ~180 tok/s regardless
     /// of how fast / bursty the network delivers tokens. Default on.
@@ -213,20 +214,48 @@ struct ConfigurationView: View {
         .padding(.vertical, 64)
     }
 
-    var body: some View {
-        ZStack {
-            VStack(spacing: 0) {
-                // Header
-                headerView
-                    .opacity(hasAppeared ? 1 : 0)
-                    .offset(y: hasAppeared ? 0 : -10)
-                    .animation(.spring(response: 0.4, dampingFraction: 0.8), value: hasAppeared)
+    /// Extracted from `body` to keep the main settings expression under Swift's
+    /// type-checker complexity limit (the merge pushed the inline body over it).
+    @ViewBuilder private var privacySection: some View {
+        if matchesSearch(Self.privacyKeywords) {
+            SettingsSection(title: "Privacy", icon: "hand.raised") {
+                VStack(alignment: .leading, spacing: 20) {
+                    Text(
+                        "Control what anonymous data Osaurus collects.",
+                        bundle: .module
+                    )
+                    .font(.system(size: 12))
+                    .foregroundColor(theme.secondaryText)
 
-                // Scrollable content area
-                ScrollViewReader { proxy in
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 24) {
-                        // MARK: - General Section
+                    SettingsToggle(
+                        title: L("Share Anonymous Usage Data"),
+                        description:
+                            "Send anonymous, aggregated usage analytics to help improve Osaurus. Never includes your chats, prompts, files, or keys. Turn off any time.",
+                        anchorId: "settings.privacy.usage",
+                        isOn: $tempTelemetryEnabled
+                    )
+                    .onChange(of: tempTelemetryEnabled) { _, newValue in
+                        TelemetryService.shared.setEnabled(newValue)
+                    }
+
+                    SettingsToggle(
+                        title: L("Send Crash Reports"),
+                        description:
+                            "Send anonymous crash and freeze reports so we can fix what breaks. Never includes your chats, prompts, files, or keys. Turn off any time.",
+                        anchorId: "settings.privacy.crash",
+                        isOn: $tempCrashReportingEnabled
+                    )
+                    .onChange(of: tempCrashReportingEnabled) { _, newValue in
+                        CrashReportingService.shared.setEnabled(newValue)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Extracted from `body` to keep the settings expression under Swift's
+    /// type-checker complexity limit.
+    @ViewBuilder private var generalSection: some View {
                         if matchesSearch(Self.generalKeywords) {
                             SettingsSection(title: "General", icon: "gear") {
                                 VStack(alignment: .leading, spacing: 20) {
@@ -360,44 +389,11 @@ struct ConfigurationView: View {
                                 }
                             }
                         }
+    }
 
-                        // MARK: - Privacy Section
-                        if matchesSearch(Self.privacyKeywords) {
-                            SettingsSection(title: "Privacy", icon: "hand.raised") {
-                                VStack(alignment: .leading, spacing: 20) {
-                                    Text(
-                                        "Control what anonymous data Osaurus collects.",
-                                        bundle: .module
-                                    )
-                                    .font(.system(size: 12))
-                                    .foregroundColor(theme.secondaryText)
-
-                                    SettingsToggle(
-                                        title: L("Share Anonymous Usage Data"),
-                                        description:
-                                            "Send anonymous, aggregated usage analytics to help improve Osaurus. Never includes your chats, prompts, files, or keys. Turn off any time.",
-                                        anchorId: "settings.privacy.usage",
-                                        isOn: $tempTelemetryEnabled
-                                    )
-                                    .onChange(of: tempTelemetryEnabled) { _, newValue in
-                                        TelemetryService.shared.setEnabled(newValue)
-                                    }
-
-                                    SettingsToggle(
-                                        title: L("Send Crash Reports"),
-                                        description:
-                                            "Send anonymous crash and freeze reports so we can fix what breaks. Never includes your chats, prompts, files, or keys. Turn off any time.",
-                                        anchorId: "settings.privacy.crash",
-                                        isOn: $tempCrashReportingEnabled
-                                    )
-                                    .onChange(of: tempCrashReportingEnabled) { _, newValue in
-                                        CrashReportingService.shared.setEnabled(newValue)
-                                    }
-                                }
-                            }
-                        }
-
-                        // MARK: - Chat Section
+    /// Extracted from `body` to keep the settings expression under Swift's
+    /// type-checker complexity limit.
+    @ViewBuilder private var chatSection: some View {
                         if matchesSearch(Self.chatKeywords) {
                             SettingsSection(title: "Chat", icon: "message") {
                                 VStack(alignment: .leading, spacing: 20) {
@@ -552,11 +548,53 @@ struct ConfigurationView: View {
                                 }
                             }
                         }
+    }
+
+    var body: some View {
+        ZStack {
+            VStack(spacing: 0) {
+                // Header
+                headerView
+                    .opacity(hasAppeared ? 1 : 0)
+                    .offset(y: hasAppeared ? 0 : -10)
+                    .animation(.spring(response: 0.4, dampingFraction: 0.8), value: hasAppeared)
+
+                // Scrollable content area
+                ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 24) {
+                        // MARK: - General Section
+                        generalSection
+
+                        // MARK: - Privacy Section
+                        privacySection
+
+                        // MARK: - Chat Section
+                        chatSection
 
                         // MARK: - Tool Permissions Section
                         if matchesSearch(Self.toolPermissionsKeywords) {
                             ToolPermissionsSection()
                                 .settingsLandingAnchor("settings.toolPermissions")
+                        }
+
+                        // MARK: - Agent Delegation Section
+                        if matchesSearch([
+                            "Agent Delegation",
+                            "Delegate",
+                            "Subagent",
+                            "Cloud",
+                            "Local",
+                            "Image",
+                            "Permissions",
+                            "Always Allow",
+                            "Deny",
+                            "Budget",
+                        ]) {
+                            AgentDelegationSettingsSection(
+                                configuration: $agentDelegationConfiguration,
+                                modelItems: coreModelPickerItems
+                            )
                         }
 
                         // MARK: - Server settings moved
@@ -750,10 +788,23 @@ struct ConfigurationView: View {
         .environment(\.theme, themeManager.currentTheme)
         .onAppear {
             loadConfiguration()
+            agentDelegationConfiguration = AgentDelegationConfigurationStore.snapshot()
             tempTelemetryEnabled = TelemetryService.shared.isEnabled
             tempCrashReportingEnabled = CrashReportingService.shared.isEnabled
             withAnimation(.easeOut(duration: 0.25).delay(0.05)) {
                 hasAppeared = true
+            }
+        }
+        .onChange(of: agentDelegationConfiguration) { _, newValue in
+            AgentDelegationConfigurationStore.save(newValue)
+        }
+        .onReceive(
+            NotificationCenter.default.publisher(for: .agentDelegationConfigurationChanged)
+        ) { notification in
+            if let configuration = notification.object as? AgentDelegationConfiguration,
+                configuration != agentDelegationConfiguration
+            {
+                agentDelegationConfiguration = configuration
             }
         }
         .onReceive(ModelPickerItemCache.shared.$items) { options in

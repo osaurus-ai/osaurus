@@ -188,6 +188,30 @@ public actor ModelRuntime {
         return modelCache[name] != nil
     }
 
+    /// Warm-load an installed local model without starting generation. Used by
+    /// delegated jobs that temporarily evict chat models for unified-memory
+    /// headroom, then restore the prior resident set after the helper job.
+    func preload(name: String) async throws {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw NSError(
+                domain: "ModelRuntime",
+                code: 20,
+                userInfo: [NSLocalizedDescriptionKey: "Cannot preload an empty model name"]
+            )
+        }
+        if modelCache[trimmed] != nil { return }
+        guard let found = ModelManager.findInstalledModel(named: trimmed) else {
+            throw NSError(
+                domain: "ModelRuntime",
+                code: 21,
+                userInfo: [NSLocalizedDescriptionKey: "Installed model not found for preload: \(trimmed)"]
+            )
+        }
+        if modelCache[found.name] != nil { return }
+        _ = try await loadContainer(id: found.id, name: found.name)
+    }
+
     func cachedModelSummaries(refreshTopology: Bool = false) async -> [ModelCacheSummary] {
         if refreshTopology {
             for holder in modelCache.values {
@@ -541,8 +565,18 @@ public actor ModelRuntime {
         if currentModelName == name { currentModelName = nil }
 
         Memory.cacheLimit = mlxCacheLimit()
+        // Fully settle the teardown before returning so the NEXT GPU producer
+        // (a model load, image generation, embedding) never overlaps this
+        // model's async buffer frees on the shared Metal device — releasing the
+        // weight arrays above enqueues allocator frees + fences that escape a
+        // single `synchronize` and otherwise race the next producer (observed:
+        // a slow model's unload dealloc colliding with vMLXFlux's weight load,
+        // SIGSEGV in `Fence::wait` vs `MetalAllocator::free`). Drain, return the
+        // freed buffers, then drain again to flush the frees `clearCache` itself
+        // triggers.
         Stream.gpu.synchronize()
         Memory.clearCache()
+        Stream.gpu.synchronize()
     }
 
     /// Evict `other` for the strict-single-model policy WITHOUT cancelling an
@@ -1398,9 +1432,24 @@ public actor ModelRuntime {
                     loadConfiguration: mtpPlan.loadConfiguration
                 )
             } catch {
+                // Drain the load's GPU tail before releasing the exclusive gate
+                // even on failure (a partially-evaluated dequant still left work
+                // queued). See the success-path note below.
+                Stream.gpu.synchronize()
                 await MetalGate.shared.exitModelLoad(model: name)
                 throw error
             }
+            // Drain the GPU before releasing the exclusive model-load gate.
+            // `loadModelContainer` dequantizes weights + compiles kernels via MLX
+            // eval, which SUBMITS Metal work that can still be in async flight when
+            // the call returns. Releasing the gate here while that tail is live lets
+            // the next exclusive producer (another model load, or an image job)
+            // start and race the in-flight command buffer — SIGSEGV in
+            // `AGXG17XFamilyCommandBuffer tryCoalescingPreviousComputeCommandEncoder`
+            // (observed under sustained chained gen→edit model churn). Symmetric
+            // with the unload drain and the BatchEngine (#82) / ImageGenerationService
+            // (#89) stream-finish drains: "gate released" must mean "GPU idle".
+            Stream.gpu.synchronize()
             await MetalGate.shared.exitModelLoad(model: name)
             if Task.isCancelled {
                 container.disableCaching()

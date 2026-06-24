@@ -165,8 +165,13 @@ struct ModelDownloadView: View {
             )
             .opacity(hasAppeared ? 1 : 0)
 
-            modelListView(lists: lists)
-                .opacity(hasAppeared ? 1 : 0)
+            if selectedTab == .images {
+                ImageModelsDownloadView()
+                    .opacity(hasAppeared ? 1 : 0)
+            } else {
+                modelListView(lists: lists)
+                    .opacity(hasAppeared ? 1 : 0)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(theme.primaryBackground)
@@ -241,6 +246,10 @@ struct ModelDownloadView: View {
                     showImportSheet = false
                     selectedTab = .all
                     searchText = repoId
+                },
+                onImportedImage: { _ in
+                    showImportSheet = false
+                    selectedTab = .images
                 }
             )
             .environment(\.theme, themeManager.currentTheme)
@@ -330,7 +339,7 @@ struct ModelDownloadView: View {
                     .foregroundColor(theme.secondaryText)
                 }
                 .buttonStyle(PlainButtonStyle())
-                .localizedHelp("Import an MLX model from Hugging Face")
+                .localizedHelp("Import a model from Hugging Face")
 
                 // Download status indicator (shown when downloads are active)
                 if modelManager.activeDownloadsCount > 0 {
@@ -654,10 +663,9 @@ struct ModelDownloadView: View {
     /// stays identical.
     private func modelCard(for model: MLXModel) -> some View {
         ModelRowView(
-            model: model,
+            content: ModelCardContent(model: model, totalMemoryGB: systemMonitor.totalMemoryGB),
             downloadState: modelManager.effectiveDownloadState(for: model),
             metrics: modelManager.downloadMetrics[model.id],
-            totalMemoryGB: systemMonitor.totalMemoryGB,
             onViewDetails: { modelToShowDetails = model },
             onCancel: { modelManager.cancelDownload(model.id) },
             onPause: { modelManager.pauseDownload(model.id) },
@@ -835,6 +843,9 @@ struct ModelDownloadView: View {
                                     catalogContent(lists: lists)
                                 case .downloaded:
                                     modelGrid(models: lists.downloaded)
+                                case .images:
+                                    // Rendered by the body's `.images` branch.
+                                    EmptyView()
                                 }
                             }
                         }
@@ -1185,6 +1196,8 @@ struct ModelDownloadView: View {
             return "cube.box"
         case .downloaded:
             return "internaldrive"
+        case .images:
+            return "photo"
         }
     }
 
@@ -1197,6 +1210,8 @@ struct ModelDownloadView: View {
             return L("No models available")
         case .downloaded:
             return L("No models on device yet")
+        case .images:
+            return L("No image models")
         }
     }
 
@@ -1461,6 +1476,7 @@ struct ModelDownloadView: View {
         switch input.selectedTab {
         case .all: displayed = topPicks + others
         case .downloaded: displayed = downloaded
+        case .images: displayed = []  // image tab renders its own view
         }
 
         return GridLists(suggested: topPicks, others: others, downloaded: downloaded, displayed: displayed)
@@ -1814,6 +1830,9 @@ private struct HuggingFaceImportSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     let onImported: (String) -> Void
+    /// Called when the pasted repo is an image bundle, staged via the image
+    /// store instead of the LLM path.
+    let onImportedImage: (String) -> Void
 
     @State private var inputText: String = ""
     @State private var errorMessage: String? = nil
@@ -1882,7 +1901,7 @@ private struct HuggingFaceImportSheet: View {
                 .foregroundColor(theme.accentColor)
                 .padding(.top, 1)
             Text(
-                "Osaurus only runs MLX models. Try a repo from `OsaurusAI` or `mlx-community`.",
+                "Paste an MLX language model (try `OsaurusAI` or `mlx-community`) or an mflux image model — each is routed to the right place automatically.",
                 bundle: .module
             )
             .font(.system(size: 12))
@@ -1986,6 +2005,19 @@ private struct HuggingFaceImportSheet: View {
         errorMessage = nil
         isResolving = true
         Task { @MainActor in
+            // Image bundles use a diffusers/mflux layout and a separate engine,
+            // so route them to the image store before the LLM compatibility
+            // check (which would reject them and stage to the wrong directory).
+            if await ImageModelDownloadService.isImageRepo(repoId) {
+                ImageModelDownloadService.shared.download(
+                    repoId: repoId,
+                    displayName: ImageModelDownload.directoryName(forRepoId: repoId)
+                )
+                isResolving = false
+                onImportedImage(repoId)
+                return
+            }
+
             let resolved = await ModelManager.shared.resolveModelIfMLXCompatible(byRepoId: repoId)
             isResolving = false
             if resolved != nil {

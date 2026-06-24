@@ -750,6 +750,16 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     userAgent: userAgent,
                     ollamaFormat: path == "/embed"
                 )
+            } else if head.method == .GET, path == "/images/models" {
+                handleImageModels(head: head, context: context, startTime: startTime, userAgent: userAgent)
+            } else if head.method == .POST, path == "/images/generations" {
+                handleImageGenerations(head: head, context: context, startTime: startTime, userAgent: userAgent)
+            } else if head.method == .POST, path == "/images/edits" {
+                handleImageEdits(head: head, context: context, startTime: startTime, userAgent: userAgent)
+            } else if head.method == .POST, path == "/images/upscale" {
+                handleImageUpscale(head: head, context: context, startTime: startTime, userAgent: userAgent)
+            } else if head.method == .POST, path == "/images/cancel" {
+                handleImageCancel(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if path.hasPrefix("/plugins/") {
                 handlePluginRoute(
                     head: head,
@@ -2845,7 +2855,46 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             SystemPromptComposer.injectSystemContent(composed.prompt, into: &enriched.messages)
         }
         SystemPromptComposer.injectMemoryPrefix(composed.memorySection, into: &enriched.messages)
-        let mergedTools = await mergeAgentContextTools(composed.tools, clientTools: request.tools)
+        // Agent-run / HTTP orchestrators must get the active AgentDelegation
+        // tools as callable SCHEMAS too. `composeChatContext` only surfaces the
+        // built-in image tools as a prompt-hint capability (not the schema), so
+        // without this an agent-run orchestrator is told it can make images /
+        // delegate but `image_generate`/`image_edit`/`local_delegate`/`spawn`
+        // never reach its `<tools>` block. `specs(forTools:)` returns only the
+        // currently active ones (it applies the same delegation gating), and a
+        // name dedupe keeps composeChatContext's surface authoritative.
+        // Per-agent gate: only inject the delegation schemas when THIS agent has
+        // opted into spawn/delegation (mirrors the authoritative `resolveTools`
+        // strip). Without this, the explicit injection below would re-add the
+        // tools that the per-agent gate just stripped. `specs(forTools:)` still
+        // applies the global delegation gating on top.
+        // Mirror the authoritative native-chat `resolveTools` surfacing so the
+        // HTTP agent-run path and the in-app chat agree on which agents see the
+        // delegation tools: the DEFAULT agent surfaces them when the GLOBAL
+        // `agentDelegationEnabled` is on (piece #1), and a CUSTOM agent surfaces
+        // them when its per-agent `spawnDelegationEnabled` is on. Without the
+        // default-agent branch, `/agents/default/run` silently lacked
+        // image_generate/image_edit/local_delegate/spawn even with delegation
+        // globally enabled — a surface/behaviour split vs the chat UI.
+        let spawnDelegationEnabled = await MainActor.run { () -> Bool in
+            if agentUUID == Agent.defaultId {
+                return AgentDelegationConfigurationStore.snapshot().agentDelegationEnabled
+            }
+            return AgentManager.shared.effectiveCapabilities(for: agentUUID).spawnDelegationEnabled
+        }
+        let delegationSpecs =
+            spawnDelegationEnabled
+            ? await MainActor.run {
+                ToolRegistry.shared.specs(forTools: [
+                    "image_generate", "image_edit", "local_delegate", "spawn",
+                ])
+            }
+            : []
+        let composedToolNames = Set(composed.tools.map(\.function.name))
+        let contextToolsWithDelegation =
+            composed.tools + delegationSpecs.filter { !composedToolNames.contains($0.function.name) }
+        let mergedTools = await mergeAgentContextTools(
+            contextToolsWithDelegation, clientTools: request.tools)
         let resolvedToolChoice: ToolChoiceOption? = {
             guard let mergedTools, !mergedTools.isEmpty else { return nil }
             return request.tool_choice ?? .auto
@@ -4684,7 +4733,22 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let model: String
             if req.model.isEmpty || req.model == "default" {
                 let agentModel = await MainActor.run { AgentManager.shared.effectiveModel(for: agentId) }
-                model = agentModel ?? req.model
+                if let agentModel {
+                    model = agentModel
+                } else {
+                    // No configured default model for this agent (e.g. a fresh
+                    // install where the user hasn't pinned one). Fall back to the
+                    // currently-loaded model rather than the literal "default":
+                    // "default" has no ModelInfo, so `resolveContextWindow` would
+                    // collapse the window to the tiny chat-config fallback and the
+                    // agent's own system prompt + tools would spuriously trip
+                    // `.overBudget` (Context window cannot fit … even after
+                    // compaction) on even a one-word message. Mirrors how /health
+                    // reports the active model.
+                    let currentLoaded = await ModelRuntime.shared.cachedModelSummaries()
+                        .first(where: { $0.isCurrent })?.name
+                    model = currentLoaded ?? req.model
+                }
             } else {
                 model = req.model
             }
@@ -5989,6 +6053,503 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     errorMessage: error.localizedDescription
                 )
             }
+        }
+    }
+
+    // MARK: - Image generation (/v1/images/*)
+
+    private func requestBodyData() -> (data: Data, string: String?) {
+        if let body = stateRef.value.requestBodyBuffer {
+            var copy = body
+            let bytes = copy.readBytes(length: copy.readableBytes) ?? []
+            let data = Data(bytes)
+            return (data, String(decoding: data, as: UTF8.self))
+        }
+        return (Data(), nil)
+    }
+
+    private func sendImageError(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        status: HTTPResponseStatus,
+        message: String,
+        path: String,
+        startTime: Date,
+        userAgent: String?,
+        requestBody: String?
+    ) {
+        let body = #"{"error":{"message":"\#(Self.jsonEscape(message))","type":"invalid_request_error"}}"#
+        var headers = [("Content-Type", "application/json; charset=utf-8")]
+        headers.append(contentsOf: stateRef.value.corsHeaders)
+        sendResponse(context: context, version: head.version, status: status, headers: headers, body: body)
+        logRequest(
+            method: "POST", path: path, userAgent: userAgent, requestBody: requestBody,
+            responseStatus: Int(status.code), startTime: startTime, errorMessage: message)
+    }
+
+    private static func jsonEscape(_ s: String) -> String {
+        s.replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+            .replacingOccurrences(of: "\n", with: " ")
+    }
+
+    /// Decode an image input field — a `data:` URI, a `file://` URL, or raw
+    /// base64 — into bytes the service can stage for the engine.
+    static func decodeImageInput(_ value: String) -> Data? {
+        if value.hasPrefix("data:") {
+            guard let comma = value.firstIndex(of: ",") else { return nil }
+            return Data(base64Encoded: String(value[value.index(after: comma)...]))
+        }
+        if value.hasPrefix("file://"), let url = URL(string: value) {
+            return try? Data(contentsOf: url)
+        }
+        if value.hasPrefix("http://") || value.hasPrefix("https://") {
+            return nil  // remote fetch unsupported for the local image engine
+        }
+        return Data(base64Encoded: value)
+    }
+
+    /// Resolve width/height from explicit fields or an OpenAI-style `WxH` size.
+    static func resolveImageSize(size: String?, width: Int?, height: Int?) -> (Int?, Int?) {
+        if let width, let height { return (width, height) }
+        if let size {
+            let parts = size.lowercased().split(separator: "x")
+            if parts.count == 2, let w = Int(parts[0]), let h = Int(parts[1]) {
+                return (w, h)
+            }
+        }
+        return (width, height)
+    }
+
+    /// Clamp a caller-supplied image dimension to the same 256–1024 / multiple-of-16
+    /// envelope the agent `image_generate`/`image_edit` tools enforce
+    /// (`NativeImageTools.clampedDimension`). The public REST endpoints previously
+    /// passed `width`/`height` through unclamped, so an oversized request could OOM
+    /// or trip the GPU watchdog on the exclusive Metal lane.
+    static func clampImageDimension(_ value: Int) -> Int {
+        let bounded = min(1024, max(256, value))
+        let rounded = (bounded / 16) * 16
+        return max(256, rounded)
+    }
+
+    /// Clamp denoising steps to the advertised 1–50 range (mirrors the agent path).
+    static func clampImageSteps(_ value: Int) -> Int { min(50, max(1, value)) }
+
+    private static func imageOutputFormat(_ raw: String?) -> ImageOutputFormat {
+        switch raw?.lowercased() {
+        case "jpeg", "jpg": return .jpeg
+        case "webp": return .webp
+        default: return .png
+        }
+    }
+
+    /// Build the per-image result object honoring `response_format`.
+    private static func imageResult(for image: GeneratedImage, responseFormat: String) -> ImageResultDTO {
+        if responseFormat == "b64_json", let data = try? Data(contentsOf: image.url) {
+            return ImageResultDTO(url: nil, b64_json: data.base64EncodedString(), seed: image.seed)
+        }
+        return ImageResultDTO(url: image.url.absoluteString, b64_json: nil, seed: image.seed)
+    }
+
+    private static func imageErrorStatus(message: String, hfAuth: Bool) -> HTTPResponseStatus {
+        if hfAuth { return HTTPResponseStatus(statusCode: 402) }
+        let m = message.lowercased()
+        if m.contains("not found") { return .notFound }
+        if m.contains("incomplete") { return .conflict }
+        if m.contains("not implemented") { return .notImplemented }
+        if m.contains("invalid request") || m.contains("wrong model kind") { return .badRequest }
+        return .internalServerError
+    }
+
+    func handleImageModels(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        let cors = stateRef.value.corsHeaders
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        let logSelf = self
+        runRequestTask(priority: .userInitiated) {
+            let models: [ImageModelInfo]
+            do {
+                models = try await ImageGenerationService.shared.availableModels()
+            } catch {
+                models = []
+            }
+            let dtos = models.map { m in
+                ImageModelDTO(
+                    id: m.id,
+                    object: "model",
+                    display_name: m.displayName,
+                    kind: m.kind,
+                    ready: m.ready,
+                    quantization_bits: m.quantizationBits,
+                    capabilities: ImageCapabilitiesDTO(
+                        text_to_image: m.capabilities.textToImage,
+                        image_edit: m.capabilities.imageEdit,
+                        upscale: m.capabilities.upscale,
+                        negative_prompt: m.capabilities.negativePrompt,
+                        mask: m.capabilities.mask,
+                        multiple_source_images: m.capabilities.multipleSourceImages,
+                        lora: m.capabilities.lora
+                    ),
+                    defaults: ImageDefaultsDTO(
+                        steps: m.defaultSteps,
+                        guidance: m.defaultGuidance.map { Double($0) }
+                    ),
+                    limits: ImageLimitsDTO(
+                        min_steps: 1, max_steps: 50, size_multiple: 16,
+                        max_pixels: 1024 * 1024,
+                        supported_sizes: ["512x512", "768x768", "1024x1024"]
+                    ),
+                    blocked_reasons: m.blockedReasons
+                )
+            }
+            let response = ImageModelsResponseDTO(object: "list", data: dtos)
+            let json = (try? JSONEncoder.osaurusCanonical().encode(response))
+                .map { String(decoding: $0, as: UTF8.self) } ?? #"{"object":"list","data":[]}"#
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(context: ctx.value, version: head.version, status: .ok, headers: headers, body: json)
+            }
+            logSelf.logRequest(
+                method: "GET", path: "/images/models", userAgent: userAgent,
+                requestBody: nil, responseBody: json, responseStatus: 200, startTime: startTime)
+        }
+    }
+
+    func handleImageGenerations(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        let (data, bodyString) = requestBodyData()
+        guard let req = try? JSONDecoder().decode(ImageGenerationRequestDTO.self, from: data) else {
+            sendImageError(
+                head: head, context: context, status: .badRequest,
+                message: "Invalid request body", path: "/images/generations",
+                startTime: startTime, userAgent: userAgent, requestBody: bodyString)
+            return
+        }
+        // Resolve the model: explicit request value wins; otherwise fall back to
+        // the configured default (Settings → Agent Delegation), matching the
+        // agent image_generate tool.
+        let trimmedModel = req.model?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard
+            let modelId =
+                (trimmedModel?.isEmpty == false ? trimmedModel : nil)
+                ?? AgentDelegationConfigurationStore.snapshot().defaultImageGenerationModelId,
+            !modelId.isEmpty
+        else {
+            sendImageError(
+                head: head, context: context, status: .badRequest,
+                message:
+                    "No image model specified and no default image generation model is configured (Settings → Agent Delegation).",
+                path: "/images/generations",
+                startTime: startTime, userAgent: userAgent, requestBody: bodyString)
+            return
+        }
+        let (w, h) = Self.resolveImageSize(size: req.size, width: req.width, height: req.height)
+        let params = ImageGenerationParameters(
+            model: modelId,
+            prompt: req.prompt,
+            negativePrompt: req.negative_prompt,
+            width: w.map(Self.clampImageDimension),
+            height: h.map(Self.clampImageDimension),
+            steps: req.steps.map(Self.clampImageSteps),
+            guidance: req.guidance.map { Float($0) },
+            seed: req.seed,
+            // Multi-image (`n` > 1) is force-capped to 1: the service generates the
+            // N images sequentially in one job WITHOUT a GPU drain between them, which
+            // reliably trips the MLX `tryCoalescingPreviousComputeCommandEncoder`
+            // assertion (reproduced at n=2). Re-enable once the per-image drain lands
+            // in the multi-image loop (see docs/REMAINING_WORK.md).
+            numImages: 1,
+            outputFormat: Self.imageOutputFormat(req.output_format)
+        )
+        let jobID = Self.shortId(prefix: "img")
+        runImageJob(
+            head: head, context: context, startTime: startTime, userAgent: userAgent,
+            path: "/images/generations", requestBody: bodyString,
+            streaming: req.stream ?? false, responseFormat: req.response_format ?? "url",
+            jobID: jobID
+        ) { await ImageGenerationService.shared.generate(params, jobID: jobID) }
+    }
+
+    func handleImageEdits(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        let (data, bodyString) = requestBodyData()
+        guard let req = try? JSONDecoder().decode(ImageEditRequestDTO.self, from: data) else {
+            sendImageError(
+                head: head, context: context, status: .badRequest,
+                message: "Invalid request body", path: "/images/edits",
+                startTime: startTime, userAgent: userAgent, requestBody: bodyString)
+            return
+        }
+        // Prefer the ordered `images` list; fall back to the single `image`.
+        let rawSources = req.images ?? [req.image].compactMap { $0 }
+        let sources = rawSources.compactMap { Self.decodeImageInput($0) }
+        guard !sources.isEmpty else {
+            sendImageError(
+                head: head, context: context, status: .badRequest,
+                message: "edit requires a source image", path: "/images/edits",
+                startTime: startTime, userAgent: userAgent, requestBody: bodyString)
+            return
+        }
+        // No model exposes a real mask path today — reject masks up front.
+        if req.mask != nil {
+            sendImageError(
+                head: head, context: context, status: .notImplemented,
+                message: "mask editing is not supported by this model", path: "/images/edits",
+                startTime: startTime, userAgent: userAgent, requestBody: bodyString)
+            return
+        }
+        // Resolve the model: explicit request value wins; otherwise fall back to
+        // the configured default edit model (Settings → Agent Delegation),
+        // matching the agent image_edit tool.
+        let trimmedEditModel = req.model?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard
+            let editModelId =
+                (trimmedEditModel?.isEmpty == false ? trimmedEditModel : nil)
+                ?? AgentDelegationConfigurationStore.snapshot().defaultImageEditModelId,
+            !editModelId.isEmpty
+        else {
+            sendImageError(
+                head: head, context: context, status: .badRequest,
+                message:
+                    "No image model specified and no default image edit model is configured (Settings → Agent Delegation).",
+                path: "/images/edits",
+                startTime: startTime, userAgent: userAgent, requestBody: bodyString)
+            return
+        }
+        let (w, h) = Self.resolveImageSize(size: req.size, width: req.width, height: req.height)
+        let params = ImageEditParameters(
+            model: editModelId,
+            prompt: req.prompt,
+            sourceImages: sources,
+            maskImage: nil,
+            negativePrompt: req.negative_prompt,
+            strength: req.strength.map { Float($0) } ?? 0.75,
+            width: w.map(Self.clampImageDimension),
+            height: h.map(Self.clampImageDimension),
+            steps: req.steps.map(Self.clampImageSteps),
+            guidance: req.guidance.map { Float($0) },
+            seed: req.seed,
+            outputFormat: Self.imageOutputFormat(req.output_format)
+        )
+        let jobID = Self.shortId(prefix: "img")
+        runImageJob(
+            head: head, context: context, startTime: startTime, userAgent: userAgent,
+            path: "/images/edits", requestBody: bodyString,
+            streaming: req.stream ?? false, responseFormat: req.response_format ?? "url",
+            jobID: jobID
+        ) { await ImageGenerationService.shared.edit(params, jobID: jobID) }
+    }
+
+    func handleImageUpscale(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        let (data, bodyString) = requestBodyData()
+        guard let req = try? JSONDecoder().decode(ImageUpscaleRequestDTO.self, from: data),
+            let source = Self.decodeImageInput(req.image)
+        else {
+            sendImageError(
+                head: head, context: context, status: .badRequest,
+                message: "Invalid request body", path: "/images/upscale",
+                startTime: startTime, userAgent: userAgent, requestBody: bodyString)
+            return
+        }
+        let params = ImageUpscaleParameters(
+            model: req.model,
+            sourceImage: source,
+            scale: req.scale ?? 4,
+            steps: req.steps,
+            seed: req.seed,
+            outputFormat: Self.imageOutputFormat(req.output_format)
+        )
+        let jobID = Self.shortId(prefix: "img")
+        runImageJob(
+            head: head, context: context, startTime: startTime, userAgent: userAgent,
+            path: "/images/upscale", requestBody: bodyString,
+            streaming: req.stream ?? false, responseFormat: req.response_format ?? "url",
+            jobID: jobID
+        ) { await ImageGenerationService.shared.upscale(params, jobID: jobID) }
+    }
+
+    func handleImageCancel(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        let (data, bodyString) = requestBodyData()
+        guard let req = try? JSONDecoder().decode(ImageCancelRequestDTO.self, from: data) else {
+            sendImageError(
+                head: head, context: context, status: .badRequest,
+                message: "Invalid request body", path: "/images/cancel",
+                startTime: startTime, userAgent: userAgent, requestBody: bodyString)
+            return
+        }
+        let cors = stateRef.value.corsHeaders
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        let logSelf = self
+        runRequestTask(priority: .userInitiated) {
+            await ImageGenerationService.shared.cancel(jobID: req.job_id)
+            let json = #"{"type":"cancelled","job_id":"\#(Self.jsonEscape(req.job_id))"}"#
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(context: ctx.value, version: head.version, status: .ok, headers: headers, body: json)
+            }
+            logSelf.logRequest(
+                method: "POST", path: "/images/cancel", userAgent: userAgent,
+                requestBody: bodyString, responseBody: json, responseStatus: 200, startTime: startTime)
+        }
+    }
+
+    /// Shared driver for the three image endpoints: streams SSE progress when
+    /// `streaming`, otherwise buffers to a single OpenAI-shaped JSON response.
+    private func runImageJob(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?,
+        path: String,
+        requestBody: String?,
+        streaming: Bool,
+        responseFormat: String,
+        jobID: String,
+        build: @escaping @Sendable () async -> AsyncThrowingStream<ImageGenerationEvent, Error>
+    ) {
+        let cors = stateRef.value.corsHeaders
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        let logSelf = self
+
+        if streaming {
+            // The writer is confined to the event loop; wrap it in a
+            // NIOLoopBound so it can cross into the `@Sendable` hop closures
+            // (same pattern as the chat SSE path).
+            let writer = NIOLoopBound(SSEResponseWriter(), eventLoop: loop)
+            hop { writer.value.writeHeaders(ctx.value, extraHeaders: cors) }
+            func emit(_ event: ImageStreamEventDTO) {
+                let json = (try? JSONEncoder.osaurusCanonical().encode(event))
+                    .map { String(decoding: $0, as: UTF8.self) } ?? "{}"
+                hop { writer.value.writeRawJSONData(json, context: ctx.value) }
+            }
+            runRequestTask(priority: .userInitiated) {
+                emit(ImageStreamEventDTO(type: "queued", job_id: jobID))
+                let stream = await build()
+                do {
+                    for try await event in stream {
+                        switch event {
+                        case .loadingModel(let model):
+                            emit(ImageStreamEventDTO(type: "loading_model", job_id: jobID, model: model))
+                        case .step(let step, let total, let eta):
+                            emit(ImageStreamEventDTO(
+                                type: "step", job_id: jobID, step: step, total: total,
+                                progress: total > 0 ? Double(step) / Double(total) : nil,
+                                eta_seconds: eta))
+                        case .preview(let pngData, let step):
+                            let uri = "data:image/png;base64," + pngData.base64EncodedString()
+                            emit(ImageStreamEventDTO(type: "preview", job_id: jobID, step: step, image: uri))
+                        case .completed(let images):
+                            let results = images.map { Self.imageResult(for: $0, responseFormat: responseFormat) }
+                            emit(ImageStreamEventDTO(type: "completed", job_id: jobID, images: results))
+                        case .failed(let message, let hfAuth):
+                            emit(ImageStreamEventDTO(type: "error", job_id: jobID, message: message, hf_auth: hfAuth))
+                        case .cancelled:
+                            emit(ImageStreamEventDTO(type: "cancelled", job_id: jobID))
+                        }
+                    }
+                } catch {
+                    emit(ImageStreamEventDTO(type: "error", job_id: jobID, message: String(describing: error), hf_auth: false))
+                }
+                hop { writer.value.writeEnd(ctx.value) }
+                logSelf.logRequest(
+                    method: "POST", path: path, userAgent: userAgent,
+                    requestBody: requestBody, responseBody: "[stream]", responseStatus: 200, startTime: startTime)
+            }
+            return
+        }
+
+        // Non-streaming: collect to a single response.
+        runImageNonStreaming(
+            head: head, ctx: ctx, hop: hop, cors: cors, logSelf: logSelf,
+            startTime: startTime, userAgent: userAgent, path: path, requestBody: requestBody,
+            responseFormat: responseFormat, build: build)
+    }
+
+    private func runImageNonStreaming(
+        head: HTTPRequestHead,
+        ctx: NIOLoopBound<ChannelHandlerContext>,
+        hop: @escaping (@escaping @Sendable () -> Void) -> Void,
+        cors: [(String, String)],
+        logSelf: HTTPHandler,
+        startTime: Date,
+        userAgent: String?,
+        path: String,
+        requestBody: String?,
+        responseFormat: String,
+        build: @escaping @Sendable () async -> AsyncThrowingStream<ImageGenerationEvent, Error>
+    ) {
+        runRequestTask(priority: .userInitiated) {
+            var produced: [GeneratedImage] = []
+            var failure: (message: String, hfAuth: Bool)?
+            let stream = await build()
+            do {
+                for try await event in stream {
+                    switch event {
+                    case .completed(let images): produced = images
+                    case .failed(let message, let hfAuth): failure = (message, hfAuth)
+                    default: break
+                    }
+                }
+            } catch {
+                failure = (String(describing: error), false)
+            }
+
+            if let failure {
+                let status = Self.imageErrorStatus(message: failure.message, hfAuth: failure.hfAuth)
+                let body = #"{"error":{"message":"\#(Self.jsonEscape(failure.message))","type":"invalid_request_error"}}"#
+                hop {
+                    var headers = [("Content-Type", "application/json; charset=utf-8")]
+                    headers.append(contentsOf: cors)
+                    self.sendResponse(context: ctx.value, version: head.version, status: status, headers: headers, body: body)
+                }
+                logSelf.logRequest(
+                    method: "POST", path: path, userAgent: userAgent, requestBody: requestBody,
+                    responseStatus: Int(status.code), startTime: startTime, errorMessage: failure.message)
+                return
+            }
+
+            let results = produced.map { Self.imageResult(for: $0, responseFormat: responseFormat) }
+            let response = ImagesResponseDTO(created: Int(Date().timeIntervalSince1970), data: results)
+            let json = (try? JSONEncoder.osaurusCanonical().encode(response))
+                .map { String(decoding: $0, as: UTF8.self) } ?? #"{"created":0,"data":[]}"#
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(context: ctx.value, version: head.version, status: .ok, headers: headers, body: json)
+            }
+            logSelf.logRequest(
+                method: "POST", path: path, userAgent: userAgent, requestBody: requestBody,
+                responseBody: json, responseStatus: 200, startTime: startTime)
         }
     }
 

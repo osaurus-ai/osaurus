@@ -495,10 +495,16 @@ enum AgentLoopBudget {
         // If the iteration ends in a tool result, notices ride alongside it as
         // tool-role environment feedback (captured before we append, so every
         // notice keeps that result's `tool_call_id`); otherwise they fall back
-        // to a trailing user turn.
+        // to a trailing user turn. Native image generate->edit is the narrow
+        // exception: Gemma treats a second tool-role message as low-salience
+        // environment chatter after the generated image, so only that
+        // continuation notice is promoted to a transient user turn.
         let trailingTool = (msgs.last?.role == "tool") ? msgs.last : nil
+        let nativeImageGenerateResult = trailingTool.map(isNativeImageGenerateToolResult) ?? false
         for notice in notices {
-            if let trailingTool {
+            if nativeImageGenerateResult, isNativeImageEditContinuationNotice(notice) {
+                msgs.append(ChatMessage(role: "user", content: notice))
+            } else if let trailingTool {
                 msgs.append(
                     ChatMessage(
                         role: "tool",
@@ -512,6 +518,29 @@ enum AgentLoopBudget {
             }
         }
         return msgs
+    }
+
+    private static func isNativeImageGenerateToolResult(_ message: ChatMessage) -> Bool {
+        guard message.role == "tool",
+            let content = message.content,
+            ToolEnvelope.isSuccess(content),
+            let data = content.data(using: .utf8),
+            let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            dict["tool"] as? String == "image_generate",
+            let payload = dict["result"] as? [String: Any],
+            payload["kind"] as? String == "native_image_generation_job",
+            let images = payload["images"] as? [[String: Any]]
+        else { return false }
+        return images.contains { image in
+            guard let path = image["path"] as? String else { return false }
+            return !path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+    }
+
+    private static func isNativeImageEditContinuationNotice(_ notice: String) -> Bool {
+        notice.contains("`image_edit`")
+            && notice.contains("source_paths")
+            && notice.contains("previous `image_generate` result")
     }
 
     /// Like `trimPreservingSystemPrefix`, but also reports whether the

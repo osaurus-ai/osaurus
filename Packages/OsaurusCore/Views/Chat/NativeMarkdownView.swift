@@ -748,7 +748,7 @@ final class NativeMarkdownView: NSView {
                 if let existing = existingEntry?.view as? NSImageView {
                     iv = existing
                 } else {
-                    iv = NSImageView()
+                    iv = MarkdownSegmentImageView()
                     iv.translatesAutoresizingMaskIntoConstraints = false
                     iv.imageScaling = .scaleProportionallyUpOrDown
                     iv.imageAlignment = .alignLeft
@@ -1018,12 +1018,25 @@ final class NativeMarkdownView: NSView {
         return min(Self.imageMaxHeight, max(1, width / aspect))
     }
 
-    /// Sync an image segment's height constraint to `imageHeight(...)`.
+    /// Sync an image segment's height constraint to `imageHeight(...)` and
+    /// reposition its overlaid download button to the displayed image's right
+    /// edge (the view is full-width while the image is left-aligned and scaled).
     private func applyImageHeight(segmentId: String, width: CGFloat) {
         guard let constraint = imageHeightConstraints[segmentId] else { return }
         let target = imageHeight(forSegmentId: segmentId, width: width)
         if abs(constraint.constant - target) > 0.5 {
             constraint.constant = target
+        }
+        if let view = segmentViews.first(where: { $0.key == segmentId })?.view
+            as? MarkdownSegmentImageView
+        {
+            let displayedWidth: CGFloat
+            if let aspect = imageAspectRatios[segmentId], aspect > 0 {
+                displayedWidth = min(width, target * aspect)
+            } else {
+                displayedWidth = width
+            }
+            view.setImageRightEdge(displayedWidth)
         }
     }
 

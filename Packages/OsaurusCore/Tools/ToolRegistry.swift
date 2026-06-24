@@ -202,6 +202,12 @@ final class ToolRegistry: ObservableObject {
             SearchMemoryTool(),
             // Inline data visualization rendered as a chart card.
             RenderChartTool(),
+            // Native local image generation. Tool body enforces the separate
+            // Agent Delegation permission defaults and low-RAM unload policy.
+            LocalTextDelegateTool(),
+            SpawnTool(),
+            NativeImageGenerateTool(),
+            NativeImageEditTool(),
             // Agent DB feature (spec §6). The system prompt composer
             // gates these per-agent via `Agent.settings.dbEnabled`;
             // registering them as built-ins means agents that *do*
@@ -375,8 +381,10 @@ final class ToolRegistry: ObservableObject {
 
     /// Get specs for specific tools by name (ignores enabled state).
     func specs(forTools toolNames: [String]) -> [Tool] {
+        let delegationExcluded = agentDelegationExcludedToolNames()
         return toolNames.compactMap { name in
-            toolsByName[name]?.asOpenAITool()
+            guard !delegationExcluded.contains(name) else { return nil }
+            return toolsByName[name]?.asOpenAITool()
         }
     }
 
@@ -572,10 +580,24 @@ final class ToolRegistry: ObservableObject {
     /// `kind: .unavailable` "still initializing" notice so the model knows
     /// to retry rather than pivot.
     func execute(
-        name: String,
+        name rawName: String,
         argumentsJSON: String,
         permissionGateResolved: Bool = false
     ) async throws -> String {
+        // The capabilities manifest lists deferred tools to the model as
+        // `tool/<name>` (SystemPromptTemplates.enabledCapabilitiesManifest). Some
+        // models copy that `tool/` prefix verbatim into a tool call even for a
+        // first-class function tool, yielding a spurious tool_not_found. Worse,
+        // the default agent can't self-heal — capabilities_load is gated off for
+        // it — so it just gives up and refuses ("I cannot generate images").
+        // Resolve to the model's real intent by stripping a `tool/` prefix when
+        // the bare name isn't registered but the stripped one is, mirroring the
+        // `tool/` handling in CapabilityTools.resolve.
+        var name = rawName
+        if toolsByName[name] == nil, name.hasPrefix("tool/") {
+            let stripped = String(name.dropFirst("tool/".count))
+            if toolsByName[stripped] != nil { name = stripped }
+        }
         // External-surface deny list: refuse workspace-mutating tool
         // classes for HTTP/MCP-initiated executions regardless of
         // registration state or permission policy.
@@ -1378,6 +1400,16 @@ final class ToolRegistry: ObservableObject {
         Self.folderToolNames.union(builtInSandboxToolNames)
     }
 
+    static let agentDelegationTextToolNames: Set<String> = ["local_delegate"]
+    static let agentDelegationSpawnToolNames: Set<String> = ["spawn"]
+    static let agentDelegationImageToolNames: Set<String> = ["image_generate", "image_edit"]
+    /// All agent-delegation tool names — used by the authoritative per-agent
+    /// `spawnDelegationEnabled` gate in `SystemPromptComposer.resolveTools`.
+    static let agentDelegationAllToolNames: Set<String> =
+        agentDelegationTextToolNames
+        .union(agentDelegationSpawnToolNames)
+        .union(agentDelegationImageToolNames)
+
     /// Read-only snapshot of the built-in sandbox tool names. Exposed so the
     /// composer's canonical-order helper can group them at the top of the
     /// `<tools>` block without reaching into private state.
@@ -1422,6 +1454,22 @@ final class ToolRegistry: ObservableObject {
         }
         if mode.usesHostFolderTools || mode.usesSandboxTools {
             excluded.formUnion(folderConflictingToolNames)
+        }
+        excluded.formUnion(agentDelegationExcludedToolNames())
+        return excluded
+    }
+
+    private func agentDelegationExcludedToolNames() -> Set<String> {
+        let config = AgentDelegationConfigurationStore.snapshot()
+        var excluded: Set<String> = []
+        if !config.textDelegationToolAvailable {
+            excluded.formUnion(Self.agentDelegationTextToolNames)
+        }
+        if !config.anyAgentSpawnable {
+            excluded.formUnion(Self.agentDelegationSpawnToolNames)
+        }
+        if !config.imageDelegationActive {
+            excluded.formUnion(Self.agentDelegationImageToolNames)
         }
         return excluded
     }
@@ -1520,6 +1568,11 @@ final class ToolRegistry: ObservableObject {
         if dynamic, !isEnabled {
             appendReason(.disabled)
             details.append(L("globally disabled"))
+        }
+
+        if agentDelegationExcludedToolNames().contains(toolName) {
+            appendReason(.disabled)
+            details.append(L("agent delegation is disabled in Settings"))
         }
 
         if dynamic, let agentAllowedNames, !agentAllowedNames.contains(toolName) {

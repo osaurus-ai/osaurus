@@ -147,6 +147,14 @@ public enum OsaurusPaths {
         root().appendingPathComponent("cache", isDirectory: true)
     }
 
+    /// Output directory for locally generated images (vMLXFlux). The image
+    /// engine writes the final PNG here and returns the URL; the chat layer
+    /// copies the bytes into its attachment store and HTTP `response_format:url`
+    /// callers receive a `file://` path under this directory.
+    public static func generatedImages() -> URL {
+        root().appendingPathComponent("generated-images", isDirectory: true)
+    }
+
     /// Disk KV cache directory used by vmlx-swift's `DiskCache` (L2 tier).
     /// Stores SQLite index + safetensors blocks keyed by model + token hash.
     public static func diskKVCache() -> URL {

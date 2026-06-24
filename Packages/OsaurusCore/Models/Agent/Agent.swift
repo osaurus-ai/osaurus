@@ -474,6 +474,9 @@ public struct AgentCapabilities: Sendable, Equatable {
     public var selfSchedulingEnabled: Bool
     /// Computer Use (`computer_use` entry tool) exposed to the model.
     public var computerUseEnabled: Bool
+    /// Spawn / agent delegation (`spawn` / `local_delegate` / `image_generate` /
+    /// `image_edit`) exposed to the model — per-agent opt-in.
+    public var spawnDelegationEnabled: Bool
 
     public init(
         toolsEnabled: Bool,
@@ -483,7 +486,8 @@ public struct AgentCapabilities: Sendable, Equatable {
         speakEnabled: Bool,
         searchMemoryEnabled: Bool,
         selfSchedulingEnabled: Bool,
-        computerUseEnabled: Bool = false
+        computerUseEnabled: Bool = false,
+        spawnDelegationEnabled: Bool = false
     ) {
         self.toolsEnabled = toolsEnabled
         self.memoryEnabled = memoryEnabled
@@ -493,6 +497,7 @@ public struct AgentCapabilities: Sendable, Equatable {
         self.searchMemoryEnabled = searchMemoryEnabled
         self.selfSchedulingEnabled = selfSchedulingEnabled
         self.computerUseEnabled = computerUseEnabled
+        self.spawnDelegationEnabled = spawnDelegationEnabled
     }
 }
 
@@ -725,6 +730,12 @@ public struct AgentSettings: Codable, Sendable, Equatable {
     /// This is the spec's "SOUL.md ceiling" expressed as settings rather
     /// than parsed prose.
     public var computerUseCeiling: AutonomyCeiling?
+    /// Per-agent opt-in for spawn / agent delegation (`spawn` / `local_delegate` /
+    /// `image_generate` / `image_edit`). Default off; gated authoritatively in
+    /// `resolveTools` (stripped unless enabled). The global
+    /// `AgentDelegationConfiguration` still supplies the defaults (models, load
+    /// policy, RAM safety, permissions, budgets); this is the per-agent enable.
+    public var spawnDelegationEnabled: Bool
 
     public init(
         dbEnabled: Bool,
@@ -737,7 +748,8 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         searchMemoryEnabled: Bool = false,
         selfSchedulingEnabled: Bool = false,
         computerUseEnabled: Bool = false,
-        computerUseCeiling: AutonomyCeiling? = nil
+        computerUseCeiling: AutonomyCeiling? = nil,
+        spawnDelegationEnabled: Bool = false
     ) {
         self.dbEnabled = dbEnabled
         self.schedule = schedule
@@ -750,6 +762,7 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         self.selfSchedulingEnabled = selfSchedulingEnabled
         self.computerUseEnabled = computerUseEnabled
         self.computerUseCeiling = computerUseCeiling
+        self.spawnDelegationEnabled = spawnDelegationEnabled
     }
 
     public init(from decoder: Decoder) throws {
@@ -786,6 +799,8 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         selfSchedulingEnabled = try c.decodeIfPresent(Bool.self, forKey: .selfSchedulingEnabled) ?? false
         // Default off; back-compat for agents that predate the feature.
         computerUseEnabled = try c.decodeIfPresent(Bool.self, forKey: .computerUseEnabled) ?? false
+        spawnDelegationEnabled =
+            try c.decodeIfPresent(Bool.self, forKey: .spawnDelegationEnabled) ?? false
         // Optional; absent means no ceiling (user policy applies as-is).
         computerUseCeiling = try c.decodeIfPresent(
             AutonomyCeiling.self,
@@ -805,6 +820,7 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         case selfSchedulingEnabled
         case computerUseEnabled
         case computerUseCeiling
+        case spawnDelegationEnabled
         // Read-only legacy key — never encoded after migration.
         case generativeGreetings
     }
@@ -822,6 +838,7 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         try c.encode(selfSchedulingEnabled, forKey: .selfSchedulingEnabled)
         try c.encode(computerUseEnabled, forKey: .computerUseEnabled)
         try c.encodeIfPresent(computerUseCeiling, forKey: .computerUseCeiling)
+        try c.encode(spawnDelegationEnabled, forKey: .spawnDelegationEnabled)
     }
 
     /// Default settings for newly created agents (and for back-compat decoding of

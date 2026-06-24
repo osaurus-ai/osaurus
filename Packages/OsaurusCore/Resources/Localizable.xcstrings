@@ -1,6 +1,168 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Save As…" : {
+
+    },
+    "1024 × 1024" : {
+
+    },
+    "512 × 512" : {
+
+    },
+    "768 × 768" : {
+
+    },
+    "Add a negative prompt" : {
+
+    },
+    "Allow Summary" : {
+
+    },
+    "Ask Before Expanded Sharing" : {
+
+    },
+    "Attach one source image to edit with this model." : {
+
+    },
+    "Balanced. Good detail at a moderate speed." : {
+
+    },
+    "Classifier-free guidance" : {
+
+    },
+    "Compact Result Only" : {
+
+    },
+    "Default steps" : {
+
+    },
+    "Denoising steps" : {
+
+    },
+    "Describe the image..." : {
+
+    },
+    "Edited the image" : {
+
+    },
+    "Editing the image" : {
+
+    },
+    "Enter a prompt to generate an image." : {
+
+    },
+    "Fast drafts. Lowest detail, quickest to render." : {
+
+    },
+    "Generated an image" : {
+
+    },
+    "Generating an image" : {
+
+    },
+    "Generating image…" : {
+
+    },
+    "How strongly the prompt changes the source image" : {
+
+    },
+    "Image Copied to Clipboard" : {
+
+    },
+    "Image Generation" : {
+
+    },
+    "Image generation cancelled." : {
+
+    },
+    "Image generation failed:" : {
+
+    },
+    "Image generation failed: no model selected" : {
+
+    },
+    "Image generation failed: selected model is not an image model." : {
+
+    },
+    "Image generation produced no image." : {
+
+    },
+    "Image models will appear here" : {
+
+    },
+    "Image saved" : {
+
+    },
+    "Images" : {
+
+    },
+    "Import a model from Hugging Face" : {
+
+    },
+    "Keep Warm When Safe" : {
+
+    },
+    "Let the main chat spawn image and local-model helper jobs" : {
+
+    },
+    "Loading image model…" : {
+
+    },
+    "Loading model…" : {
+
+    },
+    "Manual Panel Keeps Loaded" : {
+
+    },
+    "Model id" : {
+
+    },
+    "No image models" : {
+
+    },
+    "Not ready" : {
+
+    },
+    "On-device image model" : {
+
+    },
+    "Optional numeric seed" : {
+
+    },
+    "Output image size" : {
+
+    },
+    "Selected image model does not accept source images." : {
+
+    },
+    "Sharpest. The size most models are trained for, but slowest." : {
+
+    },
+    "Single Residency" : {
+
+    },
+    "Spawn" : {
+
+    },
+    "Spawn & Delegation" : {
+
+    },
+    "Strict Single Job" : {
+
+    },
+    "Terms to avoid during image generation" : {
+
+    },
+    "Unload After Agent Job" : {
+
+    },
+    "Unload After Job" : {
+
+    },
+    "agent delegation is disabled in Settings" : {
+
+    },
     "" : {
       "shouldTranslate" : false
     },

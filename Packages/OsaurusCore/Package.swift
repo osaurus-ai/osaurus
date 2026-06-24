@@ -34,7 +34,7 @@ let package = Package(
         // live model, cache, parser, API, and UI evidence.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "4453909ef453f9235fd7e65986ca3ffc62ff904d"
+            revision: "6b77b1ee682d81b3f84d84ac455de565fea3f348"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
@@ -173,6 +173,11 @@ let package = Package(
                 .product(name: "MLXLMCommon", package: "vmlx-swift"),
                 .product(name: "MLXEmbedders", package: "vmlx-swift"),
                 .product(name: "VMLXTokenizers", package: "vmlx-swift"),
+                // Native on-device image generation (mFLUX). Umbrella import
+                // `import vMLXFlux`; shares the one MLX runtime above and is
+                // routed through MetalGate's exclusive image lane (see
+                // ImageGenerationService).
+                .product(name: "vMLXFlux", package: "vmlx-swift"),
                 .product(name: "FluidAudio", package: "FluidAudio"),
                 .product(name: "VecturaKit", package: "VecturaKit"),
                 .product(name: "OsaurusNetworking", package: "OsaurusNetworking"),

@@ -186,4 +186,59 @@ struct ContentBlockDisplayTests {
 
         #expect(userText == "ts:debug-token should stay visible for user content")
     }
+
+    @Test
+    func imageGenerateToolResult_rendersSharedArtifactCard() throws {
+        let assistant = ChatTurn(role: .assistant, content: "")
+        let call = ToolCall(
+            id: "call_image_1",
+            type: "function",
+            function: ToolCallFunction(name: "image_generate", arguments: #"{"prompt":"green apple"}"#)
+        )
+        assistant.toolCalls = [call]
+        assistant.toolResults[call.id] = ToolEnvelope.success(
+            tool: "image_generate",
+            text: try Self.enrichedArtifactMarker(
+                filename: "green-apple.png",
+                mimeType: "image/png",
+                hostPath: "/tmp/green-apple.png",
+                contextId: "chat-context"
+            )
+        )
+
+        let blocks = ContentBlock.generateBlocks(
+            from: [assistant],
+            streamingTurnId: nil,
+            agentName: "Assistant"
+        )
+
+        let artifact = blocks.compactMap { block -> SharedArtifact? in
+            guard case let .sharedArtifact(artifact) = block.kind else { return nil }
+            return artifact
+        }.first
+
+        #expect(artifact?.filename == "green-apple.png")
+        #expect(artifact?.mimeType == "image/png")
+        #expect(artifact?.hostPath == "/tmp/green-apple.png")
+    }
+
+    private static func enrichedArtifactMarker(
+        filename: String,
+        mimeType: String,
+        hostPath: String,
+        contextId: String
+    ) throws -> String {
+        let metadata: [String: Any] = [
+            "filename": filename,
+            "mime_type": mimeType,
+            "has_content": false,
+            "host_path": hostPath,
+            "context_id": contextId,
+            "context_type": ArtifactContextType.chat.rawValue,
+            "file_size": 128,
+        ]
+        let data = try JSONSerialization.data(withJSONObject: metadata, options: .osaurusCanonical)
+        let jsonLine = String(decoding: data, as: UTF8.self)
+        return SharedArtifact.startMarker + jsonLine + SharedArtifact.endMarker
+    }
 }

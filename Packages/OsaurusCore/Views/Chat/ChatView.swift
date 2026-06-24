@@ -160,6 +160,7 @@ final class ChatSession: ObservableObject {
     @Published var selectedModel: String? = nil
     @Published var pickerItems: [ModelPickerItem] = []
     @Published var activeModelOptions: [String: ModelOptionValue] = [:]
+    @Published var imageComposerSettings = ImageComposerSettings()
     @Published var hasAnyModel: Bool = false
     @Published var isDiscoveringModels: Bool = true
     /// When true, voice input auto-restarts after AI responds (continuous conversation mode)
@@ -550,6 +551,7 @@ final class ChatSession: ObservableObject {
                 }
 
                 self.loadActiveModelOptions(for: model)
+                self.applyImageModelDefaults(for: model)
 
                 // Clear pending image attachments when switching to a non-VLM
                 // model. Computed against the NEW model id, since `@Published`
@@ -721,6 +723,7 @@ final class ChatSession: ObservableObject {
             selectedModel = pickerItems.firstChatCapable?.id
         }
         loadActiveModelOptions(for: selectedModel)
+        applyImageModelDefaults(for: selectedModel)
         isLoadingModel = false
     }
 
@@ -758,6 +761,7 @@ final class ChatSession: ObservableObject {
         isLoadingModel = true
         selectedModel = newSelected
         loadActiveModelOptions(for: selectedModel)
+        applyImageModelDefaults(for: selectedModel)
         isLoadingModel = false
         hasAnyModel = !newOptions.isEmpty
     }
@@ -778,6 +782,8 @@ final class ChatSession: ObservableObject {
         if modelId.lowercased() == "foundation" { return false }
         if ModelMediaCapabilities.from(modelId: modelId).supportsImage { return true }
         guard let option = pickerItems.first(where: { $0.id == modelId }) else { return false }
+        // Image-edit models accept image input (osaurus image-edit feature).
+        if option.imageCapabilities?.imageEdit == true { return true }
         return option.isVLM
     }
 
@@ -795,6 +801,20 @@ final class ChatSession: ObservableObject {
     var selectedPickerItem: ModelPickerItem? {
         guard let model = selectedModel else { return nil }
         return pickerItems.first { $0.id == model }
+    }
+
+    var selectedImagePickerItem: ModelPickerItem? {
+        guard let model = selectedModel else { return nil }
+        return pickerItems.first { $0.id == model && $0.source.isImageGeneration }
+    }
+
+    private func applyImageModelDefaults(for model: String?) {
+        guard let model,
+            let item = pickerItems.first(where: { $0.id == model && $0.source.isImageGeneration })
+        else { return }
+        var settings = imageComposerSettings
+        settings.applyModelDefaults(steps: item.imageDefaultSteps, guidance: item.imageDefaultGuidance)
+        imageComposerSettings = settings
     }
 
     /// True when the selected model is served by the managed Osaurus Router
@@ -2035,6 +2055,34 @@ final class ChatSession: ObservableObject {
         }
     }
 
+    /// Convert a successful native image tool result into the same enriched
+    /// artifact envelope that `share_artifact` uses, so generated/edited images
+    /// render as first-class chat cards.
+    private func processNativeImageToolResult(
+        toolName: String,
+        toolResult: String
+    ) async -> String {
+        guard let sessionId else { return toolResult }
+        let contextId = sessionId.uuidString
+        let outcome = await Task.detached(priority: .userInitiated) {
+            NativeImageToolArtifactBridge.processFirstImageArtifact(
+                toolName: toolName,
+                toolResult: toolResult,
+                contextId: contextId,
+                contextType: .chat
+            )
+        }.value
+
+        guard let outcome else { return toolResult }
+        switch outcome {
+        case .success(let processed):
+            return ToolEnvelope.success(tool: toolName, text: processed.enrichedToolResult)
+        case .failure(let reason):
+            NSLog("[NativeImageToolArtifactBridge] artifact promotion failed for %@: %@", toolName, String(describing: reason))
+            return toolResult
+        }
+    }
+
     /// Translate a `SharedArtifact.ResolutionFailure` into a
     /// `ToolEnvelope.failure` whose `message` tells the model exactly
     /// what went wrong AND what to try next. The "next" hint is keyed on
@@ -2951,6 +2999,140 @@ final class ChatSession: ObservableObject {
         }
     #endif
 
+    /// True when `id` names an on-device image-generation model in the picker
+    /// catalog. Drives the image-vs-LLM branch in `send`.
+    func isImageGenerationModel(_ id: String?) -> Bool {
+        guard let id, !id.isEmpty else { return false }
+        return ModelPickerItemCache.shared.items.contains {
+            $0.id == id && $0.source.isImageGeneration
+        }
+    }
+
+    /// Run a text→image generation for the active image model, streaming
+    /// progress into `turn` and rendering the final PNG as a markdown image
+    /// (the existing assistant markdown renderer displays `file://` images).
+    /// Honors the run lifecycle: cancelling `currentTask` cancels the consume
+    /// loop, which soft-cancels the underlying job.
+    func runImageGeneration(
+        prompt: String,
+        attachments: [Attachment],
+        settings: ImageComposerSettings,
+        into turn: ChatTurn,
+        runId: UUID
+    ) async {
+        guard let model = selectedModel, !model.isEmpty else {
+            turn.content = L("Image generation failed: no model selected")
+            rebuildVisibleBlocks()
+            return
+        }
+        guard !prompt.isEmpty else {
+            turn.content = L("Enter a prompt to generate an image.")
+            rebuildVisibleBlocks()
+            return
+        }
+        guard let imageItem = selectedImagePickerItem else {
+            turn.content = L("Image generation failed: selected model is not an image model.")
+            rebuildVisibleBlocks()
+            return
+        }
+
+        turn.content = L("Generating image…")
+        rebuildVisibleBlocks()
+
+        var lastRebuild = Date.distantPast
+        func refresh(force: Bool = false) {
+            let now = Date()
+            if force || now.timeIntervalSince(lastRebuild) >= 0.1 {
+                lastRebuild = now
+                rebuildVisibleBlocks()
+            }
+        }
+
+        var reachedTerminal = false
+        let sourceImages = attachments.loadImages()
+        let stream: AsyncThrowingStream<ImageGenerationEvent, Error>
+        if imageItem.imageCapabilities?.imageEdit == true || imageItem.imageKind == "imageEdit" {
+            guard !sourceImages.isEmpty else {
+                turn.content = L("Attach one source image to edit with this model.")
+                rebuildVisibleBlocks()
+                return
+            }
+            let params = ImageEditParameters(
+                model: model,
+                prompt: prompt,
+                sourceImages: sourceImages,
+                negativePrompt: settings.normalizedNegativePrompt,
+                strength: settings.clampedStrength,
+                width: settings.clampedWidth,
+                height: settings.clampedHeight,
+                steps: settings.clampedSteps,
+                guidance: settings.clampedGuidance,
+                seed: settings.normalizedSeed
+            )
+            stream = await ImageGenerationService.shared.edit(params, jobID: runId.uuidString)
+        } else {
+            guard sourceImages.isEmpty else {
+                turn.content = L("Selected image model does not accept source images.")
+                rebuildVisibleBlocks()
+                return
+            }
+            let params = ImageGenerationParameters(
+                model: model,
+                prompt: prompt,
+                negativePrompt: settings.normalizedNegativePrompt,
+                width: settings.clampedWidth,
+                height: settings.clampedHeight,
+                steps: settings.clampedSteps,
+                guidance: settings.clampedGuidance,
+                seed: settings.normalizedSeed,
+                numImages: 1,
+                outputFormat: .png
+            )
+            stream = await ImageGenerationService.shared.generate(params, jobID: runId.uuidString)
+        }
+        do {
+            for try await event in stream {
+                guard isRunActive(runId) else { break }
+                switch event {
+                case .loadingModel:
+                    turn.content = L("Loading image model…")
+                    refresh()
+                case .step(let step, let total, _):
+                    turn.content = "\(L("Generating image…")) \(step)/\(total)"
+                    refresh()
+                case .preview:
+                    break
+                case .completed(let images):
+                    reachedTerminal = true
+                    if images.isEmpty {
+                        turn.content = L("Image generation produced no image.")
+                    } else {
+                        turn.content = images
+                            .map { "![\(prompt)](\($0.url.absoluteString))" }
+                            .joined(separator: "\n\n")
+                    }
+                    refresh(force: true)
+                case .failed(let message, _):
+                    reachedTerminal = true
+                    turn.content = "\(L("Image generation failed:")) \(message)"
+                    refresh(force: true)
+                case .cancelled:
+                    if !reachedTerminal {
+                        reachedTerminal = true
+                        turn.content = L("Image generation cancelled.")
+                    }
+                    refresh(force: true)
+                }
+            }
+        } catch {
+            if !reachedTerminal {
+                turn.content = "\(L("Image generation failed:")) \(error)"
+                refresh(force: true)
+            }
+        }
+        isDirty = true
+    }
+
     func send(_ text: String, attachments: [Attachment] = []) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let hasContent = !trimmed.isEmpty || !attachments.isEmpty
@@ -3045,6 +3227,7 @@ final class ChatSession: ObservableObject {
         // streaming pipeline (e.g. from a sandbox plugin running on a
         // detached task) couldn't tell what agent they belonged to.
         let turnAgentId = agentId ?? Agent.defaultId
+        let imageSettings = imageComposerSettings
 
         currentTask = Task { @MainActor [weak self] in
             guard let self else { return }
@@ -3063,6 +3246,21 @@ final class ChatSession: ObservableObject {
                 // Must refresh block memoizer before first delta — otherwise visibleBlocks stays
                 // user-only while isStreaming is true and the table early-returns without assistant rows.
                 rebuildVisibleBlocks()
+
+                // Image-generation models route through ImageGenerationService
+                // (a second MLX graph, gated exclusive to LLM eval) instead of
+                // the chat engine. The same run lifecycle (defer finalizeRun,
+                // currentTask cancellation) applies.
+                if self.isImageGenerationModel(self.selectedModel) {
+                    await self.runImageGeneration(
+                        prompt: trimmed,
+                        attachments: attachments,
+                        settings: imageSettings,
+                        into: assistantTurn,
+                        runId: runId
+                    )
+                    return
+                }
 
                 #if DEBUG
                     // Dev aid: stream a canned tool-call timeline instead of the real
@@ -3494,6 +3692,14 @@ final class ChatSession: ObservableObject {
                             resultText = await self.processShareArtifactResult(
                                 toolResult: resultText,
                                 executionMode: executionMode
+                            )
+                            if let artifact = SharedArtifact.fromEnrichedToolResult(resultText) {
+                                await PluginManager.shared.notifyArtifactHandlers(artifact: artifact)
+                            }
+                        } else if NativeImageToolArtifactBridge.isNativeImageTool(inv.toolName) {
+                            resultText = await self.processNativeImageToolResult(
+                                toolName: inv.toolName,
+                                toolResult: resultText
                             )
                             if let artifact = SharedArtifact.fromEnrichedToolResult(resultText) {
                                 await PluginManager.shared.notifyArtifactHandlers(artifact: artifact)
@@ -4901,6 +5107,7 @@ struct ChatView: View {
                                 contextBreakdown: observedSession.estimatedContextBreakdown,
                                 sessionSpendMicro: observedSession.sessionRouterSpendMicro,
                                 showSessionSpend: observedSession.isOsaurusRouterSession,
+                                imageComposerSettings: $observedSession.imageComposerSettings,
                                 onSend: { manualText in
                                     if let manualText = manualText {
                                         observedSession.input = manualText
@@ -5793,6 +6000,18 @@ extension ChatView {
     /// Copy a turn's thinking + content to the clipboard
     private func copyTurnContent(turnId: UUID) {
         guard let turn = session.turns.first(where: { $0.id == turnId }) else { return }
+
+        // Image-generation replies are just the rendered image — copy the actual
+        // image to the clipboard instead of the raw `![](file://…)` markdown.
+        if !turn.contentIsBlank, !turn.hasRenderableThinking,
+            ContentBlock.isImageOnlyContent(turn.visibleContent),
+            let imageURL = Self.firstLocalImageURL(in: turn.visibleContent)
+        {
+            // Reads the file and writes to the pasteboard off the main thread.
+            ImageActions.copyImageFileToClipboard(at: imageURL)
+            return
+        }
+
         var textToCopy = ""
         if turn.hasRenderableThinking {
             textToCopy += turn.thinking
@@ -5804,6 +6023,22 @@ extension ChatView {
         guard !textToCopy.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(textToCopy, forType: .string)
+    }
+
+    /// Extracts the first local file URL from a standalone `![](…)` image line.
+    private static func firstLocalImageURL(in content: String) -> URL? {
+        guard
+            let regex = try? NSRegularExpression(pattern: #"!\[[^\]]*\]\(([^)]+)\)"#)
+        else { return nil }
+        let range = NSRange(content.startIndex..<content.endIndex, in: content)
+        guard let match = regex.firstMatch(in: content, range: range),
+            match.numberOfRanges > 1,
+            let urlRange = Range(match.range(at: 1), in: content)
+        else { return nil }
+        let urlString = content[urlRange].trimmingCharacters(in: .whitespaces)
+        let url = URL(string: urlString)
+        if url?.isFileURL == true { return url }
+        return nil
     }
 
     /// Stable callback for regenerate action - prevents closure recreation

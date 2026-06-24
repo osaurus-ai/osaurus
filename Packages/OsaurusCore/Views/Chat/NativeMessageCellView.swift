@@ -509,6 +509,12 @@ final class NativeAssistantActionsView: NSView {
     private var currentTheme: (any ThemeProtocol)?
     private var speakWidthConstraint: NSLayoutConstraint?
     private var speakLeadingConstraint: NSLayoutConstraint?
+    private var overflowWidthConstraint: NSLayoutConstraint?
+    private var overflowLeadingConstraint: NSLayoutConstraint?
+    /// Image-generation turns render as just the produced image, so Read-aloud
+    /// (nothing to speak) and the overflow "…" Inspect (no request log) collapse
+    /// away — only Copy and Regenerate stay.
+    private var hideSecondaryActions = false
 
     override init(frame: NSRect) {
         let copyControl = HeaderCircleActionControl(action: {})
@@ -561,6 +567,17 @@ final class NativeAssistantActionsView: NSView {
         self.speakLeadingConstraint = speakLeading
         self.speakWidthConstraint = speakWidth
 
+        // Overflow "…" normally follows Speaker and carries the trailing pin, but
+        // collapses (width/leading → 0) for image-only turns the same way Speaker
+        // does for TTS-off, so the row tightens to just Copy / Regenerate.
+        let overflowLeading = overflowButton.leadingAnchor.constraint(
+            equalTo: speakButton.trailingAnchor,
+            constant: 4
+        )
+        let overflowWidth = overflowButton.widthAnchor.constraint(equalToConstant: size)
+        self.overflowLeadingConstraint = overflowLeading
+        self.overflowWidthConstraint = overflowWidth
+
         NSLayoutConstraint.activate([
             copyButton.leadingAnchor.constraint(equalTo: leadingAnchor),
             copyButton.centerYAnchor.constraint(equalTo: centerYAnchor),
@@ -579,10 +596,11 @@ final class NativeAssistantActionsView: NSView {
             speakWidth,
             speakButton.heightAnchor.constraint(equalToConstant: size),
 
-            // Overflow "…" is always last and carries the trailing pin.
-            overflowButton.leadingAnchor.constraint(equalTo: speakButton.trailingAnchor, constant: 4),
+            // Overflow "…" is normally last and carries the trailing pin; it
+            // collapses for image-only turns (see overflowLeading/overflowWidth).
+            overflowLeading,
             overflowButton.centerYAnchor.constraint(equalTo: centerYAnchor),
-            overflowButton.widthAnchor.constraint(equalToConstant: size),
+            overflowWidth,
             overflowButton.heightAnchor.constraint(equalToConstant: size),
             overflowButton.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor),
         ])
@@ -623,12 +641,14 @@ final class NativeAssistantActionsView: NSView {
         turnId: UUID,
         timestamp: Date,
         theme: any ThemeProtocol,
+        hideSecondaryActions: Bool,
         onCopy: ((UUID) -> Void)?,
         onRegenerate: ((UUID) -> Void)?,
         onSpeak: ((UUID) -> Void)?
     ) {
         self.turnId = turnId
         self.responseTimestamp = timestamp
+        self.hideSecondaryActions = hideSecondaryActions
         self.onCopy = onCopy
         self.onRegenerate = onRegenerate
         self.onSpeak = onSpeak
@@ -658,6 +678,7 @@ final class NativeAssistantActionsView: NSView {
             iconTint: nil
         )
         applyTTSVisibility()
+        applyOverflowVisibility()
         refreshSpeakIcon()
     }
 
@@ -767,10 +788,19 @@ final class NativeAssistantActionsView: NSView {
         let toolDriven =
             TTSService.shared.playingMessageId == turnId
             && TTSService.shared.activeSpeakCallId != nil
-        let visible = enabled && !toolDriven
+        let visible = enabled && !toolDriven && !hideSecondaryActions
         speakButton.isHidden = !visible
         speakWidthConstraint?.constant = visible ? 28 : 0
         speakLeadingConstraint?.constant = visible ? 4 : 0
+    }
+
+    /// Image-only turns have no request log to inspect, so the overflow "…" button
+    /// collapses (width/leading → 0) the same way Speaker does for TTS-off.
+    private func applyOverflowVisibility() {
+        let visible = !hideSecondaryActions
+        overflowButton.isHidden = !visible
+        overflowWidthConstraint?.constant = visible ? 28 : 0
+        overflowLeadingConstraint?.constant = visible ? 4 : 0
     }
 }
 
@@ -1628,9 +1658,10 @@ final class NativeMessageCellView: NSTableCellView {
                 sameKind: sameKind
             )
 
-        case let .assistantActions(turnId, timestamp):
+        case let .assistantActions(turnId, imageOnly, timestamp):
             configureAsAssistantActions(
                 turnId: turnId,
+                imageOnly: imageOnly,
                 timestamp: timestamp,
                 context: context,
                 sameKind: sameKind
@@ -2329,6 +2360,7 @@ final class NativeMessageCellView: NSTableCellView {
 
     private func configureAsAssistantActions(
         turnId: UUID,
+        imageOnly: Bool,
         timestamp: Date,
         context: CellRenderingContext,
         sameKind: Bool
@@ -2351,6 +2383,7 @@ final class NativeMessageCellView: NSTableCellView {
             turnId: turnId,
             timestamp: timestamp,
             theme: context.theme,
+            hideSecondaryActions: imageOnly,
             onCopy: context.onCopy,
             onRegenerate: context.onRegenerate,
             onSpeak: context.onSpeak

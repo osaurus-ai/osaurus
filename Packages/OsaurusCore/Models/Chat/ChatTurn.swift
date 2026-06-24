@@ -437,9 +437,14 @@ final class ChatTurn: ObservableObject, Identifiable {
         !attachments.isEmpty
     }
 
-    /// User-visible content. Assistant turns hide Gemini round-trip metadata.
+    /// User-visible content. Assistant turns hide Gemini round-trip metadata
+    /// and any leaked tool-call JSON a model emitted as text instead of a
+    /// structured call.
     var visibleContent: String {
-        role == .assistant ? StringCleaning.stripGeminiDisplayMetadata(content) : content
+        guard role == .assistant else { return content }
+        return StringCleaning.stripLeakedActionJSON(
+            StringCleaning.stripGeminiDisplayMetadata(content)
+        )
     }
 
     /// Whether this turn has any thinking/reasoning content
