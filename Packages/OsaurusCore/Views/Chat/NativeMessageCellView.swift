@@ -1438,6 +1438,7 @@ final class NativeMessageCellView: NSTableCellView {
     private var nativeTypingView: NativeTypingIndicatorView?
     private var nativeArtifactView: NativeArtifactCardView?
     private var nativeChartView: NativeChartView?
+    private var nativeFileDiffView: NativeFileDiffView?
     private var nativeStatsView: NativeStatsView?
     private var nativeAssistantActionsView: NativeAssistantActionsView?
     private var nativeEmptyNoticeView: NativeEmptyResponseNoticeView?
@@ -1595,6 +1596,9 @@ final class NativeMessageCellView: NSTableCellView {
 
         case let .chart(spec):
             configureAsChart(block: block, spec: spec, context: context, sameKind: sameKind)
+
+        case let .fileDiff(diff):
+            configureAsFileDiff(block: block, diff: diff, context: context, sameKind: sameKind)
 
         case let .generationStats(ttft, tokensPerSecond, tokenCount, unclosedReasoning):
             configureAsStats(
@@ -2473,6 +2477,53 @@ final class NativeMessageCellView: NSTableCellView {
         }
     }
 
+    // MARK: - File Diff
+
+    private func configureAsFileDiff(
+        block: ContentBlock,
+        diff: FileDiff,
+        context: CellRenderingContext,
+        sameKind: Bool
+    ) {
+        if !sameKind || nativeFileDiffView == nil {
+            removeAllContentViews()
+            let dv = NativeFileDiffView()
+            dv.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(dv)
+            let bottomToCell = dv.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6)
+            bottomToCell.priority = NSLayoutConstraint.Priority(250)
+            NSLayoutConstraint.activate([
+                dv.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+                dv.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+                dv.topAnchor.constraint(equalTo: topAnchor, constant: 6),
+                bottomToCell,
+            ])
+            nativeFileDiffView = dv
+        }
+        let blockId = block.id
+        // Diff cards default to expanded; the shared `expandedIds` set is reused
+        // with inverted meaning — presence marks a card the user has collapsed.
+        // The height estimator applies the same inversion.
+        let collapsed = context.expandedIds.contains(blockId)
+        nativeFileDiffView?.onToggleCollapse = { context.onToggleExpand(blockId) }
+        nativeFileDiffView?.onHeightChanged = { [weak self] in
+            guard let self, let dv = self.nativeFileDiffView else { return }
+            guard self.currentBlockId == blockId else { return }
+            context.onHeightMeasured?(dv.measureHeight(outerWidth: context.width, collapsed: collapsed) + 12, blockId)
+        }
+        nativeFileDiffView?.configure(
+            diff: diff,
+            collapsed: collapsed,
+            width: context.width,
+            theme: context.theme
+        )
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let dv = self.nativeFileDiffView else { return }
+            guard self.currentBlockId == blockId else { return }
+            context.onHeightMeasured?(dv.measureHeight(outerWidth: context.width, collapsed: collapsed) + 12, blockId)
+        }
+    }
+
     // MARK: - Unsupported (should never appear; zero-height placeholder)
 
     private func configureAsUnsupported(sameKind: Bool) {
@@ -2530,6 +2581,7 @@ final class NativeMessageCellView: NSTableCellView {
         // content — visible as charts bleeding through unrelated rows once
         // the user starts scrolling and recycling kicks in.
         detachIfStillParented(nativeChartView); nativeChartView = nil
+        nativeFileDiffView?.removeFromSuperview(); nativeFileDiffView = nil
         nativeStatsView?.removeFromSuperview(); nativeStatsView = nil
         nativeAssistantActionsView?.removeFromSuperview(); nativeAssistantActionsView = nil
         nativeEmptyNoticeView?.removeFromSuperview(); nativeEmptyNoticeView = nil
@@ -2775,7 +2827,7 @@ private func cgColorsEqual(_ lhs: CGColor?, _ rhs: CGColor?) -> Bool {
 enum ContentBlockKindTag: Equatable {
     case header, paragraph, toolCallGroup, thinking, userMessage, pendingToolCall
     case generationStats, typingIndicator, groupSpacer, sharedArtifact, chart
-    case assistantActions, emptyResponseNotice, other
+    case assistantActions, emptyResponseNotice, fileDiff, other
 }
 
 extension ContentBlockKind {
@@ -2792,6 +2844,7 @@ extension ContentBlockKind {
         case .groupSpacer: return .groupSpacer
         case .sharedArtifact: return .sharedArtifact
         case .chart: return .chart
+        case .fileDiff: return .fileDiff
         case .assistantActions: return .assistantActions
         case .emptyResponseNotice: return .emptyResponseNotice
         }
@@ -2958,6 +3011,22 @@ enum NativeCellHeightEstimator {
                 ? p
                 : (6 + 16 + p)
             return h
+
+        case let .fileDiff(diff):
+            // Diff cards reuse `expandedIds` with inverted meaning, so
+            // `isExpanded == true` here marks a card the user collapsed.
+            // configureAsFileDiff reports measureHeight(...) + 12 for the cell
+            // top/bottom inset — match that.
+            let header = NativeFileDiffView.headerHeight
+            if isExpanded { return header + 12 }
+            let innerW = max(width - 32 - 14 - 8, 100)
+            let chars = max(Int(innerW / 7), 20)
+            var lineRows = 0
+            for line in diff.lines {
+                lineRows += max(1, (line.text.count + chars - 1) / chars)
+            }
+            let fontLineHeight: CGFloat = max(10, CGFloat(theme.codeSize) - 1) * 1.35
+            return header + 6 + CGFloat(lineRows) * fontLineHeight + 6 + 12
         }
     }
 }

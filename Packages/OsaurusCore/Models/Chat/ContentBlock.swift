@@ -51,6 +51,9 @@ enum ContentBlockKind: Equatable {
     case typingIndicator
     case groupSpacer
     case chart(spec: ChartSpec)
+    /// GitHub-style diff card rendered in place of the generic tool-call row
+    /// for `file_write` / `file_edit` edits inside the selected folder.
+    case fileDiff(diff: FileDiff)
     /// Footer row appended to every completed assistant turn.
     /// Replaces the hover-revealed copy/regenerate buttons that used to live in the header,
     /// so moving the mouse over the assistant transcript no longer triggers per-row reconfigures.
@@ -111,6 +114,9 @@ enum ContentBlockKind: Equatable {
         case let (.chart(lSpec), .chart(rSpec)):
             return lSpec == rSpec
 
+        case let (.fileDiff(lDiff), .fileDiff(rDiff)):
+            return lDiff == rDiff
+
         case let (.assistantActions(lId, lTime), .assistantActions(rId, rTime)):
             return lId == rId && lTime == rTime
 
@@ -141,7 +147,7 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
         case let .paragraph(_, _, _, role): return role
         case .toolCallGroup, .thinking, .sharedArtifact, .pendingToolCall,
             .generationStats, .typingIndicator, .groupSpacer, .chart, .assistantActions,
-            .emptyResponseNotice:
+            .emptyResponseNotice, .fileDiff:
             return .assistant
         case .userMessage: return .user
         }
@@ -324,6 +330,20 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
             id: "chart-\(turnId.uuidString)",
             turnId: turnId,
             kind: .chart(spec: spec),
+            position: position
+        )
+    }
+
+    static func fileDiff(
+        turnId: UUID,
+        callId: String,
+        diff: FileDiff,
+        position: BlockPosition
+    ) -> ContentBlock {
+        ContentBlock(
+            id: "filediff-\(callId)",
+            turnId: turnId,
+            kind: .fileDiff(diff: diff),
             position: position
         )
     }
@@ -571,6 +591,17 @@ extension ContentBlock {
                     {
                         flushRegularItems()
                         turnBlocks.append(.chart(turnId: turn.id, spec: spec.normalized, position: .middle))
+                    } else if FileDiff.diffProducingToolNames.contains(call.function.name),
+                        let result,
+                        let diff = FileDiff.from(toolResult: result)
+                    {
+                        // Replace the generic tool-call row with a GitHub-style
+                        // diff card so a folder-scoped edit reads as a reviewable
+                        // change rather than an opaque tool invocation.
+                        flushRegularItems()
+                        turnBlocks.append(
+                            .fileDiff(turnId: turn.id, callId: call.id, diff: diff, position: .middle)
+                        )
                     } else {
                         regularItems.append(
                             ToolCallItem(call: call, result: result, duration: turn.toolCallDurations[call.id])
