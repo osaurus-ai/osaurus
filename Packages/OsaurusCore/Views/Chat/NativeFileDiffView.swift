@@ -317,7 +317,11 @@ final class NativeFileDiffView: NSView {
     // MARK: - Private: Styling
 
     private func applyHeaderStyling(diff: FileDiff, theme: any ThemeProtocol) {
-        let bgColor = NSColor(theme.codeBlockBackground)
+        // Match NativeCodeBlockView: pair the card with the active highlight
+        // theme's background so syntax colors land on the surface they were
+        // tuned for. Diff tints are semi-transparent and blend over it.
+        ensureHighlightrTheme(for: theme)
+        let bgColor = highlightrThemeBackgroundNSColor()
         layer?.backgroundColor = bgColor.cgColor
         layer?.borderColor = NSColor(theme.primaryBorder)
             .withAlphaComponent(theme.borderOpacity).cgColor
@@ -366,13 +370,56 @@ final class NativeFileDiffView: NSView {
         let para = NSMutableParagraphStyle()
         para.lineBreakMode = .byCharWrapping
 
+        tv.textStorage?.setAttributedString(
+            highlightedBody(diff: diff, theme: theme, font: font, paragraphStyle: para)
+        )
+
+        diffBackground?.lineKinds = diff.lines.map(\.kind)
+        diffBackground?.addedBackground = NSColor(theme.successColor).withAlphaComponent(0.14)
+        diffBackground?.removedBackground = NSColor(theme.errorColor).withAlphaComponent(0.14)
+        diffBackground?.addedBar = NSColor(theme.successColor).withAlphaComponent(0.6)
+        diffBackground?.removedBar = NSColor(theme.errorColor).withAlphaComponent(0.6)
+    }
+
+    /// Builds the body text. When a language is known, the hunk is syntax-
+    /// highlighted as one document (preserving multi-line token context) and our
+    /// monospaced font + char-wrap paragraph style are overlaid on top of the
+    /// highlighter's foreground colors. Falls back to flat coloring otherwise.
+    private func highlightedBody(
+        diff: FileDiff,
+        theme: any ThemeProtocol,
+        font: NSFont,
+        paragraphStyle para: NSParagraphStyle
+    ) -> NSAttributedString {
+        let fullText = diff.lines.map(\.text).joined(separator: "\n")
+        let fullRange = NSRange(location: 0, length: (fullText as NSString).length)
+
+        if let language = diff.language,
+            let highlighted = highlightCode(fullText, language: language, theme: theme)
+        {
+            let body = NSMutableAttributedString(attributedString: highlighted)
+            // Highlightr can append a trailing newline; trim anything past the
+            // source length so line indices stay aligned with `lineKinds`.
+            if body.length > fullRange.length {
+                body.deleteCharacters(
+                    in: NSRange(location: fullRange.length, length: body.length - fullRange.length)
+                )
+            }
+            // Only trust positional attributes if the characters are unchanged.
+            if body.length == fullRange.length, body.string == fullText {
+                // Override font (Highlightr ships its own) so all lines share one
+                // fixed advance — required for the diff to stay column-aligned —
+                // and pin the wrapping style, keeping per-token foreground colors.
+                body.addAttribute(.font, value: font, range: fullRange)
+                body.addAttribute(.paragraphStyle, value: para, range: fullRange)
+                return body
+            }
+        }
+
+        // Plain fallback: meta lines dimmed, everything else primary text.
         let body = NSMutableAttributedString()
         for (idx, line) in diff.lines.enumerated() {
-            let color: NSColor
-            switch line.kind {
-            case .meta: color = NSColor(theme.tertiaryText)
-            default: color = NSColor(theme.primaryText)
-            }
+            let color = line.kind == .meta ? NSColor(theme.tertiaryText) : NSColor(theme.primaryText)
             let text = idx == diff.lines.count - 1 ? line.text : line.text + "\n"
             body.append(
                 NSAttributedString(
@@ -381,13 +428,7 @@ final class NativeFileDiffView: NSView {
                 )
             )
         }
-        tv.textStorage?.setAttributedString(body)
-
-        diffBackground?.lineKinds = diff.lines.map(\.kind)
-        diffBackground?.addedBackground = NSColor(theme.successColor).withAlphaComponent(0.14)
-        diffBackground?.removedBackground = NSColor(theme.errorColor).withAlphaComponent(0.14)
-        diffBackground?.addedBar = NSColor(theme.successColor).withAlphaComponent(0.6)
-        diffBackground?.removedBar = NSColor(theme.errorColor).withAlphaComponent(0.6)
+        return body
     }
 
     private func bodyTextWidth(forOuterWidth outerWidth: CGFloat) -> CGFloat {
