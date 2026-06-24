@@ -159,10 +159,19 @@ final class NativeFileDiffView: NSView {
         clickMonitorInstalled = true
         NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { event in
             if let cv = event.window?.contentView {
-                let p = cv.convert(event.locationInWindow, from: nil)
-                let hit = cv.hitTest(p)
+                // hitTest takes a point in the receiver's SUPERVIEW coords;
+                // locationInWindow is already in that space for the contentView.
+                let hit = cv.hitTest(event.locationInWindow)
+                var chain = ""
+                var v = hit
+                var depth = 0
+                while let cur = v, depth < 6 {
+                    chain += (chain.isEmpty ? "" : " < ") + String(describing: type(of: cur))
+                    v = cur.superview
+                    depth += 1
+                }
                 FileDiffDebugLog.log(
-                    "CLICK loc=\(Int(event.locationInWindow.x)),\(Int(event.locationInWindow.y)) hit=\(hit.map { String(describing: type(of: $0)) } ?? "nil")"
+                    "CLICK loc=\(Int(event.locationInWindow.x)),\(Int(event.locationInWindow.y)) hit=\(chain.isEmpty ? "nil" : chain)"
                 )
             } else {
                 FileDiffDebugLog.log("CLICK (no window/contentView)")
