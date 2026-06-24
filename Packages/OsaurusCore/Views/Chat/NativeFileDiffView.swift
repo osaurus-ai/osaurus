@@ -69,6 +69,31 @@ final class DiffBackgroundView: NSView {
     }
 }
 
+// MARK: - ClickableHeaderView
+
+/// Header row that toggles the diff card on click. The two action buttons keep
+/// their own click handling; every other point in the header (icon, labels,
+/// empty space) routes to `onClick`, so tapping the collapsed card expands it.
+final class ClickableHeaderView: NSView {
+    var onClick: (() -> Void)?
+    /// Subviews that should receive their own clicks instead of toggling.
+    var passthroughControls: [NSView] = []
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        let pInSelf = convert(point, from: superview)
+        for control in passthroughControls {
+            if let hit = control.hitTest(pInSelf) { return hit }
+        }
+        return NSPointInRect(pInSelf, bounds) ? self : nil
+    }
+
+    override func mouseDown(with event: NSEvent) { onClick?() }
+
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: .pointingHand)
+    }
+}
+
 // MARK: - NativeFileDiffView
 
 final class NativeFileDiffView: NSView {
@@ -88,12 +113,14 @@ final class NativeFileDiffView: NSView {
     private static let textInsetRight: CGFloat = 8
     private static let textInsetTop: CGFloat = 6
     private static let textInsetBottom: CGFloat = 6
-    static let headerHeight: CGFloat = 30
+    static let headerHeight: CGFloat = 36
 
     // MARK: Subviews
 
-    private let headerView = NSView()
-    private let iconView = NSImageView()
+    private let headerView = ClickableHeaderView()
+    /// Literal "</>" code glyph — drawn as text so it renders regardless of SF
+    /// Symbol availability, shown before the file name in every state.
+    private let iconLabel = NSTextField(labelWithString: "</>")
     private let fileLabel = NSTextField(labelWithString: "")
     private let addedLabel = NSTextField(labelWithString: "")
     private let removedLabel = NSTextField(labelWithString: "")
@@ -187,15 +214,14 @@ final class NativeFileDiffView: NSView {
 
         headerView.translatesAutoresizingMaskIntoConstraints = false
         headerView.wantsLayer = true
+        headerView.onClick = { [weak self] in self?.onToggleCollapse?() }
         addSubview(headerView)
 
-        iconView.translatesAutoresizingMaskIntoConstraints = false
-        iconView.image = SymbolImageCache.image(
-            "chevron.left.forward.slash.chevron.right",
-            accessibilityDescription: nil
-        )
-        iconView.imageScaling = .scaleProportionallyDown
-        headerView.addSubview(iconView)
+        iconLabel.translatesAutoresizingMaskIntoConstraints = false
+        iconLabel.isEditable = false
+        iconLabel.isBordered = false
+        iconLabel.drawsBackground = false
+        headerView.addSubview(iconLabel)
 
         for label in [fileLabel, addedLabel, removedLabel, previewBadge] {
             label.translatesAutoresizingMaskIntoConstraints = false
@@ -224,18 +250,20 @@ final class NativeFileDiffView: NSView {
         collapseButton.alphaValue = 0.55
         headerView.addSubview(collapseButton)
 
+        // Action buttons keep their own click handling; the rest of the header
+        // toggles the card.
+        headerView.passthroughControls = [copyButton, collapseButton]
+
         NSLayoutConstraint.activate([
             headerView.leadingAnchor.constraint(equalTo: leadingAnchor),
             headerView.trailingAnchor.constraint(equalTo: trailingAnchor),
             headerView.topAnchor.constraint(equalTo: topAnchor),
             headerView.heightAnchor.constraint(equalToConstant: Self.headerHeight),
 
-            iconView.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 10),
-            iconView.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
-            iconView.widthAnchor.constraint(equalToConstant: 14),
-            iconView.heightAnchor.constraint(equalToConstant: 14),
+            iconLabel.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 10),
+            iconLabel.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
 
-            fileLabel.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 8),
+            fileLabel.leadingAnchor.constraint(equalTo: iconLabel.trailingAnchor, constant: 7),
             fileLabel.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
 
             addedLabel.leadingAnchor.constraint(equalTo: fileLabel.trailingAnchor, constant: 8),
@@ -327,7 +355,11 @@ final class NativeFileDiffView: NSView {
             .withAlphaComponent(theme.borderOpacity).cgColor
         headerView.layer?.backgroundColor = bgColor.withAlphaComponent(0.6).cgColor
 
-        iconView.contentTintColor = NSColor(theme.tertiaryText)
+        iconLabel.font = NSFont.monospacedSystemFont(
+            ofSize: CGFloat(theme.captionSize),
+            weight: .semibold
+        )
+        iconLabel.textColor = NSColor(theme.tertiaryText)
 
         fileLabel.stringValue = diff.fileName
         fileLabel.font = NSFont.systemFont(ofSize: CGFloat(theme.captionSize), weight: .semibold)
