@@ -94,7 +94,7 @@ struct ImageModelDetailView: View, Identifiable {
                         .foregroundColor(theme.accentColor)
                 }
 
-                Text("Image")
+                Text(L("Image"))
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundColor(theme.accentColor)
                     .padding(.horizontal, 7)

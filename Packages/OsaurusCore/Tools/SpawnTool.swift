@@ -165,7 +165,10 @@ public final class SpawnTool: OsaurusTool, @unchecked Sendable {
                 retryable: true
             )
         }
-        try? await ChatResidencyHandoff.restore(lease)
+        // Best-effort (logs on failure) rather than a bare `try?` so a reload
+        // failure on the success path can't silently strand the chat model
+        // unloaded with no diagnostic.
+        _ = await ChatResidencyHandoff.restoreBestEffort(lease)
         let elapsed = Date().timeIntervalSince(started)
 
         switch result.exit {

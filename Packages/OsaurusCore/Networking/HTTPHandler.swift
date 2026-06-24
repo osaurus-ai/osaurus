@@ -6121,6 +6121,20 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         return (width, height)
     }
 
+    /// Clamp a caller-supplied image dimension to the same 256–1024 / multiple-of-16
+    /// envelope the agent `image_generate`/`image_edit` tools enforce
+    /// (`NativeImageTools.clampedDimension`). The public REST endpoints previously
+    /// passed `width`/`height` through unclamped, so an oversized request could OOM
+    /// or trip the GPU watchdog on the exclusive Metal lane.
+    static func clampImageDimension(_ value: Int) -> Int {
+        let bounded = min(1024, max(256, value))
+        let rounded = (bounded / 16) * 16
+        return max(256, rounded)
+    }
+
+    /// Clamp denoising steps to the advertised 1–50 range (mirrors the agent path).
+    static func clampImageSteps(_ value: Int) -> Int { min(50, max(1, value)) }
+
     private static func imageOutputFormat(_ raw: String?) -> ImageOutputFormat {
         switch raw?.lowercased() {
         case "jpeg", "jpg": return .jpeg
@@ -6245,12 +6259,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             model: modelId,
             prompt: req.prompt,
             negativePrompt: req.negative_prompt,
-            width: w,
-            height: h,
-            steps: req.steps,
+            width: w.map(Self.clampImageDimension),
+            height: h.map(Self.clampImageDimension),
+            steps: req.steps.map(Self.clampImageSteps),
             guidance: req.guidance.map { Float($0) },
             seed: req.seed,
-            numImages: max(1, req.n ?? 1),
+            numImages: max(1, min(4, req.n ?? 1)),
             outputFormat: Self.imageOutputFormat(req.output_format)
         )
         let jobID = Self.shortId(prefix: "img")
@@ -6320,9 +6334,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             maskImage: nil,
             negativePrompt: req.negative_prompt,
             strength: req.strength.map { Float($0) } ?? 0.75,
-            width: w,
-            height: h,
-            steps: req.steps,
+            width: w.map(Self.clampImageDimension),
+            height: h.map(Self.clampImageDimension),
+            steps: req.steps.map(Self.clampImageSteps),
             guidance: req.guidance.map { Float($0) },
             seed: req.seed,
             outputFormat: Self.imageOutputFormat(req.output_format)

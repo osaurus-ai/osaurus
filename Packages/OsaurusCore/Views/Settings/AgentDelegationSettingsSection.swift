@@ -191,10 +191,12 @@ struct AgentDelegationSettingsSection: View {
                             title: "Local Text Delegate",
                             selection: $configuration.permissionDefaults.localTextDelegate
                         )
-                        permissionPicker(
-                            title: "Delegate Tool Use",
-                            selection: $configuration.permissionDefaults.localTextDelegateToolUse
-                        )
+                        // No "Delegate Tool Use" picker — spawned subagents are
+                        // text-only (AgentSubagentRunner rejects all tool calls), so
+                        // permissionDefaults.localTextDelegateToolUse is not yet
+                        // enforced anywhere. Showing it would be a no-op control.
+                        // The field is kept (reserved) for when nested-tool subagents
+                        // exist; surface this picker again at that point.
                         permissionPicker(
                             title: "Image Generate",
                             selection: $configuration.permissionDefaults.imageGenerate

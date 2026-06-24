@@ -311,12 +311,12 @@ struct ImageGenerationPanelView: View {
                 }
                 Spacer()
                 Button(action: { NSWorkspace.shared.activateFileViewerSelecting([url]) }) {
-                    Label("Reveal", systemImage: "folder")
+                    Label(L("Reveal"), systemImage: "folder")
                         .font(.system(size: 12, weight: .medium))
                 }
                 .buttonStyle(PlainButtonStyle())
                 Button(action: { saveAs(url) }) {
-                    Label("Save As…", systemImage: "square.and.arrow.down")
+                    Label(L("Save As…"), systemImage: "square.and.arrow.down")
                         .font(.system(size: 12, weight: .medium))
                 }
                 .buttonStyle(PlainButtonStyle())

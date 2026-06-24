@@ -289,7 +289,10 @@ public final class LocalTextDelegateTool: OsaurusTool, @unchecked Sendable {
         let unloadedAfterJob = await unloadDelegateIfNeeded(model: model.name, config: config)
         // Reload the orchestrator chat model unloaded for this job (no-op for a
         // cloud orchestrator, where the lease is empty).
-        try? await ChatResidencyHandoff.restore(residencyLease)
+        // Best-effort (logs on failure) rather than a bare `try?` so a reload
+        // failure on the success path can't silently strand the chat model
+        // unloaded with no diagnostic.
+        _ = await ChatResidencyHandoff.restoreBestEffort(residencyLease)
         let elapsed = Date().timeIntervalSince(started)
 
         switch runResult.exit {

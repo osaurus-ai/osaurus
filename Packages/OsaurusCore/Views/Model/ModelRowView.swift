@@ -413,11 +413,11 @@ struct ModelRowView: View {
     private func modelTypeBadge(_ type: ModelCardType) -> some View {
         switch type {
         case .llm:
-            TintedPill(icon: "text.bubble", label: Text("LLM"), color: theme.accentColor)
+            TintedPill(icon: "text.bubble", label: Text(L("LLM")), color: theme.accentColor)
         case .vlm:
-            TintedPill(icon: "eye", label: Text("VLM"), color: .purple)
+            TintedPill(icon: "eye", label: Text(L("VLM")), color: .purple)
         case .image:
-            TintedPill(icon: "photo", label: Text("Image"), color: theme.accentColor)
+            TintedPill(icon: "photo", label: Text(L("Image")), color: theme.accentColor)
         }
     }
 
