@@ -27,7 +27,14 @@ public final class FolderContextService: ObservableObject {
             }
         }
     }
-    @Published public private(set) var hasActiveFolder: Bool = false
+    /// Derived from `currentContext` rather than stored as a second
+    /// `@Published` source. The two were always mutated in lockstep, so a
+    /// stored property just doubled the synchronous `objectWillChange`
+    /// fan-out (and the Combine debounce reschedule it drives) on every
+    /// folder change — a hot spot in the app-hang samples. SwiftUI observers
+    /// re-read this whenever `currentContext` publishes, so behaviour is
+    /// unchanged.
+    public var hasActiveFolder: Bool { currentContext != nil }
 
     /// Thread-safe accessor for the current folder root path.
     /// Reads a lock-protected cache so callers never need to hop to MainActor.
@@ -91,7 +98,6 @@ public final class FolderContextService: ObservableObject {
             // Build context
             let context = await buildContext(from: url)
             currentContext = context
-            hasActiveFolder = true
 
             // Register folder tools
             FolderToolManager.shared.registerFolderTools(for: context)
@@ -153,7 +159,6 @@ public final class FolderContextService: ObservableObject {
     /// session" guarantee and must pair with `deactivateEvalContext()`.
     func activateEvalContext(_ context: FolderContext) {
         currentContext = context
-        hasActiveFolder = true
     }
 
     /// Reverse of `activateEvalContext` — clears the context without
@@ -161,7 +166,6 @@ public final class FolderContextService: ObservableObject {
     /// evaluator owns its own registration lifecycle).
     func deactivateEvalContext() {
         currentContext = nil
-        hasActiveFolder = false
     }
 
     /// Build context from a URL (assumes access is already granted)
@@ -319,7 +323,6 @@ public final class FolderContextService: ObservableObject {
         securityScopedResource?.stopAccessingSecurityScopedResource()
         securityScopedResource = nil
         currentContext = nil
-        hasActiveFolder = false
 
         if unregisterTools {
             FolderToolManager.shared.unregisterFolderTools()
@@ -374,7 +377,6 @@ public final class FolderContextService: ObservableObject {
 
             let context = await buildContext(from: resolved.url)
             self.currentContext = context
-            self.hasActiveFolder = true
             FolderToolManager.shared.registerFolderTools(for: context)
         }
     }
