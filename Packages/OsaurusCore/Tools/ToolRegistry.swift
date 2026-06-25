@@ -482,11 +482,13 @@ final class ToolRegistry: ObservableObject {
             let requirements = permissioned.requirements
 
             // Check system permissions and prompt the user for any that are missing
-            let missingSystemPermissions = SystemPermissionService.shared.missingPermissions(from: requirements)
+            let missingSystemPermissions = await SystemPermissionService.shared.missingPermissions(
+                from: requirements)
             for permission in missingSystemPermissions {
                 _ = await SystemPermissionService.shared.requestPermissionAndWait(permission)
             }
-            let stillMissing = SystemPermissionService.shared.missingPermissions(from: requirements)
+            let stillMissing = await SystemPermissionService.shared.missingPermissions(
+                from: requirements)
             if !stillMissing.isEmpty {
                 let missingNames = stillMissing.map { $0.displayName }.joined(separator: ", ")
                 throw NSError(
