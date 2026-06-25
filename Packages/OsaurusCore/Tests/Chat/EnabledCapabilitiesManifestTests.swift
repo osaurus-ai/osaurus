@@ -150,7 +150,11 @@ struct EnabledCapabilitiesManifestTests {
         #expect(rendered.contains("  tool/image_generate"))
         #expect(rendered.contains("  tool/image_edit"))
         #expect(!rendered.contains("image_generate — Make an image"))
-        #expect(!rendered.contains("plugin/"))
+        // The group has no loadable id, so it must NOT be collapsed into a
+        // `plugin/<id> — Image Generation` tier line. (The intro itself
+        // references `plugin/<id>`/`plugin/calendar`, so a blanket
+        // `!contains("plugin/")` would be wrong — assert on the display name.)
+        #expect(!rendered.contains("— Image Generation"))
     }
 
     @Test("token cap collapses overflow plugins to a pointer line")

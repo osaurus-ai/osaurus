@@ -326,8 +326,10 @@ struct CapabilitiesLoadToolTests {
         // The issue's repro: a wrong-prefix id is a deterministic invalid_args
         // failure. Capability ids are a closed vocabulary, so re-issuing the
         // identical call cannot succeed — it must NOT be advertised retryable.
+        // `plugin/` is now a real loadable type, so use a genuinely-unknown
+        // prefix to exercise the invalid_args path.
         let tool = CapabilitiesLoadTool()
-        let result = try await tool.execute(argumentsJSON: "{\"ids\": [\"plugin/Scite.AI\"]}")
+        let result = try await tool.execute(argumentsJSON: "{\"ids\": [\"widget/Scite.AI\"]}")
         #expect(EnvelopeAssertions.failureKind(result) == "invalid_args")
         #expect(EnvelopeAssertions.failureRetryable(result) == false)
     }
