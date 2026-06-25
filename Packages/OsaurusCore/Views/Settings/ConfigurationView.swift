@@ -126,11 +126,6 @@ struct ConfigurationView: View {
         "Tool Permissions", "Permissions", "Folder", "File", "Shell", "Git", "Write",
         "Delete", "Move", "Copy",
     ]
-    private static let serverMovedKeywords = [
-        "Server", "Port", "Network", "Expose", "CORS", "Origins", "Allowed Origins",
-        "Local Inference", "Inference", "Sampling", "Top P", "Eviction", "Idle Residency",
-        "Keep model loaded",
-    ]
     private static let notificationsKeywords = [
         "Notifications", "Toast", "Position", "Timeout", "Alerts", "Concurrent", "Background",
     ]
@@ -140,7 +135,7 @@ struct ConfigurationView: View {
 
     private static let allSearchKeywordGroups: [[String]] = [
         generalKeywords, chatKeywords, toolPermissionsKeywords,
-        serverMovedKeywords, notificationsKeywords, legalKeywords,
+        notificationsKeywords, legalKeywords,
     ]
 
     /// True when an active query matches at least one section. Drives the
@@ -540,19 +535,6 @@ struct ConfigurationView: View {
                                 configuration: $agentDelegationConfiguration,
                                 modelItems: coreModelPickerItems
                             )
-                        }
-
-                        // MARK: - Server settings moved
-                        // The Server (Port/Expose/CORS) and Local
-                        // Inference (Top P, eviction, idle residency)
-                        // sections previously lived here. They're now
-                        // the canonical home of the Server → Settings
-                        // tab in `ServerView`, which is backed by
-                        // `VMLXServerRuntimeSettings`. A small
-                        // pointer card surfaces the move when the
-                        // user searches for any of those keywords.
-                        if matchesSearch(Self.serverMovedKeywords) {
-                            ServerSettingsMovedNotice()
                         }
 
                         // MARK: - Notifications Section
@@ -1545,51 +1527,6 @@ private struct ToastPositionPicker: View {
 /// Surfaces when the user searches for Server/Local Inference
 /// keywords inside the legacy Configuration view. Links to the new
 /// Server → Settings tab where those controls now live.
-private struct ServerSettingsMovedNotice: View {
-    @ObservedObject private var themeManager = ThemeManager.shared
-
-    var body: some View {
-        let theme = themeManager.currentTheme
-        Button(action: openServerSettings) {
-            HStack(spacing: 12) {
-                Image(systemName: "arrow.right.circle.fill")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(theme.accentColor)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Server settings moved", bundle: .module)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
-                    Text(
-                        "Port, network exposure, CORS, top-P, model eviction, and idle residency now live in Server → Settings, backed by the vmlx server-runtime contract.",
-                        bundle: .module
-                    )
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.secondaryText)
-                    .multilineTextAlignment(.leading)
-                }
-                Spacer()
-                Text("Open", bundle: .module)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(theme.accentColor)
-            }
-            .padding(14)
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(theme.cardBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12)
-                            .stroke(theme.accentColor.opacity(0.25), lineWidth: 1)
-                    )
-            )
-        }
-        .buttonStyle(PlainButtonStyle())
-    }
-
-    private func openServerSettings() {
-        AppDelegate.shared?.showManagementWindow(initialTab: .server)
-    }
-}
-
 // MARK: - Styled Settings Text Area
 
 private struct StyledSettingsTextArea: View {
