@@ -143,7 +143,6 @@ struct ConfigurationView: View {
         "Local Inference", "Inference", "Sampling", "Top P", "Eviction", "Idle Residency",
         "Keep model loaded",
     ]
-    private static let voiceKeywords = ["Voice", "Parakeet", "Transcription", "Model", "Speech"]
     private static let notificationsKeywords = [
         "Notifications", "Toast", "Position", "Timeout", "Alerts", "Concurrent", "Background",
     ]
@@ -153,7 +152,7 @@ struct ConfigurationView: View {
 
     private static let allSearchKeywordGroups: [[String]] = [
         generalKeywords, privacyKeywords, chatKeywords, toolPermissionsKeywords,
-        serverMovedKeywords, voiceKeywords, notificationsKeywords, legalKeywords,
+        serverMovedKeywords, notificationsKeywords, legalKeywords,
     ]
 
     /// True when an active query matches at least one section. Drives the
@@ -608,11 +607,6 @@ struct ConfigurationView: View {
                         // user searches for any of those keywords.
                         if matchesSearch(Self.serverMovedKeywords) {
                             ServerSettingsMovedNotice()
-                        }
-
-                        // MARK: - Voice Section
-                        if matchesSearch(Self.voiceKeywords) {
-                            VoiceSettingsSection()
                         }
 
                         // MARK: - Notifications Section
@@ -1700,86 +1694,6 @@ private struct StyledSettingsTextArea: View {
                 .foregroundColor(themeManager.currentTheme.tertiaryText)
         }
     }
-}
-
-// MARK: - Voice Settings Section
-
-private struct VoiceSettingsSection: View {
-    @ObservedObject private var themeManager = ThemeManager.shared
-    @ObservedObject private var modelManager = SpeechModelManager.shared
-    @ObservedObject private var speechService = SpeechService.shared
-
-    var body: some View {
-        SettingsSection(title: "Voice (Advanced)", icon: "waveform") {
-            VStack(alignment: .leading, spacing: 20) {
-                Text("Configure voice settings directly in the Voice tab.", bundle: .module)
-                    .font(.system(size: 12))
-                    .foregroundColor(themeManager.currentTheme.secondaryText)
-
-                // Status info
-                HStack(spacing: 12) {
-                    // Model status
-                    HStack(spacing: 6) {
-                        if speechService.isLoadingModel {
-                            ProgressView()
-                                .scaleEffect(0.5)
-                                .frame(width: 8, height: 8)
-                        } else {
-                            Circle()
-                                .fill(
-                                    speechService.isModelLoaded
-                                        ? themeManager.currentTheme.successColor
-                                        : themeManager.currentTheme.tertiaryText
-                                )
-                                .frame(width: 8, height: 8)
-                        }
-                        Text(modelStatusText)
-                            .font(.system(size: 11))
-                            .foregroundColor(themeManager.currentTheme.secondaryText)
-                    }
-
-                    Spacer()
-
-                    // Quick link to Voice tab
-                    Button(action: {
-                        AppDelegate.shared?.showManagementWindow(initialTab: .voice)
-                    }) {
-                        HStack(spacing: 4) {
-                            Image(systemName: "arrow.right.circle")
-                                .font(.system(size: 11))
-                            Text("Open Voice Tab", bundle: .module)
-                                .font(.system(size: 11, weight: .medium))
-                        }
-                        .foregroundColor(themeManager.currentTheme.accentColor)
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                }
-                .padding(10)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(themeManager.currentTheme.tertiaryBackground)
-                )
-            }
-        }
-    }
-
-    private var modelStatusText: String {
-        if speechService.isLoadingModel {
-            return "Loading model..."
-        } else if speechService.isModelLoaded {
-            if let modelId = speechService.loadedModelId,
-                let model = modelManager.availableModels.first(where: { $0.id == modelId })
-            {
-                return model.name
-            }
-            return "Model Loaded"
-        } else if modelManager.downloadedModelsCount == 0 {
-            return "No models downloaded"
-        } else {
-            return "Model not loaded"
-        }
-    }
-
 }
 
 // MARK: - Tool Permissions Section
