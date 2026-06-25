@@ -26,7 +26,6 @@ struct ConfigurationView: View {
     @State private var tempCoreModelProvider: String = ""
     @State private var tempCoreModelName: String = ""
     @State private var coreModelPickerItems: [ModelPickerItem] = []
-    @State private var agentDelegationConfiguration = AgentDelegationConfigurationStore.snapshot()
 
     // Server / Local Inference settings now live in the Server →
     // Settings tab. Their state was deleted with the inline UI.
@@ -324,25 +323,6 @@ struct ConfigurationView: View {
                         // MARK: - General Section
                         generalSection
 
-                        // MARK: - Agent Delegation Section
-                        if matchesSearch([
-                            "Agent Delegation",
-                            "Delegate",
-                            "Subagent",
-                            "Cloud",
-                            "Local",
-                            "Image",
-                            "Permissions",
-                            "Always Allow",
-                            "Deny",
-                            "Budget",
-                        ]) {
-                            AgentDelegationSettingsSection(
-                                configuration: $agentDelegationConfiguration,
-                                modelItems: coreModelPickerItems
-                            )
-                        }
-
                         // MARK: - Notifications Section
                         if matchesSearch(Self.notificationsKeywords) {
                             SettingsSection(title: "Notifications", icon: "bell", anchorId: "settings.notifications.toasts") {
@@ -516,21 +496,8 @@ struct ConfigurationView: View {
         .environment(\.theme, themeManager.currentTheme)
         .onAppear {
             loadConfiguration()
-            agentDelegationConfiguration = AgentDelegationConfigurationStore.snapshot()
             withAnimation(.easeOut(duration: 0.25).delay(0.05)) {
                 hasAppeared = true
-            }
-        }
-        .onChange(of: agentDelegationConfiguration) { _, newValue in
-            AgentDelegationConfigurationStore.save(newValue)
-        }
-        .onReceive(
-            NotificationCenter.default.publisher(for: .agentDelegationConfigurationChanged)
-        ) { notification in
-            if let configuration = notification.object as? AgentDelegationConfiguration,
-                configuration != agentDelegationConfiguration
-            {
-                agentDelegationConfiguration = configuration
             }
         }
         .onReceive(ModelPickerItemCache.shared.$items) { options in
