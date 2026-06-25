@@ -11,8 +11,10 @@
 //  fields (context length, top-P, tool attempts, clipboard, greeting
 //  persona) so the General settings' hotkey + core-model values — which
 //  live in the same struct — are never clobbered. The default-agent
-//  persona / generation knobs persist to `DefaultAgentConfiguration`, and
-//  the memory toggle to `MemoryConfiguration`.
+//  persona / generation knobs persist to `DefaultAgentConfiguration`.
+//  Tools and memory are deliberately not surfaced here: the default
+//  agent's tools toggle lives in the Agents tab and the global memory
+//  switch in the Memory tab, so this view never writes either.
 //
 
 import AppKit
@@ -33,8 +35,6 @@ struct ChatSettingsView: View {
     @State private var tempChatContextLength: String = ""
     @State private var tempChatTopP: String = ""
     @State private var tempChatMaxToolAttempts: String = ""
-    @State private var tempDisableTools: Bool = true
-    @State private var tempMemoryEnabled: Bool = false
     @State private var tempEnableClipboardMonitoring: Bool = false
     /// Smooth streaming: pace the visible reveal at ~180 tok/s regardless
     /// of how fast / bursty the network delivers tokens. Default on.
@@ -237,45 +237,6 @@ struct ChatSettingsView: View {
 
                 SettingsDivider()
 
-                SettingsSubsection(label: "Tools") {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Toggle(
-                            isOn: Binding(
-                                get: { !tempDisableTools },
-                                set: { tempDisableTools = !$0 }
-                            )
-                        ) {
-                            Text("Enable tools", bundle: .module)
-                                .font(.system(size: 12))
-                        }
-                        Text(
-                            "Let agents use built-in and plugin tools. Turn off to send messages directly to the model with no tool specs or capability injection (chat-only).",
-                            bundle: .module
-                        )
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
-                    }
-                }
-
-                SettingsDivider()
-
-                SettingsSubsection(label: "Memory") {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Toggle(isOn: $tempMemoryEnabled) {
-                            Text("Enable memory", bundle: .module)
-                                .font(.system(size: 12))
-                        }
-                        Text(
-                            "Inject persistent memory (identity, pinned facts, episodes) into the chat. A relevance gate decides whether memory is needed per-turn, with a single ~800 token budget when it is. Enable for agents that benefit from long-term context.",
-                            bundle: .module
-                        )
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
-                    }
-                }
-
-                SettingsDivider()
-
                 SettingsSubsection(label: "Clipboard") {
                     VStack(alignment: .leading, spacing: 8) {
                         Toggle(isOn: $tempEnableClipboardMonitoring) {
@@ -381,28 +342,27 @@ struct ChatSettingsView: View {
             await Task.yield()
             let chat: ChatConfiguration = ChatConfigurationStore.load()
             let defaultAgent = DefaultAgentConfigurationStore.load()
-            let memory = MemoryConfigurationStore.load()
-            applyLoadedConfiguration(chat: chat, defaultAgent: defaultAgent, memory: memory)
+            applyLoadedConfiguration(chat: chat, defaultAgent: defaultAgent)
         }
     }
 
     private func applyLoadedConfiguration(
         chat: ChatConfiguration,
-        defaultAgent: DefaultAgentConfiguration,
-        memory: MemoryConfiguration
+        defaultAgent: DefaultAgentConfiguration
     ) {
-        // The Default agent's persona and tool-off flag live on
+        // The Default agent's persona and generation knobs live on
         // `DefaultAgentConfiguration` (split off from `ChatConfiguration`);
         // the numeric generation knobs (context length, top-P, tool
         // attempts) and clipboard / greeting voice live on `ChatConfiguration`.
+        // Tools and memory are intentionally NOT surfaced here: the default
+        // agent's tools toggle lives in the Agents tab and the global memory
+        // switch lives in the Memory tab.
         tempSystemPrompt = defaultAgent.systemPrompt
         tempChatTemperature = defaultAgent.temperature.map { String($0) } ?? ""
         tempChatMaxTokens = defaultAgent.maxTokens.map(String.init) ?? ""
         tempChatContextLength = chat.contextLength.map(String.init) ?? ""
         tempChatTopP = chat.topPOverride.map { String($0) } ?? ""
         tempChatMaxToolAttempts = chat.maxToolAttempts.map(String.init) ?? ""
-        tempDisableTools = defaultAgent.disableTools
-        tempMemoryEnabled = memory.enabled
         tempEnableClipboardMonitoring = chat.enableClipboardMonitoring
         // Storage convention: empty string = "use the built-in default."
         // The editor never displays an empty state — we hydrate it with the
@@ -430,8 +390,6 @@ struct ChatSettingsView: View {
         tempChatContextLength = ""
         tempChatTopP = ""
         tempChatMaxToolAttempts = ""
-        tempDisableTools = true
-        tempMemoryEnabled = false
         tempEnableClipboardMonitoring = chatDefaults.enableClipboardMonitoring
         tempGreetingPersona = GenerativeGreetingService.defaultPersonaInstruction
 
@@ -448,8 +406,6 @@ struct ChatSettingsView: View {
         var contextLength: String
         var topP: String
         var maxToolAttempts: String
-        var disableTools: Bool
-        var memoryEnabled: Bool
         var enableClipboardMonitoring: Bool
         var greetingPersona: String
     }
@@ -462,8 +418,6 @@ struct ChatSettingsView: View {
             contextLength: tempChatContextLength,
             topP: tempChatTopP,
             maxToolAttempts: tempChatMaxToolAttempts,
-            disableTools: tempDisableTools,
-            memoryEnabled: tempMemoryEnabled,
             enableClipboardMonitoring: tempEnableClipboardMonitoring,
             greetingPersona: tempGreetingPersona
         )
@@ -547,22 +501,15 @@ struct ChatSettingsView: View {
         }()
         ChatConfigurationStore.save(chatCfg)
 
-        // Persist default-agent specific fields to their own store.
+        // Persist default-agent specific fields to their own store. Tools
+        // (`disableTools`) are intentionally NOT written here — the default
+        // agent's tools toggle lives in the Agents tab, and the global memory
+        // switch lives in the Memory tab; this view leaves both untouched.
         var defaultAgentCfg = DefaultAgentConfigurationStore.load()
         defaultAgentCfg.systemPrompt = tempSystemPrompt
         defaultAgentCfg.temperature = parsedTemp
         defaultAgentCfg.maxTokens = parsedMax
-        defaultAgentCfg.disableTools = tempDisableTools
         DefaultAgentConfigurationStore.save(defaultAgentCfg)
-
-        // Persist the memory enable toggle. Budgets are not user-adjustable in
-        // this UI — users can edit MemoryConfiguration.json directly for
-        // advanced tuning.
-        var memoryCfg = MemoryConfigurationStore.load()
-        if memoryCfg.enabled != tempMemoryEnabled {
-            memoryCfg.enabled = tempMemoryEnabled
-            MemoryConfigurationStore.save(memoryCfg)
-        }
 
         // Re-baseline so the dirty check clears now that the live form matches
         // what's persisted.
