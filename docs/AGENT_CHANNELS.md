@@ -252,6 +252,7 @@ requests.
 The connection center validates channel definitions before saving:
 
 - `discord` is reserved for the native Discord adapter.
+- `telegram` is reserved for the native Telegram adapter.
 - Custom HTTP connections require an HTTP or HTTPS base URL.
 - Custom HTTP base URLs run through the same blocked-host policy used by the
   runner, so localhost/private/link-local targets are rejected before save.
@@ -304,6 +305,47 @@ message. Discord does this for `read_messages`, `search_messages`, and
 `send_message`, so repeated reads cannot duplicate the same provider message in
 the local store. The store keeps only the newest 1,000 message snapshots per
 connection/room pair so busy channels do not grow the database without bound.
+Read and search results reflect messages that were authorized at ingest time.
+If an operator later tightens sender allowlists, previously stored snapshots may
+remain readable until they age out or are pruned.
+
+Telegram is native as well. The Bot API does not expose arbitrary prior chat
+history to bots, so Telegram `read_messages` and `search_messages` read from the
+local Agent Channel message store. The adapter exposes webhook and long-poll
+service entry points for populating that store; a production HTTP receiver,
+background poller, and visible settings surface are separate integration work.
+The native Telegram adapter:
+
+- stores non-secret allowlists in `telegram.json` and keeps the bot token in
+  Keychain;
+- authorizes reads and writes against explicit chat allowlists, and authorizes
+  inbound receives against explicit chat and sender allowlists;
+- supports numeric chat ids and `@username` room ids, but `@username`
+  allowlists only match updates where Telegram includes the chat username. Use
+  numeric ids for private groups or any chat where Telegram may omit the handle.
+- runs the shared inbound authorization gate before storing message text or
+  making it dispatchable, so inbound Telegram text remains untrusted external
+  data rather than instruction text;
+- normalizes webhook and long-poll updates into candidate provider-neutral
+  external message snapshots, then stores snapshots only after authorization;
+- deduplicates by Telegram `update_id` with `recordReceiveEvent(...)` before
+  dispatch/storage, while long-poll batches store the next global `getUpdates`
+  offset as a receive cursor;
+- stores one snapshot per `connection_id + room_id + provider_message_id`; if
+  Telegram later sends an edited message update for the same provider message,
+  reads may show the original stored snapshot until edit-refresh support lands.
+- ignores self messages and bot messages by default to avoid bot loops;
+- drops empty or oversized inbound message content before storage;
+- requires `confirm_send: true` before posting and records sent messages with a
+  Telegram delivery status.
+
+The production Telegram webhook receiver must pass the configured Telegram
+secret token into the service verifier before decoding update content. Direct
+service calls that omit an expected secret are test/in-process entry points, not
+the public HTTP receiver contract. Because Telegram bot tokens are part of Bot
+API request paths, any future network proxy, crash-report, or HTTP-diagnostics
+surface must redact full request URLs with the same token-redaction policy used
+for provider errors.
 
 Relay or webhook receivers should follow the same sequence used by the Telegram
 plugin pattern:
