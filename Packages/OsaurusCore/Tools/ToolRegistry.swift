@@ -1031,7 +1031,12 @@ final class ToolRegistry: ObservableObject {
     func listTools() -> [ToolEntry] {
         if let cached = cachedListTools { return cached }
         let entries = toolsByName.values
-            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+            // Locale-independent compare: tool names are identifiers, so
+            // `localizedCaseInsensitiveCompare`'s ICU/locale round-trip was
+            // pure overhead — and it made a cold rebuild trip the main-thread
+            // hang watchdog. A fixed order is also better for KV-cache
+            // stability across users with different locales.
+            .sorted { $0.name.caseInsensitiveCompare($1.name) == .orderedAscending }
             .map { t in
                 ToolEntry(
                     name: t.name,
