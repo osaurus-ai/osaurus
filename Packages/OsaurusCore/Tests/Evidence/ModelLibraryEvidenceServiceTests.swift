@@ -27,7 +27,10 @@ struct ModelLibraryEvidenceServiceTests {
         let service = ModelLibraryEvidenceService(
             registry: EvidenceReportRegistryService(now: fixture.clock)
         )
-        let snapshot = service.registerEvidence(for: [supported, partial, unsupported, unproven])
+        let snapshot = service.registerEvidence(
+            for: [supported, partial, unsupported, unproven],
+            proofDescriptors: try fixture.completeProofDescriptors(for: supported.id)
+        )
 
         #expect(Set(snapshot.rows.map(\.supportState)) == [.supported, .partial, .unsupported, .unproven])
 
@@ -40,6 +43,25 @@ struct ModelLibraryEvidenceServiceTests {
         #expect(
             report(for: unproven.id, in: compatibility)?.metadata["support_state"] == "unproven"
         )
+    }
+
+    @Test
+    func localPreflightPassWithoutProofStaysUnproven() throws {
+        let fixture = try ModelEvidenceFixture()
+        let model = try fixture.model(id: "org/preflight-only", config: #"{"model_type":"qwen3"}"#)
+
+        let service = ModelLibraryEvidenceService(
+            registry: EvidenceReportRegistryService(now: fixture.clock)
+        )
+        let snapshot = service.registerEvidence(for: [model])
+        let row = try #require(snapshot.rows.first)
+        let compatibility = try #require(snapshot.report(id: row.compatibilityReportID))
+
+        #expect(row.supportState == .unproven)
+        #expect(compatibility.status == .passed)
+        #expect(row.requirements.first { $0.kind == .runtimeGeneration }?.state == .missing)
+        #expect(row.requirements.first { $0.kind == .tokenRate }?.state == .missing)
+        #expect(row.requirements.first { $0.kind == .memoryFootprint }?.state == .missing)
     }
 
     @Test
@@ -91,6 +113,7 @@ struct ModelLibraryEvidenceServiceTests {
         let model = try fixture.model(id: "org/proven", config: #"{"model_type":"qwen3"}"#)
         let cacheArtifact = try fixture.writeArtifact(named: "proof/cache.json")
         let benchmarkArtifact = try fixture.writeArtifact(named: "proof/benchmark.json")
+        let evalArtifact = try fixture.writeArtifact(named: "proof/eval.json")
         let missingRuntime = fixture.root.appendingPathComponent("proof/runtime.json").path
 
         let service = ModelLibraryEvidenceService(
@@ -111,7 +134,15 @@ struct ModelLibraryEvidenceServiceTests {
                     kind: .benchmark,
                     artifactPath: benchmarkArtifact.path,
                     status: .partial,
-                    counts: EvidenceReportCounts(total: 2, passed: 1, warnings: 1)
+                    counts: EvidenceReportCounts(total: 2, passed: 1, warnings: 1),
+                    metadata: ["tokens_per_second": "12.5"]
+                ),
+                ModelEvidenceProofDescriptor(
+                    modelId: model.id,
+                    kind: .eval,
+                    artifactPath: evalArtifact.path,
+                    status: .passed,
+                    counts: EvidenceReportCounts(total: 3, passed: 3)
                 ),
                 ModelEvidenceProofDescriptor(
                     modelId: model.id,
@@ -124,10 +155,42 @@ struct ModelLibraryEvidenceServiceTests {
         )
 
         let row = try #require(snapshot.rows.first)
-        #expect(row.proofReportIDs.count == 3)
+        #expect(row.proofReportIDs.count == 4)
         #expect(snapshot.reports.contains { $0.kind == .cache && $0.source == "model-library-cache-proof" })
         #expect(snapshot.reports.contains { $0.kind == .benchmark && $0.status == .partial })
+        #expect(snapshot.reports.contains { $0.kind == .eval && $0.status == .passed })
         #expect(snapshot.reports.contains { $0.kind == .runtime && $0.source == "custom-live-proof" && $0.status == .unavailable })
+    }
+
+    @Test
+    func missingTokenRateBlocksPassedGenerationProofAndKeepsRowPartial() throws {
+        let fixture = try ModelEvidenceFixture()
+        let model = try fixture.model(id: "org/no-token-rate", config: #"{"model_type":"qwen3"}"#)
+        let runtimeArtifact = try fixture.writeArtifact(named: "proof/runtime-no-tps.json")
+
+        let service = ModelLibraryEvidenceService(
+            registry: EvidenceReportRegistryService(now: fixture.clock)
+        )
+        let snapshot = service.registerEvidence(
+            for: [model],
+            proofDescriptors: [
+                ModelEvidenceProofDescriptor(
+                    modelId: model.id,
+                    kind: .runtime,
+                    artifactPath: runtimeArtifact.path,
+                    status: .passed,
+                    metadata: ["physical_footprint_within_limit": "true"]
+                ),
+            ]
+        )
+
+        let row = try #require(snapshot.rows.first)
+        let runtimeReport = try #require(snapshot.reports.first { $0.kind == .runtime })
+
+        #expect(row.supportState == .partial)
+        #expect(runtimeReport.status == .blocked)
+        #expect(runtimeReport.metadata["evidence_validation"] == "passing generation proof must record token/s")
+        #expect(row.requirements.first { $0.kind == .tokenRate }?.state == .blocked)
     }
 
     @Test
@@ -214,5 +277,36 @@ private struct ModelEvidenceFixture {
         )
         try Data("{\"ok\":true}".utf8).write(to: url)
         return url
+    }
+
+    func completeProofDescriptors(for modelId: String) throws -> [ModelEvidenceProofDescriptor] {
+        let runtime = try writeArtifact(named: "proof/\(modelId)-runtime.json")
+        let cache = try writeArtifact(named: "proof/\(modelId)-cache.json")
+        let benchmark = try writeArtifact(named: "proof/\(modelId)-benchmark.json")
+        return [
+            ModelEvidenceProofDescriptor(
+                modelId: modelId,
+                kind: .runtime,
+                artifactPath: runtime.path,
+                status: .passed,
+                metadata: [
+                    "tokens_per_second": "18.4",
+                    "physical_footprint_within_limit": "true",
+                ]
+            ),
+            ModelEvidenceProofDescriptor(
+                modelId: modelId,
+                kind: .cache,
+                artifactPath: cache.path,
+                status: .passed
+            ),
+            ModelEvidenceProofDescriptor(
+                modelId: modelId,
+                kind: .benchmark,
+                artifactPath: benchmark.path,
+                status: .passed,
+                metadata: ["tokens_per_second": "18.4"]
+            ),
+        ]
     }
 }

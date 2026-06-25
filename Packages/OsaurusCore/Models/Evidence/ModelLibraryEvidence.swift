@@ -43,6 +43,8 @@ enum ModelEvidenceSupportState: String, Codable, CaseIterable, Hashable, Sendabl
 enum ModelEvidenceProofKind: String, Codable, CaseIterable, Hashable, Sendable {
     case cache
     case benchmark
+    case eval
+    case memory
     case runtime
 
     var reportKind: EvidenceReportKind {
@@ -51,10 +53,42 @@ enum ModelEvidenceProofKind: String, Codable, CaseIterable, Hashable, Sendable {
             return .cache
         case .benchmark:
             return .benchmark
+        case .eval:
+            return .eval
+        case .memory:
+            return .runtime
         case .runtime:
             return .runtime
         }
     }
+}
+
+enum ModelEvidenceRequirementKind: String, Codable, CaseIterable, Hashable, Sendable {
+    case importState = "import_state"
+    case compatibilityPreflight = "compatibility_preflight"
+    case runtimeGeneration = "runtime_generation"
+    case tokenRate = "token_rate"
+    case memoryFootprint = "memory_footprint"
+    case cacheBehavior = "cache_behavior"
+    case benchmarkOrEval = "benchmark_or_eval"
+}
+
+enum ModelEvidenceRequirementState: String, Codable, CaseIterable, Hashable, Sendable {
+    case passed
+    case partial
+    case failed
+    case blocked
+    case missing
+    case unavailable
+}
+
+struct ModelEvidenceRequirementStatus: Equatable, Identifiable, Sendable {
+    var kind: ModelEvidenceRequirementKind
+    var state: ModelEvidenceRequirementState
+    var reportID: String?
+    var detail: String
+
+    var id: ModelEvidenceRequirementKind { kind }
 }
 
 enum ModelEvidenceGroupKind: String, Codable, CaseIterable, Hashable, Sendable {
@@ -150,6 +184,7 @@ struct ModelEvidenceRow: Equatable, Identifiable, Sendable {
     var cacheReportID: String
     var compatibilityReportID: String
     var proofReportIDs: [String]
+    var requirements: [ModelEvidenceRequirementStatus]
     var redactedBundlePath: String?
     var metadata: [String: String]
 
