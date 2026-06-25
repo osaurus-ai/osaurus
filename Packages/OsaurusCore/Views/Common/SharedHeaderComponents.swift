@@ -781,7 +781,9 @@ private struct PopoverRow<Content: View>: View {
     @State private var isHovered = false
 
     private var rowBackground: Color {
-        if isCurrent { return theme.accentColor.opacity(0.10) }
+        // The selected row is marked by the trailing circle checkmark alone — no
+        // accent fill — so its corners never clash with the popover's own
+        // (larger) corner radius. Hover / keyboard focus still tint the row.
         if isHighlighted { return theme.secondaryBackground.opacity(0.9) }
         if isHovered { return theme.secondaryBackground.opacity(0.6) }
         return .clear
@@ -793,8 +795,8 @@ private struct PopoverRow<Content: View>: View {
                 content()
                 Spacer(minLength: 4)
                 if isCurrent {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 10, weight: .bold))
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 14))
                         .foregroundColor(theme.accentColor)
                 }
             }
