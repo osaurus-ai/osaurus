@@ -60,6 +60,8 @@ make evals-report EVALS_OUT=reports/today.json      # custom output path
 make evals EVALS_SUITE=Packages/OsaurusEvals/Suites/AgentLoop  # other suite
 make evals-pr-report LOCAL_MODEL=foundation FRONTIER_MODEL=openai/gpt-4o-mini
 make evals-pr-report-baseline BASELINE_DIR=build/evals/main-report
+make evals-watcher-report EVALS_WATCHER_CHANNEL=main EVALS_REPORT_PRESET=local-frontier
+make evals-scoreboard EVALS_SCOREBOARD_ROOT=build/evals/watcher/main EVALS_MAX_REGRESSIONS=0
 ```
 
 ### Asset prerequisites (handled automatically)
@@ -204,6 +206,50 @@ Eval evidence:
 The `--from-reports <dir>` flag builds the bundle from existing `EvalReport`
 JSON files without model calls, which is useful for CLI smoke tests and docs
 examples.
+
+For mainline and release-candidate watcher runs, use the stored artifact
+workflow:
+
+```bash
+make evals-watcher-report \
+  EVALS_WATCHER_CHANNEL=main \
+  EVALS_WATCHER_ARTIFACT_ID=main-$(date -u +%Y%m%dT%H%M%SZ) \
+  LOCAL_MODEL=foundation \
+  FRONTIER_MODEL=openai/gpt-4o-mini
+
+make evals-watcher-report \
+  EVALS_WATCHER_CHANNEL=release-candidate \
+  EVALS_WATCHER_ARTIFACT_ID=rc-agent-loop-20260621 \
+  BASELINE_DIR=build/evals/watcher/main/20260621T120000Z/report
+```
+
+Each run stores a report bundle under
+`build/evals/watcher/<channel>/<timestamp>/report/` and refreshes
+`build/evals/watcher/<channel>/scoreboard/latest/scoreboard.json` plus
+`scoreboard.md`. The manifest carries the artifact ID, and the scoreboard
+summarizes the latest release-candidate run, local/frontier model presets,
+baseline comparison counts, and the no-regression threshold
+(`EVALS_MAX_REGRESSIONS`, default `0`). The scoreboard can also be rebuilt from
+existing bundles without running a model:
+
+```bash
+make evals-scoreboard \
+  EVALS_SCOREBOARD_ROOT=build/evals/watcher/main \
+  EVALS_SCOREBOARD_OUT=build/evals/scoreboard/main \
+  EVALS_MAX_REGRESSIONS=0
+
+swift run --package-path Packages/OsaurusEvals osaurus-evals scoreboard \
+  --reports-root build/evals/watcher/main \
+  --out-dir build/evals/scoreboard/main \
+  --max-regressions 0
+```
+
+Use `EVALS_REPORT_PRESET=local-only` for fixture or local-only validation that
+must not require frontier credentials; the default remains `local-frontier` for
+release evidence.
+
+See `docs/EVAL_WATCHER.md` for the maintainer loop, optional dedicated Mac
+runner notes, and cost controls.
 
 For lower-level agent-loop baseline work, use the regression lab. It runs
 selected `agent_loop` suites, writes per-suite JSON artifacts, compares the
@@ -826,16 +872,7 @@ The pure-data domains (`schema`, `tool_envelope`, `prefix_hash`, `argument_coerc
 
 ## CI isolation
 
-<<<<<<< HEAD
 This package is a **separate Swift package** — the eval *suites* never run on CI (they burn tokens and need local models). The harness's own unit tests DO run on CI: `Tests/OsaurusEvalsKitTests` covers fixture decode, scorer contracts, the regression/scorecard labs, and judge resolution — all deterministic and token-free (no LLM calls, no model loads). Run them locally with `make evals-test` (plain `swift test --package-path Packages/OsaurusEvals` works too); the `test-evals` job in `.github/workflows/ci.yml` runs the same thing on every PR. Tests that need live resources stay behind env-var gates (`OSAURUS_EVALS_ENABLED=1`, `OSAURUS_RUN_SANDBOX_INTEGRATION_TESTS=1`) so nothing burns tokens unintentionally. Suite decode smokes assert **floor** counts (`>=`), so adding cases never breaks them — only deletions or schema drift do.
-=======
-This package is a **separate Swift package**. CI / Xcode builds run
-`swift build` and `swift test` from `Packages/OsaurusCore`, never from here.
-`swift test --package-path Packages/OsaurusEvals` runs pure Swift report /
-schema tests only. Tests that would call a live model or provider must stay
-behind an explicit opt-in env-var gate so they never burn tokens
-unintentionally.
->>>>>>> a495cd98e (Add eval review report artifacts)
 
 ## Future hooks (deliberately stubbed)
 

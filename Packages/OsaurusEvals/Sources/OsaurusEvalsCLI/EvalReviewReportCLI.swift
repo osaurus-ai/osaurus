@@ -69,18 +69,7 @@ extension OsaurusEvalsCLI {
         await EvalBootstrap.run(bootstrapPlan)
         startupWatchdog?.cancel()
 
-        let models = [
-            EvalReviewRunModel(
-                role: .local,
-                rawModelId: opts.localModelId,
-                selection: ModelSelection.parse(opts.localModelId)
-            ),
-            EvalReviewRunModel(
-                role: .frontier,
-                rawModelId: opts.frontierModelId,
-                selection: ModelSelection.parse(opts.frontierModelId)
-            ),
-        ]
+        let models = opts.runModels()
 
         var installedProviderIds: [UUID] = []
         for model in models {
@@ -253,6 +242,7 @@ extension OsaurusEvalsCLI {
             commit: gitValue(["rev-parse", "HEAD"]) ?? "(unknown)",
             runner: "osaurus-evals report",
             artifactPath: opts.outDir.path,
+            artifactId: opts.artifactId,
             suites: uniqueSuiteRefs(suiteRefs),
             models: uniqueModelRefs(modelRefs),
             commands: commands,
@@ -347,6 +337,8 @@ extension OsaurusEvalsCLI {
                                       [--frontier-model <provider/model>]
                                       [--baseline <dir>]
                                       [--out-dir <dir>]
+                                      [--artifact-id <id>]
+                                      [--preset local-frontier|local-only|frontier-only]
                                       [--judge-model <provider/model>]
                                       [--include-sandbox-frontier]
 
@@ -361,6 +353,8 @@ extension OsaurusEvalsCLI {
                                            Adds compare.json and compare.md.
                 --out-dir <dir>            Artifact directory. Defaults to
                                            build/evals/pr-report/<timestamp>.
+                --artifact-id <id>         Stable artifact identifier written to the manifest.
+                --preset <name>            Model lane preset. Defaults to local-frontier.
                 --judge-model <id>         Sets JUDGE_MODEL for rubric grading.
                 --filter <substr>          Only run cases whose id contains <substr>.
                 --include-sandbox-frontier Also run SandboxFrontier. Off by default.
@@ -389,8 +383,10 @@ extension OsaurusEvalsCLI {
         let suites: [URL]
         let localModelId: String
         let frontierModelId: String
+        let preset: EvalReviewReportPreset
         let baseline: URL?
         let outDir: URL
+        let artifactId: String?
         let judgeModel: String?
         let filter: String?
         let includeSandboxFrontier: Bool
@@ -402,8 +398,10 @@ extension OsaurusEvalsCLI {
             var suites: [URL] = []
             var localModelId = "foundation"
             var frontierModelId = "openai/gpt-4o-mini"
+            var preset = EvalReviewReportPreset.localFrontier
             var baseline: URL?
             var outDir: URL?
+            var artifactId: String?
             var judgeModel: String?
             var filter: String?
             var includeSandboxFrontier = false
@@ -424,11 +422,21 @@ extension OsaurusEvalsCLI {
                 case "--frontier-model":
                     frontierModelId = try valueForArg(args, after: i, flag: arg)
                     i += 2
+                case "--preset":
+                    let raw = try valueForArg(args, after: i, flag: arg)
+                    guard let parsed = EvalReviewReportPreset(rawValue: raw) else {
+                        throw CLIError.invalidValue(arg, raw)
+                    }
+                    preset = parsed
+                    i += 2
                 case "--baseline":
                     baseline = try urlForArg(args, after: i, flag: arg)
                     i += 2
                 case "--out-dir":
                     outDir = try urlForArg(args, after: i, flag: arg)
+                    i += 2
+                case "--artifact-id":
+                    artifactId = try valueForArg(args, after: i, flag: arg)
                     i += 2
                 case "--judge-model":
                     judgeModel = try valueForArg(args, after: i, flag: arg)
@@ -467,8 +475,10 @@ extension OsaurusEvalsCLI {
                 suites: suites,
                 localModelId: localModelId,
                 frontierModelId: frontierModelId,
+                preset: preset,
                 baseline: baseline,
                 outDir: outDir ?? defaultEvalReviewOutDir(),
+                artifactId: artifactId,
                 judgeModel: judgeModel,
                 filter: filter,
                 includeSandboxFrontier: includeSandboxFrontier,
@@ -494,9 +504,46 @@ extension OsaurusEvalsCLI {
                 EvalReviewSuiteRef(name: $0.suite, path: $0.suitePath)
             }
         }
+
+        func runModels() -> [EvalReviewRunModel] {
+            var models: [EvalReviewRunModel] = []
+            if preset.includesLocal {
+                models.append(
+                    EvalReviewRunModel(
+                        role: .local,
+                        rawModelId: localModelId,
+                        selection: ModelSelection.parse(localModelId)
+                    )
+                )
+            }
+            if preset.includesFrontier {
+                models.append(
+                    EvalReviewRunModel(
+                        role: .frontier,
+                        rawModelId: frontierModelId,
+                        selection: ModelSelection.parse(frontierModelId)
+                    )
+                )
+            }
+            return models
+        }
     }
 
-    private struct EvalReviewRunModel {
+    enum EvalReviewReportPreset: String {
+        case localFrontier = "local-frontier"
+        case localOnly = "local-only"
+        case frontierOnly = "frontier-only"
+
+        var includesLocal: Bool {
+            self == .localFrontier || self == .localOnly
+        }
+
+        var includesFrontier: Bool {
+            self == .localFrontier || self == .frontierOnly
+        }
+    }
+
+    struct EvalReviewRunModel {
         let role: EvalReviewModelRole
         let rawModelId: String
         let selection: ModelSelection
@@ -628,6 +675,10 @@ extension OsaurusEvalsCLI {
         ]
         if let baseline = opts.baseline {
             args += ["--baseline", baseline.path]
+        }
+        args += ["--preset", opts.preset.rawValue]
+        if let artifactId = opts.artifactId {
+            args += ["--artifact-id", artifactId]
         }
         if let filter = opts.filter {
             args += ["--filter", filter]

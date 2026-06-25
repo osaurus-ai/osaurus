@@ -89,6 +89,7 @@ public struct EvalReviewManifest: Sendable, Codable, Equatable {
     public let commit: String
     public let runner: String
     public let artifactPath: String
+    public let artifactId: String?
     public let suites: [EvalReviewSuiteRef]
     public let models: [EvalReviewModelRef]
     public let commands: [EvalReviewCommandRecord]
@@ -101,6 +102,7 @@ public struct EvalReviewManifest: Sendable, Codable, Equatable {
         commit: String,
         runner: String,
         artifactPath: String,
+        artifactId: String? = nil,
         suites: [EvalReviewSuiteRef],
         models: [EvalReviewModelRef],
         commands: [EvalReviewCommandRecord],
@@ -112,6 +114,7 @@ public struct EvalReviewManifest: Sendable, Codable, Equatable {
         self.commit = commit
         self.runner = runner
         self.artifactPath = artifactPath
+        self.artifactId = artifactId
         self.suites = suites
         self.models = models
         self.commands = commands
@@ -304,6 +307,9 @@ public struct EvalReviewReportBundle: Sendable, Codable, Equatable {
         lines.append("- Branch: `\(manifest.branch)`")
         lines.append("- Commit: `\(manifest.commit)`")
         lines.append("- Artifact: `\(manifest.artifactPath)`")
+        if let artifactId = manifest.artifactId {
+            lines.append("- Artifact ID: `\(artifactId)`")
+        }
         lines.append("- Verdict: \(verdictLabel())")
         if let baseline = manifest.baselinePath {
             lines.append("- Baseline: `\(baseline)`")
@@ -400,6 +406,9 @@ public struct EvalReviewReportBundle: Sendable, Codable, Equatable {
             lines.append("- Regressions vs baseline: not run")
         }
         lines.append("- Artifact: \(manifest.artifactPath)")
+        if let artifactId = manifest.artifactId {
+            lines.append("- Artifact ID: \(artifactId)")
+        }
     }
 
     private func evidenceLine(_ model: EvalReviewModelSummary?) -> String {

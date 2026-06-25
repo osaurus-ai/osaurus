@@ -11,6 +11,7 @@
 //  Usage:
 //    osaurus-evals run --suite Suites/CapabilitySearch [--model foundation] [--filter browser] [--out report.json]
 //    osaurus-evals report [--local-model foundation] [--frontier-model openai/gpt-4o-mini]
+//    osaurus-evals scoreboard --reports-root build/evals/watcher/main
 //
 //  Exit codes:
 //    0  every non-skipped case passed (or no cases ran)
@@ -105,6 +106,8 @@ struct OsaurusEvalsCLI {
             // Pure file aggregation over ComputerUse/ComputerUseLoop reports.
             // No model load, no runtime settings changes.
             exit(runComputerUseScorecard(Array(args.dropFirst())))
+        case "scoreboard":
+            exit(runEvalScoreboard(Array(args.dropFirst())))
         case "--help", "-h":
             printUsage()
             exit(0)
@@ -968,6 +971,7 @@ struct OsaurusEvalsCLI {
                 osaurus-evals capture-screen [--app <name>] [--out <path>]
                 osaurus-evals agent-loop-lab --baseline <path> [--suite <dir> ...] [--model <id>]
                 osaurus-evals report [--suite <dir> ...] [--local-model <id>] [--frontier-model <id>]
+                                      [--preset local-frontier|local-only|frontier-only]
                                       [--baseline <dir>] [--out-dir <dir>]
                 osaurus-evals diff <baseline> <current> [--out <p>] [--markdown <p>]
                                               [--fail-on-regression]
@@ -975,6 +979,8 @@ struct OsaurusEvalsCLI {
                 osaurus-evals compat <community-dir> [--out <p>] [--markdown <p>] [--validate]
                 osaurus-evals scorecard <report.json|reports-dir> [...] [--out-dir <dir>]
                                         [--out <json>] [--markdown <md>]
+                osaurus-evals scoreboard --reports-root <dir> [--reports-root <dir> ...]
+                                          [--out-dir <dir>] [--max-regressions <n>]
 
             FLAGS:
                 --suite <dir>         Required; repeatable. Directory of *.json eval
@@ -1093,6 +1099,8 @@ struct OsaurusEvalsCLI {
                 osaurus-evals agent-loop-lab --baseline reports/main-agentloop
                 osaurus-evals scorecard build/evals/computer-use.json build/evals/computer-use-loop.json
                 osaurus-evals report --local-model foundation --frontier-model openai/gpt-4o-mini
+                osaurus-evals report --preset local-only --from-reports reports/current
+                osaurus-evals scoreboard --reports-root build/evals/watcher/main
             """
         print(usage)
     }
