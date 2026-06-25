@@ -78,6 +78,20 @@ enum ChatSessionStore {
             print("[ChatSessionStore] Deferring chat-history open: key rotation in flight")
             return
         }
+        // `isStorageReadyForWrites` is policy-based and clears for a plaintext
+        // posture, but the on-disk file can still be encrypted when the launch
+        // migration that converges it hasn't landed yet. Opening it then routes
+        // through `currentKey()`'s synchronous Keychain read on the main thread
+        // and trips the app-hang watchdog. Defer when the open would need a key
+        // we don't already hold; convergence + `ChatSessionsManager`'s reload
+        // bring sessions in once the file is plaintext or the key is resident.
+        if Thread.isMainThread,
+            OsaurusStorageOpener.wouldBlockOnUncachedKey(
+                for: OsaurusPaths.chatHistoryDatabaseFile().path)
+        {
+            print("[ChatSessionStore] Deferring chat-history open: storage key not yet resident")
+            return
+        }
         StorageMutationGate.blockingAwaitNotMutating()
         didOpen = true
         do {
