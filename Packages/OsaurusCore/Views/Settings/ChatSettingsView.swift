@@ -169,7 +169,51 @@ struct ChatSettingsView: View {
             )
             .settingsLandingAnchor("settings.chat.systemPrompt")
 
-            // Generation Settings
+            SettingsSubsection(label: "Display") {
+                SettingsToggle(
+                    title: L("Smooth streaming"),
+                    description:
+                        "Pace incoming tokens at a steady rate so streaming looks like a typewriter across all providers. Disable to render tokens as soon as they arrive — useful with very fast remote providers that you'd rather see complete instantly.",
+                    isOn: $smoothStreamingEnabled
+                )
+            }
+
+            SettingsDivider()
+
+            SettingsSubsection(label: "Clipboard") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Toggle(isOn: $tempEnableClipboardMonitoring) {
+                        Text("Enable clipboard monitoring", bundle: .module)
+                            .font(.system(size: 12))
+                    }
+                    Text(
+                        "Automatically detect and offer text from any app as context. Includes 'grab selection' feature when summoning Osaurus.",
+                        bundle: .module
+                    )
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.tertiaryText)
+                }
+            }
+
+            SettingsDivider()
+
+            SettingsSubsection(label: "Generative Greetings") {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text(
+                        "Default voice for AI-generated greetings + quick actions. Turn greetings on per agent under the agent's Features tab; each agent can also override this voice in its Customization tab.",
+                        bundle: .module
+                    )
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.tertiaryText)
+
+                    personalityEditorBlock
+                }
+            }
+
+            SettingsDivider()
+
+            // Generation knobs sit last: the most technical controls, used
+            // mainly by power users tuning sampling / token budgets.
             SettingsSubsection(label: "Generation") {
                 VStack(alignment: .leading, spacing: 12) {
                     SettingsSliderField(
@@ -219,49 +263,6 @@ struct ChatSettingsView: View {
                         defaultValue: 15,
                         anchorId: "settings.chat.toolAttempts"
                     )
-                }
-            }
-
-            SettingsDivider()
-
-            SettingsSubsection(label: "Display") {
-                SettingsToggle(
-                    title: L("Smooth streaming"),
-                    description:
-                        "Pace incoming tokens at a steady rate so streaming looks like a typewriter across all providers. Disable to render tokens as soon as they arrive — useful with very fast remote providers that you'd rather see complete instantly.",
-                    isOn: $smoothStreamingEnabled
-                )
-            }
-
-            SettingsDivider()
-
-            SettingsSubsection(label: "Clipboard") {
-                VStack(alignment: .leading, spacing: 8) {
-                    Toggle(isOn: $tempEnableClipboardMonitoring) {
-                        Text("Enable clipboard monitoring", bundle: .module)
-                            .font(.system(size: 12))
-                    }
-                    Text(
-                        "Automatically detect and offer text from any app as context. Includes 'grab selection' feature when summoning Osaurus.",
-                        bundle: .module
-                    )
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
-                }
-            }
-
-            SettingsDivider()
-
-            SettingsSubsection(label: "Generative Greetings") {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text(
-                        "Default voice for AI-generated greetings + quick actions. Turn greetings on per agent under the agent's Features tab; each agent can also override this voice in its Customization tab.",
-                        bundle: .module
-                    )
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
-
-                    personalityEditorBlock
                 }
             }
         }
