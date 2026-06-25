@@ -142,6 +142,12 @@ final class AgentPickerKeyboardController: ObservableObject {
     private var itemCount: Int = 0
     private var onActivate: ((Int) -> Void)?
     private var onDismiss: (() -> Void)?
+    /// Index to resume arrow-key navigation from on the first key press, set to
+    /// the current selection. Held separately from `highlightedIndex` so opening
+    /// the popover doesn't paint a focus border on the selected row (it's already
+    /// marked by its checkmark) — the highlight only appears once the user
+    /// actually navigates.
+    private var pendingStartIndex: Int?
 
     /// Begin monitoring keys for an open popover. Safe to call repeatedly; the
     /// monitor is installed once and the callbacks/count are refreshed.
@@ -152,7 +158,10 @@ final class AgentPickerKeyboardController: ObservableObject {
         onDismiss: @escaping () -> Void
     ) {
         self.itemCount = itemCount
-        self.highlightedIndex = initialIndex
+        // Start with nothing highlighted so the selected row isn't bordered on
+        // open; remember where to resume arrow-key navigation from.
+        self.highlightedIndex = nil
+        self.pendingStartIndex = initialIndex
         self.onActivate = onActivate
         self.onDismiss = onDismiss
 
@@ -167,7 +176,9 @@ final class AgentPickerKeyboardController: ObservableObject {
                 self.move(by: -1)
                 return nil
             case 36, 76:  // return / numpad enter
-                if let index = self.highlightedIndex {
+                // Activate the highlighted row, or — if the user hasn't arrowed
+                // yet — the current selection (so open + Enter confirms it).
+                if let index = self.highlightedIndex ?? self.pendingStartIndex {
                     self.onActivate?(index)
                     return nil
                 }
@@ -185,6 +196,7 @@ final class AgentPickerKeyboardController: ObservableObject {
         if let monitor { NSEvent.removeMonitor(monitor) }
         monitor = nil
         highlightedIndex = nil
+        pendingStartIndex = nil
         onActivate = nil
         onDismiss = nil
     }
@@ -193,6 +205,10 @@ final class AgentPickerKeyboardController: ObservableObject {
         guard itemCount > 0 else { return }
         if let current = highlightedIndex {
             highlightedIndex = max(0, min(itemCount - 1, current + offset))
+        } else if let resume = pendingStartIndex {
+            // First arrow press after open: continue from the current selection.
+            highlightedIndex = max(0, min(itemCount - 1, resume + offset))
+            pendingStartIndex = nil
         } else {
             highlightedIndex = offset > 0 ? 0 : itemCount - 1
         }
