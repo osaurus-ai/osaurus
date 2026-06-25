@@ -139,13 +139,15 @@ public enum SettingsSearchIndex {
             title: "Max Tool Attempts", keywords: ["tool calls", "agent loop", "attempts"]
         ),
 
-        // MARK: Settings (Privacy / Notifications / Legal)
+        // MARK: Settings (Notifications / Legal)
+        // Usage-analytics + crash-reporting consent now live at the top of the
+        // Privacy tab's Overview, so these route there (and glow on landing).
         .init(
-            id: "settings.privacy.usage", tab: .settings, section: "Privacy",
+            id: "settings.privacy.usage", tab: .privacy, section: "Data Collection",
             title: "Share Anonymous Usage Data", keywords: ["telemetry", "analytics", "tracking"]
         ),
         .init(
-            id: "settings.privacy.crash", tab: .settings, section: "Privacy",
+            id: "settings.privacy.crash", tab: .privacy, section: "Data Collection",
             title: "Send Crash Reports", keywords: ["crash", "diagnostics", "freeze"]
         ),
         .init(

@@ -17,15 +17,6 @@ struct ConfigurationView: View {
     @State private var successMessage: String?
     @State private var isResetting = false
 
-    /// Usage-analytics consent. Mirrors `TelemetryService.shared.isEnabled`
-    /// (opt-in: true only once the user has granted it). Applied immediately on
-    /// change rather than via "Save Changes", like the notification toggles,
-    /// since it's a privacy switch.
-    @State private var tempTelemetryEnabled: Bool = false
-
-    /// Crash-reporting consent. Mirrors `CrashReportingService.shared.isEnabled`
-    /// (opt-out: defaults on). Applied immediately on change, as above.
-    @State private var tempCrashReportingEnabled: Bool = true
 
     // Chat settings state
     @State private var tempChatHotkey: Hotkey? = nil
@@ -127,9 +118,6 @@ struct ConfigurationView: View {
         "Core Model", "CLI", "Command Line", "Install", "Symlink", "Maintenance",
         "Reset", "Factory Reset", "Wipe",
     ]
-    private static let privacyKeywords = [
-        "Privacy", "Telemetry", "Analytics", "Usage Data", "Tracking", "Diagnostics",
-    ]
     private static let chatKeywords = [
         "Chat", "System Prompt", "Temperature", "Max Tokens", "Context Length", "Top P",
         "Max Tool Attempts", "Generation", "Memory", "Tools",
@@ -151,7 +139,7 @@ struct ConfigurationView: View {
     ]
 
     private static let allSearchKeywordGroups: [[String]] = [
-        generalKeywords, privacyKeywords, chatKeywords, toolPermissionsKeywords,
+        generalKeywords, chatKeywords, toolPermissionsKeywords,
         serverMovedKeywords, notificationsKeywords, legalKeywords,
     ]
 
@@ -211,45 +199,6 @@ struct ConfigurationView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 64)
-    }
-
-    /// Extracted from `body` to keep the main settings expression under Swift's
-    /// type-checker complexity limit (the merge pushed the inline body over it).
-    @ViewBuilder private var privacySection: some View {
-        if matchesSearch(Self.privacyKeywords) {
-            SettingsSection(title: "Privacy", icon: "hand.raised") {
-                VStack(alignment: .leading, spacing: 20) {
-                    Text(
-                        "Control what anonymous data Osaurus collects.",
-                        bundle: .module
-                    )
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.secondaryText)
-
-                    SettingsToggle(
-                        title: L("Share Anonymous Usage Data"),
-                        description:
-                            "Send anonymous, aggregated usage analytics to help improve Osaurus. Never includes your chats, prompts, files, or keys. Turn off any time.",
-                        anchorId: "settings.privacy.usage",
-                        isOn: $tempTelemetryEnabled
-                    )
-                    .onChange(of: tempTelemetryEnabled) { _, newValue in
-                        TelemetryService.shared.setEnabled(newValue)
-                    }
-
-                    SettingsToggle(
-                        title: L("Send Crash Reports"),
-                        description:
-                            "Send anonymous crash and freeze reports so we can fix what breaks. Never includes your chats, prompts, files, or keys. Turn off any time.",
-                        anchorId: "settings.privacy.crash",
-                        isOn: $tempCrashReportingEnabled
-                    )
-                    .onChange(of: tempCrashReportingEnabled) { _, newValue in
-                        CrashReportingService.shared.setEnabled(newValue)
-                    }
-                }
-            }
-        }
     }
 
     /// Extracted from `body` to keep the settings expression under Swift's
@@ -565,9 +514,6 @@ struct ConfigurationView: View {
                         // MARK: - General Section
                         generalSection
 
-                        // MARK: - Privacy Section
-                        privacySection
-
                         // MARK: - Chat Section
                         chatSection
 
@@ -783,8 +729,6 @@ struct ConfigurationView: View {
         .onAppear {
             loadConfiguration()
             agentDelegationConfiguration = AgentDelegationConfigurationStore.snapshot()
-            tempTelemetryEnabled = TelemetryService.shared.isEnabled
-            tempCrashReportingEnabled = CrashReportingService.shared.isEnabled
             withAnimation(.easeOut(duration: 0.25).delay(0.05)) {
                 hasAppeared = true
             }

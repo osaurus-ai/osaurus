@@ -610,8 +610,17 @@ private struct PrivacyOverviewTab: View {
     let forgetActionMessage: String?
     let forgetAllRedactions: () -> Void
 
+    /// Usage-analytics consent. Mirrors `TelemetryService.shared.isEnabled`
+    /// (opt-in: true only once granted). Applied immediately on change.
+    @State private var telemetryEnabled = false
+    /// Crash-reporting consent. Mirrors `CrashReportingService.shared.isEnabled`
+    /// (opt-out: defaults on). Applied immediately on change.
+    @State private var crashReportingEnabled = true
+
     var body: some View {
         VStack(alignment: .leading, spacing: 24) {
+            dataCollectionSection
+
             SettingsSection(title: L("Filter"), icon: "lock.shield.fill") {
                 SettingsSubsection(label: "Detection") {
                     VStack(alignment: .leading, spacing: 12) {
@@ -671,6 +680,50 @@ private struct PrivacyOverviewTab: View {
                 icon: "person.crop.circle.fill.badge.minus"
             ) {
                 forgetCard
+            }
+        }
+        .onAppear {
+            telemetryEnabled = TelemetryService.shared.isEnabled
+            crashReportingEnabled = CrashReportingService.shared.isEnabled
+        }
+    }
+
+    // MARK: - Data collection
+
+    /// Anonymous usage-analytics + crash-reporting consent. Lives at the top
+    /// of the Privacy overview so the app's data-collection switches sit with
+    /// the rest of the privacy controls. Both apply immediately on change.
+    private var dataCollectionSection: some View {
+        SettingsSection(title: L("Data Collection"), icon: "hand.raised") {
+            VStack(alignment: .leading, spacing: 20) {
+                Text(
+                    "Control what anonymous data Osaurus collects.",
+                    bundle: .module
+                )
+                .font(.system(size: 12))
+                .foregroundColor(theme.secondaryText)
+
+                SettingsToggle(
+                    title: L("Share Anonymous Usage Data"),
+                    description:
+                        "Send anonymous, aggregated usage analytics to help improve Osaurus. Never includes your chats, prompts, files, or keys. Turn off any time.",
+                    anchorId: "settings.privacy.usage",
+                    isOn: $telemetryEnabled
+                )
+                .onChange(of: telemetryEnabled) { _, newValue in
+                    TelemetryService.shared.setEnabled(newValue)
+                }
+
+                SettingsToggle(
+                    title: L("Send Crash Reports"),
+                    description:
+                        "Send anonymous crash and freeze reports so we can fix what breaks. Never includes your chats, prompts, files, or keys. Turn off any time.",
+                    anchorId: "settings.privacy.crash",
+                    isOn: $crashReportingEnabled
+                )
+                .onChange(of: crashReportingEnabled) { _, newValue in
+                    CrashReportingService.shared.setEnabled(newValue)
+                }
             }
         }
     }
