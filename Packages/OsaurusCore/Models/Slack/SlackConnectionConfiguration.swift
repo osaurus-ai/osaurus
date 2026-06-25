@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import CryptoKit
 
 struct SlackConnectionConfiguration: Codable, Equatable, Sendable {
     var configuredTeamIds: [String]
@@ -14,6 +15,9 @@ struct SlackConnectionConfiguration: Codable, Equatable, Sendable {
     var writeEnabled: Bool
     var defaultReadLimit: Int
     var allowBroadcastMentions: Bool
+    var botUserId: String?
+    var botId: String?
+    var apiAppId: String?
 
     init(
         configuredTeamIds: [String] = [],
@@ -21,7 +25,10 @@ struct SlackConnectionConfiguration: Codable, Equatable, Sendable {
         writableChannelIds: [String] = [],
         writeEnabled: Bool = false,
         defaultReadLimit: Int = 50,
-        allowBroadcastMentions: Bool = false
+        allowBroadcastMentions: Bool = false,
+        botUserId: String? = nil,
+        botId: String? = nil,
+        apiAppId: String? = nil
     ) {
         self.configuredTeamIds = Self.normalizedIds(configuredTeamIds)
         self.readableChannelIds = Self.normalizedIds(readableChannelIds)
@@ -29,6 +36,9 @@ struct SlackConnectionConfiguration: Codable, Equatable, Sendable {
         self.writeEnabled = writeEnabled
         self.defaultReadLimit = Self.clampReadLimit(defaultReadLimit)
         self.allowBroadcastMentions = allowBroadcastMentions
+        self.botUserId = Self.normalizedOptionalId(botUserId)
+        self.botId = Self.normalizedOptionalId(botId)
+        self.apiAppId = Self.normalizedOptionalId(apiAppId)
     }
 
     var normalized: SlackConnectionConfiguration {
@@ -38,7 +48,10 @@ struct SlackConnectionConfiguration: Codable, Equatable, Sendable {
             writableChannelIds: writableChannelIds,
             writeEnabled: writeEnabled,
             defaultReadLimit: defaultReadLimit,
-            allowBroadcastMentions: allowBroadcastMentions
+            allowBroadcastMentions: allowBroadcastMentions,
+            botUserId: botUserId,
+            botId: botId,
+            apiAppId: apiAppId
         )
     }
 
@@ -64,6 +77,11 @@ struct SlackConnectionConfiguration: Codable, Equatable, Sendable {
 
     static func normalizedId(_ id: String) -> String {
         id.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    static func normalizedOptionalId(_ id: String?) -> String? {
+        let normalized = normalizedId(id ?? "")
+        return normalized.isEmpty ? nil : normalized
     }
 
     static func isValidSlackId(_ id: String) -> Bool {
@@ -252,5 +270,45 @@ enum SlackSecurity {
             return text
         }
         return text.replacingOccurrences(of: value, with: replacement)
+    }
+}
+
+enum SlackSignatureVerifier {
+    static func isAuthorized(
+        signingSecret: String,
+        timestamp: String,
+        body: Data,
+        signature: String,
+        now: Date = Date(),
+        tolerance: TimeInterval = 300
+    ) -> Bool {
+        let trimmedSecret = signingSecret.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedTimestamp = timestamp.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedSignature = signature.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !trimmedSecret.isEmpty,
+              let timestampSeconds = TimeInterval(trimmedTimestamp),
+              abs(now.timeIntervalSince1970 - timestampSeconds) <= tolerance,
+              trimmedSignature.hasPrefix("v0=")
+        else {
+            return false
+        }
+
+        var base = Data("v0:\(trimmedTimestamp):".utf8)
+        base.append(body)
+        let key = SymmetricKey(data: Data(trimmedSecret.utf8))
+        let digest = HMAC<SHA256>.authenticationCode(for: base, using: key)
+        let expected = "v0=" + digest.map { String(format: "%02x", $0) }.joined()
+        return constantTimeEquals(trimmedSignature, expected)
+    }
+
+    private static func constantTimeEquals(_ lhs: String, _ rhs: String) -> Bool {
+        let lhsBytes = Array(lhs.utf8)
+        let rhsBytes = Array(rhs.utf8)
+        guard lhsBytes.count == rhsBytes.count else { return false }
+        var difference: UInt8 = 0
+        for index in lhsBytes.indices {
+            difference |= lhsBytes[index] ^ rhsBytes[index]
+        }
+        return difference == 0
     }
 }

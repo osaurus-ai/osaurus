@@ -28,13 +28,13 @@ struct SlackAuthIdentity: Codable, Equatable, Sendable {
 struct SlackConversation: Codable, Equatable, Sendable {
     let id: String
     let name: String?
-    let isChannel: Bool?
-    let isGroup: Bool?
-    let isIM: Bool?
-    let isMPIM: Bool?
-    let isPrivate: Bool?
-    let isArchived: Bool?
-    let isMember: Bool?
+    let isChannel: Bool
+    let isGroup: Bool
+    let isIM: Bool
+    let isMPIM: Bool
+    let isPrivate: Bool
+    let isArchived: Bool
+    let isMember: Bool
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -48,15 +48,52 @@ struct SlackConversation: Codable, Equatable, Sendable {
         case isMember = "is_member"
     }
 
+    init(
+        id: String,
+        name: String? = nil,
+        isChannel: Bool = false,
+        isGroup: Bool = false,
+        isIM: Bool = false,
+        isMPIM: Bool = false,
+        isPrivate: Bool = false,
+        isArchived: Bool = false,
+        isMember: Bool = false
+    ) {
+        self.id = id
+        self.name = name
+        self.isChannel = isChannel
+        self.isGroup = isGroup
+        self.isIM = isIM
+        self.isMPIM = isMPIM
+        self.isPrivate = isPrivate
+        self.isArchived = isArchived
+        self.isMember = isMember
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            id: try container.decode(String.self, forKey: .id),
+            name: try container.decodeIfPresent(String.self, forKey: .name),
+            isChannel: try container.decodeIfPresent(Bool.self, forKey: .isChannel) ?? false,
+            isGroup: try container.decodeIfPresent(Bool.self, forKey: .isGroup) ?? false,
+            isIM: try container.decodeIfPresent(Bool.self, forKey: .isIM) ?? false,
+            isMPIM: try container.decodeIfPresent(Bool.self, forKey: .isMPIM) ?? false,
+            isPrivate: try container.decodeIfPresent(Bool.self, forKey: .isPrivate) ?? false,
+            isArchived: try container.decodeIfPresent(Bool.self, forKey: .isArchived) ?? false,
+            isMember: try container.decodeIfPresent(Bool.self, forKey: .isMember) ?? false
+        )
+    }
+
     var displayName: String {
         guard let name, !name.isEmpty else { return id }
         return name
     }
 
     var kind: String {
-        if isIM == true { return "im" }
-        if isMPIM == true { return "mpim" }
-        if isGroup == true { return "private_channel" }
+        if isIM { return "im" }
+        if isMPIM { return "mpim" }
+        if isGroup { return "private_channel" }
         return "channel"
     }
 }
@@ -80,6 +117,53 @@ struct SlackMessage: Codable, Equatable, Sendable {
         case ts
         case threadTs = "thread_ts"
         case replyCount = "reply_count"
+    }
+}
+
+struct SlackOutboundMessageRequest: Equatable, Sendable {
+    let channelId: String
+    let content: String
+    let threadTs: String?
+    let parse: String
+    let linkNames: Bool
+    let unfurlLinks: Bool
+    let unfurlMedia: Bool
+    let replyBroadcast: Bool
+
+    init(
+        channelId: String,
+        content: String,
+        threadTs: String? = nil,
+        parse: String = "none",
+        linkNames: Bool = false,
+        unfurlLinks: Bool = false,
+        unfurlMedia: Bool = false,
+        replyBroadcast: Bool = false
+    ) {
+        self.channelId = channelId
+        self.content = content
+        self.threadTs = threadTs
+        self.parse = parse
+        self.linkNames = linkNames
+        self.unfurlLinks = unfurlLinks
+        self.unfurlMedia = unfurlMedia
+        self.replyBroadcast = replyBroadcast
+    }
+
+    var jsonBody: [String: Any] {
+        var body: [String: Any] = [
+            "channel": channelId,
+            "text": content,
+            "parse": parse,
+            "link_names": linkNames,
+            "unfurl_links": unfurlLinks,
+            "unfurl_media": unfurlMedia,
+            "reply_broadcast": replyBroadcast,
+        ]
+        if let threadTs, !threadTs.isEmpty {
+            body["thread_ts"] = threadTs
+        }
+        return body
     }
 }
 
@@ -114,7 +198,7 @@ protocol SlackAPIClientProtocol: Sendable {
     func conversations(token: String, limit: Int) async throws -> [SlackConversation]
     func messages(channelId: String, token: String, limit: Int) async throws -> [SlackMessage]
     func threadMessages(channelId: String, threadTs: String, token: String, limit: Int) async throws -> [SlackMessage]
-    func sendMessage(channelId: String, content: String, threadTs: String?, token: String) async throws -> SlackMessage
+    func sendMessage(_ request: SlackOutboundMessageRequest, token: String) async throws -> SlackMessage
 }
 
 final class SlackAPIClient: SlackAPIClientProtocol, @unchecked Sendable {
@@ -192,21 +276,13 @@ final class SlackAPIClient: SlackAPIClientProtocol, @unchecked Sendable {
         return payload.messages
     }
 
-    func sendMessage(channelId: String, content: String, threadTs: String?, token: String) async throws -> SlackMessage {
-        try validateSlackId(channelId, label: "channel_id")
-        var body: [String: Any] = [
-            "channel": channelId,
-            "text": content,
-            "parse": "none",
-            "link_names": false,
-            "unfurl_links": false,
-            "unfurl_media": false,
-            "reply_broadcast": false,
-        ]
-        if let threadTs, !threadTs.isEmpty {
-            body["thread_ts"] = threadTs
-        }
-        let payload: PostMessagePayload = try await postJSON(method: "chat.postMessage", token: token, body: body)
+    func sendMessage(_ request: SlackOutboundMessageRequest, token: String) async throws -> SlackMessage {
+        try validateSlackId(request.channelId, label: "channel_id")
+        let payload: PostMessagePayload = try await postJSON(
+            method: "chat.postMessage",
+            token: token,
+            body: request.jsonBody
+        )
         if let message = payload.message {
             return message
         }
@@ -216,9 +292,9 @@ final class SlackAPIClient: SlackAPIClientProtocol, @unchecked Sendable {
                 user: nil,
                 username: nil,
                 botId: nil,
-                text: content,
+                text: request.content,
                 ts: ts,
-                threadTs: threadTs,
+                threadTs: request.threadTs,
                 replyCount: nil
             )
         }
@@ -271,7 +347,9 @@ final class SlackAPIClient: SlackAPIClientProtocol, @unchecked Sendable {
                 throw SlackAPIError.invalidResponse("Slack returned a non-HTTP response.")
             }
             guard http.statusCode != 429 else {
-                throw SlackAPIError.rateLimited("Slack rate limited this request.")
+                let retryAfter = http.value(forHTTPHeaderField: "Retry-After")
+                let suffix = retryAfter.map { " Retry after \($0) seconds." } ?? ""
+                throw SlackAPIError.rateLimited("Slack rate limited this request.\(suffix)")
             }
             guard (200 ..< 300).contains(http.statusCode) else {
                 throw mapHTTPError(status: http.statusCode, data: data, token: token)
@@ -344,7 +422,9 @@ final class SlackAPIClient: SlackAPIClientProtocol, @unchecked Sendable {
     }
 
     private static func urlEncode(_ value: String) -> String {
-        value.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? value
+        var allowed = CharacterSet.alphanumerics
+        allowed.insert(charactersIn: "-._~")
+        return value.addingPercentEncoding(withAllowedCharacters: allowed) ?? value
     }
 }
 

@@ -300,7 +300,8 @@ The JSON configuration stores only non-secret IDs and policy in `slack.json`:
   `confirm_send: true`.
 - `allowBroadcastMentions` defaults to false. When false, outbound messages
   containing Slack broadcast markup such as `<!channel>`, `<!here>`, or
-  `<!everyone>` are rejected before any network call.
+  `<!everyone>`, plus user-group markup such as `<!subteam^...>`, are rejected
+  before any network call.
 
 Slack thread ids use `channel_id:thread_ts` so the canonical
 `agent_channel_read_thread` and `agent_channel_reply_thread` tools can route
@@ -308,6 +309,24 @@ Slack thread operations without adding Slack-only tool names. Sent messages use
 conservative Slack posting controls: automatic name linking is disabled,
 message parsing is set to `none`, unfurls are disabled, and thread replies do
 not broadcast.
+
+The native adapter keeps live Slack calls behind `SlackAPIClientProtocol`.
+Outbound sends are represented as a `SlackOutboundMessageRequest` before
+transport so tests can assert channel id, text, thread timestamp, parsing,
+unfurl, and broadcast controls without Slack credentials. Slack Events API
+message and `app_mention` payloads normalize into
+`SlackNormalizedInboundMessage`, preserving the provider event id, workspace id,
+room id, message timestamp, canonical `channel_id:thread_ts`, mention user ids,
+and payload JSON for the shared Agent Channel store. A repeated Slack event id
+is recorded once through `channel_seen_events`, and message snapshots from
+read/search/send paths are keyed as `slack + channel_id + message_ts`.
+Inbound event storage is also gated by `readableChannelIds`; a valid Slack
+signature does not authorize events from non-allowlisted channels. Inbound
+normalization also requires the saved bot identity (`botUserId` or `botId`) so
+the adapter can suppress self/echo messages before dispatch.
+Webhook receivers should use `SlackSignatureVerifier` with the saved
+`signing_secret` to validate `X-Slack-Request-Timestamp`,
+`X-Slack-Signature`, and the exact raw request body before normalizing content.
 
 ## Message State And Dedupe
 

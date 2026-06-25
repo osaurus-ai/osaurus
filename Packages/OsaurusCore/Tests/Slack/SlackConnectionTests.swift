@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import CryptoKit
 import Testing
 
 @testable import OsaurusCore
@@ -72,6 +73,57 @@ struct SlackConnectionTests {
         }
     }
 
+    @Test func diagnosticsPersistsBotIdentityForInboundSelfFiltering() async throws {
+        try await withIsolatedSlackStores { credentials in
+            let service = SlackConnectionService(client: FakeSlackAPIClient(), credentialStore: credentials)
+            try service.saveBotToken("xoxb-slack-bot-token-super-secret")
+            try service.saveConfiguration(
+                SlackConnectionConfiguration(readableChannelIds: ["C23456"])
+            )
+
+            let diagnostics = await service.diagnostics()
+            let saved = SlackConnectionConfigurationStore.load()
+
+            #expect(diagnostics.identity?.userId == "U12345")
+            #expect(diagnostics.identity?.botId == "B12345")
+            #expect(saved.botUserId == "U12345")
+            #expect(saved.botId == "B12345")
+        }
+    }
+
+    @Test func signatureVerifierAuthorizesSlackSignedRequestOnlyWithinTolerance() throws {
+        let signingSecret = "8f742231b10e8888abcd99yyyzzz85a5"
+        let timestamp = "1531420618"
+        let body = Data(
+            """
+            token=xyzz0WbapA4vBCDEFasx0Fqz&team_id=T1DC2J9E1&team_domain=testteamnow&channel_id=C2147483705&channel_name=test&user_id=U2147483697&user_name=Steve&command=/weather&text=94070&response_url=https://hooks.slack.com/commands/1234/5678&trigger_id=13345224609.738474920.8088930838d88f008e0
+            """.utf8
+        )
+        let signature = "v0=4d19b371acb8c24626ae294d086e5dc1513e8e0c04781438c439143315cb807e"
+
+        #expect(SlackSignatureVerifier.isAuthorized(
+            signingSecret: signingSecret,
+            timestamp: timestamp,
+            body: body,
+            signature: signature,
+            now: Date(timeIntervalSince1970: 1_531_420_618)
+        ))
+        #expect(!SlackSignatureVerifier.isAuthorized(
+            signingSecret: signingSecret,
+            timestamp: timestamp,
+            body: body,
+            signature: signature,
+            now: Date(timeIntervalSince1970: 1_531_421_000)
+        ))
+        #expect(!SlackSignatureVerifier.isAuthorized(
+            signingSecret: signingSecret,
+            timestamp: timestamp,
+            body: Data("tampered".utf8),
+            signature: signature,
+            now: Date(timeIntervalSince1970: 1_531_420_618)
+        ))
+    }
+
     @Test func apiClientRedactsTokenEchoedBySlackErrorBody() async throws {
         let token = "xoxb-slack-bot-token-super-secret"
         let session = SlackHTTPStubProtocol.session(
@@ -116,9 +168,11 @@ struct SlackConnectionTests {
         )
 
         _ = try await client.sendMessage(
-            channelId: "C34567",
-            content: "Hello @channel <@U23456>",
-            threadTs: nil,
+            SlackOutboundMessageRequest(
+                channelId: "C34567",
+                content: "Hello @channel <@U23456>",
+                threadTs: nil
+            ),
             token: token
         )
 
@@ -146,6 +200,28 @@ struct SlackConnectionTests {
         let form = SlackHTTPStubProtocol.lastRequestFormBody()
         #expect(form["limit"] == "10")
         #expect(form["exclude_archived"] == "true")
+        #expect(SlackHTTPStubProtocol.lastRawRequestBody()
+            .contains("types=public_channel%2Cprivate_channel%2Cmpim%2Cim"))
+    }
+
+    @Test func apiClientMapsSlackRateLimitWithRetryAfterHint() async throws {
+        let token = "xoxb-slack-bot-token-super-secret"
+        let session = SlackHTTPStubProtocol.session(
+            statusCode: 429,
+            body: #"{"ok":false,"error":"ratelimited"}"#,
+            headers: ["Retry-After": "7"]
+        )
+        let client = SlackAPIClient(
+            baseURL: URL(string: "https://slack.test/api")!,
+            sessionProvider: { session }
+        )
+
+        do {
+            _ = try await client.messages(channelId: "C23456", token: token, limit: 1)
+            Issue.record("Slack request should have been rate limited")
+        } catch let error as SlackAPIError {
+            #expect(error == .rateLimited("Slack rate limited this request. Retry after 7 seconds."))
+        }
     }
 
     @Test func readChannelReturnsBoundedMessagesForAllowlistedSlackChannel() async throws {
@@ -174,6 +250,460 @@ struct SlackConnectionTests {
             #expect(messages.count == 2)
             #expect(messages.first?["content"] as? String == "eval reports landed")
             #expect(messages.first?["thread_id"] as? String == "C23456:1718800000.000100")
+        }
+    }
+
+    @Test func readAndSendRecordSlackMessagesInAgentChannelStore() async throws {
+        try await withIsolatedSlackStores { credentials in
+            let store = AgentChannelMessageStore()
+            try store.openInMemory()
+            defer { store.close() }
+
+            let fake = FakeSlackAPIClient()
+            await fake.setMessages([
+                "C23456": [
+                    .fixture(ts: "1718800000.000100", text: "eval reports landed"),
+                    .fixture(ts: "1718800001.000200", text: "review requested"),
+                ],
+            ])
+            let service = SlackConnectionService(
+                client: fake,
+                credentialStore: credentials,
+                messageStore: store,
+                recordMessageSnapshotsInline: true
+            )
+            try service.saveBotToken("xoxb-slack-bot-token-super-secret")
+            try service.saveConfiguration(
+                SlackConnectionConfiguration(
+                    readableChannelIds: ["C23456"],
+                    writableChannelIds: ["C23456"],
+                    writeEnabled: true,
+                    defaultReadLimit: 2
+                )
+            )
+
+            _ = try await service.readChannel(channelId: "C23456", limit: nil)
+            _ = try await service.readChannel(channelId: "C23456", limit: nil)
+            #expect(try store.messageCount(connectionId: "slack", roomId: "C23456") == 2)
+
+            _ = try await service.sendMessage(
+                channelId: "C23456",
+                content: "Ship it",
+                confirmSend: true
+            )
+            let rows = try store.recentMessages(connectionId: "slack", roomId: "C23456", limit: 10)
+            #expect(rows.contains { $0.providerMessageId == "1718800001.000100" && $0.direction == .outbound })
+            #expect(rows.allSatisfy { !$0.payloadJSON.localizedCaseInsensitiveContains("xoxb-slack") })
+        }
+    }
+
+    @Test func slackInboundEventNormalizationCapturesMentionThreadAndStoreDedupe() async throws {
+        try await withIsolatedSlackStores { credentials in
+            let store = AgentChannelMessageStore()
+            try store.openInMemory()
+            defer { store.close() }
+
+            let service = SlackConnectionService(
+                client: FakeSlackAPIClient(),
+                credentialStore: credentials,
+                messageStore: store
+            )
+            try service.saveConfiguration(
+                SlackConnectionConfiguration(
+                    readableChannelIds: ["C23456"],
+                    botUserId: "UOSABOT"
+                )
+            )
+            let envelope = SlackEventEnvelope(
+                token: "legacy-verification-secret",
+                teamId: "T12345",
+                apiAppId: "A12345",
+                event: SlackEventMessage(
+                    type: "app_mention",
+                    subtype: nil,
+                    channel: "C23456",
+                    user: "U55555",
+                    botId: nil,
+                    text: "<@UOSABOT> can you check this?",
+                    ts: "1718800001.000200",
+                    threadTs: "1718800000.000100",
+                    channelType: "channel"
+                ),
+                type: "event_callback",
+                eventId: "Ev12345",
+                eventTime: 1_718_800_001
+            )
+
+            let normalized = try #require(try service.recordInboundEvent(envelope))
+            #expect(normalized.providerEventId == "Ev12345")
+            #expect(normalized.roomId == "C23456")
+            #expect(normalized.threadId == "C23456:1718800000.000100")
+            #expect(normalized.isThreadReply)
+            #expect(normalized.isMention)
+            #expect(normalized.mentionedUserIds == ["UOSABOT"])
+            #expect(!normalized.payloadJSON.contains("legacy-verification-secret"))
+            #expect(try service.recordInboundEvent(envelope) == nil)
+            #expect(try store.messageCount(connectionId: "slack", roomId: "C23456") == 1)
+        }
+    }
+
+    @Test func slackInboundEventRequiresSignedBodyForWebhookEntryPoint() async throws {
+        try await withIsolatedSlackStores { credentials in
+            let signingSecret = "slack-signing-secret-super-secret"
+            let store = AgentChannelMessageStore()
+            try store.openInMemory()
+            defer { store.close() }
+
+            let service = SlackConnectionService(
+                client: FakeSlackAPIClient(),
+                credentialStore: credentials,
+                messageStore: store
+            )
+            try service.saveSigningSecret(signingSecret)
+            try service.saveConfiguration(
+                SlackConnectionConfiguration(
+                    readableChannelIds: ["C23456"],
+                    botUserId: "UOSABOT"
+                )
+            )
+            let envelope = SlackEventEnvelope(
+                token: "legacy-verification-secret",
+                teamId: "T12345",
+                apiAppId: "A12345",
+                event: SlackEventMessage(
+                    type: "app_mention",
+                    subtype: nil,
+                    channel: "C23456",
+                    user: "U55555",
+                    botId: nil,
+                    text: "<@UOSABOT> signed event",
+                    ts: "1718800001.000200",
+                    threadTs: nil,
+                    channelType: "channel"
+                ),
+                type: "event_callback",
+                eventId: "EvSigned12345",
+                eventTime: 1_718_800_001
+            )
+            let body = try JSONEncoder().encode(envelope)
+            let timestamp = "1718800001"
+            let signature = slackSignature(secret: signingSecret, timestamp: timestamp, body: body)
+
+            let normalized = try #require(try service.recordVerifiedInboundEvent(
+                body: body,
+                timestamp: timestamp,
+                signature: signature,
+                now: Date(timeIntervalSince1970: 1_718_800_001)
+            ))
+
+            #expect(normalized.providerEventId == "EvSigned12345")
+            #expect(!normalized.payloadJSON.contains("legacy-verification-secret"))
+            #expect(try store.messageCount(connectionId: "slack", roomId: "C23456") == 1)
+
+            do {
+                _ = try service.recordVerifiedInboundEvent(
+                    body: body,
+                    timestamp: timestamp,
+                    signature: "v0=bad",
+                    now: Date(timeIntervalSince1970: 1_718_800_001)
+                )
+                Issue.record("Slack webhook entry should reject invalid signatures")
+            } catch let error as SlackConnectionServiceError {
+                #expect(error == .signatureVerificationFailed)
+            }
+        }
+    }
+
+    @Test func signedSlackInboundEventRequiresReadableChannelAllowlistBeforeStorage() async throws {
+        try await withIsolatedSlackStores { credentials in
+            let signingSecret = "slack-signing-secret-super-secret"
+            let store = AgentChannelMessageStore()
+            try store.openInMemory()
+            defer { store.close() }
+
+            let service = SlackConnectionService(
+                client: FakeSlackAPIClient(),
+                credentialStore: credentials,
+                messageStore: store
+            )
+            try service.saveSigningSecret(signingSecret)
+            try service.saveConfiguration(
+                SlackConnectionConfiguration(
+                    readableChannelIds: ["C99999"],
+                    botUserId: "UOSABOT"
+                )
+            )
+            let envelope = SlackEventEnvelope(
+                token: nil,
+                teamId: "T12345",
+                apiAppId: "A12345",
+                event: SlackEventMessage(
+                    type: "app_mention",
+                    subtype: nil,
+                    channel: "C23456",
+                    user: "U55555",
+                    botId: nil,
+                    text: "<@UOSABOT> signed but not allowlisted",
+                    ts: "1718800001.000300",
+                    threadTs: nil,
+                    channelType: "channel"
+                ),
+                type: "event_callback",
+                eventId: "EvSignedDenied12345",
+                eventTime: 1_718_800_001
+            )
+            let body = try JSONEncoder().encode(envelope)
+            let timestamp = "1718800001"
+            let signature = slackSignature(secret: signingSecret, timestamp: timestamp, body: body)
+
+            let normalized = try service.recordVerifiedInboundEvent(
+                body: body,
+                timestamp: timestamp,
+                signature: signature,
+                now: Date(timeIntervalSince1970: 1_718_800_001)
+            )
+
+            #expect(normalized == nil)
+            #expect(try store.messageCount(connectionId: "slack", roomId: "C23456") == 0)
+        }
+    }
+
+    @Test func slackInboundEventMentionAndSelfMessagePolicyAvoidsOverTriggering() async throws {
+        try await withIsolatedSlackStores { credentials in
+            let service = SlackConnectionService(client: FakeSlackAPIClient(), credentialStore: credentials)
+            try service.saveConfiguration(
+                SlackConnectionConfiguration(
+                    readableChannelIds: ["C23456"],
+                    botUserId: "UOSABOT",
+                    botId: "BOSABOT",
+                    apiAppId: "AOSABOT"
+                )
+            )
+
+            let thirdPartyMention = SlackEventEnvelope(
+                token: nil,
+                teamId: "T12345",
+                apiAppId: "A12345",
+                event: SlackEventMessage(
+                    type: "message",
+                    subtype: nil,
+                    channel: "C23456",
+                    user: "U55555",
+                    botId: nil,
+                    text: "cc <@UOTHER|teammate>",
+                    ts: "1718800002.000200",
+                    threadTs: nil,
+                    channelType: "channel"
+                ),
+                type: "event_callback",
+                eventId: "EvOtherMention",
+                eventTime: 1_718_800_002
+            )
+            let normalized = try #require(service.normalizeInboundEvent(thirdPartyMention))
+            #expect(normalized.mentionedUserIds == ["UOTHER"])
+            #expect(!normalized.isMention)
+
+            let ownBotDirectMessage = SlackEventEnvelope(
+                token: nil,
+                teamId: "T12345",
+                apiAppId: "AOSABOT",
+                event: SlackEventMessage(
+                    type: "message",
+                    subtype: nil,
+                    channel: "C23456",
+                    user: nil,
+                    botId: "BOSABOT",
+                    text: "self echo without subtype",
+                    ts: "1718800003.000100",
+                    threadTs: nil,
+                    channelType: "channel"
+                ),
+                type: "event_callback",
+                eventId: "EvSelfBotDirect",
+                eventTime: 1_718_800_003
+            )
+            #expect(service.normalizeInboundEvent(ownBotDirectMessage) == nil)
+
+            let ownBotMessage = SlackEventEnvelope(
+                token: nil,
+                teamId: "T12345",
+                apiAppId: "AOSABOT",
+                event: SlackEventMessage(
+                    type: "message",
+                    subtype: "bot_message",
+                    channel: "C23456",
+                    user: nil,
+                    botId: "BOSABOT",
+                    text: "self echo",
+                    ts: "1718800003.000200",
+                    threadTs: nil,
+                    channelType: "channel"
+                ),
+                type: "event_callback",
+                eventId: "EvSelfBot",
+                eventTime: 1_718_800_003
+            )
+            #expect(service.normalizeInboundEvent(ownBotMessage) == nil)
+        }
+    }
+
+    @Test func slackInboundEventRejectsUnconfiguredTeamAndMissingBotIdentity() async throws {
+        try await withIsolatedSlackStores { credentials in
+            let service = SlackConnectionService(client: FakeSlackAPIClient(), credentialStore: credentials)
+            let envelope = SlackEventEnvelope(
+                token: nil,
+                teamId: "TOTHER",
+                apiAppId: "A12345",
+                event: SlackEventMessage(
+                    type: "app_mention",
+                    subtype: nil,
+                    channel: "C23456",
+                    user: "U55555",
+                    botId: nil,
+                    text: "<@UOSABOT> hello",
+                    ts: "1718800003.000400",
+                    threadTs: nil,
+                    channelType: "channel"
+                ),
+                type: "event_callback",
+                eventId: "EvWrongTeam",
+                eventTime: 1_718_800_003
+            )
+
+            try service.saveConfiguration(
+                SlackConnectionConfiguration(
+                    configuredTeamIds: ["T12345"],
+                    readableChannelIds: ["C23456"],
+                    botUserId: "UOSABOT"
+                )
+            )
+            #expect(service.normalizeInboundEvent(envelope) == nil)
+
+            try service.saveConfiguration(
+                SlackConnectionConfiguration(
+                    configuredTeamIds: ["TOTHER"],
+                    readableChannelIds: ["C23456"]
+                )
+            )
+            #expect(service.normalizeInboundEvent(envelope) == nil)
+        }
+    }
+
+    @Test func slackInboundEventDedupesMessageAndAppMentionForSameSlackMessage() async throws {
+        try await withIsolatedSlackStores { credentials in
+            let store = AgentChannelMessageStore()
+            try store.openInMemory()
+            defer { store.close() }
+
+            let service = SlackConnectionService(
+                client: FakeSlackAPIClient(),
+                credentialStore: credentials,
+                messageStore: store
+            )
+            try service.saveConfiguration(
+                SlackConnectionConfiguration(
+                    readableChannelIds: ["C23456"],
+                    botUserId: "UOSABOT"
+                )
+            )
+            let appMention = SlackEventEnvelope(
+                token: nil,
+                teamId: "T12345",
+                apiAppId: "A12345",
+                event: SlackEventMessage(
+                    type: "app_mention",
+                    subtype: nil,
+                    channel: "C23456",
+                    user: "U55555",
+                    botId: nil,
+                    text: "<@UOSABOT> same message",
+                    ts: "1718800004.000200",
+                    threadTs: nil,
+                    channelType: "channel"
+                ),
+                type: "event_callback",
+                eventId: "EvAppMention",
+                eventTime: 1_718_800_004
+            )
+            let messageEcho = SlackEventEnvelope(
+                token: nil,
+                teamId: "T12345",
+                apiAppId: "A12345",
+                event: SlackEventMessage(
+                    type: "message",
+                    subtype: nil,
+                    channel: "C23456",
+                    user: "U55555",
+                    botId: nil,
+                    text: "<@UOSABOT> same message",
+                    ts: "1718800004.000200",
+                    threadTs: nil,
+                    channelType: "channel"
+                ),
+                type: "event_callback",
+                eventId: "EvMessageEcho",
+                eventTime: 1_718_800_004
+            )
+
+            #expect(try service.recordInboundEvent(appMention) != nil)
+            #expect(try service.recordInboundEvent(messageEcho) == nil)
+            #expect(try store.messageCount(connectionId: "slack", roomId: "C23456") == 1)
+        }
+    }
+
+    @Test func slackInboundDispatchSurvivesPassiveSnapshotCollision() async throws {
+        try await withIsolatedSlackStores { credentials in
+            let store = AgentChannelMessageStore()
+            try store.openInMemory()
+            defer { store.close() }
+
+            let service = SlackConnectionService(
+                client: FakeSlackAPIClient(),
+                credentialStore: credentials,
+                messageStore: store
+            )
+            try service.saveConfiguration(
+                SlackConnectionConfiguration(
+                    readableChannelIds: ["C23456"],
+                    botUserId: "UOSABOT"
+                )
+            )
+            _ = try store.recordMessages([
+                AgentChannelStoredMessage(
+                    connectionId: "slack",
+                    roomId: "C23456",
+                    providerMessageId: "1718800005.000200",
+                    direction: .inbound,
+                    threadId: "C23456:1718800005.000200",
+                    authorId: "U55555",
+                    authorName: "Mika",
+                    content: "<@UOSABOT> cached before event",
+                    providerTimestamp: "1718800005.000200"
+                ),
+            ])
+            let envelope = SlackEventEnvelope(
+                token: nil,
+                teamId: "T12345",
+                apiAppId: "A12345",
+                event: SlackEventMessage(
+                    type: "app_mention",
+                    subtype: nil,
+                    channel: "C23456",
+                    user: "U55555",
+                    botId: nil,
+                    text: "<@UOSABOT> cached before event",
+                    ts: "1718800005.000200",
+                    threadTs: nil,
+                    channelType: "channel"
+                ),
+                type: "event_callback",
+                eventId: "EvPassiveCollision",
+                eventTime: 1_718_800_005
+            )
+
+            #expect(try service.recordInboundEvent(envelope) != nil)
+            #expect(try service.recordInboundEvent(envelope) == nil)
+            #expect(try store.messageCount(connectionId: "slack", roomId: "C23456") == 1)
         }
     }
 
@@ -308,6 +838,9 @@ struct SlackConnectionTests {
             #expect(throws: SlackConnectionServiceError.broadcastMentionDenied) {
                 try service.draftMessage(channelId: "C34567", content: "Heads up <!channel>")
             }
+            #expect(throws: SlackConnectionServiceError.broadcastMentionDenied) {
+                try service.draftMessage(channelId: "C34567", content: "Heads up <!subteam^S12345|@ops>")
+            }
             #expect(await fake.sentMessageCount() == 0)
         }
     }
@@ -393,6 +926,14 @@ struct SlackConnectionTests {
             try? FileManager.default.removeItem(at: directory)
         }
         try await body(credentials)
+    }
+
+    private func slackSignature(secret: String, timestamp: String, body: Data) -> String {
+        var base = Data("v0:\(timestamp):".utf8)
+        base.append(body)
+        let key = SymmetricKey(data: Data(secret.utf8))
+        let digest = HMAC<SHA256>.authenticationCode(for: base, using: key)
+        return "v0=" + digest.map { String(format: "%02x", $0) }.joined()
     }
 }
 
@@ -517,12 +1058,12 @@ private actor FakeSlackAPIClient: SlackAPIClientProtocol {
         Array((messagesByChannel[channelId] ?? []).filter { ($0.threadTs ?? $0.ts) == threadTs }.prefix(limit))
     }
 
-    func sendMessage(channelId: String, content: String, threadTs: String?, token: String) async throws -> SlackMessage {
-        sentMessages.append((channelId: channelId, content: content, threadTs: threadTs))
+    func sendMessage(_ request: SlackOutboundMessageRequest, token: String) async throws -> SlackMessage {
+        sentMessages.append((channelId: request.channelId, content: request.content, threadTs: request.threadTs))
         return .fixture(
             ts: "171880000\(sentMessages.count).000100",
-            text: content,
-            threadTs: threadTs
+            text: request.content,
+            threadTs: request.threadTs
         )
     }
 }
@@ -559,11 +1100,13 @@ private actor FakeDiscordAPIClientForSlackTests: DiscordAPIClientProtocol {
 private final class SlackHTTPStubProtocol: URLProtocol {
     nonisolated(unsafe) private static var statusCode: Int = 200
     nonisolated(unsafe) private static var body = Data()
+    nonisolated(unsafe) private static var headers: [String: String] = [:]
     nonisolated(unsafe) private static var requestBody = Data()
 
-    static func session(statusCode: Int, body: String) -> URLSession {
+    static func session(statusCode: Int, body: String, headers: [String: String] = [:]) -> URLSession {
         self.statusCode = statusCode
         self.body = Data(body.utf8)
+        self.headers = headers
         requestBody = Data()
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [SlackHTTPStubProtocol.self]
@@ -573,6 +1116,10 @@ private final class SlackHTTPStubProtocol: URLProtocol {
     static func lastRequestJSONBody() -> [String: Any]? {
         guard !requestBody.isEmpty else { return nil }
         return try? JSONSerialization.jsonObject(with: requestBody) as? [String: Any]
+    }
+
+    static func lastRawRequestBody() -> String {
+        String(data: requestBody, encoding: .utf8) ?? ""
     }
 
     static func lastRequestFormBody() -> [String: String] {
@@ -621,7 +1168,7 @@ private final class SlackHTTPStubProtocol: URLProtocol {
             url: request.url!,
             statusCode: Self.statusCode,
             httpVersion: "HTTP/1.1",
-            headerFields: ["Content-Type": "application/json"]
+            headerFields: ["Content-Type": "application/json"].merging(Self.headers) { _, new in new }
         )!
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
         client?.urlProtocol(self, didLoad: Self.body)

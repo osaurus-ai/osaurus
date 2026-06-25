@@ -160,6 +160,15 @@ private extension OsaurusTool {
                     tool: tool,
                     retryable: false
                 )
+            case .signingSecretNotConfigured:
+                return ToolEnvelope.failure(
+                    kind: .unavailable,
+                    message: error.localizedDescription,
+                    tool: tool,
+                    retryable: false
+                )
+            case .signatureVerificationFailed, .invalidInboundPayload:
+                return ToolEnvelope.failure(kind: .invalidArgs, message: error.localizedDescription, tool: tool)
             case .configurationSaveFailed, .api:
                 return ToolEnvelope.failure(
                     kind: .executionError,
