@@ -155,116 +155,113 @@ struct ChatSettingsView: View {
 
     // MARK: - Chat Section
 
+    // The settings render directly on the page rather than inside a card:
+    // the Chat tab's own header already names and describes the section, so a
+    // wrapping "Chat" card would just repeat it.
     @ViewBuilder private var chatSection: some View {
-        SettingsSection(title: "Chat", icon: "message") {
-            VStack(alignment: .leading, spacing: 20) {
-                Text("Configure how chat mode generates responses.", bundle: .module)
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.secondaryText)
+        VStack(alignment: .leading, spacing: 20) {
+            // System Prompt
+            StyledSettingsTextArea(
+                label: "System Prompt",
+                text: $tempSystemPrompt,
+                placeholder: "Enter the default Osaurus agent's instructions...",
+                hint: "Optional. Persona for the built-in Osaurus agent."
+            )
+            .settingsLandingAnchor("settings.chat.systemPrompt")
 
-                // System Prompt
-                StyledSettingsTextArea(
-                    label: "System Prompt",
-                    text: $tempSystemPrompt,
-                    placeholder: "Enter the default Osaurus agent's instructions...",
-                    hint: "Optional. Persona for the built-in Osaurus agent."
-                )
-                .settingsLandingAnchor("settings.chat.systemPrompt")
-
-                // Generation Settings
-                SettingsSubsection(label: "Generation") {
-                    VStack(alignment: .leading, spacing: 12) {
-                        SettingsSliderField(
-                            label: "Temperature",
-                            help: "Randomness (0–2). Higher = more creative",
-                            text: $tempChatTemperature,
-                            range: 0 ... 2,
-                            step: 0.1,
-                            defaultValue: 0.7,
-                            formatString: "%.1f",
-                            anchorId: "settings.chat.temperature"
-                        )
-                        SettingsStepperField(
-                            label: "Max Tokens",
-                            help: "Maximum response tokens",
-                            text: $tempChatMaxTokens,
-                            range: 1 ... 65536,
-                            step: 1024,
-                            defaultValue: 16384,
-                            anchorId: "settings.chat.maxTokens"
-                        )
-                        SettingsStepperField(
-                            label: "Context Length",
-                            help: "Context window for remote models",
-                            text: $tempChatContextLength,
-                            range: 2048 ... 256000,
-                            step: 1024,
-                            defaultValue: 128000,
-                            anchorId: "settings.chat.contextLength"
-                        )
-                        SettingsSliderField(
-                            label: "Top P Override",
-                            help: "Sampling diversity (0–1)",
-                            text: $tempChatTopP,
-                            range: 0 ... 1,
-                            step: 0.05,
-                            defaultValue: 1.0,
-                            formatString: "%.2f",
-                            anchorId: "settings.chat.topP"
-                        )
-                        SettingsStepperField(
-                            label: "Max Tool Attempts",
-                            help: "Max consecutive tool calls per turn",
-                            text: $tempChatMaxToolAttempts,
-                            range: 1 ... 50,
-                            step: 1,
-                            defaultValue: 15,
-                            anchorId: "settings.chat.toolAttempts"
-                        )
-                    }
-                }
-
-                SettingsDivider()
-
-                SettingsSubsection(label: "Display") {
-                    SettingsToggle(
-                        title: L("Smooth streaming"),
-                        description:
-                            "Pace incoming tokens at a steady rate so streaming looks like a typewriter across all providers. Disable to render tokens as soon as they arrive — useful with very fast remote providers that you'd rather see complete instantly.",
-                        isOn: $smoothStreamingEnabled
+            // Generation Settings
+            SettingsSubsection(label: "Generation") {
+                VStack(alignment: .leading, spacing: 12) {
+                    SettingsSliderField(
+                        label: "Temperature",
+                        help: "Randomness (0–2). Higher = more creative",
+                        text: $tempChatTemperature,
+                        range: 0 ... 2,
+                        step: 0.1,
+                        defaultValue: 0.7,
+                        formatString: "%.1f",
+                        anchorId: "settings.chat.temperature"
+                    )
+                    SettingsStepperField(
+                        label: "Max Tokens",
+                        help: "Maximum response tokens",
+                        text: $tempChatMaxTokens,
+                        range: 1 ... 65536,
+                        step: 1024,
+                        defaultValue: 16384,
+                        anchorId: "settings.chat.maxTokens"
+                    )
+                    SettingsStepperField(
+                        label: "Context Length",
+                        help: "Context window for remote models",
+                        text: $tempChatContextLength,
+                        range: 2048 ... 256000,
+                        step: 1024,
+                        defaultValue: 128000,
+                        anchorId: "settings.chat.contextLength"
+                    )
+                    SettingsSliderField(
+                        label: "Top P Override",
+                        help: "Sampling diversity (0–1)",
+                        text: $tempChatTopP,
+                        range: 0 ... 1,
+                        step: 0.05,
+                        defaultValue: 1.0,
+                        formatString: "%.2f",
+                        anchorId: "settings.chat.topP"
+                    )
+                    SettingsStepperField(
+                        label: "Max Tool Attempts",
+                        help: "Max consecutive tool calls per turn",
+                        text: $tempChatMaxToolAttempts,
+                        range: 1 ... 50,
+                        step: 1,
+                        defaultValue: 15,
+                        anchorId: "settings.chat.toolAttempts"
                     )
                 }
+            }
 
-                SettingsDivider()
+            SettingsDivider()
 
-                SettingsSubsection(label: "Clipboard") {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Toggle(isOn: $tempEnableClipboardMonitoring) {
-                            Text("Enable clipboard monitoring", bundle: .module)
-                                .font(.system(size: 12))
-                        }
-                        Text(
-                            "Automatically detect and offer text from any app as context. Includes 'grab selection' feature when summoning Osaurus.",
-                            bundle: .module
-                        )
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
+            SettingsSubsection(label: "Display") {
+                SettingsToggle(
+                    title: L("Smooth streaming"),
+                    description:
+                        "Pace incoming tokens at a steady rate so streaming looks like a typewriter across all providers. Disable to render tokens as soon as they arrive — useful with very fast remote providers that you'd rather see complete instantly.",
+                    isOn: $smoothStreamingEnabled
+                )
+            }
+
+            SettingsDivider()
+
+            SettingsSubsection(label: "Clipboard") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Toggle(isOn: $tempEnableClipboardMonitoring) {
+                        Text("Enable clipboard monitoring", bundle: .module)
+                            .font(.system(size: 12))
                     }
+                    Text(
+                        "Automatically detect and offer text from any app as context. Includes 'grab selection' feature when summoning Osaurus.",
+                        bundle: .module
+                    )
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.tertiaryText)
                 }
+            }
 
-                SettingsDivider()
+            SettingsDivider()
 
-                SettingsSubsection(label: "Generative Greetings") {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text(
-                            "Default voice for AI-generated greetings + quick actions. Turn greetings on per agent under the agent's Features tab; each agent can also override this voice in its Customization tab.",
-                            bundle: .module
-                        )
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
+            SettingsSubsection(label: "Generative Greetings") {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text(
+                        "Default voice for AI-generated greetings + quick actions. Turn greetings on per agent under the agent's Features tab; each agent can also override this voice in its Customization tab.",
+                        bundle: .module
+                    )
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.tertiaryText)
 
-                        personalityEditorBlock
-                    }
+                    personalityEditorBlock
                 }
             }
         }
