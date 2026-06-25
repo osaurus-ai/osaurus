@@ -224,6 +224,8 @@ private extension ManagementView {
             IdentityView()
         case .storage:
             StorageSettingsView()
+        case .chat:
+            ChatSettingsView()
         case .settings:
             ConfigurationView(searchText: $searchText)
         case .none:

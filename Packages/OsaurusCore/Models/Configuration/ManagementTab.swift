@@ -33,6 +33,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
     case privacy
     case identity
     case storage
+    case chat
     case settings
 
     public var id: String { rawValue }
@@ -74,6 +75,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
         case .privacy: "hand.raised.fill"
         case .identity: "person.badge.key.fill"
         case .storage: "externaldrive.fill.badge.checkmark"
+        case .chat: "text.bubble.fill"
         case .settings: "gearshape.fill"
         }
     }
@@ -103,6 +105,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
         case .privacy: L("Privacy")
         case .identity: L("Identity")
         case .storage: L("Storage")
+        case .chat: L("Chat")
         case .settings: L("Settings")
         }
     }
