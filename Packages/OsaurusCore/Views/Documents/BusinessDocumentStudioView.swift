@@ -48,9 +48,9 @@ struct BusinessDocumentStudioView: View {
                 .frame(width: 28, height: 28)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(verbatim: "Business Document Studio")
+                Text(verbatim: "Business Document Workbench")
                     .font(.system(size: 15, weight: .semibold))
-                Text(verbatim: "Preview and export availability")
+                Text(verbatim: "Import, extract, export, and hand off")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
             }
@@ -109,6 +109,17 @@ struct BusinessDocumentStudioView: View {
                     StudioSection(title: "Import Summary") {
                         infoGrid(presentation.importRows)
                     }
+                    StudioSection(title: "Business Extraction Summary") {
+                        VStack(alignment: .leading, spacing: 12) {
+                            infoGrid(presentation.businessRows)
+                            if !presentation.fieldRows.isEmpty {
+                                extractionList(title: "Fields", rows: presentation.fieldRows)
+                            }
+                            if !presentation.tableRows.isEmpty {
+                                extractionList(title: "Tables", rows: presentation.tableRows)
+                            }
+                        }
+                    }
                     StudioSection(title: "Metadata") {
                         infoGrid(presentation.summaryRows)
                     }
@@ -134,6 +145,9 @@ struct BusinessDocumentStudioView: View {
                                 exportOptionRow(option, presentation: presentation)
                             }
                         }
+                    }
+                    StudioSection(title: "Workspace Attachment Handoff") {
+                        infoGrid(presentation.handoffRows)
                     }
                     if !presenter.artifactStatuses.isEmpty {
                         StudioSection(title: "Artifact Status") {
@@ -253,6 +267,38 @@ struct BusinessDocumentStudioView: View {
                 )
             }
         }
+    }
+
+    private func extractionList(
+        title: String,
+        rows: [BusinessDocumentStudioInfoRow]
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text(verbatim: title)
+                .font(.system(size: 12, weight: .semibold))
+            ForEach(rows) { row in
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    Text(verbatim: row.label)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 128, alignment: .leading)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Text(verbatim: row.value)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.primary)
+                        .lineLimit(3)
+                        .truncationMode(.tail)
+                        .textSelection(.enabled)
+                }
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(Color(nsColor: .controlBackgroundColor))
+        )
     }
 
     @ViewBuilder
@@ -462,7 +508,7 @@ struct BusinessDocumentStudioView: View {
         panel.canChooseFiles = true
         panel.resolvesAliases = true
         panel.title = L("Open Business Document")
-        panel.message = L("Choose a business document to inspect or export.")
+        panel.message = L("Choose a business document to inspect preview, extraction, and export availability.")
         panel.allowedContentTypes = BusinessDocumentStudioDocumentTypes.supportedContentTypes
 
         Task { @MainActor in

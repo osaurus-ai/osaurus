@@ -41,6 +41,10 @@ struct BusinessDocumentStudioServiceTests {
         #expect(inspection.registryRoles == [.adapter, .emitter])
         #expect(inspection.exportOptions.contains { $0.targetFormatId == "csv" && $0.canExport })
         #expect(inspection.exportOptions.contains { $0.targetFormatId == "tsv" && $0.canExport })
+        #expect(inspection.extractionSummary.fields.map(\.name) == ["name", "age", "active"])
+        #expect(inspection.extractionSummary.tables.first?.rowCount == 3)
+        #expect(inspection.extractionSummary.tables.first?.columnCount == 3)
+        #expect(inspection.extractionSummary.attachmentHandoff.isAvailable)
 
         guard case let .table(preview) = inspection.preview else {
             Issue.record("Expected table preview")
@@ -53,6 +57,7 @@ struct BusinessDocumentStudioServiceTests {
         let encoded = try JSONEncoder().encode(inspection)
         let decoded = try JSONDecoder().decode(BusinessDocumentStudioInspection.self, from: encoded)
         #expect(decoded.summary.filename == inspection.summary.filename)
+        #expect(decoded.extractionSummary.fields.count == 3)
 
         let result = try await service.export(
             document,
@@ -130,6 +135,8 @@ struct BusinessDocumentStudioServiceTests {
         #expect(preview.inspection.validationIssues.contains { $0.code == .formulaNotWritable })
         #expect(preview.sheets.first?.sampleRows[1].cells[1].hasFormula == true)
         #expect(preview.sheets.first?.sampleRows[1].cells[1].text.text == "1200")
+        #expect(inspection.extractionSummary.fields.isEmpty)
+        #expect(inspection.extractionSummary.tables.first?.label == "Revenue")
 
         do {
             _ = try await service.export(
@@ -287,6 +294,37 @@ struct BusinessDocumentStudioServiceTests {
         #expect(preview.creationAvailability.reasonCode == .missingEmitter)
     }
 
+    @Test func structuredAttachmentHandoffUsesExistingAttachmentAPI() throws {
+        let service = BusinessDocumentStudioService(registry: DocumentFormatRegistry())
+        let document = Self.pdfDocument()
+
+        let inspection = try service.inspect(document)
+        let attachment = try service.makeAttachment(for: document)
+
+        #expect(inspection.extractionSummary.attachmentHandoff.isAvailable)
+        #expect(attachment.filename == "report.pdf")
+        #expect(attachment.structuredDocumentMetadata?.formatId == "pdf")
+        #expect(attachment.businessDocumentSummary?.kind == .pdf)
+    }
+
+    @Test func emptyTextFallbackDisablesAndBlocksAttachmentHandoff() throws {
+        let service = BusinessDocumentStudioService(registry: DocumentFormatRegistry())
+        let document = Self.plainTextDocument(text: "")
+
+        let inspection = try service.inspect(document)
+
+        #expect(!inspection.extractionSummary.attachmentHandoff.isAvailable)
+        #expect(inspection.extractionSummary.attachmentHandoff.fallbackUTF8Bytes == 0)
+        do {
+            _ = try service.makeAttachment(for: document)
+            Issue.record("Expected empty text fallback to block attachment handoff")
+        } catch BusinessDocumentStudioError.attachmentHandoffUnavailable(let message) {
+            #expect(message.contains("non-empty text fallback"))
+        } catch {
+            Issue.record("Expected attachmentHandoffUnavailable, got \(error)")
+        }
+    }
+
     // MARK: - Fixtures
 
     private static func write(_ content: String, filename: String) throws -> URL {
@@ -310,21 +348,21 @@ struct BusinessDocumentStudioServiceTests {
         return url
     }
 
-    private static func plainTextDocument() -> StructuredDocument {
+    private static func plainTextDocument(text: String = "hello world") -> StructuredDocument {
         StructuredDocument(
             formatId: "plaintext",
             filename: "notes.txt",
-            fileSize: 11,
+            fileSize: Int64(text.utf8.count),
             representation: AnyStructuredRepresentation(
                 formatId: "plaintext",
-                underlying: PlainTextRepresentation(text: "hello world")
+                underlying: PlainTextRepresentation(text: text)
             ),
             security: .notInspected(
                 formatId: "plaintext",
                 fileExtension: "txt",
                 sourceTrust: .generatedArtifact
             ),
-            textFallback: "hello world"
+            textFallback: text
         )
     }
 

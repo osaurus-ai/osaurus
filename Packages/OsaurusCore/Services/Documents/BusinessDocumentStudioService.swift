@@ -97,6 +97,7 @@ public struct BusinessDocumentStudioInspection: Codable, Equatable, Sendable {
     public let registryRoles: [DocumentFormatRegistrationRole]
     public let parseLimitBytes: Int64
     public let security: DocumentSecurityMetadata
+    public let extractionSummary: BusinessDocumentStudioExtractionSummary
     public let preview: BusinessDocumentStudioPreview
     public let exportOptions: [BusinessDocumentStudioExportOption]
 }
@@ -277,6 +278,38 @@ public struct BusinessDocumentTextPreview: Codable, Equatable, Sendable {
     public let isTruncated: Bool
 }
 
+public struct BusinessDocumentStudioExtractionSummary: Codable, Equatable, Sendable {
+    public let headline: String
+    public let fields: [BusinessDocumentStudioFieldSummary]
+    public let tables: [BusinessDocumentStudioTableSummary]
+    public let attachmentHandoff: BusinessDocumentStudioAttachmentHandoff
+}
+
+public struct BusinessDocumentStudioFieldSummary: Codable, Equatable, Sendable {
+    public let name: String
+    public let source: String
+    public let valueKind: String
+    public let filledCount: Int
+    public let emptyCount: Int
+    public let sampleValues: [String]
+}
+
+public struct BusinessDocumentStudioTableSummary: Codable, Equatable, Sendable {
+    public let label: String
+    public let source: String
+    public let rowCount: Int
+    public let columnCount: Int
+    public let cellCount: Int
+    public let sampleText: String?
+}
+
+public struct BusinessDocumentStudioAttachmentHandoff: Codable, Equatable, Sendable {
+    public let isAvailable: Bool
+    public let label: String
+    public let message: String
+    public let fallbackUTF8Bytes: Int
+}
+
 public struct BusinessDocumentCreationAvailability: Codable, Equatable, Sendable {
     public let formatId: String
     public let reasonCode: BusinessDocumentCreationReasonCode
@@ -328,6 +361,7 @@ public enum BusinessDocumentStudioError: LocalizedError, Sendable {
     case unsafeTextPackageTarget(fileExtension: String)
     case packageTargetExtensionMismatch(targetFormatId: String, fileExtension: String)
     case textExportTooLarge(actual: Int, limit: Int)
+    case attachmentHandoffUnavailable(String)
     case writeFailed(String)
 
     public var errorDescription: String? {
@@ -350,6 +384,8 @@ public enum BusinessDocumentStudioError: LocalizedError, Sendable {
             return "Export target '\(targetFormatId)' cannot write package extension .\(fileExtension)."
         case .textExportTooLarge(let actual, let limit):
             return "Text fallback export is \(actual) bytes, limit is \(limit) bytes."
+        case .attachmentHandoffUnavailable(let message):
+            return message
         case .writeFailed(let message):
             return "Business document export failed: \(message)"
         }
@@ -413,14 +449,25 @@ public struct BusinessDocumentStudioService: Sendable {
     ) throws -> BusinessDocumentStudioInspection {
         let roles = registry.registrationRoles(forFormatId: document.formatId)
             .sorted { $0.rawValue < $1.rawValue }
+        let preview = try preview(for: document, policy: policy)
         return BusinessDocumentStudioInspection(
             summary: BusinessDocumentStudioSummary(document: document),
             registryRoles: roles,
             parseLimitBytes: parseLimitBytes ?? DocumentLimits.limit(forFormatId: document.formatId),
             security: document.security,
-            preview: try preview(for: document, policy: policy),
+            extractionSummary: Self.extractionSummary(for: document, preview: preview),
+            preview: preview,
             exportOptions: exportOptions(for: document, policy: policy)
         )
+    }
+
+    public func makeAttachment(for document: StructuredDocument) throws -> Attachment {
+        guard !document.textFallback.isEmpty else {
+            throw BusinessDocumentStudioError.attachmentHandoffUnavailable(
+                "Workspace attachment handoff requires a non-empty text fallback."
+            )
+        }
+        return Attachment.structuredDocument(document)
     }
 
     public func export(
@@ -857,6 +904,137 @@ public struct BusinessDocumentStudioService: Sendable {
             blockCount: richText.blocks.count,
             isBlockSampleTruncated: richText.blocks.count > policy.maxRichBlocks
         )
+    }
+
+    private static func extractionSummary(
+        for document: StructuredDocument,
+        preview: BusinessDocumentStudioPreview
+    ) -> BusinessDocumentStudioExtractionSummary {
+        let handoff = BusinessDocumentStudioAttachmentHandoff(
+            isAvailable: !document.textFallback.isEmpty,
+            label: "Structured document attachment",
+            message: document.textFallback.isEmpty
+                ? "No text fallback is available for workspace attachment handoff."
+                : "Can be handed to workspace attachments with structured metadata and text fallback.",
+            fallbackUTF8Bytes: document.textFallback.utf8.count
+        )
+
+        switch preview {
+        case .table(let table):
+            return BusinessDocumentStudioExtractionSummary(
+                headline: "\(table.columnCount) field(s), \(table.rowsScanned) scanned row(s)",
+                fields: table.columns.map { column in
+                    BusinessDocumentStudioFieldSummary(
+                        name: column.name,
+                        source: "Column \(column.index + 1)",
+                        valueKind: column.inferredType.rawValue,
+                        filledCount: column.nonEmptyCount,
+                        emptyCount: column.emptyCount,
+                        sampleValues: column.sampleValues
+                    )
+                },
+                tables: [
+                    BusinessDocumentStudioTableSummary(
+                        label: table.filename,
+                        source: table.delimiter == .tab ? "TSV" : "CSV",
+                        rowCount: table.rowsScanned,
+                        columnCount: table.columnCount,
+                        cellCount: table.rowsScanned * table.columnCount,
+                        sampleText: table.sampledRows.first?.values.joined(separator: " | ")
+                    ),
+                ],
+                attachmentHandoff: handoff
+            )
+
+        case .workbook(let workbook):
+            return BusinessDocumentStudioExtractionSummary(
+                headline: "\(workbook.inspection.sheetSummaries.count) sheet(s), \(workbook.inspection.totalCells) cell(s)",
+                fields: [],
+                tables: workbook.sheets.map { sheet in
+                    BusinessDocumentStudioTableSummary(
+                        label: sheet.name,
+                        source: "Worksheet \(sheet.index + 1)",
+                        rowCount: sheet.rowCount,
+                        columnCount: sheet.maxColumn,
+                        cellCount: sheet.cellCount,
+                        sampleText: sheet.sampleRows.first?.cells.map(\.text.text).joined(separator: " | ")
+                    )
+                },
+                attachmentHandoff: handoff
+            )
+
+        case .pdf(let pdf):
+            return BusinessDocumentStudioExtractionSummary(
+                headline: "\(pdf.pageCount) page(s), \(pdf.tableCount) detected table(s)",
+                fields: [],
+                tables: pdf.pages.flatMap { page in
+                    page.tables.map { table in
+                        BusinessDocumentStudioTableSummary(
+                            label: "Page \(page.pageIndex + 1) table \(table.index + 1)",
+                            source: "PDF page \(page.pageIndex + 1)",
+                            rowCount: table.rowCount,
+                            columnCount: table.columnCount,
+                            cellCount: table.cellCount,
+                            sampleText: table.sampleRows.first?.cells.map(\.text.text).joined(separator: " | ")
+                        )
+                    }
+                },
+                attachmentHandoff: handoff
+            )
+
+        case .presentation(let presentation):
+            return BusinessDocumentStudioExtractionSummary(
+                headline: "\(presentation.slideCount) slide(s), \(presentation.tableCount) table(s)",
+                fields: presentation.slides.map { slide in
+                    BusinessDocumentStudioFieldSummary(
+                        name: slide.label,
+                        source: "Slide \(slide.slideNumber)",
+                        valueKind: "slide text",
+                        filledCount: slide.text.text.isEmpty ? 0 : 1,
+                        emptyCount: slide.text.text.isEmpty ? 1 : 0,
+                        sampleValues: slide.text.text.isEmpty ? [] : [slide.text.text]
+                    )
+                },
+                tables: presentation.slides.flatMap { slide in
+                    slide.tables.map { table in
+                        BusinessDocumentStudioTableSummary(
+                            label: "\(slide.label) table \(table.index + 1)",
+                            source: "Slide \(slide.slideNumber)",
+                            rowCount: table.rowCount,
+                            columnCount: table.columnCount,
+                            cellCount: table.cellCount,
+                            sampleText: table.sampleRows.first?.cells.map(\.text.text).joined(separator: " | ")
+                        )
+                    }
+                },
+                attachmentHandoff: handoff
+            )
+
+        case .richText(let richText):
+            return BusinessDocumentStudioExtractionSummary(
+                headline: "\(richText.blockCount) rich text block(s)",
+                fields: richText.sampledBlocks.map { block in
+                    BusinessDocumentStudioFieldSummary(
+                        name: block.kind.rawValue,
+                        source: "Block \(block.sourceIndex + 1)",
+                        valueKind: block.kind.rawValue,
+                        filledCount: block.text.text.isEmpty ? 0 : 1,
+                        emptyCount: block.text.text.isEmpty ? 1 : 0,
+                        sampleValues: block.text.text.isEmpty ? [] : [block.text.text]
+                    )
+                },
+                tables: [],
+                attachmentHandoff: handoff
+            )
+
+        case .text(let text):
+            return BusinessDocumentStudioExtractionSummary(
+                headline: "\(text.fullUTF16Length) UTF-16 unit text fallback",
+                fields: [],
+                tables: [],
+                attachmentHandoff: handoff
+            )
+        }
     }
 
     private static func textPreview(_ preview: PDFPPTXTextPreview) -> BusinessDocumentTextPreview {

@@ -184,6 +184,17 @@ final class BusinessDocumentStudioPresenter: ObservableObject {
         appendArtifactStatus(BusinessDocumentStudioArtifactStatus(block: block))
     }
 
+    func makeWorkspaceAttachment() throws -> Attachment {
+        guard let document else {
+            throw BusinessDocumentStudioPresenterError.noDocumentLoaded
+        }
+        do {
+            return try service.makeAttachment(for: document)
+        } catch BusinessDocumentStudioError.attachmentHandoffUnavailable(let message) {
+            throw BusinessDocumentStudioPresenterError.attachmentHandoffUnavailable(message)
+        }
+    }
+
     private func mapServiceError(
         _ error: BusinessDocumentStudioError,
         optionID: String
@@ -268,6 +279,7 @@ final class BusinessDocumentStudioPresenter: ObservableObject {
 
         case .unsupportedFormat,
              .adapterReturnedUnexpectedFormat,
+             .attachmentHandoffUnavailable,
              .writeFailed:
             return .failed(error.localizedDescription)
         }
@@ -310,10 +322,14 @@ struct BusinessDocumentStudioPresentation: Equatable {
     let subtitle: String
     let iconSystemName: String
     let importRows: [BusinessDocumentStudioInfoRow]
+    let businessRows: [BusinessDocumentStudioInfoRow]
     let summaryRows: [BusinessDocumentStudioInfoRow]
     let structureRows: [BusinessDocumentStudioInfoRow]
     let securityRows: [BusinessDocumentStudioInfoRow]
     let previewRows: [BusinessDocumentStudioInfoRow]
+    let fieldRows: [BusinessDocumentStudioInfoRow]
+    let tableRows: [BusinessDocumentStudioInfoRow]
+    let handoffRows: [BusinessDocumentStudioInfoRow]
     let previewSections: [BusinessDocumentStudioPreviewSection]
     let warnings: [BusinessDocumentStudioWarning]
     let exportOptions: [BusinessDocumentStudioExportOptionPresentation]
@@ -325,10 +341,14 @@ struct BusinessDocumentStudioPresentation: Equatable {
         subtitle = "\(summary.kind.displayName) - \(summary.formatId.uppercased())"
         iconSystemName = summary.kind.systemImageName
         importRows = Self.importRows(for: inspection, sourceURL: sourceURL)
+        businessRows = Self.businessRows(for: inspection.extractionSummary)
         summaryRows = Self.summaryRows(for: inspection)
         structureRows = Self.structureRows(for: summary.structureSummary)
         securityRows = Self.securityRows(for: inspection.security)
         previewRows = Self.previewRows(for: inspection.preview)
+        fieldRows = Self.fieldRows(for: inspection.extractionSummary.fields)
+        tableRows = Self.tableRows(for: inspection.extractionSummary.tables)
+        handoffRows = Self.handoffRows(for: inspection.extractionSummary.attachmentHandoff)
         previewSections = Self.previewSections(for: inspection.preview)
         warnings = Self.warnings(for: inspection)
         exportOptions = inspection.exportOptions.map(BusinessDocumentStudioExportOptionPresentation.init(option:))
@@ -385,6 +405,17 @@ struct BusinessDocumentStudioPresentation: Equatable {
             )
         }
         return numberedRows(prefix: "import", pairs)
+    }
+
+    private static func businessRows(
+        for summary: BusinessDocumentStudioExtractionSummary
+    ) -> [BusinessDocumentStudioInfoRow] {
+        numberedRows(prefix: "business", [
+            ("Extraction summary", summary.headline),
+            ("Fields", "\(summary.fields.count)"),
+            ("Tables", "\(summary.tables.count)"),
+            ("Workspace handoff", summary.attachmentHandoff.isAvailable ? "Available" : "Unavailable"),
+        ])
     }
 
     private static func structureRows(
@@ -556,27 +587,40 @@ struct BusinessDocumentStudioPresentation: Equatable {
 
         case .pdf(let pdf):
             return pdf.pages.enumerated().map { offset, page in
-                BusinessDocumentStudioPreviewSection(
+                var rows = numberedRows(prefix: "pdf-page-\(offset)", [
+                    ("Text", page.text.text),
+                    ("Tables", "\(page.tableCount)"),
+                ])
+                rows.append(contentsOf: tableSampleRows(page.tables, prefix: "pdf-page-\(offset)-table"))
+                return BusinessDocumentStudioPreviewSection(
                     id: "pdf-page-\(offset)",
                     title: "Page \(page.pageIndex + 1)",
-                    rows: numberedRows(prefix: "pdf-page-\(offset)", [
-                        ("Text", page.text.text),
-                        ("Tables", "\(page.tableCount)"),
-                    ])
+                    rows: rows
                 )
             }
 
         case .presentation(let presentation):
             return presentation.slides.enumerated().map { offset, slide in
-                BusinessDocumentStudioPreviewSection(
+                var rows = numberedRows(prefix: "presentation-slide-\(offset)", [
+                    ("Slide", "\(slide.slideNumber)"),
+                    ("Hidden", slide.isHidden ? "Yes" : "No"),
+                    ("Text", slide.text.text),
+                    ("Tables", "\(slide.tableCount)"),
+                ])
+                if let speakerNotes = slide.speakerNotes {
+                    rows.append(
+                        BusinessDocumentStudioInfoRow(
+                            id: "presentation-slide-\(offset)-speaker-notes",
+                            label: "Speaker notes",
+                            value: speakerNotes.text
+                        )
+                    )
+                }
+                rows.append(contentsOf: tableSampleRows(slide.tables, prefix: "presentation-slide-\(offset)-table"))
+                return BusinessDocumentStudioPreviewSection(
                     id: "presentation-slide-\(offset)",
                     title: slide.label,
-                    rows: numberedRows(prefix: "presentation-slide-\(offset)", [
-                        ("Slide", "\(slide.slideNumber)"),
-                        ("Hidden", slide.isHidden ? "Yes" : "No"),
-                        ("Text", slide.text.text),
-                        ("Tables", "\(slide.tableCount)"),
-                    ])
+                    rows: rows
                 )
             }
 
@@ -604,6 +648,74 @@ struct BusinessDocumentStudioPresentation: Equatable {
                 ),
             ]
         }
+    }
+
+    private static func tableSampleRows(
+        _ tables: [BusinessDocumentTablePreview],
+        prefix: String
+    ) -> [BusinessDocumentStudioInfoRow] {
+        tables.prefix(4).enumerated().flatMap { tableOffset, table in
+            var rows = numberedRows(prefix: "\(prefix)-\(tableOffset)", [
+                (
+                    "Table \(table.index + 1)",
+                    "\(table.rowCount)x\(table.columnCount), \(table.cellCount) cells"
+                ),
+            ])
+            rows.append(
+                contentsOf: table.sampleRows.prefix(4).enumerated().map { rowOffset, row in
+                    BusinessDocumentStudioInfoRow(
+                        id: "\(prefix)-\(tableOffset)-row-\(rowOffset)",
+                        label: "Table row \(row.index + 1)",
+                        value: row.cells.map(\.text.text).joined(separator: " | ")
+                    )
+                }
+            )
+            return rows
+        }
+    }
+
+    private static func fieldRows(
+        for fields: [BusinessDocumentStudioFieldSummary]
+    ) -> [BusinessDocumentStudioInfoRow] {
+        fields.prefix(12).enumerated().map { offset, field in
+            let samples = field.sampleValues.isEmpty
+                ? ""
+                : " - samples: \(field.sampleValues.prefix(3).joined(separator: ", "))"
+            return BusinessDocumentStudioInfoRow(
+                id: "field-\(offset)",
+                label: field.name,
+                value: "\(field.valueKind), \(field.filledCount) filled, \(field.emptyCount) empty\(samples)"
+            )
+        }
+    }
+
+    private static func tableRows(
+        for tables: [BusinessDocumentStudioTableSummary]
+    ) -> [BusinessDocumentStudioInfoRow] {
+        tables.prefix(12).enumerated().map { offset, table in
+            let sample: String
+            if let sampleText = table.sampleText, !sampleText.isEmpty {
+                sample = " - \(sampleText)"
+            } else {
+                sample = ""
+            }
+            return BusinessDocumentStudioInfoRow(
+                id: "table-\(offset)",
+                label: table.label,
+                value: "\(table.source), \(table.rowCount)x\(table.columnCount), \(table.cellCount) cells\(sample)"
+            )
+        }
+    }
+
+    private static func handoffRows(
+        for handoff: BusinessDocumentStudioAttachmentHandoff
+    ) -> [BusinessDocumentStudioInfoRow] {
+        numberedRows(prefix: "handoff", [
+            ("Status", handoff.isAvailable ? "Available" : "Unavailable"),
+            ("Artifact", handoff.label),
+            ("Text fallback", fileSizeLabel(Int64(handoff.fallbackUTF8Bytes))),
+            ("Detail", handoff.message),
+        ])
     }
 
     private static func warnings(
@@ -905,6 +1017,7 @@ struct BusinessDocumentStudioLoadFailure: Equatable {
                  .unsafeTextPackageTarget,
                  .packageTargetExtensionMismatch,
                  .textExportTooLarge,
+                 .attachmentHandoffUnavailable,
                  .writeFailed:
                 kind = .other
                 title = "Document unavailable"
@@ -920,6 +1033,20 @@ struct BusinessDocumentStudioLoadFailure: Equatable {
 
         kind = .other
         title = "Document unavailable"
+    }
+}
+
+enum BusinessDocumentStudioPresenterError: LocalizedError, Equatable {
+    case noDocumentLoaded
+    case attachmentHandoffUnavailable(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .noDocumentLoaded:
+            return "No document is loaded."
+        case .attachmentHandoffUnavailable(let message):
+            return message
+        }
     }
 }
 

@@ -1,6 +1,6 @@
 # Business Document I/O Workbench
 
-The Business Document Studio is the user-visible workbench for importing,
+The Business Document Workbench is the user-visible surface for importing,
 previewing, extracting, and exporting business documents without routing the
 file through chat.
 
@@ -20,6 +20,25 @@ file through chat.
 
 Unsupported extensions stay in an unsupported import state. Malformed files stay
 in an extraction-failure state with the adapter error surfaced to the user.
+
+## Business Extraction Summary
+
+The workbench now derives a format-neutral business summary from the parsed
+representation:
+
+- Field summaries list CSV columns, workbook header cells, slide text sections,
+  and rich-text blocks with source labels, filled/empty counts, value kinds, and
+  bounded samples.
+- Table summaries list CSV files, worksheets, detected PDF tables, and slide
+  tables with row/column/cell counts and a first sampled row where available.
+- PDF and slide preview sections include sampled table rows, not just table
+  counts, so users can verify extracted structure before exporting.
+- Workspace attachment handoff is surfaced through the existing
+  `Attachment.structuredDocument(_:)` API. The workbench reports whether a text
+  fallback is available and can create an attachment that carries structured
+  document metadata without touching workspace routing code. Empty text
+  fallbacks are reported as unavailable and attachment creation fails with a
+  typed workbench error instead of creating a misleading empty attachment.
 
 ## Export and Artifacts
 

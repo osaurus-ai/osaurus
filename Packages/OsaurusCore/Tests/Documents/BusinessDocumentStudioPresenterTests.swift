@@ -37,6 +37,11 @@ struct BusinessDocumentStudioPresenterTests {
         #expect(presentation.importRows.contains { $0.label == "Source" && $0.value == source.path })
         #expect(presentation.importRows.contains(.init(label: "Document kind", value: "Table")))
         #expect(presentation.importRows.contains(.init(label: "Extraction", value: "Structured table preview")))
+        #expect(presentation.businessRows.contains(.init(label: "Fields", value: "3")))
+        #expect(presentation.businessRows.contains(.init(label: "Tables", value: "1")))
+        #expect(presentation.fieldRows.contains { $0.label == "age" && $0.value.contains("integer") })
+        #expect(presentation.tableRows.contains { $0.label.hasSuffix("people.csv") && $0.value.contains("3x3") })
+        #expect(presentation.handoffRows.contains(.init(label: "Status", value: "Available")))
         #expect(presentation.previewRows.contains(.init(label: "Preview", value: "Delimited table")))
         #expect(presentation.previewRows.contains(.init(label: "Columns", value: "3")))
         #expect(presentation.availableExportOptions.map(\.targetFormatId).contains("csv"))
@@ -101,6 +106,9 @@ struct BusinessDocumentStudioPresenterTests {
         #expect(xlsx.reason == .validationFailed)
         #expect(xlsx.reasonLabel == "Validation failed")
         #expect(presentation.previewRows.contains(.init(label: "Formula cells", value: "1")))
+        #expect(presentation.fieldRows.isEmpty)
+        #expect(presentation.businessRows.contains(.init(label: "Fields", value: "0")))
+        #expect(presentation.tableRows.contains { $0.label == "Revenue" && $0.value.contains("2x2") })
         #expect(presentation.warnings.contains { warning in
             warning.severity == .blocked
                 && warning.title == "Export unavailable: XLSX workbook"
@@ -142,6 +150,44 @@ struct BusinessDocumentStudioPresenterTests {
         #expect(status.safetyLabel == "No artifact written")
     }
 
+    @Test func workspaceAttachmentHandoffProducesStructuredDocumentAttachment() throws {
+        let presenter = BusinessDocumentStudioPresenter(
+            service: BusinessDocumentStudioService(registry: DocumentFormatRegistry())
+        )
+
+        try presenter.load(document: Self.pdfDocument())
+
+        let attachment = try presenter.makeWorkspaceAttachment()
+
+        #expect(attachment.filename == "report.pdf")
+        #expect(attachment.structuredDocumentMetadata?.formatId == "pdf")
+        #expect(attachment.businessDocumentSummary?.kind == .pdf)
+        #expect(attachment.businessDocumentSummary?.chipDetailLabel.contains("PDF") == true)
+    }
+
+    @Test func emptyTextFallbackShowsUnavailableHandoffAndBlocksAttachmentCreation() throws {
+        let presenter = BusinessDocumentStudioPresenter(
+            service: BusinessDocumentStudioService(registry: DocumentFormatRegistry())
+        )
+
+        try presenter.load(document: Self.plainTextDocument(text: ""))
+
+        let presentation = try Self.loadedPresentation(from: presenter)
+        #expect(presentation.businessRows.contains(.init(label: "Workspace handoff", value: "Unavailable")))
+        #expect(presentation.handoffRows.contains(.init(label: "Status", value: "Unavailable")))
+        let fallbackRow = try #require(presentation.handoffRows.first { $0.label == "Text fallback" })
+        #expect(fallbackRow.value.contains("0") || fallbackRow.value.lowercased().contains("zero"))
+
+        do {
+            _ = try presenter.makeWorkspaceAttachment()
+            Issue.record("Expected empty text fallback to block workspace attachment creation")
+        } catch BusinessDocumentStudioPresenterError.attachmentHandoffUnavailable(let message) {
+            #expect(message.contains("non-empty text fallback"))
+        } catch {
+            Issue.record("Expected attachmentHandoffUnavailable, got \(error)")
+        }
+    }
+
     @Test func presentationPreviewSurfacesSlideExtractionAndMissingEmitter() throws {
         let presenter = BusinessDocumentStudioPresenter(
             service: BusinessDocumentStudioService(registry: DocumentFormatRegistry())
@@ -160,6 +206,39 @@ struct BusinessDocumentStudioPresenterTests {
         #expect(pptx.canExport == false)
         #expect(pptx.reason == .missingEmitter)
         #expect(pptx.statusLabel == "Missing emitter")
+    }
+
+    @Test func pdfAndSlideTableExtractionSummariesSurfaceSampledTables() throws {
+        let presenter = BusinessDocumentStudioPresenter(
+            service: BusinessDocumentStudioService(registry: DocumentFormatRegistry())
+        )
+
+        try presenter.load(document: Self.pdfDocumentWithTable())
+
+        var presentation = try Self.loadedPresentation(from: presenter)
+        #expect(presentation.businessRows.contains(.init(label: "Tables", value: "1")))
+        #expect(presentation.tableRows.contains { row in
+            row.label == "Page 1 table 1"
+                && row.value.contains("2x2")
+                && row.value.contains("Region | Revenue")
+        })
+        #expect(presentation.previewSections.first?.rows.contains { row in
+            row.label == "Table row 1" && row.value == "Region | Revenue"
+        } == true)
+
+        try presenter.load(document: Self.presentationDocument(includeTable: true))
+
+        presentation = try Self.loadedPresentation(from: presenter)
+        #expect(presentation.businessRows.contains(.init(label: "Tables", value: "1")))
+        #expect(presentation.fieldRows.contains { $0.label == "Slide 1" && $0.value.contains("slide text") })
+        #expect(presentation.tableRows.contains { row in
+            row.label == "Slide 1 table 1"
+                && row.value.contains("2x2")
+                && row.value.contains("Quarter | Status")
+        })
+        #expect(presentation.previewSections.first?.rows.contains { row in
+            row.label == "Table row 1" && row.value == "Quarter | Status"
+        } == true)
     }
 
     @Test func availableTextFallbackExportSucceeds() async throws {
@@ -443,21 +522,21 @@ struct BusinessDocumentStudioPresenterTests {
         return url
     }
 
-    private static func plainTextDocument() -> StructuredDocument {
+    private static func plainTextDocument(text: String = "hello world") -> StructuredDocument {
         StructuredDocument(
             formatId: "plaintext",
             filename: "notes.txt",
-            fileSize: 11,
+            fileSize: Int64(text.utf8.count),
             representation: AnyStructuredRepresentation(
                 formatId: "plaintext",
-                underlying: PlainTextRepresentation(text: "hello world")
+                underlying: PlainTextRepresentation(text: text)
             ),
             security: .notInspected(
                 formatId: "plaintext",
                 fileExtension: "txt",
                 sourceTrust: .generatedArtifact
             ),
-            textFallback: "hello world"
+            textFallback: text
         )
     }
 
@@ -488,8 +567,96 @@ struct BusinessDocumentStudioPresenterTests {
         )
     }
 
-    private static func presentationDocument() -> StructuredDocument {
+    private static func pdfDocumentWithTable() -> StructuredDocument {
+        let table = PDFTable(
+            pageIndex: 0,
+            index: 0,
+            rows: [
+                pdfTableRow(index: 0, values: ["Region", "Revenue"]),
+                pdfTableRow(index: 1, values: ["North", "$1200"]),
+            ],
+            bounds: bounds(),
+            anchor: DocumentAnchor(
+                kind: .table,
+                path: [.init(kind: .page, index: 0), .init(kind: .table, index: 0)]
+            )
+        )
+        let page = PDFPageRepresentation(
+            pageIndex: 0,
+            text: "Quarterly report",
+            tables: [table],
+            anchor: DocumentAnchor(
+                kind: .page,
+                path: [.init(kind: .page, index: 0)],
+                label: "Page 1"
+            )
+        )
+        return StructuredDocument(
+            formatId: "pdf",
+            filename: "report.pdf",
+            fileSize: 128,
+            representation: AnyStructuredRepresentation(
+                formatId: "pdf",
+                underlying: PDFDocumentRepresentation(pages: [page])
+            ),
+            security: .notInspected(
+                formatId: "pdf",
+                fileExtension: "pdf",
+                sourceTrust: .generatedArtifact
+            ),
+            textFallback: "Quarterly report\nRegion\tRevenue\nNorth\t$1200"
+        )
+    }
+
+    private static func presentationDocument(includeTable: Bool = false) -> StructuredDocument {
         let sourcePart = "ppt/slides/slide1.xml"
+        let table = PresentationTable(
+            index: 0,
+            sourcePart: sourcePart,
+            anchorId: "slide1/table0",
+            rows: [
+                PresentationTableRow(
+                    index: 0,
+                    anchorId: "slide1/table0/row0",
+                    cells: [
+                        PresentationTableCell(
+                            rowIndex: 0,
+                            columnIndex: 0,
+                            text: "Quarter",
+                            paragraphIndexes: [2],
+                            anchorId: "slide1/table0/r0c0"
+                        ),
+                        PresentationTableCell(
+                            rowIndex: 0,
+                            columnIndex: 1,
+                            text: "Status",
+                            paragraphIndexes: [2],
+                            anchorId: "slide1/table0/r0c1"
+                        ),
+                    ]
+                ),
+                PresentationTableRow(
+                    index: 1,
+                    anchorId: "slide1/table0/row1",
+                    cells: [
+                        PresentationTableCell(
+                            rowIndex: 1,
+                            columnIndex: 0,
+                            text: "Q1",
+                            paragraphIndexes: [3],
+                            anchorId: "slide1/table0/r1c0"
+                        ),
+                        PresentationTableCell(
+                            rowIndex: 1,
+                            columnIndex: 1,
+                            text: "Green",
+                            paragraphIndexes: [3],
+                            anchorId: "slide1/table0/r1c1"
+                        ),
+                    ]
+                ),
+            ]
+        )
         let slide = PresentationSlide(
             index: 0,
             number: 1,
@@ -510,7 +677,8 @@ struct BusinessDocumentStudioPresenterTests {
                     sourcePart: sourcePart,
                     anchorId: "slide1/p1/r0"
                 ),
-            ]
+            ],
+            tables: includeTable ? [table] : []
         )
         let deck = PresentationDocument(
             kind: .presentation,
@@ -611,5 +779,46 @@ struct BusinessDocumentStudioPresenterTests {
                 ]
             )
         )
+    }
+
+    private static func pdfTableRow(index: Int, values: [String]) -> PDFTableRow {
+        PDFTableRow(
+            index: index,
+            cells: values.enumerated().map { columnIndex, value in
+                PDFTableCell(
+                    rowIndex: index,
+                    columnIndex: columnIndex,
+                    text: value,
+                    bounds: bounds(x: Double(columnIndex) * 10, y: Double(index) * 10),
+                    anchor: DocumentAnchor(
+                        kind: .cell,
+                        path: [
+                            .init(kind: .page, index: 0),
+                            .init(kind: .table, index: 0),
+                            .init(kind: .row, index: index),
+                            .init(kind: .cell, index: columnIndex),
+                        ]
+                    )
+                )
+            },
+            bounds: bounds(y: Double(index) * 10),
+            anchor: DocumentAnchor(
+                kind: .row,
+                path: [
+                    .init(kind: .page, index: 0),
+                    .init(kind: .table, index: 0),
+                    .init(kind: .row, index: index),
+                ]
+            )
+        )
+    }
+
+    private static func bounds(
+        x: Double = 0,
+        y: Double = 0,
+        width: Double = 10,
+        height: Double = 10
+    ) -> DocumentBoundingBox {
+        DocumentBoundingBox(x: x, y: y, width: width, height: height, coordinateSpace: .page)
     }
 }

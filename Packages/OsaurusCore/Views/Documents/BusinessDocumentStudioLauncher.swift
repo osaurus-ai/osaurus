@@ -2,7 +2,7 @@
 //  BusinessDocumentStudioLauncher.swift
 //  osaurus
 //
-//  App-facing entry point for opening Business Document Studio windows.
+//  App-facing entry point for opening Business Document Workbench windows.
 //
 
 import AppKit
@@ -52,7 +52,7 @@ public enum BusinessDocumentStudioLauncher {
             defer: false
         )
         window.title = sourceURL.lastPathComponent.isEmpty
-            ? L("Business Document Studio")
+            ? L("Business Document Workbench")
             : sourceURL.lastPathComponent
         window.titlebarAppearsTransparent = true
         window.isReleasedWhenClosed = false
