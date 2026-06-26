@@ -17,6 +17,13 @@ struct ToolsManagerView: View {
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
+    /// Rows rendered per group before collapsing the rest behind a "Show all"
+    /// disclosure. Bounds eager layout work when a single source exposes a very
+    /// large number of tools.
+    private static let toolGroupRenderCap = 20
+    /// Group keys the user has chosen to fully expand past the render cap.
+    @State private var expandedToolGroups: Set<String> = []
+
     @State private var selectedTab: ToolsTab = .available
     @State private var searchText: String = ""
     @State private var hasAppeared = false
@@ -248,7 +255,7 @@ struct ToolsManagerView: View {
                         InstalledSectionHeader(title: L("Built-in Tools"), icon: "shippingbox")
                             .padding(.top, 8)
 
-                        ForEach(builtInNative) { entry in
+                        cappedGroup(key: "builtInNative", tools: builtInNative) { entry in
                             RuntimeManagedToolEntryRow(
                                 entry: entry,
                                 badge: builtInBadge(for: entry),
@@ -264,7 +271,7 @@ struct ToolsManagerView: View {
                         InstalledSectionHeader(title: L("Runtime Tools"), icon: "terminal")
                             .padding(.top, 8)
 
-                        ForEach(runtimeTools) { entry in
+                        cappedGroup(key: "runtime", tools: runtimeTools) { entry in
                             RuntimeManagedToolEntryRow(
                                 entry: entry,
                                 badge: runtimeBadge(for: entry),
@@ -315,6 +322,38 @@ struct ToolsManagerView: View {
             }
             .padding(24)
             .frame(maxWidth: .infinity)
+        }
+    }
+
+    /// Emit a tool group's rows, capping the rendered count at
+    /// `toolGroupRenderCap` until the user expands it. Keeps a single source
+    /// with hundreds of tools from laying out every row at once.
+    @ViewBuilder
+    private func cappedGroup<Row: View>(
+        key: String,
+        tools: [ToolRegistry.ToolEntry],
+        @ViewBuilder row: @escaping (ToolRegistry.ToolEntry) -> Row
+    ) -> some View {
+        let cap = Self.toolGroupRenderCap
+        let isExpanded = expandedToolGroups.contains(key)
+        let shown = (isExpanded || tools.count <= cap) ? tools : Array(tools.prefix(cap))
+
+        ForEach(shown) { entry in
+            row(entry)
+        }
+
+        if tools.count > cap {
+            ShowAllToolsButton(
+                hiddenCount: tools.count - cap,
+                isExpanded: isExpanded
+            ) {
+                if isExpanded {
+                    expandedToolGroups.remove(key)
+                } else {
+                    expandedToolGroups.insert(key)
+                }
+            }
+            .padding(.top, 4)
         }
     }
 
@@ -1577,6 +1616,43 @@ struct ToolPermissionBanner: View {
                         .stroke(theme.warningColor.opacity(0.2), lineWidth: 1)
                 )
         )
+    }
+}
+
+// MARK: - Show All Tools Button
+
+/// Disclosure control that toggles a capped tool group between its first
+/// `toolGroupRenderCap` rows and the full list.
+private struct ShowAllToolsButton: View {
+    @Environment(\.theme) private var theme
+    let hiddenCount: Int
+    let isExpanded: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                    .font(.system(size: 10, weight: .semibold))
+                if isExpanded {
+                    Text("Show fewer", bundle: .module)
+                        .font(.system(size: 12, weight: .medium))
+                } else {
+                    Text("Show \(hiddenCount) more", bundle: .module)
+                        .font(.system(size: 12, weight: .medium))
+                }
+                Spacer()
+            }
+            .foregroundColor(theme.accentColor)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(theme.tertiaryBackground.opacity(0.5))
+            )
+        }
+        .buttonStyle(PlainButtonStyle())
     }
 }
 
