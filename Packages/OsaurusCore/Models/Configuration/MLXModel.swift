@@ -387,6 +387,22 @@ struct MLXModel: Identifiable, Codable {
         return VLMDetection.isVLM(modelId: id)
     }
 
+    /// Whether the on-disk bundle is in MLX format and therefore loadable by
+    /// the local engine (vmlx). Catalog entries that aren't on disk yet return
+    /// `true` — they're curated MLX builds and there's nothing to inspect; the
+    /// check only matters for downloaded/external bundles co-mingled in a
+    /// shared model store. Verdict is cached per directory by
+    /// `ModelFormatDetection` (dropped on `.localModelsChanged`), so reading it
+    /// per row stays cheap.
+    var isMLXFormat: Bool {
+        guard isDownloaded else { return true }
+        // First-party OsaurusAI bundles are always MLX by construction. Trust
+        // provenance unconditionally so a pipeline that omits the `format: mlx`
+        // tag (e.g. an unquantized first-party build) can never be greyed out.
+        if id.lowercased().hasPrefix("osaurusai/") { return true }
+        return ModelFormatDetection.isMLXFormat(at: localDirectory)
+    }
+
     /// Whether this bundle is an embedding/encoder-only model (BERT family,
     /// model2vec, etc.) that cannot generate chat completions. Detected from
     /// the on-disk config.json; bundles that aren't on disk return false.

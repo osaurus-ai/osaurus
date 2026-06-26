@@ -18,11 +18,25 @@ struct CapabilityLoadBufferTests {
         let buffer = CapabilityLoadBuffer()
         let tool1 = Tool(
             type: "function",
-            function: ToolFunction(name: "test_tool_1", description: "A test", parameters: nil)
+            function: ToolFunction(
+                name: "test_tool_1",
+                description: "A test",
+                parameters: .object([
+                    "type": .string("object"),
+                    "properties": .object([:]),
+                ])
+            )
         )
         let tool2 = Tool(
             type: "function",
-            function: ToolFunction(name: "test_tool_2", description: "Another test", parameters: nil)
+            function: ToolFunction(
+                name: "test_tool_2",
+                description: "Another test",
+                parameters: .object([
+                    "type": .string("object"),
+                    "properties": .object([:]),
+                ])
+            )
         )
 
         await buffer.add(tool1)
@@ -41,6 +55,65 @@ struct CapabilityLoadBufferTests {
         let buffer = CapabilityLoadBuffer()
         let result = await buffer.drain()
         #expect(result.isEmpty)
+    }
+
+    @Test func duplicateAddsAreIdempotentWithinOneTurn() async {
+        let buffer = CapabilityLoadBuffer()
+        let tool = Tool(
+            type: "function",
+            function: ToolFunction(
+                name: "duplicate_loaded_tool",
+                description: "A test",
+                parameters: .object([
+                    "type": .string("object"),
+                    "properties": .object([:]),
+                ])
+            )
+        )
+
+        await buffer.add(tool)
+        await buffer.add(tool)
+
+        let drained = await buffer.drain()
+        #expect(drained.map { $0.function.name } == ["duplicate_loaded_tool"])
+        #expect(await buffer.drain().isEmpty)
+    }
+
+    @Test func noArgumentDynamicSchemaBuffersAsEmptyObjectTool() async {
+        let buffer = CapabilityLoadBuffer()
+        let noArgumentTool = Tool(
+            type: "function",
+            function: ToolFunction(
+                name: "no_argument_loaded_tool",
+                description: "A test",
+                parameters: nil
+            )
+        )
+
+        let diagnostic = await buffer.add(noArgumentTool)
+
+        #expect(diagnostic == nil)
+        let drained = await buffer.drain()
+        #expect(drained.map { $0.function.name } == ["no_argument_loaded_tool"])
+        #expect(drained.first?.function.parameters == nil)
+    }
+
+    @Test func malformedDynamicSchemaFailsClosedBeforeBuffering() async {
+        let buffer = CapabilityLoadBuffer()
+        let malformed = Tool(
+            type: "function",
+            function: ToolFunction(
+                name: "malformed_schema_tool",
+                description: "A test",
+                parameters: .string("not an object")
+            )
+        )
+
+        let diagnostic = await buffer.add(malformed)
+
+        #expect(diagnostic?.kind == .invalidArgs)
+        #expect(diagnostic?.field == "parameters")
+        #expect(await buffer.drain().isEmpty)
     }
 }
 
@@ -486,6 +559,13 @@ struct CapabilitiesLoadToolTests {
                     spec: SandboxToolSpec(
                         id: "probe",
                         description: "Probe tool governed by the skill",
+                        parameters: [
+                            "mode": SandboxParameterSpec(
+                                type: "string",
+                                description: "Optional probe mode",
+                                default: "default"
+                            )
+                        ],
                         run: "echo hi"
                     ),
                     plugin: plugin
@@ -640,6 +720,31 @@ struct CapabilitiesLoadToolTests {
             await SessionToolStateStore.shared.invalidate(sessionId)
         }
     }
+
+    @Test @MainActor
+    func toolLoadRejectsMalformedDynamicSchemaWithTypedDiagnostic() async throws {
+        try await DynamicCatalogTestLock.shared.run {
+            let toolName =
+                "lane_b_malformed_schema_tool_\(UUID().uuidString.replacingOccurrences(of: "-", with: "_"))"
+            let fixture = MalformedSchemaFixtureTool(name: toolName)
+            ToolRegistry.shared.registerPluginTool(fixture)
+            ToolRegistry.shared.setEnabled(true, for: fixture.name)
+            defer { ToolRegistry.shared.unregister(names: [fixture.name]) }
+
+            _ = await CapabilityLoadBuffer.shared.drain()
+
+            let tool = CapabilitiesLoadTool()
+            let result = try await ChatExecutionContext.$currentAgentId.withValue(UUID()) {
+                try await tool.execute(argumentsJSON: "{\"ids\": [\"tool/\(fixture.name)\"]}")
+            }
+
+            #expect(ToolEnvelope.isError(result))
+            #expect(EnvelopeAssertions.failureKind(result) == "invalid_args")
+            #expect(EnvelopeAssertions.failureField(result) == "parameters")
+            #expect(result.contains("non-object parameter schema"))
+            #expect(await CapabilityLoadBuffer.shared.drain().isEmpty)
+        }
+    }
 }
 
 private struct CapabilityPolicyFixtureTool: OsaurusTool {
@@ -658,6 +763,16 @@ private struct CapabilityPolicyFixtureTool: OsaurusTool {
         ]),
         "required": .array([.string("query")]),
     ])
+
+    func execute(argumentsJSON: String) async throws -> String {
+        argumentsJSON
+    }
+}
+
+private struct MalformedSchemaFixtureTool: OsaurusTool {
+    let name: String
+    let description = "Fixture with a malformed schema"
+    let parameters: JSONValue? = .string("not an object")
 
     func execute(argumentsJSON: String) async throws -> String {
         argumentsJSON

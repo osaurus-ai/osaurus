@@ -1619,7 +1619,15 @@ final class ChatSession: ObservableObject {
             // disturb it). Fall back to the static greeting; the pool refills
             // once inference goes idle. Remote/foundation greetings don't
             // contend, so they're unaffected.
-            let greetingModelIsLocal = ModelManager.findInstalledModel(named: model) != nil
+            // Resolve whether the greeting model is local off the main thread.
+            // `findInstalledModel` funnels into `discoverLocalModels`, which
+            // blocks on a condition wait (up to the scan wait-limit) while the
+            // background disk scan runs. This closure inherits the main actor
+            // from its enclosing method, so the wait was freezing the app while
+            // an empty-state greeting loaded.
+            let greetingModelIsLocal = await Task.detached(priority: .userInitiated) {
+                ModelManager.findInstalledModel(named: model) != nil
+            }.value
             let localStreamBusy = await MainActor.run {
                 ChatWindowManager.shared.isAnyWindowStreamingLocalModel
             }
@@ -3405,12 +3413,12 @@ final class ChatSession: ObservableObject {
                         }
                     }
 
-                    // Frozen for the whole run (deferred-schema policy): the
-                    // tool schema never changes mid-run, even after
-                    // `capabilities_load` — see the drain block below. In Mode 2
-                    // we send no tools: the remote agent advertises and executes
-                    // its own tools server-side and only streams text back.
-                    let toolSpecs = isRemoteAgentTarget ? [] : context.tools
+                    // Each agent-loop iteration is a fresh provider request.
+                    // `capabilities_load` may refresh this array for the next
+                    // same-turn request after validating the loaded schemas. In
+                    // Mode 2 we still send no tools: the remote agent advertises
+                    // and executes its own tools server-side and streams text.
+                    var toolSpecs = isRemoteAgentTarget ? [] : context.tools
                     let isManualTools = liveToolMode == .manual
                     cachedContext = context
 
@@ -3661,15 +3669,10 @@ final class ChatSession: ObservableObject {
                         }
 
                         // Tools loaded via capabilities_load / sandbox_plugin_register.
-                        // Deferred-schema policy (KV stability): loaded tools
-                        // are callable IMMEDIATELY — the registry dispatches by
-                        // name and schema visibility is not an execution gate —
-                        // but `toolSpecs` stays FROZEN for the rest of this run.
-                        // Hot-patching it mid-run rewrote the rendered `<tools>`
-                        // block and busted the paged-KV cache for the whole
-                        // conversation. The names persist into the session's
-                        // tool union so the next user turn composes their full
-                        // schemas in.
+                        // Each loop iteration is a fresh model request, so it
+                        // is safe to expose validated schemas on the NEXT
+                        // iteration in this same user turn. We still never
+                        // mutate an in-flight stream.
                         if inv.toolName == "capabilities_load"
                             || inv.toolName == "sandbox_plugin_register"
                         {
@@ -3677,18 +3680,26 @@ final class ChatSession: ObservableObject {
                             // unrelated run; persist only in auto mode (manual
                             // mode keeps the user's explicit tool set fixed).
                             let newTools = await CapabilityLoadBuffer.shared.drain()
-                            if !isManualTools, !newTools.isEmpty {
-                                if !ToolEnvelope.isError(resultText) {
-                                    resultText += AgentToolLoop.deferredSchemaNotice
-                                }
+                            if !newTools.isEmpty {
+                                let activation = AgentToolLoop.activateCapabilitySchemas(
+                                    loadedTools: newTools,
+                                    currentTools: toolSpecs,
+                                    mode: .sameTurnNextRequest
+                                )
+                                toolSpecs = activation.tools
+                                resultText = AgentToolLoop.annotateCapabilityLoadResult(
+                                    resultText,
+                                    activation: activation.report
+                                )
                                 if let sid = self.sessionId {
-                                    let names = newTools.map { $0.function.name }
-                                    let snapshot = context.alwaysLoadedNames
-                                    await SessionToolStateStore.shared.appendLoadedTools(
-                                        self.sessionStateKey(sid),
-                                        names: names,
-                                        fallbackAlwaysLoadedNames: snapshot
-                                    )
+                                    if !isManualTools {
+                                        let snapshot = context.alwaysLoadedNames
+                                        await SessionToolStateStore.shared.appendLoadedTools(
+                                            self.sessionStateKey(sid),
+                                            names: activation.report.allToolNames,
+                                            fallbackAlwaysLoadedNames: snapshot
+                                        )
+                                    }
                                 }
                             }
                         }

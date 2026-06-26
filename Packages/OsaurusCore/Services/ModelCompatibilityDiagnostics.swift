@@ -98,6 +98,7 @@ enum ModelCompatibilityDiagnostics {
             case incompleteBundle
             case unsupportedHunyuanDense
             case unsupportedLongCat
+            case notMLXFormat
             case partialDFlashSpeculativeDecoding
         }
 
@@ -335,6 +336,24 @@ enum ModelCompatibilityDiagnostics {
                 detail: localBundle.detail ?? L("The local directory does not have the required MLX files.")
             )
         case .available:
+            // A bundle can have every required file yet still be a non-MLX
+            // (e.g. PyTorch / transformers) safetensors export co-mingled in a
+            // shared model store — it passes discovery but vmlx cannot load it.
+            // Block it here with a clear reason instead of an opaque load crash.
+            if !modelId.lowercased().hasPrefix("osaurusai/"),
+                let path = localBundle.path,
+                !ModelFormatDetection.isMLXFormat(at: URL(fileURLWithPath: path))
+            {
+                return RuntimeStatus(
+                    kind: .blocked,
+                    reason: .notMLXFormat,
+                    title: L("Not an MLX model"),
+                    detail:
+                        L(
+                            "This bundle isn't in MLX format, so the local engine (vmlx) can't load it. Osaurus runs MLX-format weights only — convert it with mlx_lm or pick an MLX build of the model."
+                        )
+                )
+            }
             if source.kind == .external {
                 return RuntimeStatus(
                     kind: .unproven,

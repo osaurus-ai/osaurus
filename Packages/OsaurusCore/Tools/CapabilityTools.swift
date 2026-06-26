@@ -11,22 +11,132 @@ import Foundation
 
 // MARK: - CapabilityLoadBuffer
 
+/// Structured diagnostic for a dynamically-loaded tool schema that cannot be
+/// exposed safely. Dynamic schemas must fail closed: a missing/malformed
+/// provider schema is not silently replaced with `{}` because that teaches the
+/// model to call an underspecified tool and then rely on parser repair.
+struct CapabilitySchemaDiagnostic: Sendable {
+    let toolName: String
+    let kind: ToolEnvelope.Kind
+    let message: String
+    let field: String?
+    let expected: String?
+
+    func dictionary() -> [String: Any] {
+        var dict: [String: Any] = [
+            "tool_name": toolName,
+            "kind": kind.rawValue,
+            "message": message,
+        ]
+        if let field { dict["field"] = field }
+        if let expected { dict["expected"] = expected }
+        return dict
+    }
+}
+
 /// Shared buffer for communicating newly loaded tool specs from capabilities_load
 /// back to the execution loop. The loop drains pending tools after each
 /// capabilities_load call and appends them to the active tool set.
 actor CapabilityLoadBuffer {
     static let shared = CapabilityLoadBuffer()
 
-    private var pendingTools: [Tool] = []
+    private var pendingToolOrder: [String] = []
+    private var pendingToolsByName: [String: Tool] = [:]
 
-    func add(_ tool: Tool) {
-        pendingTools.append(tool)
+    @discardableResult
+    func add(_ tool: Tool) -> CapabilitySchemaDiagnostic? {
+        if let diagnostic = Self.validateDynamicToolSchema(tool) {
+            return diagnostic
+        }
+        let name = tool.function.name
+        if pendingToolsByName[name] == nil {
+            pendingToolOrder.append(name)
+        }
+        // Idempotent duplicate loads in one turn: keep one activation slot,
+        // but let the latest spec replace an earlier copy if the registry
+        // refreshed it before the buffer drained.
+        pendingToolsByName[name] = tool
+        return nil
     }
 
     func drain() -> [Tool] {
-        let tools = pendingTools
-        pendingTools = []
+        let tools = pendingToolOrder.compactMap { pendingToolsByName[$0] }
+        pendingToolOrder = []
+        pendingToolsByName = [:]
         return tools
+    }
+
+    static func validateDynamicToolSchema(_ tool: Tool) -> CapabilitySchemaDiagnostic? {
+        let name = tool.function.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else {
+            return CapabilitySchemaDiagnostic(
+                toolName: tool.function.name,
+                kind: .invalidArgs,
+                message: "Loaded tool schema is missing a function name.",
+                field: "name",
+                expected: "non-empty function name"
+            )
+        }
+        guard tool.type == "function" else {
+            return CapabilitySchemaDiagnostic(
+                toolName: name,
+                kind: .invalidArgs,
+                message: "Loaded tool '\(name)' has unsupported tool type '\(tool.type)'.",
+                field: "type",
+                expected: "function"
+            )
+        }
+        guard let parameters = tool.function.parameters else {
+            // Existing no-argument tools legitimately use nil parameters; the
+            // OpenAI encoder normalizes nil to an empty object schema.
+            return nil
+        }
+        guard case .object(let schema) = parameters else {
+            return CapabilitySchemaDiagnostic(
+                toolName: name,
+                kind: .invalidArgs,
+                message: "Loaded tool '\(name)' has a non-object parameter schema.",
+                field: "parameters",
+                expected: "JSON Schema object with type: object"
+            )
+        }
+        guard case .string("object")? = schema["type"] else {
+            return CapabilitySchemaDiagnostic(
+                toolName: name,
+                kind: .invalidArgs,
+                message: "Loaded tool '\(name)' parameter schema must declare type: object.",
+                field: "parameters.type",
+                expected: "object"
+            )
+        }
+        if let properties = schema["properties"], case .object = properties {
+            // Valid.
+        } else if schema["properties"] != nil {
+            return CapabilitySchemaDiagnostic(
+                toolName: name,
+                kind: .invalidArgs,
+                message: "Loaded tool '\(name)' parameter schema has non-object properties.",
+                field: "parameters.properties",
+                expected: "object mapping property names to schemas"
+            )
+        }
+        if let required = schema["required"] {
+            guard case .array(let values) = required,
+                values.allSatisfy({
+                    if case .string = $0 { return true }
+                    return false
+                })
+            else {
+                return CapabilitySchemaDiagnostic(
+                    toolName: name,
+                    kind: .invalidArgs,
+                    message: "Loaded tool '\(name)' parameter schema has malformed required fields.",
+                    field: "parameters.required",
+                    expected: "array of strings"
+                )
+            }
+        }
+        return nil
     }
 }
 
@@ -529,7 +639,8 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
                         kind: .invalidArgs,
                         message:
                             "Invalid ID format '\(id)' — expected `<type>/<id>` "
-                            + "(e.g. `tool/sandbox_exec`, `skill/plot-data`). Use IDs from the Enabled capabilities list or `capabilities_discover`."
+                            + "(e.g. `tool/sandbox_exec`, `skill/plot-data`). Use IDs from the Enabled capabilities list or `capabilities_discover`.",
+                        field: "ids"
                     )
                 )
                 continue
@@ -578,7 +689,8 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
             return ToolEnvelope.failure(
                 kind: first.kind,
                 message: combined,
-                field: first.kind == .invalidArgs ? "ids" : nil,
+                field: first.field ?? (first.kind == .invalidArgs ? "ids" : nil),
+                expected: first.expected,
                 tool: name,
                 retryable: !deterministicKinds.contains(first.kind)
             )
@@ -599,6 +711,8 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
     private struct LoadFailure {
         let kind: ToolEnvelope.Kind
         let message: String
+        var field: String? = nil
+        var expected: String? = nil
     }
 
     private enum LoadOutcome {
@@ -785,7 +899,16 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
                 )
             )
         }
-        await CapabilityLoadBuffer.shared.add(spec)
+        if let diagnostic = await CapabilityLoadBuffer.shared.add(spec) {
+            return .failure(
+                LoadFailure(
+                    kind: diagnostic.kind,
+                    message: diagnostic.message,
+                    field: diagnostic.field,
+                    expected: diagnostic.expected
+                )
+            )
+        }
         return .success("Tool '\(toolId)' loaded and available.\n")
     }
 
@@ -825,10 +948,23 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
     private func bufferToolSpecs(named names: [String]) async -> String {
         guard !names.isEmpty else { return "" }
         let specs = await MainActor.run { ToolRegistry.shared.specs(forTools: names) }
+        var loadedNames: [String] = []
+        var skippedLines: [String] = []
         for spec in specs {
-            await CapabilityLoadBuffer.shared.add(spec)
+            if let diagnostic = await CapabilityLoadBuffer.shared.add(spec) {
+                skippedLines.append("Skipped tool '\(diagnostic.toolName)': \(diagnostic.message)")
+            } else {
+                loadedNames.append(spec.function.name)
+            }
         }
-        return "Auto-loaded tools: \(names.joined(separator: ", "))\n"
+        var output = ""
+        if !loadedNames.isEmpty {
+            output += "Auto-loaded tools: \(loadedNames.joined(separator: ", "))\n"
+        }
+        if !skippedLines.isEmpty {
+            output += skippedLines.joined(separator: "\n") + "\n"
+        }
+        return output
     }
 
     private func loadSkill(_ skillName: String) async -> LoadOutcome {

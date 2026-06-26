@@ -43,8 +43,19 @@ struct ModelPickerView: View {
         !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    /// Picker options with non-MLX local bundles removed. The catalog greys
+    /// these out so the user can see why they won't run, but the picker exists
+    /// only to select a usable model — a non-selectable row is just clutter, so
+    /// drop them here. Non-local sources (foundation, remote) are always
+    /// `isMLXFormat`, so only co-mingled local non-MLX bundles are filtered.
+    /// Filtering before grouping keeps the header count, tab badges, and rows
+    /// all consistent.
+    private var visibleOptions: [ModelPickerItem] {
+        displayOptions.filter { $0.isMLXFormat }
+    }
+
     private var currentTabs: [ModelPickerTab] {
-        displayOptions.groupedByTab()
+        visibleOptions.groupedByTab()
     }
 
     /// The tab to fall back to when there is no valid explicit selection: the
@@ -103,6 +114,7 @@ struct ModelPickerView: View {
             parameterCount: model.parameterCount,
             quantization: model.quantization,
             isVLM: model.isVLM,
+            isMLXFormat: model.isMLXFormat,
             providerLabel: providerLabel
         )
     }
@@ -202,7 +214,7 @@ struct ModelPickerView: View {
                 modelList(rows: rows)
             }
         }
-        .frame(width: 380, height: min(CGFloat(displayOptions.count * 48 + 160), 480))
+        .frame(width: 380, height: min(CGFloat(visibleOptions.count * 48 + 160), 480))
         .background(popoverBackground)
         .overlay(popoverBorder)
         .shadow(color: theme.shadowColor.opacity(0.15), radius: 12, x: 0, y: 6)
@@ -258,7 +270,7 @@ struct ModelPickerView: View {
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundColor(theme.primaryText)
 
-            Text("\(displayOptions.count)", bundle: .module)
+            Text("\(visibleOptions.count)", bundle: .module)
                 .font(.system(size: 11, weight: .medium))
                 .foregroundColor(theme.secondaryText)
                 .padding(.horizontal, 8)

@@ -32,6 +32,11 @@ struct ModelRowView: View {
     /// Callback when user taps the Details button
     let onViewDetails: () -> Void
 
+    /// Callback when the user taps a non-MLX (greyed) card. When set and the
+    /// card is unsupported, this fires instead of `onViewDetails` so the host
+    /// can explain that the model can't be used rather than open its details.
+    var onUnsupportedTap: (() -> Void)? = nil
+
     /// Optional cancel action when downloading or paused
     let onCancel: (() -> Void)?
 
@@ -47,7 +52,13 @@ struct ModelRowView: View {
     @State private var isHovering = false
 
     var body: some View {
-        Button(action: onViewDetails) {
+        Button(action: {
+            if content.isUnsupportedFormat, let onUnsupportedTap {
+                onUnsupportedTap()
+            } else {
+                onViewDetails()
+            }
+        }) {
             VStack(spacing: 0) {
                 gradientHeader
 
@@ -95,12 +106,18 @@ struct ModelRowView: View {
                 y: isHovering ? 4 : theme.cardShadowY
             )
             .contentShape(RoundedRectangle(cornerRadius: 14))
+            // Grey out bundles the local engine can't load (non-MLX format)
+            // while keeping the card tappable so its detail sheet can explain
+            // why. Desaturate + fade so it reads as "present but unavailable".
+            .saturation(content.isUnsupportedFormat ? 0 : 1)
+            .opacity(content.isUnsupportedFormat ? 0.6 : 1)
         }
         .buttonStyle(PlainButtonStyle())
         .animation(.easeOut(duration: 0.15), value: isHovering)
         .onHover { hovering in
             isHovering = hovering
         }
+        .localizedHelp(content.isUnsupportedFormat ? "Not an MLX model — the local engine can't load this bundle" : "")
     }
 
     // MARK: - Gradient Header
@@ -326,6 +343,13 @@ struct ModelRowView: View {
                     color: useCase.tintColor
                 )
             }
+            if content.isUnsupportedFormat {
+                TintedPill(
+                    icon: "exclamationmark.octagon",
+                    label: Text(L("Not MLX")),
+                    color: theme.errorColor
+                )
+            }
             compatibilityBadge
             if let type = content.type {
                 modelTypeBadge(type)
@@ -435,6 +459,9 @@ struct ModelCardContent {
     let gradientColors: [Color]
     let isTopSuggestion: Bool
     let isDownloaded: Bool
+    /// True when the bundle is on disk but not in MLX format, so the local
+    /// engine can't load it. Greys the card and shows an explanatory badge.
+    var isUnsupportedFormat: Bool = false
     let useCase: ModelUseCase?
     let compatibility: ModelCompatibility
     /// LLM / VLM / Image pill; `nil` to omit.
@@ -463,6 +490,7 @@ extension ModelCardContent {
             gradientColors: ModelCardGradient.colors(for: model),
             isTopSuggestion: model.isTopSuggestion,
             isDownloaded: model.isDownloaded,
+            isUnsupportedFormat: model.isDownloaded && !model.isMLXFormat,
             useCase: model.useCase,
             compatibility: model.compatibility(totalMemoryGB: totalMemoryGB),
             type: model.useCase == .vision ? nil : (model.isVLM ? .vlm : .llm),

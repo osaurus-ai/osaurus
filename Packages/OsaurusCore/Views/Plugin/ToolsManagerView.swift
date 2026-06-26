@@ -17,6 +17,13 @@ struct ToolsManagerView: View {
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
+    /// Rows rendered per group before collapsing the rest behind a "Show all"
+    /// disclosure. Bounds eager layout work when a single source exposes a very
+    /// large number of tools.
+    private static let toolGroupRenderCap = 20
+    /// Group keys the user has chosen to fully expand past the render cap.
+    @State private var expandedToolGroups: Set<String> = []
+
     @State private var selectedTab: ToolsTab = .available
     @State private var searchText: String = ""
     @State private var hasAppeared = false
@@ -190,7 +197,12 @@ struct ToolsManagerView: View {
 
     private var availableToolsTabContent: some View {
         ScrollView {
-            LazyVStack(spacing: 16) {
+            // A single LazyVStack so every tool row is an individual lazy child.
+            // Group rows are emitted via bare `ForEach` (not wrapped in a
+            // `VStack`), since a nested stack would be realized as one eager
+            // child and defeat virtualization. Row spacing is 8; section
+            // headers and intro cards add 8 more top padding for a 16 gap.
+            LazyVStack(spacing: 8) {
                 SectionHeader(
                     title: L("Available Tools"),
                     description: "Tools from installed plugins and connected providers"
@@ -204,6 +216,7 @@ struct ToolsManagerView: View {
                         stateFilter: $exposureStateFilter,
                         onExport: exportExposureReport
                     )
+                    .padding(.top, 8)
                 }
 
                 let builtInNative = visibleTools(builtInNativeToolEntries)
@@ -235,44 +248,44 @@ struct ToolsManagerView: View {
                 } else {
                     if pluginsWithMissingPermissionsCount > 0 {
                         ToolPermissionBanner(count: pluginsWithMissingPermissionsCount)
+                            .padding(.top, 8)
                     }
 
                     if !builtInNative.isEmpty {
                         InstalledSectionHeader(title: L("Built-in Tools"), icon: "shippingbox")
+                            .padding(.top, 8)
 
-                        VStack(spacing: 8) {
-                            ForEach(builtInNative) { entry in
-                                RuntimeManagedToolEntryRow(
-                                    entry: entry,
-                                    badge: builtInBadge(for: entry),
-                                    policyInfo: policyInfoCache[entry.name],
-                                    availability: cachedAvailability(availabilityCache, for: entry),
-                                    exposureRow: exposureRowsByName[entry.name],
-                                    onChange: { applyLocalToolMutation(name: entry.name) }
-                                )
-                            }
+                        cappedGroup(key: "builtInNative", tools: builtInNative) { entry in
+                            RuntimeManagedToolEntryRow(
+                                entry: entry,
+                                badge: builtInBadge(for: entry),
+                                policyInfo: policyInfoCache[entry.name],
+                                availability: cachedAvailability(availabilityCache, for: entry),
+                                exposureRow: exposureRowsByName[entry.name],
+                                onChange: { applyLocalToolMutation(name: entry.name) }
+                            )
                         }
                     }
 
                     if !runtimeTools.isEmpty {
                         InstalledSectionHeader(title: L("Runtime Tools"), icon: "terminal")
+                            .padding(.top, 8)
 
-                        VStack(spacing: 8) {
-                            ForEach(runtimeTools) { entry in
-                                RuntimeManagedToolEntryRow(
-                                    entry: entry,
-                                    badge: runtimeBadge(for: entry),
-                                    policyInfo: policyInfoCache[entry.name],
-                                    availability: cachedAvailability(availabilityCache, for: entry),
-                                    exposureRow: exposureRowsByName[entry.name],
-                                    onChange: { applyLocalToolMutation(name: entry.name) }
-                                )
-                            }
+                        cappedGroup(key: "runtime", tools: runtimeTools) { entry in
+                            RuntimeManagedToolEntryRow(
+                                entry: entry,
+                                badge: runtimeBadge(for: entry),
+                                policyInfo: policyInfoCache[entry.name],
+                                availability: cachedAvailability(availabilityCache, for: entry),
+                                exposureRow: exposureRowsByName[entry.name],
+                                onChange: { applyLocalToolMutation(name: entry.name) }
+                            )
                         }
                     }
 
                     if !pluginGroups.isEmpty {
                         InstalledSectionHeader(title: L("Plugin Tools"), icon: "puzzlepiece.extension")
+                            .padding(.top, 8)
 
                         ForEach(pluginGroups, id: \.plugin.id) { item in
                             ToolPluginCard(
@@ -288,6 +301,7 @@ struct ToolsManagerView: View {
 
                     if !remoteGroups.isEmpty {
                         InstalledSectionHeader(title: L("Remote Tools"), icon: "server.rack")
+                            .padding(.top, 8)
 
                         ForEach(remoteGroups, id: \.provider.id) { item in
                             RemoteProviderToolsCard(
@@ -308,6 +322,38 @@ struct ToolsManagerView: View {
             }
             .padding(24)
             .frame(maxWidth: .infinity)
+        }
+    }
+
+    /// Emit a tool group's rows, capping the rendered count at
+    /// `toolGroupRenderCap` until the user expands it. Keeps a single source
+    /// with hundreds of tools from laying out every row at once.
+    @ViewBuilder
+    private func cappedGroup<Row: View>(
+        key: String,
+        tools: [ToolRegistry.ToolEntry],
+        @ViewBuilder row: @escaping (ToolRegistry.ToolEntry) -> Row
+    ) -> some View {
+        let cap = Self.toolGroupRenderCap
+        let isExpanded = expandedToolGroups.contains(key)
+        let shown = (isExpanded || tools.count <= cap) ? tools : Array(tools.prefix(cap))
+
+        ForEach(shown) { entry in
+            row(entry)
+        }
+
+        if tools.count > cap {
+            ShowAllToolsButton(
+                hiddenCount: tools.count - cap,
+                isExpanded: isExpanded
+            ) {
+                if isExpanded {
+                    expandedToolGroups.remove(key)
+                } else {
+                    expandedToolGroups.insert(key)
+                }
+            }
+            .padding(.top, 4)
         }
     }
 
@@ -1080,7 +1126,9 @@ private struct SandboxPluginsTabContent: View {
 
     var body: some View {
         ScrollView {
-            LazyVStack(spacing: 16) {
+            // Mirror the Available tab: a single LazyVStack with bare `ForEach`
+            // groups so tool rows virtualize instead of laying out eagerly.
+            LazyVStack(spacing: 8) {
                 SectionHeader(
                     title: L("Sandbox Tools"),
                     description:
@@ -1128,17 +1176,16 @@ private struct SandboxPluginsTabContent: View {
 
                 if !builtInTools.isEmpty {
                     InstalledSectionHeader(title: L("Built-in Sandbox Tools"), icon: "terminal")
+                        .padding(.top, 8)
 
-                    VStack(spacing: 8) {
-                        ForEach(builtInTools) { entry in
-                            RuntimeManagedToolEntryRow(
-                                entry: entry,
-                                badge: L("Sandbox"),
-                                policyInfo: policyInfoCache[entry.name],
-                                availability: cachedAvailability(availabilityCache, for: entry),
-                                onChange: onChange
-                            )
-                        }
+                    ForEach(builtInTools) { entry in
+                        RuntimeManagedToolEntryRow(
+                            entry: entry,
+                            badge: L("Sandbox"),
+                            policyInfo: policyInfoCache[entry.name],
+                            availability: cachedAvailability(availabilityCache, for: entry),
+                            onChange: onChange
+                        )
                     }
                 }
 
@@ -1569,6 +1616,43 @@ struct ToolPermissionBanner: View {
                         .stroke(theme.warningColor.opacity(0.2), lineWidth: 1)
                 )
         )
+    }
+}
+
+// MARK: - Show All Tools Button
+
+/// Disclosure control that toggles a capped tool group between its first
+/// `toolGroupRenderCap` rows and the full list.
+private struct ShowAllToolsButton: View {
+    @Environment(\.theme) private var theme
+    let hiddenCount: Int
+    let isExpanded: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                    .font(.system(size: 10, weight: .semibold))
+                if isExpanded {
+                    Text("Show fewer", bundle: .module)
+                        .font(.system(size: 12, weight: .medium))
+                } else {
+                    Text("Show \(hiddenCount) more", bundle: .module)
+                        .font(.system(size: 12, weight: .medium))
+                }
+                Spacer()
+            }
+            .foregroundColor(theme.accentColor)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(theme.tertiaryBackground.opacity(0.5))
+            )
+        }
+        .buttonStyle(PlainButtonStyle())
     }
 }
 
@@ -2004,8 +2088,9 @@ private struct RuntimeManagedToolEntryRow: View {
                     .lineLimit(1)
                 ToolRowMetaLine(availability: availability, exposureRow: exposureRow)
             }
-
-            Spacer()
+            // Expand the info column instead of a trailing Spacer so the row has
+            // one fewer flexible layout child to negotiate per pass.
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             Text(badge)
                 .font(.system(size: 10, weight: .semibold))
@@ -2069,8 +2154,10 @@ struct ToolEntryRow: View {
     var body: some View {
         HStack(spacing: 10) {
             toolIcon
+            // Expand the info column instead of a trailing Spacer to drop one
+            // flexible layout child from the row.
             toolInfo
-            Spacer()
+                .frame(maxWidth: .infinity, alignment: .leading)
 
             if let info = policyInfo {
                 ToolPolicyMenu(
@@ -2180,8 +2267,9 @@ private struct RemoteToolRow: View {
                     .lineLimit(1)
                 ToolRowMetaLine(availability: availability, exposureRow: exposureRow)
             }
-
-            Spacer()
+            // Expand the info column instead of a trailing Spacer to drop one
+            // flexible layout child from the row.
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             if let info = policyInfo {
                 ToolPolicyMenu(

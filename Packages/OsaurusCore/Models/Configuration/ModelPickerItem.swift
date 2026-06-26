@@ -78,6 +78,13 @@ struct ModelPickerItem: Identifiable, Hashable {
     /// Whether this is a Vision Language Model
     let isVLM: Bool
 
+    /// Whether the local bundle is in MLX format and therefore loadable by the
+    /// local engine. Set from `MLXModel.isMLXFormat` for local items so the
+    /// picker can grey out (and refuse to select) co-mingled non-MLX bundles
+    /// that would otherwise fail at load. Always `true` for non-local sources
+    /// (foundation, remote) and undownloaded catalog entries.
+    let isMLXFormat: Bool
+
     /// Whether this is an embedding/encoder-only model (BERT family,
     /// model2vec, etc.). Set from `MLXModel.isEmbedding` for local items so
     /// `isLikelyChatCapable` can exclude them without re-reading config.json.
@@ -113,6 +120,7 @@ struct ModelPickerItem: Identifiable, Hashable {
         parameterCount: String? = nil,
         quantization: String? = nil,
         isVLM: Bool = false,
+        isMLXFormat: Bool = true,
         isEmbedding: Bool = false,
         description: String? = nil,
         inputPriceMicroPerMTok: Int64? = nil,
@@ -130,6 +138,7 @@ struct ModelPickerItem: Identifiable, Hashable {
         self.parameterCount = parameterCount
         self.quantization = quantization
         self.isVLM = isVLM
+        self.isMLXFormat = isMLXFormat
         self.isEmbedding = isEmbedding
         self.description = description
         self.inputPriceMicroPerMTok = inputPriceMicroPerMTok
@@ -171,6 +180,7 @@ extension ModelPickerItem {
             parameterCount: model.parameterCount,
             quantization: model.quantization,
             isVLM: model.isVLM,
+            isMLXFormat: model.isMLXFormat,
             isEmbedding: model.isEmbedding,
             description: model.description
         )
@@ -320,7 +330,8 @@ extension ModelPickerItem {
             // bundles (HF cache, LM Studio), not just the curated chat
             // catalog, so an embedding repo can appear here. The flag is
             // detected from the bundle's config.json at item construction.
-            return !isEmbedding
+            // Non-MLX bundles can't load locally, so never auto-pick one.
+            return !isEmbedding && isMLXFormat
         case .imageGeneration:
             // Image models produce images, not chat completions — never a
             // default chat pick (but still selectable to enter image mode).

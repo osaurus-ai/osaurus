@@ -923,19 +923,153 @@ enum AgentToolLoop {
         "[System Notice] Your todo list still has \(pending) unchecked item\(pending == 1 ? "" : "s") and has not been updated recently. If you finished any, re-send the full list with those boxes checked now; if the plan changed, rewrite the list."
     }
 
-    /// Appended to a successful `capabilities_load` result under the
-    /// deferred-schema policy: the loaded tool is callable immediately
-    /// (registry dispatch is by name), but the rendered tool-schema block
-    /// stays frozen until the next compose so the prompt prefix — and the
-    /// paged-KV cache built on it — stays byte-stable mid-run.
-    ///
-    /// The anti-rediscovery clause is load-bearing: small models read "not in
-    /// the tool list yet" as "I can't call it" and loop back into
-    /// `capabilities_discover` / a redundant `capabilities_load` (observed on
-    /// gemma-12B after a `plugin/<id>` group load). Stating outright that the
-    /// tools are ready and must NOT be re-discovered cuts that detour.
+    /// Legacy prose kept only for older call sites/tests. New code must use
+    /// `annotateCapabilityLoadResult(_:activation:)` so the tool result remains
+    /// one valid JSON envelope with a structured activation object.
     static let deferredSchemaNotice =
         "\nNote: the tools just loaded are callable NOW — invoke them directly by name with JSON arguments. Do NOT call capabilities_discover or capabilities_load for them again; they are already available. Their schemas are omitted from the tool list until the next user turn, but calling them by name works immediately."
+
+    /// Maximum number of schema-activation continuation attempts a surface may
+    /// perform when it cannot expose newly loaded schemas on the next agent-loop
+    /// model request. The shared loop surfaces can safely update the next
+    /// request's `tools` array, so they report `continuation.required = false`;
+    /// stricter providers still get a bounded, machine-readable contract.
+    static let maxCapabilityActivationContinuations = 2
+
+    enum CapabilitySchemaActivationMode: Sendable {
+        case sameTurnNextRequest
+        case continuationRequired
+
+        var rawValue: String {
+            switch self {
+            case .sameTurnNextRequest: return "same_turn_next_request"
+            case .continuationRequired: return "continuation_required"
+            }
+        }
+    }
+
+    struct CapabilitySchemaActivationReport: Sendable {
+        let mode: CapabilitySchemaActivationMode
+        let activatedToolNames: [String]
+        let duplicateToolNames: [String]
+        let diagnostics: [CapabilitySchemaDiagnostic]
+        let maxContinuationRetries: Int
+
+        var isEmpty: Bool {
+            activatedToolNames.isEmpty && duplicateToolNames.isEmpty && diagnostics.isEmpty
+        }
+
+        var allToolNames: [String] {
+            AgentToolLoop.orderedUnique(activatedToolNames + duplicateToolNames)
+        }
+
+        func dictionary() -> [String: Any] {
+            let continuationRequired: Bool
+            switch mode {
+            case .sameTurnNextRequest:
+                continuationRequired = false
+            case .continuationRequired:
+                continuationRequired = true
+            }
+
+            return [
+                "kind": "capability_schema_activation",
+                "mode": mode.rawValue,
+                "status": continuationRequired
+                    ? "continuation_required"
+                    : "activated_for_same_turn_next_request",
+                "schema_visible_on_next_agent_loop_request": !continuationRequired,
+                "activated_tool_names": activatedToolNames,
+                "duplicate_tool_names": duplicateToolNames,
+                "diagnostics": diagnostics.map { $0.dictionary() },
+                "instruction":
+                    "Do not call capabilities_discover or capabilities_load for these tools again in this turn. Call the activated tool by name with JSON arguments.",
+                "continuation": [
+                    "required": continuationRequired,
+                    "max_retries": maxContinuationRetries,
+                    "retry_after": "recompose_request_with_loaded_tool_schema",
+                    "bounded": true,
+                ],
+            ]
+        }
+    }
+
+    /// Merge schemas loaded via `capabilities_load` into the active request
+    /// schema for the next loop iteration. This is safe for the shared loop
+    /// surfaces because every iteration is a fresh provider request; no current
+    /// streaming request is mutated mid-flight.
+    @MainActor
+    static func activateCapabilitySchemas(
+        loadedTools: [Tool],
+        currentTools: [Tool],
+        mode: CapabilitySchemaActivationMode = .sameTurnNextRequest,
+        maxContinuationRetries: Int = maxCapabilityActivationContinuations
+    ) -> (tools: [Tool], report: CapabilitySchemaActivationReport) {
+        var byName = Dictionary(currentTools.map { ($0.function.name, $0) }) { _, latest in latest }
+        var activated: [String] = []
+        var duplicates: [String] = []
+
+        for tool in loadedTools {
+            let name = tool.function.name
+            if byName[name] == nil {
+                activated.append(name)
+            } else {
+                duplicates.append(name)
+            }
+            byName[name] = tool
+        }
+
+        let merged = SystemPromptComposer.canonicalToolOrder(Array(byName.values))
+        let report = CapabilitySchemaActivationReport(
+            mode: mode,
+            activatedToolNames: orderedUnique(activated),
+            duplicateToolNames: orderedUnique(duplicates),
+            diagnostics: [],
+            maxContinuationRetries: max(1, maxContinuationRetries)
+        )
+        return (merged, report)
+    }
+
+    /// Keep a `capabilities_load` result as a single valid `ToolEnvelope`
+    /// success and attach machine-readable activation metadata under
+    /// `result.activation`. If the result is an error or cannot be decoded,
+    /// return it unchanged rather than fabricating a success.
+    static func annotateCapabilityLoadResult(
+        _ result: String,
+        activation: CapabilitySchemaActivationReport
+    ) -> String {
+        guard !activation.isEmpty, !ToolEnvelope.isError(result),
+            let data = result.data(using: .utf8),
+            var envelope = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            (envelope["ok"] as? Bool) == true
+        else { return result }
+
+        var payload: [String: Any]
+        if let existing = envelope["result"] as? [String: Any] {
+            payload = existing
+        } else if let existing = envelope["result"] {
+            payload = ["value": existing]
+        } else {
+            payload = [:]
+        }
+        payload["activation"] = activation.dictionary()
+        envelope["result"] = payload
+
+        guard JSONSerialization.isValidJSONObject(envelope),
+            let encoded = try? JSONSerialization.data(withJSONObject: envelope, options: [.sortedKeys]),
+            let json = String(data: encoded, encoding: .utf8)
+        else { return result }
+        return json
+    }
+
+    private static func orderedUnique(_ names: [String]) -> [String] {
+        var seen = Set<String>()
+        var ordered: [String] = []
+        for name in names where seen.insert(name).inserted {
+            ordered.append(name)
+        }
+        return ordered
+    }
 
     /// Stable call-id assignment: preserve the model-supplied id when
     /// present (OpenAI `call_xxx`), otherwise mint one in the same shape.
