@@ -760,6 +760,7 @@ extension AgentManager {
             computerUseEnabled: agent.settings.computerUseEnabled,
             spawnDelegationEnabled: agent.settings.spawnDelegationEnabled,
             imageEnabled: agent.settings.imageEnabled,
+            ocrEnabled: agent.settings.ocrEnabled,
             spawnableAgentNames: agent.settings.spawnableAgentNames
         )
     }

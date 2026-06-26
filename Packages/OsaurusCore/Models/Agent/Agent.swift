@@ -480,6 +480,10 @@ public struct AgentCapabilities: Sendable, Equatable {
     /// `spawnDelegationEnabled` so an agent can spawn without image (or vice
     /// versa).
     public var imageEnabled: Bool
+    /// OCR (`ocr`) exposed to the model — per-agent opt-in, split from
+    /// `imageEnabled` so an agent can OCR without image generation (or vice
+    /// versa).
+    public var ocrEnabled: Bool
     /// Personas this agent may launch via `spawn`. Empty → the `spawn` tool
     /// stays hidden (nothing to spawn). The Default agent ignores this and uses
     /// the global `SubagentConfiguration.spawnableAgentNames` pool instead.
@@ -496,6 +500,7 @@ public struct AgentCapabilities: Sendable, Equatable {
         computerUseEnabled: Bool = false,
         spawnDelegationEnabled: Bool = false,
         imageEnabled: Bool = false,
+        ocrEnabled: Bool = false,
         spawnableAgentNames: [String] = []
     ) {
         self.toolsEnabled = toolsEnabled
@@ -508,6 +513,7 @@ public struct AgentCapabilities: Sendable, Equatable {
         self.computerUseEnabled = computerUseEnabled
         self.spawnDelegationEnabled = spawnDelegationEnabled
         self.imageEnabled = imageEnabled
+        self.ocrEnabled = ocrEnabled
         self.spawnableAgentNames = spawnableAgentNames
     }
 }
@@ -764,6 +770,15 @@ public struct AgentSettings: Codable, Sendable, Equatable {
     /// image-edit model at run time). The Default agent uses the global
     /// `SubagentConfiguration.defaultImageEditModelId` instead.
     public var imageEditModelId: String?
+    /// Per-agent opt-in for the `ocr` tool (extract text from images via a local
+    /// OCR VLM). Default off; split from `imageEnabled` so an agent can enable
+    /// OCR independently. The Default agent ignores this and uses the global OCR
+    /// enable in `SubagentConfiguration`.
+    public var ocrEnabled: Bool
+    /// Per-agent OCR model bundle id (`nil` → resolve to the first ready
+    /// image-capable OCR model at run time). The Default agent uses the global
+    /// `SubagentConfiguration.defaultOcrModelId` instead.
+    public var ocrModelId: String?
     /// Per-agent permission policies for the delegation sub-agents (`spawn`,
     /// `image`), keyed by capability id. A kind absent from the map resolves to
     /// the safe `.ask` default. The Default agent uses the global
@@ -790,6 +805,8 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         spawnableAgentNames: [String] = [],
         imageGenerationModelId: String? = nil,
         imageEditModelId: String? = nil,
+        ocrEnabled: Bool = false,
+        ocrModelId: String? = nil,
         subagentPermissions: SubagentPermissionDefaults = SubagentPermissionDefaults(),
         subagentBudgets: SubagentBudgets = SubagentBudgets()
     ) {
@@ -809,6 +826,8 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         self.spawnableAgentNames = spawnableAgentNames
         self.imageGenerationModelId = imageGenerationModelId
         self.imageEditModelId = imageEditModelId
+        self.ocrEnabled = ocrEnabled
+        self.ocrModelId = ocrModelId
         self.subagentPermissions = subagentPermissions
         self.subagentBudgets = subagentBudgets
     }
@@ -866,6 +885,8 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         // `SubagentConfiguration`).
         imageGenerationModelId = try c.decodeIfPresent(String.self, forKey: .imageGenerationModelId)
         imageEditModelId = try c.decodeIfPresent(String.self, forKey: .imageEditModelId)
+        ocrEnabled = try c.decodeIfPresent(Bool.self, forKey: .ocrEnabled) ?? false
+        ocrModelId = try c.decodeIfPresent(String.self, forKey: .ocrModelId)
         subagentPermissions =
             (try? c.decodeIfPresent(SubagentPermissionDefaults.self, forKey: .subagentPermissions))
             ?? SubagentPermissionDefaults()
@@ -891,6 +912,8 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         case spawnableAgentNames
         case imageGenerationModelId
         case imageEditModelId
+        case ocrEnabled
+        case ocrModelId
         case subagentPermissions
         case subagentBudgets
         // Read-only legacy key — never encoded after migration.
@@ -915,6 +938,8 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         try c.encode(spawnableAgentNames, forKey: .spawnableAgentNames)
         try c.encodeIfPresent(imageGenerationModelId, forKey: .imageGenerationModelId)
         try c.encodeIfPresent(imageEditModelId, forKey: .imageEditModelId)
+        try c.encode(ocrEnabled, forKey: .ocrEnabled)
+        try c.encodeIfPresent(ocrModelId, forKey: .ocrModelId)
         try c.encode(subagentPermissions, forKey: .subagentPermissions)
         try c.encode(subagentBudgets, forKey: .subagentBudgets)
     }

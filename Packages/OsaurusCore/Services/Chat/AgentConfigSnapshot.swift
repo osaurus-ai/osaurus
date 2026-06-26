@@ -111,6 +111,10 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
     /// unless the agent opted in (custom agents) / the global image switch is on
     /// (Default agent).
     public let imageEnabled: Bool
+    /// Per-agent opt-in for `ocr`. Enforced in `resolveTools` — stripped unless
+    /// the agent opted in (custom agents) / the global OCR switch is on (Default
+    /// agent).
+    public let ocrEnabled: Bool
     /// Personas this agent may launch via `spawn`. Drives the "is there anything
     /// to spawn?" half of the spawn visibility gate for custom agents.
     public let spawnableAgentNames: [String]
@@ -133,6 +137,7 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
         computerUseEnabled: Bool = false,
         spawnDelegationEnabled: Bool = false,
         imageEnabled: Bool = false,
+        ocrEnabled: Bool = false,
         spawnableAgentNames: [String] = []
     ) {
         self.agentId = agentId
@@ -152,6 +157,7 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
         self.computerUseEnabled = computerUseEnabled
         self.spawnDelegationEnabled = spawnDelegationEnabled
         self.imageEnabled = imageEnabled
+        self.ocrEnabled = ocrEnabled
         self.spawnableAgentNames = spawnableAgentNames
     }
 
@@ -193,6 +199,7 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
             computerUseEnabled: caps.computerUseEnabled,
             spawnDelegationEnabled: caps.spawnDelegationEnabled,
             imageEnabled: caps.imageEnabled,
+            ocrEnabled: caps.ocrEnabled,
             spawnableAgentNames: caps.spawnableAgentNames
         )
     }

@@ -52,6 +52,7 @@ public struct SubagentCapability: Sendable {
         case computerUse
         case spawn
         case image
+        case ocr
 
         /// The resolved per-agent flag for the `resolveTools` strip.
         public func enabled(in snapshot: AgentConfigSnapshot) -> Bool {
@@ -59,6 +60,7 @@ public struct SubagentCapability: Sendable {
             case .computerUse: return snapshot.computerUseEnabled
             case .spawn: return snapshot.spawnDelegationEnabled
             case .image: return snapshot.imageEnabled
+            case .ocr: return snapshot.ocrEnabled
             }
         }
 
@@ -68,6 +70,7 @@ public struct SubagentCapability: Sendable {
             case .computerUse: return settings.computerUseEnabled
             case .spawn: return settings.spawnDelegationEnabled
             case .image: return settings.imageEnabled
+            case .ocr: return settings.ocrEnabled
             }
         }
 
@@ -77,6 +80,7 @@ public struct SubagentCapability: Sendable {
             case .computerUse: settings.computerUseEnabled = value
             case .spawn: settings.spawnDelegationEnabled = value
             case .image: settings.imageEnabled = value
+            case .ocr: settings.ocrEnabled = value
             }
         }
     }
@@ -196,6 +200,26 @@ public enum SubagentCapabilityRegistry {
         guidanceLabelKey: "Image Generation"
     )
 
+    /// The OCR family — one `ocr` tool that extracts text from one or more
+    /// images using a configured local OCR VLM (DeepSeek-OCR / Unlimited-OCR).
+    /// `modelSource = .dedicatedConfigured` (its own per-agent model), but it
+    /// runs a bounded VLM completion through `AgentSubagentRunner` and unloads
+    /// the resident chat model via `ResidencyHandoff` when the OCR model is a
+    /// different local model. Off-by-default; each agent opts in from its
+    /// Sub-agents tab. The guidance renders when `ocr` resolves.
+    public static let ocr = SubagentCapability(
+        id: "ocr",
+        toolNames: ["ocr"],
+        gate: .delegation,
+        perAgentFlag: .ocr,
+        modelSource: .dedicatedConfigured,
+        displayLabel: "OCR",
+        iconName: "doc.text.viewfinder",
+        guidance: SystemPromptTemplates.ocrGuidance,
+        guidanceSectionId: "ocr",
+        guidanceLabelKey: "OCR"
+    )
+
     /// The reduction family — `sandbox_reduce` runs a read/search/exec-only
     /// child loop inside the sandbox and hands back only a digest. Gated by
     /// sandbox registration (NOT a per-agent / delegation toggle), so it never
@@ -209,12 +233,12 @@ public enum SubagentCapabilityRegistry {
         iconName: "doc.text.magnifyingglass"
     )
 
-    /// Every capability, in guidance-render order (computer_use, then image;
+    /// Every capability, in guidance-render order (computer_use, image, ocr;
     /// spawn / sandbox_reduce have no guidance and are skipped at render time).
-    public static let all: [SubagentCapability] = [computerUse, spawn, image, sandboxReduce]
+    public static let all: [SubagentCapability] = [computerUse, spawn, image, ocr, sandboxReduce]
 
-    /// The delegation-gated capabilities (spawn + image).
-    public static let delegationFamily: [SubagentCapability] = [spawn, image]
+    /// The delegation-gated capabilities (spawn + image + ocr).
+    public static let delegationFamily: [SubagentCapability] = [spawn, image, ocr]
 
     /// Distinct per-agent toggle flags, in registry order (computer_use, spawn,
     /// image). One entry per *toggle* (deduped, so a future kind that shares a
@@ -296,6 +320,17 @@ public enum SubagentToolVisibility {
         isDefault ? config.imageDelegationActive : perAgentEnabled
     }
 
+    /// Whether `ocr` is available for an agent. The Default / main chat is
+    /// governed by its own OCR switch (`ocrDelegationActive`); a custom agent by
+    /// its own toggle. There is no global master switch.
+    static func ocrAvailable(
+        isDefault: Bool,
+        config: SubagentConfiguration,
+        perAgentEnabled: Bool
+    ) -> Bool {
+        isDefault ? config.ocrDelegationActive : perAgentEnabled
+    }
+
     /// Whether a specific `spawn` TARGET persona is reachable from a launching
     /// agent — the execution-time check the spawn kind enforces. Default / main
     /// chat uses its own pool; a custom agent its own allow-list.
@@ -335,6 +370,13 @@ public enum SubagentToolVisibility {
         ) {
             names.formUnion(SubagentCapabilityRegistry.image.toolNames)
         }
+        if ocrAvailable(
+            isDefault: isDefault,
+            config: config,
+            perAgentEnabled: snapshot.ocrEnabled
+        ) {
+            names.formUnion(SubagentCapabilityRegistry.ocr.toolNames)
+        }
         return names
     }
 
@@ -362,6 +404,18 @@ public enum SubagentToolVisibility {
             return isEdit ? config.defaultImageEditModelId : config.defaultImageGenerationModelId
         }
         return isEdit ? settings?.imageEditModelId : settings?.imageGenerationModelId
+    }
+
+    /// The effective OCR model id for an agent. Default / main chat uses the
+    /// global configured default; a custom agent uses its own per-agent model. A
+    /// `nil` result falls through to the run-time "first ready OCR model"
+    /// resolver, so an agent that enabled OCR without picking a model still works.
+    static func effectiveOcrModel(
+        isDefault: Bool,
+        config: SubagentConfiguration,
+        settings: AgentSettings?
+    ) -> String? {
+        isDefault ? config.defaultOcrModelId : settings?.ocrModelId
     }
 
     /// The effective permission policy for a delegation capability. Default / main

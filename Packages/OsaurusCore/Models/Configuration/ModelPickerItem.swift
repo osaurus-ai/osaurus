@@ -575,6 +575,12 @@ extension Array where Element == ModelPickerItem {
         filter(\.isImageEditDelegateCandidate)
     }
 
+    /// Models eligible as an `ocr` model — image-capable (VLM) models that can
+    /// read text from an image (DeepSeek-OCR / Unlimited-OCR and other VLMs).
+    var ocrDelegateCandidates: [ModelPickerItem] {
+        filter(\.isVLM)
+    }
+
     func subagentModelCandidate(
         id: String?,
         kind: SubagentModelKind

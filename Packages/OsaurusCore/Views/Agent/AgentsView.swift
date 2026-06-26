@@ -998,6 +998,7 @@ struct AgentDetailView: View {
     private var computerUseEnabled: Bool { subagentToggles[.computerUse] ?? false }
     private var spawnDelegationEnabled: Bool { subagentToggles[.spawn] ?? false }
     private var imageEnabled: Bool { subagentToggles[.image] ?? false }
+    private var ocrEnabled: Bool { subagentToggles[.ocr] ?? false }
     /// Per-agent `spawn` allow-list (which agents this agent may spawn).
     /// Mirrored from / into `AgentSettings.spawnableAgentNames`; empty hides the
     /// `spawn` tool. The Default agent uses the global pool instead.
@@ -1011,6 +1012,10 @@ struct AgentDetailView: View {
     /// agent uses `mainChatSubagentConfig` instead.
     @State private var imageGenerationModelId: String? = nil
     @State private var imageEditModelId: String? = nil
+    /// Per-agent OCR model bundle id. `nil` resolves to the first ready OCR model
+    /// at run time. Mirrored from / into `AgentSettings.ocrModelId`. The Default
+    /// agent uses `mainChatSubagentConfig.defaultOcrModelId` instead.
+    @State private var ocrModelId: String? = nil
     /// Per-agent delegation permissions (spawn / image) + spawn budgets. Mirrored
     /// from / into `AgentSettings`. The Default agent uses `mainChatSubagentConfig`.
     @State private var subagentPermissions: SubagentPermissionDefaults = SubagentPermissionDefaults()
@@ -3131,6 +3136,13 @@ struct AgentDetailView: View {
                     subtitle:
                         "Let the agent generate and edit images with a local model using the `image` tool."
                 )
+            case .ocr:
+                return PerAgentFeature(
+                    flag: .ocr,
+                    title: "OCR",
+                    subtitle:
+                        "Let the agent extract text from images with a local OCR model using the `ocr` tool."
+                )
             }
         }
     }
@@ -3313,6 +3325,14 @@ struct AgentDetailView: View {
                     saveMainChatSubagentConfig()
                 }
             )
+        case .ocr:
+            return Binding(
+                get: { mainChatSubagentConfig.ocrDelegationEnabled },
+                set: {
+                    mainChatSubagentConfig.ocrDelegationEnabled = $0
+                    saveMainChatSubagentConfig()
+                }
+            )
         case .spawn:
             return Binding(
                 get: { mainChatSpawnEnabled },
@@ -3364,6 +3384,30 @@ struct AgentDetailView: View {
             )
             subagentFootnote(
                 "Image load policy is a system setting in Settings → Sub-agents."
+            )
+        case .ocr:
+            ocrModelPickerRow
+            subagentPanelDivider
+            subagentPermissionRow(
+                for: SubagentCapabilityRegistry.ocr.id,
+                label: "Permission"
+            )
+            subagentFootnote(
+                "OCR runs a local image-capable model and may briefly unload the chat model."
+            )
+        }
+    }
+
+    /// OCR model picker for the OCR card. `nil` (Choose automatically) resolves
+    /// to the first ready OCR model at run time.
+    private var ocrModelPickerRow: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            AgentSheetSectionLabel("Model")
+            subagentModelPicker(
+                title: "OCR model",
+                selection: ocrModelSelection,
+                candidates: pickerItems.ocrDelegateCandidates,
+                currentId: currentOcrModelId
             )
         }
     }
@@ -3521,6 +3565,29 @@ struct AgentDetailView: View {
 
     private var currentImageEditModelId: String? {
         isDefaultAgent ? mainChatSubagentConfig.defaultImageEditModelId : imageEditModelId
+    }
+
+    private var ocrModelSelection: Binding<String> {
+        if isDefaultAgent {
+            return Binding(
+                get: { mainChatSubagentConfig.defaultOcrModelId ?? "" },
+                set: {
+                    mainChatSubagentConfig.defaultOcrModelId = normalizedModelSelection($0)
+                    saveMainChatSubagentConfig()
+                }
+            )
+        }
+        return Binding(
+            get: { ocrModelId ?? "" },
+            set: {
+                ocrModelId = normalizedModelSelection($0)
+                debouncedSave()
+            }
+        )
+    }
+
+    private var currentOcrModelId: String? {
+        isDefaultAgent ? mainChatSubagentConfig.defaultOcrModelId : ocrModelId
     }
 
     private func subagentPermissionBinding(for kindId: String) -> Binding<SubagentPermissionPolicy> {
@@ -5507,6 +5574,7 @@ struct AgentDetailView: View {
         spawnableAgentNames = agent.settings.spawnableAgentNames
         imageGenerationModelId = agent.settings.imageGenerationModelId
         imageEditModelId = agent.settings.imageEditModelId
+        ocrModelId = agent.settings.ocrModelId
         subagentPermissions = agent.settings.subagentPermissions
         subagentBudgets = agent.settings.subagentBudgets
         // The main chat (Default agent) binds its Sub-agents tab to the global
@@ -5734,6 +5802,8 @@ struct AgentDetailView: View {
                 // allow-list, which gates tool visibility).
                 imageGenerationModelId: imageGenerationModelId,
                 imageEditModelId: imageEditModelId,
+                ocrEnabled: ocrEnabled,
+                ocrModelId: ocrModelId,
                 subagentPermissions: subagentPermissions,
                 subagentBudgets: subagentBudgets
             ),

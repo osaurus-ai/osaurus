@@ -175,6 +175,11 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
     var imageDelegationEnabled: Bool
     var defaultImageGenerationModelId: String?
     var defaultImageEditModelId: String?
+    /// The DEFAULT / main-chat agent's `ocr` enable. Custom agents carry their
+    /// own `AgentSettings.ocrEnabled`; this governs the main chat only.
+    var ocrDelegationEnabled: Bool
+    /// The DEFAULT / main-chat agent's OCR model bundle id (`nil` → first ready).
+    var defaultOcrModelId: String?
     var imageJobLoadPolicy: SubagentImageLoadPolicy
     var permissionDefaults: SubagentPermissionDefaults
     var budgets: SubagentBudgets
@@ -190,6 +195,8 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
         imageDelegationEnabled: Bool = false,
         defaultImageGenerationModelId: String? = nil,
         defaultImageEditModelId: String? = nil,
+        ocrDelegationEnabled: Bool = false,
+        defaultOcrModelId: String? = nil,
         imageJobLoadPolicy: SubagentImageLoadPolicy = .agentSingleResidency,
         permissionDefaults: SubagentPermissionDefaults = SubagentPermissionDefaults(),
         budgets: SubagentBudgets = SubagentBudgets(),
@@ -200,6 +207,8 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
         self.imageDelegationEnabled = imageDelegationEnabled
         self.defaultImageGenerationModelId = defaultImageGenerationModelId
         self.defaultImageEditModelId = defaultImageEditModelId
+        self.ocrDelegationEnabled = ocrDelegationEnabled
+        self.defaultOcrModelId = defaultOcrModelId
         self.imageJobLoadPolicy = imageJobLoadPolicy
         self.permissionDefaults = permissionDefaults
         self.budgets = budgets.normalized
@@ -231,6 +240,12 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
         imageDelegationEnabled
     }
 
+    /// Whether `ocr` is active for the DEFAULT / main chat (its OCR switch).
+    /// Custom agents gate on their own `AgentSettings.ocrEnabled`.
+    var ocrDelegationActive: Bool {
+        ocrDelegationEnabled
+    }
+
     /// Whether an agent-launched image job must evict resident chat models for
     /// the duration of the job (single-GPU-residency handoff). The other load
     /// policies keep the chat model resident. Single source for the image
@@ -246,6 +261,8 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
             imageDelegationEnabled: imageDelegationEnabled,
             defaultImageGenerationModelId: Self.normalizedModelId(defaultImageGenerationModelId),
             defaultImageEditModelId: Self.normalizedModelId(defaultImageEditModelId),
+            ocrDelegationEnabled: ocrDelegationEnabled,
+            defaultOcrModelId: Self.normalizedModelId(defaultOcrModelId),
             imageJobLoadPolicy: imageJobLoadPolicy,
             permissionDefaults: permissionDefaults,
             budgets: budgets.normalized,
@@ -262,6 +279,8 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
         case imageDelegationEnabled
         case defaultImageGenerationModelId
         case defaultImageEditModelId
+        case ocrDelegationEnabled
+        case defaultOcrModelId
         case imageJobLoadPolicy
         case permissionDefaults
         case budgets
@@ -280,6 +299,8 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
                 forKey: .defaultImageGenerationModelId
             ),
             defaultImageEditModelId: try container.decodeIfPresent(String.self, forKey: .defaultImageEditModelId),
+            ocrDelegationEnabled: try container.decodeIfPresent(Bool.self, forKey: .ocrDelegationEnabled) ?? false,
+            defaultOcrModelId: try container.decodeIfPresent(String.self, forKey: .defaultOcrModelId),
             // Enum fields use `(try? …) ?? default` so a single invalid/renamed
             // raw value falls back to its default instead of throwing — a throw
             // here would discard the ENTIRE delegation config (see the lenient

@@ -207,6 +207,10 @@ final class ToolRegistry: ObservableObject {
             // defaults and low-RAM unload policy.
             SpawnTool(),
             ImageTool(),
+            // Native local OCR (one `ocr` tool; extracts text from images via a
+            // configured OCR VLM). Per-agent gated like image/spawn; the tool body
+            // resolves the OCR model + runs the single-residency handoff.
+            OcrTool(),
             // Agent DB feature (spec §6). The system prompt composer
             // gates these per-agent via `Agent.settings.dbEnabled`;
             // registering them as built-ins means agents that *do*
@@ -1439,7 +1443,11 @@ final class ToolRegistry: ObservableObject {
     static var agentDelegationImageToolNames: Set<String> {
         Set(SubagentCapabilityRegistry.image.toolNames)
     }
-    /// All agent-delegation tool names (spawn + image), derived from the
+    /// OCR-family tool names, derived from the capability registry.
+    static var agentDelegationOcrToolNames: Set<String> {
+        Set(SubagentCapabilityRegistry.ocr.toolNames)
+    }
+    /// All agent-delegation tool names (spawn + image + ocr), derived from the
     /// registry's delegation family. Used by the authoritative per-agent
     /// `spawnDelegationEnabled` gate in `SystemPromptComposer.resolveTools`.
     static var agentDelegationAllToolNames: Set<String> {

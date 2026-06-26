@@ -684,6 +684,15 @@ public enum SystemPromptTemplates {
         - The job runs locally in the background and may briefly swap models; that is expected. Make the call and report the result when it returns.
         """
 
+    public static let ocrGuidance = """
+        ## OCR (image text extraction)
+
+        - You CAN read and extract text from images with the `ocr` tool. When the user provides one or more image file paths and asks you to read, transcribe, extract, recognize, or "OCR" the text in them, call `ocr` with `images` set to the path(s). Optionally pass a `prompt` to steer extraction (e.g. a grounding instruction); omit it to use the default.
+        - NEVER reply that you cannot read images or that you are "text-only" — you have this tool, so use it. Do not redirect the user to another app for text extraction.
+        - The tool returns the extracted text as a structured result. Use it to answer the user's request (quote, summarize, or process the text as asked).
+        - The job runs locally in the background and may briefly swap to the OCR model; that is expected. Make the call and report the result when it returns.
+        """
+
     // MARK: - Soul
 
     /// Renders the SOUL section — agent-authored, sandbox-only identity

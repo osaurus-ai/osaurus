@@ -159,7 +159,7 @@ struct SubagentCapabilityRegistryTests {
     @Test("the registry represents every shipped kind, including sandbox_reduce")
     func allRepresentsEveryKind() {
         let ids = Set(SubagentCapabilityRegistry.all.map(\.id))
-        #expect(ids == ["computer_use", "spawn", "image", "sandbox_reduce"])
+        #expect(ids == ["computer_use", "spawn", "image", "ocr", "sandbox_reduce"])
         // sandbox_reduce is display/guidance-only here — gated by sandbox
         // registration, not a per-agent or delegation toggle.
         #expect(SubagentCapabilityRegistry.sandboxReduce.perAgentFlag == nil)
@@ -197,7 +197,7 @@ struct SubagentCapabilityRegistryTests {
         // One card per *flag*: computer_use, spawn, and image are now each their
         // own per-agent toggle (image split out of the old shared spawn flag), so
         // the Sub-agents tab renders exactly three cards in registry order.
-        #expect(SubagentCapabilityRegistry.perAgentToggleFlags == [.computerUse, .spawn, .image])
+        #expect(SubagentCapabilityRegistry.perAgentToggleFlags == [.computerUse, .spawn, .image, .ocr])
     }
 
     /// Drift guard: the registry SSOT (consumed by both visibility surfaces)
@@ -211,10 +211,13 @@ struct SubagentCapabilityRegistryTests {
         #expect(SubagentToolVisibility.delegationToolNames == ToolRegistry.agentDelegationAllToolNames)
         #expect(ToolRegistry.agentDelegationSpawnToolNames == Set(SubagentCapabilityRegistry.spawn.toolNames))
         #expect(ToolRegistry.agentDelegationImageToolNames == Set(SubagentCapabilityRegistry.image.toolNames))
+        #expect(ToolRegistry.agentDelegationOcrToolNames == Set(SubagentCapabilityRegistry.ocr.toolNames))
         // The "all" set is exactly the union of the per-family sets.
         #expect(
             ToolRegistry.agentDelegationAllToolNames
-                == ToolRegistry.agentDelegationSpawnToolNames.union(ToolRegistry.agentDelegationImageToolNames)
+                == ToolRegistry.agentDelegationSpawnToolNames
+                .union(ToolRegistry.agentDelegationImageToolNames)
+                .union(ToolRegistry.agentDelegationOcrToolNames)
         )
     }
 
