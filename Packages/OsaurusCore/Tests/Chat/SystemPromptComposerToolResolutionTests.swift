@@ -83,7 +83,10 @@ struct SystemPromptComposerToolResolutionTests {
     private func makeSnapshot(
         toolMode: ToolSelectionMode = .auto,
         manualToolNames: [String]? = nil,
-        computerUseEnabled: Bool
+        computerUseEnabled: Bool = false,
+        spawnDelegationEnabled: Bool = false,
+        imageEnabled: Bool = false,
+        spawnableAgentNames: [String] = []
     ) -> AgentConfigSnapshot {
         AgentConfigSnapshot(
             agentId: UUID(),
@@ -95,7 +98,10 @@ struct SystemPromptComposerToolResolutionTests {
             manualToolNames: manualToolNames,
             systemPrompt: "",
             dbEnabled: false,
-            computerUseEnabled: computerUseEnabled
+            computerUseEnabled: computerUseEnabled,
+            spawnDelegationEnabled: spawnDelegationEnabled,
+            imageEnabled: imageEnabled,
+            spawnableAgentNames: spawnableAgentNames
         )
     }
 
@@ -613,6 +619,90 @@ struct SystemPromptComposerToolResolutionTests {
             #expect(!names.contains("cancel_next_run"))
             #expect(!names.contains("notify"))
         }
+    }
+
+    // MARK: - Delegation gates (spawn / image — per-capability, per-agent)
+
+    /// Stamp the master delegation switch ON in an isolated subagent-store
+    /// sandbox, run `body`, then reset. Mirrors `SubagentToolAvailabilityTests`'
+    /// cross-suite lock so the global config stays stable while we read the
+    /// delegation-gated schema.
+    private func withSubagentMasterOn(_ body: @MainActor @Sendable () async -> Void) async {
+        let lease = await acquireSubagentStoreSandbox("composer-delegation")
+        defer { lease.release() }
+        SubagentConfigurationStore.save(SubagentConfiguration(agentDelegationEnabled: true))
+        await body()
+    }
+
+    /// A custom agent surfaces `image` purely on its OWN `imageEnabled` toggle
+    /// (master on), independent of spawn — `image` is its own per-agent flag now,
+    /// and `resolveTools` resolves each delegation capability separately.
+    @Test
+    func autoMode_customAgentSurfacesImageIndependentlyOfSpawn() async {
+        await withSubagentMasterOn {
+            let names = Set(
+                SystemPromptComposer.resolveTools(
+                    snapshot: makeSnapshot(imageEnabled: true),
+                    executionMode: .none
+                ).map { $0.function.name }
+            )
+            #expect(names.contains("image"))
+            // No spawn toggle / list → spawn stays hidden even though image is on.
+            #expect(!names.contains("spawn"))
+        }
+    }
+
+    /// A custom agent surfaces `spawn` only with its own toggle AND a non-empty
+    /// per-agent spawnable list (nothing to spawn ⇒ hidden); `image` stays hidden
+    /// when its own toggle is off.
+    @Test
+    func autoMode_customAgentSurfacesSpawnOnlyWithToggleAndTargets() async {
+        await withSubagentMasterOn {
+            let withTargets = Set(
+                SystemPromptComposer.resolveTools(
+                    snapshot: makeSnapshot(
+                        spawnDelegationEnabled: true,
+                        spawnableAgentNames: ["Helper"]
+                    ),
+                    executionMode: .none
+                ).map { $0.function.name }
+            )
+            #expect(withTargets.contains("spawn"))
+            #expect(!withTargets.contains("image"))
+
+            // Toggle on but EMPTY list → nothing to spawn → spawn hidden.
+            let noTargets = Set(
+                SystemPromptComposer.resolveTools(
+                    snapshot: makeSnapshot(
+                        spawnDelegationEnabled: true,
+                        spawnableAgentNames: []
+                    ),
+                    executionMode: .none
+                ).map { $0.function.name }
+            )
+            #expect(!noTargets.contains("spawn"))
+        }
+    }
+
+    /// Master OFF → no delegation tool surfaces for a custom agent regardless of
+    /// its per-agent flags (the master gate is the kill switch).
+    @Test
+    func autoMode_masterOffHidesAllDelegationToolsForCustomAgent() async {
+        let lease = await acquireSubagentStoreSandbox("composer-master-off")
+        defer { lease.release() }
+        SubagentConfigurationStore.save(.default)  // master off
+        let names = Set(
+            SystemPromptComposer.resolveTools(
+                snapshot: makeSnapshot(
+                    spawnDelegationEnabled: true,
+                    imageEnabled: true,
+                    spawnableAgentNames: ["Helper"]
+                ),
+                executionMode: .none
+            ).map { $0.function.name }
+        )
+        #expect(!names.contains("image"))
+        #expect(!names.contains("spawn"))
     }
 
     // MARK: - canonicalToolOrder

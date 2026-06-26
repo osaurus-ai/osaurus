@@ -13,6 +13,20 @@ Owner: Eric. Last updated 2026-06-25. SSOT for the user-facing feature.
 > now `ResidencyHandoff`). Sections below predate the rename and use the old names —
 > read them through that map.
 
+> **Per-agent settings + unified main-chat tab (2026-06-26).** Image models,
+> permissions, and budgets are now **per-agent**, configured in each agent's **Sub-agents
+> tab** — including the **main chat**, which gets the same tab (Spawn + Image cards) bound
+> to the global config. A capability is now **fully configured where you turn it on**:
+> you pick the `image` gen/edit model, the `spawn`/`image` permission, and `spawn` budgets
+> right next to the enable toggle. This **supersedes**: §3.2 "Default-model settings" and
+> §3.3's permission/model/budget controls (those are no longer a global page — Settings →
+> Spawn is now **system-only**: master enable · handoff · RAM-safety · image load policy),
+> and the **"First-use permission popup" model-picker** (UX spec item 4 / the "To build"
+> list) — the model lives in the tab, so the first-use prompt is a plain
+> allow/deny/always. Custom agents persist to `AgentSettings`; the main chat keeps using
+> the global `SubagentConfiguration` (also the REST `/v1/images` default), edited from its
+> own tab.
+
 ## 1. Vision — spawn is a TOOL every main chat can use
 The main osaurus chat model — **cloud OR local** — can call sub-agent tools to
 run a bounded sub-process, get a compact result back, and continue its own turn:

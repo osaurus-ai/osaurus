@@ -62,4 +62,69 @@ struct SpawnToolTests {
         #expect(kind.capability.modelSource == .persona)
         #expect(kind.feedTitle.contains("helper"))
     }
+
+    /// Per-agent spawnable enforcement: a CUSTOM launching agent may only spawn
+    /// personas in its OWN `spawnableAgentNames` list — the global pool does NOT
+    /// apply to it. Here the master switch is on and the global pool lists
+    /// "Helper", but the launching agent is a custom agent with an empty list, so
+    /// `resolveModel` must reject BEFORE any model/residency work (the
+    /// reject-before-evict contract). Binding `ChatExecutionContext.currentAgentId`
+    /// to a non-default id that AgentManager doesn't know about resolves the
+    /// per-agent target list to empty.
+    @Test func customAgentSpawnRejectsTargetOutsideItsOwnList() async throws {
+        let lease = await acquireSubagentStoreSandbox("spawn-per-agent-enforcement")
+        defer { lease.release() }
+        SubagentConfigurationStore.save(
+            SubagentConfiguration(
+                agentDelegationEnabled: true,
+                spawnableAgentNames: ["Helper"]
+            )
+        )
+
+        let customAgentId = UUID()
+        await ChatExecutionContext.$currentAgentId.withValue(customAgentId) {
+            do {
+                _ = try await TextSubagentKind(agentName: "Helper", input: "x")
+                    .resolveModel(SubagentScope.current())
+                Issue.record("custom agent spawn of an unlisted target should be denied")
+            } catch let SubagentError.denied(message) {
+                // The custom-agent message points at the agent's own Sub-agents
+                // tab, not the global Main Chat pool.
+                #expect(message.contains("not spawnable from this agent"))
+            } catch {
+                Issue.record("expected SubagentError.denied, got \(error)")
+            }
+        }
+    }
+
+    /// Per-agent permission enforcement for the main chat: the Default agent
+    /// reads its spawn permission from the GLOBAL config (not `AgentSettings`).
+    /// With the target in the global pool but the spawn permission set to
+    /// `.deny`, `resolveModel` must reject with the per-agent permission message
+    /// before any model / persona work (reject-before-evict).
+    @Test func mainChatSpawnRespectsGlobalPermissionDeny() async throws {
+        let lease = await acquireSubagentStoreSandbox("spawn-main-chat-permission-deny")
+        defer { lease.release() }
+        var perms = SubagentPermissionDefaults()
+        perms.setPolicy(.deny, for: SubagentCapabilityRegistry.spawn.id)
+        SubagentConfigurationStore.save(
+            SubagentConfiguration(
+                agentDelegationEnabled: true,
+                spawnableAgentNames: ["Helper"],
+                permissionDefaults: perms
+            )
+        )
+
+        await ChatExecutionContext.$currentAgentId.withValue(Agent.defaultId) {
+            do {
+                _ = try await TextSubagentKind(agentName: "Helper", input: "x")
+                    .resolveModel(SubagentScope.current())
+                Issue.record("a denied spawn permission should reject resolveModel")
+            } catch let SubagentError.denied(message) {
+                #expect(message.contains("denied by this agent's permission settings"))
+            } catch {
+                Issue.record("expected SubagentError.denied, got \(error)")
+            }
+        }
+    }
 }

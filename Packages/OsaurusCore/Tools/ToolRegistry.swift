@@ -1494,21 +1494,17 @@ final class ToolRegistry: ObservableObject {
         return excluded
     }
 
-    /// The baseline GLOBAL family gate for the delegation kinds: each delegation
-    /// capability carries its own `globalActive` predicate (spawn →
-    /// `anyAgentSpawnable`, image → `imageDelegationActive`), so this loops the
-    /// registry instead of mirroring the per-family checks by hand. Adding a
-    /// delegation kind needs only its descriptor.
+    /// The baseline MASTER gate for the delegation kinds. The base schema has no
+    /// agent context, so it applies only the master `agentDelegationEnabled`
+    /// switch: when delegation is off entirely, the whole family is hidden;
+    /// otherwise every delegation tool stays in the base set and the per-agent /
+    /// Default-vs-custom narrowing happens in `SystemPromptComposer.resolveTools`
+    /// (and the HTTP agent-run path) via `SubagentToolVisibility`, where the
+    /// agent is known. Keeping the base set a superset is what lets a custom
+    /// agent surface `spawn` even when the main-chat pool is empty.
     private func agentDelegationExcludedToolNames() -> Set<String> {
-        let config = SubagentConfigurationStore.snapshot()
-        var excluded: Set<String> = []
-        for capability in SubagentCapabilityRegistry.delegationFamily {
-            guard case .delegation(let global) = capability.gate else { continue }
-            if !global.isActive(config) {
-                excluded.formUnion(capability.toolNames)
-            }
-        }
-        return excluded
+        guard !SubagentConfigurationStore.snapshot().agentDelegationEnabled else { return [] }
+        return SubagentToolVisibility.delegationToolNames
     }
 
     /// Sandbox read tools made redundant by the unified, path-routed host

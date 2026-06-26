@@ -102,10 +102,18 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
     /// `resolveTools` — `computer_use` is stripped in BOTH auto and manual
     /// mode unless the agent has opted in.
     public let computerUseEnabled: Bool
-    /// Per-agent opt-in for spawn / agent delegation. Enforced authoritatively in
-    /// `resolveTools` — `spawn` / `image` are stripped unless the agent has opted
-    /// in (AND with the global config gates).
+    /// Per-agent opt-in for `spawn`. Enforced authoritatively in `resolveTools`
+    /// — stripped unless the agent has opted in AND has at least one spawnable
+    /// persona (`spawnableAgentNames`), ANDed with the global master gate. The
+    /// Default agent is governed by the global pool instead.
     public let spawnDelegationEnabled: Bool
+    /// Per-agent opt-in for `image`. Enforced in `resolveTools` — stripped
+    /// unless the agent opted in (custom agents) / the global image switch is on
+    /// (Default agent).
+    public let imageEnabled: Bool
+    /// Personas this agent may launch via `spawn`. Drives the "is there anything
+    /// to spawn?" half of the spawn visibility gate for custom agents.
+    public let spawnableAgentNames: [String]
 
     public init(
         agentId: UUID,
@@ -123,7 +131,9 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
         searchMemoryEnabled: Bool = false,
         selfSchedulingEnabled: Bool = false,
         computerUseEnabled: Bool = false,
-        spawnDelegationEnabled: Bool = false
+        spawnDelegationEnabled: Bool = false,
+        imageEnabled: Bool = false,
+        spawnableAgentNames: [String] = []
     ) {
         self.agentId = agentId
         self.toolsDisabled = toolsDisabled
@@ -141,6 +151,8 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
         self.selfSchedulingEnabled = selfSchedulingEnabled
         self.computerUseEnabled = computerUseEnabled
         self.spawnDelegationEnabled = spawnDelegationEnabled
+        self.imageEnabled = imageEnabled
+        self.spawnableAgentNames = spawnableAgentNames
     }
 
     /// Read every `effective*` field in one MainActor batch.
@@ -179,7 +191,9 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
             searchMemoryEnabled: caps.searchMemoryEnabled,
             selfSchedulingEnabled: caps.selfSchedulingEnabled,
             computerUseEnabled: caps.computerUseEnabled,
-            spawnDelegationEnabled: caps.spawnDelegationEnabled
+            spawnDelegationEnabled: caps.spawnDelegationEnabled,
+            imageEnabled: caps.imageEnabled,
+            spawnableAgentNames: caps.spawnableAgentNames
         )
     }
 }

@@ -14,6 +14,15 @@ This file is the spec + wiring contract for the current build.
 > store → `SubagentConfigurationStore`, the handoff → `ResidencyHandoff`. The §4 paths
 > below have been updated to the shipped types.
 
+> **Per-agent settings (2026-06-26).** Image models, permissions, and budgets are now
+> **per-agent** — configured in each agent's **Sub-agents** tab (custom agents store them
+> on `AgentSettings`; the **main chat** edits the global `SubagentConfiguration` from its
+> own un-hidden tab). Global Settings → Spawn is **system-only** (master enable · handoff ·
+> RAM-safety · image load policy). The kinds read effective settings through pure resolvers
+> (`SubagentToolVisibility.effectiveImageModel` / `effectivePermission` / `effectiveBudgets`,
+> default→global / custom→`AgentSettings`). The in-prompt first-use image-model picker is
+> gone (model lives in the tab). §2/§4/§6 below reflect this.
+
 ---
 
 ## 1. What it is
@@ -58,20 +67,33 @@ Reuse, don't reinvent: `AgentToolLoop` (`Services/Chat/AgentToolLoop.swift`),
 3. **Tool** — a thin tool that parses args, builds the kind, and calls
    `SubagentSession.run(_:tool:)`.
 
-## 2. Gating — DEFAULT OFF, two switches
+## 2. Gating — DEFAULT OFF, master switch + per-capability, per-agent resolution
 
-1. **Global:** `SubagentConfiguration.agentDelegationEnabled` (the flag kept its name
-   through the type rename).
-2. **Per-agent:** `Agent.spawnDelegationEnabled` (default `false`) — whether THIS agent
-   may use the sub-agent tools at all. Spawn *targets* are gated separately by
-   `SubagentConfiguration.spawnableAgentNames`: a persona is reachable via `spawn` ONLY
-   when its owner lists it spawnable. A model can never reach an arbitrary local model —
-   only opted-in agents.
+1. **Master (global):** `SubagentConfiguration.agentDelegationEnabled` — the one
+   system-wide switch. With it off, the whole delegation family is hidden for everyone;
+   `ToolRegistry`'s base schema applies ONLY this master gate (no agent context), so the
+   base set stays a superset and the per-agent narrowing happens where the agent is known.
+2. **Per-capability, resolved per agent** by `SubagentToolVisibility` (each ANDed with
+   the master switch):
+   - **`spawn`** — *Default / main chat:* governed by the global pool
+     (`SubagentConfiguration.spawnableAgentNames`, edited in the main chat's Sub-agents
+     tab); visible when the pool is non-empty. *Custom agent:* its own
+     `AgentSettings.spawnDelegationEnabled` **and** a non-empty per-agent
+     `AgentSettings.spawnableAgentNames` (its Sub-agents tab) — nothing to spawn ⇒ hidden.
+   - **`image`** — *Default / main chat:* the global `imageDelegationEnabled` switch.
+     *Custom agent:* its own `AgentSettings.imageEnabled` toggle.
+   - **`computer_use`** — authoritative per-agent flag (`AgentSettings.computerUseEnabled`),
+     stripped in both auto + manual mode; the Default agent never enables it.
+
+Spawn *targets* are validated again at execution time (`TextSubagentKind.resolveModel` →
+`SubagentToolVisibility.spawnTargetAllowed`): the Default agent checks the global pool, a
+custom agent its OWN allow-list. A model can never reach an arbitrary local model — only
+opted-in agents, scoped to the launching agent.
 
 Both the native chat composer (`SystemPromptComposer.resolveTools`) and the HTTP
 agent-run surface (`HTTPHandler.enrichWithAgentContext`) resolve the visible sub-agent
-tool set through the SAME `SubagentToolVisibility` resolver, so the two surfaces can
-never drift (the BUG E regression guard).
+tool set through the SAME `SubagentToolVisibility.visibleDelegationToolNames` resolver, so
+the two surfaces can never drift (the BUG E regression guard).
 
 ## 3. Model-handoff contract
 
@@ -152,26 +174,56 @@ restore-on-failure (orchestrator never left unloaded).
 
 ### Personas / config / runtime (reused, existing)
 - `Models/Agent/Agent.swift` + `Managers/AgentManager.swift` — persona name/model
-  (local or remote)/prompt/tool-policy; `effectiveModel(for:)`; per-agent
-  `spawnDelegationEnabled`.
+  (local or remote)/prompt/tool-policy; `effectiveModel(for:)`. Per-agent sub-agent
+  fields on `AgentSettings` (custom agents): `computerUseEnabled` + `computerUseCeiling`,
+  `spawnDelegationEnabled` + `spawnableAgentNames` (this agent's own spawn allow-list),
+  `imageEnabled` (image is its own per-agent toggle, no longer riding the spawn flag),
+  and — added 2026-06-26 — `imageGenerationModelId` / `imageEditModelId` (`String?`),
+  `subagentPermissions` (`SubagentPermissionDefaults`), and `subagentBudgets`
+  (`SubagentBudgets`). `effectiveCapabilities(for:)` carries `imageEnabled` +
+  `spawnableAgentNames` through to the snapshot the visibility resolvers read; the model /
+  permission / budget fields are read live at the kind via the effective-settings
+  resolvers (below).
 - `Models/AgentDelegation/SubagentConfiguration.swift` + `SubagentConfigurationStore.swift`
-  — global enable, load policy, per-kind permission (`SubagentPermissionDefaults` is a
-  `[kindId: policy]` map keyed by `capability.id`, ask/deny/always — a kind absent from
-  the map defaults to `.ask`, so a new permissioned kind needs no new struct field),
-  budgets, the local-handoff toggle, RAM-safety preflight. Persists to
-  `agent-delegation.json` (legacy top-level `spawn`/`image` keys migrate into the map
-  on decode); broadcasts `.subagentConfigurationChanged`.
+  — the **system + Default/main-chat** config: master `agentDelegationEnabled`,
+  local-handoff toggle, RAM-safety preflight, image load policy, plus the **Default /
+  main-chat** values: default image gen/edit models, per-kind permission
+  (`SubagentPermissionDefaults` is a `[kindId: policy]` map keyed by `capability.id`,
+  ask/deny/always — a kind absent from the map defaults to `.ask`, so a new permissioned
+  kind needs no new struct field), budgets, `imageDelegationEnabled`, and
+  `spawnableAgentNames` (the main chat's pool). These also back the REST `/v1/images`
+  default. Custom agents override the model / permission / budget values from their own
+  `AgentSettings`. Persists to `agent-delegation.json`; broadcasts
+  `.subagentConfigurationChanged`.
+- `Subagent/SubagentCapabilityRegistry.swift` — `SubagentToolVisibility` also hosts the
+  pure **effective-settings resolvers** (`effectiveImageModel` / `effectivePermission` /
+  `effectiveBudgets`): **Default → global `SubagentConfiguration`; custom →
+  `AgentSettings`** (nil image model → first-ready fallback; missing permission → `.ask`).
+  Each kind reads these so the Default-vs-custom branch lives in one tested place.
 - `Services/ModelRuntime.swift` — load/unload/`preload`/`cachedModelSummaries`, the
   model-fit refusal; `Services/ModelRuntime/MetalGate.swift` — GPU owner-keyed gate.
 
 ### Surfacing
-- `Tools/ToolRegistry.swift` — exposes `spawn` / `image` (and `computer_use`,
-  `sandbox_reduce`) only when the gates pass; an `agent` enum of spawnable personas.
-  Optional alias tools (`configure_osaurus(input)` = sugar for
-  `spawn("configure_osaurus", input)`).
-- `Views/Settings/SubagentSettingsSection.swift` + the `SpawnSettingsView` sidebar page
-  render the grouped settings; both bind the one store and sync via
-  `.subagentConfigurationChanged`.
+- `Tools/ToolRegistry.swift` — `agentDelegationExcludedToolNames()` applies ONLY the
+  master gate to the base schema (so the base set is a superset); per-agent narrowing of
+  `spawn` / `image` happens downstream in `resolveTools` / the HTTP path. The delegation
+  tool-name sets are DERIVED from `SubagentCapabilityRegistry` (no hand-maintained list).
+- `Views/Agent/AgentsView.swift` — per-agent sub-agent controls live in the dedicated
+  **`DetailTab.subagents`** ("Sub-agents") tab, rendered registry-driven (one card per
+  `SubagentCapabilityRegistry.perAgentToggleFlags` entry: `computer_use` →
+  autonomy-ceiling, `spawn` → per-agent spawnable checklist + permission picker + budget
+  steppers, `image` → gen/edit model pickers + permission picker) with each card's config
+  in an inline DisclosureGroup. The tab is **shown for the Default agent too** (2026-06-26):
+  it renders only the Spawn + Image cards (no `computer_use`), bound to the global
+  `SubagentConfiguration` via `SubagentConfigurationStore` (the main chat's settings still
+  live there). Custom-agent cards write `AgentSettings` via `debouncedSave()`; the main
+  chat saves the global config directly.
+- `Views/Settings/SubagentSettingsSection.swift` — the global Spawn tab is **system-only**
+  (2026-06-26): master enable, Local Orchestrator Handoff, RAM-Safety preflight, Image
+  Load Policy, and the "How it works" explainer. The Main Chat block and the per-agent
+  image-model / permission / budget controls moved to the main chat's Sub-agents tab. It
+  still binds the one store and syncs via `.subagentConfigurationChanged`;
+  `SettingsSearchIndex` indexes the slimmed layout.
 
 ## 5. Lifecycle & progress (summary; full detail in DESIGN §8)
 
@@ -185,10 +237,12 @@ denoise step counter (k/N). Re-entrancy: a subprocess cannot `spawn`.
 
 ## 6. Usage
 
-- **User:** mark an Agent **spawnable** in its editor; it gets its own model
-  (local/remote), prompt, tools. Set per-job permission (`spawn`/`image`
-  ask/deny/always) + the "Local Orchestrator Handoff" toggle + budgets in the Spawn &
-  Sub-agents settings.
+- **User:** open an agent's **Sub-agents** tab to configure its sub-agents end-to-end —
+  toggle `computer_use` / `spawn` / `image`, pick which personas `spawn` may call (its own
+  allow-list), set the `spawn` permission + budgets, and pick the `image` gen/edit models +
+  permission. The **main chat (Default agent)** has the same tab (Spawn + Image cards). Only
+  true system controls — master enable, "Local Orchestrator Handoff", RAM-Safety, and Image
+  Load Policy — live in Settings → Spawn.
 - **Model:** sees `spawn` (and any alias tools) only when enabled. `spawn("sparky",
   "do x y z")`. Image: one `image` tool — `image({"prompt": …})` to generate, add
   `source_paths` to edit.

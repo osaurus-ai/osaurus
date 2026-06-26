@@ -758,7 +758,9 @@ extension AgentManager {
             searchMemoryEnabled: agent.settings.searchMemoryEnabled,
             selfSchedulingEnabled: agent.settings.selfSchedulingEnabled,
             computerUseEnabled: agent.settings.computerUseEnabled,
-            spawnDelegationEnabled: agent.settings.spawnDelegationEnabled
+            spawnDelegationEnabled: agent.settings.spawnDelegationEnabled,
+            imageEnabled: agent.settings.imageEnabled,
+            spawnableAgentNames: agent.settings.spawnableAgentNames
         )
     }
 

@@ -474,9 +474,16 @@ public struct AgentCapabilities: Sendable, Equatable {
     public var selfSchedulingEnabled: Bool
     /// Computer Use (`computer_use` entry tool) exposed to the model.
     public var computerUseEnabled: Bool
-    /// Spawn / agent delegation (`spawn` / `image`) exposed to the model —
-    /// per-agent opt-in.
+    /// Spawn (`spawn`) exposed to the model — per-agent opt-in.
     public var spawnDelegationEnabled: Bool
+    /// Image (`image`) exposed to the model — per-agent opt-in, split from
+    /// `spawnDelegationEnabled` so an agent can spawn without image (or vice
+    /// versa).
+    public var imageEnabled: Bool
+    /// Personas this agent may launch via `spawn`. Empty → the `spawn` tool
+    /// stays hidden (nothing to spawn). The Default agent ignores this and uses
+    /// the global `SubagentConfiguration.spawnableAgentNames` pool instead.
+    public var spawnableAgentNames: [String]
 
     public init(
         toolsEnabled: Bool,
@@ -487,7 +494,9 @@ public struct AgentCapabilities: Sendable, Equatable {
         searchMemoryEnabled: Bool,
         selfSchedulingEnabled: Bool,
         computerUseEnabled: Bool = false,
-        spawnDelegationEnabled: Bool = false
+        spawnDelegationEnabled: Bool = false,
+        imageEnabled: Bool = false,
+        spawnableAgentNames: [String] = []
     ) {
         self.toolsEnabled = toolsEnabled
         self.memoryEnabled = memoryEnabled
@@ -498,6 +507,8 @@ public struct AgentCapabilities: Sendable, Equatable {
         self.selfSchedulingEnabled = selfSchedulingEnabled
         self.computerUseEnabled = computerUseEnabled
         self.spawnDelegationEnabled = spawnDelegationEnabled
+        self.imageEnabled = imageEnabled
+        self.spawnableAgentNames = spawnableAgentNames
     }
 }
 
@@ -730,12 +741,37 @@ public struct AgentSettings: Codable, Sendable, Equatable {
     /// This is the spec's "SOUL.md ceiling" expressed as settings rather
     /// than parsed prose.
     public var computerUseCeiling: AutonomyCeiling?
-    /// Per-agent opt-in for spawn / agent delegation (`spawn` / `image`).
-    /// Default off; gated authoritatively in
-    /// `resolveTools` (stripped unless enabled). The global
-    /// `SubagentConfiguration` still supplies the defaults (models, load
-    /// policy, RAM safety, permissions, budgets); this is the per-agent enable.
+    /// Per-agent opt-in for the `spawn` tool. Default off; gated
+    /// authoritatively in `resolveTools` (stripped unless enabled AND the agent
+    /// has at least one spawnable persona). The global `SubagentConfiguration`
+    /// still supplies the system defaults (budgets, RAM safety, permissions);
+    /// this is the per-agent enable.
     public var spawnDelegationEnabled: Bool
+    /// Per-agent opt-in for the `image` tool (generate + edit). Default off;
+    /// split from `spawnDelegationEnabled` so an agent can spawn without image.
+    /// The Default agent ignores this and uses the global image enable in
+    /// `SubagentConfiguration`.
+    public var imageEnabled: Bool
+    /// Personas this agent may launch via `spawn` (per-agent allow-list). Empty
+    /// → the `spawn` tool stays hidden (nothing to spawn). The Default agent
+    /// ignores this and uses the global pool in `SubagentConfiguration`.
+    public var spawnableAgentNames: [String]
+    /// Per-agent image-generation model bundle id (`nil` → resolve to the first
+    /// ready text-to-image model at run time). The Default agent uses the global
+    /// `SubagentConfiguration.defaultImageGenerationModelId` instead.
+    public var imageGenerationModelId: String?
+    /// Per-agent image-edit model bundle id (`nil` → resolve to the first ready
+    /// image-edit model at run time). The Default agent uses the global
+    /// `SubagentConfiguration.defaultImageEditModelId` instead.
+    public var imageEditModelId: String?
+    /// Per-agent permission policies for the delegation sub-agents (`spawn`,
+    /// `image`), keyed by capability id. A kind absent from the map resolves to
+    /// the safe `.ask` default. The Default agent uses the global
+    /// `SubagentConfiguration.permissionDefaults` instead.
+    public var subagentPermissions: SubagentPermissionDefaults
+    /// Per-agent budgets for `spawn` jobs (token / turn / wall-clock caps). The
+    /// Default agent uses the global `SubagentConfiguration.budgets` instead.
+    public var subagentBudgets: SubagentBudgets
 
     public init(
         dbEnabled: Bool,
@@ -749,7 +785,13 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         selfSchedulingEnabled: Bool = false,
         computerUseEnabled: Bool = false,
         computerUseCeiling: AutonomyCeiling? = nil,
-        spawnDelegationEnabled: Bool = false
+        spawnDelegationEnabled: Bool = false,
+        imageEnabled: Bool = false,
+        spawnableAgentNames: [String] = [],
+        imageGenerationModelId: String? = nil,
+        imageEditModelId: String? = nil,
+        subagentPermissions: SubagentPermissionDefaults = SubagentPermissionDefaults(),
+        subagentBudgets: SubagentBudgets = SubagentBudgets()
     ) {
         self.dbEnabled = dbEnabled
         self.schedule = schedule
@@ -763,6 +805,12 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         self.computerUseEnabled = computerUseEnabled
         self.computerUseCeiling = computerUseCeiling
         self.spawnDelegationEnabled = spawnDelegationEnabled
+        self.imageEnabled = imageEnabled
+        self.spawnableAgentNames = spawnableAgentNames
+        self.imageGenerationModelId = imageGenerationModelId
+        self.imageEditModelId = imageEditModelId
+        self.subagentPermissions = subagentPermissions
+        self.subagentBudgets = subagentBudgets
     }
 
     public init(from decoder: Decoder) throws {
@@ -801,11 +849,29 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         computerUseEnabled = try c.decodeIfPresent(Bool.self, forKey: .computerUseEnabled) ?? false
         spawnDelegationEnabled =
             try c.decodeIfPresent(Bool.self, forKey: .spawnDelegationEnabled) ?? false
+        // Default off; spawn/image delegation is pre-release so there is no
+        // legacy shape to migrate (image was previously gated by the shared
+        // spawn flag, which stays the spawn-only enable now).
+        imageEnabled = try c.decodeIfPresent(Bool.self, forKey: .imageEnabled) ?? false
+        spawnableAgentNames =
+            try c.decodeIfPresent([String].self, forKey: .spawnableAgentNames) ?? []
         // Optional; absent means no ceiling (user policy applies as-is).
         computerUseCeiling = try c.decodeIfPresent(
             AutonomyCeiling.self,
             forKey: .computerUseCeiling
         )
+        // Per-agent image models / permissions / budgets. All optional with safe
+        // defaults; a malformed value must never discard the whole agent decode,
+        // so the struct-typed fields use `try?` (the same lenient approach as
+        // `SubagentConfiguration`).
+        imageGenerationModelId = try c.decodeIfPresent(String.self, forKey: .imageGenerationModelId)
+        imageEditModelId = try c.decodeIfPresent(String.self, forKey: .imageEditModelId)
+        subagentPermissions =
+            (try? c.decodeIfPresent(SubagentPermissionDefaults.self, forKey: .subagentPermissions))
+            ?? SubagentPermissionDefaults()
+        subagentBudgets =
+            (try? c.decodeIfPresent(SubagentBudgets.self, forKey: .subagentBudgets))
+            ?? SubagentBudgets()
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -821,6 +887,12 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         case computerUseEnabled
         case computerUseCeiling
         case spawnDelegationEnabled
+        case imageEnabled
+        case spawnableAgentNames
+        case imageGenerationModelId
+        case imageEditModelId
+        case subagentPermissions
+        case subagentBudgets
         // Read-only legacy key — never encoded after migration.
         case generativeGreetings
     }
@@ -839,6 +911,12 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         try c.encode(computerUseEnabled, forKey: .computerUseEnabled)
         try c.encodeIfPresent(computerUseCeiling, forKey: .computerUseCeiling)
         try c.encode(spawnDelegationEnabled, forKey: .spawnDelegationEnabled)
+        try c.encode(imageEnabled, forKey: .imageEnabled)
+        try c.encode(spawnableAgentNames, forKey: .spawnableAgentNames)
+        try c.encodeIfPresent(imageGenerationModelId, forKey: .imageGenerationModelId)
+        try c.encodeIfPresent(imageEditModelId, forKey: .imageEditModelId)
+        try c.encode(subagentPermissions, forKey: .subagentPermissions)
+        try c.encode(subagentBudgets, forKey: .subagentBudgets)
     }
 
     /// Default settings for newly created agents (and for back-compat decoding of

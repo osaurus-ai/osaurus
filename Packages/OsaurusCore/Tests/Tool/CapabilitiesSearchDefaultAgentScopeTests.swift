@@ -30,6 +30,13 @@ struct DefaultAgentSchemaScopeTests {
     @Test
     func defaultAgent_keepsBaselineRegardlessOfQuery() async {
         Self.ensureBootstrapped()
+        // Isolate the global delegation snapshot: the default-agent schema gates
+        // `spawn` / `image` on `SubagentConfigurationStore.snapshot()`, so a
+        // parallel suite that flips the master switch + main-chat pool would
+        // otherwise leak `spawn` into this baseline mid-flight (the documented
+        // cross-suite snapshot race — see SubagentStoreTestLock).
+        let lease = await acquireSubagentStoreSandbox("default-agent-schema-baseline")
+        defer { lease.release() }
         let context = await SystemPromptComposer.composeChatContext(
             agentId: Agent.defaultId,
             executionMode: .none,
@@ -51,6 +58,8 @@ struct DefaultAgentSchemaScopeTests {
     @Test
     func defaultAgent_loadsConsolidatedWritesDirectlyNotViaSearch() async {
         Self.ensureBootstrapped()
+        let lease = await acquireSubagentStoreSandbox("default-agent-schema-consolidated")
+        defer { lease.release() }
         let context = await SystemPromptComposer.composeChatContext(
             agentId: Agent.defaultId,
             executionMode: .none,

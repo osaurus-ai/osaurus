@@ -44,6 +44,39 @@ configurable primitive. Almost everything needed already exists.
 > permission lives in `SubagentPermissionDefaults`, now a `[kindId: policy]` map keyed
 > by `capability.id` (legacy top-level `spawn`/`image` keys migrate on decode), so a
 > new permissioned kind needs no new config field — it reads/writes its own id.
+>
+> **IA reorg + per-capability per-agent split (2026-06-25).** The per-agent sub-agent
+> controls moved out of the crowded Configure → Features list into a dedicated
+> **`DetailTab.subagents`** ("Sub-agents") tab, rendered registry-driven (one card per
+> `SubagentCapabilityRegistry.perAgentToggleFlags` entry, config inline in a
+> DisclosureGroup); the tab is hidden for the Default agent. Each capability is now
+> **independently per-agent**: `image` got its own `PerAgentFlag.image` /
+> `AgentSettings.imageEnabled` (it no longer rides the spawn flag), and `spawn` got a
+> per-agent `AgentSettings.spawnableAgentNames` allow-list. The §0.2 "per-agent
+> `spawnable` flag" below is therefore now a **per-agent toggle + per-agent target
+> list** for custom agents. The **Default agent stays governed by global Settings**:
+> `SubagentConfiguration` keeps the system fields plus the Default-only
+> `imageDelegationEnabled` + `spawnableAgentNames` (its pool). The Default-vs-custom
+> resolution per capability lives in `SubagentToolVisibility` (`spawnAvailable` /
+> `imageAvailable` / `spawnTargetAllowed` / `visibleDelegationToolNames`), all ANDed with
+> the master switch; `ToolRegistry`'s base schema applies only the master gate so the
+> base set is a superset narrowed where the agent is known. Global Settings → Spawn is
+> split into **System** + **Main Chat (Default Agent)** blocks.
+>
+> **Full per-agent settings + unified main-chat tab (2026-06-26, supersedes the two
+> sentences above about the hidden Default tab + the split Spawn page).** The split made
+> the *enable* per-agent but left each capability's **model / permission / budget** in
+> global Settings. This pass moves them per-agent too: new `AgentSettings` fields
+> `imageGenerationModelId` / `imageEditModelId` / `subagentPermissions` /
+> `subagentBudgets`, read live at the kind through pure resolvers
+> (`SubagentToolVisibility.effectiveImageModel` / `effectivePermission` /
+> `effectiveBudgets`: Default → global config, custom → `AgentSettings`). The Sub-agents
+> tab is **un-hidden for the Default agent** and renders Spawn + Image cards bound to the
+> global `SubagentConfiguration` (a UI move — the main chat's settings still persist
+> there), so the main chat is consistent with custom agents. Global Settings → Spawn is
+> now **system-only** (master enable · handoff · RAM-safety · image load policy). The
+> in-prompt first-use image-model picker (see §8.1 phase 3) is removed — the model is
+> chosen in the tab, so the prompt is a plain allow/deny/always.
 
 ---
 
@@ -179,9 +212,12 @@ func runAgent(name, query):
 - Single-residency handoff + `ModelRuntime` load-refusal = RAM safety.
 - Re-entrancy guard: a subagent cannot call `spawn` (mirror
   `LocalTextDelegateContext.isActive`).
-- Permission: per-callable-agent ask/deny/always (extend AgentDelegation
-  permission defaults, keyed by agent or job kind).
-- Budgets: tokens/turns/elapsed from AgentDelegation settings.
+- Permission: ask/deny/always, resolved **per launching agent** via
+  `SubagentToolVisibility.effectivePermission` (custom → `AgentSettings.subagentPermissions`;
+  Default → global `SubagentConfiguration.permissionDefaults`), keyed by `capability.id`.
+- Budgets: tokens/turns/elapsed, resolved **per launching agent** via
+  `effectiveBudgets` (custom → `AgentSettings.subagentBudgets`; Default → global
+  `SubagentConfiguration.budgets`).
 
 ## 7. Build order
 1. `spawn` tool + `AgentSubagentRunner` (generalize `LocalTextDelegateTool`'s
@@ -208,7 +244,7 @@ text (`AgentToolLoop`) and image (`vMLXFlux`) jobs.
 |---|------------------|-------|--------------|---------------|
 | 1 | `received` | tool dispatch | parse args, resolve agent/job | bad args |
 | 2 | `resolving_model` | resolver | resolve subagent model; **reject stale/incomplete/wrong-kind BEFORE touching residency** (no pointless eviction) | model missing/incomplete |
-| 3 | `permission` | permission policy | ask/deny/always; prompt shows the *resolved* model + allows switch | denied |
+| 3 | `permission` | permission policy | ask/deny/always (the policy is the agent's own `effectivePermission`); the prompt shows the *resolved* model. (The first-use in-prompt model picker was removed 2026-06-26 — the model is set in the agent's Sub-agents tab.) | denied |
 | 4 | `waiting_for_chat_idle` | `InferenceLoadCoordinator.waitForChatIdle` | wait for the orchestrator's in-flight generation to fully drain | chat-busy timeout |
 | 5 | `unloading_chat_models` | `ChatResidencyHandoff` | unload resident orchestrator model(s) — **local orchestrator only** | — |
 | 6 | `loading_subagent` | `ModelRuntime.load` / engine load | weight dequant + kernel compile under `MetalGate("load:<m>")`; **model-fit RAM refusal happens here** | won't-fit refusal |

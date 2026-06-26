@@ -63,16 +63,43 @@ final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
 
     func resolveModel(_ scope: SubagentScope) async throws -> ResolvedModel {
         let config = SubagentConfigurationStore.snapshot()
-        guard config.imageDelegationActive else {
+        // Master switch first (system-wide), so the message names the right
+        // control when delegation is off entirely.
+        guard config.agentDelegationEnabled else {
             throw SubagentError.denied(
                 params.isEdit
                     ? "Image edit is disabled in Agent Delegation settings."
                     : "Image generation is disabled in Agent Delegation settings."
             )
         }
+        // Per-agent image enable + model: Default / main chat → global image
+        // switch + global configured model; a custom agent → its own
+        // `imageEnabled` toggle + per-agent model, resolved from the launching
+        // agent (`scope`). A nil model falls through to the resolver's
+        // first-ready-model fallback below.
+        let isDefault = scope.agentId == Agent.defaultId
+        let settings = await MainActor.run {
+            AgentManager.shared.agent(for: scope.agentId)?.settings
+        }
+        let imageAllowed = SubagentToolVisibility.imageAvailable(
+            isDefault: isDefault,
+            config: config,
+            perAgentEnabled: settings?.imageEnabled ?? false
+        )
+        guard imageAllowed else {
+            throw SubagentError.denied(
+                params.isEdit
+                    ? "Image edit is not enabled for this agent."
+                    : "Image generation is not enabled for this agent."
+            )
+        }
         let modelKind: SubagentModelKind = params.isEdit ? .imageEdit : .imageGeneration
-        let configured =
-            params.isEdit ? config.defaultImageEditModelId : config.defaultImageGenerationModelId
+        let configured = SubagentToolVisibility.effectiveImageModel(
+            isEdit: params.isEdit,
+            isDefault: isDefault,
+            config: config,
+            settings: settings
+        )
         do {
             let models = try await ImageGenerationService.shared.availableModels()
             let model = try NativeImageJobModelResolver.resolve(
@@ -91,6 +118,21 @@ final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
 
     func permission(_ scope: SubagentScope, _ resolved: ResolvedModel) async -> SubagentDecision {
         let config = SubagentConfigurationStore.snapshot()
+        // Per-agent permission: Default / main chat → global permission map; a
+        // custom agent → its own `subagentPermissions`, resolved from the
+        // launching agent (`scope`). The model is now chosen in the agent's
+        // Sub-agents tab, so the prompt is a plain allow / deny (the `.ask`
+        // policy); `.alwaysAllow` is set per-agent in that tab.
+        let isDefault = scope.agentId == Agent.defaultId
+        let settings = await MainActor.run {
+            AgentManager.shared.agent(for: scope.agentId)?.settings
+        }
+        let policy = SubagentToolVisibility.effectivePermission(
+            capabilityId: capability.id,
+            isDefault: isDefault,
+            config: config,
+            settings: settings
+        )
         let approvalJSON = SubagentApprovalArguments.enrichedJSON(
             from: argumentsJSON,
             values: [
@@ -99,42 +141,21 @@ final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
             ]
         )
         return params.isEdit
-            ? await editPermission(config: config, argumentsJSON: approvalJSON)
-            : await generatePermission(config: config, argumentsJSON: approvalJSON)
+            ? await editPermission(policy: policy, argumentsJSON: approvalJSON)
+            : await generatePermission(policy: policy, argumentsJSON: approvalJSON)
     }
 
     private func generatePermission(
-        config: SubagentConfiguration,
+        policy: SubagentPermissionPolicy,
         argumentsJSON: String
     ) async -> SubagentDecision {
-        switch config.permissionDefaults.policy(for: capability.id) {
+        switch policy {
         case .deny:
-            return .denied("Image generation is denied by Agent Delegation settings.")
+            return .denied("Image generation is denied by this agent's permission settings.")
         case .alwaysAllow:
             return .allow
         case .ask:
             if ChatExecutionContext.autoApproveToolPrompts { return .allow }
-            // First use (no default image model chosen yet): show the spawn-model
-            // picker inside the permission prompt so the user picks the image
-            // model once and the choice persists.
-            if config.defaultImageGenerationModelId == nil {
-                let options = await Self.imageGenModelChoices()
-                let outcome = await ToolPermissionPromptService.requestSpawnApproval(
-                    toolName: "image",
-                    description: ImageTool.toolDescription,
-                    argumentsJSON: argumentsJSON,
-                    modelPickerTitle: "Image model",
-                    modelOptions: options,
-                    currentModel: nil
-                )
-                switch outcome {
-                case .denied:
-                    return .userDenied("User denied image generation.")
-                case .allowed(let model, let always):
-                    Self.persistImagePreferences(model: model, always: always)
-                    return .allow
-                }
-            }
             let approved = await ToolPermissionPromptService.requestApproval(
                 toolName: "image",
                 description: ImageTool.toolDescription,
@@ -145,12 +166,12 @@ final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
     }
 
     private func editPermission(
-        config: SubagentConfiguration,
+        policy: SubagentPermissionPolicy,
         argumentsJSON: String
     ) async -> SubagentDecision {
-        switch config.permissionDefaults.policy(for: capability.id) {
+        switch policy {
         case .deny:
-            return .denied("Image edit is denied by Agent Delegation settings.")
+            return .denied("Image edit is denied by this agent's permission settings.")
         case .alwaysAllow:
             return .allow
         case .ask:
@@ -323,26 +344,6 @@ final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
         case .cancelled:
             feed.emitPhase("cancelled")
         }
-    }
-
-    // MARK: - First-use model picker
-
-    /// Ready text→image bundles, as first-use permission-prompt choices.
-    private static func imageGenModelChoices() async -> [SpawnModelChoice] {
-        let models = (try? await ImageGenerationService.shared.availableModels()) ?? []
-        return
-            models
-            .filter { $0.ready && $0.kind == "imageGen" }
-            .map { SpawnModelChoice(id: $0.id, label: $0.displayName) }
-    }
-
-    /// Persist the first-use spawn-model + permission choice so Settings → Spawn
-    /// reflects it and subsequent jobs use it.
-    private static func persistImagePreferences(model: String?, always: Bool) {
-        var cfg = SubagentConfigurationStore.snapshot()
-        if let model, !model.isEmpty { cfg.defaultImageGenerationModelId = model }
-        if always { cfg.permissionDefaults.setPolicy(.alwaysAllow, for: SubagentCapabilityRegistry.image.id) }
-        SubagentConfigurationStore.save(cfg)
     }
 
     // MARK: - Source image loading (edit)

@@ -2869,32 +2869,28 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         // tools that the per-agent gate just stripped. `specs(forTools:)` still
         // applies the global delegation gating on top.
         // Mirror the authoritative native-chat `resolveTools` surfacing so the
-        // HTTP agent-run path and the in-app chat agree on which agents see the
-        // delegation tools: the DEFAULT agent surfaces them when the GLOBAL
-        // `agentDelegationEnabled` is on (piece #1), and a CUSTOM agent surfaces
-        // them when its per-agent `spawnDelegationEnabled` is on. Without the
-        // default-agent branch, `/agents/default/run` silently lacked
-        // image/spawn even with delegation
-        // globally enabled — a surface/behaviour split vs the chat UI.
-        // Use the shared `SubagentToolVisibility` resolver (the same SSOT the
-        // native `resolveTools` strip reads) so the HTTP agent-run path and the
-        // in-app chat can never drift on which sub-agent tools an agent sees
-        // (BUG E parity guard). The tool-name set comes from the capability
-        // registry, not a hardcoded list.
-        let spawnDelegationEnabled = await MainActor.run { () -> Bool in
-            SubagentToolVisibility.delegationEnabled(
+        // HTTP agent-run path and the in-app chat agree on which sub-agent tools
+        // an agent sees: resolve the per-agent visible delegation set through the
+        // shared `SubagentToolVisibility` resolver (the same SSOT the native
+        // `resolveTools` strip reads) — Default → global pool / image switch,
+        // custom → its own per-agent toggles + spawnable allow-list, all ANDed
+        // with the master switch. Without this parity the `/agents/{id}/run`
+        // surface drifts from the chat UI (BUG E guard). The tool-name set comes
+        // from the capability registry, not a hardcoded list.
+        let visibleDelegation = await MainActor.run { () -> Set<String> in
+            let snapshot = AgentConfigSnapshot.capture(agentId: agentUUID)
+            return SubagentToolVisibility.visibleDelegationToolNames(
                 agentId: agentUUID,
-                perAgentEnabled: AgentManager.shared.effectiveCapabilities(for: agentUUID)
-                    .spawnDelegationEnabled,
-                globalEnabled: SubagentConfigurationStore.snapshot().agentDelegationEnabled
+                snapshot: snapshot,
+                config: SubagentConfigurationStore.snapshot()
             )
         }
         let delegationSpecs =
-            spawnDelegationEnabled
-            ? await MainActor.run {
-                ToolRegistry.shared.specs(forTools: Array(SubagentToolVisibility.delegationToolNames))
+            visibleDelegation.isEmpty
+            ? []
+            : await MainActor.run {
+                ToolRegistry.shared.specs(forTools: Array(visibleDelegation))
             }
-            : []
         let composedToolNames = Set(composed.tools.map(\.function.name))
         let contextToolsWithDelegation =
             composed.tools + delegationSpecs.filter { !composedToolNames.contains($0.function.name) }

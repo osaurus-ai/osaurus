@@ -25,6 +25,14 @@ Branch: `feat/image-generation-vmlxflux`. Last updated 2026-06-25 (unified sub-a
 > The global-enable flag (`SubagentConfiguration.agentDelegationEnabled`) and the
 > per-agent flag (`Agent.spawnDelegationEnabled`) kept their property names; only the
 > enclosing types were renamed `AgentDelegation*` → `Subagent*`.
+>
+> **Per-agent split (2026-06-25, see "Per-agent home + per-capability split" below):**
+> the dated toggle-matrix log further down (`image-off` / `text-off` / `spawn-off` rows)
+> predates the per-capability per-agent reshape. `image` is now its own per-agent flag
+> (`AgentSettings.imageEnabled`, no longer riding `spawnDelegationEnabled`), `spawn` gets
+> a per-agent `spawnableAgentNames` allow-list, and those matrix rows describe the
+> **Default / main chat** path (global config), which a custom agent now overrides from
+> its **Sub-agents** tab.
 
 ---
 
@@ -109,14 +117,99 @@ tool entry (spawn | image | computer_use | sandbox_reduce)
   `LocalTextDelegateContext` merge into one `SubagentContext` + the shared interrupt token.
 
 ### Config + settings
+> **Superseded in part by "Full per-agent settings + unified main-chat tab
+> (2026-06-26)" below** — image models, permissions, and budgets are now
+> **per-agent** (each agent's Sub-agents tab, including the main chat's), and the
+> global Spawn page is **system-only** (no Main Chat block). The
+> `SubagentConfiguration` fields below survive as the **Default / main-chat** values
+> (and the REST `/v1/images` default); custom agents carry their own on
+> `AgentSettings`.
+
 - `AgentDelegationConfiguration` → **`SubagentConfiguration`** (permission defaults
   collapsed to `spawn` + `image`; dead `AgentDelegationModelKind.localTextDelegate` +
   its ModelPicker candidate dropped). Store → **`SubagentConfigurationStore`** (on-disk
-  file name `agent-delegation.json` retained for now).
-- Settings (`SpawnSettingsView` / `SubagentSettingsSection`) regrouped into clear
-  sections: Enable · Spawnable Agents · Local handoff + RAM Safety · Image gen/edit
-  models · Permissions · Load Policy · Budgets. The old "Cloud Cost Saver" block +
-  orphaned delegate picker are removed.
+  file name `agent-delegation.json` retained for now). Semantics narrowed to **system +
+  Default-agent**: it carries the master `agentDelegationEnabled`, local handoff,
+  RAM-safety, image load policy, plus the **Default / main-chat** image gen/edit models,
+  permissions, budgets, `imageDelegationEnabled`, and `spawnableAgentNames` (the main
+  chat's pool).
+- Global Settings → Spawn (`SubagentSettingsSection`) is now **system-only**: master
+  enable · Local Orchestrator Handoff · RAM-Safety preflight · Image Load Policy · the
+  "How it works" explainer. Image models, permissions, budgets, and the Default's
+  spawn/image enable + pool moved to the **main chat's Sub-agents tab** (see
+  2026-06-26 below). `SettingsSearchIndex` indexes the slimmed layout; the old "Cloud
+  Cost Saver" block + orphaned delegate picker are gone.
+
+### Per-agent home + per-capability split (IA reorg, 2026-06-25)
+> **Updated 2026-06-26** — the Sub-agents tab is **no longer hidden for the Default
+> agent** (the main chat configures spawn/image from its own tab now), and each card's
+> config grew from toggles-only to **model + permission + budget** controls. See "Full
+> per-agent settings + unified main-chat tab (2026-06-26)" below.
+
+- The per-agent sub-agent controls moved out of the crowded Configure → Features list
+  into a dedicated **`DetailTab.subagents`** ("Sub-agents") tab in the agent editor. It
+  is **registry-driven**: one card per `SubagentCapabilityRegistry.perAgentToggleFlags`
+  entry (`computer_use` → autonomy ceiling, `spawn` → per-agent spawnable checklist +
+  permission + budgets, `image` → gen/edit model pickers + permission), each with its
+  config inline in a DisclosureGroup.
+- Each capability is now **independently per-agent** on `AgentSettings`:
+  `computerUseEnabled` (+ `computerUseCeiling`), `spawnDelegationEnabled` +
+  `spawnableAgentNames` (this agent's own spawn allow-list), and the new `imageEnabled`
+  (`PerAgentFlag.image` — image no longer rides the spawn flag). `AgentConfigSnapshot` +
+  `effectiveCapabilities(for:)` thread `imageEnabled` + `spawnableAgentNames` through.
+- **Default-vs-custom resolution per capability** lives in `SubagentToolVisibility`
+  (`spawnAvailable` / `imageAvailable` / `spawnTargetAllowed` /
+  `visibleDelegationToolNames`), all ANDed with the master switch: Default → global pool /
+  image switch; custom → its own toggle + allow-list. `ToolRegistry`'s base schema applies
+  ONLY the master gate (superset); `resolveTools` + the HTTP path narrow per agent.
+  `TextSubagentKind.resolveModel` validates the spawn target against the launching agent's
+  list (custom) / global pool (Default); `ImageSubagentKind.resolveModel` gates on master +
+  the launching agent's image-enable.
+
+### Full per-agent settings + unified main-chat tab (2026-06-26)
+The earlier split made the *enable* per-agent but left a capability's **model**,
+**permission**, and **budget** in global Settings → Spawn — so you flipped `image` on in
+the agent's tab but its model lived elsewhere. This pass finishes the principle: **a
+capability is fully configured where you turn it on.**
+
+- **New per-agent fields on `AgentSettings`** (custom agents): `imageGenerationModelId` /
+  `imageEditModelId` (`String?`), `subagentPermissions` (`SubagentPermissionDefaults`,
+  the `[kindId: policy]` map), and `subagentBudgets` (`SubagentBudgets`). Codable with
+  back-compat defaults (legacy JSON → safe defaults; a nil model stays nil and falls
+  through to the first-ready-model resolver). The permission/budget struct types were
+  promoted to `public` so `AgentSettings` can hold them.
+- **Pure effective-settings resolvers** next to `SubagentToolVisibility`
+  (`SubagentCapabilityRegistry.swift`), mirroring `imageAvailable`'s shape so they stay
+  MainActor-free + unit-testable: `effectiveImageModel(isEdit:isDefault:config:settings:)`,
+  `effectivePermission(capabilityId:isDefault:config:settings:)`,
+  `effectiveBudgets(isDefault:config:settings:)`. **Default / main chat → global
+  `SubagentConfiguration`; custom agent → its own `AgentSettings`** (missing permission →
+  `.ask`; nil image model → first-ready fallback).
+- **Execution wiring.** `ImageSubagentKind` resolves its model via `effectiveImageModel`
+  and its allow/deny via `effectivePermission` (the launching agent from `scope`);
+  `TextSubagentKind` reads `effectivePermission` + `effectiveBudgets`. The **in-prompt
+  first-use image-model picker is removed** — the model is chosen in the tab, so the
+  runtime prompt is a plain allow/deny (`.alwaysAllow` is set per-agent in the tab).
+- **Unified main chat.** The Sub-agents tab is un-hidden for the Default agent and renders
+  only the Spawn + Image cards (no `computer_use`), bound to the global
+  `SubagentConfiguration` via `SubagentConfigurationStore` (the main chat's settings still
+  live there — it's a UI move, not a persistence migration). Custom agents write their
+  `AgentSettings` via `debouncedSave()`; the main chat saves the global config directly.
+- **System-only Spawn page.** `SubagentSettingsSection` dropped the Main Chat block and the
+  moved image-model / permission / budget controls; it keeps master enable, Local
+  Orchestrator Handoff, RAM-Safety, Image Load Policy, and the explainer.
+  `SpawnSettingsView`'s subtitle + `SettingsSearchIndex` were updated to match.
+- **Documented exceptions (still global):** the `NativeImageJobCoordinator` image-job
+  residency timeout (`config.budgets.maxElapsedSeconds`; no `agentId` in
+  `NativeImageJobContext`) and the REST `/v1/images` default model (not agent-scoped, =
+  the main chat's model).
+- **Tests:** `AgentSettings` Codable round-trip (incl. the 4 new fields + legacy
+  defaults); resolver units (default vs custom + nil fallback) in
+  `SubagentCapabilityRegistryTests`; `ImageSubagentKind` permission deny/always
+  (model-free, via the Default-agent global path); `SpawnToolTests` per-agent +
+  main-chat permission deny. Model-free suites green (residual failures are pre-existing
+  keychain-disabled-mode + cross-suite ToolRegistry races + an MCP probe timeout, all
+  unrelated). OsaurusCore + OsaurusEvals + the app target all build.
 
 ### Tests & evals
 - OsaurusCore: `SubagentSession` host + each `SubagentKind` + the generalized
@@ -429,9 +522,11 @@ Piece #3 (inline render via `processNativeImageToolResult`) was already wired �
   that parent cancel as a self-inflicted race (agent-run's turn-task survives it). Fix
   direction: decouple the chat-triggered image job from incidental parent-task cancellation
   (honor only explicit `cancelledJobIDs`), and/or yield produced images even on a soft cancel.
-- **Piece #2 — first-use permission + model picker** (still to build): on first spawn, show the
-  standard Yes/No/Always tool-permission prompt extended with a spawn-model picker; persist the
-  choice to `AgentDelegationConfiguration`; the Spawn settings page reflects it.
+- **Piece #2 — first-use permission + model picker** (~~still to build~~ → **DROPPED
+  2026-06-26**): the in-prompt model picker was removed in favor of per-agent model
+  selection in the agent's Sub-agents tab (see "Full per-agent settings + unified
+  main-chat tab"). The first-use prompt is now a plain Yes/No/Always; "Always" is the
+  `.alwaysAllow` policy set per-agent in that tab.
 
 ## Default-off + coherence (Eric 2026-06-21)
 - **Default OFF / invisible at baseline** — confirmed: `AgentDelegationConfiguration.agentDelegationEnabled` ships `false`; every family gate (`imageDelegationActive`, `anyAgentSpawnable`, `textDelegationToolAvailable`) and the system-prompt image-capability hint are gated on it, and the piece-#1 main-chat surfacing is too. So until the user flips the Agent Delegation toggle there is zero trace — no tools, no hints, no prompts. (Test config forces it on for testing only.)

@@ -50,13 +50,15 @@ public struct SubagentCapability: Sendable {
     /// write through the descriptor instead of hardcoding field names.
     public enum PerAgentFlag: Sendable, Hashable {
         case computerUse
-        case spawnDelegation
+        case spawn
+        case image
 
         /// The resolved per-agent flag for the `resolveTools` strip.
         public func enabled(in snapshot: AgentConfigSnapshot) -> Bool {
             switch self {
             case .computerUse: return snapshot.computerUseEnabled
-            case .spawnDelegation: return snapshot.spawnDelegationEnabled
+            case .spawn: return snapshot.spawnDelegationEnabled
+            case .image: return snapshot.imageEnabled
             }
         }
 
@@ -64,7 +66,8 @@ public struct SubagentCapability: Sendable {
         public func read(from settings: AgentSettings) -> Bool {
             switch self {
             case .computerUse: return settings.computerUseEnabled
-            case .spawnDelegation: return settings.spawnDelegationEnabled
+            case .spawn: return settings.spawnDelegationEnabled
+            case .image: return settings.imageEnabled
             }
         }
 
@@ -72,26 +75,8 @@ public struct SubagentCapability: Sendable {
         public func write(_ value: Bool, into settings: inout AgentSettings) {
             switch self {
             case .computerUse: settings.computerUseEnabled = value
-            case .spawnDelegation: settings.spawnDelegationEnabled = value
-            }
-        }
-    }
-
-    /// The family-specific baseline GLOBAL gate a delegation capability ANDs
-    /// with (applied in `ToolRegistry`). Declared as data (not a closure) so the
-    /// descriptor stays a plain value; the `SubagentConfiguration` mapping is the
-    /// one internal switch a new delegation kind extends.
-    public enum DelegationGlobalGate: Sendable, Equatable {
-        /// spawn: delegation on AND at least one agent is marked spawnable.
-        case anyAgentSpawnable
-        /// image: delegation on AND image delegation enabled.
-        case imageDelegationActive
-
-        /// Whether this global gate is currently open for `config`.
-        func isActive(_ config: SubagentConfiguration) -> Bool {
-            switch self {
-            case .anyAgentSpawnable: return config.anyAgentSpawnable
-            case .imageDelegationActive: return config.imageDelegationActive
+            case .spawn: settings.spawnDelegationEnabled = value
+            case .image: settings.imageEnabled = value
             }
         }
     }
@@ -101,11 +86,13 @@ public struct SubagentCapability: Sendable {
         /// Authoritative per-agent flag, stripped in BOTH auto + manual mode
         /// (computer_use). The Default agent never enables it.
         case perAgent
-        /// The spawn/image delegation family: the Default agent surfaces it when
-        /// the GLOBAL `global` gate is on; a custom agent when its per-agent
-        /// `spawnDelegationEnabled` is on. `global` is the family-specific
-        /// baseline gate applied in `ToolRegistry`.
-        case delegation(global: DelegationGlobalGate)
+        /// The spawn / image delegation family. Visibility is resolved per agent
+        /// by `SubagentToolVisibility` (Default → global pool / image switch;
+        /// custom → its own per-agent toggle + allow-list), all ANDed with the
+        /// master `agentDelegationEnabled` switch. `ToolRegistry` applies only
+        /// that master gate to the base schema; the per-agent narrowing happens
+        /// where the agent context is known.
+        case delegation
         /// Sandbox-scoped (sandbox_reduce): gated by sandbox registration +
         /// execution mode, NOT stripped in `resolveTools` and not surfaced as a
         /// per-agent / delegation toggle.
@@ -186,8 +173,8 @@ public enum SubagentCapabilityRegistry {
     public static let spawn = SubagentCapability(
         id: "spawn",
         toolNames: ["spawn"],
-        gate: .delegation(global: .anyAgentSpawnable),
-        perAgentFlag: .spawnDelegation,
+        gate: .delegation,
+        perAgentFlag: .spawn,
         modelSource: .persona,
         displayLabel: "Subagent",
         iconName: "person.2.fill"
@@ -198,8 +185,8 @@ public enum SubagentCapabilityRegistry {
     public static let image = SubagentCapability(
         id: "image",
         toolNames: ["image"],
-        gate: .delegation(global: .imageDelegationActive),
-        perAgentFlag: .spawnDelegation,
+        gate: .delegation,
+        perAgentFlag: .image,
         modelSource: .dedicatedConfigured,
         displayLabel: "Image",
         iconName: "photo",
@@ -228,11 +215,10 @@ public enum SubagentCapabilityRegistry {
     /// The delegation-gated capabilities (spawn + image).
     public static let delegationFamily: [SubagentCapability] = [spawn, image]
 
-    /// Distinct per-agent toggle flags, in registry order (computer_use, then the
-    /// shared spawn/image delegation flag). One entry per *toggle* — the spawn +
-    /// image entries collapse onto their shared `spawnDelegationEnabled` flag —
-    /// so the AgentsView editor renders exactly one toggle per flag, driven by
-    /// the registry instead of hand-built groups.
+    /// Distinct per-agent toggle flags, in registry order (computer_use, spawn,
+    /// image). One entry per *toggle* (deduped, so a future kind that shares a
+    /// flag would collapse) — the AgentsView Sub-agents tab renders exactly one
+    /// card per flag, driven by the registry instead of hand-built groups.
     public static var perAgentToggleFlags: [SubagentCapability.PerAgentFlag] {
         var seen = Set<SubagentCapability.PerAgentFlag>()
         var ordered: [SubagentCapability.PerAgentFlag] = []
@@ -283,14 +269,128 @@ public enum SubagentToolVisibility {
         return names
     }
 
-    /// Whether the delegation family is visible for this agent. The Default
-    /// agent is governed by the GLOBAL delegation switch; a custom agent by its
-    /// own `spawnDelegationEnabled` flag.
-    public static func delegationEnabled(
-        agentId: UUID,
+    /// Whether `spawn` is available for an agent. The Default / main chat is
+    /// governed by the global pool (`anyAgentSpawnable`); a custom agent by its
+    /// own toggle AND a non-empty per-agent allow-list (nothing to spawn → hide).
+    /// Both AND the master `agentDelegationEnabled` switch.
+    static func spawnAvailable(
+        isDefault: Bool,
+        config: SubagentConfiguration,
         perAgentEnabled: Bool,
-        globalEnabled: Bool
+        perAgentTargets: [String]
     ) -> Bool {
-        agentId == Agent.defaultId ? globalEnabled : perAgentEnabled
+        guard config.agentDelegationEnabled else { return false }
+        return isDefault
+            ? config.anyAgentSpawnable
+            : (perAgentEnabled && !perAgentTargets.isEmpty)
+    }
+
+    /// Whether `image` is available for an agent. The Default / main chat is
+    /// governed by the global image switch (`imageDelegationActive`); a custom
+    /// agent by its own toggle. Both AND the master `agentDelegationEnabled`
+    /// switch (parallels `spawnAvailable`'s `anyAgentSpawnable`).
+    static func imageAvailable(
+        isDefault: Bool,
+        config: SubagentConfiguration,
+        perAgentEnabled: Bool
+    ) -> Bool {
+        guard config.agentDelegationEnabled else { return false }
+        return isDefault ? config.imageDelegationActive : perAgentEnabled
+    }
+
+    /// Whether a specific `spawn` TARGET persona is reachable from a launching
+    /// agent — the execution-time check the spawn kind enforces. Default / main
+    /// chat uses the global pool; a custom agent its own allow-list.
+    static func spawnTargetAllowed(
+        _ name: String,
+        isDefault: Bool,
+        config: SubagentConfiguration,
+        perAgentTargets: [String]
+    ) -> Bool {
+        guard config.agentDelegationEnabled else { return false }
+        if isDefault { return config.isAgentSpawnable(name) }
+        return perAgentTargets.contains { $0.caseInsensitiveCompare(name) == .orderedSame }
+    }
+
+    /// The delegation tool names visible to a given agent, applying the master
+    /// gate + the per-capability Default-vs-custom predicate. The single source
+    /// both the native `resolveTools` strip and the HTTP agent-run path read, so
+    /// the two surfaces can never drift (BUG E parity guard).
+    static func visibleDelegationToolNames(
+        agentId: UUID,
+        snapshot: AgentConfigSnapshot,
+        config: SubagentConfiguration
+    ) -> Set<String> {
+        let isDefault = (agentId == Agent.defaultId)
+        var names = Set<String>()
+        if spawnAvailable(
+            isDefault: isDefault,
+            config: config,
+            perAgentEnabled: snapshot.spawnDelegationEnabled,
+            perAgentTargets: snapshot.spawnableAgentNames
+        ) {
+            names.formUnion(SubagentCapabilityRegistry.spawn.toolNames)
+        }
+        if imageAvailable(
+            isDefault: isDefault,
+            config: config,
+            perAgentEnabled: snapshot.imageEnabled
+        ) {
+            names.formUnion(SubagentCapabilityRegistry.image.toolNames)
+        }
+        return names
+    }
+
+    // MARK: - Per-agent effective settings
+
+    // Image models, permissions, and budgets are configured per-agent (each
+    // agent's Sub-agents tab) for custom agents and in the global config for the
+    // Default / main chat. These pure resolvers concentrate that Default-vs-custom
+    // branch so every execution path (the kinds) reads it the same way; they take
+    // the launching agent's `AgentSettings` (nil-safe) plus the global `config`,
+    // so they stay unit-testable without MainActor.
+
+    /// The effective image-model bundle id for an agent + kind. Default / main
+    /// chat uses the global configured default; a custom agent uses its own
+    /// per-agent model. A `nil` result is intentional — it falls through to the
+    /// run-time "first ready model" resolver, so an agent that enabled image
+    /// without picking a model still works.
+    static func effectiveImageModel(
+        isEdit: Bool,
+        isDefault: Bool,
+        config: SubagentConfiguration,
+        settings: AgentSettings?
+    ) -> String? {
+        if isDefault {
+            return isEdit ? config.defaultImageEditModelId : config.defaultImageGenerationModelId
+        }
+        return isEdit ? settings?.imageEditModelId : settings?.imageGenerationModelId
+    }
+
+    /// The effective permission policy for a delegation capability. Default / main
+    /// chat uses the global permission map; a custom agent uses its own. A missing
+    /// entry resolves to the safe `.ask` default.
+    static func effectivePermission(
+        capabilityId: String,
+        isDefault: Bool,
+        config: SubagentConfiguration,
+        settings: AgentSettings?
+    ) -> SubagentPermissionPolicy {
+        let defaults =
+            isDefault
+            ? config.permissionDefaults
+            : (settings?.subagentPermissions ?? SubagentPermissionDefaults())
+        return defaults.policy(for: capabilityId)
+    }
+
+    /// The effective (clamped) `spawn` budgets for an agent. Default / main chat
+    /// uses the global budgets; a custom agent uses its own.
+    static func effectiveBudgets(
+        isDefault: Bool,
+        config: SubagentConfiguration,
+        settings: AgentSettings?
+    ) -> SubagentBudgets {
+        let budgets = isDefault ? config.budgets : (settings?.subagentBudgets ?? SubagentBudgets())
+        return budgets.normalized
     }
 }

@@ -18,13 +18,14 @@ struct SpawnSettingsView: View {
 
     @State private var hasAppeared = false
     @State private var configuration = SubagentConfigurationStore.snapshot()
-    @State private var modelItems: [ModelPickerItem] = []
 
     var body: some View {
         VStack(spacing: 0) {
             ManagerHeader(
                 title: L("Spawn & Delegation"),
-                subtitle: L("Let the main chat spawn image and local-model helper jobs")
+                subtitle: L(
+                    "System settings for spawn and image helper jobs — each agent opts in from its Sub-agents tab"
+                )
             )
             .opacity(hasAppeared ? 1 : 0)
             .offset(y: hasAppeared ? 0 : -10)
@@ -32,10 +33,7 @@ struct SpawnSettingsView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    SubagentSettingsSection(
-                        configuration: $configuration,
-                        modelItems: modelItems
-                    )
+                    SubagentSettingsSection(configuration: $configuration)
                 }
                 .padding(.horizontal, 24)
                 .padding(.vertical, 24)
@@ -48,7 +46,6 @@ struct SpawnSettingsView: View {
         .environment(\.theme, themeManager.currentTheme)
         .onAppear {
             configuration = SubagentConfigurationStore.snapshot()
-            modelItems = ModelPickerItemCache.shared.items
             withAnimation(.easeOut(duration: 0.25).delay(0.05)) {
                 hasAppeared = true
             }
@@ -62,9 +59,6 @@ struct SpawnSettingsView: View {
             // Re-sync when the Settings copy (or anything else) saves a change.
             let latest = SubagentConfigurationStore.snapshot()
             if latest != configuration { configuration = latest }
-        }
-        .onReceive(ModelPickerItemCache.shared.$items) { items in
-            modelItems = items
         }
     }
 }

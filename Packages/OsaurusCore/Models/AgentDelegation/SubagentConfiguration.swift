@@ -7,12 +7,12 @@
 
 import Foundation
 
-enum SubagentPermissionPolicy: String, Codable, CaseIterable, Sendable {
+public enum SubagentPermissionPolicy: String, Codable, CaseIterable, Sendable {
     case ask
     case deny
     case alwaysAllow = "always_allow"
 
-    var displayName: String {
+    public var displayName: String {
         switch self {
         case .ask: return L("Ask")
         case .deny: return L("Deny")
@@ -52,20 +52,20 @@ enum SubagentModelKind: String, Codable, CaseIterable, Sendable {
 /// Policy meaning: `.deny` blocks the kind's job; `.ask` prompts on first use
 /// (spawn has no interactive prompt, so `.ask` simply allows there);
 /// `.alwaysAllow` skips the prompt.
-struct SubagentPermissionDefaults: Codable, Equatable, Sendable {
+public struct SubagentPermissionDefaults: Codable, Equatable, Sendable {
     private var policies: [String: SubagentPermissionPolicy]
 
-    init(policies: [String: SubagentPermissionPolicy] = [:]) {
+    public init(policies: [String: SubagentPermissionPolicy] = [:]) {
         self.policies = policies
     }
 
     /// The policy for a kind id, defaulting to the safe `.ask` when unset.
-    func policy(for kindId: String) -> SubagentPermissionPolicy {
+    public func policy(for kindId: String) -> SubagentPermissionPolicy {
         policies[kindId] ?? .ask
     }
 
     /// Set the policy for a kind id.
-    mutating func setPolicy(_ policy: SubagentPermissionPolicy, for kindId: String) {
+    public mutating func setPolicy(_ policy: SubagentPermissionPolicy, for kindId: String) {
         policies[kindId] = policy
     }
 
@@ -85,7 +85,7 @@ struct SubagentPermissionDefaults: Codable, Equatable, Sendable {
     /// throw here used to discard the ENTIRE delegation configuration and
     /// silently fall back to all-defaults (delegation OFF), invisibly disabling
     /// the feature (BUG D). Each entry instead falls back to `.ask`.
-    init(from decoder: Decoder) throws {
+    public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         var merged: [String: SubagentPermissionPolicy] = [:]
 
@@ -114,24 +114,24 @@ struct SubagentPermissionDefaults: Codable, Equatable, Sendable {
         self.policies = merged
     }
 
-    func encode(to encoder: Encoder) throws {
+    public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(policies.mapValues(\.rawValue), forKey: .policies)
     }
 }
 
-struct SubagentBudgets: Codable, Equatable, Sendable {
-    var maxDelegateTokens: Int
-    var maxDelegateTurns: Int
+public struct SubagentBudgets: Codable, Equatable, Sendable {
+    public var maxDelegateTokens: Int
+    public var maxDelegateTurns: Int
     /// Reserved. Spawned subagents run text-only (`AgentSubagentRunner` passes
     /// `tools: nil` and rejects any tool call), so there are no nested tool calls
     /// to cap and nothing enforces this today. Kept for forward-compat for when a
     /// subagent kind gains tool use; intentionally NOT surfaced in Settings until
     /// then so the control isn't a no-op.
-    var maxToolCalls: Int
-    var maxElapsedSeconds: Int
+    public var maxToolCalls: Int
+    public var maxElapsedSeconds: Int
 
-    init(
+    public init(
         maxDelegateTokens: Int = 2048,
         maxDelegateTurns: Int = 1,
         maxToolCalls: Int = 0,
@@ -143,7 +143,7 @@ struct SubagentBudgets: Codable, Equatable, Sendable {
         self.maxElapsedSeconds = maxElapsedSeconds
     }
 
-    var normalized: SubagentBudgets {
+    public var normalized: SubagentBudgets {
         SubagentBudgets(
             maxDelegateTokens: Self.clamp(maxDelegateTokens, to: 256 ... 32_768),
             maxDelegateTurns: Self.clamp(maxDelegateTurns, to: 1 ... 8),
@@ -164,9 +164,13 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
     /// after (single-residency handoff). Off by default — a cloud orchestrator
     /// never needs this. See `ChatResidencyHandoff` / `ResidencyHandoff`.
     var localTextDelegationEnabled: Bool
-    /// Names of Agent personas the user has marked spawnable via `spawn`. Empty by
-    /// default → every agent is off until explicitly opted in (per-agent gate).
+    /// The DEFAULT / main-chat agent's spawnable personas (its `spawn` pool).
+    /// Empty by default → the main chat has nothing to spawn until opted in.
+    /// Custom agents carry their OWN per-agent list in `AgentSettings`; this
+    /// field governs the main chat only (edited in Settings → Spawn → Main Chat).
     var spawnableAgentNames: [String]
+    /// The DEFAULT / main-chat agent's `image` enable. Custom agents carry their
+    /// own `AgentSettings.imageEnabled`; this governs the main chat only.
     var imageDelegationEnabled: Bool
     var defaultImageGenerationModelId: String?
     var defaultImageEditModelId: String?
@@ -210,17 +214,21 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
         agentDelegationEnabled && localTextDelegationEnabled
     }
 
-    /// Whether the named Agent persona is reachable via `spawn` (global gate + the
-    /// per-agent opt-in, default off).
+    /// Whether the named persona is reachable via `spawn` from the DEFAULT /
+    /// main chat (master gate + the main-chat pool). Custom agents use their own
+    /// per-agent list via `SubagentToolVisibility.spawnTargetAllowed`.
     func isAgentSpawnable(_ name: String) -> Bool {
         agentDelegationEnabled
             && spawnableAgentNames.contains { $0.caseInsensitiveCompare(name) == .orderedSame }
     }
 
+    /// Whether the DEFAULT / main chat has at least one spawnable persona.
     var anyAgentSpawnable: Bool {
         agentDelegationEnabled && !spawnableAgentNames.isEmpty
     }
 
+    /// Whether `image` is active for the DEFAULT / main chat (master + image
+    /// switch). Custom agents gate on their own `AgentSettings.imageEnabled`.
     var imageDelegationActive: Bool {
         agentDelegationEnabled && imageDelegationEnabled
     }

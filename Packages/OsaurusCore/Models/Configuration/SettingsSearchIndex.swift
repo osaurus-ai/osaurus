@@ -402,38 +402,33 @@ public enum SettingsSearchIndex {
         ),
 
         // MARK: Spawn & Delegation
+        // The Spawn tab is system-only now: the master switch + GPU-residency
+        // knobs that apply to every agent. Per-agent spawn/image config (targets,
+        // models, permissions, budgets) — including the built-in main chat — is
+        // configured in each agent's Sub-agents tab (not indexed here).
         .init(
             id: "spawn.enable",
             tab: .spawn,
+            section: "System",
             title: "Spawn & Delegation",
             keywords: [
                 "spawn", "delegate", "delegation", "sub-agent", "subagent",
-                "helper jobs", "agent delegation",
+                "helper jobs", "agent delegation", "master", "enable",
             ]
-        ),
-        .init(
-            id: "spawn.spawnable",
-            tab: .spawn,
-            section: "Spawnable Agents",
-            title: "Spawnable Agents",
-            keywords: ["spawnable", "personas", "delegate agents", "spawn targets"]
         ),
         .init(
             id: "spawn.handoff",
             tab: .spawn,
-            section: "Local Handoff & RAM Safety",
+            section: "System",
             title: "Local Handoff & RAM Safety",
             keywords: ["handoff", "ram safety", "residency", "unload", "preflight"]
         ),
         .init(
-            id: "spawn.imageModels",
+            id: "spawn.loadPolicy",
             tab: .spawn,
-            section: "Image Models",
-            title: "Image Models",
-            keywords: [
-                "image generation", "image edit", "diffusion", "image model",
-                "chat image jobs",
-            ]
+            section: "System",
+            title: "Load Policy",
+            keywords: ["load policy", "image jobs", "unload", "residency"]
         ),
         .init(
             id: "privacy.tab",

@@ -46,14 +46,38 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
 
     func resolveModel(_ scope: SubagentScope) async throws -> ResolvedModel {
         let config = SubagentConfigurationStore.snapshot()
-        guard config.isAgentSpawnable(agentName) else {
+        // Per-agent spawnable allow-list: the Default / main chat uses the global
+        // pool (Settings → Spawn → Main Chat); a custom agent uses its own list
+        // (its Sub-agents tab), resolved from the launching agent (`scope`).
+        let isDefault = scope.agentId == Agent.defaultId
+        // One launching-agent lookup feeds the per-agent spawn allow-list,
+        // permission, and budgets (Default / main chat → global config).
+        let settings = await MainActor.run {
+            AgentManager.shared.agent(for: scope.agentId)?.settings
+        }
+        let perAgentTargets = settings?.spawnableAgentNames ?? []
+        guard
+            SubagentToolVisibility.spawnTargetAllowed(
+                agentName,
+                isDefault: isDefault,
+                config: config,
+                perAgentTargets: perAgentTargets
+            )
+        else {
             throw SubagentError.denied(
-                "Agent '\(agentName)' is not spawnable. Mark it spawnable in Agent Delegation settings."
+                isDefault
+                    ? "Agent '\(agentName)' is not spawnable. Add it in the main chat's Sub-agents tab."
+                    : "Agent '\(agentName)' is not spawnable from this agent. Add it in the agent's Sub-agents tab."
             )
         }
-        if config.permissionDefaults.policy(for: capability.id) == .deny {
+        if SubagentToolVisibility.effectivePermission(
+            capabilityId: capability.id,
+            isDefault: isDefault,
+            config: config,
+            settings: settings
+        ) == .deny {
             throw SubagentError.denied(
-                "Spawning is denied by Agent Delegation permission settings."
+                "Spawning is denied by this agent's permission settings."
             )
         }
 
@@ -75,7 +99,11 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
         self.personaName = persona.name
         self.personaId = persona.id
         self.systemPrompt = persona.systemPrompt
-        self.budgets = config.budgets
+        self.budgets = SubagentToolVisibility.effectiveBudgets(
+            isDefault: isDefault,
+            config: config,
+            settings: settings
+        )
 
         // Decide the residency handoff from ACTUAL GPU residency (not a
         // best-effort orchestrator name lookup): if the spawn model is local
@@ -98,7 +126,7 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
             self.residencyShouldUnload = true
             self.residencyRequiredBytes = ChatResidencyHandoff.estimatedChatModelBytes(named: modelName)
             self.ramSafetyEnabled = config.ramSafetyPreflightEnabled
-            self.handoffMaxElapsedSeconds = config.budgets.maxElapsedSeconds
+            self.handoffMaxElapsedSeconds = self.budgets.maxElapsedSeconds
         }
 
         return ResolvedModel(name: modelName, id: nil, isLocal: isLocalModel)
