@@ -2012,8 +2012,9 @@ private struct RuntimeManagedToolEntryRow: View {
                     .lineLimit(1)
                 ToolRowMetaLine(availability: availability, exposureRow: exposureRow)
             }
-
-            Spacer()
+            // Expand the info column instead of a trailing Spacer so the row has
+            // one fewer flexible layout child to negotiate per pass.
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             Text(badge)
                 .font(.system(size: 10, weight: .semibold))
@@ -2077,8 +2078,10 @@ struct ToolEntryRow: View {
     var body: some View {
         HStack(spacing: 10) {
             toolIcon
+            // Expand the info column instead of a trailing Spacer to drop one
+            // flexible layout child from the row.
             toolInfo
-            Spacer()
+                .frame(maxWidth: .infinity, alignment: .leading)
 
             if let info = policyInfo {
                 ToolPolicyMenu(
@@ -2188,8 +2191,9 @@ private struct RemoteToolRow: View {
                     .lineLimit(1)
                 ToolRowMetaLine(availability: availability, exposureRow: exposureRow)
             }
-
-            Spacer()
+            // Expand the info column instead of a trailing Spacer to drop one
+            // flexible layout child from the row.
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             if let info = policyInfo {
                 ToolPolicyMenu(
