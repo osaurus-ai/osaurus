@@ -190,7 +190,12 @@ struct ToolsManagerView: View {
 
     private var availableToolsTabContent: some View {
         ScrollView {
-            LazyVStack(spacing: 16) {
+            // A single LazyVStack so every tool row is an individual lazy child.
+            // Group rows are emitted via bare `ForEach` (not wrapped in a
+            // `VStack`), since a nested stack would be realized as one eager
+            // child and defeat virtualization. Row spacing is 8; section
+            // headers and intro cards add 8 more top padding for a 16 gap.
+            LazyVStack(spacing: 8) {
                 SectionHeader(
                     title: L("Available Tools"),
                     description: "Tools from installed plugins and connected providers"
@@ -204,6 +209,7 @@ struct ToolsManagerView: View {
                         stateFilter: $exposureStateFilter,
                         onExport: exportExposureReport
                     )
+                    .padding(.top, 8)
                 }
 
                 let builtInNative = visibleTools(builtInNativeToolEntries)
@@ -235,44 +241,44 @@ struct ToolsManagerView: View {
                 } else {
                     if pluginsWithMissingPermissionsCount > 0 {
                         ToolPermissionBanner(count: pluginsWithMissingPermissionsCount)
+                            .padding(.top, 8)
                     }
 
                     if !builtInNative.isEmpty {
                         InstalledSectionHeader(title: L("Built-in Tools"), icon: "shippingbox")
+                            .padding(.top, 8)
 
-                        VStack(spacing: 8) {
-                            ForEach(builtInNative) { entry in
-                                RuntimeManagedToolEntryRow(
-                                    entry: entry,
-                                    badge: builtInBadge(for: entry),
-                                    policyInfo: policyInfoCache[entry.name],
-                                    availability: cachedAvailability(availabilityCache, for: entry),
-                                    exposureRow: exposureRowsByName[entry.name],
-                                    onChange: { applyLocalToolMutation(name: entry.name) }
-                                )
-                            }
+                        ForEach(builtInNative) { entry in
+                            RuntimeManagedToolEntryRow(
+                                entry: entry,
+                                badge: builtInBadge(for: entry),
+                                policyInfo: policyInfoCache[entry.name],
+                                availability: cachedAvailability(availabilityCache, for: entry),
+                                exposureRow: exposureRowsByName[entry.name],
+                                onChange: { applyLocalToolMutation(name: entry.name) }
+                            )
                         }
                     }
 
                     if !runtimeTools.isEmpty {
                         InstalledSectionHeader(title: L("Runtime Tools"), icon: "terminal")
+                            .padding(.top, 8)
 
-                        VStack(spacing: 8) {
-                            ForEach(runtimeTools) { entry in
-                                RuntimeManagedToolEntryRow(
-                                    entry: entry,
-                                    badge: runtimeBadge(for: entry),
-                                    policyInfo: policyInfoCache[entry.name],
-                                    availability: cachedAvailability(availabilityCache, for: entry),
-                                    exposureRow: exposureRowsByName[entry.name],
-                                    onChange: { applyLocalToolMutation(name: entry.name) }
-                                )
-                            }
+                        ForEach(runtimeTools) { entry in
+                            RuntimeManagedToolEntryRow(
+                                entry: entry,
+                                badge: runtimeBadge(for: entry),
+                                policyInfo: policyInfoCache[entry.name],
+                                availability: cachedAvailability(availabilityCache, for: entry),
+                                exposureRow: exposureRowsByName[entry.name],
+                                onChange: { applyLocalToolMutation(name: entry.name) }
+                            )
                         }
                     }
 
                     if !pluginGroups.isEmpty {
                         InstalledSectionHeader(title: L("Plugin Tools"), icon: "puzzlepiece.extension")
+                            .padding(.top, 8)
 
                         ForEach(pluginGroups, id: \.plugin.id) { item in
                             ToolPluginCard(
@@ -288,6 +294,7 @@ struct ToolsManagerView: View {
 
                     if !remoteGroups.isEmpty {
                         InstalledSectionHeader(title: L("Remote Tools"), icon: "server.rack")
+                            .padding(.top, 8)
 
                         ForEach(remoteGroups, id: \.provider.id) { item in
                             RemoteProviderToolsCard(
@@ -1080,7 +1087,9 @@ private struct SandboxPluginsTabContent: View {
 
     var body: some View {
         ScrollView {
-            LazyVStack(spacing: 16) {
+            // Mirror the Available tab: a single LazyVStack with bare `ForEach`
+            // groups so tool rows virtualize instead of laying out eagerly.
+            LazyVStack(spacing: 8) {
                 SectionHeader(
                     title: L("Sandbox Tools"),
                     description:
@@ -1128,17 +1137,16 @@ private struct SandboxPluginsTabContent: View {
 
                 if !builtInTools.isEmpty {
                     InstalledSectionHeader(title: L("Built-in Sandbox Tools"), icon: "terminal")
+                        .padding(.top, 8)
 
-                    VStack(spacing: 8) {
-                        ForEach(builtInTools) { entry in
-                            RuntimeManagedToolEntryRow(
-                                entry: entry,
-                                badge: L("Sandbox"),
-                                policyInfo: policyInfoCache[entry.name],
-                                availability: cachedAvailability(availabilityCache, for: entry),
-                                onChange: onChange
-                            )
-                        }
+                    ForEach(builtInTools) { entry in
+                        RuntimeManagedToolEntryRow(
+                            entry: entry,
+                            badge: L("Sandbox"),
+                            policyInfo: policyInfoCache[entry.name],
+                            availability: cachedAvailability(availabilityCache, for: entry),
+                            onChange: onChange
+                        )
                     }
                 }
 
