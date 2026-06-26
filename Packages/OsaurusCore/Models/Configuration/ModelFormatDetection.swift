@@ -67,13 +67,26 @@ enum ModelFormatDetection {
 
     // MARK: - Detection
 
-    /// True when the bundle at `directory` is in MLX format. A bundle that is
-    /// missing both signals (e.g. a plain PyTorch / transformers safetensors
-    /// export co-mingled in a shared model store) returns false.
+    /// Whether the bundle at `directory` should be treated as MLX-loadable.
+    ///
+    /// Deliberately biased toward *allowing*: a bundle is greyed out only when
+    /// it can be **positively proven non-MLX** (a safetensors header tagged for
+    /// another framework — `pt`, `tf`, `flax`, …). MLX proof (a `quantization`
+    /// block or a `format: mlx` tag) always allows; a bundle with no usable
+    /// signal at all is allowed too, since a real MLX build can legitimately
+    /// lack both (e.g. an unquantized conversion whose weights carry no
+    /// `__metadata__`). This keeps a working MLX model from ever being hidden;
+    /// the cost is that a non-MLX bundle with no framework tag isn't greyed and
+    /// instead fails at load as before — no regression.
     static func isMLXFormat(at directory: URL) -> Bool {
         cachedVerdict("dir:\(directory.path)") {
             if configHasMLXQuantization(at: directory) { return true }
-            return anySafetensorsHasMLXFormatTag(at: directory)
+
+            let formats = safetensorsFormatTags(at: directory)
+            if formats.contains("mlx") { return true }
+            // Proven non-MLX only if some shard names another framework.
+            let provenNonMLX = formats.contains { !$0.isEmpty && $0 != "mlx" }
+            return !provenNonMLX
         }
     }
 
@@ -90,24 +103,28 @@ enum ModelFormatDetection {
         return object["quantization"] is [String: Any]
     }
 
-    /// True when any `*.safetensors` file in `directory` declares
-    /// `__metadata__.format == "mlx"`. Only the header is read (an 8-byte
-    /// little-endian length prefix followed by that many JSON bytes), never the
-    /// weights, so this stays cheap even for multi-gigabyte bundles.
-    private static func anySafetensorsHasMLXFormatTag(at directory: URL) -> Bool {
+    /// The lowercased `__metadata__.format` tags declared by the `*.safetensors`
+    /// files in `directory` (deduplicated; untagged files contribute nothing).
+    /// Only each file's header is read — an 8-byte little-endian length prefix
+    /// followed by that many JSON bytes — never the weights, so this stays cheap
+    /// even for multi-gigabyte bundles. Short-circuits as soon as an `mlx` tag
+    /// is seen so the common case touches just one shard.
+    private static func safetensorsFormatTags(at directory: URL) -> Set<String> {
         guard
             let items = try? FileManager.default.contentsOfDirectory(
                 at: directory,
                 includingPropertiesForKeys: nil
             )
-        else { return false }
+        else { return [] }
 
+        var formats: Set<String> = []
         for url in items where url.pathExtension == "safetensors" {
-            if let format = safetensorsFormatTag(at: url), format.lowercased() == "mlx" {
-                return true
+            if let format = safetensorsFormatTag(at: url)?.lowercased() {
+                formats.insert(format)
+                if format == "mlx" { return formats }
             }
         }
-        return false
+        return formats
     }
 
     private static func safetensorsFormatTag(at url: URL) -> String? {

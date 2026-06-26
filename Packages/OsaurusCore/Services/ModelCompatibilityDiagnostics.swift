@@ -340,7 +340,8 @@ enum ModelCompatibilityDiagnostics {
             // (e.g. PyTorch / transformers) safetensors export co-mingled in a
             // shared model store — it passes discovery but vmlx cannot load it.
             // Block it here with a clear reason instead of an opaque load crash.
-            if let path = localBundle.path,
+            if !modelId.lowercased().hasPrefix("osaurusai/"),
+                let path = localBundle.path,
                 !ModelFormatDetection.isMLXFormat(at: URL(fileURLWithPath: path))
             {
                 return RuntimeStatus(

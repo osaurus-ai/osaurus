@@ -396,6 +396,10 @@ struct MLXModel: Identifiable, Codable {
     /// per row stays cheap.
     var isMLXFormat: Bool {
         guard isDownloaded else { return true }
+        // First-party OsaurusAI bundles are always MLX by construction. Trust
+        // provenance unconditionally so a pipeline that omits the `format: mlx`
+        // tag (e.g. an unquantized first-party build) can never be greyed out.
+        if id.lowercased().hasPrefix("osaurusai/") { return true }
         return ModelFormatDetection.isMLXFormat(at: localDirectory)
     }
 

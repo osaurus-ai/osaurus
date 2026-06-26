@@ -149,13 +149,18 @@ struct ModelFormatDetectionTests {
         #expect(!ModelFormatDetection.isMLXFormat(at: dir))
     }
 
-    @Test func safetensorsWithoutMetadataIsNotMLX() throws {
+    @Test func untaggedBundleIsAllowed() throws {
+        // A real MLX build can legitimately carry no `quantization` block and no
+        // `__metadata__` tag (e.g. an unquantized conversion, like the
+        // mlx-community pocket-tts bundle). With no positive non-MLX proof it
+        // must NOT be greyed — biased toward allowing so a working model is
+        // never hidden.
         let dir = try makeBundle(
-            config: ["model_type": "glm"],
+            config: ["model_type": "lfm2"],
             safetensors: [("model.safetensors", nil)]
         )
         defer { try? FileManager.default.removeItem(at: dir) }
-        #expect(!ModelFormatDetection.isMLXFormat(at: dir))
+        #expect(ModelFormatDetection.isMLXFormat(at: dir))
     }
 
     @Test func transformersQuantizationConfigIsNotMLX() throws {
@@ -173,10 +178,39 @@ struct ModelFormatDetectionTests {
         #expect(!ModelFormatDetection.isMLXFormat(at: dir))
     }
 
-    @Test func emptyBundleIsNotMLX() throws {
+    @Test func configOnlyBundleIsAllowed() throws {
+        // No safetensors to inspect and no quantization block: no non-MLX proof,
+        // so allowed (unknown -> allow).
         let dir = try makeBundle(config: ["model_type": "glm"])
         defer { try? FileManager.default.removeItem(at: dir) }
-        #expect(!ModelFormatDetection.isMLXFormat(at: dir))
+        #expect(ModelFormatDetection.isMLXFormat(at: dir))
+    }
+
+    @Test func mixedShardsWithMLXTagAllowed() throws {
+        // One shard tagged pt, another tagged mlx: an MLX tag anywhere wins.
+        let dir = try makeBundle(
+            config: ["model_type": "lfm2"],
+            safetensors: [
+                ("model-00001-of-00002.safetensors", ["format": "pt"]),
+                ("model-00002-of-00002.safetensors", ["format": "mlx"]),
+            ]
+        )
+        defer { try? FileManager.default.removeItem(at: dir) }
+        #expect(ModelFormatDetection.isMLXFormat(at: dir))
+    }
+
+    @Test func tensorflowAndFlaxTagsAreNotMLX() throws {
+        for tag in ["tf", "flax", "jax", "np"] {
+            let dir = try makeBundle(
+                config: ["model_type": "glm"],
+                safetensors: [("model.safetensors", ["format": tag])]
+            )
+            defer { try? FileManager.default.removeItem(at: dir) }
+            #expect(
+                !ModelFormatDetection.isMLXFormat(at: dir),
+                "Expected format tag \(tag) to be treated as non-MLX"
+            )
+        }
     }
 
     // MARK: - MLXModel integration
@@ -223,6 +257,28 @@ struct ModelFormatDetectionTests {
         #expect(!model.isMLXFormat)
     }
 
+    @Test func osaurusAIProvenanceAlwaysAllowed() throws {
+        // First-party bundles are trusted by provenance even if the on-disk
+        // files would otherwise read as non-MLX (e.g. a pipeline that omits the
+        // MLX tag). An `OsaurusAI/...` id must never be greyed.
+        let dir = try makeBundle(
+            config: ["model_type": "lfm2"],
+            safetensors: [("model.safetensors", ["format": "pt"])],
+            extraFiles: ["tokenizer.json"]
+        )
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let model = MLXModel(
+            id: "OsaurusAI/LFM2.5-230M-bf16",
+            name: "LFM2 first-party",
+            description: "fixture",
+            downloadURL: "https://example.invalid/lfm2",
+            bundleDirectory: dir,
+            externalSource: nil
+        )
+        #expect(model.isDownloaded)
+        #expect(model.isMLXFormat)
+    }
+
     @Test func undownloadedModelIsAssumedMLX() {
         // Catalog entries not on disk can't be inspected; the curated catalog
         // is MLX, so they must not be greyed.
@@ -259,6 +315,26 @@ struct ModelFormatDetectionTests {
         #expect(report.preflight.status == .unsupported)
         #expect(report.preflight.reason == .notMLXFormat)
         #expect(report.preflight.blocksRuntimeLoad)
+    }
+
+    @Test func diagnosticsAllowsOsaurusAIBundleByProvenance() throws {
+        // Even a pt-tagged bundle is not blocked when its id is first-party.
+        let dir = try makeBundle(
+            config: ["model_type": "lfm2"],
+            safetensors: [("model.safetensors", ["format": "pt"])],
+            extraFiles: ["tokenizer.json"]
+        )
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let model = MLXModel(
+            id: "OsaurusAI/LFM2.5-230M-bf16",
+            name: "LFM2 first-party",
+            description: "fixture",
+            downloadURL: "https://example.invalid/lfm2",
+            bundleDirectory: dir,
+            externalSource: nil
+        )
+        let report = ModelCompatibilityDiagnostics.report(for: model)
+        #expect(report.preflight.reason != .notMLXFormat)
     }
 
     @Test func diagnosticsAllowsMLXBundle() throws {

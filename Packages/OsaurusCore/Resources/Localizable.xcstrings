@@ -53579,6 +53579,12 @@
         }
       }
     },
+    "Not an MLX model" : {
+
+    },
+    "Not an MLX model — the local engine can't load this bundle" : {
+
+    },
     "Not connected" : {
       "localizations" : {
         "de" : {
@@ -53872,6 +53878,9 @@
           }
         }
       }
+    },
+    "Not MLX" : {
+
     },
     "Not now" : {
       "comment" : "Secondary button on the out-of-credits chat modal; dismisses without adding credits.",
@@ -87499,6 +87508,9 @@
           }
         }
       }
+    },
+    "This bundle isn't in MLX format, so the local engine (vmlx) can't load it. Osaurus runs MLX-format weights only — convert it with mlx_lm or pick an MLX build of the model." : {
+
     },
     "This bundle isn't ready" : {
       "comment" : "A title for a card indicating that a model bundle is not yet available.",
