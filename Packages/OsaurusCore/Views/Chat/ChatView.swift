@@ -1619,7 +1619,15 @@ final class ChatSession: ObservableObject {
             // disturb it). Fall back to the static greeting; the pool refills
             // once inference goes idle. Remote/foundation greetings don't
             // contend, so they're unaffected.
-            let greetingModelIsLocal = ModelManager.findInstalledModel(named: model) != nil
+            // Resolve whether the greeting model is local off the main thread.
+            // `findInstalledModel` funnels into `discoverLocalModels`, which
+            // blocks on a condition wait (up to the scan wait-limit) while the
+            // background disk scan runs. This closure inherits the main actor
+            // from its enclosing method, so the wait was freezing the app while
+            // an empty-state greeting loaded.
+            let greetingModelIsLocal = await Task.detached(priority: .userInitiated) {
+                ModelManager.findInstalledModel(named: model) != nil
+            }.value
             let localStreamBusy = await MainActor.run {
                 ChatWindowManager.shared.isAnyWindowStreamingLocalModel
             }
