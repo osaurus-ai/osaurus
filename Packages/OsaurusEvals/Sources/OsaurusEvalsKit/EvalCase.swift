@@ -451,6 +451,13 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// rubric). The deterministic matchers run with NO model, so the lane
         /// is CI-safe like `computer_use` / `schema`.
         public let screenContext: ScreenContextExpectations?
+        /// Outcome expectation for `domain == "subagent"` cases. Drives the
+        /// shared `SubagentSession` host through `SubagentJobEvaluator` in one
+        /// of three lanes (`scripted` model-free, live `spawn`, live `image`)
+        /// and scores the compact result envelope + the unified feed. The
+        /// scripted lane is CI-safe (no model); the spawn/image lanes skip
+        /// gracefully when the host has no spawnable persona / image model.
+        public let subagent: SubagentExpectations?
 
         public init(
             schema: SchemaExpectations? = nil,
@@ -466,7 +473,8 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             computerUse: ComputerUseExpectations? = nil,
             computerUseLoop: ComputerUseLoopExpectations? = nil,
             defaultAgent: DefaultAgentExpectations? = nil,
-            screenContext: ScreenContextExpectations? = nil
+            screenContext: ScreenContextExpectations? = nil,
+            subagent: SubagentExpectations? = nil
         ) {
             self.schema = schema
             self.toolEnvelope = toolEnvelope
@@ -482,6 +490,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.computerUseLoop = computerUseLoop
             self.defaultAgent = defaultAgent
             self.screenContext = screenContext
+            self.subagent = subagent
         }
     }
 
@@ -1559,6 +1568,130 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.expectVerbsInOrder = expectVerbsInOrder
             self.scoredMaxModelTokens = scoredMaxModelTokens
             self.scriptedActions = scriptedActions
+        }
+    }
+
+    /// Expectation for `domain == "subagent"` cases. Selects one of three
+    /// lanes via `lane` and scores the resulting `SubagentJobTranscript`:
+    ///   - `scripted` — model-free. A `ScriptedSubagentKind` drives the real
+    ///     `SubagentSession` host so the WHOLE lifecycle (resolve →
+    ///     permission → handoff → run → normalize → cleanup), the unified
+    ///     recursion guard, and the feed lifecycle run in CI with no tokens.
+    ///   - `spawn` — live. Invokes the real `SpawnTool` (host +
+    ///     `TextSubagentKind`) against a user-configured spawnable persona.
+    ///   - `image` — live. Invokes the real `ImageTool` (host +
+    ///     `ImageSubagentKind`); `sourcePaths` non-empty selects edit mode.
+    /// Live lanes SKIP (not fail) when the host can't satisfy them (no
+    /// spawnable persona / image delegation off / model not ready), mirroring
+    /// `requirePlugins`. Every present matcher must pass.
+    public struct SubagentExpectations: Sendable, Codable {
+        /// `"scripted"` | `"spawn"` | `"image"`. Selects the lane.
+        public let lane: String
+
+        // --- scripted lane inputs ---
+        /// Opt the scripted kind into the residency-handoff middleware.
+        public let needsHandoff: Bool?
+        /// Permission verdict: `"allow"` | `"deny"` | `"userDeny"`.
+        public let decision: String?
+        /// Typed failure thrown at resolve time (reject-before-evict). One of
+        /// the `SubagentError` cases: `denied` / `userDenied` / `unavailable` /
+        /// `invalidArgs` / `timedOut` / `iterationCap` / `toolRejected` /
+        /// `overBudget` / `emptyExhausted` / `executionFailed`.
+        public let resolveFailure: String?
+        /// Typed failure thrown inside `run` (same value set as above).
+        public let runFailure: String?
+        /// When true, the scripted run attempts a nested sub-agent so the
+        /// unified recursion guard refuses it (paired with `expectNestedRefused`).
+        public let recurse: Bool?
+        /// Lifecycle phases the scripted kind emits onto the feed.
+        public let phases: [String]?
+
+        // --- live spawn lane inputs ---
+        /// Spawnable persona name for the `spawn` lane.
+        public let agent: String?
+        /// Task/query handed to the spawned persona.
+        public let input: String?
+
+        // --- live image lane inputs ---
+        /// Prompt for the `image` lane (also the edit instruction).
+        public let prompt: String?
+        /// One to four local source image paths — non-empty selects edit mode.
+        public let sourcePaths: [String]?
+        /// Optional local image model id override.
+        public let model: String?
+
+        // --- expectations (any subset; an empty set just records) ---
+        /// Whether the run must end in a success envelope.
+        public let expectSuccess: Bool?
+        /// Expected envelope kind: `"success"` or a failure discriminator
+        /// (`rejected` / `user_denied` / `unavailable` / `invalid_args` /
+        /// `timeout` / `execution_error`).
+        public let expectEnvelopeKind: String?
+        /// Expected result payload discriminator (`spawn_result` /
+        /// `native_image_generation_job` / the scripted kind's `resultKind`).
+        public let expectResultKind: String?
+        /// Case-insensitive substrings the terminal summary must contain.
+        public let summaryContains: [String]?
+        /// Feed event kinds that must all appear (e.g. `["phase"]`).
+        public let expectFeedKinds: [String]?
+        /// Feed phase titles that must appear IN ORDER (subsequence) — the
+        /// live-progress proof.
+        public let expectPhasesInOrder: [String]?
+        /// Scripted lane: assert the residency handoff wrapped the run.
+        public let expectHandoffWrapped: Bool?
+        /// Scripted lane: assert the nested sub-agent attempt was refused.
+        public let expectNestedRefused: Bool?
+        /// Image lane: expected mode (`"generate"` | `"edit"`).
+        public let expectImageMode: String?
+        /// Image lane: minimum number of images on success.
+        public let minImages: Int?
+
+        public init(
+            lane: String,
+            needsHandoff: Bool? = nil,
+            decision: String? = nil,
+            resolveFailure: String? = nil,
+            runFailure: String? = nil,
+            recurse: Bool? = nil,
+            phases: [String]? = nil,
+            agent: String? = nil,
+            input: String? = nil,
+            prompt: String? = nil,
+            sourcePaths: [String]? = nil,
+            model: String? = nil,
+            expectSuccess: Bool? = nil,
+            expectEnvelopeKind: String? = nil,
+            expectResultKind: String? = nil,
+            summaryContains: [String]? = nil,
+            expectFeedKinds: [String]? = nil,
+            expectPhasesInOrder: [String]? = nil,
+            expectHandoffWrapped: Bool? = nil,
+            expectNestedRefused: Bool? = nil,
+            expectImageMode: String? = nil,
+            minImages: Int? = nil
+        ) {
+            self.lane = lane
+            self.needsHandoff = needsHandoff
+            self.decision = decision
+            self.resolveFailure = resolveFailure
+            self.runFailure = runFailure
+            self.recurse = recurse
+            self.phases = phases
+            self.agent = agent
+            self.input = input
+            self.prompt = prompt
+            self.sourcePaths = sourcePaths
+            self.model = model
+            self.expectSuccess = expectSuccess
+            self.expectEnvelopeKind = expectEnvelopeKind
+            self.expectResultKind = expectResultKind
+            self.summaryContains = summaryContains
+            self.expectFeedKinds = expectFeedKinds
+            self.expectPhasesInOrder = expectPhasesInOrder
+            self.expectHandoffWrapped = expectHandoffWrapped
+            self.expectNestedRefused = expectNestedRefused
+            self.expectImageMode = expectImageMode
+            self.minImages = minImages
         }
     }
 

@@ -330,13 +330,6 @@ extension ModelPickerItem {
         }
     }
 
-    var isLocalTextDelegateCandidate: Bool {
-        if case .local = source {
-            return isLikelyChatCapable
-        }
-        return false
-    }
-
     var isImageGenerationDelegateCandidate: Bool {
         source.isImageGeneration && imageReady && (imageCapabilities?.textToImage == true)
     }
@@ -563,10 +556,6 @@ extension Array where Element == ModelPickerItem {
         return ranked?.element ?? first
     }
 
-    var localTextDelegateCandidates: [ModelPickerItem] {
-        filter(\.isLocalTextDelegateCandidate)
-    }
-
     var imageGenerationDelegateCandidates: [ModelPickerItem] {
         filter(\.isImageGenerationDelegateCandidate)
     }
@@ -575,9 +564,9 @@ extension Array where Element == ModelPickerItem {
         filter(\.isImageEditDelegateCandidate)
     }
 
-    func agentDelegationCandidate(
+    func subagentModelCandidate(
         id: String?,
-        kind: AgentDelegationModelKind
+        kind: SubagentModelKind
     ) -> ModelPickerItem? {
         guard let id else { return nil }
         let trimmed = id.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -585,14 +574,12 @@ extension Array where Element == ModelPickerItem {
         return candidates(for: kind).first { $0.id == trimmed }
     }
 
-    func defaultAgentDelegationCandidate(kind: AgentDelegationModelKind) -> ModelPickerItem? {
+    func defaultSubagentModelCandidate(kind: SubagentModelKind) -> ModelPickerItem? {
         candidates(for: kind).first
     }
 
-    private func candidates(for kind: AgentDelegationModelKind) -> [ModelPickerItem] {
+    private func candidates(for kind: SubagentModelKind) -> [ModelPickerItem] {
         switch kind {
-        case .localTextDelegate:
-            return localTextDelegateCandidates
         case .imageGeneration:
             return imageGenerationDelegateCandidates
         case .imageEdit:

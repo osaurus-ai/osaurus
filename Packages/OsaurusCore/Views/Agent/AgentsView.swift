@@ -976,9 +976,9 @@ struct AgentDetailView: View {
     /// Custom agents only; the Features section shows the toggle and
     /// `saveAgent` folds it into the persisted `AgentSettings` block.
     @State private var computerUseEnabled: Bool = false
-    /// Per-agent opt-in for the Spawn / Delegation feature (`spawn` /
-    /// `local_delegate` / `image_generate` / `image_edit` tools). Custom agents
-    /// only; the Features section shows the toggle and `debouncedSave` persists it
+    /// Per-agent opt-in for the Spawn / Delegation feature (`spawn` / `image`
+    /// tools). Custom agents only; the Features section shows the toggle and
+    /// `debouncedSave` persists it
     /// into `AgentSettings.spawnDelegationEnabled`.
     @State private var spawnDelegationEnabled: Bool = false
     /// Per-agent autonomy ceiling for Computer Use (PR2). `nil` means no
@@ -2684,7 +2684,7 @@ struct AgentDetailView: View {
                             featureToggleRow(
                                 title: "Spawn & Delegation",
                                 subtitle:
-                                    "Give the agent the spawn / local_delegate / image_generate / image_edit tools — it can offload bounded tasks to a sub-agent persona or a local model, and generate or edit images. Default models, RAM-safety, and permissions are configured in Settings → Spawn.",
+                                    "Give the agent the spawn and image tools — it can offload bounded tasks to a sub-agent persona or a local model, and generate or edit images. Default models, RAM-safety, and permissions are configured in Settings → Spawn.",
                                 isOn: $spawnDelegationEnabled
                             )
                         }

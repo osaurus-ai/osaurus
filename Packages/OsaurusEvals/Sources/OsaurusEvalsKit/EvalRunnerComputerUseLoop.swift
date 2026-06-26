@@ -42,7 +42,11 @@ extension EvalRunner {
         let driver = ScriptedCUDriver(app: exp.app, elements: exp.elements)
         let preset = AutonomyPreset(rawValue: exp.preset ?? "autonomous") ?? .autonomous
         let gate = ComputerUseGate(policy: AutonomyPolicy(globalPreset: preset))
-        let feed = ComputerUseFeed(toolCallId: "eval-\(testCase.id)", goal: testCase.query)
+        let feed = SubagentFeed(
+            toolCallId: "eval-\(testCase.id)",
+            kindId: "computer_use",
+            title: testCase.query
+        )
         let interrupt = InterruptToken()
         let limits = RunLimits(maxSteps: exp.maxSteps ?? 16, wallClockSeconds: 240)
 

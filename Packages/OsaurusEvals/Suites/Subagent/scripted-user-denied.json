@@ -1,0 +1,17 @@
+{
+  "id": "subagent.scripted-user-denied",
+  "domain": "subagent",
+  "label": "Subagent • scripted user refusal -> user_denied",
+  "query": "A scripted sub-agent the user declines at the approval prompt.",
+  "notes": "Model-free. The kind's permission step returns .userDenied; the host must map it to a `user_denied` failure envelope (distinct from a policy `rejected`). Pins the interactive-refusal contract.",
+  "fixtures": {},
+  "expect": {
+    "subagent": {
+      "lane": "scripted",
+      "decision": "userDeny",
+      "expectSuccess": false,
+      "expectEnvelopeKind": "user_denied",
+      "summaryContains": ["scripted user refusal"]
+    }
+  }
+}

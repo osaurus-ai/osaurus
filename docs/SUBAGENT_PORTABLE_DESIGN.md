@@ -8,6 +8,23 @@
 This generalizes the current hardcoded `local_delegate` / `image_*` tools into one
 configurable primitive. Almost everything needed already exists.
 
+> **Implemented (2026-06-25).** This design shipped as the unified `Subagent*`
+> framework. The `Spawnable` kind protocol below is **`SubagentKind`**
+> (`Subagent/SubagentKind.swift`); the shared lifecycle (resolve → [handoff] → run →
+> result, with scope ids, recursion guard, feed, and compact result) is the
+> **`SubagentSession`** host (`Subagent/SubagentSession.swift`). Four kinds ship:
+> `TextSubagentKind` (`spawn`), `ImageSubagentKind` (one `image` tool, `source_paths` ⇒
+> edit), `ComputerUseKind`, `SandboxReduceKind`. Surface changes from this doc:
+> **`local_delegate` is removed (folded into `spawn`)** and **`image_generate` +
+> `image_edit` are merged into `image`**; the handoff is **`ResidencyHandoff`** and the
+> config/store/section are renamed `AgentDelegation*` → `Subagent*` (the
+> `agentDelegationEnabled` / `Agent.spawnDelegationEnabled` flag names were kept). The
+> §0/§4 "built (as `local_delegate`)" rows and the §5 "keep it as an alias for
+> back-compat" note are superseded — pre-release, so there are no back-compat shims.
+> The **privacy loop** and other future kinds remain valid: add one `SubagentKind` +
+> one `SubagentCapabilityRegistry` entry. See SUBAGENT_TEAM_SPEC.md §4 for the shipped
+> wiring.
+
 ---
 
 

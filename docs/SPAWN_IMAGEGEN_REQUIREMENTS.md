@@ -1,14 +1,25 @@
 # Spawn / Image-Gen Orchestration — Product Requirements
-Owner: Eric. Last updated 2026-06-21. SSOT for the user-facing feature.
+Owner: Eric. Last updated 2026-06-25. SSOT for the user-facing feature.
 (Engineering status/log lives in SUBAGENT_ORCHESTRATION_STATUS.md.)
 
+> **Unified surface (2026-06-25).** The sub-agent paths were unified onto one shared
+> `SubagentSession` host + `SubagentKind` framework (see
+> SUBAGENT_ORCHESTRATION_STATUS.md → "Unified Sub-agent Architecture"). The tool
+> surface changed: **`local_delegate` is removed (folded into `spawn`)** and
+> **`image_generate` + `image_edit` are merged into one `image` tool** (passing
+> `source_paths` switches it to edit). Config/services renamed
+> `AgentDelegation*` → `Subagent*` (`SubagentConfiguration`,
+> `SubagentConfigurationStore`, `SubagentSettingsSection`; the residency middleware is
+> now `ResidencyHandoff`). Sections below predate the rename and use the old names —
+> read them through that map.
+
 ## 1. Vision — spawn is a TOOL every main chat can use
-The main osaurus chat model — **cloud OR local** — can call `spawn`-class tools to
+The main osaurus chat model — **cloud OR local** — can call sub-agent tools to
 run a bounded sub-process, get a compact result back, and continue its own turn:
-- **spawn image gen / edit** → `image_generate` / `image_edit` (vMLXFlux engine).
-- **spawn text model / coder** → `local_delegate` (bounded helper on a chosen local
-  model) and `spawn(agent,input)` (a named persona sub-agent).
-Spawn tools join the SAME tool surface the chat already uses, alongside computer-use,
+- **image gen / edit** → one `image` tool (vMLXFlux engine); `source_paths` ⇒ edit.
+- **text model / coder** → `spawn(agent,input)` (a named persona sub-agent, or the
+  default text model when no persona is given).
+Sub-agent tools join the SAME tool surface the chat already uses, alongside computer-use,
 file, and capability tools — so the model reaches for them naturally. They must be
 present as callable **schemas** in the chat's `<tools>` block, not just a prompt hint.
 

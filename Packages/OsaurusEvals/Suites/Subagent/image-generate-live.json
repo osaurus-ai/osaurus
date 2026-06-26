@@ -1,0 +1,20 @@
+{
+  "id": "subagent.image-generate-live",
+  "domain": "subagent",
+  "label": "Subagent • live image generate",
+  "query": "Generate an image from a prompt.",
+  "notes": "LIVE. Runs the real ImageTool (no source_paths -> generate mode) through the host + ImageSubagentKind. Auto-approves the permission prompt headlessly. SKIPS on any host where image delegation is off or no image model is ready (rejected/unavailable). To run it: enable image generation and pick a default image model in Spawn & Delegation settings.",
+  "fixtures": {},
+  "expect": {
+    "subagent": {
+      "lane": "image",
+      "prompt": "a simple flat red circle centered on a white background",
+      "expectSuccess": true,
+      "expectEnvelopeKind": "success",
+      "expectResultKind": "native_image_generation_job",
+      "expectImageMode": "generate",
+      "minImages": 1,
+      "expectFeedKinds": ["phase"]
+    }
+  }
+}

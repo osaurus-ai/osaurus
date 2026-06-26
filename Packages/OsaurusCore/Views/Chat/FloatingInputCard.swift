@@ -3257,7 +3257,6 @@ extension FloatingInputCard {
                 .padding(.top, hasChipRow ? 6 : 10)
                 .padding(.bottom, 6)
 
-
             buttonBar
                 .padding(.horizontal, 12)
                 .padding(.vertical, 12)
@@ -3692,14 +3691,20 @@ extension FloatingInputCard {
     private var imageSizeOptions: [ImageSizeOption] {
         [
             ImageSizeOption(
-                dimension: 512, title: L("512 × 512"),
-                detail: L("Fast drafts. Lowest detail, quickest to render.")),
+                dimension: 512,
+                title: L("512 × 512"),
+                detail: L("Fast drafts. Lowest detail, quickest to render.")
+            ),
             ImageSizeOption(
-                dimension: 768, title: L("768 × 768"),
-                detail: L("Balanced. Good detail at a moderate speed.")),
+                dimension: 768,
+                title: L("768 × 768"),
+                detail: L("Balanced. Good detail at a moderate speed.")
+            ),
             ImageSizeOption(
-                dimension: 1024, title: L("1024 × 1024"),
-                detail: L("Sharpest. The size most models are trained for, but slowest.")),
+                dimension: 1024,
+                title: L("1024 × 1024"),
+                detail: L("Sharpest. The size most models are trained for, but slowest.")
+            ),
         ]
     }
 
@@ -3761,7 +3766,9 @@ extension FloatingInputCard {
                             Text(option.title)
                                 .font(
                                     theme.font(
-                                        size: CGFloat(theme.captionSize), weight: .semibold)
+                                        size: CGFloat(theme.captionSize),
+                                        weight: .semibold
+                                    )
                                 )
                                 .foregroundColor(theme.primaryText)
                             Text(option.detail)
@@ -3830,7 +3837,8 @@ extension FloatingInputCard {
                 .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .medium))
                 .foregroundColor(theme.tertiaryText)
             TextField(
-                "", value: $imageComposerSettings.guidance,
+                "",
+                value: $imageComposerSettings.guidance,
                 format: .number.precision(.fractionLength(1))
             )
             .textFieldStyle(.plain)
@@ -3871,7 +3879,8 @@ extension FloatingInputCard {
                 .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .medium))
                 .foregroundColor(theme.tertiaryText)
             TextField(
-                "", value: $imageComposerSettings.strength,
+                "",
+                value: $imageComposerSettings.strength,
                 format: .number.precision(.fractionLength(2))
             )
             .textFieldStyle(.plain)
@@ -3890,7 +3899,8 @@ extension FloatingInputCard {
     /// current value (when set) or a call to add one.
     private var negativePromptButton: some View {
         let value = imageComposerSettings.negativePrompt.trimmingCharacters(
-            in: .whitespacesAndNewlines)
+            in: .whitespacesAndNewlines
+        )
         let hasValue = !value.isEmpty
         return Button {
             negativePromptDraft = imageComposerSettings.negativePrompt
@@ -3903,7 +3913,9 @@ extension FloatingInputCard {
                 Text(hasValue ? value : L("Add a negative prompt"))
                     .font(
                         theme.font(
-                            size: CGFloat(theme.captionSize), weight: hasValue ? .medium : .regular)
+                            size: CGFloat(theme.captionSize),
+                            weight: hasValue ? .medium : .regular
+                        )
                     )
                     .foregroundColor(hasValue ? theme.secondaryText : theme.tertiaryText)
                     .lineLimit(1)

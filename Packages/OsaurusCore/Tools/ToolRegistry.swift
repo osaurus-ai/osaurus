@@ -202,12 +202,11 @@ final class ToolRegistry: ObservableObject {
             SearchMemoryTool(),
             // Inline data visualization rendered as a chart card.
             RenderChartTool(),
-            // Native local image generation. Tool body enforces the separate
-            // Agent Delegation permission defaults and low-RAM unload policy.
-            LocalTextDelegateTool(),
+            // Native local image generation/editing (one `image` tool; source_paths
+            // → edit). Tool body enforces the separate Agent Delegation permission
+            // defaults and low-RAM unload policy.
             SpawnTool(),
-            NativeImageGenerateTool(),
-            NativeImageEditTool(),
+            ImageTool(),
             // Agent DB feature (spec §6). The system prompt composer
             // gates these per-agent via `Agent.settings.dbEnabled`;
             // registering them as built-ins means agents that *do*
@@ -483,12 +482,14 @@ final class ToolRegistry: ObservableObject {
 
             // Check system permissions and prompt the user for any that are missing
             let missingSystemPermissions = await SystemPermissionService.shared.missingPermissions(
-                from: requirements)
+                from: requirements
+            )
             for permission in missingSystemPermissions {
                 _ = await SystemPermissionService.shared.requestPermissionAndWait(permission)
             }
             let stillMissing = await SystemPermissionService.shared.missingPermissions(
-                from: requirements)
+                from: requirements
+            )
             if !stillMissing.isEmpty {
                 let missingNames = stillMissing.map { $0.displayName }.joined(separator: ", ")
                 throw NSError(
@@ -1428,14 +1429,14 @@ final class ToolRegistry: ObservableObject {
         Self.folderToolNames.union(builtInSandboxToolNames)
     }
 
-    static let agentDelegationTextToolNames: Set<String> = ["local_delegate"]
+    /// Text delegation collapsed to `spawn` only (`local_delegate` removed), so
+    /// the only text sub-agent tool name is `spawn` itself.
     static let agentDelegationSpawnToolNames: Set<String> = ["spawn"]
-    static let agentDelegationImageToolNames: Set<String> = ["image_generate", "image_edit"]
+    static let agentDelegationImageToolNames: Set<String> = ["image"]
     /// All agent-delegation tool names — used by the authoritative per-agent
     /// `spawnDelegationEnabled` gate in `SystemPromptComposer.resolveTools`.
     static let agentDelegationAllToolNames: Set<String> =
-        agentDelegationTextToolNames
-        .union(agentDelegationSpawnToolNames)
+        agentDelegationSpawnToolNames
         .union(agentDelegationImageToolNames)
 
     /// Read-only snapshot of the built-in sandbox tool names. Exposed so the
@@ -1488,11 +1489,8 @@ final class ToolRegistry: ObservableObject {
     }
 
     private func agentDelegationExcludedToolNames() -> Set<String> {
-        let config = AgentDelegationConfigurationStore.snapshot()
+        let config = SubagentConfigurationStore.snapshot()
         var excluded: Set<String> = []
-        if !config.textDelegationToolAvailable {
-            excluded.formUnion(Self.agentDelegationTextToolNames)
-        }
         if !config.anyAgentSpawnable {
             excluded.formUnion(Self.agentDelegationSpawnToolNames)
         }

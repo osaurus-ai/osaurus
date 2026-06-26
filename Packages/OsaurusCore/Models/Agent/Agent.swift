@@ -474,8 +474,8 @@ public struct AgentCapabilities: Sendable, Equatable {
     public var selfSchedulingEnabled: Bool
     /// Computer Use (`computer_use` entry tool) exposed to the model.
     public var computerUseEnabled: Bool
-    /// Spawn / agent delegation (`spawn` / `local_delegate` / `image_generate` /
-    /// `image_edit`) exposed to the model — per-agent opt-in.
+    /// Spawn / agent delegation (`spawn` / `image`) exposed to the model —
+    /// per-agent opt-in.
     public var spawnDelegationEnabled: Bool
 
     public init(
@@ -730,10 +730,10 @@ public struct AgentSettings: Codable, Sendable, Equatable {
     /// This is the spec's "SOUL.md ceiling" expressed as settings rather
     /// than parsed prose.
     public var computerUseCeiling: AutonomyCeiling?
-    /// Per-agent opt-in for spawn / agent delegation (`spawn` / `local_delegate` /
-    /// `image_generate` / `image_edit`). Default off; gated authoritatively in
+    /// Per-agent opt-in for spawn / agent delegation (`spawn` / `image`).
+    /// Default off; gated authoritatively in
     /// `resolveTools` (stripped unless enabled). The global
-    /// `AgentDelegationConfiguration` still supplies the defaults (models, load
+    /// `SubagentConfiguration` still supplies the defaults (models, load
     /// policy, RAM safety, permissions, budgets); this is the per-agent enable.
     public var spawnDelegationEnabled: Bool
 

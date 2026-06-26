@@ -1,0 +1,16 @@
+{
+  "id": "subagent.scripted-invalid-args",
+  "domain": "subagent",
+  "label": "Subagent • malformed args -> invalid_args",
+  "query": "A scripted sub-agent handed malformed arguments.",
+  "notes": "Model-free. The kind throws .invalidArgs in resolveModel; the host maps it to an `invalid_args` envelope (the validation-failure kind the inline-render bridge and agent loop branch on). Pins the typed-arg-failure contract.",
+  "fixtures": {},
+  "expect": {
+    "subagent": {
+      "lane": "scripted",
+      "resolveFailure": "invalidArgs",
+      "expectSuccess": false,
+      "expectEnvelopeKind": "invalid_args"
+    }
+  }
+}

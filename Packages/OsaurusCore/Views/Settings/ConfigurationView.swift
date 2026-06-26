@@ -17,7 +17,6 @@ struct ConfigurationView: View {
     @State private var successMessage: String?
     @State private var isResetting = false
 
-
     // General settings state. The chat-mode generation knobs and folder
     // tool-permission policies moved to the dedicated Chat tab
     // (`ChatSettingsView`); the global hotkey and core model still live
@@ -172,139 +171,139 @@ struct ConfigurationView: View {
     /// Extracted from `body` to keep the settings expression under Swift's
     /// type-checker complexity limit.
     @ViewBuilder private var generalSection: some View {
-                        if matchesSearch(Self.generalKeywords) {
-                            SettingsSection(title: "General", icon: "gear") {
-                                VStack(alignment: .leading, spacing: 20) {
-                                    Text("Application behavior and system integration.", bundle: .module)
+        if matchesSearch(Self.generalKeywords) {
+            SettingsSection(title: "General", icon: "gear") {
+                VStack(alignment: .leading, spacing: 20) {
+                    Text("Application behavior and system integration.", bundle: .module)
+                        .font(.system(size: 12))
+                        .foregroundColor(theme.secondaryText)
+
+                    // Global Hotkey
+                    SettingsField(label: "Global Hotkey", anchorId: "settings.general.hotkey") {
+                        HotkeyRecorder(value: $tempChatHotkey)
+                    }
+
+                    // Start at Login
+                    SettingsToggle(
+                        title: L("Start at Login"),
+                        description: "Launch Osaurus when you sign in",
+                        anchorId: "settings.general.login",
+                        isOn: $tempStartAtLogin
+                    )
+
+                    SettingsToggle(
+                        title: L("Hide Dock Icon"),
+                        description: "Run in menu bar only (requires restart)",
+                        isOn: $tempHideDockIcon
+                    )
+
+                    SettingsToggle(
+                        title: L("Beta Updates"),
+                        description:
+                            "Receive pre-release updates with new features before they're generally available",
+                        anchorId: "settings.general.updates",
+                        isOn: $updater.isBetaChannel
+                    )
+
+                    SettingsDivider()
+
+                    SettingsSubsection(label: "Core Model", anchorId: "settings.general.coreModel") {
+                        VStack(alignment: .leading, spacing: 8) {
+                            coreModelPicker
+                            Text(
+                                "Lightweight model used for memory consolidation and transcription cleanup. If unset, your active chat model is used as a fallback. Note: tools must also be enabled on the active agent — check Agent → Capabilities.",
+                                bundle: .module
+                            )
+                            .font(.system(size: 11))
+                            .foregroundColor(theme.tertiaryText)
+                        }
+                    }
+
+                    SettingsDivider()
+
+                    // Command Line Tool
+                    SettingsSubsection(label: "Command Line Tool", anchorId: "settings.general.cli") {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text(
+                                "Install the `osaurus` CLI into your PATH for terminal access.",
+                                bundle: .module
+                            )
+                            .font(.system(size: 12))
+                            .foregroundColor(theme.tertiaryText)
+
+                            HStack(spacing: 12) {
+                                Button(action: { installCLI() }) {
+                                    Text("Install CLI", bundle: .module)
+                                }
+                                .buttonStyle(SettingsButtonStyle())
+                                .localizedHelp("Create a symlink to the embedded CLI")
+
+                                if let message = cliInstallMessage {
+                                    HStack(spacing: 6) {
+                                        Image(
+                                            systemName: cliInstallSuccess
+                                                ? "checkmark.circle.fill"
+                                                : "exclamationmark.triangle.fill"
+                                        )
                                         .font(.system(size: 12))
-                                        .foregroundColor(theme.secondaryText)
-
-                                    // Global Hotkey
-                                    SettingsField(label: "Global Hotkey", anchorId: "settings.general.hotkey") {
-                                        HotkeyRecorder(value: $tempChatHotkey)
-                                    }
-
-                                    // Start at Login
-                                    SettingsToggle(
-                                        title: L("Start at Login"),
-                                        description: "Launch Osaurus when you sign in",
-                                        anchorId: "settings.general.login",
-                                        isOn: $tempStartAtLogin
-                                    )
-
-                                    SettingsToggle(
-                                        title: L("Hide Dock Icon"),
-                                        description: "Run in menu bar only (requires restart)",
-                                        isOn: $tempHideDockIcon
-                                    )
-
-                                    SettingsToggle(
-                                        title: L("Beta Updates"),
-                                        description:
-                                            "Receive pre-release updates with new features before they're generally available",
-                                        anchorId: "settings.general.updates",
-                                        isOn: $updater.isBetaChannel
-                                    )
-
-                                    SettingsDivider()
-
-                                    SettingsSubsection(label: "Core Model", anchorId: "settings.general.coreModel") {
-                                        VStack(alignment: .leading, spacing: 8) {
-                                            coreModelPicker
-                                            Text(
-                                                "Lightweight model used for memory consolidation and transcription cleanup. If unset, your active chat model is used as a fallback. Note: tools must also be enabled on the active agent — check Agent → Capabilities.",
-                                                bundle: .module
-                                            )
+                                        Text(message)
                                             .font(.system(size: 11))
-                                            .foregroundColor(theme.tertiaryText)
-                                        }
+                                            .lineLimit(2)
                                     }
-
-                                    SettingsDivider()
-
-                                    // Command Line Tool
-                                    SettingsSubsection(label: "Command Line Tool", anchorId: "settings.general.cli") {
-                                        VStack(alignment: .leading, spacing: 12) {
-                                            Text(
-                                                "Install the `osaurus` CLI into your PATH for terminal access.",
-                                                bundle: .module
-                                            )
-                                            .font(.system(size: 12))
-                                            .foregroundColor(theme.tertiaryText)
-
-                                            HStack(spacing: 12) {
-                                                Button(action: { installCLI() }) {
-                                                    Text("Install CLI", bundle: .module)
-                                                }
-                                                .buttonStyle(SettingsButtonStyle())
-                                                .localizedHelp("Create a symlink to the embedded CLI")
-
-                                                if let message = cliInstallMessage {
-                                                    HStack(spacing: 6) {
-                                                        Image(
-                                                            systemName: cliInstallSuccess
-                                                                ? "checkmark.circle.fill"
-                                                                : "exclamationmark.triangle.fill"
-                                                        )
-                                                        .font(.system(size: 12))
-                                                        Text(message)
-                                                            .font(.system(size: 11))
-                                                            .lineLimit(2)
-                                                    }
-                                                    .foregroundColor(
-                                                        cliInstallSuccess ? theme.successColor : theme.warningColor
-                                                    )
-                                                }
-                                            }
-
-                                            Text(
-                                                "If installed to ~/.local/bin, ensure it's in your PATH.",
-                                                bundle: .module
-                                            )
-                                            .font(.system(size: 11))
-                                            .foregroundColor(theme.tertiaryText)
-                                        }
-                                    }
-
-                                    SettingsDivider()
-
-                                    // Storage
-                                    SettingsSubsection(label: "Storage") {
-                                        DirectoryPickerView()
-                                    }
-
-                                    SettingsDivider()
-
-                                    // External models (HF cache, LM Studio)
-                                    SettingsSubsection(label: "External models") {
-                                        ExternalModelsSettingsView()
-                                    }
-
-                                    SettingsDivider()
-
-                                    // Maintenance
-                                    SettingsSubsection(label: "Maintenance", anchorId: "settings.general.reset") {
-                                        VStack(alignment: .leading, spacing: 12) {
-                                            Text(
-                                                "Troubleshoot or reset the application. A factory reset permanently deletes all data and settings.",
-                                                bundle: .module
-                                            )
-                                            .font(.system(size: 12))
-                                            .foregroundColor(theme.tertiaryText)
-
-                                            Button(role: .destructive, action: { showFactoryResetConfirmation() }) {
-                                                HStack(spacing: 6) {
-                                                    Image(systemName: "trash")
-                                                        .font(.system(size: 12))
-                                                    Text("Factory Reset…", bundle: .module)
-                                                }
-                                            }
-                                            .buttonStyle(SettingsButtonStyle(isDestructive: true))
-                                        }
-                                    }
+                                    .foregroundColor(
+                                        cliInstallSuccess ? theme.successColor : theme.warningColor
+                                    )
                                 }
                             }
+
+                            Text(
+                                "If installed to ~/.local/bin, ensure it's in your PATH.",
+                                bundle: .module
+                            )
+                            .font(.system(size: 11))
+                            .foregroundColor(theme.tertiaryText)
                         }
+                    }
+
+                    SettingsDivider()
+
+                    // Storage
+                    SettingsSubsection(label: "Storage") {
+                        DirectoryPickerView()
+                    }
+
+                    SettingsDivider()
+
+                    // External models (HF cache, LM Studio)
+                    SettingsSubsection(label: "External models") {
+                        ExternalModelsSettingsView()
+                    }
+
+                    SettingsDivider()
+
+                    // Maintenance
+                    SettingsSubsection(label: "Maintenance", anchorId: "settings.general.reset") {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text(
+                                "Troubleshoot or reset the application. A factory reset permanently deletes all data and settings.",
+                                bundle: .module
+                            )
+                            .font(.system(size: 12))
+                            .foregroundColor(theme.tertiaryText)
+
+                            Button(role: .destructive, action: { showFactoryResetConfirmation() }) {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "trash")
+                                        .font(.system(size: 12))
+                                    Text("Factory Reset…", bundle: .module)
+                                }
+                            }
+                            .buttonStyle(SettingsButtonStyle(isDestructive: true))
+                        }
+                    }
+                }
+            }
+        }
     }
 
     var body: some View {
@@ -318,128 +317,132 @@ struct ConfigurationView: View {
 
                 // Scrollable content area
                 ScrollViewReader { proxy in
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 24) {
-                        // MARK: - General Section
-                        generalSection
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 24) {
+                            // MARK: - General Section
+                            generalSection
 
-                        // MARK: - Notifications Section
-                        if matchesSearch(Self.notificationsKeywords) {
-                            SettingsSection(title: "Notifications", icon: "bell", anchorId: "settings.notifications.toasts") {
-                                VStack(alignment: .leading, spacing: 20) {
-                                    // Enable Toasts Toggle
-                                    SettingsToggle(
-                                        title: L("Show Toast Notifications"),
-                                        description: "Display notifications for background tasks and events",
-                                        isOn: $tempToastEnabled
-                                    )
-                                    .onChange(of: tempToastEnabled) { _, _ in
-                                        saveToastConfig()
-                                    }
-
-                                    // Position Picker
-                                    SettingsField(
-                                        label: "Toast Position",
-                                        hint: "Where toasts appear on screen"
-                                    ) {
-                                        ToastPositionPicker(selection: $tempToastPosition)
-                                            .onChange(of: tempToastPosition) { _, _ in
-                                                saveToastConfig()
-                                            }
-                                    }
-
-                                    // Timeout
-                                    StyledSettingsTextField(
-                                        label: "Default Timeout",
-                                        text: $tempToastTimeout,
-                                        placeholder: "5.0",
-                                        help: "Seconds before auto-dismiss. Empty uses default 5s"
-                                    )
-                                    .onChange(of: tempToastTimeout) { _, _ in
-                                        saveToastConfig()
-                                    }
-
-                                    // Max Visible
-                                    StyledSettingsTextField(
-                                        label: "Max Visible Toasts",
-                                        text: $tempToastMaxVisible,
-                                        placeholder: "5",
-                                        help: "Maximum toasts shown at once. Empty uses default 5"
-                                    )
-                                    .onChange(of: tempToastMaxVisible) { _, _ in
-                                        saveToastConfig()
-                                    }
-
-                                    // Max Concurrent Background Tasks
-                                    StyledSettingsTextField(
-                                        label: "Max Concurrent Tasks",
-                                        text: $tempToastMaxConcurrent,
-                                        placeholder: "5",
-                                        help: "Maximum background tasks running at once. Empty uses default 5"
-                                    )
-                                    .onChange(of: tempToastMaxConcurrent) { _, _ in
-                                        saveToastConfig()
-                                    }
-
-                                    // Test Toast Button
-                                    HStack {
-                                        Spacer()
-                                        Button(action: showTestToast) {
-                                            HStack(spacing: 6) {
-                                                Image(systemName: "bell.badge")
-                                                    .font(.system(size: 12))
-                                                Text("Test Toast", bundle: .module)
-                                                    .font(.system(size: 12, weight: .medium))
-                                            }
+                            // MARK: - Notifications Section
+                            if matchesSearch(Self.notificationsKeywords) {
+                                SettingsSection(
+                                    title: "Notifications",
+                                    icon: "bell",
+                                    anchorId: "settings.notifications.toasts"
+                                ) {
+                                    VStack(alignment: .leading, spacing: 20) {
+                                        // Enable Toasts Toggle
+                                        SettingsToggle(
+                                            title: L("Show Toast Notifications"),
+                                            description: "Display notifications for background tasks and events",
+                                            isOn: $tempToastEnabled
+                                        )
+                                        .onChange(of: tempToastEnabled) { _, _ in
+                                            saveToastConfig()
                                         }
-                                        .buttonStyle(SettingsButtonStyle())
+
+                                        // Position Picker
+                                        SettingsField(
+                                            label: "Toast Position",
+                                            hint: "Where toasts appear on screen"
+                                        ) {
+                                            ToastPositionPicker(selection: $tempToastPosition)
+                                                .onChange(of: tempToastPosition) { _, _ in
+                                                    saveToastConfig()
+                                                }
+                                        }
+
+                                        // Timeout
+                                        StyledSettingsTextField(
+                                            label: "Default Timeout",
+                                            text: $tempToastTimeout,
+                                            placeholder: "5.0",
+                                            help: "Seconds before auto-dismiss. Empty uses default 5s"
+                                        )
+                                        .onChange(of: tempToastTimeout) { _, _ in
+                                            saveToastConfig()
+                                        }
+
+                                        // Max Visible
+                                        StyledSettingsTextField(
+                                            label: "Max Visible Toasts",
+                                            text: $tempToastMaxVisible,
+                                            placeholder: "5",
+                                            help: "Maximum toasts shown at once. Empty uses default 5"
+                                        )
+                                        .onChange(of: tempToastMaxVisible) { _, _ in
+                                            saveToastConfig()
+                                        }
+
+                                        // Max Concurrent Background Tasks
+                                        StyledSettingsTextField(
+                                            label: "Max Concurrent Tasks",
+                                            text: $tempToastMaxConcurrent,
+                                            placeholder: "5",
+                                            help: "Maximum background tasks running at once. Empty uses default 5"
+                                        )
+                                        .onChange(of: tempToastMaxConcurrent) { _, _ in
+                                            saveToastConfig()
+                                        }
+
+                                        // Test Toast Button
+                                        HStack {
+                                            Spacer()
+                                            Button(action: showTestToast) {
+                                                HStack(spacing: 6) {
+                                                    Image(systemName: "bell.badge")
+                                                        .font(.system(size: 12))
+                                                    Text("Test Toast", bundle: .module)
+                                                        .font(.system(size: 12, weight: .medium))
+                                                }
+                                            }
+                                            .buttonStyle(SettingsButtonStyle())
+                                        }
                                     }
                                 }
                             }
-                        }
 
-                        // MARK: - Legal Section
-                        if matchesSearch(Self.legalKeywords) {
-                            SettingsSection(title: "Legal", icon: "doc.text", anchorId: "settings.legal") {
-                                VStack(alignment: .leading, spacing: 12) {
-                                    Text(
-                                        "Review the agreements that govern your use of Osaurus.",
-                                        bundle: .module
-                                    )
-                                    .font(.system(size: 12))
-                                    .foregroundColor(theme.secondaryText)
+                            // MARK: - Legal Section
+                            if matchesSearch(Self.legalKeywords) {
+                                SettingsSection(title: "Legal", icon: "doc.text", anchorId: "settings.legal") {
+                                    VStack(alignment: .leading, spacing: 12) {
+                                        Text(
+                                            "Review the agreements that govern your use of Osaurus.",
+                                            bundle: .module
+                                        )
+                                        .font(.system(size: 12))
+                                        .foregroundColor(theme.secondaryText)
 
-                                    legalLinkRow(
-                                        title: L("Terms of Service"),
-                                        url: OsaurusWebLinks.terms
-                                    )
-                                    legalLinkRow(
-                                        title: L("Privacy Policy"),
-                                        url: OsaurusWebLinks.privacy
-                                    )
+                                        legalLinkRow(
+                                            title: L("Terms of Service"),
+                                            url: OsaurusWebLinks.terms
+                                        )
+                                        legalLinkRow(
+                                            title: L("Privacy Policy"),
+                                            url: OsaurusWebLinks.privacy
+                                        )
+                                    }
                                 }
                             }
-                        }
 
-                        // MARK: - No Results
-                        if isSearching && !hasAnySearchMatch {
-                            searchEmptyState
-                        }
+                            // MARK: - No Results
+                            if isSearching && !hasAnySearchMatch {
+                                searchEmptyState
+                            }
 
+                        }
+                        .padding(.horizontal, 24)
+                        .padding(.vertical, 24)
+                        .frame(maxWidth: .infinity)
                     }
-                    .padding(.horizontal, 24)
-                    .padding(.vertical, 24)
-                    .frame(maxWidth: .infinity)
-                }
-                .opacity(hasAppeared ? 1 : 0)
-                // When a settings-search result lands here, scroll its control
-                // into view (the control glows itself via `settingsLandingAnchor`).
-                .onChange(of: highlightCoordinator.pending) { _, id in
-                    scrollToLandingTarget(id, proxy: proxy)
-                }
-                .onAppear {
-                    scrollToLandingTarget(highlightCoordinator.pending, proxy: proxy)
-                }
+                    .opacity(hasAppeared ? 1 : 0)
+                    // When a settings-search result lands here, scroll its control
+                    // into view (the control glows itself via `settingsLandingAnchor`).
+                    .onChange(of: highlightCoordinator.pending) { _, id in
+                        scrollToLandingTarget(id, proxy: proxy)
+                    }
+                    .onAppear {
+                        scrollToLandingTarget(highlightCoordinator.pending, proxy: proxy)
+                    }
                 }
             }
 

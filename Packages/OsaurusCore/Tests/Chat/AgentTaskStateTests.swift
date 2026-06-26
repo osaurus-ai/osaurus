@@ -658,9 +658,10 @@ struct AgentTaskStateTests {
     @Test func nativeImageResultBiasesFollowUpEditToSavedPath() throws {
         let state = AgentTaskState()
         let envelope = ToolEnvelope.success(
-            tool: "image_generate",
+            tool: "image",
             result: [
                 "kind": "native_image_generation_job",
+                "mode": "generate",
                 "status": "completed",
                 "images": [
                     [
@@ -672,10 +673,10 @@ struct AgentTaskStateTests {
             ] as [String: Any]
         )
 
-        state.record(name: "image_generate", argsJSON: #"{"prompt":"make a red cube"}"#, result: envelope)
+        state.record(name: "image", argsJSON: #"{"prompt":"make a red cube"}"#, result: envelope)
 
         let bias = try #require(state.nextStepBias())
-        #expect(bias.contains("image_edit"))
+        #expect(bias.contains("`image`"))
         #expect(bias.contains("/tmp/osaurus-images/generated-cube.png"))
         #expect(bias.contains("source_paths"))
     }
@@ -683,9 +684,10 @@ struct AgentTaskStateTests {
     @Test func nativeImageEditResultDoesNotBiasAnotherEdit() {
         let state = AgentTaskState()
         let envelope = ToolEnvelope.success(
-            tool: "image_edit",
+            tool: "image",
             result: [
                 "kind": "native_image_generation_job",
+                "mode": "edit",
                 "status": "completed",
                 "images": [
                     [
@@ -698,7 +700,7 @@ struct AgentTaskStateTests {
         )
 
         state.record(
-            name: "image_edit",
+            name: "image",
             argsJSON: #"{"source_paths":["/tmp/osaurus-images/generated-cube.png"],"prompt":"make it green"}"#,
             result: envelope
         )

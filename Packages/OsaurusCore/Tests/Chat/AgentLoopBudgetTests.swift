@@ -233,9 +233,10 @@ struct AgentLoopBudgetTests {
 
     @Test func nativeImageEditContinuationNoticeAfterGenerateRidesAsUser() {
         let imageGenerateResult = ToolEnvelope.success(
-            tool: "image_generate",
+            tool: "image",
             result: [
                 "kind": "native_image_generation_job",
+                "mode": "generate",
                 "status": "completed",
                 "images": [
                     [
@@ -247,8 +248,8 @@ struct AgentLoopBudgetTests {
             ] as [String: Any]
         )
         let imageContinuation =
-            "[System Notice] The previous `image_generate` result saved image path(s): "
-            + "`/tmp/osaurus-images/generated-cube.png`. Continue by calling `image_edit` "
+            "[System Notice] The previous `image` result saved image path(s): "
+            + "`/tmp/osaurus-images/generated-cube.png`. Continue by calling `image` "
             + "with `source_paths` set to those path value(s)."
         let composed = AgentLoopBudget.appendingTransientNotices(
             [
@@ -261,14 +262,14 @@ struct AgentLoopBudgetTests {
                     role: "tool",
                     content: imageGenerateResult,
                     tool_calls: nil,
-                    tool_call_id: "call_image_generate"
+                    tool_call_id: "call_image"
                 ),
             ]
         )
 
         #expect(composed.count == 4)
         #expect(composed[2].role == "tool")
-        #expect(composed[2].tool_call_id == "call_image_generate")
+        #expect(composed[2].tool_call_id == "call_image")
         #expect(composed[2].content == "[System Notice] Tool call budget: 1 of 2 remaining.")
         #expect(composed[3].role == "user")
         #expect(composed[3].content == imageContinuation)

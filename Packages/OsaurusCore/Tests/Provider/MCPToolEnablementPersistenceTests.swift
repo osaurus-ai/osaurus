@@ -57,7 +57,9 @@ struct MCPToolEnablementPersistenceTests {
 
             // First discovery: both tools auto-enable on first registration.
             let registered = manager.registerDiscoveredTools(
-                mcpTools, for: provider.id, provider: provider
+                mcpTools,
+                for: provider.id,
+                provider: provider
             )
             let alpha = registered[0].name
             let beta = registered[1].name
@@ -78,7 +80,9 @@ struct MCPToolEnablementPersistenceTests {
             // Re-discovery on relaunch / autoConnect must NOT re-enable the tool
             // the user disabled, and must leave the other one enabled.
             _ = manager.registerDiscoveredTools(
-                mcpTools, for: provider.id, provider: provider
+                mcpTools,
+                for: provider.id,
+                provider: provider
             )
             #expect(registry.isGlobalEnabled(alpha))
             #expect(registry.isGlobalEnabled(beta) == false)

@@ -888,38 +888,33 @@ public struct SystemPromptComposer: Sendable {
             )
         }
 
-        // Computer Use: rendered only when the `computer_use` tool actually
-        // resolved into the schema. That gate (set in `resolveTools`) is the
-        // single authoritative `computerUseEnabled` check — custom-agent opt-in,
-        // the Default agent never reaches here — so the section can never
-        // advertise desktop automation the model can't invoke. Schema-gated
-        // like codeStyle / riskAware / agentLoopGuidance, so it is
-        // session-constant and KV-cache stable, and it surfaces as its own
-        // context-budget line so an enabled agent can see Computer Use is live.
-        if !effectiveToolsOff, resolvedNames.contains(ComputerUseTool.toolName) {
-            composer.append(
-                .static(
-                    id: "computerUse",
-                    label: L("Computer Use"),
-                    content: SystemPromptTemplates.computerUseGuidance
+        // Sub-agent capability guidance (Computer Use, Image Generation): one
+        // registry-driven loop instead of parallel hand-written blocks. Each
+        // capability's guidance is rendered only when its PRIMARY tool actually
+        // resolved into the schema — the authoritative per-agent gate already
+        // ran in `resolveTools`, so a section can never advertise a sub-agent
+        // the model can't invoke. Schema-gated like codeStyle / riskAware /
+        // agentLoopGuidance, so it stays session-constant + KV-cache stable,
+        // and the registry's stable order keeps the rendered byte sequence
+        // fixed (computerUse before imageGeneration, as before).
+        if !effectiveToolsOff {
+            for capability in SubagentCapabilityRegistry.all {
+                guard let guidance = capability.guidance,
+                    let sectionId = capability.guidanceSectionId,
+                    let labelKey = capability.guidanceLabelKey,
+                    resolvedNames.contains(capability.primaryToolName)
+                else { continue }
+                composer.append(
+                    .static(
+                        id: sectionId,
+                        label: String(
+                            localized: String.LocalizationValue(labelKey),
+                            bundle: .module
+                        ),
+                        content: guidance
+                    )
                 )
-            )
-        }
-
-        // Image generation: authoritative directive, schema-gated on the actual
-        // tool. Without it, a persona-led model (e.g. the Default "Osaurus
-        // configuration assistant") intermittently refuses image requests with
-        // "I can't generate images / I'm text-only" even though image_generate is
-        // in its schema. Only rendered when the tool resolved, so it stays
-        // KV-cache stable and never advertises a tool the model can't call.
-        if !effectiveToolsOff, resolvedNames.contains("image_generate") {
-            composer.append(
-                .static(
-                    id: "imageGeneration",
-                    label: L("Image Generation"),
-                    content: SystemPromptTemplates.imageGenerationGuidance
-                )
-            )
+            }
         }
 
         // Agent-loop guidance: short cheat-sheet for the chat-layer-
@@ -1265,7 +1260,7 @@ public struct SystemPromptComposer: Sendable {
         // outright that it can create/edit images — otherwise the compacted
         // baseline skeleton is the only hint and small models reach for the
         // search tool instead.
-        if AgentDelegationConfigurationStore.snapshot().imageDelegationActive {
+        if SubagentConfigurationStore.snapshot().imageDelegationActive {
             let imageCaps =
                 ToolRegistry.shared.listTools()
                 .filter { ToolRegistry.agentDelegationImageToolNames.contains($0.name) }
@@ -1995,20 +1990,24 @@ public struct SystemPromptComposer: Sendable {
         // additionally excluded by the allowlist filter below, so Computer
         // Use is a custom-agent-only capability.
         if !snapshot.computerUseEnabled {
-            byName.removeValue(forKey: ComputerUseTool.toolName)
+            for name in SubagentCapabilityRegistry.computerUse.toolNames {
+                byName.removeValue(forKey: name)
+            }
         }
 
         // Spawn / agent delegation gate. For CUSTOM agents this is an
         // AUTHORITATIVE per-agent gate, same as Computer Use: the spawn /
-        // local_delegate / image_generate / image_edit tools are stripped unless
+        // image tools are stripped unless
         // the agent's `spawnDelegationEnabled` is on (ANDs with the global
-        // `AgentDelegationConfiguration` family gates applied in alwaysLoadedSpecs).
+        // `SubagentConfiguration` family gates applied in alwaysLoadedSpecs).
         // The DEFAULT / main chat is EXEMPT here — it is governed by the global
         // Agent Delegation switch in the default-agent surface below (the user's
         // main chat spawns when delegation is globally on; the first actual call
         // prompts for permission + model). So we never strip it for the default agent.
+        // The visible tool-name set is the shared `SubagentToolVisibility`
+        // source the HTTP agent-run path also reads (BUG E parity guard).
         if snapshot.agentId != Agent.defaultId, !snapshot.spawnDelegationEnabled {
-            for name in ToolRegistry.agentDelegationAllToolNames {
+            for name in SubagentToolVisibility.delegationToolNames {
                 byName.removeValue(forKey: name)
             }
         }
@@ -2028,13 +2027,13 @@ public struct SystemPromptComposer: Sendable {
             var allowed = ToolRegistry.defaultAgentAllowedToolNames
                 .union(additionalToolNames)
             // Spawn UX: the main/default chat may call the delegation tools
-            // (image_generate / image_edit / spawn / local_delegate) when the
+            // (image / spawn) when the
             // global Agent Delegation switch is on. They survive the filter only
             // if still in `byName` — i.e. the global family gates (applied in
             // alwaysLoadedSpecs) allowed them. The first actual call prompts for
             // permission + spawn-model choice.
-            if AgentDelegationConfigurationStore.snapshot().agentDelegationEnabled {
-                allowed.formUnion(ToolRegistry.agentDelegationAllToolNames)
+            if SubagentConfigurationStore.snapshot().agentDelegationEnabled {
+                allowed.formUnion(SubagentToolVisibility.delegationToolNames)
             }
             byName = byName.filter { allowed.contains($0.key) }
         } else {
@@ -2065,12 +2064,12 @@ public struct SystemPromptComposer: Sendable {
         let resolved = canonicalToolOrder(Array(byName.values))
 
         // Debug aid for the image-delegation tool surfacing: confirms whether
-        // `image_generate` actually reached the model's schema and what the
-        // delegation gate evaluated to at compose time.
-        let imageActive = AgentDelegationConfigurationStore.snapshot().imageDelegationActive
-        let hasImageGenerate = resolved.contains { $0.function.name == "image_generate" }
+        // the unified `image` tool actually reached the model's schema and what
+        // the delegation gate evaluated to at compose time.
+        let imageActive = SubagentConfigurationStore.snapshot().imageDelegationActive
+        let hasImage = resolved.contains { $0.function.name == "image" }
         toolResolveLog.debug(
-            "resolveTools agent=\(snapshot.agentId.uuidString, privacy: .public) imageDelegationActive=\(imageActive, privacy: .public) image_generate_in_schema=\(hasImageGenerate, privacy: .public) toolCount=\(resolved.count, privacy: .public)"
+            "resolveTools agent=\(snapshot.agentId.uuidString, privacy: .public) imageDelegationActive=\(imageActive, privacy: .public) image_in_schema=\(hasImage, privacy: .public) toolCount=\(resolved.count, privacy: .public)"
         )
 
         return resolved

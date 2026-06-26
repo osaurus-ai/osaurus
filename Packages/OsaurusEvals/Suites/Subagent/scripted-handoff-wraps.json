@@ -1,0 +1,18 @@
+{
+  "id": "subagent.scripted-handoff-wraps",
+  "domain": "subagent",
+  "label": "Subagent • residency handoff wraps needsHandoff kinds",
+  "query": "A scripted model-swapping sub-agent that needs the residency handoff.",
+  "notes": "Model-free. The kind sets needsHandoff=true and vends a recording handoff; the host must wrap the run through the handoff middleware (around -> body). Pins the optional-handoff contract used by the live spawn/image kinds without touching MLX.",
+  "fixtures": {},
+  "expect": {
+    "subagent": {
+      "lane": "scripted",
+      "needsHandoff": true,
+      "decision": "allow",
+      "expectSuccess": true,
+      "expectEnvelopeKind": "success",
+      "expectHandoffWrapped": true
+    }
+  }
+}

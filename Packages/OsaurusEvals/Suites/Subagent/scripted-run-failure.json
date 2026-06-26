@@ -1,0 +1,19 @@
+{
+  "id": "subagent.scripted-run-failure",
+  "domain": "subagent",
+  "label": "Subagent • run failure -> execution_error (feed still fired)",
+  "query": "A scripted sub-agent that fails inside its run loop.",
+  "notes": "Model-free. The kind emits a phase then throws .executionFailed inside run; the host maps it to `execution_error` AND the feed must still carry the phase it emitted before failing (the run got far enough to register the feed). Pins the failure path past permission.",
+  "fixtures": {},
+  "expect": {
+    "subagent": {
+      "lane": "scripted",
+      "decision": "allow",
+      "phases": ["running"],
+      "runFailure": "executionFailed",
+      "expectSuccess": false,
+      "expectEnvelopeKind": "execution_error",
+      "expectFeedKinds": ["phase"]
+    }
+  }
+}

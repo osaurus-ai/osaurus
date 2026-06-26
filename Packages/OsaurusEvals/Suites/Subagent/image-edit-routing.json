@@ -1,0 +1,18 @@
+{
+  "id": "subagent.image-edit-routing",
+  "domain": "subagent",
+  "label": "Subagent • image source_paths routes to edit + validates sources",
+  "query": "Edit an image given a source path.",
+  "notes": "LIVE-ish. Proves the merged `image` tool routes to EDIT when `source_paths` is set: with a non-existent source the edit path (reached only when delegation is on and an edit model resolves) validates sources and returns `invalid_args` on field source_paths. On a host with image delegation off or no edit model it returns rejected/unavailable instead, so the generalized availability rule SKIPS it. A true edit happy-path (real source image + ready edit model) is a maintainer live-verification step, not a portable suite case.",
+  "fixtures": {},
+  "expect": {
+    "subagent": {
+      "lane": "image",
+      "prompt": "recolor the shape to blue",
+      "sourcePaths": ["/tmp/osaurus-eval-nonexistent-source.png"],
+      "expectSuccess": false,
+      "expectEnvelopeKind": "invalid_args",
+      "summaryContains": ["source"]
+    }
+  }
+}

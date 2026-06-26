@@ -1,0 +1,19 @@
+{
+  "id": "subagent.spawn-live-digest",
+  "domain": "subagent",
+  "label": "Subagent • live spawn persona digest",
+  "query": "Spawn a persona and get back a compact digest.",
+  "notes": "LIVE. Runs the real SpawnTool through the host + TextSubagentKind against a spawnable persona named 'sparky'. SKIPS automatically on any host where 'sparky' is not marked spawnable / has no model (the host returns rejected/unavailable). To run it: create an agent named 'sparky', mark it spawnable, and give it a model in Spawn & Delegation settings.",
+  "fixtures": {},
+  "expect": {
+    "subagent": {
+      "lane": "spawn",
+      "agent": "sparky",
+      "input": "In one sentence, summarize what a bounded sub-agent is.",
+      "expectSuccess": true,
+      "expectEnvelopeKind": "success",
+      "expectResultKind": "spawn_result",
+      "expectFeedKinds": ["phase"]
+    }
+  }
+}

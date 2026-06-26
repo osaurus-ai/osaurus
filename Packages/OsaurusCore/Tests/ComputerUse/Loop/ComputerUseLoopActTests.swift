@@ -50,7 +50,7 @@ final class ComputerUseLoopActTests: XCTestCase {
         var lastView: AgentView?
         var lastSnapshot: CUSnapshot?
         var metrics = ComputerUseRunMetrics()
-        let feed = ComputerUseFeed(toolCallId: "t", goal: "g")
+        let feed = SubagentFeed(toolCallId: "t", kindId: "computer_use", title: "g")
 
         let out = await ComputerUseLoop.act(
             action: clickAction(),
@@ -95,7 +95,7 @@ final class ComputerUseLoopActTests: XCTestCase {
         var lastView: AgentView?
         var lastSnapshot: CUSnapshot?
         var metrics = ComputerUseRunMetrics()
-        let feed = ComputerUseFeed(toolCallId: "t", goal: "g")
+        let feed = SubagentFeed(toolCallId: "t", kindId: "computer_use", title: "g")
 
         _ = await ComputerUseLoop.act(
             action: clickAction(),
@@ -133,7 +133,7 @@ final class ComputerUseLoopActTests: XCTestCase {
         var lastView: AgentView?
         var lastSnapshot: CUSnapshot?
         var metrics = ComputerUseRunMetrics()
-        let feed = ComputerUseFeed(toolCallId: "t", goal: "g")
+        let feed = SubagentFeed(toolCallId: "t", kindId: "computer_use", title: "g")
 
         let out = await ComputerUseLoop.act(
             action: AgentAction(verb: .setValue, target: AgentTarget(mark: 13), text: "Jared"),
@@ -180,7 +180,7 @@ final class ComputerUseLoopActTests: XCTestCase {
         var lastView: AgentView?
         var lastSnapshot: CUSnapshot?
         var metrics = ComputerUseRunMetrics()
-        let feed = ComputerUseFeed(toolCallId: "t", goal: "g")
+        let feed = SubagentFeed(toolCallId: "t", kindId: "computer_use", title: "g")
 
         _ = await ComputerUseLoop.act(
             action: AgentAction(verb: .clear, target: AgentTarget(mark: 13)),
@@ -221,7 +221,7 @@ final class ComputerUseLoopActTests: XCTestCase {
         var lastView: AgentView?
         var lastSnapshot: CUSnapshot?
         var metrics = ComputerUseRunMetrics()
-        let feed = ComputerUseFeed(toolCallId: "t", goal: "g")
+        let feed = SubagentFeed(toolCallId: "t", kindId: "computer_use", title: "g")
 
         _ = await ComputerUseLoop.act(
             action: AgentAction(verb: .type, target: AgentTarget(mark: 13), text: "hi", replace: false),
@@ -262,7 +262,7 @@ final class ComputerUseLoopActTests: XCTestCase {
         var lastView: AgentView?
         var lastSnapshot: CUSnapshot?
         var metrics = ComputerUseRunMetrics()
-        let feed = ComputerUseFeed(toolCallId: "t", goal: "g")
+        let feed = SubagentFeed(toolCallId: "t", kindId: "computer_use", title: "g")
         let out = await ComputerUseLoop.act(
             action: action,
             element: makeElement(),
@@ -338,7 +338,7 @@ final class ComputerUseLoopActTests: XCTestCase {
         var lastView: AgentView?
         var lastSnapshot: CUSnapshot?
         var metrics = ComputerUseRunMetrics()
-        let feed = ComputerUseFeed(toolCallId: "t", goal: "g")
+        let feed = SubagentFeed(toolCallId: "t", kindId: "computer_use", title: "g")
         _ = await ComputerUseLoop.act(
             action: AgentAction(verb: .doubleClick, target: AgentTarget(mark: 13)),
             element: makeElement(),
@@ -377,7 +377,7 @@ final class ComputerUseLoopActTests: XCTestCase {
         var lastView: AgentView?
         var lastSnapshot: CUSnapshot?
         var metrics = ComputerUseRunMetrics()
-        let feed = ComputerUseFeed(toolCallId: "t", goal: "g")
+        let feed = SubagentFeed(toolCallId: "t", kindId: "computer_use", title: "g")
 
         _ = await ComputerUseLoop.act(
             action: clickAction(),

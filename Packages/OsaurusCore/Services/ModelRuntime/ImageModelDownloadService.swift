@@ -134,10 +134,14 @@ final class ImageModelDownloadService: ObservableObject {
         let sourceMarkerName = Self.sourceMarkerName
         Task.detached(priority: .utility) {
             try? FileManager.default.createDirectory(
-                at: root, withIntermediateDirectories: true)
+                at: root,
+                withIntermediateDirectories: true
+            )
             try? repoId.write(
                 to: root.appendingPathComponent(sourceMarkerName),
-                atomically: true, encoding: .utf8)
+                atomically: true,
+                encoding: .utf8
+            )
         }
     }
 
@@ -151,7 +155,10 @@ final class ImageModelDownloadService: ObservableObject {
     static func isImageRepo(_ repoId: String) async -> Bool {
         guard
             let files = await HuggingFaceService.shared.fetchMatchingFiles(
-                repoId: repoId, patterns: patterns, excludedFiles: excluded)
+                repoId: repoId,
+                patterns: patterns,
+                excludedFiles: excluded
+            )
         else { return false }
         let paths = files.map { $0.path.lowercased() }
         let hasModelIndex = paths.contains { $0 == "model_index.json" }
@@ -201,7 +208,10 @@ final class ImageModelDownloadService: ObservableObject {
 
         guard
             let files = await HuggingFaceService.shared.fetchMatchingFiles(
-                repoId: repoId, patterns: Self.patterns, excludedFiles: Self.excluded),
+                repoId: repoId,
+                patterns: Self.patterns,
+                excludedFiles: Self.excluded
+            ),
             !files.isEmpty
         else {
             states[dirName] = .failed(error: "Could not list files for \(repoId)")
@@ -223,7 +233,12 @@ final class ImageModelDownloadService: ObservableObject {
                     guard let file = iterator.next() else { return false }
                     group.addTask { [weak self] in
                         try await self?.downloadFile(
-                            file, repoId: repoId, root: root, dirName: dirName, total: totalBytes)
+                            file,
+                            repoId: repoId,
+                            root: root,
+                            dirName: dirName,
+                            total: totalBytes
+                        )
                     }
                     return true
                 }
@@ -281,7 +296,9 @@ final class ImageModelDownloadService: ObservableObject {
         let downloader = DirectDownloader()
         downloaders[dirName, default: []].append(downloader)
         try await downloader.download(
-            from: url, to: destination, expectedSize: file.size
+            from: url,
+            to: destination,
+            expectedSize: file.size
         ) { [weak self] received, _ in
             Task { @MainActor [weak self] in
                 guard let self else { return }
@@ -317,6 +334,10 @@ final class ImageModelDownloadService: ObservableObject {
         let fraction = total > 0 ? min(1.0, Double(received) / Double(total)) : 0
         states[id] = .downloading(progress: fraction)
         metrics[id] = ModelDownloadService.DownloadMetrics(
-            bytesReceived: received, totalBytes: total, bytesPerSecond: speed, etaSeconds: eta)
+            bytesReceived: received,
+            totalBytes: total,
+            bytesPerSecond: speed,
+            etaSeconds: eta
+        )
     }
 }

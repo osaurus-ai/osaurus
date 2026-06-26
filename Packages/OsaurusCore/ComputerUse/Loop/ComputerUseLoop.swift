@@ -7,9 +7,10 @@
 //  harness owns every deterministic decision: which element the mark maps
 //  to, whether the gate allows it, and whether the action actually landed.
 //
-//  Runs as a nested subagent inside `ComputerUseTool` (the `sandbox_reduce`
-//  pattern), so the inner steps never leak into the parent chat transcript —
-//  they surface only through the `ComputerUseFeed`.
+//  Runs as a nested subagent inside `ComputerUseKind` on the shared
+//  `SubagentSession` host (the `sandbox_reduce` pattern), so the inner steps
+//  never leak into the parent chat transcript — they surface only through the
+//  shared `SubagentFeed`.
 //
 
 import Foundation
@@ -195,7 +196,7 @@ public enum ComputerUseLoop {
         modelId: String,
         driver: MacDriver,
         gate: ComputerUseGating,
-        feed: ComputerUseFeed,
+        feed: SubagentFeed,
         interrupt: InterruptToken,
         confirm: @escaping @Sendable (ActionPreview) async -> Bool,
         requestCloudVisionConsent: @escaping @Sendable () async -> CloudVisionConsentChoice = {
@@ -312,7 +313,7 @@ public enum ComputerUseLoop {
         func terminate(_ outcome: RunOutcome) -> ComputerUseRunResult {
             metrics.steps = step
             feed.emit(
-                FeedEvent(
+                SubagentActivityEvent(
                     step: step,
                     kind: .outcome,
                     title: outcome.summary,
@@ -385,7 +386,7 @@ public enum ComputerUseLoop {
             // The model ignored the forced tool call and emitted text. Re-ask.
             guard let call = parsed else {
                 consecutiveInvalid += 1
-                feed.emit(FeedEvent(step: step, kind: .retry, title: "Model did not call agent_action"))
+                feed.emit(SubagentActivityEvent(step: step, kind: .retry, title: "Model did not call agent_action"))
                 if consecutiveInvalid >= limits.maxConsecutiveInvalid {
                     return terminate(.gaveUp(reason: "The model stopped producing valid actions."))
                 }
@@ -419,7 +420,7 @@ public enum ComputerUseLoop {
                 consecutiveInvalid += 1
                 let reason: String
                 if case .invalid(let r) = decoded { reason = r } else { reason = "Invalid action." }
-                feed.emit(FeedEvent(step: step, kind: .retry, title: "Invalid action", detail: reason))
+                feed.emit(SubagentActivityEvent(step: step, kind: .retry, title: "Invalid action", detail: reason))
                 if consecutiveInvalid >= limits.maxConsecutiveInvalid {
                     return terminate(.gaveUp(reason: "The model could not produce a valid action: \(reason)"))
                 }
@@ -437,7 +438,7 @@ public enum ComputerUseLoop {
             consecutiveInvalid = 0
             messages.append(assistantMessage)
             feed.emit(
-                FeedEvent(
+                SubagentActivityEvent(
                     step: step,
                     kind: .propose,
                     title: action.feedLabel,
@@ -513,7 +514,7 @@ public enum ComputerUseLoop {
                 // so the next turn sees whatever settled.
                 let seconds = min(max(action.seconds ?? 1, 0), Self.maxWaitSeconds)
                 feed.emit(
-                    FeedEvent(step: step + 1, kind: .act, title: "Wait \(seconds)s for UI to settle")
+                    SubagentActivityEvent(step: step + 1, kind: .act, title: "Wait \(seconds)s for UI to settle")
                 )
                 if seconds > 0 {
                     try? await Task.sleep(nanoseconds: UInt64(seconds) * 1_000_000_000)
@@ -780,14 +781,14 @@ public enum ComputerUseLoop {
         toolResult: inout String,
         advancedStep: inout Bool,
         metrics: inout ComputerUseRunMetrics,
-        feed: ComputerUseFeed,
+        feed: SubagentFeed,
         step: Int
     ) async -> Bool {
         switch decision {
         case .reject(let reason):
             metrics.blocked += 1
             feed.emit(
-                FeedEvent(step: step, kind: .blocked, title: "Blocked: \(action.feedLabel)", detail: reason)
+                SubagentActivityEvent(step: step, kind: .blocked, title: "Blocked: \(action.feedLabel)", detail: reason)
             )
             toolResult = "That action is not allowed: \(reason). Choose a different action."
             advancedStep = false
@@ -795,7 +796,7 @@ public enum ComputerUseLoop {
         case .confirm(let preview):
             metrics.confirmsRequested += 1
             feed.emit(
-                FeedEvent(
+                SubagentActivityEvent(
                     step: step,
                     kind: .confirmRequested,
                     title: "Confirm: \(preview.summary)",
@@ -804,11 +805,11 @@ public enum ComputerUseLoop {
             )
             if await confirm(preview) {
                 metrics.confirmsApproved += 1
-                feed.emit(FeedEvent(step: step, kind: .confirmed, title: "Approved: \(action.feedLabel)"))
+                feed.emit(SubagentActivityEvent(step: step, kind: .confirmed, title: "Approved: \(action.feedLabel)"))
                 return true
             }
             metrics.confirmsDeclined += 1
-            feed.emit(FeedEvent(step: step, kind: .denied, title: "Declined: \(action.feedLabel)"))
+            feed.emit(SubagentActivityEvent(step: step, kind: .denied, title: "Declined: \(action.feedLabel)"))
             toolResult = "The user declined that action. Try a different approach or ask to stop."
             advancedStep = false
             return false
@@ -829,7 +830,7 @@ public enum ComputerUseLoop {
         pid: Int32?,
         driver: MacDriver,
         previous: AgentView?,
-        feed: ComputerUseFeed,
+        feed: SubagentFeed,
         step: Int,
         tier: CaptureTier = .ax
     ) async -> Perception {
@@ -843,7 +844,7 @@ public enum ComputerUseLoop {
         let snapshot = await driver.capture(pid: pid, tier: tier)
         let view = AgentView.build(from: snapshot, previous: previous)
         feed.emit(
-            FeedEvent(
+            SubagentActivityEvent(
                 step: step,
                 kind: .perceive,
                 title: "Looked at \(snapshot.app)",
@@ -866,7 +867,7 @@ public enum ComputerUseLoop {
         currentTier: inout CaptureTier,
         pendingFrameImage: inout CUImage?,
         metrics: inout ComputerUseRunMetrics,
-        feed: ComputerUseFeed,
+        feed: SubagentFeed,
         step: Int
     ) async -> Perception {
         var perception = await perceive(
@@ -934,7 +935,7 @@ public enum ComputerUseLoop {
         driver: MacDriver,
         lastView: inout AgentView?,
         lastSnapshot: inout CUSnapshot?,
-        feed: ComputerUseFeed,
+        feed: SubagentFeed,
         step: Int
     ) async -> String {
         guard let pid else { return "No app is focused. Use `open` first." }
@@ -955,7 +956,7 @@ public enum ComputerUseLoop {
         // report every element from the prior full view as "removed".
         let view = AgentView.build(from: found, previous: nil)
         feed.emit(
-            FeedEvent(
+            SubagentActivityEvent(
                 step: step,
                 kind: .act,
                 title: "Find " + (action.query.map { "\"\($0)\"" } ?? "elements"),
@@ -989,7 +990,7 @@ public enum ComputerUseLoop {
     private static func handleOpen(
         action: AgentAction,
         driver: MacDriver,
-        feed: ComputerUseFeed,
+        feed: SubagentFeed,
         step: Int
     ) async -> OpenResult {
         guard let identifier = action.app, !identifier.isEmpty else {
@@ -1001,7 +1002,7 @@ public enum ComputerUseLoop {
             let snapshot = await driver.capture(pid: info.pid, tier: .ax)
             let view = AgentView.build(from: snapshot, previous: nil)
             feed.emit(
-                FeedEvent(step: step, kind: .act, title: "Opened \(info.name)", success: true)
+                SubagentActivityEvent(step: step, kind: .act, title: "Opened \(info.name)", success: true)
             )
             return .opened(
                 pid: info.pid,
@@ -1012,7 +1013,7 @@ public enum ComputerUseLoop {
             )
         case .failure(let error):
             feed.emit(
-                FeedEvent(
+                SubagentActivityEvent(
                     step: step,
                     kind: .act,
                     title: "Open \(identifier) failed",
@@ -1041,7 +1042,7 @@ public enum ComputerUseLoop {
         lastView: inout AgentView?,
         lastSnapshot: inout CUSnapshot?,
         metrics: inout ComputerUseRunMetrics,
-        feed: ComputerUseFeed,
+        feed: SubagentFeed,
         step: Int
     ) async -> String {
         metrics.actsAttempted += 1
@@ -1112,7 +1113,7 @@ public enum ComputerUseLoop {
             // Emit the retry outcome and adopt it on success (shared shape).
             func adoptRetry(_ retry: CUActionResult) {
                 feed.emit(
-                    FeedEvent(
+                    SubagentActivityEvent(
                         step: step,
                         kind: .act,
                         title: "Retry \(action.verb.rawValue) at element center",
@@ -1138,7 +1139,7 @@ public enum ComputerUseLoop {
                 let focus = await driver.coordinate(.click(x: cx, y: cy, pid: pid))
                 guard focus.success else {
                     feed.emit(
-                        FeedEvent(
+                        SubagentActivityEvent(
                             step: step,
                             kind: .act,
                             title: "Could not focus element for \(action.verb.rawValue) retry",
@@ -1165,7 +1166,7 @@ public enum ComputerUseLoop {
         }
 
         feed.emit(
-            FeedEvent(
+            SubagentActivityEvent(
                 step: step,
                 kind: .act,
                 title: action.feedLabel,
@@ -1199,7 +1200,7 @@ public enum ComputerUseLoop {
         if verifyTier != .ax { pendingFrameImage = snapshot.image }
         if view.hasChanges { metrics.verifyChanged += 1 }
         feed.emit(
-            FeedEvent(
+            SubagentActivityEvent(
                 step: step,
                 kind: .verify,
                 title: view.hasChanges ? "Change detected" : "No visible change",
@@ -1300,7 +1301,7 @@ public enum ComputerUseLoop {
         _ produce: @escaping @Sendable () async throws -> T,
         timeout: TimeInterval,
         maxRetries: Int,
-        feed: ComputerUseFeed,
+        feed: SubagentFeed,
         step: Int
     ) async throws -> T {
         var attempt = 0
@@ -1313,7 +1314,7 @@ public enum ComputerUseLoop {
                 if attempt >= maxRetries { throw error }
                 attempt += 1
                 feed.emit(
-                    FeedEvent(
+                    SubagentActivityEvent(
                         step: step,
                         kind: .retry,
                         title: "Model step failed; retrying (\(attempt)/\(maxRetries))",
@@ -1419,7 +1420,7 @@ public enum ComputerUseLoop {
         messages: inout [ChatMessage],
         imageTokensInContext: inout Int,
         metrics: inout ComputerUseRunMetrics,
-        feed: ComputerUseFeed,
+        feed: SubagentFeed,
         step: Int
     ) async {
         let effective = vision.withConsent(consent.granted)
@@ -1451,7 +1452,7 @@ public enum ComputerUseLoop {
                 imageTokensInContext: &imageTokensInContext
             )
             feed.emit(
-                FeedEvent(
+                SubagentActivityEvent(
                     step: step,
                     kind: .perceive,
                     title: "Attached a screenshot",
@@ -1486,7 +1487,7 @@ public enum ComputerUseLoop {
         messages: inout [ChatMessage],
         imageTokensInContext: inout Int,
         metrics: inout ComputerUseRunMetrics,
-        feed: ComputerUseFeed,
+        feed: SubagentFeed,
         step: Int
     ) async {
         let effective = vision.withConsent(consent.granted)
@@ -1500,7 +1501,7 @@ public enum ComputerUseLoop {
         else { return }
         consent.asked = true
         feed.emit(
-            FeedEvent(
+            SubagentActivityEvent(
                 step: step,
                 kind: .perceive,
                 title: "Asked to use Cloud vision",
@@ -1510,7 +1511,7 @@ public enum ComputerUseLoop {
         switch await requestConsent() {
         case .deny:
             feed.emit(
-                FeedEvent(
+                SubagentActivityEvent(
                     step: step,
                     kind: .perceive,
                     title: "Staying on-device",
@@ -1555,7 +1556,7 @@ public enum ComputerUseLoop {
         messages: inout [ChatMessage],
         imageTokensInContext: inout Int,
         metrics: inout ComputerUseRunMetrics,
-        feed: ComputerUseFeed,
+        feed: SubagentFeed,
         step: Int
     ) async {
         let mode = vision.cloudScrubMode
@@ -1581,7 +1582,7 @@ public enum ComputerUseLoop {
         )
         metrics.cloudVisionUsed = true
         feed.emit(
-            FeedEvent(
+            SubagentActivityEvent(
                 step: step,
                 kind: .perceive,
                 title: "Attached a screenshot",

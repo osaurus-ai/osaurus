@@ -3,11 +3,12 @@
 //  OsaurusCore — Computer Use
 //
 //  The single model-facing entry point for the Computer Use feature. The
-//  parent agent calls `computer_use(goal:)` once; this tool spins up the
-//  nested perceive→decide→gate→act→verify loop (the `sandbox_reduce`
-//  pattern) and returns a single summary. The inner agent_action steps
-//  never leak into the parent transcript — they surface only through the
-//  live `ComputerUseFeed` rendered in the chat row.
+//  parent agent calls `computer_use(goal:)` once; this thin tool parses the
+//  arguments and hands a `ComputerUseKind` to the shared `SubagentSession`
+//  host, which runs the nested perceive→decide→gate→act→verify loop and
+//  returns a single summary. The inner agent_action steps never leak into the
+//  parent transcript — they surface only through the shared `SubagentFeed`
+//  rendered in the chat row.
 //
 //  Gating: registered as a built-in so the runtime can execute it and
 //  ChatView can intercept its feed, but the system prompt composer strips
@@ -141,51 +142,6 @@ final class ComputerUseTool: OsaurusTool, PermissionedTool, @unchecked Sendable 
             )
         }
 
-        // Resolve the run scope. Outside chat (HTTP / eval) we fall back to fresh
-        // ids and the default agent so the loop still runs, just without the row
-        // binding.
-        let sessionId = ChatExecutionContext.currentSessionId ?? UUID().uuidString
-        let toolCallId = ChatExecutionContext.currentToolCallId ?? UUID().uuidString
-        let agentId = ChatExecutionContext.currentAgentId ?? Agent.defaultId
-
-        // Resolve everything that lives on the main actor in one hop: the model,
-        // the agent's autonomy ceiling, a snapshot of the user policy, and the
-        // vision context (the model's image support + local-vs-cloud posture +
-        // cloud-vision consent). The gate and vision posture are built from this
-        // snapshot so a mid-run settings edit can't change the rules under the
-        // running loop.
-        let resolved = await MainActor.run {
-            () -> (model: String?, ceiling: AutonomyCeiling?, policy: AutonomyPolicy, vision: VisionContext) in
-            let model = AgentManager.shared.effectiveModel(for: agentId)
-            let ceiling = AgentManager.shared.agent(for: agentId)?.settings.computerUseCeiling
-            let policy = ComputerUsePolicyStore.load()
-            let vision: VisionContext
-            if let model, !model.isEmpty {
-                vision = VisionContext(
-                    modelAcceptsImages: ComputerUseTool.modelAcceptsImages(model),
-                    modelIsLocal: ModelManager.findInstalledModel(named: model) != nil,
-                    cloudConsent: CloudVisionConsent.shared.isGranted,
-                    cloudScrubMode: CloudVisionConsent.shared.scrubMode
-                )
-            } else {
-                vision = .none
-            }
-            return (model, ceiling, policy, vision)
-        }
-        let ceiling = resolved.ceiling
-        let policy = resolved.policy
-        let vision = resolved.vision
-        guard let modelId = resolved.model, !modelId.isEmpty else {
-            return ToolEnvelope.failure(
-                kind: .unavailable,
-                message:
-                    "No model is selected for this agent, so Computer Use can't run. Pick a model first.",
-                tool: name,
-                retryable: false
-            )
-        }
-        let policySummary = ComputerUseTool.policySummary(policy: policy, ceiling: ceiling)
-
         // Limits: honour an explicit `max_steps`, clamped to a sane range.
         var limits = RunLimits()
         if let raw = args["max_steps"], !(raw is NSNull) {
@@ -202,62 +158,12 @@ final class ComputerUseTool: OsaurusTool, PermissionedTool, @unchecked Sendable 
             }
         }
 
-        let feed = ComputerUseFeed(toolCallId: toolCallId, goal: goal)
-        let interrupt = InterruptToken()
-        ComputerUseFeedRegistry.shared.register(feed)
-        ComputerUseInterruptCenter.shared.register(interrupt, for: toolCallId)
-        defer {
-            ComputerUseInterruptCenter.shared.unregister(toolCallId)
-            ComputerUseFeedRegistry.shared.unregister(toolCallId: toolCallId)
-            Task { @MainActor in
-                ComputerUsePromptQueue.shared.cancelAll(forToolCallId: toolCallId)
-            }
-        }
-
-        let result = await ComputerUseLoop.run(
-            goal: goal,
-            modelId: modelId,
-            driver: NativeMacDriver(),
-            gate: ComputerUseGate(policy: policy, ceiling: ceiling),
-            feed: feed,
-            interrupt: interrupt,
-            confirm: { preview in
-                await ComputerUsePromptQueue.shared.requestConfirmation(preview, toolCallId: toolCallId)
-            },
-            requestCloudVisionConsent: {
-                await ComputerUsePromptQueue.shared.requestCloudVisionConsent(toolCallId: toolCallId)
-            },
-            limits: limits,
-            policySummary: policySummary,
-            vision: vision,
-            sessionId: sessionId
+        // Model resolution, the per-action gate + confirm overlay, the live
+        // feed, the interrupt token, and the compact result all run through the
+        // shared `SubagentSession` host via `ComputerUseKind`.
+        return await SubagentSession.run(
+            ComputerUseKind(goal: goal, limits: limits),
+            tool: name
         )
-
-        let outcome = result.outcome
-        let metrics = result.metrics
-        await MainActor.run {
-            FeatureTelemetry.computerUseRun(metrics, outcome: ComputerUseTool.outcomeToken(outcome))
-        }
-
-        switch outcome {
-        case .done(let summary):
-            return ToolEnvelope.success(tool: name, text: summary)
-        case .interrupted:
-            return ToolEnvelope.failure(
-                kind: .userDenied,
-                message: "Computer Use was stopped by the user.",
-                tool: name,
-                retryable: false
-            )
-        case .gaveUp, .deadEnd, .stepCapReached, .failed:
-            // A legitimate non-completion — not a tool malfunction. Surface the
-            // reason so the parent model can pivot, but don't invite a blind retry.
-            return ToolEnvelope.failure(
-                kind: .executionError,
-                message: outcome.summary,
-                tool: name,
-                retryable: false
-            )
-        }
     }
 }

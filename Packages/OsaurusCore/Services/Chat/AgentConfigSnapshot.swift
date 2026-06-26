@@ -103,8 +103,8 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
     /// mode unless the agent has opted in.
     public let computerUseEnabled: Bool
     /// Per-agent opt-in for spawn / agent delegation. Enforced authoritatively in
-    /// `resolveTools` — `spawn` / `local_delegate` / `image_generate` / `image_edit`
-    /// are stripped unless the agent has opted in (AND with the global config gates).
+    /// `resolveTools` — `spawn` / `image` are stripped unless the agent has opted
+    /// in (AND with the global config gates).
     public let spawnDelegationEnabled: Bool
 
     public init(

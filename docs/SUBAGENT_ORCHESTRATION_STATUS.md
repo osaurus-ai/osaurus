@@ -1,10 +1,135 @@
 # Local Subagent Orchestration — Engineering Status & Design
-Branch: `feat/image-generation-vmlxflux`. Last updated 2026-06-21.
+Branch: `feat/image-generation-vmlxflux`. Last updated 2026-06-25 (unified sub-agent architecture).
 
 - **Product requirements (the vision/spec):** `docs/SPAWN_IMAGEGEN_REQUIREMENTS.md`.
 - This file is the **engineering log**: current state, architecture, live-matrix
   status, known gaps, and build history. The "Current state" + "Matrix status"
   sections below are authoritative — earlier dated claims have been folded in.
+
+> **Naming note (2026-06-25):** the unified-architecture pass renamed the tools,
+> config, and services. The dated working-log sections below this point predate
+> the rename and still use the OLD names. Read them through this map:
+>
+> | Old (in the log below) | New (current) |
+> |---|---|
+> | `local_delegate` tool | **removed** — folded into `spawn` |
+> | `image_generate` + `image_edit` tools | one **`image`** tool (`source_paths` ⇒ edit) |
+> | `AgentDelegationConfiguration` | `SubagentConfiguration` |
+> | `AgentDelegationConfigurationStore` | `SubagentConfigurationStore` (file still `agent-delegation.json`) |
+> | `AgentDelegationSettingsSection` | `SubagentSettingsSection` |
+> | `.agentDelegationConfigurationChanged` notification | `.subagentConfigurationChanged` |
+> | `ComputerUseFeed` / `…FeedRegistry` / `…InterruptCenter` | `SubagentFeed` / `SubagentFeedRegistry` / `SubagentInterruptCenter` |
+> | image coordinator's private `NativeImageChatResidency*` copies | one shared `ResidencyHandoff` middleware (built on `ChatResidencyHandoff`) |
+> | result kinds `spawn_result` / `digest` / `native_image_generation_job` | one compact `ToolEnvelope` shape |
+>
+> The global-enable flag (`SubagentConfiguration.agentDelegationEnabled`) and the
+> per-agent flag (`Agent.spawnDelegationEnabled`) kept their property names; only the
+> enclosing types were renamed `AgentDelegation*` → `Subagent*`.
+
+---
+
+## 🧩 Unified Sub-agent Architecture (2026-06-25) — one host, four kinds
+
+This is now the **authoritative** architecture and supersedes the per-path
+descriptions in the dated log below. Pre-release, so the rename/merge carries **no
+back-compat shims**. Goal: one consistent machinery across **all four** nested
+sub-agent paths (`spawn`, `image`, `computer_use`, `sandbox_reduce`) instead of
+four bespoke re-implementations of the same "bounded nested job → compact result,
+inner steps never leak into the parent transcript" contract. `computer_use` was the
+most-mature path, so its scaffolding (scope ids, live feed, interrupt, defer-cleanup,
+compact result) was generalized into the shared `Subagent*` framework that the other
+three adopt.
+
+### Tool surface (what users/models see now)
+- **`spawn`** — the only text sub-agent tool. `local_delegate` is **deleted**; its
+  loop was a copy of spawn's. Persona-or-default text sub-agent, dedicated `spawn`
+  permission key.
+- **`image`** — one tool. `image_generate` + `image_edit` are **merged**: pass
+  `prompt` (+ optional `negative_prompt`, `strength`); supplying `source_paths`
+  switches it to **edit** mode. Both default-model settings are kept (gen vs edit
+  bundles differ), and the gen→edit nudge / inline artifact bridge / `ToolDisplayName`
+  are mode-aware.
+- **`computer_use`** — unchanged loop + per-action confirm gate; it only *adopts* the
+  shared layers.
+- **`sandbox_reduce`** — unchanged read/search/exec allowlist; runs on the shared host.
+
+### Three layers
+```
+tool entry (spawn | image | computer_use | sandbox_reduce)
+  └─ SubagentSession host        Subagent/SubagentSession.swift
+       ├─ scope ids (sessionId/toolCallId/agentId via ChatExecutionContext)
+       ├─ recursion guard (one SubagentContext; no nested sub-agents)
+       ├─ kind.resolveModel  → reject-before-evict
+       ├─ kind.permission    → ask / deny / always   (computer_use: rich per-action gate)
+       ├─ kind.needsHandoff? → ResidencyHandoff (spawn, image only)   Subagent/ResidencyHandoff.swift
+       │      local orchestrator → memoryPreflight → unload → run → restore
+       │      cloud orchestrator → no unload (nothing resident)
+       ├─ kind.run(scope, feed, interrupt)
+       │      SubagentFeed + SubagentFeedRegistry + SubagentInterruptCenter
+       └─ normalize → compact ToolEnvelope ; defer: unregister feed/interrupt, restore, telemetry
+```
+
+1. **Host — `SubagentSession`** (`Subagent/SubagentSession.swift`): every sub-agent
+   tool funnels through it. Resolves scope ids, holds the recursion guard, registers a
+   feed + interrupt token, runs the kind, normalizes to a compact `ToolEnvelope`, and
+   `defer`s cleanup + telemetry. A deterministic scripted seam (`ScriptedSubagentKind`)
+   exercises the full lifecycle **model-free** in tests/evals.
+2. **Optional handoff — `ResidencyHandoff`** (`Subagent/ResidencyHandoff.swift`):
+   generalized from the old `ChatResidencyHandoff`; the single residency authority. Only
+   model-swapping kinds (`spawn`, `image`) set `needsHandoff = true`. Same-model kinds
+   (`sandbox_reduce`, `computer_use`) skip preflight/unload/restore. The image
+   coordinator's private residency copies are deleted.
+3. **Kinds behind `SubagentKind`** (`Subagent/SubagentKind.swift`, `Subagent/Kinds/`):
+   `TextSubagentKind` (spawn), `ImageSubagentKind` (image), `ComputerUseKind`
+   (computer_use), `SandboxReduceKind` (sandbox_reduce). Adding a future kind (privacy
+   loop, code exec, browser) is one file + one registry entry.
+
+### Cross-cutting unifications (the decoupling wins)
+- **One activity feed.** `SubagentFeed` / `SubagentActivityEvent` /
+  `SubagentFeedRegistry` / `SubagentInterruptCenter` (`Subagent/SubagentFeed.swift`)
+  replace the computer-use-only feed + the separate `NativeImageJobProgress`.
+  `NativeToolCallGroupView` binds ONE feed for every sub-agent row, so **text `spawn`
+  now gets a live progress row** (fixes the old "frozen turn" gap) and image phase/step
+  events map onto the same surface.
+- **One capability/gating registry.** `SubagentCapabilityRegistry`
+  (`Subagent/SubagentCapabilityRegistry.swift`) maps each capability flag → tool
+  name(s) + guidance prompt. `SystemPromptComposer.resolveTools` iterates it to
+  strip tools + inject guidance, and a shared `SubagentToolVisibility` resolver is
+  used by **both** the composer and `HTTPHandler.enrichWithAgentContext`. This kills
+  the hardcoded `["image_generate","image_edit","local_delegate","spawn"]` list that
+  caused the **BUG E** surface desync; a parity test now guards it.
+- **One compact-result contract.** The ad-hoc `spawn_result` / `digest` /
+  `native_image_generation_job` payloads collapse into one `ToolEnvelope` shape that the
+  inline-render bridge and agent-loop nudge read uniformly.
+- **One recursion guard + budgets/cancellation.** `SandboxReduceContext` /
+  `LocalTextDelegateContext` merge into one `SubagentContext` + the shared interrupt token.
+
+### Config + settings
+- `AgentDelegationConfiguration` → **`SubagentConfiguration`** (permission defaults
+  collapsed to `spawn` + `image`; dead `AgentDelegationModelKind.localTextDelegate` +
+  its ModelPicker candidate dropped). Store → **`SubagentConfigurationStore`** (on-disk
+  file name `agent-delegation.json` retained for now).
+- Settings (`SpawnSettingsView` / `SubagentSettingsSection`) regrouped into clear
+  sections: Enable · Spawnable Agents · Local handoff + RAM Safety · Image gen/edit
+  models · Permissions · Load Policy · Budgets. The old "Cloud Cost Saver" block +
+  orphaned delegate picker are removed.
+
+### Tests & evals
+- OsaurusCore: `SubagentSession` host + each `SubagentKind` + the generalized
+  feed/registry/interrupt + the merged `image` `source_paths`→edit routing + the
+  `ResidencyHandoff` middleware are unit-tested, plus a **capability/visibility parity
+  test** (`resolveTools` ⇄ `enrichWithAgentContext`) as the BUG E regression guard.
+  `make test` / `make ci-test` stay green; `build/Tests.xcresult` covers the new types.
+- OsaurusEvals: a new **`subagent` domain** (facade `SubagentJobEvaluator`, a
+  `case "subagent":` arm in `EvalRunner.runOne`, an `expect.subagent` block) with
+  **scripted, model-free, CI-safe** cases that also run as eval-kit unit tests, plus
+  **live** spawn + image (gen/edit) cases that skip cleanly when no host/model is
+  configured. `computer_use_loop` / `agent_loop` / `sandbox` suites stay green. See
+  `Packages/OsaurusEvals/README.md` → the `subagent` domain section.
+
+> The dated working-log below (GPU serialization, BUGs A–G, live matrices) remains the
+> **historical record** of how the image/spawn/computer-use paths were proven; it is
+> preserved verbatim and read through the naming map above.
 
 ---
 

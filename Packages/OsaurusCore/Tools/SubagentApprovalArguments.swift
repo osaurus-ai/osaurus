@@ -1,5 +1,5 @@
 //
-//  AgentDelegationApprovalArguments.swift
+//  SubagentApprovalArguments.swift
 //  osaurus
 //
 //  Small helpers for showing resolved delegate-job facts in permission prompts.
@@ -7,7 +7,7 @@
 
 import Foundation
 
-enum AgentDelegationApprovalArguments {
+enum SubagentApprovalArguments {
     static func enrichedJSON(from argumentsJSON: String, values: [String: Any]) -> String {
         var payload = parseObject(argumentsJSON) ?? [:]
         for (key, value) in values {

@@ -136,25 +136,25 @@ struct EnabledCapabilitiesManifestTests {
         // ids are listed inline even in compact mode — dropping descriptions.
         let groups = [
             Group(
-                pluginDisplay: "Image Generation",
+                pluginDisplay: "Built-in tools",
                 skills: [],
                 tools: [
-                    Cap(name: "image_generate", description: "Make an image"),
-                    Cap(name: "image_edit", description: "Edit an image"),
+                    Cap(name: "image", description: "Make or edit an image"),
+                    Cap(name: "render_chart", description: "Render a chart"),
                 ]
             )
         ]
         let rendered = try #require(
             SystemPromptTemplates.enabledCapabilitiesManifest(groups: groups, compact: true)
         )
-        #expect(rendered.contains("  tool/image_generate"))
-        #expect(rendered.contains("  tool/image_edit"))
-        #expect(!rendered.contains("image_generate — Make an image"))
+        #expect(rendered.contains("  tool/image"))
+        #expect(rendered.contains("  tool/render_chart"))
+        #expect(!rendered.contains("image — Make or edit an image"))
         // The group has no loadable id, so it must NOT be collapsed into a
-        // `plugin/<id> — Image Generation` tier line. (The intro itself
+        // `plugin/<id> — Built-in tools` tier line. (The intro itself
         // references `plugin/<id>`/`plugin/calendar`, so a blanket
         // `!contains("plugin/")` would be wrong — assert on the display name.)
-        #expect(!rendered.contains("— Image Generation"))
+        #expect(!rendered.contains("— Built-in tools"))
     }
 
     @Test("token cap collapses overflow plugins to a pointer line")

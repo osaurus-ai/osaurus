@@ -167,7 +167,9 @@ public struct ComputerUseScorecard: Sendable, Codable, Equatable {
         lines.append("")
         lines.append("- Generated: \(generatedAt)")
         lines.append("- Sources: \(sources.count)")
-        lines.append("- Privacy: case IDs and report paths only; raw prompts, notes, screen text, and field contents are omitted.")
+        lines.append(
+            "- Privacy: case IDs and report paths only; raw prompts, notes, screen text, and field contents are omitted."
+        )
         lines.append("")
         lines.append("## Totals")
         lines.append("")
@@ -190,8 +192,12 @@ public struct ComputerUseScorecard: Sendable, Codable, Equatable {
         lines.append("")
         lines.append("## Confirm And Autonomy")
         lines.append("")
-        lines.append("- Gate cases: confirm \(confirmAutonomy.confirmedGateCases), allow \(confirmAutonomy.autonomousGateCases), deny \(confirmAutonomy.deniedGateCases)")
-        lines.append("- Loop confirmations: \(confirmAutonomy.loopConfirmationRequests) request(s) across \(confirmAutonomy.loopCasesRequestingConfirmation) case(s)")
+        lines.append(
+            "- Gate cases: confirm \(confirmAutonomy.confirmedGateCases), allow \(confirmAutonomy.autonomousGateCases), deny \(confirmAutonomy.deniedGateCases)"
+        )
+        lines.append(
+            "- Loop confirmations: \(confirmAutonomy.loopConfirmationRequests) request(s) across \(confirmAutonomy.loopCasesRequestingConfirmation) case(s)"
+        )
         lines.append("- Loop autonomous actions: \(confirmAutonomy.loopAutonomousActions)")
         lines.append("")
         lines.append("## Verify")
@@ -212,7 +218,9 @@ public struct ComputerUseScorecard: Sendable, Codable, Equatable {
         lines.append("| Case | Domain | Outcome | Report |")
         lines.append("| --- | --- | --- | --- |")
         for ref in evidence {
-            lines.append("| `\(escapeMarkdown(ref.caseId))` | `\(escapeMarkdown(ref.domain))` | \(ref.outcome.rawValue) | `\(escapeMarkdown(ref.reportPath))` |")
+            lines.append(
+                "| `\(escapeMarkdown(ref.caseId))` | `\(escapeMarkdown(ref.domain))` | \(ref.outcome.rawValue) | `\(escapeMarkdown(ref.reportPath))` |"
+            )
         }
         return lines.joined(separator: "\n") + "\n"
     }
@@ -504,7 +512,7 @@ private struct GateFacts {
     private static func firstMatch(in string: String, patterns: [String]) -> String? {
         for pattern in patterns {
             guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
-            let nsRange = NSRange(string.startIndex..<string.endIndex, in: string)
+            let nsRange = NSRange(string.startIndex ..< string.endIndex, in: string)
             guard let match = regex.firstMatch(in: string, range: nsRange),
                 match.numberOfRanges > 1,
                 let range = Range(match.range(at: 1), in: string)
@@ -541,14 +549,15 @@ private struct LoopFacts {
             targetResolveSuccesses = nil
             targetResolveAttempts = nil
         }
-        deadEnded = joined.contains("outcome ok: deadEnd")
+        deadEnded =
+            joined.contains("outcome ok: deadEnd")
             || joined.contains("outcome 'deadEnd'")
             || joined.contains("outcomeName=deadEnd")
     }
 
     private static func intValue(named name: String, in string: String) -> Int? {
         guard let regex = try? NSRegularExpression(pattern: #"\b\#(name)=(\d+)"#) else { return nil }
-        let nsRange = NSRange(string.startIndex..<string.endIndex, in: string)
+        let nsRange = NSRange(string.startIndex ..< string.endIndex, in: string)
         guard let match = regex.firstMatch(in: string, range: nsRange),
             match.numberOfRanges > 1,
             let range = Range(match.range(at: 1), in: string)
@@ -559,7 +568,7 @@ private struct LoopFacts {
     private static func resolveRate(in string: String) -> (successes: Int, attempts: Int)? {
         guard let regex = try? NSRegularExpression(pattern: #"axResolvableRate: [0-9.]+ \((\d+)/(\d+)\)"#)
         else { return nil }
-        let nsRange = NSRange(string.startIndex..<string.endIndex, in: string)
+        let nsRange = NSRange(string.startIndex ..< string.endIndex, in: string)
         guard let match = regex.firstMatch(in: string, range: nsRange),
             match.numberOfRanges > 2,
             let successRange = Range(match.range(at: 1), in: string),

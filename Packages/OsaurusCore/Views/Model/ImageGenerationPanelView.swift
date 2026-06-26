@@ -3,7 +3,7 @@
 //  osaurus
 //
 //  Manual image generation / edit panel. A direct surface (separate from the
-//  chat-triggered `image_generate` / `image_edit` delegation tools) that drives
+//  chat-triggered `image` delegation tool) that drives
 //  `ImageGenerationService` for an on-device bundle: prompt + a few params →
 //  live progress → the saved image, with a Save-As / Reveal action.
 //
@@ -188,7 +188,8 @@ struct ImageGenerationPanelView: View {
                         .frame(width: 84, height: 84)
                         .clipShape(RoundedRectangle(cornerRadius: 8))
                         .overlay(
-                            RoundedRectangle(cornerRadius: 8).stroke(theme.cardBorder, lineWidth: 1))
+                            RoundedRectangle(cornerRadius: 8).stroke(theme.cardBorder, lineWidth: 1)
+                        )
                 }
                 Button(action: pickSource) {
                     Text(sourceURL == nil ? "Choose…" : "Replace…", bundle: .module)
@@ -218,7 +219,8 @@ struct ImageGenerationPanelView: View {
                     RoundedRectangle(cornerRadius: 10)
                         .fill(theme.inputBackground)
                         .overlay(
-                            RoundedRectangle(cornerRadius: 10).stroke(theme.inputBorder, lineWidth: 1))
+                            RoundedRectangle(cornerRadius: 10).stroke(theme.inputBorder, lineWidth: 1)
+                        )
                 )
             fieldLabel("Negative prompt (optional)")
             TextField("", text: $negativePrompt)
@@ -229,7 +231,8 @@ struct ImageGenerationPanelView: View {
                     RoundedRectangle(cornerRadius: 10)
                         .fill(theme.inputBackground)
                         .overlay(
-                            RoundedRectangle(cornerRadius: 10).stroke(theme.inputBorder, lineWidth: 1))
+                            RoundedRectangle(cornerRadius: 10).stroke(theme.inputBorder, lineWidth: 1)
+                        )
                 )
         }
     }
@@ -258,7 +261,9 @@ struct ImageGenerationPanelView: View {
                         RoundedRectangle(cornerRadius: 8)
                             .fill(theme.inputBackground)
                             .overlay(
-                                RoundedRectangle(cornerRadius: 8).stroke(theme.inputBorder, lineWidth: 1)))
+                                RoundedRectangle(cornerRadius: 8).stroke(theme.inputBorder, lineWidth: 1)
+                            )
+                    )
             }
             Spacer()
         }
@@ -277,7 +282,8 @@ struct ImageGenerationPanelView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     statusRow(
                         spinner: true,
-                        text: "Step \(step)/\(total)" + (eta.map { String(format: " · ~%.0fs", $0) } ?? ""))
+                        text: "Step \(step)/\(total)" + (eta.map { String(format: " · ~%.0fs", $0) } ?? "")
+                    )
                     ProgressView(value: Double(step), total: Double(max(total, 1)))
                         .tint(theme.accentColor)
                 }
@@ -301,7 +307,8 @@ struct ImageGenerationPanelView: View {
                     .frame(maxHeight: 300)
                     .clipShape(RoundedRectangle(cornerRadius: 10))
                     .overlay(
-                        RoundedRectangle(cornerRadius: 10).stroke(theme.cardBorder, lineWidth: 1))
+                        RoundedRectangle(cornerRadius: 10).stroke(theme.cardBorder, lineWidth: 1)
+                    )
             }
             HStack(spacing: 12) {
                 if let seed = model.resultSeed {
@@ -355,7 +362,8 @@ struct ImageGenerationPanelView: View {
                 .padding(.vertical, 9)
                 .background(
                     RoundedRectangle(cornerRadius: 8)
-                        .fill(canRun ? theme.accentColor : theme.accentColor.opacity(0.4)))
+                        .fill(canRun ? theme.accentColor : theme.accentColor.opacity(0.4))
+                )
             }
             .buttonStyle(PlainButtonStyle())
             .disabled(!canRun)
@@ -382,7 +390,9 @@ struct ImageGenerationPanelView: View {
                     prompt: trimmedPrompt,
                     sourceImages: [data],
                     negativePrompt: negative.isEmpty ? nil : negative,
-                    seed: seed))
+                    seed: seed
+                )
+            )
         } else {
             model.generate(
                 ImageGenerationParameters(
@@ -391,7 +401,9 @@ struct ImageGenerationPanelView: View {
                     negativePrompt: negative.isEmpty ? nil : negative,
                     width: size,
                     height: size,
-                    seed: seed))
+                    seed: seed
+                )
+            )
         }
     }
 
@@ -435,6 +447,7 @@ struct ImageGenerationPanelView: View {
         .background(
             RoundedRectangle(cornerRadius: 10)
                 .fill(theme.inputBackground)
-                .overlay(RoundedRectangle(cornerRadius: 10).stroke(theme.cardBorder, lineWidth: 1)))
+                .overlay(RoundedRectangle(cornerRadius: 10).stroke(theme.cardBorder, lineWidth: 1))
+        )
     }
 }

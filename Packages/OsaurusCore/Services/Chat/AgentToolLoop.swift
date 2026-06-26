@@ -526,9 +526,12 @@ enum AgentLoopBudget {
             ToolEnvelope.isSuccess(content),
             let data = content.data(using: .utf8),
             let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            dict["tool"] as? String == "image_generate",
+            dict["tool"] as? String == "image",
             let payload = dict["result"] as? [String: Any],
             payload["kind"] as? String == "native_image_generation_job",
+            // Only a fresh generation (not an edit) gets the continuation
+            // promotion — the nudge after an edit would loop.
+            (payload["mode"] as? String) ?? "generate" == "generate",
             let images = payload["images"] as? [[String: Any]]
         else { return false }
         return images.contains { image in
@@ -538,9 +541,8 @@ enum AgentLoopBudget {
     }
 
     private static func isNativeImageEditContinuationNotice(_ notice: String) -> Bool {
-        notice.contains("`image_edit`")
-            && notice.contains("source_paths")
-            && notice.contains("previous `image_generate` result")
+        notice.contains("source_paths")
+            && notice.contains("previous `image` result")
     }
 
     /// Like `trimPreservingSystemPrefix`, but also reports whether the

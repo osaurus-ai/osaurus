@@ -54,7 +54,7 @@ public actor ImageGenerationService {
 
     /// Release the resident image model after agent-triggered jobs or memory
     /// pressure handoffs. Manual image-panel flows may choose to keep the
-    /// engine warm and skip this through `AgentDelegationImageLoadPolicy`.
+    /// engine warm and skip this through `SubagentImageLoadPolicy`.
     public func unload() async {
         if let engine {
             await engine.unload()
@@ -89,7 +89,8 @@ public actor ImageGenerationService {
                 let items = try? fm.contentsOfDirectory(
                     at: url,
                     includingPropertiesForKeys: [.isDirectoryKey],
-                    options: [.skipsHiddenFiles])
+                    options: [.skipsHiddenFiles]
+                )
             else { return false }
             return items.contains {
                 (try? $0.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
@@ -184,7 +185,7 @@ public actor ImageGenerationService {
             let count = max(1, params.numImages)
             var streams: [AsyncThrowingStream<ImageGenEvent, Error>] = []
             streams.reserveCapacity(count)
-            for index in 0..<count {
+            for index in 0 ..< count {
                 // n > 1 is not engine-batched; run sequentially with distinct
                 // seeds so each image differs while staying reproducible.
                 let seed = params.seed.map { $0 &+ UInt64(index) }

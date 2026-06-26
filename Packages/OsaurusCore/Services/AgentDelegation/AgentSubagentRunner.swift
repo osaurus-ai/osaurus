@@ -2,11 +2,12 @@
 //  AgentSubagentRunner.swift
 //  osaurus
 //
-//  Shared bounded runner for the text/coding subagent KIND of `spawn`: a
-//  context-isolated `AgentToolLoop` on a chosen model that returns a compact
-//  digest only (the orchestrator never sees the transcript). Text-only — no
-//  nested tool execution in v1. Both the `spawn` tool (over Agent personas) and
-//  the `local_delegate` tool drive this same runner.
+//  Shared bounded runner for the text/tool subagent KINDs: a context-isolated
+//  `AgentToolLoop` on a chosen model that returns a compact digest only (the
+//  orchestrator never sees the transcript). Serves both `spawn` (text-only, no
+//  child tools) and `sandbox_reduce` (an allowlisted read/search/exec child
+//  toolset). The host (`SubagentSession`) owns the recursion guard, feed,
+//  permission, and residency handoff; this owns only the loop + digest.
 //
 
 import Foundation
@@ -17,25 +18,49 @@ struct AgentSubagentRunResult: Sendable {
     var iterations: Int
 }
 
+/// Optional child toolset for a subagent run. When `nil`, the run is text-only
+/// (every tool call is refused). When present, the child sees `specs` and the
+/// runner dispatches allowed calls through `execute` (the kind enforces its own
+/// allowlist + error conversion inside `execute`).
+struct AgentSubagentToolset: Sendable {
+    var specs: [Tool]
+    /// Execute one child tool call and return the result envelope. The kind
+    /// owns the allowlist check, dispatch, and error→envelope conversion; the
+    /// runner owns message bookkeeping and child-session scoping.
+    var execute: @Sendable (_ invocation: ServiceToolInvocation) async -> String
+}
+
 enum AgentSubagentRunner {
-    /// Run a bounded text subagent. The caller owns model resolution, permission,
-    /// and the residency handoff; this owns only the loop + digest.
+    /// Run a bounded subagent loop. The caller (kind) owns model resolution,
+    /// permission, the residency handoff, and result mapping; this owns the
+    /// loop, message bookkeeping, and digest capture.
     static func run(
         modelName: String,
         seedMessages: [ChatMessage],
-        maxTokens: Int,
+        maxTokens: Int?,
         maxIterations: Int,
         deadline: Date,
-        sessionId: String
+        sessionId: String,
+        isAgentRequest: Bool = true,
+        stopOnToolRejection: Bool = true,
+        treatEmptyChoicesAsFinal: Bool = false,
+        isInterrupted: @escaping @Sendable () -> Bool = { false },
+        toolset: AgentSubagentToolset? = nil
     ) async throws -> AgentSubagentRunResult {
         var messages = seedMessages
         var finalDigest: String?
 
         let contextWindow = await AgentLoopBudget.resolveContextWindow(modelId: modelName)
+        let toolTokens: Int
+        if let set = toolset {
+            toolTokens = await MainActor.run { ToolRegistry.shared.totalEstimatedTokens(for: set.specs) }
+        } else {
+            toolTokens = 0
+        }
         let budgetManager = AgentLoopBudget.makeBudgetManager(
             contextWindow: contextWindow,
             systemPromptChars: messages.first?.content?.count ?? 0,
-            toolTokens: 0,
+            toolTokens: toolTokens,
             maxResponseTokens: maxTokens
         )
         let watermark = CompactionWatermark()
@@ -43,7 +68,7 @@ enum AgentSubagentRunner {
 
         let hooks = AgentLoopHooks(
             isCancelled: {
-                Task.isCancelled || Date() >= deadline
+                Task.isCancelled || Date() >= deadline || isInterrupted()
             },
             buildMessages: { notices in
                 for notice in notices {
@@ -68,17 +93,15 @@ enum AgentSubagentRunner {
                     presence_penalty: nil,
                     stop: nil,
                     n: nil,
-                    tools: nil,
+                    tools: toolset?.specs,
                     tool_choice: nil,
                     session_id: sessionId
                 )
                 request.samplingParametersAreImplicit = true
-                request.isAgentRequest = true
-                let response = try await LocalTextDelegateContext.$isActive.withValue(true) {
-                    try await engine.completeChat(request: request)
-                }
+                request.isAgentRequest = isAgentRequest
+                let response = try await engine.completeChat(request: request)
                 guard let choice = response.choices.first else {
-                    return .emptyResponse
+                    return treatEmptyChoicesAsFinal ? .finalResponse : .emptyResponse
                 }
                 if let calls = choice.message.tool_calls, !calls.isEmpty {
                     messages.append(choice.message)
@@ -95,24 +118,59 @@ enum AgentSubagentRunner {
                 finalDigest = choice.message.content
                 return .finalResponse
             },
-            executeTool: { invocation, callId in
-                let envelope = ToolEnvelope.failure(
-                    kind: .rejected,
-                    message:
-                        "Tool '\(invocation.toolName)' is not available inside a spawned subagent. "
-                        + "Subagent jobs are text-only.",
-                    tool: invocation.toolName,
-                    retryable: false
+            onDedupedResult: { _, callId, held in
+                // Only fires when a child tool call short-circuits (tool kinds);
+                // text-only spawn never reaches here.
+                messages.append(
+                    ChatMessage(role: "tool", content: held, tool_calls: nil, tool_call_id: callId)
                 )
-                messages.append(ChatMessage(role: "tool", content: envelope, tool_calls: nil, tool_call_id: callId))
-                return AgentLoopToolExecution(result: envelope, isError: true)
+            },
+            executeTool: { invocation, callId in
+                guard let toolset else {
+                    // Text-only: every tool call is refused.
+                    let envelope = ToolEnvelope.failure(
+                        kind: .rejected,
+                        message:
+                            "Tool '\(invocation.toolName)' is not available inside a spawned subagent. "
+                            + "Subagent jobs are text-only.",
+                        tool: invocation.toolName,
+                        retryable: false
+                    )
+                    messages.append(
+                        ChatMessage(
+                            role: "tool",
+                            content: envelope,
+                            tool_calls: nil,
+                            tool_call_id: callId
+                        )
+                    )
+                    return AgentLoopToolExecution(result: envelope, isError: true)
+                }
+                // Ephemeral child session id; `currentAgentId` stays inherited
+                // from the parent so sandbox routing + the exec limiter hit the
+                // same agent budget.
+                let result = await ChatExecutionContext.$currentSessionId.withValue(sessionId) {
+                    await toolset.execute(invocation)
+                }
+                messages.append(
+                    ChatMessage(
+                        role: "tool",
+                        content: result,
+                        tool_calls: nil,
+                        tool_call_id: callId
+                    )
+                )
+                return AgentLoopToolExecution(
+                    result: result,
+                    isError: ToolEnvelope.isError(result)
+                )
             }
         )
 
         let runResult = try await AgentToolLoop.run(
             policy: AgentLoopPolicy(
                 maxIterations: maxIterations,
-                stopOnToolRejection: true,
+                stopOnToolRejection: stopOnToolRejection,
                 dedupeNoticeEnabled: false
             ),
             state: AgentTaskState(),

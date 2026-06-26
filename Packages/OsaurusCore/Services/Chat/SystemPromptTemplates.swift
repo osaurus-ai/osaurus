@@ -672,15 +672,15 @@ public enum SystemPromptTemplates {
         - Use it for desktop UI automation (filling a form, navigating an app, extracting on-screen content), NOT for shell, files, or web requests — those have dedicated tools.
         """
 
-    /// Authoritative image-generation directive. Schema-gated on `image_generate`
+    /// Authoritative image-generation directive. Schema-gated on `image`
     /// in the composer, so it only renders when the tool is actually callable.
     /// Counters the persona-led refusal ("I'm text-only / I can't make images").
     public static let imageGenerationGuidance = """
         ## Image generation
 
-        - You CAN create and edit images directly. When the user asks you to generate, create, make, draw, render, or produce an image, call the `image_generate` tool. To modify a provided image, call `image_edit`.
-        - NEVER reply that you cannot generate images, that you are "text-only", or that you lack an image tool — you have these tools, so use them. Do not redirect the user to another app or a settings page for image creation.
-        - The generated image is shown to the user automatically (it renders inline in the chat). Do not call `share_artifact` for it. If the user asked for a follow-up edit or transformation of that image, continue by calling `image_edit` with `source_paths` set to the saved path from the generate result; otherwise just briefly confirm in one sentence.
+        - You CAN create and edit images directly with the `image` tool. When the user asks you to generate, create, make, draw, render, or produce an image, call `image` with a `prompt`. To modify an existing image, call `image` with the same `prompt` PLUS `source_paths` set to the image path(s) — `source_paths` is what switches it into edit mode.
+        - NEVER reply that you cannot generate images, that you are "text-only", or that you lack an image tool — you have this tool, so use it. Do not redirect the user to another app or a settings page for image creation.
+        - The resulting image is shown to the user automatically (it renders inline in the chat). Do not call `share_artifact` for it. If the user asked for a follow-up edit or transformation of that image, continue by calling `image` again with `source_paths` set to the saved path from the previous result; otherwise just briefly confirm in one sentence.
         - The job runs locally in the background and may briefly swap models; that is expected. Make the call and report the result when it returns.
         """
 

@@ -4,9 +4,9 @@
 //
 //  Dedicated management page for spawn / agent delegation, promoted out of the
 //  long Settings scroll so it's discoverable next to Computer Use. It is a thin
-//  page wrapper around the existing `AgentDelegationSettingsSection`: same
-//  backing store (`AgentDelegationConfigurationStore` → `agent-delegation.json`)
-//  and the same `.agentDelegationConfigurationChanged` notification the Settings
+//  page wrapper around the existing `SubagentSettingsSection`: same
+//  backing store (`SubagentConfigurationStore` → `agent-delegation.json`)
+//  and the same `.subagentConfigurationChanged` notification the Settings
 //  copy uses, so the two stay two-way synced — edit here or there, both reflect.
 //
 
@@ -17,7 +17,7 @@ struct SpawnSettingsView: View {
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
     @State private var hasAppeared = false
-    @State private var configuration = AgentDelegationConfigurationStore.snapshot()
+    @State private var configuration = SubagentConfigurationStore.snapshot()
     @State private var modelItems: [ModelPickerItem] = []
 
     var body: some View {
@@ -32,7 +32,7 @@ struct SpawnSettingsView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    AgentDelegationSettingsSection(
+                    SubagentSettingsSection(
                         configuration: $configuration,
                         modelItems: modelItems
                     )
@@ -47,20 +47,20 @@ struct SpawnSettingsView: View {
         .background(theme.primaryBackground)
         .environment(\.theme, themeManager.currentTheme)
         .onAppear {
-            configuration = AgentDelegationConfigurationStore.snapshot()
+            configuration = SubagentConfigurationStore.snapshot()
             modelItems = ModelPickerItemCache.shared.items
             withAnimation(.easeOut(duration: 0.25).delay(0.05)) {
                 hasAppeared = true
             }
         }
         .onChange(of: configuration) { _, newValue in
-            AgentDelegationConfigurationStore.save(newValue)
+            SubagentConfigurationStore.save(newValue)
         }
         .onReceive(
-            NotificationCenter.default.publisher(for: .agentDelegationConfigurationChanged)
+            NotificationCenter.default.publisher(for: .subagentConfigurationChanged)
         ) { _ in
             // Re-sync when the Settings copy (or anything else) saves a change.
-            let latest = AgentDelegationConfigurationStore.snapshot()
+            let latest = SubagentConfigurationStore.snapshot()
             if latest != configuration { configuration = latest }
         }
         .onReceive(ModelPickerItemCache.shared.$items) { items in

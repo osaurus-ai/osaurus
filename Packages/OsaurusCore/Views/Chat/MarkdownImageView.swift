@@ -453,7 +453,8 @@ final class MarkdownSegmentImageView: NSImageView {
         downloadButton.bezelStyle = .regularSquare
         downloadButton.imagePosition = .imageOnly
         downloadButton.image = NSImage(
-            systemSymbolName: "arrow.down.to.line", accessibilityDescription: "Save Image"
+            systemSymbolName: "arrow.down.to.line",
+            accessibilityDescription: "Save Image"
         )?.withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 12, weight: .semibold))
         downloadButton.contentTintColor = .white
         downloadButton.wantsLayer = true
@@ -466,7 +467,9 @@ final class MarkdownSegmentImageView: NSImageView {
         addSubview(downloadButton)
 
         let trailing = downloadButton.trailingAnchor.constraint(
-            equalTo: leadingAnchor, constant: Self.buttonSize)
+            equalTo: leadingAnchor,
+            constant: Self.buttonSize
+        )
         rightEdgeConstraint = trailing
         NSLayoutConstraint.activate([
             downloadButton.topAnchor.constraint(equalTo: topAnchor, constant: Self.inset),
@@ -496,7 +499,8 @@ final class MarkdownSegmentImageView: NSImageView {
         let t = NSTrackingArea(
             rect: bounds,
             options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
-            owner: self, userInfo: nil
+            owner: self,
+            userInfo: nil
         )
         addTrackingArea(t)
         trackingAreaRef = t

@@ -6,7 +6,7 @@ import Testing
 
 @Suite(.serialized)
 struct EvalBootstrapPlanTests {
-    @Test func pluginRequiredCapabilitySearchSkipsBootstrapByDefault() {
+    @Test func pluginRequiredCapabilitySearchLoadsInstalledPluginsByDefault() {
         let suite = makeSuite(
             cases: [
                 makeCase(
@@ -23,7 +23,9 @@ struct EvalBootstrapPlanTests {
             preference: .automatic
         )
 
-        #expect(plan == EvalBootstrapPlan(loadInstalledPlugins: false, initializeSearchIndices: false))
+        // A selected case that requires an installed plugin auto-loads plugins
+        // (which also brings up the search indices), so no extra index scope.
+        #expect(plan == EvalBootstrapPlan(loadInstalledPlugins: true, initializeSearchIndices: false))
     }
 
     @Test func capabilitySearchInitializesIndicesWithoutPluginLoadingByDefault() {

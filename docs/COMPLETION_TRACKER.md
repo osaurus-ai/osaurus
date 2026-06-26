@@ -3,6 +3,15 @@
 The single "what is actually proven" list for PR #1682. Updated continuously as
 verification runs. Companion to `REMAINING_WORK.md` (what's still broken/to-build).
 
+> **Unified-architecture rename (2026-06-25).** Every proof below was recorded on the
+> pre-unification surface (`image_generate` / `image_edit` / `local_delegate`,
+> `agentDelegationEnabled` gate). After this tracker, the tools were unified:
+> `local_delegate` removed (→ `spawn`), the two image tools merged into one **`image`**
+> (`source_paths` ⇒ edit), and `AgentDelegation*` types renamed `Subagent*`. The
+> behaviors proven here are preserved, but the tool/config NAMES in the evidence column
+> are superseded — the unified surface gets its own re-verification (the four-path
+> matrix in SUBAGENT_ORCHESTRATION_STATUS.md). Read through the naming map there.
+
 **Status legend:** ✅ PROVEN (live evidence on the merged binary) · 🟢 VERIFIED
 (static/diff/build, no live run needed) · 🟡 PARTIAL/non-deterministic · 🔴 BROKEN /
 blocks merge · ⚪ NOT YET TESTED.

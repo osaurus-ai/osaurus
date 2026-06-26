@@ -8,6 +8,12 @@
 > become the first spawnable KINDS; a local-only **privacy loop** is a planned
 > kind. Canonical design + operational lifecycle/cache/tokenizer/image/progress
 > nuances: **SUBAGENT_PORTABLE_DESIGN.md**. Status/TODO: SUBAGENT_ORCHESTRATION_STATUS.md.
+>
+> **IMPLEMENTED (2026-06-25):** this shipped as the unified `Subagent*` framework
+> (`SubagentSession` + `SubagentKind`). The flows here are renamed: `local_delegate`
+> is gone (folded into **`spawn`**) and `image_generate`/`image_edit` are merged into
+> one **`image`** tool (`source_paths` ⇒ edit). Read this historical doc through that
+> map; the live wiring is in SUBAGENT_TEAM_SPEC.md §4.
 
 
 Status: `PARTIAL - SOURCE WIRED, E2E PROOF MISSING`

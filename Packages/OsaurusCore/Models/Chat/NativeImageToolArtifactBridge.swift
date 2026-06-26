@@ -8,7 +8,7 @@
 import Foundation
 
 enum NativeImageToolArtifactBridge {
-    static let toolNames: Set<String> = ["image_generate", "image_edit"]
+    static let toolNames: Set<String> = ["image"]
 
     static func isNativeImageTool(_ name: String) -> Bool {
         toolNames.contains(name)
@@ -28,17 +28,20 @@ enum NativeImageToolArtifactBridge {
             return nil
         }
 
+        // One `image` tool serves both modes; the payload's `mode` distinguishes
+        // them for the filename + description.
+        let isEdit = (payload["mode"] as? String) == "edit"
         let sourceURL = URL(fileURLWithPath: path)
         let filename = nativeImageFilename(
             sourceURL: sourceURL,
-            toolName: toolName,
+            isEdit: isEdit,
             jobID: payload["job_id"] as? String
         )
         return SharedArtifact.processTrustedLocalFileResult(
             fileURL: sourceURL,
             filename: filename,
             mimeType: SharedArtifact.mimeType(from: filename),
-            description: artifactDescription(toolName: toolName, model: payload["model"] as? String),
+            description: artifactDescription(isEdit: isEdit, model: payload["model"] as? String),
             contextId: contextId,
             contextType: contextType
         )
@@ -64,17 +67,17 @@ enum NativeImageToolArtifactBridge {
         return nil
     }
 
-    private static func nativeImageFilename(sourceURL: URL, toolName: String, jobID: String?) -> String {
+    private static func nativeImageFilename(sourceURL: URL, isEdit: Bool, jobID: String?) -> String {
         let lastPathComponent = sourceURL.lastPathComponent.trimmingCharacters(in: .whitespacesAndNewlines)
         if !lastPathComponent.isEmpty { return lastPathComponent }
-        let suffix = (toolName == "image_edit") ? "edit" : "generate"
+        let suffix = isEdit ? "edit" : "generate"
         let idPart = jobID?.trimmingCharacters(in: .whitespacesAndNewlines)
         let base = idPart?.isEmpty == false ? idPart! : UUID().uuidString
         return "native-image-\(suffix)-\(base).png"
     }
 
-    private static func artifactDescription(toolName: String, model: String?) -> String {
-        let action = toolName == "image_edit" ? "Native image edit result" : "Native image generation result"
+    private static func artifactDescription(isEdit: Bool, model: String?) -> String {
+        let action = isEdit ? "Native image edit result" : "Native image generation result"
         guard let model = model?.trimmingCharacters(in: .whitespacesAndNewlines), !model.isEmpty else {
             return action
         }

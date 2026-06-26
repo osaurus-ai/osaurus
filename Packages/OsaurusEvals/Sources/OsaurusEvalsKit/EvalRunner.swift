@@ -155,7 +155,7 @@ public enum EvalRunner {
     /// stay telemetry-free instead of carrying a noisy process footprint.
     private static let resourceSampledDomains: Set<String> = [
         "agent_loop", "capability_claims", "computer_use_loop", "capability_search",
-        "default_agent",
+        "default_agent", "subagent",
     ]
 
     private static func runOne(
@@ -285,6 +285,8 @@ public enum EvalRunner {
             return runComputerUseCase(testCase, modelId: modelId)
         case "computer_use_loop":
             return await runComputerUseLoopCase(testCase, modelId: modelId)
+        case "subagent":
+            return await runSubagentCase(testCase, modelId: modelId)
         case "screen_context":
             return await runScreenContextCase(
                 testCase,

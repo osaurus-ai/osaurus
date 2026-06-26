@@ -137,20 +137,19 @@ struct NativeImageJobCoordinatorTests {
     }
 
     @Test func chatResidencyPolicyOnlyEvictsForAgentSingleResidency() {
+        // The image-job residency decision now lives on the config as the single
+        // source consumed by the shared `ChatResidencyHandoff` dedup.
         #expect(
-            NativeImageChatResidencyPolicy.shouldUnloadChatModels(
-                for: AgentDelegationConfiguration(imageJobLoadPolicy: .agentSingleResidency)
-            )
+            SubagentConfiguration(imageJobLoadPolicy: .agentSingleResidency)
+                .imageJobUnloadsChatModels
         )
         #expect(
-            !NativeImageChatResidencyPolicy.shouldUnloadChatModels(
-                for: AgentDelegationConfiguration(imageJobLoadPolicy: .unloadImageAfterAgentJob)
-            )
+            !SubagentConfiguration(imageJobLoadPolicy: .unloadImageAfterAgentJob)
+                .imageJobUnloadsChatModels
         )
         #expect(
-            !NativeImageChatResidencyPolicy.shouldUnloadChatModels(
-                for: AgentDelegationConfiguration(imageJobLoadPolicy: .manualPanelKeepsImageLoaded)
-            )
+            !SubagentConfiguration(imageJobLoadPolicy: .manualPanelKeepsImageLoaded)
+                .imageJobUnloadsChatModels
         )
     }
 
@@ -175,18 +174,24 @@ struct NativeImageJobCoordinatorTests {
     }
 
     @Test func qwenImageRequestsUseAtLeastTwoDenoiseSteps() {
-        #expect(ImageGenerationService.safeDenoiseSteps(
-            for: "qwen-image-mflux-4bit",
-            requested: 1
-        ) == 2)
-        #expect(ImageGenerationService.safeDenoiseSteps(
-            for: "Qwen-Image-Edit-mflux-q4",
-            requested: 1
-        ) == 2)
-        #expect(ImageGenerationService.safeDenoiseSteps(
-            for: "FLUX.1-schnell-mflux-4bit",
-            requested: 1
-        ) == 1)
+        #expect(
+            ImageGenerationService.safeDenoiseSteps(
+                for: "qwen-image-mflux-4bit",
+                requested: 1
+            ) == 2
+        )
+        #expect(
+            ImageGenerationService.safeDenoiseSteps(
+                for: "Qwen-Image-Edit-mflux-q4",
+                requested: 1
+            ) == 2
+        )
+        #expect(
+            ImageGenerationService.safeDenoiseSteps(
+                for: "FLUX.1-schnell-mflux-4bit",
+                requested: 1
+            ) == 1
+        )
     }
 
     private func imageModel(

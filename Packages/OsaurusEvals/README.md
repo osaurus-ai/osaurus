@@ -27,6 +27,7 @@ Packages/OsaurusEvals/
     ScreenContext/      — deterministic AX-text screen-context distillation (no LLM)
     Schema/             — SchemaValidator.validate pinning
     StreamingHint/      — StreamingToolHint encode/decode round-trips
+    Subagent/           — SubagentSession host lifecycle (scripted model-free + live spawn/image)
     ToolEnvelope/       — ToolEnvelope.{success,failure} JSON shape
 ```
 
@@ -277,7 +278,7 @@ Exit codes:
 
 ## Case schema
 
-Every case file shares a top-level shape: `id`, `domain`, optional `label` and `notes`, `query`, `fixtures`, `expect`. The `domain` field selects which runner branch handles the case and which `expect.<sub>` block is required. Twelve domains exist today:
+Every case file shares a top-level shape: `id`, `domain`, optional `label` and `notes`, `query`, `fixtures`, `expect`. The `domain` field selects which runner branch handles the case and which `expect.<sub>` block is required. Thirteen domains exist today:
 
 | Domain | Hits LLM? | Runner branch | Required expectation block |
 |---|---|---|---|
@@ -286,6 +287,7 @@ Every case file shares a top-level shape: `id`, `domain`, optional `label` and `
 | `capability_search` | no | `runCapabilitySearchCase` | `expect.capabilitySearch` |
 | `computer_use` | no | `runComputerUseCase` | `expect.computerUse` |
 | `computer_use_loop` | yes¹ | `runComputerUseLoopCase` | `expect.computerUseLoop` |
+| `subagent` | mixed³ | `runSubagentCase` | `expect.subagent` |
 | `screen_context` | no² | `runScreenContextCase` | `expect.screenContext` |
 | `schema` | no | `runSchemaCase` | `expect.schema` |
 | `tool_envelope` | no | `runToolEnvelopeCase` | `expect.toolEnvelope` |
@@ -297,6 +299,8 @@ Every case file shares a top-level shape: `id`, `domain`, optional `label` and `
 ¹ `computer_use_loop` drives a live model by default, but a case that supplies `scriptedActions` runs **model-free** (deterministic, CI-safe) via the loop's `AgentStepProvider` seam.
 
 ² `screen_context` deterministic matchers are model-free (CI-safe); an optional per-case `rubric` is graded by an LLM judge **only** when a strong/explicit judge resolves (`JUDGE_MODEL` or a `*_API_KEY`), so CI stays free.
+
+³ `subagent` has both lanes: a `scripted` lane drives the `SubagentSession` host through a deterministic `ScriptedSubagentKind` seam with **no model call** (CI-safe), while the `spawn` / `image` lanes exercise the live tools and **skip** when no model / delegation host is configured.
 
 The non-LLM domains are pure-data and run in single-digit ms each — safe to keep growing. `capability_claims` is the LLM-burning domain; keep it off CI.
 
@@ -500,6 +504,54 @@ The suite covers (under `Suites/ComputerUseLoop/`): `type-into-field`, `compose-
 make evals EVALS_SUITE=Packages/OsaurusEvals/Suites/ComputerUseLoop MODEL=foundation
 # The scripted (model-free) cases also run deterministically under the eval-kit
 # unit tests in Packages/OsaurusEvals/Tests/OsaurusEvalsKitTests.
+```
+
+### `subagent` domain
+
+End-to-end evals over the **unified sub-agent framework** — the shared `SubagentSession` host + `SubagentKind` protocol that `spawn`, `image`, `computer_use`, and `sandbox_reduce` all now run through (one recursion guard, one activity feed, one optional residency handoff, one compact-result envelope). Drives the public `SubagentJobEvaluator` facade in OsaurusCore (mirrors `AgentLoopEvaluator` / `CapabilityClaimsEvaluator`). Three lanes, selected by `expect.subagent.lane`:
+
+- **`scripted`** (model-free, **CI-safe**): a deterministic `ScriptedSubagentKind` is driven through the real `SubagentSession` host with **no model call** — the host-lifecycle analogue of `computer_use_loop`'s `scriptedActions` seam. Pins the whole contract: scope-id resolution, the single recursion guard (`activeKindId`), reject-before-evict model resolution, the permission verdict → envelope mapping, the optional residency-handoff wrap, feed registration, compact-result normalization, and `defer` cleanup. These cases also run as eval-kit unit tests in `Packages/OsaurusEvals/Tests/OsaurusEvalsKitTests/SubagentEvalTests.swift`.
+- **`spawn`** (live): runs the real `SpawnTool` against a spawnable persona and scores the compact `spawn_result`. LLM-burning; **skips** when no spawnable agent / model is configured.
+- **`image`** (live): runs the real unified `image` tool — `sourcePaths` non-empty routes to **edit**, otherwise **generate** — and scores the `native_image_generation_job` result. **Skips** when image delegation / a local image model isn't configured.
+
+The live lanes skip (never fail) on an unconfigured host: a case that expects success but gets a `rejected` / `unavailable` / `user_denied` availability envelope it didn't explicitly ask for is reported `skipped`, the same `requirePlugins`-style semantics the other live domains use. So the whole suite is green on a bare checkout (10 scripted pass, 3 live skip).
+
+```json
+{
+  "id": "subagent.scripted-run-failure",
+  "domain": "subagent",
+  "query": "scripted run failure surfaces execution_error with a feed phase",
+  "notes": "Model-free. The kind emits a phase then throws .executionFailed inside run; the host maps it to `execution_error` AND the feed still carries the phase emitted before failing.",
+  "fixtures": {},
+  "expect": {
+    "subagent": {
+      "lane": "scripted",
+      "phases": ["running"],
+      "runFailure": "executionFailed",
+      "expectSuccess": false,
+      "expectEnvelopeKind": "execution_error",
+      "expectFeedKinds": ["phase"]
+    }
+  }
+}
+```
+
+Field notes (`expect.subagent`):
+
+- `lane` — `"scripted"` | `"spawn"` | `"image"` (required; selects which inputs below apply).
+- Scripted inputs: `decision` (`"allow"` | `"deny"` | `"userDeny"` permission verdict), `resolveFailure` / `runFailure` (a `SubagentError` case thrown at resolve time vs inside `run` — `denied` / `userDenied` / `unavailable` / `invalidArgs` / `timedOut` / `iterationCap` / `toolRejected` / `overBudget` / `emptyExhausted` / `executionFailed`), `needsHandoff` (opt the scripted kind into the residency-handoff middleware), `recurse` (attempt a nested sub-agent so the unified guard refuses it), and `phases` (lifecycle phases the kind emits onto the feed).
+- Live `spawn` inputs: `agent` (persona name), `input` (task).
+- Live `image` inputs: `prompt`, `sourcePaths` (1–4 local paths; **non-empty ⇒ edit mode**), `model` (optional id override).
+- Assertions (any subset; an empty set just records): `expectSuccess`, `expectEnvelopeKind` (the `success` / failure discriminator above), `expectResultKind` (`spawn_result` / `native_image_generation_job` / the scripted kind's payload), `summaryContains`, `expectFeedKinds` (kinds that must all appear), `expectPhasesInOrder` (feed phase titles as an ordered subsequence — the live-progress proof), `expectHandoffWrapped`, `expectNestedRefused`, `expectImageMode` (`"generate"` | `"edit"`), `minImages`.
+
+The suite covers (under `Suites/Subagent/`) ten model-free scripted cases — `scripted-happy-path`, `scripted-policy-denied`, `scripted-user-denied`, `scripted-resolve-unavailable`, `scripted-run-failure`, `scripted-handoff-wraps`, `scripted-recursion-guard`, `scripted-multi-phase-feed`, `scripted-invalid-args`, `scripted-timeout` — plus three live cases: `spawn-live-digest`, `image-generate-live`, and `image-edit-routing` (`sourcePaths` → edit).
+
+```bash
+# Scripted lane only (model-free, CI-safe) — runs everywhere:
+swift run --package-path Packages/OsaurusEvals osaurus-evals run \
+  --suite Packages/OsaurusEvals/Suites/Subagent --filter scripted
+# Whole suite (live cases skip without a configured model/delegation host):
+make evals EVALS_SUITE=Packages/OsaurusEvals/Suites/Subagent MODEL=foundation
 ```
 
 ### `computer_use` domain

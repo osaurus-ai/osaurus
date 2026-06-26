@@ -3,6 +3,17 @@
 Living assessment. Updated as stress tests + fixes land. Honest status only —
 "ready" requires live proof, not code-reading.
 
+> **Unified-architecture rename (2026-06-25).** The dated assessments + capability
+> matrix below predate the sub-agent unification and still use the old surface:
+> `local_delegate` is **removed** (folded into `spawn`) and `image_generate` +
+> `image_edit` are merged into one **`image`** tool (`source_paths` ⇒ edit); config is
+> `SubagentConfiguration` / `SubagentSettingsSection`. The crash/GPU/handoff proofs
+> below remain valid for the underlying behavior — the engine paths are unchanged; only
+> the tool/config names changed. Re-run the live readiness matrix against the new tool
+> surface before re-asserting "ready" (the `make app` + four-path re-verify in
+> SUBAGENT_ORCHESTRATION_STATUS.md). Canonical architecture:
+> SUBAGENT_ORCHESTRATION_STATUS.md → "Unified Sub-agent Architecture".
+
 ## Cohesion pass + production gate (2026-06-23)
 
 A full settings/agent-loop cohesion audit (3 parallel reviewers) found the two-tool

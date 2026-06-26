@@ -37,9 +37,10 @@ struct NativeImageToolArtifactBridgeTests {
             try bytes.write(to: generated)
 
             let toolResult = ToolEnvelope.success(
-                tool: "image_generate",
+                tool: "image",
                 result: [
                     "kind": "native_image_generation_job",
+                    "mode": "generate",
                     "job_id": "job-1",
                     "model": "qwen-image-edit",
                     "status": "completed",
@@ -55,7 +56,7 @@ struct NativeImageToolArtifactBridgeTests {
             )
 
             let outcome = NativeImageToolArtifactBridge.processFirstImageArtifact(
-                toolName: "image_generate",
+                toolName: "image",
                 toolResult: toolResult,
                 contextId: "chat-1"
             )
@@ -64,12 +65,14 @@ struct NativeImageToolArtifactBridgeTests {
             case .success(let processed):
                 let copied = try Data(contentsOf: URL(fileURLWithPath: processed.artifact.hostPath))
                 let renderedArtifact = SharedArtifact.fromEnrichedToolResult(
-                    ToolEnvelope.success(tool: "image_generate", text: processed.enrichedToolResult)
+                    ToolEnvelope.success(tool: "image", text: processed.enrichedToolResult)
                 )
                 #expect(processed.artifact.filename == "green-apple.png")
                 #expect(processed.artifact.mimeType == "image/png")
                 #expect(processed.artifact.fileSize == bytes.count)
-                #expect(processed.artifact.hostPath.hasPrefix(OsaurusPaths.contextArtifactsDir(contextId: "chat-1").path))
+                #expect(
+                    processed.artifact.hostPath.hasPrefix(OsaurusPaths.contextArtifactsDir(contextId: "chat-1").path)
+                )
                 #expect(copied == bytes)
                 #expect(renderedArtifact?.filename == "green-apple.png")
             case .failure(let reason):

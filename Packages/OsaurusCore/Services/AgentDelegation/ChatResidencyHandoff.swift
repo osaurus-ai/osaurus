@@ -10,7 +10,8 @@
 //  to unload.
 //
 //  This is the reusable core of the flow `NativeImageJobCoordinator` already
-//  performs for image jobs; `LocalTextDelegateTool` uses it for the text path.
+//  performs for image jobs; `TextSubagentKind` (the `spawn` tool) uses it for
+//  the text path via the shared `ResidencyHandoff` middleware.
 //
 
 import Darwin
@@ -26,7 +27,9 @@ struct ChatResidencyLease: Sendable, Equatable {
 
 enum ChatResidencyHandoff {
     private static let logger = Logger(
-        subsystem: "com.dinoki.osaurus", category: "ChatResidencyHandoff")
+        subsystem: "com.dinoki.osaurus",
+        category: "ChatResidencyHandoff"
+    )
 
     /// Restore the orchestrator, logging (not swallowing) a failure. Use on the
     /// cleanup / failure paths where the caller can't propagate — a reload
@@ -58,7 +61,9 @@ enum ChatResidencyHandoff {
                 return String(
                     format:
                         "RAM-safety preflight refused the job: the spawn model needs ~%.1f GB but only ~%.1f GB would be available after freeing the chat model. Use a smaller spawn model, free memory, or disable the RAM-safety preflight in Agent Delegation settings.",
-                    neededGB, availableGB)
+                    neededGB,
+                    availableGB
+                )
             }
         }
     }
@@ -69,7 +74,8 @@ enum ChatResidencyHandoff {
     static func availableMemoryBytes() -> Int64 {
         var vmInfo = vm_statistics64()
         var count = mach_msg_type_number_t(
-            MemoryLayout<vm_statistics64>.size / MemoryLayout<natural_t>.size)
+            MemoryLayout<vm_statistics64>.size / MemoryLayout<natural_t>.size
+        )
         let kr = withUnsafeMutablePointer(to: &vmInfo) {
             $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
                 host_statistics64(mach_host_self(), HOST_VM_INFO64, $0, &count)
@@ -79,7 +85,8 @@ enum ChatResidencyHandoff {
         var rawPage: vm_size_t = 0
         host_page_size(mach_host_self(), &rawPage)
         let pageSize = Int64(rawPage)
-        return (Int64(vmInfo.free_count) + Int64(vmInfo.inactive_count)
+        return
+            (Int64(vmInfo.free_count) + Int64(vmInfo.inactive_count)
             + Int64(vmInfo.purgeable_count)) * pageSize
     }
 
@@ -108,7 +115,8 @@ enum ChatResidencyHandoff {
             let availableGB = Double(projected) / 1_073_741_824
             onPhase(
                 "ram_preflight_refused",
-                String(format: "need ~%.1f GB, ~%.1f GB available", neededGB, availableGB))
+                String(format: "need ~%.1f GB, ~%.1f GB available", neededGB, availableGB)
+            )
             throw HandoffError.insufficientMemory(neededGB: neededGB, availableGB: availableGB)
         }
     }
@@ -132,7 +140,8 @@ enum ChatResidencyHandoff {
             let enumerator = fm.enumerator(
                 at: url,
                 includingPropertiesForKeys: [.fileSizeKey],
-                options: [.skipsHiddenFiles])
+                options: [.skipsHiddenFiles]
+            )
         else { return 0 }
         var total: Int64 = 0
         for case let file as URL in enumerator {

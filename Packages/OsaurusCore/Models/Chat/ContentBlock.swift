@@ -662,7 +662,11 @@ extension ContentBlock {
                     && Self.isImageOnlyContent(turn.visibleContent)
                 turnBlocks.append(
                     .assistantActions(
-                        turnId: turn.id, imageOnly: imageOnly, timestamp: turn.createdAt, position: .last)
+                        turnId: turn.id,
+                        imageOnly: imageOnly,
+                        timestamp: turn.createdAt,
+                        position: .last
+                    )
                 )
             }
 
@@ -901,13 +905,14 @@ extension ContentBlock {
 
     static func isImageOnlyContent(_ content: String) -> Bool {
         guard let regex = standaloneImageLineRegex else { return false }
-        let lines = content
+        let lines =
+            content
             .split(whereSeparator: \.isNewline)
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
         guard !lines.isEmpty else { return false }
         return lines.allSatisfy { line in
-            let range = NSRange(line.startIndex..<line.endIndex, in: line)
+            let range = NSRange(line.startIndex ..< line.endIndex, in: line)
             return regex.firstMatch(in: line, range: range) != nil
         }
     }

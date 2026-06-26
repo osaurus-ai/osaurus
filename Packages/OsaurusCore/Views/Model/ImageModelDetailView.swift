@@ -131,7 +131,9 @@ struct ImageModelDetailView: View, Identifiable {
         }
         .background(theme.primaryBackground)
         .overlay(
-            Rectangle().fill(theme.cardBorder).frame(height: 1), alignment: .bottom)
+            Rectangle().fill(theme.cardBorder).frame(height: 1),
+            alignment: .bottom
+        )
     }
 
     // MARK: - Details
@@ -147,7 +149,10 @@ struct ImageModelDetailView: View, Identifiable {
                     metaRow(
                         L("Size"),
                         ByteCountFormatter.string(
-                            fromByteCount: Int64(info.totalBytes), countStyle: .file))
+                            fromByteCount: Int64(info.totalBytes),
+                            countStyle: .file
+                        )
+                    )
                 }
                 if let quant = quantText(bits: info.quantizationBits, id: id) {
                     divider
@@ -159,8 +164,10 @@ struct ImageModelDetailView: View, Identifiable {
                 }
                 divider
                 metaRow(
-                    L("Status"), info.ready ? L("Ready") : L("Not ready"),
-                    valueColor: info.ready ? theme.successColor : theme.warningColor)
+                    L("Status"),
+                    info.ready ? L("Ready") : L("Not ready"),
+                    valueColor: info.ready ? theme.successColor : theme.warningColor
+                )
             }
         }
         .padding(.vertical, 4)
@@ -203,7 +210,8 @@ struct ImageModelDetailView: View, Identifiable {
                 .fill(theme.warningColor.opacity(0.08))
                 .overlay(
                     RoundedRectangle(cornerRadius: 10)
-                        .stroke(theme.warningColor.opacity(0.3), lineWidth: 1))
+                        .stroke(theme.warningColor.opacity(0.3), lineWidth: 1)
+                )
         )
     }
 
@@ -351,7 +359,9 @@ struct ImageModelDetailView: View, Identifiable {
     }
 
     private func primaryButton(
-        icon: String, title: LocalizedStringKey, action: @escaping () -> Void
+        icon: String,
+        title: LocalizedStringKey,
+        action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
             HStack(spacing: 6) {

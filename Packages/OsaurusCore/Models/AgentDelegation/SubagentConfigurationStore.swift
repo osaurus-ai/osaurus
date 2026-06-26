@@ -1,5 +1,5 @@
 //
-//  AgentDelegationConfigurationStore.swift
+//  SubagentConfigurationStore.swift
 //  osaurus
 //
 //  JSON-on-disk persistence for local delegate/image-job policy.
@@ -7,9 +7,9 @@
 
 import Foundation
 
-enum AgentDelegationConfigurationStore {
+enum SubagentConfigurationStore {
     private nonisolated(unsafe) static var overrideDirectory: URL?
-    private nonisolated(unsafe) static var cachedSnapshot: AgentDelegationConfiguration?
+    private nonisolated(unsafe) static var cachedSnapshot: SubagentConfiguration?
     private static let snapshotLock = NSLock()
     private static let fileName = "agent-delegation.json"
 
@@ -20,24 +20,24 @@ enum AgentDelegationConfigurationStore {
         snapshotLock.unlock()
     }
 
-    nonisolated static func load() -> AgentDelegationConfiguration? {
+    nonisolated static func load() -> SubagentConfiguration? {
         let url = fileURL()
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
         do {
             let data = try Data(contentsOf: url)
-            let decoded = try JSONDecoder().decode(AgentDelegationConfiguration.self, from: data)
+            let decoded = try JSONDecoder().decode(SubagentConfiguration.self, from: data)
             let normalized = decoded.normalized
             snapshotLock.lock()
             cachedSnapshot = normalized
             snapshotLock.unlock()
             return normalized
         } catch {
-            print("[Osaurus] Failed to load AgentDelegationConfiguration: \(error)")
+            print("[Osaurus] Failed to load SubagentConfiguration: \(error)")
             return nil
         }
     }
 
-    nonisolated static func save(_ configuration: AgentDelegationConfiguration) {
+    nonisolated static func save(_ configuration: SubagentConfiguration) {
         let normalized = configuration.normalized
         let url = fileURL()
         OsaurusPaths.ensureExistsSilent(url.deletingLastPathComponent())
@@ -51,16 +51,16 @@ enum AgentDelegationConfigurationStore {
             snapshotLock.unlock()
             DispatchQueue.main.async {
                 NotificationCenter.default.post(
-                    name: .agentDelegationConfigurationChanged,
+                    name: .subagentConfigurationChanged,
                     object: normalized
                 )
             }
         } catch {
-            print("[Osaurus] Failed to save AgentDelegationConfiguration: \(error)")
+            print("[Osaurus] Failed to save SubagentConfiguration: \(error)")
         }
     }
 
-    nonisolated static func snapshot() -> AgentDelegationConfiguration {
+    nonisolated static func snapshot() -> SubagentConfiguration {
         snapshotLock.lock()
         if let cached = cachedSnapshot {
             snapshotLock.unlock()
@@ -90,7 +90,7 @@ enum AgentDelegationConfigurationStore {
 }
 
 extension Notification.Name {
-    static let agentDelegationConfigurationChanged = Foundation.Notification.Name(
-        "agentDelegationConfigurationChanged"
+    static let subagentConfigurationChanged = Foundation.Notification.Name(
+        "subagentConfigurationChanged"
     )
 }

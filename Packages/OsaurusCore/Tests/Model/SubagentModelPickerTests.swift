@@ -1,5 +1,5 @@
 //
-//  AgentDelegationModelPickerTests.swift
+//  SubagentModelPickerTests.swift
 //  osaurusTests
 //
 //  Ensures agent-delegation settings only select compatible downloaded models.
@@ -11,21 +11,7 @@ import Testing
 @testable import OsaurusCore
 
 @MainActor
-struct AgentDelegationModelPickerTests {
-    @Test("local text delegate candidates exclude remote image and embedding rows")
-    func localTextDelegateCandidatesExcludeNonLocalChatRows() {
-        let remoteId = UUID()
-        let items: [ModelPickerItem] = [
-            ModelPickerItem(id: "local-chat", displayName: "Local Chat", source: .local),
-            ModelPickerItem(id: "local-embed", displayName: "Local Embed", source: .local, isEmbedding: true),
-            .fromRemoteModel(modelId: "openai/gpt-4o", providerName: "OpenAI", providerId: remoteId),
-            imageModel(id: "flux", textToImage: true),
-        ]
-
-        #expect(items.localTextDelegateCandidates.map(\.id) == ["local-chat"])
-        #expect(items.defaultAgentDelegationCandidate(kind: .localTextDelegate)?.id == "local-chat")
-    }
-
+struct SubagentModelPickerTests {
     @Test("image generation candidates require ready text to image capability")
     func imageGenerationCandidatesRequireReadyTextToImage() {
         let items: [ModelPickerItem] = [
@@ -36,7 +22,7 @@ struct AgentDelegationModelPickerTests {
         ]
 
         #expect(items.imageGenerationDelegateCandidates.map(\.id) == ["flux"])
-        #expect(items.defaultAgentDelegationCandidate(kind: .imageGeneration)?.id == "flux")
+        #expect(items.defaultSubagentModelCandidate(kind: .imageGeneration)?.id == "flux")
     }
 
     @Test("image edit candidates require ready edit capability")
@@ -48,7 +34,7 @@ struct AgentDelegationModelPickerTests {
         ]
 
         #expect(items.imageEditDelegateCandidates.map(\.id) == ["qwen-edit"])
-        #expect(items.defaultAgentDelegationCandidate(kind: .imageEdit)?.id == "qwen-edit")
+        #expect(items.defaultSubagentModelCandidate(kind: .imageEdit)?.id == "qwen-edit")
     }
 
     @Test("configured candidate rejects missing or incompatible ids")
@@ -59,10 +45,10 @@ struct AgentDelegationModelPickerTests {
             imageModel(id: "qwen-edit", imageEdit: true),
         ]
 
-        #expect(items.agentDelegationCandidate(id: "local-chat", kind: .localTextDelegate)?.id == "local-chat")
-        #expect(items.agentDelegationCandidate(id: "flux", kind: .localTextDelegate) == nil)
-        #expect(items.agentDelegationCandidate(id: "missing", kind: .imageGeneration) == nil)
-        #expect(items.agentDelegationCandidate(id: nil, kind: .imageEdit) == nil)
+        #expect(items.subagentModelCandidate(id: "flux", kind: .imageGeneration)?.id == "flux")
+        #expect(items.subagentModelCandidate(id: "local-chat", kind: .imageGeneration) == nil)
+        #expect(items.subagentModelCandidate(id: "missing", kind: .imageGeneration) == nil)
+        #expect(items.subagentModelCandidate(id: nil, kind: .imageEdit) == nil)
     }
 
     private func imageModel(

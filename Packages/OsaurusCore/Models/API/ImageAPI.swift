@@ -16,7 +16,7 @@ import Foundation
 struct ImageGenerationRequestDTO: Decodable {
     /// Optional: when omitted/empty the handler falls back to the configured
     /// `defaultImageGenerationModelId` (Settings → Agent Delegation), matching
-    /// the agent `image_generate` tool's default-resolution behavior.
+    /// the agent `image` tool's default-resolution behavior.
     let model: String?
     let prompt: String
     let negative_prompt: String?
@@ -28,14 +28,14 @@ struct ImageGenerationRequestDTO: Decodable {
     let guidance: Double?
     let seed: UInt64?
     let response_format: String?  // "url" | "b64_json"
-    let output_format: String?    // "png" | "jpeg" | "webp"
+    let output_format: String?  // "png" | "jpeg" | "webp"
     let stream: Bool?
 }
 
 struct ImageEditRequestDTO: Decodable {
     /// Optional: when omitted/empty the handler falls back to the configured
     /// `defaultImageEditModelId` (Settings → Agent Delegation), matching the
-    /// agent `image_edit` tool's default-resolution behavior.
+    /// agent `image` tool's (edit mode) default-resolution behavior.
     let model: String?
     let prompt: String
     let image: String?

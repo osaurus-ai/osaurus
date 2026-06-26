@@ -24,7 +24,10 @@ struct SandboxReduceToolTests {
     }
 
     @Test func refusesRecursion() async throws {
-        let result = try await SandboxReduceContext.$isActive.withValue(true) {
+        // The recursion guard is now the unified host guard
+        // (`SubagentSession.activeKindId`), shared across the whole sub-agent
+        // family, rather than a per-tool TaskLocal.
+        let result = try await SubagentSession.$activeKindId.withValue("spawn") {
             try await tool.execute(argumentsJSON: #"{"task":"summarize logs"}"#)
         }
         #expect(ToolEnvelope.isError(result))

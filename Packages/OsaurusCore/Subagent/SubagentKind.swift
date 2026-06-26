@@ -1,0 +1,94 @@
+//
+//  SubagentKind.swift
+//  OsaurusCore — Subagent framework
+//
+//  The pluggable contract every nested sub-agent KIND conforms to. Adding a
+//  future kind (privacy loop, code exec, browser) means writing ONE
+//  conformer — the host (`SubagentSession`), the live feed, the recursion
+//  guard, the compact-result normalization, and the optional model handoff
+//  are all shared and need no edits.
+//
+//  The tool entry point parses its arguments, constructs a concrete kind
+//  capturing them, and hands it to `SubagentSession.run(_:tool:)`. Keeping
+//  arg-parsing in the tool/kind init means the protocol methods stay uniform
+//  so the host can drive `any SubagentKind`.
+//
+
+import Foundation
+
+/// One nested sub-agent implementation. A value/reference type that has
+/// already captured its parsed request, so the host can run it uniformly.
+public protocol SubagentKind: Sendable {
+    /// Gate flag + tool name(s) + guidance prompt for this kind.
+    var capability: AgentCapability { get }
+
+    /// `true` only for kinds that resolve a *different* model and therefore
+    /// may need the residency handoff (spawn, image). Same-model kinds
+    /// (sandbox_reduce, computer_use) return `false` and skip
+    /// preflight/unload/restore entirely.
+    var needsHandoff: Bool { get }
+
+    /// One-line human label for the live feed row header (goal / task /
+    /// prompt). Defaults to the capability id.
+    var feedTitle: String { get }
+
+    /// Resolve + validate the target model BEFORE any residency eviction
+    /// (reject-before-evict). Throw `SubagentError` to fail cleanly.
+    func resolveModel(_ scope: SubagentScope) async throws -> ResolvedModel
+
+    /// Permission decision (policy gate / interactive prompt / rich gate).
+    /// Each kind owns its consent UX; the host only needs the verdict.
+    func permission(_ scope: SubagentScope, _ resolved: ResolvedModel) async -> SubagentDecision
+
+    /// Run the inner loop, emitting progress to `feed` and honoring
+    /// `interrupt`. Returns the compact result or throws `SubagentError`.
+    func run(
+        _ scope: SubagentScope,
+        _ resolved: ResolvedModel,
+        feed: SubagentFeed,
+        interrupt: InterruptToken
+    ) async throws -> SubagentResult
+
+    /// The optional model-residency handoff this kind wraps its run with.
+    /// Same-model kinds (computer_use, sandbox_reduce) use the default
+    /// passthrough; model-swapping kinds (spawn, image) override this to vend a
+    /// `ResidencyHandoff` configured with their per-run plan (the kind owns the
+    /// policy + size source, so the middleware stays generic).
+    func makeHandoff() -> SubagentHandoff
+}
+
+extension SubagentKind {
+    public var feedTitle: String { capability.id }
+
+    /// Default: no residency change. Model-swapping kinds override.
+    public func makeHandoff() -> SubagentHandoff { PassthroughHandoff() }
+}
+
+// MARK: - Optional handoff middleware
+
+/// Wraps a run with optional residency management. Only kinds that resolve a
+/// different model use a real implementation; same-model kinds use
+/// `PassthroughHandoff`. Implemented as an "around" combinator so restore is
+/// guaranteed even when the run throws.
+public protocol SubagentHandoff: Sendable {
+    func around(
+        scope: SubagentScope,
+        resolved: ResolvedModel,
+        feed: SubagentFeed,
+        run body: () async throws -> SubagentResult
+    ) async throws -> SubagentResult
+}
+
+/// No-op handoff: same-model kinds (computer_use, sandbox_reduce) run the
+/// body directly with no preflight / unload / restore.
+public struct PassthroughHandoff: SubagentHandoff {
+    public init() {}
+    public func around(
+        scope: SubagentScope,
+        resolved: ResolvedModel,
+        feed: SubagentFeed,
+        run body: () async throws -> SubagentResult
+    ) async throws -> SubagentResult {
+        try await body()
+    }
+}

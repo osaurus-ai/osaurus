@@ -38,7 +38,8 @@ struct ImageGenerationBridgeContractTests {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
-        let repoRoot = coreRoot
+        let repoRoot =
+            coreRoot
             .deletingLastPathComponent()
             .deletingLastPathComponent()
 
@@ -67,7 +68,9 @@ struct ImageGenerationBridgeContractTests {
             encoding: .utf8
         )
         let appResolved = try String(
-            contentsOf: repoRoot.appendingPathComponent("App/osaurus.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved"),
+            contentsOf: repoRoot.appendingPathComponent(
+                "App/osaurus.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved"
+            ),
             encoding: .utf8
         )
 

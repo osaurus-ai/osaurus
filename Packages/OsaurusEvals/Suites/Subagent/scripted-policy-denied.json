@@ -1,0 +1,17 @@
+{
+  "id": "subagent.scripted-policy-denied",
+  "domain": "subagent",
+  "label": "Subagent • scripted policy denial -> rejected",
+  "query": "A scripted sub-agent whose policy denies the run.",
+  "notes": "Model-free. The kind's permission step returns .denied; the host must map it to a `rejected` failure envelope (not user_denied). Pins the policy-refusal contract.",
+  "fixtures": {},
+  "expect": {
+    "subagent": {
+      "lane": "scripted",
+      "decision": "deny",
+      "expectSuccess": false,
+      "expectEnvelopeKind": "rejected",
+      "summaryContains": ["scripted policy denial"]
+    }
+  }
+}

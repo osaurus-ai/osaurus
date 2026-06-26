@@ -65,7 +65,7 @@ public enum StringCleaning {
         while i < chars.count {
             if chars[i] == "{",
                 let end = matchingBraceIndex(chars, start: i),
-                isLeakedToolCallJSON(String(chars[i...end]))
+                isLeakedToolCallJSON(String(chars[i ... end]))
             {
                 i = end + 1
                 continue
@@ -87,7 +87,11 @@ public enum StringCleaning {
         while i < chars.count {
             let c = chars[i]
             if inString {
-                if escaped { escaped = false } else if c == "\\" { escaped = true } else if c == "\"" {
+                if escaped {
+                    escaped = false
+                } else if c == "\\" {
+                    escaped = true
+                } else if c == "\"" {
                     inString = false
                 }
             } else if c == "\"" {

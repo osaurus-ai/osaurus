@@ -246,7 +246,9 @@ enum ToolPermissionPromptService {
         hostingController.view.layoutSubtreeIfNeeded()
         let fittingSize = hostingController.view.fittingSize
         let windowSize = NSSize(
-            width: max(fittingSize.width, 480), height: max(fittingSize.height, 300))
+            width: max(fittingSize.width, 480),
+            height: max(fittingSize.height, 300)
+        )
         let mouse = NSEvent.mouseLocation
         let targetScreen =
             NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
@@ -256,7 +258,11 @@ enum ToolPermissionPromptService {
                 NSRect(
                     x: vf.origin.x + (vf.width - windowSize.width) / 2,
                     y: vf.origin.y + (vf.height - windowSize.height) / 2,
-                    width: windowSize.width, height: windowSize.height), display: false)
+                    width: windowSize.width,
+                    height: windowSize.height
+                ),
+                display: false
+            )
         } else {
             panel.setContentSize(windowSize)
             panel.center()
@@ -265,7 +271,9 @@ enum ToolPermissionPromptService {
 
         nonisolated(unsafe) let onDenyForClose = onDeny
         closeObserver = NotificationCenter.default.addObserver(
-            forName: NSWindow.willCloseNotification, object: panel, queue: .main
+            forName: NSWindow.willCloseNotification,
+            object: panel,
+            queue: .main
         ) { _ in onDenyForClose() }
 
         let handleKeyEvent: (NSEvent) -> Bool = { event in

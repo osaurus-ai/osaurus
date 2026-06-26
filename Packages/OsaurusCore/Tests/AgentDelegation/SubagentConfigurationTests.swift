@@ -1,5 +1,5 @@
 //
-//  AgentDelegationConfigurationTests.swift
+//  SubagentConfigurationTests.swift
 //  osaurusTests
 //
 //  Covers the persisted settings contract used by cloud-to-local text
@@ -12,17 +12,15 @@ import Testing
 @testable import OsaurusCore
 
 @Suite("Agent delegation configuration")
-struct AgentDelegationConfigurationTests {
+struct SubagentConfigurationTests {
     @Test("defaults are low RAM and ask-first")
     func defaultsAreSafe() {
-        let config = AgentDelegationConfiguration.default
-        #expect(config.cloudTextDelegationEnabled == false)
-        #expect(config.textDelegateLoadPolicy == .unloadAfterJob)
+        let config = SubagentConfiguration.default
+        #expect(config.agentDelegationEnabled == false)
+        #expect(config.localTextDelegationEnabled == false)
         #expect(config.imageJobLoadPolicy == .agentSingleResidency)
-        #expect(config.permissionDefaults.localTextDelegate == .ask)
-        #expect(config.permissionDefaults.localTextDelegateToolUse == .ask)
-        #expect(config.permissionDefaults.imageGenerate == .ask)
-        #expect(config.permissionDefaults.imageEdit == .ask)
+        #expect(config.permissionDefaults.spawn == .ask)
+        #expect(config.permissionDefaults.image == .ask)
         #expect(config.budgets.maxDelegateTokens == 2048)
         #expect(config.budgets.maxDelegateTurns == 1)
         #expect(config.budgets.maxToolCalls == 0)
@@ -31,7 +29,7 @@ struct AgentDelegationConfigurationTests {
 
     @Test("budget normalization clamps invalid values")
     func budgetNormalizationClampsInvalidValues() {
-        let raw = AgentDelegationBudgets(
+        let raw = SubagentBudgets(
             maxDelegateTokens: -10,
             maxDelegateTurns: 0,
             maxToolCalls: -1,
@@ -46,7 +44,7 @@ struct AgentDelegationConfigurationTests {
 
     @Test("budget normalization caps runaway values")
     func budgetNormalizationCapsRunawayValues() {
-        let raw = AgentDelegationBudgets(
+        let raw = SubagentBudgets(
             maxDelegateTokens: 1_000_000,
             maxDelegateTurns: 100,
             maxToolCalls: 100,
@@ -61,21 +59,16 @@ struct AgentDelegationConfigurationTests {
 
     @Test("configuration round trips stable raw values")
     func configurationRoundTrip() throws {
-        let config = AgentDelegationConfiguration(
-            cloudTextDelegationEnabled: true,
-            defaultLocalTextDelegateModelId: "local-chat",
+        let config = SubagentConfiguration(
+            localTextDelegationEnabled: true,
             defaultImageGenerationModelId: "flux-schnell",
             defaultImageEditModelId: "qwen-image-edit",
-            textDelegateLoadPolicy: .keepWarmWhenSafe,
             imageJobLoadPolicy: .manualPanelKeepsImageLoaded,
-            sharingPolicy: .askBeforeExpandedSharing,
-            permissionDefaults: AgentDelegationPermissionDefaults(
-                localTextDelegate: .alwaysAllow,
-                localTextDelegateToolUse: .deny,
-                imageGenerate: .ask,
-                imageEdit: .alwaysAllow
+            permissionDefaults: SubagentPermissionDefaults(
+                spawn: .alwaysAllow,
+                image: .deny
             ),
-            budgets: AgentDelegationBudgets(
+            budgets: SubagentBudgets(
                 maxDelegateTokens: 4096,
                 maxDelegateTurns: 2,
                 maxToolCalls: 3,
@@ -84,11 +77,11 @@ struct AgentDelegationConfigurationTests {
         )
 
         let data = try JSONEncoder().encode(config)
-        let decoded = try JSONDecoder().decode(AgentDelegationConfiguration.self, from: data)
+        let decoded = try JSONDecoder().decode(SubagentConfiguration.self, from: data)
 
         #expect(decoded == config)
-        #expect(decoded.permissionDefaults.localTextDelegate.rawValue == "always_allow")
-        #expect(decoded.textDelegateLoadPolicy.rawValue == "keep_warm_when_safe")
+        #expect(decoded.permissionDefaults.spawn.rawValue == "always_allow")
+        #expect(decoded.permissionDefaults.image.rawValue == "deny")
         #expect(decoded.imageJobLoadPolicy.rawValue == "manual_panel_keeps_image_loaded")
     }
 
@@ -97,21 +90,21 @@ struct AgentDelegationConfigurationTests {
         // Regression: `.normalized` previously omitted ramSafetyPreflightEnabled, so
         // turning it OFF was silently reverted to the init default (true) on every
         // save/load (the store runs `.normalized` on both). It must survive.
-        var config = AgentDelegationConfiguration(agentDelegationEnabled: true)
+        var config = SubagentConfiguration(agentDelegationEnabled: true)
         config.ramSafetyPreflightEnabled = false
 
         #expect(config.normalized.ramSafetyPreflightEnabled == false)
 
         // Through a full encode round-trip too (decode then normalize).
         let data = try! JSONEncoder().encode(config)
-        let decoded = try! JSONDecoder().decode(AgentDelegationConfiguration.self, from: data)
+        let decoded = try! JSONDecoder().decode(SubagentConfiguration.self, from: data)
         #expect(decoded.ramSafetyPreflightEnabled == false)
         #expect(decoded.normalized.ramSafetyPreflightEnabled == false)
     }
 
     @Test("normalization preserves spawnable agent names")
     func normalizationPreservesSpawnableNames() {
-        var config = AgentDelegationConfiguration(agentDelegationEnabled: true)
+        var config = SubagentConfiguration(agentDelegationEnabled: true)
         config.spawnableAgentNames = ["Researcher", "Coder"]
 
         #expect(config.normalized.spawnableAgentNames == ["Researcher", "Coder"])

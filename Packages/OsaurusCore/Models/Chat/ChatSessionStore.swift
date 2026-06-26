@@ -87,7 +87,8 @@ enum ChatSessionStore {
         // bring sessions in once the file is plaintext or the key is resident.
         if Thread.isMainThread,
             OsaurusStorageOpener.wouldBlockOnUncachedKey(
-                for: OsaurusPaths.chatHistoryDatabaseFile().path)
+                for: OsaurusPaths.chatHistoryDatabaseFile().path
+            )
         {
             print("[ChatSessionStore] Deferring chat-history open: storage key not yet resident")
             return

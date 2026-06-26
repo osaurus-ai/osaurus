@@ -37,8 +37,10 @@ public enum ToolResultClass: Equatable, Sendable {
     case notFound
     /// Any other failure envelope.
     case error
-    /// Native image generation completed and returned saved image paths.
-    case nativeImageGeneration(paths: [String])
+    /// Native image job completed and returned saved image paths. `isEdit`
+    /// distinguishes a fresh generation from an edit of an existing image, so
+    /// the follow-up nudge only suggests editing AFTER a generation.
+    case nativeImageGeneration(paths: [String], isEdit: Bool)
     /// Any success that isn't a listing or file read.
     case other
 }
@@ -348,7 +350,7 @@ public final class AgentTaskState {
             consecutiveListingsWithoutRead = 0
         case .notFound, .error, .nativeImageGeneration, .other:
             break
-        }
+        }  // nativeImageGeneration carries associated values; matched without binding
 
         // Mark a successful read-like result as fresh (with its exact
         // envelope) so a re-issue replays it until a write invalidates it.
@@ -416,17 +418,19 @@ public final class AgentTaskState {
             }
             return
                 "Path not found. Pick a `path` from the most recent listing's entries, or list the parent directory."
-        case .nativeImageGeneration(let paths):
-            guard lastToolName == "image_generate", !paths.isEmpty else { return nil }
+        case .nativeImageGeneration(let paths, let isEdit):
+            // Only nudge toward an edit AFTER a fresh generation, never after an
+            // edit (which would loop).
+            guard lastToolName == "image", !isEdit, !paths.isEmpty else { return nil }
             let joinedPaths = paths.map { "`\($0)`" }.joined(separator: ", ")
             return
-                "The previous `image_generate` result saved image path(s): \(joinedPaths). "
+                "The previous `image` result saved image path(s): \(joinedPaths). "
                 + "If the user asked for ANY follow-up that modifies, edits, changes, adds to, "
-                + "recolors, or transforms THAT generated image, you MUST call `image_edit` now "
-                + "with `source_paths` set to those path value(s) — do NOT call `image_generate` "
-                + "again (that produces a brand-new unrelated image, not an edit of this one). "
-                + "Only if no such follow-up was requested should you give a brief final "
-                + "confirmation. Do not narrate the edit as the final answer instead of calling the tool."
+                + "recolors, or transforms THAT generated image, you MUST call `image` now "
+                + "with `source_paths` set to those path value(s) — do NOT call `image` "
+                + "without `source_paths` again (that produces a brand-new unrelated image, not an "
+                + "edit of this one). Only if no such follow-up was requested should you give a brief "
+                + "final confirmation. Do not narrate the edit as the final answer instead of calling the tool."
         case .fileContent, .error, .other:
             return nil
         }
@@ -459,7 +463,10 @@ public final class AgentTaskState {
             return .fileContent
         case "native_image_generation_job":
             let paths = nativeImagePaths(from: payload)
-            if !paths.isEmpty { return .nativeImageGeneration(paths: paths) }
+            if !paths.isEmpty {
+                let isEdit = (payload["mode"] as? String) == "edit"
+                return .nativeImageGeneration(paths: paths, isEdit: isEdit)
+            }
             return .other
         default:
             return .other

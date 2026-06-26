@@ -343,7 +343,8 @@ final class NativeFileDiffView: NSView {
         ensureHighlightrTheme(for: theme)
         let bgColor = highlightrThemeBackgroundNSColor()
         layer?.backgroundColor = bgColor.cgColor
-        layer?.borderColor = NSColor(theme.primaryBorder)
+        layer?.borderColor =
+            NSColor(theme.primaryBorder)
             .withAlphaComponent(theme.borderOpacity).cgColor
         headerView.layer?.backgroundColor = bgColor.withAlphaComponent(0.6).cgColor
 

@@ -40,7 +40,7 @@ struct ComputerUseLoopEvalTests {
             modelId: "scripted",
             driver: driver,
             gate: ComputerUseGate(policy: AutonomyPolicy(globalPreset: .autonomous)),
-            feed: ComputerUseFeed(toolCallId: "t", goal: "deterministic eval"),
+            feed: SubagentFeed(toolCallId: "t", kindId: "computer_use", title: "deterministic eval"),
             interrupt: InterruptToken(),
             confirm: { _ in true },
             limits: RunLimits(maxSteps: maxSteps, wallClockSeconds: 30),

@@ -49,14 +49,22 @@ struct ImageModelsDownloadView: View {
             seen.insert(model.id)
             out.append(
                 Card(
-                    id: model.id, content: content(forInstalled: model), repoId: nil,
-                    displayName: model.displayName))
+                    id: model.id,
+                    content: content(forInstalled: model),
+                    repoId: nil,
+                    displayName: model.displayName
+                )
+            )
         }
         for entry in ImageModelDownloadService.catalog where !seen.contains(entry.id) {
             out.append(
                 Card(
-                    id: entry.id, content: content(forCatalog: entry), repoId: entry.repoId,
-                    displayName: entry.displayName))
+                    id: entry.id,
+                    content: content(forCatalog: entry),
+                    repoId: entry.repoId,
+                    displayName: entry.displayName
+                )
+            )
         }
         return out
     }
@@ -119,7 +127,9 @@ struct ImageModelsDownloadView: View {
                 ? L("On-device image model")
                 : (model.blockedReasons.first ?? L("Not ready")),
             gradientColors: ModelCardGradient.colors(
-                family: model.canonicalName ?? model.id, id: model.id),
+                family: model.canonicalName ?? model.id,
+                id: model.id
+            ),
             isTopSuggestion: false,
             isDownloaded: true,
             useCase: nil,

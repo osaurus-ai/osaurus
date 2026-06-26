@@ -193,11 +193,11 @@ struct ContentBlockDisplayTests {
         let call = ToolCall(
             id: "call_image_1",
             type: "function",
-            function: ToolCallFunction(name: "image_generate", arguments: #"{"prompt":"green apple"}"#)
+            function: ToolCallFunction(name: "image", arguments: #"{"prompt":"green apple"}"#)
         )
         assistant.toolCalls = [call]
         assistant.toolResults[call.id] = ToolEnvelope.success(
-            tool: "image_generate",
+            tool: "image",
             text: try Self.enrichedArtifactMarker(
                 filename: "green-apple.png",
                 mimeType: "image/png",

@@ -6,6 +6,21 @@ contradictions. Supersedes the "open work / TODO / not implemented" sections of 
 other docs where they disagree. Each item: severity, where it lives, documented-before?
 (most were **undocumented** until this audit), and what to build.
 
+> **Unified-architecture rename (2026-06-25).** The backlog below predates the
+> sub-agent unification and references old names/paths. Map: `local_delegate` /
+> `LocalTextDelegateTool` are **removed** (the text path is `spawn` →
+> `AgentSubagentRunner` only); `image_generate` + `image_edit` are merged into one
+> **`image`** tool (`ImageTool` in `NativeImageTools.swift`, `source_paths` ⇒ edit);
+> `AgentDelegationConfiguration` → `SubagentConfiguration`,
+> `AgentDelegationSettingsSection` → `SubagentSettingsSection`. Items referencing
+> `LocalTextDelegateTool` (e.g. #3, #12, the test-coverage list) now apply to `spawn`
+> only. The two "Doc rot" bullets about `SUBAGENT_TEAM_SPEC.md "(being built)"` and the
+> `Agent.spawnable` naming are **fixed** (TEAM_SPEC now documents the dual gate
+> `agentDelegationEnabled` + `Agent.spawnDelegationEnabled` + `spawnableAgentNames`).
+> The P0/P1 **correctness** items (HTTP clamps, localization, restore-on-success,
+> stale spawnable names, etc.) were NOT touched by the refactor — re-verify each
+> against the renamed code before actioning.
+
 Verification key: **[verified]** = confirmed in real source this audit · **[reported]** =
 surfaced by audit, not yet hand-confirmed · **[refuted]** = checked and found false.
 

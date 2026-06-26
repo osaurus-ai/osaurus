@@ -1,0 +1,21 @@
+{
+  "id": "subagent.scripted-happy-path",
+  "domain": "subagent",
+  "label": "Subagent • scripted host happy path",
+  "query": "Run a scripted sub-agent to completion through the shared host.",
+  "notes": "Model-free. Drives the real SubagentSession host with a scripted kind: resolve -> permission(allow) -> run -> normalize. Asserts the success envelope, the compact result kind, the live feed phase, and the prose digest. CI-safe (no tokens).",
+  "fixtures": {},
+  "expect": {
+    "subagent": {
+      "lane": "scripted",
+      "decision": "allow",
+      "phases": ["running"],
+      "expectSuccess": true,
+      "expectEnvelopeKind": "success",
+      "expectResultKind": "scripted_result",
+      "expectFeedKinds": ["phase"],
+      "expectPhasesInOrder": ["running"],
+      "summaryContains": ["scripted digest"]
+    }
+  }
+}
