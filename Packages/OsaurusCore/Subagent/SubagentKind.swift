@@ -19,14 +19,10 @@ import Foundation
 /// One nested sub-agent implementation. A value/reference type that has
 /// already captured its parsed request, so the host can run it uniformly.
 public protocol SubagentKind: Sendable {
-    /// Gate flag + tool name(s) + guidance prompt for this kind.
-    var capability: AgentCapability { get }
-
-    /// `true` only for kinds that resolve a *different* model and therefore
-    /// may need the residency handoff (spawn, image). Same-model kinds
-    /// (sandbox_reduce, computer_use) return `false` and skip
-    /// preflight/unload/restore entirely.
-    var needsHandoff: Bool { get }
+    /// The kind's registry descriptor: gate + tool name(s) + guidance + display
+    /// + `modelSource`. Each kind returns its `SubagentCapabilityRegistry`
+    /// entry, so the kind and the registry are one value (no parallel struct).
+    var capability: SubagentCapability { get }
 
     /// One-line human label for the live feed row header (goal / task /
     /// prompt). Defaults to the capability id.

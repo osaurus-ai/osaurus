@@ -104,15 +104,10 @@ struct SubagentFeedView: View {
         )
     }
 
-    /// Human label for the run header, derived from the kind id.
+    /// Human label for the run header, sourced from the kind's capability
+    /// descriptor (SSOT) so the feed header and the collapsed tool chip agree.
     private var kindLabel: String {
-        switch observer.kindId {
-        case "computer_use": return "Computer Use"
-        case "image": return "Image"
-        case "spawn": return "Subagent"
-        case "sandbox_reduce": return "Investigation"
-        default: return "Subagent"
-        }
+        SubagentCapabilityRegistry.displayLabel(forKindId: observer.kindId) ?? "Subagent"
     }
 
     private var header: some View {

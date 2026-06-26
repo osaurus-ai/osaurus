@@ -176,26 +176,3 @@ public enum SubagentError: Error, Sendable {
         }
     }
 }
-
-// MARK: - Capability descriptor
-
-/// Static descriptor for one nested-sub-agent capability: the gate id, the
-/// tool name(s) it gates, and the guidance prompt to inject when the agent
-/// has it enabled. The per-agent enablement predicate + the registry that
-/// drives system-prompt stripping and HTTP tool-visibility live in
-/// `SubagentCapabilityRegistry` (see capability registry); this is just the
-/// shape every kind advertises.
-public struct AgentCapability: Sendable, Equatable {
-    /// Stable id, e.g. `"spawn"`, `"image"`, `"computer_use"`.
-    public let id: String
-    /// Tool names this capability gates (most kinds gate exactly one).
-    public let toolNames: [String]
-    /// System-prompt guidance injected when the capability is enabled.
-    public let guidance: String?
-
-    public init(id: String, toolNames: [String], guidance: String? = nil) {
-        self.id = id
-        self.toolNames = toolNames
-        self.guidance = guidance
-    }
-}

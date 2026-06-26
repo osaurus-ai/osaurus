@@ -43,49 +43,80 @@ enum SubagentModelKind: String, Codable, CaseIterable, Sendable {
     case imageEdit = "image_edit"
 }
 
+/// Per-kind permission gates for the delegation sub-agents, keyed by each kind's
+/// capability id (`"spawn"`, `"image"`, …). Stored as a generic `[kindId:
+/// policy]` map — NOT one field per kind — so a future permissioned kind needs
+/// no new struct field: it reads/writes its own `capability.id`. A kind absent
+/// from the map resolves to the safe `.ask` default.
+///
+/// Policy meaning: `.deny` blocks the kind's job; `.ask` prompts on first use
+/// (spawn has no interactive prompt, so `.ask` simply allows there);
+/// `.alwaysAllow` skips the prompt.
 struct SubagentPermissionDefaults: Codable, Equatable, Sendable {
-    /// Policy gate for the `spawn` text sub-agent. `.deny` blocks spawning;
-    /// `.ask`/`.alwaysAllow` permit it (spawn has no interactive prompt, so
-    /// both allow).
-    var spawn: SubagentPermissionPolicy
-    /// Policy gate for the unified `image` tool (generate + edit). `.deny`
-    /// blocks image jobs; `.ask` prompts on first use; `.alwaysAllow` skips the
-    /// prompt. One gate now that the two image tools merged into `image`.
-    var image: SubagentPermissionPolicy
+    private var policies: [String: SubagentPermissionPolicy]
 
-    init(
-        spawn: SubagentPermissionPolicy = .ask,
-        image: SubagentPermissionPolicy = .ask
-    ) {
-        self.spawn = spawn
-        self.image = image
+    init(policies: [String: SubagentPermissionPolicy] = [:]) {
+        self.policies = policies
+    }
+
+    /// The policy for a kind id, defaulting to the safe `.ask` when unset.
+    func policy(for kindId: String) -> SubagentPermissionPolicy {
+        policies[kindId] ?? .ask
+    }
+
+    /// Set the policy for a kind id.
+    mutating func setPolicy(_ policy: SubagentPermissionPolicy, for kindId: String) {
+        policies[kindId] = policy
     }
 
     private enum CodingKeys: String, CodingKey {
+        /// Current schema: one `[kindId: rawValue]` map.
+        case policies
+        /// Legacy schema: top-level per-kind keys (pre-map). Decoded for
+        /// migration only; never re-encoded — new writes use `policies`.
         case spawn, image
     }
 
-    /// Lenient per-field decode. A single invalid policy raw value (e.g. a
-    /// hand-edited or version-migrated `"alwaysAllow"` where the enum expects
+    /// Lenient decode covering both the current map schema and the legacy
+    /// per-field schema. A single invalid policy raw value (e.g. a hand-edited
+    /// or version-migrated `"alwaysAllow"` where the enum expects
     /// `"always_allow"`) must NOT fail the decode of the whole struct — and,
-    /// because the parent `SubagentConfiguration` decodes this with
-    /// `decodeIfPresent`, a throw here used to discard the ENTIRE delegation
-    /// configuration and silently fall back to all-defaults (delegation OFF),
-    /// invisibly disabling the feature. Each field instead falls back to the
-    /// safe `.ask` default when absent or unparseable.
+    /// because the parent `SubagentConfiguration` decodes this with `try?`, a
+    /// throw here used to discard the ENTIRE delegation configuration and
+    /// silently fall back to all-defaults (delegation OFF), invisibly disabling
+    /// the feature (BUG D). Each entry instead falls back to `.ask`.
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        func policy(_ key: CodingKeys) -> SubagentPermissionPolicy {
-            // `try?` flattens decodeIfPresent's optional: absent key -> nil,
-            // present+valid -> value, present+invalid (throw) -> nil. All the
-            // nil cases fall back to the safe `.ask` default.
-            if let v = try? c.decodeIfPresent(SubagentPermissionPolicy.self, forKey: key) {
-                return v
+        var merged: [String: SubagentPermissionPolicy] = [:]
+
+        // Current schema: a `[kindId: rawValue]` map. Decode the raw strings and
+        // map per-entry so one bad raw value is dropped (→ `.ask`) rather than
+        // failing the whole map. `try?` flattens decodeIfPresent's optional.
+        if let raw = try? c.decodeIfPresent([String: String].self, forKey: .policies) {
+            for (kindId, rawPolicy) in raw {
+                if let policy = SubagentPermissionPolicy(rawValue: rawPolicy) {
+                    merged[kindId] = policy
+                }
             }
-            return .ask
         }
-        self.spawn = policy(.spawn)
-        self.image = policy(.image)
+
+        // Legacy schema: top-level `spawn` / `image`. Only fill a key the current
+        // map did not already provide (forward schema wins on conflict).
+        func migrateLegacy(_ key: CodingKeys, _ kindId: String) {
+            guard merged[kindId] == nil else { return }
+            if let v = try? c.decodeIfPresent(SubagentPermissionPolicy.self, forKey: key) {
+                merged[kindId] = v
+            }
+        }
+        migrateLegacy(.spawn, SubagentCapabilityRegistry.spawn.id)
+        migrateLegacy(.image, SubagentCapabilityRegistry.image.id)
+
+        self.policies = merged
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(policies.mapValues(\.rawValue), forKey: .policies)
     }
 }
 

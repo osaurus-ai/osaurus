@@ -56,9 +56,10 @@ struct SpawnToolTests {
         let kind = TextSubagentKind(agentName: "helper", input: "x")
         #expect(kind.capability.id == "spawn")
         #expect(kind.capability.toolNames == ["spawn"])
-        // spawn may resolve a DIFFERENT local model → the host runs the
-        // residency handoff (unlike same-model image/computer_use/sandbox).
-        #expect(kind.needsHandoff)
+        // spawn runs the chosen persona's model → it may resolve a DIFFERENT
+        // local model and run the residency handoff (unlike the same-model
+        // image / computer_use / sandbox kinds).
+        #expect(kind.capability.modelSource == .persona)
         #expect(kind.feedTitle.contains("helper"))
     }
 }

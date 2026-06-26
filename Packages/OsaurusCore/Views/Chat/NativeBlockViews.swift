@@ -450,13 +450,16 @@ final class NativePendingToolCallView: NSView {
         argSize: Int,
         theme: any ThemeProtocol
     ) {
-        // Running node: accent-colored circle + category glyph.
+        // Running node: accent-colored circle + category glyph. Sub-agent tools
+        // take their glyph from the capability registry (SSOT) instead of the
+        // generic gear the substring categorizer would assign.
         let category = ToolCategory.from(toolName: toolName)
+        let glyph = SubagentCapabilityRegistry.iconName(forToolName: toolName) ?? category.icon
         let accent = NSColor(theme.accentColor)
         node.layer?.backgroundColor = accent.withAlphaComponent(0.14).cgColor
         node.layer?.borderColor = accent.withAlphaComponent(0.55).cgColor
         let cfg = NSImage.SymbolConfiguration(pointSize: 12, weight: .semibold)
-        categoryIcon.image = SymbolImageCache.image(category.icon, accessibilityDescription: nil)?
+        categoryIcon.image = SymbolImageCache.image(glyph, accessibilityDescription: nil)?
             .withSymbolConfiguration(cfg)
         categoryIcon.contentTintColor = accent
 

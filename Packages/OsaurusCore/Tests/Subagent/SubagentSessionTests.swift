@@ -20,7 +20,9 @@ import Testing
 /// A fully scripted `SubagentKind` so the host's control flow runs without a
 /// model. Each step is overridable; defaults form a happy path.
 private final class ScriptedKind: SubagentKind, @unchecked Sendable {
-    let capability: AgentCapability
+    let capability: SubagentCapability
+    /// Test-local handoff opt-in (drives `makeHandoff()`); no longer a
+    /// `SubagentKind` requirement.
     let needsHandoff: Bool
 
     var resolve: @Sendable (SubagentScope) async throws -> ResolvedModel
@@ -48,7 +50,7 @@ private final class ScriptedKind: SubagentKind, @unchecked Sendable {
                 return SubagentResult(payload: ["kind": "scripted", "summary": "done"], summary: "done")
             }
     ) {
-        self.capability = AgentCapability(id: id, toolNames: [id], guidance: nil)
+        self.capability = SubagentCapability(id: id, toolNames: [id], gate: .sandboxExec)
         self.needsHandoff = needsHandoff
         self.resolve = resolve
         self.decide = decide

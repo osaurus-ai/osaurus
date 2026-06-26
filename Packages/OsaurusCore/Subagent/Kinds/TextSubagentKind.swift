@@ -8,19 +8,18 @@
 //  through the shared host (`SubagentSession`), so the recursion guard, live
 //  feed, and the optional residency handoff are all shared.
 //
-//  `needsHandoff = true`: when the persona's model is local and a DIFFERENT
-//  chat model is resident, the host's `ResidencyHandoff` unloads the
-//  orchestrator (single GPU residency) and reloads it after the run. The
-//  reject-before-evict policy gates (not spawnable, permission denied, handoff
-//  disabled) are resolved up front so nothing is evicted before we know the run
-//  can proceed.
+//  `modelSource = .persona`: when the persona's model is local and a DIFFERENT
+//  chat model is resident, `makeHandoff()` vends a `ResidencyHandoff` that
+//  unloads the orchestrator (single GPU residency) and reloads it after the
+//  run. The reject-before-evict policy gates (not spawnable, permission denied,
+//  handoff disabled) are resolved up front so nothing is evicted before we know
+//  the run can proceed.
 //
 
 import Foundation
 
 final class TextSubagentKind: SubagentKind, @unchecked Sendable {
-    let capability = AgentCapability(id: "spawn", toolNames: ["spawn"], guidance: nil)
-    let needsHandoff = true
+    let capability = SubagentCapabilityRegistry.spawn
 
     private let agentName: String
     private let input: String
@@ -52,7 +51,7 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
                 "Agent '\(agentName)' is not spawnable. Mark it spawnable in Agent Delegation settings."
             )
         }
-        if config.permissionDefaults.spawn == .deny {
+        if config.permissionDefaults.policy(for: capability.id) == .deny {
             throw SubagentError.denied(
                 "Spawning is denied by Agent Delegation permission settings."
             )

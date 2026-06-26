@@ -76,13 +76,65 @@ struct SubagentCapabilityRegistryTests {
         #expect(SubagentCapabilityRegistry.spawn.guidance == nil)
     }
 
+    @Test("the registry represents every shipped kind, including sandbox_reduce")
+    func allRepresentsEveryKind() {
+        let ids = Set(SubagentCapabilityRegistry.all.map(\.id))
+        #expect(ids == ["computer_use", "spawn", "image", "sandbox_reduce"])
+        // sandbox_reduce is display/guidance-only here — gated by sandbox
+        // registration, not a per-agent or delegation toggle.
+        #expect(SubagentCapabilityRegistry.sandboxReduce.perAgentFlag == nil)
+        if case .sandboxExec = SubagentCapabilityRegistry.sandboxReduce.gate {
+        } else {
+            Issue.record("sandbox_reduce must use the .sandboxExec gate")
+        }
+        // …so it never joins the delegation family nor the strippable set.
+        let delegationIds = Set(SubagentCapabilityRegistry.delegationFamily.map(\.id))
+        #expect(!delegationIds.contains("sandbox_reduce"))
+        #expect(!SubagentToolVisibility.delegationToolNames.contains("sandbox_reduce"))
+    }
+
+    @Test("the modelSource axis records how each kind resolves its model")
+    func modelSourceAxis() {
+        // The image coordinator owns a dedicated, separately-configured model.
+        #expect(SubagentCapabilityRegistry.image.modelSource == .dedicatedConfigured)
+        // spawn runs the chosen persona's own model (local or remote).
+        #expect(SubagentCapabilityRegistry.spawn.modelSource == .persona)
+        // computer_use + sandbox_reduce reuse the parent agent's model.
+        #expect(SubagentCapabilityRegistry.computerUse.modelSource == .inheritsParent)
+        #expect(SubagentCapabilityRegistry.sandboxReduce.modelSource == .inheritsParent)
+    }
+
+    @Test("every descriptor carries a display label + icon for the feed and chip")
+    func displayAndIconArePopulated() {
+        for capability in SubagentCapabilityRegistry.all {
+            #expect(!capability.displayLabel.isEmpty, "\(capability.id) missing displayLabel")
+            #expect(!capability.iconName.isEmpty, "\(capability.id) missing iconName")
+        }
+    }
+
+    @Test("per-agent toggle flags collapse spawn + image onto one shared flag")
+    func perAgentToggleFlagsCollapse() {
+        // One toggle per *flag*: computer_use has its own; spawn + image share
+        // `spawnDelegationEnabled`, so the editor renders exactly two toggles.
+        #expect(SubagentCapabilityRegistry.perAgentToggleFlags == [.computerUse, .spawnDelegation])
+    }
+
     /// Drift guard: the registry SSOT (consumed by both visibility surfaces)
-    /// must match `ToolRegistry`'s internal delegation gating set, so the
-    /// schema strip and the registry-driven visibility never disagree.
+    /// must match `ToolRegistry`'s internal delegation gating sets, so the
+    /// schema strip and the registry-driven visibility never disagree. Every
+    /// `ToolRegistry` delegation set is now DERIVED from the registry, so these
+    /// equalities also prove there is no hand-maintained mirror to drift.
     @MainActor
-    @Test("the registry SSOT matches ToolRegistry's internal delegation set")
+    @Test("the registry SSOT matches ToolRegistry's derived delegation sets")
     func ssotMatchesToolRegistry() {
         #expect(SubagentToolVisibility.delegationToolNames == ToolRegistry.agentDelegationAllToolNames)
+        #expect(ToolRegistry.agentDelegationSpawnToolNames == Set(SubagentCapabilityRegistry.spawn.toolNames))
+        #expect(ToolRegistry.agentDelegationImageToolNames == Set(SubagentCapabilityRegistry.image.toolNames))
+        // The "all" set is exactly the union of the per-family sets.
+        #expect(
+            ToolRegistry.agentDelegationAllToolNames
+                == ToolRegistry.agentDelegationSpawnToolNames.union(ToolRegistry.agentDelegationImageToolNames)
+        )
     }
 
     // MARK: - BUG E parity guard
@@ -121,6 +173,31 @@ struct SubagentCapabilityRegistryTests {
         for legacy in ["\"local_delegate\"", "\"image_generate\"", "\"image_edit\""] {
             #expect(!composer.contains(legacy))
             #expect(!http.contains(legacy))
+        }
+    }
+
+    /// SSOT guard (the add-a-kind invariant): `ToolRegistry`'s delegation
+    /// tool-name sets must be DERIVED from the capability registry, never a
+    /// hand-maintained literal. A future edit that re-hardcodes the spawn/image
+    /// set here fails CI instead of silently re-forking the SSOT.
+    @Test("ToolRegistry derives its delegation sets from the registry, not a hardcoded list")
+    func toolRegistryDerivesFromRegistry() throws {
+        let registry = try Self.source("Tools/ToolRegistry.swift")
+
+        // The delegation accessors read the registry…
+        #expect(registry.contains("SubagentCapabilityRegistry.spawn.toolNames"))
+        #expect(registry.contains("SubagentCapabilityRegistry.image.toolNames"))
+        #expect(registry.contains("SubagentToolVisibility.delegationToolNames"))
+        // …and the exclusion gate loops the family rather than mirroring it.
+        #expect(registry.contains("SubagentCapabilityRegistry.delegationFamily"))
+
+        // No re-hardcoded combined delegation literal (the mirror we removed),
+        // and no legacy tool names.
+        for hardcoded in [
+            "[\"spawn\", \"image\"]", "[\"image\", \"spawn\"]",
+            "\"local_delegate\"", "\"image_generate\"", "\"image_edit\"",
+        ] {
+            #expect(!registry.contains(hardcoded), "ToolRegistry must not hardcode \(hardcoded)")
         }
     }
 }

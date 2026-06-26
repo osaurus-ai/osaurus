@@ -24,6 +24,26 @@ configurable primitive. Almost everything needed already exists.
 > The **privacy loop** and other future kinds remain valid: add one `SubagentKind` +
 > one `SubagentCapabilityRegistry` entry. See SUBAGENT_TEAM_SPEC.md §4 for the shipped
 > wiring.
+>
+> **Registry is the SSOT (2026-06-25 unification).** The `SubagentCapability`
+> descriptor in `SubagentCapabilityRegistry` is the single per-kind value every
+> surface reads — `resolveTools` + `ToolRegistry` gating, the AgentsView per-agent
+> toggle, the live-feed header + tool chip (`displayLabel`/`iconName`), and the
+> system-prompt guidance loop — and each kind's `capability` returns its own entry,
+> so kind and descriptor are literally one object. The descriptor adds a
+> **`modelSource`** axis — `.dedicatedConfigured` (image: own configured default +
+> coordinator-owned residency), `.persona` (spawn: a chosen persona's local/remote
+> model; the kind runs the residency handoff), `.inheritsParent` (computer_use /
+> sandbox_reduce: reuse the parent model, no swap) — that documents the local-vs-remote
+> model axis a future dedicated model-backed kind (e.g. an AppleScript generator)
+> drops into. The vestigial `needsHandoff` protocol field is gone: intent is expressed
+> by `modelSource`, and the actual swap is whether the kind overrides `makeHandoff()`
+> (default `PassthroughHandoff`). **Add-a-kind recipe:** (1) add a `SubagentCapability`
+> to the registry's `all`, (2) write the `SubagentKind` conformer that returns it, (3)
+> add a thin tool that builds the kind and calls `SubagentSession.run`. Per-kind
+> permission lives in `SubagentPermissionDefaults`, now a `[kindId: policy]` map keyed
+> by `capability.id` (legacy top-level `spawn`/`image` keys migrate on decode), so a
+> new permissioned kind needs no new config field — it reads/writes its own id.
 
 ---
 

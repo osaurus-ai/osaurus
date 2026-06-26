@@ -9,13 +9,14 @@
 //  shared `SubagentFeed`, and hands back the same compact image payload the
 //  inline-render bridge already reads.
 //
-//  `needsHandoff = false`: unlike spawn, the image residency handoff is NOT run
-//  by the host middleware. The coordinator must unload the chat model INSIDE its
-//  own detached producer task — a chat-turn cancel (which the unload itself can
-//  trigger) must not cascade into the engine drain and lose the image. Moving
-//  the unload into the host's chat-turn-task `around` would reintroduce that
-//  cancel cascade, so the coordinator stays the residency authority for images
-//  and the host only owns the guard, feed, result, and telemetry.
+//  `modelSource = .dedicatedConfigured` but the image residency handoff is NOT
+//  run by the host middleware (`makeHandoff()` stays the passthrough default).
+//  The coordinator must unload the chat model INSIDE its own detached producer
+//  task — a chat-turn cancel (which the unload itself can trigger) must not
+//  cascade into the engine drain and lose the image. Moving the unload into the
+//  host's chat-turn-task `around` would reintroduce that cancel cascade, so the
+//  coordinator stays the residency authority for images and the host only owns
+//  the guard, feed, result, and telemetry.
 //
 
 import Combine
@@ -41,8 +42,7 @@ struct ImageJobParams: Sendable {
 }
 
 final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
-    let capability = AgentCapability(id: "image", toolNames: ["image"], guidance: nil)
-    let needsHandoff = false
+    let capability = SubagentCapabilityRegistry.image
 
     private let params: ImageJobParams
     private let argumentsJSON: String
@@ -107,7 +107,7 @@ final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
         config: SubagentConfiguration,
         argumentsJSON: String
     ) async -> SubagentDecision {
-        switch config.permissionDefaults.image {
+        switch config.permissionDefaults.policy(for: capability.id) {
         case .deny:
             return .denied("Image generation is denied by Agent Delegation settings.")
         case .alwaysAllow:
@@ -148,7 +148,7 @@ final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
         config: SubagentConfiguration,
         argumentsJSON: String
     ) async -> SubagentDecision {
-        switch config.permissionDefaults.image {
+        switch config.permissionDefaults.policy(for: capability.id) {
         case .deny:
             return .denied("Image edit is denied by Agent Delegation settings.")
         case .alwaysAllow:
@@ -341,7 +341,7 @@ final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
     private static func persistImagePreferences(model: String?, always: Bool) {
         var cfg = SubagentConfigurationStore.snapshot()
         if let model, !model.isEmpty { cfg.defaultImageGenerationModelId = model }
-        if always { cfg.permissionDefaults.image = .alwaysAllow }
+        if always { cfg.permissionDefaults.setPolicy(.alwaysAllow, for: SubagentCapabilityRegistry.image.id) }
         SubagentConfigurationStore.save(cfg)
     }
 

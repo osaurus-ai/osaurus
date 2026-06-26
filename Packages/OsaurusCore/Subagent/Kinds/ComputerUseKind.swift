@@ -12,19 +12,14 @@
 //    - The per-action `ComputerUseGate` + the `ComputerUsePromptQueue` confirm
 //      / cloud-vision consent overlay. The host permission is `.allow` — the
 //      real consent surface is the gate inside `run`, exactly as before.
-//    - `needsHandoff = false`: the loop drives the SAME model as the parent
-//      chat (no residency eviction).
+//    - `modelSource = .inheritsParent`: the loop drives the SAME model as the
+//      parent chat (no residency eviction; `makeHandoff()` stays passthrough).
 //
 
 import Foundation
 
 final class ComputerUseKind: SubagentKind, @unchecked Sendable {
-    let capability = AgentCapability(
-        id: "computer_use",
-        toolNames: [ComputerUseTool.toolName],
-        guidance: SystemPromptTemplates.computerUseGuidance
-    )
-    let needsHandoff = false
+    let capability = SubagentCapabilityRegistry.computerUse
 
     private let goal: String
     private let limits: RunLimits

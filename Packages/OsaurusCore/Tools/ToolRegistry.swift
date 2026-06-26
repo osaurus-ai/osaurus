@@ -1429,15 +1429,21 @@ final class ToolRegistry: ObservableObject {
         Self.folderToolNames.union(builtInSandboxToolNames)
     }
 
-    /// Text delegation collapsed to `spawn` only (`local_delegate` removed), so
-    /// the only text sub-agent tool name is `spawn` itself.
-    static let agentDelegationSpawnToolNames: Set<String> = ["spawn"]
-    static let agentDelegationImageToolNames: Set<String> = ["image"]
-    /// All agent-delegation tool names — used by the authoritative per-agent
+    /// Spawn-family tool names, DERIVED from the capability registry (the SSOT
+    /// for sub-agent tool visibility) — never hand-maintained here.
+    static var agentDelegationSpawnToolNames: Set<String> {
+        Set(SubagentCapabilityRegistry.spawn.toolNames)
+    }
+    /// Image-family tool names, derived from the capability registry.
+    static var agentDelegationImageToolNames: Set<String> {
+        Set(SubagentCapabilityRegistry.image.toolNames)
+    }
+    /// All agent-delegation tool names (spawn + image), derived from the
+    /// registry's delegation family. Used by the authoritative per-agent
     /// `spawnDelegationEnabled` gate in `SystemPromptComposer.resolveTools`.
-    static let agentDelegationAllToolNames: Set<String> =
-        agentDelegationSpawnToolNames
-        .union(agentDelegationImageToolNames)
+    static var agentDelegationAllToolNames: Set<String> {
+        SubagentToolVisibility.delegationToolNames
+    }
 
     /// Read-only snapshot of the built-in sandbox tool names. Exposed so the
     /// composer's canonical-order helper can group them at the top of the
@@ -1488,14 +1494,19 @@ final class ToolRegistry: ObservableObject {
         return excluded
     }
 
+    /// The baseline GLOBAL family gate for the delegation kinds: each delegation
+    /// capability carries its own `globalActive` predicate (spawn →
+    /// `anyAgentSpawnable`, image → `imageDelegationActive`), so this loops the
+    /// registry instead of mirroring the per-family checks by hand. Adding a
+    /// delegation kind needs only its descriptor.
     private func agentDelegationExcludedToolNames() -> Set<String> {
         let config = SubagentConfigurationStore.snapshot()
         var excluded: Set<String> = []
-        if !config.anyAgentSpawnable {
-            excluded.formUnion(Self.agentDelegationSpawnToolNames)
-        }
-        if !config.imageDelegationActive {
-            excluded.formUnion(Self.agentDelegationImageToolNames)
+        for capability in SubagentCapabilityRegistry.delegationFamily {
+            guard case .delegation(let global) = capability.gate else { continue }
+            if !global.isActive(config) {
+                excluded.formUnion(capability.toolNames)
+            }
         }
         return excluded
     }

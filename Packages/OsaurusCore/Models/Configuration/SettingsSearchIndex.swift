@@ -400,6 +400,41 @@ public enum SettingsSearchIndex {
             title: "Computer Use",
             keywords: ["screen control", "cursor", "automation", "accessibility", "per-app"]
         ),
+
+        // MARK: Spawn & Delegation
+        .init(
+            id: "spawn.enable",
+            tab: .spawn,
+            title: "Spawn & Delegation",
+            keywords: [
+                "spawn", "delegate", "delegation", "sub-agent", "subagent",
+                "helper jobs", "agent delegation",
+            ]
+        ),
+        .init(
+            id: "spawn.spawnable",
+            tab: .spawn,
+            section: "Spawnable Agents",
+            title: "Spawnable Agents",
+            keywords: ["spawnable", "personas", "delegate agents", "spawn targets"]
+        ),
+        .init(
+            id: "spawn.handoff",
+            tab: .spawn,
+            section: "Local Handoff & RAM Safety",
+            title: "Local Handoff & RAM Safety",
+            keywords: ["handoff", "ram safety", "residency", "unload", "preflight"]
+        ),
+        .init(
+            id: "spawn.imageModels",
+            tab: .spawn,
+            section: "Image Models",
+            title: "Image Models",
+            keywords: [
+                "image generation", "image edit", "diffusion", "image model",
+                "chat image jobs",
+            ]
+        ),
         .init(
             id: "privacy.tab",
             tab: .privacy,

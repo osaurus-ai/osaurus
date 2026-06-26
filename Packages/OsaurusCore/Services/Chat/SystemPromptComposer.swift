@@ -1981,33 +1981,39 @@ public struct SystemPromptComposer: Sendable {
             }
         }
 
-        // Computer Use is an AUTHORITATIVE per-agent gate. Unlike the
-        // lean-by-default built-ins above (which are auto-mode-only and
-        // honour a `capabilities_load` carve-out), `computer_use` is
-        // stripped whenever the flag is off — in BOTH auto and manual mode,
-        // with no `additionalToolNames` bypass. The model can never see the
-        // tool unless the agent explicitly opted in. The Default agent is
-        // additionally excluded by the allowlist filter below, so Computer
-        // Use is a custom-agent-only capability.
-        if !snapshot.computerUseEnabled {
-            for name in SubagentCapabilityRegistry.computerUse.toolNames {
-                byName.removeValue(forKey: name)
-            }
-        }
-
-        // Spawn / agent delegation gate. For CUSTOM agents this is an
-        // AUTHORITATIVE per-agent gate, same as Computer Use: the spawn /
-        // image tools are stripped unless
-        // the agent's `spawnDelegationEnabled` is on (ANDs with the global
-        // `SubagentConfiguration` family gates applied in alwaysLoadedSpecs).
-        // The DEFAULT / main chat is EXEMPT here — it is governed by the global
-        // Agent Delegation switch in the default-agent surface below (the user's
-        // main chat spawns when delegation is globally on; the first actual call
-        // prompts for permission + model). So we never strip it for the default agent.
-        // The visible tool-name set is the shared `SubagentToolVisibility`
+        // Authoritative per-agent sub-agent gates, driven by ONE loop over the
+        // capability registry (no per-kind branches here) so adding a kind needs
+        // no edit to this strip. Each capability's `gate` decides the rule:
+        //   * .perAgent (computer_use): stripped whenever the agent's own flag
+        //     is off — in BOTH auto and manual mode, with no `additionalToolNames`
+        //     bypass. The Default agent is additionally excluded by the allowlist
+        //     filter below, so it stays a custom-agent-only capability.
+        //   * .delegation (spawn / image): an authoritative per-agent gate for
+        //     CUSTOM agents (stripped unless `spawnDelegationEnabled`), ANDed with
+        //     the global family gates already applied in alwaysLoadedSpecs. The
+        //     DEFAULT / main chat is EXEMPT — it is governed by the global Agent
+        //     Delegation switch in the default-agent surface below (the main chat
+        //     spawns when delegation is globally on; the first actual call prompts
+        //     for permission + model).
+        //   * .sandboxExec (sandbox_reduce): never stripped here (gated by sandbox
+        //     registration, not the schema strip).
+        // The per-agent flag is read through the descriptor (`perAgentFlag`), and
+        // the visible tool-name set stays the shared `SubagentToolVisibility`
         // source the HTTP agent-run path also reads (BUG E parity guard).
-        if snapshot.agentId != Agent.defaultId, !snapshot.spawnDelegationEnabled {
-            for name in SubagentToolVisibility.delegationToolNames {
+        for capability in SubagentCapabilityRegistry.all {
+            let stripForThisAgent: Bool
+            switch capability.gate {
+            case .perAgent:
+                stripForThisAgent = capability.perAgentFlag?.enabled(in: snapshot) == false
+            case .delegation:
+                stripForThisAgent =
+                    snapshot.agentId != Agent.defaultId
+                    && capability.perAgentFlag?.enabled(in: snapshot) == false
+            case .sandboxExec:
+                stripForThisAgent = false
+            }
+            guard stripForThisAgent else { continue }
+            for name in capability.toolNames {
                 byName.removeValue(forKey: name)
             }
         }

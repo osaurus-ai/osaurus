@@ -27,18 +27,36 @@ conforms to `SubagentKind` and runs through `SubagentSession`, sharing one lifec
 (scope ids → recursion guard → resolve → permission → [handoff] → run → compact
 result → defer-cleanup):
 
-| Kind | Tool | Runner | Returns | needsHandoff |
-|------|------|--------|---------|--------------|
-| `TextSubagentKind` | `spawn` | `AgentSubagentRunner` → `AgentToolLoop` on a persona's model | text digest | yes |
-| `ImageSubagentKind` | `image` | `NativeImageJobCoordinator` → `ImageGenerationService` (vMLXFlux); `source_paths` ⇒ edit | artifact | yes |
-| `ComputerUseKind` | `computer_use` | `ComputerUseLoop` (+ per-action confirm gate) | summary | no |
-| `SandboxReduceKind` | `sandbox_reduce` | `AgentToolLoop` with a read/search/exec allowlist | digest | no |
+| Kind | Tool | Runner | Returns | `modelSource` → handoff |
+|------|------|--------|---------|--------------------------|
+| `TextSubagentKind` | `spawn` | `AgentSubagentRunner` → `AgentToolLoop` on a persona's model | text digest | `.persona` — a local persona model unloads/reloads the local orchestrator (the kind's `makeHandoff()` vends a `ResidencyHandoff`) |
+| `ImageSubagentKind` | `image` | `NativeImageJobCoordinator` → `ImageGenerationService` (vMLXFlux); `source_paths` ⇒ edit | artifact | `.dedicatedConfigured` — the coordinator owns image-model residency (kind keeps the passthrough default) |
+| `ComputerUseKind` | `computer_use` | `ComputerUseLoop` (+ per-action confirm gate) | summary | `.inheritsParent` — no swap (passthrough) |
+| `SandboxReduceKind` | `sandbox_reduce` | `AgentToolLoop` with a read/search/exec allowlist | digest | `.inheritsParent` — no swap (passthrough) |
 | privacy loop · code exec · browser · … | — | their own kind | their result | future |
+
+> **`modelSource` axis.** A kind declares how it resolves the model it runs:
+> `.dedicatedConfigured` (own configured default + coordinator-owned residency),
+> `.persona` (a chosen persona's local/remote model; the kind runs the residency
+> handoff), or `.inheritsParent` (reuses the parent agent's model, no residency
+> change). It documents the local-vs-remote axis a future dedicated model-backed
+> kind (e.g. an AppleScript generator) slots into, and matches whether the kind
+> overrides `makeHandoff()`.
 
 Reuse, don't reinvent: `AgentToolLoop` (`Services/Chat/AgentToolLoop.swift`),
 `sandbox_reduce` (`docs/REDUCTION_SUBAGENT.md`), Computer Use Subagent (PR #1578).
-A new kind = one file in `Subagent/Kinds/` + one registry entry in
-`SubagentCapabilityRegistry` — nothing else to touch.
+**Add a kind = one descriptor + one kind + one thin tool, register, done:**
+1. **Descriptor** — add a `SubagentCapability` to `SubagentCapabilityRegistry`
+   (`id`, `toolNames`, `gate`, optional `perAgentFlag`, `modelSource`,
+   `displayLabel`, `iconName`, optional `guidance*`) and append it to `all`. This
+   one value drives gating, the per-agent toggle, the feed header + tool chip, and
+   the prompt guidance — every surface reads it, so there is no second list to edit.
+2. **Kind** — one `SubagentKind` conformer in `Subagent/Kinds/` whose `capability`
+   returns that registry entry (so kind and descriptor are one value); implement
+   `resolveModel` / `permission` / `run`, and override `makeHandoff()` only if it
+   swaps models.
+3. **Tool** — a thin tool that parses args, builds the kind, and calls
+   `SubagentSession.run(_:tool:)`.
 
 ## 2. Gating — DEFAULT OFF, two switches
 
@@ -82,18 +100,28 @@ restore-on-failure (orchestrator never left unloaded).
   `defer`s cleanup + telemetry. A scripted seam (`ScriptedSubagentKind`) drives the
   whole lifecycle model-free in tests/evals.
 - **`Subagent/SubagentKind.swift`** + **`Subagent/Kinds/`** — the `SubagentKind`
-  protocol (`needsHandoff`, `resolveModel`, `permission`, `run`) and its conformers:
+  protocol (`capability`, `resolveModel`, `permission`, `run`, and an optional
+  `makeHandoff()` that defaults to passthrough) and its conformers:
   `TextSubagentKind`, `ImageSubagentKind`, `ComputerUseKind`, `SandboxReduceKind`.
+  Each kind's `capability` IS its `SubagentCapabilityRegistry` entry, so kind and
+  descriptor are one value. (`needsHandoff` is gone — intent is the descriptor's
+  `modelSource`, and the actual swap is whether the kind overrides `makeHandoff()`.)
 - **`Subagent/ResidencyHandoff.swift`** — the optional handoff middleware
-  (`SubagentHandoff`); only `needsHandoff = true` kinds (`spawn`, `image`) use it. It
-  builds on `Services/AgentDelegation/ChatResidencyHandoff.swift` (wait-idle → unload
-  resident chat models → memoryPreflight → reload). Same-model kinds skip it.
+  (`SubagentHandoff`); only model-swapping kinds override `makeHandoff()` to vend a
+  real `ResidencyHandoff` (today `spawn`, via its `.persona` model source). It builds
+  on `Services/AgentDelegation/ChatResidencyHandoff.swift` (wait-idle → unload
+  resident chat models → memoryPreflight → reload). Kinds that keep the
+  `PassthroughHandoff` default (`computer_use`, `sandbox_reduce`, and `image` —
+  whose coordinator owns its own residency) skip it.
 - **`Subagent/SubagentFeed.swift`** — `SubagentFeed` / `SubagentActivityEvent` /
   `SubagentFeedRegistry` / `SubagentInterruptCenter`: one live progress + interrupt
   surface for all kinds (text spawn included). `NativeToolCallGroupView` binds it.
-- **`Subagent/SubagentCapabilityRegistry.swift`** — capability flag → tool name(s) +
-  guidance prompt, plus the `SubagentToolVisibility` resolver shared by the composer
-  and the HTTP surface.
+- **`Subagent/SubagentCapabilityRegistry.swift`** — the per-kind `SubagentCapability`
+  descriptor (SSOT): `id` + `toolNames` + `gate` (+ `perAgentFlag`) + `modelSource` +
+  `displayLabel`/`iconName` + `guidance*`. Drives `resolveTools`/`ToolRegistry`
+  gating, the AgentsView per-agent toggle, the feed header + tool chip, and the
+  prompt guidance loop, plus the `SubagentToolVisibility` resolver shared by the
+  composer and the HTTP surface.
 
 ### Dispatch / runners
 - **`Tools/SpawnTool.swift`** — the `spawn(agent, input)` tool → `TextSubagentKind`.
@@ -103,7 +131,8 @@ restore-on-failure (orchestrator never left unloaded).
   prompt/model/tools → compact envelope. Used by `TextSubagentKind` (`local_delegate`
   is gone — its body lived here and is now spawn's only path).
 - **`Tools/SandboxReduceTool.swift`** — the `sandbox_reduce` tool → `SandboxReduceKind`
-  (read/search/exec allowlist on `AgentToolLoop`, `needsHandoff = false`).
+  (read/search/exec allowlist on `AgentToolLoop`, `modelSource = .inheritsParent` →
+  passthrough handoff).
 - `Services/Chat/AgentToolLoop.swift` — the bounded loop driver (reused).
 
 ### Image kind (engine-specific, same handoff/progress)
@@ -117,17 +146,21 @@ restore-on-failure (orchestrator never left unloaded).
 
 ### Computer-use kind
 - `ComputerUse/Tool/ComputerUseTool.swift` + `ComputerUse/Loop/ComputerUseLoop.swift`
-  → `ComputerUseKind` (`needsHandoff = false`, host permission `.auto`; keeps its own
-  per-action confirm gate). Adopts the shared feed/registry + compact-result contract.
+  → `ComputerUseKind` (`modelSource = .inheritsParent` → passthrough handoff, host
+  permission `.auto`; keeps its own per-action confirm gate). Adopts the shared
+  feed/registry + compact-result contract.
 
 ### Personas / config / runtime (reused, existing)
 - `Models/Agent/Agent.swift` + `Managers/AgentManager.swift` — persona name/model
   (local or remote)/prompt/tool-policy; `effectiveModel(for:)`; per-agent
   `spawnDelegationEnabled`.
 - `Models/AgentDelegation/SubagentConfiguration.swift` + `SubagentConfigurationStore.swift`
-  — global enable, load policy, permission (`spawn`/`image` ask/deny/always), budgets,
-  the local-handoff toggle, RAM-safety preflight. Persists to `agent-delegation.json`;
-  broadcasts `.subagentConfigurationChanged`.
+  — global enable, load policy, per-kind permission (`SubagentPermissionDefaults` is a
+  `[kindId: policy]` map keyed by `capability.id`, ask/deny/always — a kind absent from
+  the map defaults to `.ask`, so a new permissioned kind needs no new struct field),
+  budgets, the local-handoff toggle, RAM-safety preflight. Persists to
+  `agent-delegation.json` (legacy top-level `spawn`/`image` keys migrate into the map
+  on decode); broadcasts `.subagentConfigurationChanged`.
 - `Services/ModelRuntime.swift` — load/unload/`preload`/`cachedModelSummaries`, the
   model-fit refusal; `Services/ModelRuntime/MetalGate.swift` — GPU owner-keyed gate.
 
@@ -159,9 +192,15 @@ denoise step counter (k/N). Re-entrancy: a subprocess cannot `spawn`.
 - **Model:** sees `spawn` (and any alias tools) only when enabled. `spawn("sparky",
   "do x y z")`. Image: one `image` tool — `image({"prompt": …})` to generate, add
   `source_paths` to edit.
-- **Contributor:** a new KIND = one `SubagentKind` conformer in `Subagent/Kinds/`
-  (`needsHandoff` / `resolveModel` / `permission` / `run`) + one entry in
-  `SubagentCapabilityRegistry`; the `SubagentSession` host gives you scope ids,
-  recursion guard, feed/interrupt, handoff, and the compact-result envelope for free.
-  Do NOT add recursive agents, helper LLMs, or shell workers inside a kind — it is
-  normal Swift service code driving one bounded job.
+- **Contributor:** a new KIND = one `SubagentCapability` descriptor in
+  `SubagentCapabilityRegistry` (the SSOT that drives gating + the per-agent toggle +
+  the feed/chip display + the prompt guidance) + one `SubagentKind` conformer in
+  `Subagent/Kinds/` whose `capability` returns that descriptor and that implements
+  `resolveModel` / `permission` / `run` (override `makeHandoff()` only if it swaps
+  models) + one thin tool that builds the kind and calls `SubagentSession.run`. The
+  host gives you scope ids, recursion guard, feed/interrupt, the (optional) handoff,
+  and the compact-result envelope for free. A dedicated model-backed kind (e.g. an
+  AppleScript generator on a local or remote model) is exactly this recipe with
+  `modelSource = .dedicatedConfigured` or `.persona`. Do NOT add recursive agents,
+  helper LLMs, or shell workers inside a kind — it is normal Swift service code
+  driving one bounded job.

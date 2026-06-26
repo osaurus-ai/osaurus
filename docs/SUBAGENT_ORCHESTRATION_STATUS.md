@@ -61,7 +61,7 @@ tool entry (spawn | image | computer_use | sandbox_reduce)
        ├─ recursion guard (one SubagentContext; no nested sub-agents)
        ├─ kind.resolveModel  → reject-before-evict
        ├─ kind.permission    → ask / deny / always   (computer_use: rich per-action gate)
-       ├─ kind.needsHandoff? → ResidencyHandoff (spawn, image only)   Subagent/ResidencyHandoff.swift
+       ├─ kind.makeHandoff() → ResidencyHandoff (spawn; image residency is coordinator-owned)   Subagent/ResidencyHandoff.swift
        │      local orchestrator → memoryPreflight → unload → run → restore
        │      cloud orchestrator → no unload (nothing resident)
        ├─ kind.run(scope, feed, interrupt)
@@ -75,10 +75,14 @@ tool entry (spawn | image | computer_use | sandbox_reduce)
    `defer`s cleanup + telemetry. A deterministic scripted seam (`ScriptedSubagentKind`)
    exercises the full lifecycle **model-free** in tests/evals.
 2. **Optional handoff — `ResidencyHandoff`** (`Subagent/ResidencyHandoff.swift`):
-   generalized from the old `ChatResidencyHandoff`; the single residency authority. Only
-   model-swapping kinds (`spawn`, `image`) set `needsHandoff = true`. Same-model kinds
-   (`sandbox_reduce`, `computer_use`) skip preflight/unload/restore. The image
-   coordinator's private residency copies are deleted.
+   generalized from the old `ChatResidencyHandoff`; the single residency authority for
+   the host middleware. Only `spawn` (`modelSource = .persona`) overrides
+   `makeHandoff()` to vend a real handoff; `image` (`modelSource = .dedicatedConfigured`)
+   keeps the passthrough default because its `NativeImageJobCoordinator` owns image-model
+   residency directly. Same-model kinds (`sandbox_reduce`, `computer_use`,
+   `modelSource = .inheritsParent`) keep the passthrough default and skip
+   preflight/unload/restore. (`needsHandoff` is removed — intent is the descriptor's
+   `modelSource`; the swap is whether the kind overrides `makeHandoff()`.)
 3. **Kinds behind `SubagentKind`** (`Subagent/SubagentKind.swift`, `Subagent/Kinds/`):
    `TextSubagentKind` (spawn), `ImageSubagentKind` (image), `ComputerUseKind`
    (computer_use), `SandboxReduceKind` (sandbox_reduce). Adding a future kind (privacy

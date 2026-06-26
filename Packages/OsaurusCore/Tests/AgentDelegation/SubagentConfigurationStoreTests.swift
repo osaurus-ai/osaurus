@@ -35,8 +35,7 @@ struct SubagentConfigurationStoreTests {
             defaultImageEditModelId: "qwen-edit",
             imageJobLoadPolicy: .unloadImageAfterAgentJob,
             permissionDefaults: SubagentPermissionDefaults(
-                spawn: .alwaysAllow,
-                image: .deny
+                policies: ["spawn": .alwaysAllow, "image": .deny]
             ),
             budgets: SubagentBudgets(
                 maxDelegateTokens: 100_000,
@@ -60,8 +59,8 @@ struct SubagentConfigurationStoreTests {
         #expect(reloaded.imageDelegationActive == true)
         #expect(reloaded.defaultImageGenerationModelId == "flux")
         #expect(reloaded.imageJobLoadPolicy == .unloadImageAfterAgentJob)
-        #expect(reloaded.permissionDefaults.spawn == .alwaysAllow)
-        #expect(reloaded.permissionDefaults.image == .deny)
+        #expect(reloaded.permissionDefaults.policy(for: "spawn") == .alwaysAllow)
+        #expect(reloaded.permissionDefaults.policy(for: "image") == .deny)
         #expect(reloaded.budgets.maxDelegateTokens == 32_768)
         #expect(reloaded.budgets.maxDelegateTurns == 8)
         #expect(reloaded.budgets.maxToolCalls == 32)

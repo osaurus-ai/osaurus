@@ -19,8 +19,8 @@ struct SubagentConfigurationTests {
         #expect(config.agentDelegationEnabled == false)
         #expect(config.localTextDelegationEnabled == false)
         #expect(config.imageJobLoadPolicy == .agentSingleResidency)
-        #expect(config.permissionDefaults.spawn == .ask)
-        #expect(config.permissionDefaults.image == .ask)
+        #expect(config.permissionDefaults.policy(for: "spawn") == .ask)
+        #expect(config.permissionDefaults.policy(for: "image") == .ask)
         #expect(config.budgets.maxDelegateTokens == 2048)
         #expect(config.budgets.maxDelegateTurns == 1)
         #expect(config.budgets.maxToolCalls == 0)
@@ -65,8 +65,7 @@ struct SubagentConfigurationTests {
             defaultImageEditModelId: "qwen-image-edit",
             imageJobLoadPolicy: .manualPanelKeepsImageLoaded,
             permissionDefaults: SubagentPermissionDefaults(
-                spawn: .alwaysAllow,
-                image: .deny
+                policies: ["spawn": .alwaysAllow, "image": .deny]
             ),
             budgets: SubagentBudgets(
                 maxDelegateTokens: 4096,
@@ -80,9 +79,45 @@ struct SubagentConfigurationTests {
         let decoded = try JSONDecoder().decode(SubagentConfiguration.self, from: data)
 
         #expect(decoded == config)
-        #expect(decoded.permissionDefaults.spawn.rawValue == "always_allow")
-        #expect(decoded.permissionDefaults.image.rawValue == "deny")
+        #expect(decoded.permissionDefaults.policy(for: "spawn").rawValue == "always_allow")
+        #expect(decoded.permissionDefaults.policy(for: "image").rawValue == "deny")
         #expect(decoded.imageJobLoadPolicy.rawValue == "manual_panel_keeps_image_loaded")
+    }
+
+    @Test("legacy per-field permission keys migrate into the keyed map")
+    func legacyPermissionKeysMigrate() throws {
+        // Pre-map schema: top-level `spawn` / `image` keys. They must migrate to
+        // the keyed map (and a single invalid raw value falls back to `.ask`
+        // without nuking the rest — the BUG D lenience contract).
+        let data = Data(
+            """
+            { "spawn": "always_allow", "image": "deny", "bogus": "nope" }
+            """.utf8
+        )
+
+        let decoded = try JSONDecoder().decode(SubagentPermissionDefaults.self, from: data)
+
+        #expect(decoded.policy(for: "spawn") == .alwaysAllow)
+        #expect(decoded.policy(for: "image") == .deny)
+        // Unknown kinds default to the safe `.ask`.
+        #expect(decoded.policy(for: "applescript") == .ask)
+    }
+
+    @Test("a new kind's permission round-trips with no struct field")
+    func newKindPermissionRoundTrips() throws {
+        // The whole point of the keyed map: a future permissioned kind stores its
+        // policy under its own id with no schema change here.
+        let defaults = SubagentPermissionDefaults(
+            policies: ["spawn": .deny, "applescript": .alwaysAllow]
+        )
+
+        let data = try JSONEncoder().encode(defaults)
+        let decoded = try JSONDecoder().decode(SubagentPermissionDefaults.self, from: data)
+
+        #expect(decoded == defaults)
+        #expect(decoded.policy(for: "applescript") == .alwaysAllow)
+        #expect(decoded.policy(for: "spawn") == .deny)
+        #expect(decoded.policy(for: "image") == .ask)
     }
 
     @Test("normalization preserves a disabled RAM-safety preflight")

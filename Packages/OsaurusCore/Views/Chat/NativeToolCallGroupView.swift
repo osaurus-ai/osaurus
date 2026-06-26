@@ -963,7 +963,11 @@ final class NativeToolCallRowView: NSView {
 
         // Node: category icon shape in the foreground. The icon/circle colors and
         // the running shimmer are applied in `applyStatusAndShimmer()` below.
-        let category = ToolCategory.from(toolName: item.call.function.name)
+        // Sub-agent tools take their glyph from the capability registry (SSOT)
+        // instead of the generic gear the substring categorizer would assign.
+        let toolName = item.call.function.name
+        let category = ToolCategory.from(toolName: toolName)
+        let glyph = SubagentCapabilityRegistry.iconName(forToolName: toolName) ?? category.icon
         let cfg = NSImage.SymbolConfiguration(pointSize: 12, weight: .semibold)
         // Suppress the default `contents` action so the symbol swap doesn't
         // run its own 0.25s implicit fade alongside `playNodeAppearance`'s
@@ -971,7 +975,7 @@ final class NativeToolCallRowView: NSView {
         // before the ring finishes tracing).
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        categoryIcon.image = SymbolImageCache.image(category.icon, accessibilityDescription: nil)?
+        categoryIcon.image = SymbolImageCache.image(glyph, accessibilityDescription: nil)?
             .withSymbolConfiguration(cfg)
         CATransaction.commit()
 

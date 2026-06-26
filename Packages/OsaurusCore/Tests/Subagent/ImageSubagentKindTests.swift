@@ -70,9 +70,10 @@ struct ImageSubagentKindTests {
         )
         #expect(gen.capability.id == "image")
         #expect(gen.capability.toolNames == ["image"])
-        // Images keep residency authority inside the coordinator, so the host
-        // middleware must NOT run the handoff for this kind.
-        #expect(gen.needsHandoff == false)
+        // Images use a dedicated configured model, but keep residency authority
+        // inside the coordinator, so the host middleware must NOT run the
+        // handoff for this kind (`makeHandoff()` stays passthrough).
+        #expect(gen.capability.modelSource == .dedicatedConfigured)
         #expect(gen.feedTitle.contains("image"))
         #expect(!gen.feedTitle.contains("edit"))
     }

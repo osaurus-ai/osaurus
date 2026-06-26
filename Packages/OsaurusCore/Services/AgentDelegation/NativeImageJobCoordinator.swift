@@ -391,7 +391,8 @@ actor NativeImageJobCoordinator {
     /// The residency unload stays INSIDE this producer task (not the host's
     /// `ResidencyHandoff` middleware) on purpose: a chat-turn cancel that the
     /// unload itself can trigger must not cascade into the engine drain and lose
-    /// the image (see `ImageSubagentKind.needsHandoff = false`).
+    /// the image (see `ImageSubagentKind`, whose `makeHandoff()` stays the
+    /// passthrough default so the coordinator remains the residency authority).
     private func runJob(
         context: NativeImageJobContext,
         kind: SubagentModelKind,

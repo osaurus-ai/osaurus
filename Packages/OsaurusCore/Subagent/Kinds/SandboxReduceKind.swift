@@ -7,8 +7,8 @@
 //  hands back ONLY a short digest (raw tool output never crosses into the
 //  parent context). Runs on the SAME shared runner (`AgentSubagentRunner`) and
 //  host (`SubagentSession`) as `spawn`, so the recursion guard, live feed, and
-//  compact-result contract are shared. `needsHandoff = false` (same model as
-//  the parent) so no residency eviction.
+//  compact-result contract are shared. `modelSource = .inheritsParent` (same
+//  model as the parent) so no residency eviction (`makeHandoff()` passthrough).
 //
 //  Guardrails preserved from the standalone tool: the read/search/exec
 //  allowlist (enforced in the executor as defense in depth), the child loop's
@@ -20,12 +20,7 @@
 import Foundation
 
 final class SandboxReduceKind: SubagentKind, @unchecked Sendable {
-    let capability = AgentCapability(
-        id: "sandbox_reduce",
-        toolNames: ["sandbox_reduce"],
-        guidance: nil
-    )
-    let needsHandoff = false
+    let capability = SubagentCapabilityRegistry.sandboxReduce
 
     private let agentId: String
     private let task: String

@@ -972,15 +972,17 @@ struct AgentDetailView: View {
     @State private var speakEnabled: Bool = false
     @State private var searchMemoryEnabled: Bool = false
     @State private var selfSchedulingEnabled: Bool = false
-    /// Per-agent opt-in for the Computer Use feature (`computer_use` tool).
-    /// Custom agents only; the Features section shows the toggle and
-    /// `saveAgent` folds it into the persisted `AgentSettings` block.
-    @State private var computerUseEnabled: Bool = false
-    /// Per-agent opt-in for the Spawn / Delegation feature (`spawn` / `image`
-    /// tools). Custom agents only; the Features section shows the toggle and
-    /// `debouncedSave` persists it
-    /// into `AgentSettings.spawnDelegationEnabled`.
-    @State private var spawnDelegationEnabled: Bool = false
+    /// Per-agent sub-agent capability toggles, keyed by the capability
+    /// registry's `PerAgentFlag` (computer_use + the shared spawn/image
+    /// delegation flag). Hydrated in `loadAgent` and folded back into
+    /// `AgentSettings` in `saveAgent` by looping the registry, so adding a
+    /// per-agent kind needs no new `@State` here. Custom agents only; the
+    /// Features section renders one toggle per flag.
+    @State private var subagentToggles: [SubagentCapability.PerAgentFlag: Bool] = [:]
+    /// Convenience reads over `subagentToggles` so the save path and the
+    /// Computer Use ceiling row keep their existing call sites.
+    private var computerUseEnabled: Bool { subagentToggles[.computerUse] ?? false }
+    private var spawnDelegationEnabled: Bool { subagentToggles[.spawnDelegation] ?? false }
     /// Per-agent autonomy ceiling for Computer Use (PR2). `nil` means no
     /// ceiling. Mirrored from / into `AgentSettings.computerUseCeiling`.
     @State private var computerUseCeiling: AutonomyCeiling? = nil
@@ -2642,28 +2644,34 @@ struct AgentDetailView: View {
                         }
                     }
 
-                    // Computer Use is custom-agents-only (the Default agent is
-                    // locked to its baseline). Hidden entirely for the Default
-                    // agent so it never advertises a capability it can't enable.
+                    // Per-agent sub-agent capability toggles (Computer Use +
+                    // Spawn & Delegation), rendered from the capability registry
+                    // — one toggle per `PerAgentFlag` — so adding a per-agent
+                    // kind needs no new hand-built group here. Custom-agents-only:
+                    // the Default agent is locked to its baseline, so it never
+                    // advertises a capability it can't enable.
                     if agent.id != Agent.defaultId {
-                        featureGroup(
-                            "Computer Use",
-                            description: "Let the agent operate macOS apps for you."
-                        ) {
-                            featureToggleRow(
-                                title: "Computer Use",
-                                subtitle:
-                                    "Give the agent a tool to drive macOS apps via the accessibility tree — clicking, typing, and reading on-screen content. Reads and navigation run automatically; edits and anything consequential pause for your approval.",
-                                isOn: $computerUseEnabled
-                            )
-                            if computerUseEnabled {
-                                computerUseCeilingRow
-                                Text(
-                                    "Requires Accessibility permission. Grant it and review status in Settings > Computer Use.",
-                                    bundle: .module
+                        ForEach(perAgentFeatures, id: \.flag) { feature in
+                            featureGroup(
+                                feature.groupTitle,
+                                description: feature.groupDescription
+                            ) {
+                                featureToggleRow(
+                                    title: feature.toggleTitle,
+                                    subtitle: feature.toggleSubtitle,
+                                    isOn: subagentToggleBinding(feature.flag)
                                 )
-                                .font(.system(size: 11))
-                                .foregroundColor(theme.tertiaryText)
+                                // Computer Use carries an autonomy-ceiling picker
+                                // + permission note as its "extra rows" hook.
+                                if feature.showsComputerUseExtras, computerUseEnabled {
+                                    computerUseCeilingRow
+                                    Text(
+                                        "Requires Accessibility permission. Grant it and review status in Settings > Computer Use.",
+                                        bundle: .module
+                                    )
+                                    .font(.system(size: 11))
+                                    .foregroundColor(theme.tertiaryText)
+                                }
                             }
                         }
                     }
@@ -2673,21 +2681,6 @@ struct AgentDetailView: View {
                         description: "Durable storage for this agent."
                     ) {
                         databaseFeatureRow
-                    }
-
-                    // Spawn / Delegation is custom-agents-only (like Computer Use).
-                    if agent.id != Agent.defaultId {
-                        featureGroup(
-                            "Spawn & Delegation",
-                            description: "Let this agent spawn helper jobs and sub-agents."
-                        ) {
-                            featureToggleRow(
-                                title: "Spawn & Delegation",
-                                subtitle:
-                                    "Give the agent the spawn and image tools — it can offload bounded tasks to a sub-agent persona or a local model, and generate or edit images. Default models, RAM-safety, and permissions are configured in Settings → Spawn.",
-                                isOn: $spawnDelegationEnabled
-                            )
-                        }
                     }
 
                     featureGroup(
@@ -3090,6 +3083,58 @@ struct AgentDetailView: View {
             )
         }
         LocalAgentBridge.shared.forget(agentId: agentId)
+    }
+
+    /// Editor presentation for one per-agent sub-agent capability toggle. The
+    /// SET + order of toggles is registry-driven (`perAgentToggleFlags`); only
+    /// the copy lives here in the view layer.
+    private struct PerAgentFeature {
+        let flag: SubagentCapability.PerAgentFlag
+        let groupTitle: LocalizedStringKey
+        let groupDescription: LocalizedStringKey
+        let toggleTitle: LocalizedStringKey
+        let toggleSubtitle: LocalizedStringKey
+        /// Computer Use appends an autonomy-ceiling picker + permission note.
+        let showsComputerUseExtras: Bool
+    }
+
+    /// The per-agent capability toggles to render, derived from the registry's
+    /// distinct per-agent flags so a new per-agent kind surfaces here
+    /// automatically (the exhaustive switch forces its copy to be supplied).
+    private var perAgentFeatures: [PerAgentFeature] {
+        SubagentCapabilityRegistry.perAgentToggleFlags.map { flag in
+            switch flag {
+            case .computerUse:
+                return PerAgentFeature(
+                    flag: .computerUse,
+                    groupTitle: "Computer Use",
+                    groupDescription: "Let the agent operate macOS apps for you.",
+                    toggleTitle: "Computer Use",
+                    toggleSubtitle:
+                        "Give the agent a tool to drive macOS apps via the accessibility tree — clicking, typing, and reading on-screen content. Reads and navigation run automatically; edits and anything consequential pause for your approval.",
+                    showsComputerUseExtras: true
+                )
+            case .spawnDelegation:
+                return PerAgentFeature(
+                    flag: .spawnDelegation,
+                    groupTitle: "Spawn & Delegation",
+                    groupDescription: "Let this agent spawn helper jobs and sub-agents.",
+                    toggleTitle: "Spawn & Delegation",
+                    toggleSubtitle:
+                        "Give the agent the spawn and image tools — it can offload bounded tasks to a sub-agent persona or a local model, and generate or edit images. Default models, RAM-safety, and permissions are configured in Settings → Spawn.",
+                    showsComputerUseExtras: false
+                )
+            }
+        }
+    }
+
+    /// Two-way binding into `subagentToggles` for a per-agent flag, so the
+    /// shared `featureToggleRow` can drive the registry-keyed edit-state.
+    private func subagentToggleBinding(_ flag: SubagentCapability.PerAgentFlag) -> Binding<Bool> {
+        Binding(
+            get: { subagentToggles[flag] ?? false },
+            set: { subagentToggles[flag] = $0 }
+        )
     }
 
     /// Binding-backed feature toggle row. Thin wrapper over `featureCard`
@@ -4950,8 +4995,11 @@ struct AgentDetailView: View {
         speakEnabled = agent.settings.speakEnabled
         searchMemoryEnabled = agent.settings.searchMemoryEnabled
         selfSchedulingEnabled = agent.settings.selfSchedulingEnabled
-        computerUseEnabled = agent.settings.computerUseEnabled
-        spawnDelegationEnabled = agent.settings.spawnDelegationEnabled
+        subagentToggles = SubagentCapabilityRegistry.perAgentToggleFlags.reduce(into: [:]) {
+            acc,
+            flag in
+            acc[flag] = flag.read(from: agent.settings)
+        }
         computerUseCeiling = agent.settings.computerUseCeiling
         hostWorkspacePath = agent.hostWorkspacePath
         generativeGreetingsEnabled = agent.settings.generativeGreetingsEnabled

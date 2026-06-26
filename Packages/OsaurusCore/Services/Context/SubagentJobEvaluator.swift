@@ -393,7 +393,9 @@ public enum SubagentJobEvaluator {
 /// surface so the eval facade (and thus the eval kit + its CI unit tests) can
 /// drive the exact same host lifecycle the live kinds use.
 final class ScriptedSubagentKind: SubagentKind, @unchecked Sendable {
-    let capability: AgentCapability
+    let capability: SubagentCapability
+    /// The eval spec's own handoff opt-in (drives `makeHandoff()` below). No
+    /// longer a `SubagentKind` requirement — the host consumes `makeHandoff()`.
     let needsHandoff: Bool
 
     private let spec: ScriptedSubagentSpec
@@ -402,7 +404,11 @@ final class ScriptedSubagentKind: SubagentKind, @unchecked Sendable {
 
     init(spec: ScriptedSubagentSpec) {
         self.spec = spec
-        self.capability = AgentCapability(id: spec.kindId, toolNames: [spec.kindId], guidance: nil)
+        self.capability = SubagentCapability(
+            id: spec.kindId,
+            toolNames: [spec.kindId],
+            gate: .sandboxExec
+        )
         self.needsHandoff = spec.needsHandoff
     }
 

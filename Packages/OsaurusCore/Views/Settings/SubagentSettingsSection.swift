@@ -10,8 +10,8 @@ import SwiftUI
 struct SubagentSettingsSection: View {
     @ObservedObject private var themeManager = ThemeManager.shared
     /// Source of the Agent personas offered as `spawn` targets. Observed directly
-    /// so both call sites (Settings + the Spawn & Delegation page) get the list
-    /// without threading it through every initializer.
+    /// so the Spawn & Delegation settings tab always reflects the live persona
+    /// list without threading it through every initializer.
     @ObservedObject private var agentManager = AgentManager.shared
 
     @Binding var configuration: SubagentConfiguration
@@ -139,14 +139,15 @@ struct SubagentSettingsSection: View {
 
                 SettingsSubsection(label: "Permissions") {
                     VStack(alignment: .leading, spacing: 12) {
-                        permissionPicker(
-                            title: "Spawn",
-                            selection: $configuration.permissionDefaults.spawn
-                        )
-                        permissionPicker(
-                            title: "Image",
-                            selection: $configuration.permissionDefaults.image
-                        )
+                        // One permission row per delegation kind, driven by the
+                        // registry so a future permissioned kind appears here with
+                        // no edit to this view.
+                        ForEach(SubagentCapabilityRegistry.delegationFamily, id: \.id) { capability in
+                            permissionPicker(
+                                title: capability.displayLabel,
+                                selection: permissionBinding(for: capability.id)
+                            )
+                        }
                     }
                 }
 
@@ -283,6 +284,15 @@ struct SubagentSettingsSection: View {
     private func normalizedSelection(_ value: String) -> String? {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
+    }
+
+    /// Read/write a single kind's permission policy through the keyed map, so the
+    /// permission rows stay registry-driven (no per-kind struct field to bind).
+    private func permissionBinding(for kindId: String) -> Binding<SubagentPermissionPolicy> {
+        Binding(
+            get: { configuration.permissionDefaults.policy(for: kindId) },
+            set: { configuration.permissionDefaults.setPolicy($0, for: kindId) }
+        )
     }
 
     /// Membership toggle for `spawnableAgentNames`. Case-insensitive to match
