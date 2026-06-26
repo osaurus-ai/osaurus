@@ -289,11 +289,40 @@ struct GitHubImportSheet: View {
                         )
                 )
                 .frame(maxWidth: 360)
+
+                gitHubAuthStatusView
             }
 
             Spacer()
         }
         .padding(24)
+    }
+
+    private var gitHubAuthStatusView: some View {
+        let hasToken = gitHubService.hasGitHubAuthToken
+        return HStack(alignment: .top, spacing: 8) {
+            Image(systemName: hasToken ? "key.fill" : "key.slash")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(hasToken ? theme.accentColor : theme.tertiaryText)
+                .padding(.top, 1)
+
+            Text(
+                hasToken
+                    ? "GitHub token detected for higher API limits."
+                    : "No GitHub token detected. Public imports use GitHub's 60/hour unauthenticated API limit.",
+                bundle: .module
+            )
+            .font(.system(size: 11))
+            .foregroundColor(theme.secondaryText)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: 360, alignment: .leading)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(theme.tertiaryBackground.opacity(0.65))
+        )
     }
 
     // MARK: - Loading View
@@ -309,6 +338,15 @@ struct GitHubImportSheet: View {
             Text("Fetching skills...", bundle: .module)
                 .font(.system(size: 13))
                 .foregroundColor(theme.secondaryText)
+
+            if let progress = gitHubService.importProgress, progress.total > 0 {
+                Text(
+                    "\(progress.completed) of \(progress.total) plugin manifests\(progress.resumedFromCheckpoint ? " (resumed)" : "")",
+                    bundle: .module
+                )
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
+            }
 
             Spacer()
         }
@@ -479,6 +517,8 @@ struct GitHubImportSheet: View {
             .padding(.top, 12)
             .padding(.bottom, 8)
 
+            importTrustNotice(repo: result.repo)
+
             // Select-all header + options.
             HStack(spacing: 12) {
                 Button(action: {
@@ -566,6 +606,25 @@ struct GitHubImportSheet: View {
                 .padding(.bottom, 8)
             }
         }
+    }
+
+    private func importTrustNotice(repo: GitHubRepo) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "shield.lefthalf.filled")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(theme.accentColor)
+                .padding(.top, 1)
+            Text(
+                "Review this source before installing: github.com/\(repo.owner)/\(repo.name). Plugins can add skills, commands, assets, and disabled MCP providers.",
+                bundle: .module
+            )
+            .font(.system(size: 11))
+            .foregroundColor(theme.secondaryText)
+            .lineLimit(2)
+            Spacer()
+        }
+        .padding(.horizontal, 20)
+        .padding(.bottom, 6)
     }
 
     /// Toggle a plugin's selection and, if turning it ON, also auto-check
@@ -784,6 +843,15 @@ struct GitHubImportSheet: View {
                     .foregroundColor(theme.secondaryText)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 32)
+
+                if let suggestion = error.recoverySuggestion {
+                    Text(suggestion)
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.tertiaryText)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 36)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
 
             Button(action: { importState = .urlInput }) {
