@@ -53,6 +53,7 @@ public struct StorageSettingsView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                     postureCard
+                        .settingsLandingAnchor("storage.location")
                     if !storeIssues.isEmpty {
                         recoveryCard
                     }

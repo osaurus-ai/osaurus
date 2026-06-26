@@ -115,4 +115,18 @@ public enum ChatExecutionContext {
     /// `.auto`, and loopback callers skip Bearer auth entirely.
     /// Module-internal so out-of-module callers cannot unbind it.
     @TaskLocal static var isExternalSurface: Bool = false
+
+    /// Root of a host folder an AUTHENTICATED remote agent run (Secure
+    /// Channel, agent-scoped) is permitted to read/write inside. Bound by
+    /// `handleAgentRunEndpoint` ONLY after the secure-transport, built-in
+    /// rejection, and agent-scope gates pass AND the agent has a configured
+    /// `Agent.hostWorkspaceBookmark`. When set, `isDeniedForCurrentSurface`
+    /// permits the host *file* tools (`file_write` / `file_edit`; `file_read`
+    /// is never on the deny list) — confined to this folder by the folder
+    /// tools' own root — while `shell_run` / `git_commit` / `file_undo` stay
+    /// denied even for an authenticated run. Never bound for loopback, the
+    /// `/mcp/call` bridge, plaintext callers, or a cross-agent key, so the
+    /// relaxation can't be reached from an untrusted surface. Module-internal
+    /// so out-of-module callers cannot bind it.
+    @TaskLocal static var authenticatedHostFolderRoot: URL?
 }

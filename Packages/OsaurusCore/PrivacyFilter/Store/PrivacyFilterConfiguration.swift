@@ -46,6 +46,18 @@ public struct PrivacyFilterConfiguration: Codable, Equatable, Sendable {
     /// regardless of per-provider toggles.
     public var enabled: Bool
 
+    /// Whether the on-device AI detection model participates in
+    /// detection. The deterministic regex layer (built-ins, presets,
+    /// custom rules) runs independently and needs no model, so the
+    /// filter is fully usable with this OFF and the ~2.8 GB bundle
+    /// never downloaded.
+    ///
+    /// When true the pipeline loads the model and FAILS CLOSED if the
+    /// bundle is missing / corrupt — the user opted into AI detection
+    /// and expects it. When false the model is never touched and
+    /// detection runs regex-only (never blocks on a missing model).
+    public var aiDetectionEnabled: Bool
+
     /// Per-provider enable map keyed by `RemoteProvider.id.uuidString`.
     /// Missing keys fall back to `defaultForCloudProvider` (true).
     public var providerOverrides: [String: Bool]
@@ -53,12 +65,6 @@ public struct PrivacyFilterConfiguration: Codable, Equatable, Sendable {
     /// Whether to skip detection inside fenced + inline code spans.
     /// Default on — avoids flagging identifiers as people-names.
     public var skipCodeBlocks: Bool
-
-    /// Confidence threshold passed to the classifier in v1.5. Today
-    /// the kit doesn't expose a threshold, but we persist the value
-    /// now so the UI can render the slider and re-apply it when the
-    /// kit grows the API.
-    public var confidenceThreshold: Float
 
     /// When true the review sheet auto-confirms detected entities
     /// after the first turn of each conversation (per-conversation
@@ -100,9 +106,9 @@ public struct PrivacyFilterConfiguration: Codable, Equatable, Sendable {
 
     public init(
         enabled: Bool = false,
+        aiDetectionEnabled: Bool = false,
         providerOverrides: [String: Bool] = [:],
         skipCodeBlocks: Bool = true,
-        confidenceThreshold: Float = 0.5,
         alwaysApproveByDefault: Bool = false,
         requireReviewForNonInteractive: Bool = true,
         builtinPatternEnabled: [EntityCategory: Bool] = Self.defaultBuiltinPatternEnabled,
@@ -111,9 +117,9 @@ public struct PrivacyFilterConfiguration: Codable, Equatable, Sendable {
     ) {
         self.schemaVersion = Self.currentSchemaVersion
         self.enabled = enabled
+        self.aiDetectionEnabled = aiDetectionEnabled
         self.providerOverrides = providerOverrides
         self.skipCodeBlocks = skipCodeBlocks
-        self.confidenceThreshold = confidenceThreshold
         self.alwaysApproveByDefault = alwaysApproveByDefault
         self.requireReviewForNonInteractive = requireReviewForNonInteractive
         self.builtinPatternEnabled = builtinPatternEnabled
@@ -160,9 +166,9 @@ public struct PrivacyFilterConfiguration: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case schemaVersion
         case enabled
+        case aiDetectionEnabled
         case providerOverrides
         case skipCodeBlocks
-        case confidenceThreshold
         case alwaysApproveByDefault
         case requireReviewForNonInteractive
         case builtinPatternEnabled
@@ -178,12 +184,24 @@ public struct PrivacyFilterConfiguration: Codable, Equatable, Sendable {
         self.schemaVersion =
             try c.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 0
         self.enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? false
+        // Default TRUE on decode (key absent) so users upgrading from a
+        // build that predates this field — who had the model installed
+        // and the master toggle on — keep AI detection after the
+        // update. Brand-new configs come through `init` (default
+        // FALSE) instead, so a fresh no-model install starts
+        // regex-only without trying to download the bundle.
+        self.aiDetectionEnabled =
+            try c.decodeIfPresent(Bool.self, forKey: .aiDetectionEnabled) ?? true
         self.providerOverrides =
             try c.decodeIfPresent([String: Bool].self, forKey: .providerOverrides) ?? [:]
         self.skipCodeBlocks =
             try c.decodeIfPresent(Bool.self, forKey: .skipCodeBlocks) ?? true
-        self.confidenceThreshold =
-            try c.decodeIfPresent(Float.self, forKey: .confidenceThreshold) ?? 0.5
+        // NOTE: a `confidenceThreshold` key may be present in older
+        // on-disk files. It's intentionally ignored now (the setting
+        // was always a no-op — the kit never exposed a threshold — so
+        // it was removed rather than shipped as a dead slider). An
+        // unknown key in the JSON decodes fine; we simply don't read
+        // it, and `encode` no longer writes it.
         self.alwaysApproveByDefault =
             try c.decodeIfPresent(Bool.self, forKey: .alwaysApproveByDefault) ?? false
         self.requireReviewForNonInteractive =
@@ -227,9 +245,9 @@ public struct PrivacyFilterConfiguration: Codable, Equatable, Sendable {
         // reflect the shape we're actually writing.
         try c.encode(Self.currentSchemaVersion, forKey: .schemaVersion)
         try c.encode(enabled, forKey: .enabled)
+        try c.encode(aiDetectionEnabled, forKey: .aiDetectionEnabled)
         try c.encode(providerOverrides, forKey: .providerOverrides)
         try c.encode(skipCodeBlocks, forKey: .skipCodeBlocks)
-        try c.encode(confidenceThreshold, forKey: .confidenceThreshold)
         try c.encode(alwaysApproveByDefault, forKey: .alwaysApproveByDefault)
         try c.encode(requireReviewForNonInteractive, forKey: .requireReviewForNonInteractive)
         // Encode as raw-string-keyed dict so the on-disk JSON is

@@ -64,32 +64,96 @@ public struct ScrubbedFrame: Sendable, Equatable {
 
 public enum FrameScrubber {
 
+    /// Upper bound on how many OCR'd text regions get an on-device model pass
+    /// in `.pii` mode. The model forward pass runs once per region, so this
+    /// caps the latency of the (opt-in, non-default) precise-PII scrub on a
+    /// text-dense screen. `.allText` mode masks everything and never needs it.
+    static let maxModelObservations = 200
+
     /// Scrub a contract `CUImage`. Returns `nil` only if the bytes can't be
     /// decoded; an image with no detected PII still returns a (visually
     /// identical) `ScrubbedFrame` so the type guarantee holds.
-    public static func scrub(_ image: CUImage, mode: ScrubMode = .pii) async -> ScrubbedFrame? {
+    ///
+    /// - `honorUserRules`: build the regex layer from the user's configured
+    ///   Privacy Filter ruleset (custom rules / presets / per-category toggles)
+    ///   instead of all built-ins, so a screenshot scrub matches what the text
+    ///   filter would mask. `false` keeps the all-built-ins behaviour callers
+    ///   (and tests) relied on.
+    /// - `useModelDetection`: in `.pii` mode, also run the on-device NER
+    ///   classifier so `person` / `address` / `date` / `secret` spans — which
+    ///   have no regex — are masked, not just the regex-detectable categories.
+    public static func scrub(
+        _ image: CUImage,
+        mode: ScrubMode = .pii,
+        honorUserRules: Bool = false,
+        useModelDetection: Bool = false
+    ) async -> ScrubbedFrame? {
         guard let cg = decode(image) else { return nil }
-        guard let (masked, report) = await scrub(cgImage: cg, mode: mode) else { return nil }
+        let ruleset = effectiveRuleset(honorUserRules: honorUserRules)
+        guard
+            let (masked, report) = await scrub(
+                cgImage: cg,
+                mode: mode,
+                ruleset: ruleset,
+                useModelDetection: useModelDetection
+            )
+        else { return nil }
         guard let encoded = encode(masked, width: image.width, height: image.height) else {
             return nil
         }
         return ScrubbedFrame(image: encoded, report: report)
     }
 
-    /// Core scrub over a `CGImage`. Exposed for callers that already hold pixels
-    /// (and for tests). Returns the redacted image + a report.
+    /// Back-compat core scrub over a `CGImage` (all built-ins, regex only, no
+    /// model). Kept for callers/tests that hold pixels and want the
+    /// deterministic, engine-free behaviour.
     public static func scrub(
         cgImage: CGImage,
         mode: ScrubMode = .pii
     ) async -> (CGImage, ScrubReport)? {
-        let scan = await recognizeAndDetect(in: cgImage, mode: mode)
-        let masked = paintMasks(over: cgImage, normalizedRegions: scan.regions) ?? cgImage
+        await scrub(cgImage: cgImage, mode: mode, ruleset: .allBuiltins(), useModelDetection: false)
+    }
+
+    /// Core scrub over a `CGImage` with an explicit regex ruleset and optional
+    /// on-device model pass. Returns the redacted image + a report.
+    static func scrub(
+        cgImage: CGImage,
+        mode: ScrubMode,
+        ruleset: RegexEntityDetector.EffectiveRuleSet,
+        useModelDetection: Bool
+    ) async -> (CGImage, ScrubReport)? {
+        let scan = await recognizeAndDetect(in: cgImage, mode: mode, ruleset: ruleset)
+        var regions = scan.regions
+        var categories = scan.categories
+        // The regex pass (inside the Vision handler) masks the precise spans it
+        // can. The model owns `person`/`address`/`date`/`secret`, which have no
+        // regex — run it per OCR region and mask the whole region on a hit
+        // (recall over precision, the same philosophy the regex line-fallback
+        // uses). `.allText` already masks every region, so the model adds nothing.
+        if mode == .pii, useModelDetection, !scan.observations.isEmpty {
+            let candidates = scan.observations.prefix(maxModelObservations)
+            for obs in candidates where obs.text.count >= 2 {
+                let spans = await PrivacyFilterEngine.shared.modelSpans(in: obs.text)
+                guard !spans.isEmpty else { continue }
+                regions.append(obs.box)
+                for span in spans { categories[categoryToken(span.category), default: 0] += 1 }
+            }
+        }
+        let masked = paintMasks(over: cgImage, normalizedRegions: regions) ?? cgImage
         let report = ScrubReport(
             textRegions: scan.textRegions,
-            maskedRegions: scan.regions.count,
-            categories: scan.categories
+            maskedRegions: regions.count,
+            categories: categories
         )
         return (masked, report)
+    }
+
+    /// The regex ruleset to run over OCR'd text: the user's configured set when
+    /// `honorUserRules`, else every built-in.
+    private static func effectiveRuleset(
+        honorUserRules: Bool
+    ) -> RegexEntityDetector.EffectiveRuleSet {
+        honorUserRules ? .build(from: PrivacyFilterStore.snapshot()) : .allBuiltins()
     }
 
     // MARK: - Vision OCR
@@ -102,14 +166,33 @@ public enum FrameScrubber {
         let regions: [CGRect]
         let categories: [String: Int]
         let textRegions: Int
+        /// One per recognized line: its text + normalized bounding box. Used by
+        /// the `.pii` model pass, which runs the NER classifier per region and
+        /// masks the whole region on a hit. Empty in `.allText` (every region
+        /// is already masked, so the model pass is skipped).
+        let observations: [OCRObservation]
     }
 
-    private static func recognizeAndDetect(in image: CGImage, mode: ScrubMode) async -> OCRScan {
+    /// A single recognized text region carried out of the Vision handler as
+    /// `Sendable` geometry, so an async (`@MainActor`) model pass can run after
+    /// the non-`Sendable` Vision objects are gone.
+    private struct OCRObservation: Sendable {
+        let text: String
+        /// Normalized (0…1, bottom-left) bounding box.
+        let box: CGRect
+    }
+
+    private static func recognizeAndDetect(
+        in image: CGImage,
+        mode: ScrubMode,
+        ruleset: RegexEntityDetector.EffectiveRuleSet
+    ) async -> OCRScan {
         await withCheckedContinuation { (continuation: CheckedContinuation<OCRScan, Never>) in
             let request = VNRecognizeTextRequest { request, _ in
                 let observations = (request.results as? [VNRecognizedTextObservation]) ?? []
                 var regions: [CGRect] = []
                 var categories: [String: Int] = [:]
+                var scanned: [OCRObservation] = []
                 for observation in observations {
                     guard let candidate = observation.topCandidates(1).first else { continue }
                     switch mode {
@@ -119,7 +202,7 @@ public enum FrameScrubber {
                         let text = candidate.string
                         // The detector's ranges index `candidate.string` directly, so
                         // they pass straight to Vision's `boundingBox(for:)`.
-                        for match in RegexEntityDetector.detect(in: text) {
+                        for match in RegexEntityDetector.detect(in: text, ruleset: ruleset) {
                             categories[categoryToken(match.category), default: 0] += 1
                             if let rect = (try? candidate.boundingBox(for: match.range)) ?? nil {
                                 regions.append(rect.boundingBox)
@@ -129,13 +212,16 @@ public enum FrameScrubber {
                                 regions.append(observation.boundingBox)
                             }
                         }
+                        // Carry the region out for the optional model pass.
+                        scanned.append(OCRObservation(text: text, box: observation.boundingBox))
                     }
                 }
                 continuation.resume(
                     returning: OCRScan(
                         regions: regions,
                         categories: categories,
-                        textRegions: observations.count
+                        textRegions: observations.count,
+                        observations: scanned
                     )
                 )
             }
@@ -145,7 +231,14 @@ public enum FrameScrubber {
             do {
                 try handler.perform([request])
             } catch {
-                continuation.resume(returning: OCRScan(regions: [], categories: [:], textRegions: 0))
+                continuation.resume(
+                    returning: OCRScan(
+                        regions: [],
+                        categories: [:],
+                        textRegions: 0,
+                        observations: []
+                    )
+                )
             }
         }
     }

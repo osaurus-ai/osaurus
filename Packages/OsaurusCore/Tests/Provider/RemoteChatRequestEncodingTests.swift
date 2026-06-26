@@ -82,6 +82,43 @@ struct RemoteChatRequestEncodingTests {
         #expect(payload["idempotency_key"] == nil)
     }
 
+    // MARK: - stream_options.include_usage (remote completion-token telemetry)
+
+    /// When set, `stream_options` encodes as the nested OpenAI object so the
+    /// upstream emits a final `usage` chunk we surface as completion tokens.
+    @Test func encode_includesStreamOptions_whenSet() throws {
+        var request = Self.makeRequest(model: "grok-4", maxTokens: 256)
+        request.streamOptions = StreamOptions(include_usage: true)
+        let payload = try Self.encodeAsDictionary(request)
+
+        let streamOptions = payload["stream_options"] as? [String: Any]
+        #expect(streamOptions?["include_usage"] as? Bool == true)
+    }
+
+    /// Default (nil) omits the key entirely, so every provider/path that does
+    /// not opt in keeps its exact current wire bytes.
+    @Test func encode_omitsStreamOptions_whenNil() throws {
+        let request = Self.makeRequest(model: "gpt-4o-mini", maxTokens: 256)
+        let payload = try Self.encodeAsDictionary(request)
+
+        #expect(payload["stream_options"] == nil)
+    }
+
+    /// Only the genuinely OpenAI Chat-Completions `/chat/completions` upstreams
+    /// (xAI/Grok + OpenAI-compatible third parties via `.openaiLegacy`, and
+    /// Azure OpenAI) request usage. The router carries billed tokens in its own
+    /// summary frame; Anthropic/Gemini/Responses/Codex use other shapes.
+    @Test func requestsStreamUsageOptions_truthTable() {
+        #expect(RemoteProviderService.requestsStreamUsageOptions(providerType: .openaiLegacy))
+        #expect(RemoteProviderService.requestsStreamUsageOptions(providerType: .azureOpenAI))
+        #expect(!RemoteProviderService.requestsStreamUsageOptions(providerType: .osaurus))
+        #expect(!RemoteProviderService.requestsStreamUsageOptions(providerType: .osaurusRouter))
+        #expect(!RemoteProviderService.requestsStreamUsageOptions(providerType: .anthropic))
+        #expect(!RemoteProviderService.requestsStreamUsageOptions(providerType: .gemini))
+        #expect(!RemoteProviderService.requestsStreamUsageOptions(providerType: .openResponses))
+        #expect(!RemoteProviderService.requestsStreamUsageOptions(providerType: .openAICodex))
+    }
+
     @Test func routerImplicitMaxTokens_forwardsChatDefaultToAvoidUpstream1024Cap() {
         let params = GenerationParameters(
             temperature: nil,

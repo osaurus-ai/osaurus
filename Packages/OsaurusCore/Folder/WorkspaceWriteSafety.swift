@@ -187,6 +187,25 @@ enum WorkspaceWriteSafety {
         return Preview(payload: payload, warnings: warnings, text: text)
     }
 
+    /// Capped unified-diff text for callers that only need the diff (e.g. the
+    /// sandbox write tool, which writes in-container and just wants a reviewable
+    /// diff to surface). Same labels / truncation behavior as `preview` so the
+    /// chat diff-card parser treats both sources identically.
+    static func unifiedDiffText(
+        old: String,
+        new: String,
+        path: String,
+        existed: Bool
+    ) -> (text: String, truncated: Bool) {
+        unifiedDiff(
+            old: old,
+            new: new,
+            path: path,
+            oldLabel: existed ? "before" : "before (new file)",
+            newLabel: "after"
+        )
+    }
+
     static func operationHistoryEntry(_ operation: FileOperation) -> [String: Any] {
         var entry: [String: Any] = [
             "id": operation.id.uuidString,

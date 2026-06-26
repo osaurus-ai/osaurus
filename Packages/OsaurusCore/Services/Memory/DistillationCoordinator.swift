@@ -26,6 +26,18 @@
 //
 
 import Foundation
+import os
+
+/// Sendable hand-off box for `DistillationCoordinator.runReturning`'s
+/// generic result. The body runs inside an unstructured child `Task`; the
+/// value is written there and read after `await myTask.value`, so the lock
+/// only guards against the type system's (correct) refusal to share a plain
+/// `var` across the `@Sendable` boundary — there's no real contention.
+private final class ResultBox<T: Sendable>: Sendable {
+    private let lock = OSAllocatedUnfairLock<T?>(initialState: nil)
+    func set(_ value: T) { lock.withLock { $0 = value } }
+    func get() -> T? { lock.withLock { $0 } }
+}
 
 public actor DistillationCoordinator {
     public static let shared = DistillationCoordinator()
@@ -69,15 +81,37 @@ public actor DistillationCoordinator {
     /// the run if the configured core model would require an expensive
     /// cold load. Skipped runs return without invoking `body`.
     ///
-    /// Returns when `body` either finishes, throws (it's `() async`,
-    /// so it doesn't), or was skipped by the residency gate.
+    /// Void-returning entry point (the legacy shape). Kept as a thin
+    /// wrapper over `runReturning` so existing `await coordinator.run { … }`
+    /// call sites — including ones that bind the result as
+    /// `async let x: Void = coordinator.run { … }` — keep their exact
+    /// `Void` type. New callers that need the body's value use
+    /// `runReturning`.
     public func run(
         chatIdleWaitMs: Int = 8000,
         requireResident: Bool = true,
         body: @Sendable @escaping () async -> Void
     ) async {
+        await runReturning(
+            chatIdleWaitMs: chatIdleWaitMs,
+            requireResident: requireResident,
+            body: body
+        )
+    }
+
+    /// Returns the body's result, or `nil` when the run was skipped by the
+    /// residency gate (so callers can distinguish "skipped before running"
+    /// from any value the body itself returns). `@discardableResult` so the
+    /// `Void`-body delegation from `run` doesn't warn.
+    @discardableResult
+    public func runReturning<T: Sendable>(
+        chatIdleWaitMs: Int = 8000,
+        requireResident: Bool = true,
+        body: @Sendable @escaping () async -> T
+    ) async -> T? {
         queuedCount += 1
         let previous = currentTask
+        let box = ResultBox<T>()
         let myTask = Task<Void, Never> { [weak self] in
             // Wait for the previous distill to fully complete before
             // we even check the residency / chat-idle gates — this is
@@ -117,13 +151,14 @@ public actor DistillationCoordinator {
             // briefly observable after `myTask.value` resumes, which
             // would race the diagnostics-panel snapshot.
             await self?.setBodyActive(true)
-            await body()
+            box.set(await body())
             await self?.setBodyActive(false)
         }
 
         currentTask = myTask
         await myTask.value
         queuedCount = max(0, queuedCount - 1)
+        return box.get()
     }
 
     private func setBodyActive(_ active: Bool) {

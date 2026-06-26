@@ -121,6 +121,48 @@ public struct RuntimeProofMediaEvidence: Codable, Sendable, Equatable {
     }
 }
 
+/// Source-side evidence for system-prompt injection proof. A positive source
+/// trace proves only that the configured prompt reached the composed static
+/// prompt. Runtime proof still needs a live model probe on the row itself.
+public struct RuntimeProofSystemPromptEvidence: Codable, Sendable, Equatable {
+    public var sourceTracePassed: Bool
+    public var matchingSectionIds: [String]
+    public var staticPrefixContainsExpectedPrompt: Bool
+    public var renderedPromptContainsExpectedPrompt: Bool
+
+    public init(
+        sourceTracePassed: Bool,
+        matchingSectionIds: [String],
+        staticPrefixContainsExpectedPrompt: Bool,
+        renderedPromptContainsExpectedPrompt: Bool
+    ) {
+        self.sourceTracePassed = sourceTracePassed
+        self.matchingSectionIds = matchingSectionIds
+        self.staticPrefixContainsExpectedPrompt = staticPrefixContainsExpectedPrompt
+        self.renderedPromptContainsExpectedPrompt = renderedPromptContainsExpectedPrompt
+    }
+
+    public init(trace: SystemPromptInjectionTrace) {
+        self.init(
+            sourceTracePassed: trace.passed,
+            matchingSectionIds: trace.matchingSectionIds,
+            staticPrefixContainsExpectedPrompt: trace.staticPrefixContainsExpectedPrompt,
+            renderedPromptContainsExpectedPrompt: trace.renderedPromptContainsExpectedPrompt
+        )
+    }
+
+    var personaSectionContainsExpectedPrompt: Bool {
+        matchingSectionIds.contains(PromptSectionID.persona)
+    }
+
+    var provesSourceTrace: Bool {
+        sourceTracePassed
+            && personaSectionContainsExpectedPrompt
+            && staticPrefixContainsExpectedPrompt
+            && renderedPromptContainsExpectedPrompt
+    }
+}
+
 /// One row of runtime proof evidence.
 public struct RuntimeProofRow: Codable, Sendable, Equatable {
     public var modelId: String
@@ -137,6 +179,7 @@ public struct RuntimeProofRow: Codable, Sendable, Equatable {
     public var cancellationCleanedUp: Bool
     public var cacheEvidence: RuntimeProofCacheEvidence?
     public var mediaEvidence: RuntimeProofMediaEvidence?
+    public var systemPromptEvidence: RuntimeProofSystemPromptEvidence?
     public var systemPromptProbePassed: Bool
     public var multiTurnCoherent: Bool
     public var parserMarkerLeaks: [String]
@@ -156,6 +199,7 @@ public struct RuntimeProofRow: Codable, Sendable, Equatable {
         cancellationCleanedUp: Bool = false,
         cacheEvidence: RuntimeProofCacheEvidence? = nil,
         mediaEvidence: RuntimeProofMediaEvidence? = nil,
+        systemPromptEvidence: RuntimeProofSystemPromptEvidence? = nil,
         systemPromptProbePassed: Bool = false,
         multiTurnCoherent: Bool = false,
         parserMarkerLeaks: [String] = []
@@ -174,6 +218,7 @@ public struct RuntimeProofRow: Codable, Sendable, Equatable {
         self.cancellationCleanedUp = cancellationCleanedUp
         self.cacheEvidence = cacheEvidence
         self.mediaEvidence = mediaEvidence
+        self.systemPromptEvidence = systemPromptEvidence
         self.systemPromptProbePassed = systemPromptProbePassed
         self.multiTurnCoherent = multiTurnCoherent
         self.parserMarkerLeaks = parserMarkerLeaks
@@ -309,6 +354,14 @@ public enum RuntimeProofValidator {
                     )
                 }
             case .systemPromptInjection:
+                if row.systemPromptEvidence?.provesSourceTrace != true {
+                    issues.append(
+                        blocker(
+                            .systemPromptInjection,
+                            "proven system-prompt rows require source trace into the composed static prompt"
+                        )
+                    )
+                }
                 if !row.systemPromptProbePassed {
                     issues.append(
                         blocker(

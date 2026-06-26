@@ -1,0 +1,38 @@
+{
+  "apps": [
+    { "pid": 506, "bundleId": "com.google.Chrome", "name": "Google Chrome", "active": true, "hidden": false }
+  ],
+  "activeWindow": {
+    "pid": 506,
+    "app": "Google Chrome",
+    "title": "Request Access - Example",
+    "x": 0, "y": 0, "w": 1280, "h": 820
+  },
+  "windowsByPid": {
+    "506": [
+      { "windowId": 1, "title": "Request Access - Example", "focused": true, "minimized": false, "x": 0, "y": 0, "w": 1280, "h": 820 }
+    ]
+  },
+  "snapshot": {
+    "app": "Google Chrome",
+    "focusedWindow": "Request Access - Example",
+    "truncated": false,
+    "windows": [
+      { "id": 1, "title": "Request Access - Example", "focused": true, "x": 0, "y": 0, "w": 1280, "h": 820 }
+    ],
+    "elements": [
+      { "id": "address", "role": "textfield", "label": "Address and search bar", "value": "https://example.test/request-access", "focused": false, "enabled": true, "x": 120, "y": 18, "w": 820, "h": 30, "actions": [] },
+      { "id": "heading", "role": "heading", "value": "Request access", "focused": false, "enabled": true, "x": 300, "y": 130, "w": 320, "h": 32, "actions": [] },
+      { "id": "intro", "role": "statictext", "value": "Complete this synthetic browser form before submitting the review request.", "focused": false, "enabled": true, "x": 300, "y": 178, "w": 620, "h": 24, "actions": [] },
+      { "id": "team", "role": "textfield", "label": "Team name", "value": "Synthetic Platform Team", "focused": true, "enabled": true, "x": 300, "y": 244, "w": 420, "h": 34, "actions": [] },
+      { "id": "email", "role": "textfield", "label": "Email", "value": "reviewer@example.test", "focused": false, "enabled": true, "x": 300, "y": 312, "w": 420, "h": 34, "actions": [] },
+      { "id": "reason", "role": "textarea", "label": "Justification", "value": "Need temporary access for deterministic fixture validation.", "focused": false, "enabled": true, "x": 300, "y": 380, "w": 620, "h": 120, "actions": [] },
+      { "id": "submit", "role": "button", "label": "Submit request", "focused": false, "enabled": true, "x": 300, "y": 536, "w": 150, "h": 36, "actions": [] }
+    ]
+  },
+  "focusedContent": {
+    "role": "textfield",
+    "label": "Team name",
+    "value": "Synthetic Platform Team"
+  }
+}

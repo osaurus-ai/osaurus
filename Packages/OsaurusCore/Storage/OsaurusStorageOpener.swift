@@ -52,4 +52,25 @@ public enum OsaurusStorageOpener {
             }
         }
     }
+
+    /// True when opening `path` would require an encryption key that isn't yet
+    /// resident in the process — i.e. `resolveKey` would call `currentKey()`
+    /// and pay a synchronous Keychain read. Detection-only and Keychain-free,
+    /// so launch main-thread callers can use it to defer rather than block.
+    ///
+    /// Mirrors `resolveKey`'s key-needed branches against the file's *actual*
+    /// on-disk format, which is why a policy-based readiness check is not
+    /// enough: a still-encrypted file under a now-plaintext policy (migration
+    /// not yet converged) still needs the key to open.
+    public static func wouldBlockOnUncachedKey(for path: String) -> Bool {
+        guard !StorageKeyManager.shared.hasCachedKey else { return false }
+        switch StorageFileFormat.detect(path: path) {
+        case .plaintext:
+            return false
+        case .encrypted:
+            return true
+        case .empty:
+            return StorageEncryptionPolicy.shared.desiredMode() == .encrypted
+        }
+    }
 }

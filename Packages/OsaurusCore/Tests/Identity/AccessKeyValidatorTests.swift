@@ -21,11 +21,33 @@ struct AccessKeyValidatorTests {
         )
 
         let result = validator.validate(rawKey: token)
-        guard case .valid(let issuer, _) = result else {
+        guard case .valid(let issuer, _, _) = result else {
             Issue.record("Expected .valid, got \(result)")
             return
         }
         #expect(issuer.lowercased() == TestKeys.aliceAddress.lowercased())
+    }
+
+    /// Host-side request attribution depends on `validate` surfacing the
+    /// matched key's nonce so an inbound request can be tied to a specific
+    /// paired peer in the Remote Connections view.
+    @Test func validToken_returnsMatchedKeyNonce() throws {
+        let validator = APIKeyValidator.forAlice()
+        let nonce = "attribution0000000000000000abcd"
+        let token = try TokenBuilder.build(
+            privateKey: TestKeys.alicePrivateKey,
+            iss: TestKeys.aliceAddress,
+            aud: TestKeys.aliceAddress,
+            nonce: nonce
+        )
+
+        let result = validator.validate(rawKey: token)
+        guard case .valid(_, let audience, let keyNonce) = result else {
+            Issue.record("Expected .valid, got \(result)")
+            return
+        }
+        #expect(keyNonce == nonce)
+        #expect(audience.lowercased() == TestKeys.aliceAddress.lowercased())
     }
 
     @Test func validToken_nonExpiringKey() throws {
@@ -60,7 +82,7 @@ struct AccessKeyValidatorTests {
         )
 
         let result = validator.validate(rawKey: token)
-        guard case .valid(let issuer, _) = result else {
+        guard case .valid(let issuer, _, _) = result else {
             Issue.record("Expected .valid, got \(result)")
             return
         }
@@ -126,7 +148,7 @@ struct AccessKeyValidatorTests {
         let result = validator.validate(rawKey: tampered)
 
         switch result {
-        case .valid(let issuer, _):
+        case .valid(let issuer, _, _):
             #expect(
                 issuer.lowercased() != TestKeys.aliceAddress.lowercased(),
                 "Tampered sig should not recover to original address"
@@ -186,7 +208,7 @@ struct AccessKeyValidatorTests {
         )
 
         let result = validator.validate(rawKey: token)
-        guard case .valid(let issuer, _) = result else {
+        guard case .valid(let issuer, _, _) = result else {
             Issue.record("Expected .valid for whitelisted Bob, got \(result)")
             return
         }
@@ -476,7 +498,7 @@ struct AccessKeyValidatorTests {
 
         let result = validator.validate(rawKey: token)
         switch result {
-        case .valid(let issuer, _):
+        case .valid(let issuer, _, _):
             #expect(
                 issuer.lowercased() != TestKeys.aliceAddress.lowercased(),
                 "Cross-protocol replay must not validate as the original signer"

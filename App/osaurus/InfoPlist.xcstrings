@@ -17,7 +17,19 @@
             "value" : "Osaurus"
           }
         },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus"
+          }
+        },
         "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus"
+          }
+        },
+        "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Osaurus"
@@ -41,7 +53,19 @@
             "value" : "osaurus"
           }
         },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "osaurus"
+          }
+        },
         "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "osaurus"
+          }
+        },
+        "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "osaurus"
@@ -65,10 +89,22 @@
             "value" : "Osaurus plugins may use automation to control other applications on your behalf."
           }
         },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 플러그인이 사용자를 대신하여 다른 응용 프로그램을 제어하기 위해 자동화를 사용할 수 있습니다."
+          }
+        },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Osaurus 插件可能会使用自动化代表你控制其他应用。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 插件可能會用自動化來代表你控制其他應用。"
           }
         }
       }
@@ -89,10 +125,22 @@
             "value" : "Osaurus plugins may access your calendar to read and create events."
           }
         },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 플러그인이 이벤트를 읽고 생성하기 위해 캘린더에 접근할 수 있습니다."
+          }
+        },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Osaurus 插件可能会访问你的日历，以读取和创建日程。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 插件可能會讀取你的行事曆，用來讀取和建立行事曆。"
           }
         }
       }
@@ -113,10 +161,22 @@
             "value" : "Osaurus plugins may access your calendar to read and create events."
           }
         },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 플러그인이 이벤트를 읽고 생성하기 위해 캘린더에 접근할 수 있습니다."
+          }
+        },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Osaurus 插件可能会访问你的日历，以读取和创建日程。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 插件可能會讀取你的行事曆，用來讀取和建立行事曆。"
           }
         }
       }
@@ -137,10 +197,22 @@
             "value" : "Osaurus plugins may access your contacts to search and read contact information."
           }
         },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 플러그인이 연락처 정보를 검색하고 읽기 위해 연락처에 접근할 수 있습니다."
+          }
+        },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Osaurus 插件可能会访问你的联系人，以搜索和读取联系人信息。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 插件可能會存取你的聯絡人，以搜尋和讀取聯絡人資訊。"
           }
         }
       }
@@ -173,10 +245,22 @@
             "value" : "Osaurus uses the local network to discover and connect to agents running on other devices."
           }
         },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus가 다른 기기에서 실행 중인 에이전트를 검색하고 연결하기 위해 로컬 네트워크를 사용합니다."
+          }
+        },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Osaurus 使用本地网络来发现并连接运行在其他设备上的智能体。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 使用本地網路來發現並連接執行在其他裝置上的智慧代理。"
           }
         }
       }
@@ -197,10 +281,22 @@
             "value" : "Osaurus plugins may access your location to provide location-based services."
           }
         },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 플러그인이 위치 기반 서비스를 제공하기 위해 위치 정보에 접근할 수 있습니다."
+          }
+        },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Osaurus 插件可能会访问你的位置，以提供基于位置的服务。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 插件可能會存取你的位置，以提供基於位置的服務。"
           }
         }
       }
@@ -221,10 +317,22 @@
             "value" : "Osaurus plugins may access your location to provide location-based services."
           }
         },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 플러그인이 위치 기반 서비스를 제공하기 위해 위치 정보에 접근할 수 있습니다."
+          }
+        },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Osaurus 插件可能会访问你的位置，以提供基于位置的服务。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 插件可能會存取你的位置，以提供基於位置的服務。"
           }
         }
       }
@@ -245,10 +353,22 @@
             "value" : "Osaurus uses the microphone for on-device voice transcription with FluidAudio."
           }
         },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus가 FluidAudio를 사용한 온디바이스 음성 텍스트 변환을 위해 마이크를 사용합니다."
+          }
+        },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Osaurus 使用麦克风通过 FluidAudio 进行设备端语音转写。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 使用麥克風透過 FluidAudio 進行裝置端語音轉寫。"
           }
         }
       }
@@ -269,10 +389,58 @@
             "value" : "Osaurus plugins may access your reminders to read and create tasks."
           }
         },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 플러그인이 작업을 읽고 생성하기 위해 미리 알림에 접근할 수 있습니다."
+          }
+        },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Osaurus 插件可能会访问你的提醒事项，以读取和创建任务。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 插件可能會存取你的提醒事項，以讀取和建立任務。"
+          }
+        }
+      }
+    },
+    "NSScreenCaptureUsageDescription" : {
+      "comment" : "Privacy - Screen Capture Usage Description",
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus kann Screenshots und Systemaudio nur erfassen, wenn du den Zugriff auf Bildschirmaufnahme erlaubst."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Osaurus can capture screenshots and system audio only when you grant Screen Recording access."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus는 화면 기록 접근 권한을 부여한 경우에만 스크린샷 및 시스템 오디오를 캡처할 수 있습니다."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "只有在你授予屏幕录制访问权限时，Osaurus 才能捕获屏幕截图和系统音频。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "只有在你授予螢幕錄製存取權限時，Osaurus 才能擷取螢幕截圖和系統音訊。"
           }
         }
       }

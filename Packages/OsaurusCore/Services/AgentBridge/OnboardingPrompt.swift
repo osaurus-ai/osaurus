@@ -16,7 +16,7 @@ import Foundation
 
 public enum OnboardingPrompt {
     /// Monotonic integer. Bump for any text change.
-    public static let version: Int = 1
+    public static let version: Int = 2
 
     /// Block appended to the system prompt after the agent's persistent
     /// prompt and before per-run instructions (spec §5.5.3). The schema
@@ -42,6 +42,11 @@ public enum OnboardingPrompt {
         3. Use the high-level tools (`db_insert`, `db_update`, `db_query`, `db_delete`) by default. `db_execute(sql)` is the escape hatch for cases the typed tools can't express.
         4. `db_delete` is a soft delete. Data is recoverable. Do not try to clean up the DB by hard-deleting unless the user explicitly asks.
         5. Before creating a new table, briefly confirm the columns with the user. Agent-authored schemas without user input tend to be over-engineered or wrong-shaped.
+
+        Moving data at scale (do NOT insert large data one row at a time):
+        - If the data is in a file in your working folder, call `db_import(table, path)`. The host reads, parses (CSV/TSV/JSON/JSONL), and bulk-loads it — no row data passes through your tokens and you spend one tool call, not one per row. It creates the table from the file's columns when needed.
+        - If the rows are already in your context (e.g. JSON you just fetched), pass them as `db_insert(table, rows=[...])` / `db_upsert(table, key_columns, rows=[...])` in a single call.
+        - `db_execute` runs first-class SQL, including multi-statement transform scripts (e.g. `INSERT … SELECT`, CTEs, window functions) inside one transaction. Use it to aggregate/derive instead of pulling rows into context and computing by hand. `ATTACH`/`DETACH`, `PRAGMA` writes, `load_extension`, `DROP TABLE`/`TRUNCATE`, unconstrained `DELETE`, and writes to system tables are rejected.
 
         Schema discipline:
         - Tables should have clear, narrow purposes. One thing per table.

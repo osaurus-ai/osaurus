@@ -1,0 +1,23 @@
+{
+  "id": "screen_context.slack-draft-and-selection",
+  "domain": "screen_context",
+  "label": "Screen context • Slack focused draft + selection",
+  "query": "(ambient capture)",
+  "notes": "A chat scene with a real Slack title ('engineering (Channel) - Osaurus - Slack'): the active channel surfaces as behavior ('Active: channel engineering' parsed from the '(Channel)' title), the focused composer carries a draft and a selection (both must surface), and the recent messages show up as on-screen content. Proves the focused-input path for a non-editor app (textfield, no viewport) plus the title-derived channel signal.",
+  "fixtures": {},
+  "expect": {
+    "screenContext": {
+      "fixture": "slack-thread.json",
+      "focusedRoleEquals": "text field",
+      "selectedTextContains": "the Viewing line",
+      "gistContains": ["In Slack"],
+      "mustContain": [
+        "In Slack",
+        "Active: channel engineering",
+        "Selected text:",
+        "On screen:",
+        "screen context fix"
+      ]
+    }
+  }
+}

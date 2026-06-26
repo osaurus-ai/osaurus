@@ -9,12 +9,13 @@ import Foundation
 import SwiftUI
 
 /// Defines all available tabs in the management sidebar.
-public enum ManagementTab: String, CaseIterable, Identifiable {
+public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
     case credits
     case models
     case providers
     case agents
     case plugins
+    case channels
     case sandbox
     case tools
     case skills
@@ -28,12 +29,18 @@ public enum ManagementTab: String, CaseIterable, Identifiable {
     case server
     case permissions
     case computerUse
+    case spawn
     case privacy
     case identity
     case storage
+    case chat
     case settings
 
     public var id: String { rawValue }
+
+    public static var visibleCases: [ManagementTab] {
+        allCases.filter { $0 != .channels }
+    }
 
     /// Resolves a sidebar tab id, including the legacy `"dashboard"` raw value.
     public static func resolved(from rawValue: String) -> ManagementTab? {
@@ -50,6 +57,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable {
         case .providers: "cloud.fill"
         case .agents: "person.2.fill"
         case .plugins: "puzzlepiece.extension.fill"
+        case .channels: "bubble.left.and.bubble.right.fill"
         case .sandbox: "shippingbox.fill"
         case .tools: "wrench.and.screwdriver.fill"
         case .skills: "sparkles"
@@ -63,9 +71,11 @@ public enum ManagementTab: String, CaseIterable, Identifiable {
         case .server: "server.rack"
         case .permissions: "lock.shield.fill"
         case .computerUse: "cursorarrow.rays"
+        case .spawn: "wand.and.stars"
         case .privacy: "hand.raised.fill"
         case .identity: "person.badge.key.fill"
         case .storage: "externaldrive.fill.badge.checkmark"
+        case .chat: "text.bubble.fill"
         case .settings: "gearshape.fill"
         }
     }
@@ -77,6 +87,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable {
         case .providers: L("Providers")
         case .agents: L("Agents")
         case .plugins: L("Plugins")
+        case .channels: L("Channels")
         case .sandbox: L("Sandbox")
         case .tools: L("Tools")
         case .skills: L("Skills")
@@ -90,9 +101,11 @@ public enum ManagementTab: String, CaseIterable, Identifiable {
         case .server: L("Server")
         case .permissions: L("Permissions")
         case .computerUse: L("Computer Use")
+        case .spawn: L("Spawn")
         case .privacy: L("Privacy")
         case .identity: L("Identity")
         case .storage: L("Storage")
+        case .chat: L("Chat")
         case .settings: L("Settings")
         }
     }

@@ -372,6 +372,20 @@ struct OpenAICompatibleStreamParser {
     struct Options: Sendable, Equatable {
         var decodeMode: DecodeMode
         var framing: OpenAICompatibleStreamFramer.Options
+        /// When true, a tool-call finish (`finish_reason=tool_calls`) does NOT
+        /// short-circuit the stream. The accumulated call is left for the
+        /// finish boundary (`[DONE]`/stream-end) to dispatch, so the final
+        /// `usage` chunk that OpenAI emits AFTER `finish_reason` (only when
+        /// `stream_options.include_usage` was requested) is consumed first and
+        /// surfaced as completion-token telemetry — mirroring the local vmlx
+        /// path, which forwards a tool-call step's decode stats before
+        /// finishing-by-throw. Bounded-safe: the leftover call is always
+        /// dispatched by `dispatchFinal` at `[DONE]` or natural stream-end, so
+        /// a provider that omits `[DONE]` cannot hang or drop the call. Only
+        /// enabled for upstreams we actually request usage from (see
+        /// `RemoteProviderService.requestsStreamUsageOptions`), so every other
+        /// provider keeps the original dispatch-at-`finish_reason` timing.
+        var deferToolCallDispatchUntilUsage: Bool = false
 
         static let strict = Options(decodeMode: .strict, framing: .strict)
         static let routerCompatible = Options(decodeMode: .lenient, framing: .routerCompatible)
@@ -384,7 +398,7 @@ struct OpenAICompatibleStreamParser {
         yield: (String) -> Void
     ) throws -> RemoteProviderService.StreamEventOutcome {
         do {
-            return try decodeEvent(jsonData, mode: options.decodeMode, state: &state, yield: yield)
+            return try decodeEvent(jsonData, options: options, state: &state, yield: yield)
         } catch {
             if let recovered = tryRecoverSplitDataJSON(
                 jsonData,
@@ -412,7 +426,7 @@ struct OpenAICompatibleStreamParser {
         else { return nil }
 
         do {
-            return try decodeEvent(normalizedData, mode: options.decodeMode, state: &state, yield: yield)
+            return try decodeEvent(normalizedData, options: options, state: &state, yield: yield)
         } catch {
             return nil
         }
@@ -420,27 +434,35 @@ struct OpenAICompatibleStreamParser {
 
     private static func decodeEvent(
         _ jsonData: Data,
-        mode: DecodeMode,
+        options: Options,
         state: inout RemoteProviderService.StreamingState,
         yield: (String) -> Void
     ) throws -> RemoteProviderService.StreamEventOutcome {
-        switch mode {
+        switch options.decodeMode {
         case .strict:
             let chunk = try JSONDecoder().decode(ChatCompletionChunk.self, from: jsonData)
+            // OpenAI emits usage on a dedicated final chunk (empty `choices`)
+            // when `stream_options.include_usage` was set; on every other chunk
+            // `usage` is null. Capture whatever is present — surfaced at the
+            // finish boundary by `dispatchFinal`.
+            state.captureProviderUsage(chunk.usage)
             let choice = chunk.choices.first
             return processChoice(
                 delta: choice?.delta,
                 finishReason: choice?.finish_reason,
+                deferToolCallDispatchUntilUsage: options.deferToolCallDispatchUntilUsage,
                 state: &state,
                 yield: yield
             )
         case .lenient:
             let chunk = try JSONDecoder().decode(LenientChatCompletionChunk.self, from: jsonData)
+            state.captureProviderUsage(chunk.usage)
             let choice = chunk.choices?.first
             if let message = choice?.message {
                 return processMessageCompletion(
                     message,
                     finishReason: choice?.finish_reason,
+                    deferToolCallDispatchUntilUsage: options.deferToolCallDispatchUntilUsage,
                     state: &state,
                     yield: yield
                 )
@@ -448,6 +470,7 @@ struct OpenAICompatibleStreamParser {
             return processChoice(
                 delta: choice?.delta,
                 finishReason: choice?.finish_reason,
+                deferToolCallDispatchUntilUsage: options.deferToolCallDispatchUntilUsage,
                 state: &state,
                 yield: yield
             )
@@ -457,12 +480,14 @@ struct OpenAICompatibleStreamParser {
     private static func processMessageCompletion(
         _ message: DeltaContent,
         finishReason: String?,
+        deferToolCallDispatchUntilUsage: Bool,
         state: inout RemoteProviderService.StreamingState,
         yield: (String) -> Void
     ) -> RemoteProviderService.StreamEventOutcome {
         let outcome = processChoice(
             delta: message,
             finishReason: finishReason ?? "stop",
+            deferToolCallDispatchUntilUsage: deferToolCallDispatchUntilUsage,
             state: &state,
             yield: yield
         )
@@ -475,6 +500,7 @@ struct OpenAICompatibleStreamParser {
     private static func processChoice(
         delta: DeltaContent?,
         finishReason: String?,
+        deferToolCallDispatchUntilUsage: Bool,
         state: inout RemoteProviderService.StreamingState,
         yield: (String) -> Void
     ) -> RemoteProviderService.StreamEventOutcome {
@@ -563,7 +589,21 @@ struct OpenAICompatibleStreamParser {
                 finishMarker: "finish_reason=\(finishReason)"
             ) {
             case .none: break
-            case .ready(let inv): return .finishWithToolCall(inv)
+            case .ready(let inv):
+                // Normally dispatch the tool the moment the provider signals it.
+                // For usage-enabled upstreams, keep iterating instead so the
+                // trailing `usage` chunk (which arrives AFTER `finish_reason`)
+                // is captured first; `dispatchFinal` re-resolves the same
+                // accumulated call at `[DONE]`/stream-end and dispatches it
+                // there, after emitting the completion-token stats hint. The
+                // call is preserved in `state.accumulatedToolCalls`, and
+                // visible content stays suppressed (the content/reasoning yield
+                // guards above already key off a non-empty tool-call map), so
+                // deferring cannot leak post-tool text.
+                if deferToolCallDispatchUntilUsage {
+                    break
+                }
+                return .finishWithToolCall(inv)
             case .truncated(let err): return .finishWithError(err)
             }
         }

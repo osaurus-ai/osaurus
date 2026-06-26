@@ -3,6 +3,160 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.20.9</title>
+            <pubDate>Tue, 23 Jun 2026 20:52:30 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.20.9</sparkle:version>
+            <sparkle:shortVersionString>0.20.9</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.20.9/Osaurus-0.20.9.dmg" length="54169539" type="application/octet-stream" sparkle:edSignature="zf/b42xE/QmA+HsxrL1r3reHsucRz3DSjSkt4FxywlHMvi0vJFn0MUTp1xJSrNIkmv5qAnaSo4Mtxg4fYD+iBQ=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Add Computer Use regression scorecards (#1648) by @mimeding
+- QoL improvements (#1655) by @RaajeevChandran
+- updated chinese translations (#1659) by @ftzahao
+
+## 🚀 Features
+
+- add Korean (ko) localization (#1660) by @tpae
+
+## 🐛 Bug Fixes
+
+- make agent run honor agent temperature (#1678) by @RaajeevChandran
+- stop wasted iterations on repeated failing capabilities\_load calls (#1679) by @RaajeevChandran
+- persist per tool disable state for MCP provider tools (#1677) by @RaajeevChandran
+- fixed app hangs (#1672) by @RaajeevChandran
+
+## 🧰 Maintenance
+
+- Surface host-side remote-agent (p2p) activity (#1676) by @tpae
+- Polish remote agent connect UX (#1657) by @tpae
+- Harden Bonjour discovery (security, reliability, discoverability) (#1658) by @tpae
+- unify local and remote agent detail views (#1656) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.20.8...0.20.9
+]]></description>
+        </item>
+        <item>
+            <title>0.20.8</title>
+            <pubDate>Mon, 22 Jun 2026 23:40:42 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.20.8</sparkle:version>
+            <sparkle:shortVersionString>0.20.8</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.20.8/Osaurus-0.20.8.dmg" length="53917115" type="application/octet-stream" sparkle:edSignature="tRhCLoFJ08Ljx1XxTRPEVz45/4S9/L/C3L4uWVIOGWx7IYZ/GSMotj2EsCyAdKYdM64Ucr1LI7hGTrMOEBRgAw=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Add Computer Use evidence pack (#1631) by @mimeding
+- Add Computer Use diagnostics (#1643) by @mimeding
+- Add Screen Context capture lab (#1644) by @mimeding
+- show pasted content preview in chat (#1645) by @RaajeevChandran
+- Add Agent Channel Connection Center (#1616) by @mimeding
+- updated chinese translations (#1633) by @ftzahao
+
+## 🚀 Features
+
+- Privacy filter: opt-in on-device model, no-regex rule builder, settings polish (#1641) by @tpae
+- agent db upgrade (#1640) by @tpae
+
+## 🐛 Bug Fixes
+
+- fixed app hangs (#1638) by @RaajeevChandran
+- Fix Computer Use main-thread hangs (#1634) by @tpae
+- Fix and harden remote agent (Mode 2) runs (#1636) by @tpae
+- fix /memory/ingest distillation and harden launch crashes (#1632) (#1635) by @tpae
+
+## 🧰 Maintenance
+
+- disable broken tools (#1650) by @tpae
+- updated onboarding flow (#1649) by @tpae
+- make plain-text answers the primary agent-loop exit (#1639) by @tpae
+- qol improvements (#1637) by @RaajeevChandran
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.20.7...0.20.8
+]]></description>
+        </item>
+        <item>
+            <title>0.20.7</title>
+            <pubDate>Mon, 22 Jun 2026 01:08:21 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.20.7</sparkle:version>
+            <sparkle:shortVersionString>0.20.7</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.20.7/Osaurus-0.20.7.dmg" length="53685784" type="application/octet-stream" sparkle:edSignature="pUxOWaZkfk60O6RcFHVAoeAmC38Hl+t5MBSQVpA9hn8+OHZ3SN3xFeym7xF1XWP/0wtRJCLtlLjmOLEPl+asBA=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Add Agent Channels with Discord connection (#1606) by @mimeding
+- Add permission-gated screenshot slash command (#1570) by @mimeding
+- Add schedule automation history (#1583) by @mimeding
+- Add shared global proxy controls (#1565) by @mimeding
+- Add Business Document Studio service (#1557) by @mimeding
+- Add system prompt injection proof trace (#1527) by @mimeding
+- Repin vmlx-swift -> 643fde27: Kanana-2-30B-A3B (deepseek\_v3) support (#1622) by @jjang-ai
+- Repin vmlx-swift: L2 disk-cache orphan-row + solo seed-boundary fix (#1619) by @jjang-ai
+
+## 🚀 Features
+
+- add lossless tool-output compressor, per-task context-token telemetry, and real remote completion tokens (#1625) by @tpae
+
+## 🧰 Maintenance
+
+- improved remote agent ux (#1628) by @tpae
+- Harden Computer Use privacy, autonomy gate, and consent UX (#1627) by @tpae
+- updated computer use docs (#1626) by @tpae
+- harden remote agent security and reliability (#1623) by @tpae
+- improved screen context evals (#1620) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.20.6...0.20.7
+]]></description>
+        </item>
+        <item>
+            <title>0.20.6</title>
+            <pubDate>Sun, 21 Jun 2026 01:30:04 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.20.6</sparkle:version>
+            <sparkle:shortVersionString>0.20.6</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.20.6/Osaurus-0.20.6.dmg" length="53098492" type="application/octet-stream" sparkle:edSignature="F6i3218NdhXmcXHc66KltH3kh2hWeXpmG9z7cl/ub5lfI+7E3l5DihPCuzqpKZlno5kGlzf2q8w8QbmuNrE2DQ=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Add opt-in frozen screen context for chat (Computer Use) (#1610) by @tpae
+- updated chinese translations (#1607) by @ftzahao
+- Repin vmlx-swift → d35c0744: fix non-JANG Qwen3 tool-calling 'unsupported' regression (#1603) by @jjang-ai
+- Add Provider Connectivity Center (#1558) by @mimeding
+- Add local model compatibility preflight (#1572) by @mimeding
+
+## 🐛 Bug Fixes
+
+- fixed issue with memory distill failure (#1613) by @tpae
+- fixed main thread hangs (#1609) by @RaajeevChandran
+- fixed crash with computer use (#1602) by @tpae
+
+## 🧰 Maintenance
+
+- improved screen context distiller (#1618) by @tpae
+- updated themes view design (#1617) by @tpae
+- gemma 4 12b optimization loop (#1614) by @tpae
+- added additional migration hardening (#1615) by @tpae
+- Make the Default agent configuration-only in chat (#1611) by @tpae
+- Stabilize the default configuration agent and fix disappearing custom agents (#1608) by @tpae
+- evals: optimization loop backbone + W1-W6 harness and local-quality fixes (#1605) by @tpae
+- fixed issue with relay not showing errors (#1604) by @tpae
+- improved evals framework (#1601) by @tpae
+- Make at-rest storage encryption opt-in (plaintext by default, FileVault-gated migration) (#1600) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.20.5...0.20.6
+]]></description>
+        </item>
+        <item>
             <title>0.20.5</title>
             <pubDate>Fri, 19 Jun 2026 13:30:36 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>

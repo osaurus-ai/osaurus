@@ -391,6 +391,13 @@ struct SandboxReduceTool: OsaurusTool, @unchecked Sendable {
                 tool: name,
                 retryable: true
             )
+        case .emptyResponseExhausted:
+            return ToolEnvelope.failure(
+                kind: .executionError,
+                message: AgentToolLoop.emptyToolTaskFallback,
+                tool: name,
+                retryable: true
+            )
         }
     }
 }

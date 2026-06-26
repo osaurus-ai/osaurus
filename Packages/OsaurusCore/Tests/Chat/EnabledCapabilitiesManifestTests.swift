@@ -96,28 +96,65 @@ struct EnabledCapabilitiesManifestTests {
         #expect(rendered.contains("  skill/code-review — Catch obvious smells"))
     }
 
-    @Test("compact mode drops per-tool and per-skill descriptions")
-    func compactDropsDescriptions() throws {
+    @Test("compact mode renders one plugin/<id> line per plugin, not per tool")
+    func compactTiersToPluginLines() throws {
+        // A real plugin (groupId set) collapses to a single loadable
+        // `plugin/<id>` line regardless of how many tools it owns — this is
+        // the cold-prefill saving. Per-tool ids must NOT appear.
         let groups = [
             Group(
+                groupId: "osaurus-mail",
                 pluginDisplay: "Osaurus Mail",
                 skills: [Cap(name: "Mail Helper", description: "Email skill")],
-                tools: [Cap(name: "list_messages", description: "List inbox messages")]
+                tools: [
+                    Cap(name: "list_messages", description: "List inbox messages"),
+                    Cap(name: "send_message", description: "Send an email"),
+                ]
             )
         ]
         let rendered = try #require(
             SystemPromptTemplates.enabledCapabilitiesManifest(groups: groups, compact: true)
         )
-        #expect(rendered.contains("  tool/list_messages"))
-        #expect(!rendered.contains("list_messages — List inbox messages"))
-        #expect(rendered.contains("  skill/Mail Helper"))
-        #expect(!rendered.contains("Mail Helper — "))
-        #expect(!rendered.contains("(skill)"))
-        // Compact also shortens the intro: the worked example is for the
-        // full variant; the load-by-id instruction must survive.
-        #expect(!rendered.contains("Worked example"))
+        #expect(rendered.contains("plugin/osaurus-mail — Osaurus Mail"))
+        // Skill-governed plugins are flagged so the model expects the skill.
+        #expect(rendered.contains("skill-governed"))
+        // The whole point: no per-tool / per-skill id enumeration.
+        #expect(!rendered.contains("tool/list_messages"))
+        #expect(!rendered.contains("tool/send_message"))
+        #expect(!rendered.contains("skill/Mail Helper"))
+        // Compact intro teaches plugin loading and drops the worked example.
         #expect(rendered.contains("## Enabled capabilities"))
+        #expect(rendered.contains("plugin/<id>"))
         #expect(rendered.contains("capabilities_load"))
+        #expect(!rendered.contains("Worked example"))
+    }
+
+    @Test("compact mode lists synthetic (no group id) capabilities inline")
+    func compactSyntheticGroupListsIdsInline() throws {
+        // Groups with no loadable group id (built-in image tools, standalone
+        // skills) have no `plugin/<id>` to expand, so their directly-loadable
+        // ids are listed inline even in compact mode — dropping descriptions.
+        let groups = [
+            Group(
+                pluginDisplay: "Image Generation",
+                skills: [],
+                tools: [
+                    Cap(name: "image_generate", description: "Make an image"),
+                    Cap(name: "image_edit", description: "Edit an image"),
+                ]
+            )
+        ]
+        let rendered = try #require(
+            SystemPromptTemplates.enabledCapabilitiesManifest(groups: groups, compact: true)
+        )
+        #expect(rendered.contains("  tool/image_generate"))
+        #expect(rendered.contains("  tool/image_edit"))
+        #expect(!rendered.contains("image_generate — Make an image"))
+        // The group has no loadable id, so it must NOT be collapsed into a
+        // `plugin/<id> — Image Generation` tier line. (The intro itself
+        // references `plugin/<id>`/`plugin/calendar`, so a blanket
+        // `!contains("plugin/")` would be wrong — assert on the display name.)
+        #expect(!rendered.contains("— Image Generation"))
     }
 
     @Test("token cap collapses overflow plugins to a pointer line")

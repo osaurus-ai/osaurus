@@ -11,6 +11,34 @@ import Combine
 import Foundation
 import SwiftUI
 
+/// Lifecycle of a Mode 2 remote-agent connection, surfaced in chat so the user
+/// sees progress/errors and the composer can gate the first send.
+public enum RemoteAgentConnectionPhase: Equatable, Sendable {
+    /// Not in remote-agent mode (or fully torn down).
+    case idle
+    /// Connect + effective-model pin in flight; send is gated.
+    case connecting
+    /// Provider connected and model pinned; send is allowed.
+    case connected
+    /// Connect or secure-channel handshake failed; carries a user-facing reason.
+    case failed(String)
+}
+
+/// The display identity (name + avatar) of whoever currently "owns" the chat
+/// thread: the local agent in Mode 1, or the paired/discovered remote agent in
+/// Mode 2. Lets message bubbles, the empty state, and the toolbar pill render a
+/// single coherent identity instead of always showing the local agent.
+public struct ChatThreadIdentity: Equatable, Sendable {
+    public let name: String
+    /// Mascot avatar id (e.g. "green") or nil for the name-initial monogram.
+    public let mascotId: String?
+    /// Absolute path to a user-supplied avatar image (local agents only;
+    /// remote agents never transfer custom images, so this is nil for them).
+    public let customAvatarPath: String?
+    /// True when this identity is a remote agent (Mode 2).
+    public let isRemote: Bool
+}
+
 /// Per-window state container for ChatView - each window creates its own instance
 @MainActor
 final class ChatWindowState: ObservableObject {
@@ -54,6 +82,33 @@ final class ChatWindowState: ObservableObject {
     @Published var selectedDiscoveredAgentProviderId: UUID?
     @Published private(set) var pairedRelayAgents: [PairedRelayAgent] = []
     @Published var selectedRelayAgent: PairedRelayAgent?
+    /// Mode 2 only: the *unprefixed* live effective model id of the selected
+    /// remote agent (e.g. `mlx-community/Qwen3-4B-...`), resolved from
+    /// `GET /agents/{address}` on connect. Used to pin the model chip to the
+    /// agent's own model. `nil` until resolved (or when it can't be resolved),
+    /// in which case the picker falls back to the provider's first chat-capable
+    /// model. Cleared whenever the window leaves remote-agent mode.
+    @Published var pinnedRemoteAgentEffectiveModel: String?
+
+    /// Mode 2 only: the selected remote agent's mascot avatar id (e.g. "green"),
+    /// resolved from `GET /agents/{address}` on connect so the chat surfaces the
+    /// remote agent's own avatar instead of a generic icon. `nil` falls back to
+    /// the remote name's initial monogram. Cleared when leaving remote-agent mode.
+    @Published var pinnedRemoteAgentAvatar: String?
+
+    /// Mode 2 only: the selected remote agent's custom Action Bar (chat quick
+    /// actions), resolved from `GET /agents/{address}` on connect so the empty
+    /// state offers the remote agent's own prompt shortcuts. `nil` falls back to
+    /// the neutral chat defaults. Cleared when leaving remote-agent mode.
+    @Published var pinnedRemoteAgentQuickActions: [AgentQuickAction]?
+
+    /// Mode 2 only: lifecycle of the selected remote agent's connection so the
+    /// chat can show "connecting"/error and gate the first send until the
+    /// provider is connected and its model is pinned (otherwise the first
+    /// message races the async connect and fails with a misleading "model not
+    /// found"). Driven by `pinRemoteAgentModelAfterConnect` and kept in sync
+    /// with later disconnects via the `.remoteProviderStatusChanged` observer.
+    @Published var remoteAgentConnectionPhase: RemoteAgentConnectionPhase = .idle
 
     // MARK: - Theme State
 
@@ -228,6 +283,10 @@ final class ChatWindowState: ObservableObject {
         selectedDiscoveredAgent = nil
         selectedDiscoveredAgentProviderId = nil
         selectedRelayAgent = nil
+        pinnedRemoteAgentEffectiveModel = nil
+        pinnedRemoteAgentAvatar = nil
+        pinnedRemoteAgentQuickActions = nil
+        remoteAgentConnectionPhase = .idle
         agentId = newAgentId
         refreshTheme()
         refreshAgentConfig()
@@ -437,7 +496,8 @@ final class ChatWindowState: ObservableObject {
                 id: agentId,
                 name: provider.name,
                 remoteAgentAddress: relayAddress,
-                providerId: provider.id
+                providerId: provider.id,
+                avatar: RemoteAgentManager.shared.remoteAgent(forProviderId: provider.id)?.avatar
             )
         }
     }
@@ -464,6 +524,32 @@ final class ChatWindowState: ObservableObject {
     /// verbatim.
     private static func displayName(for agent: Agent) -> String {
         agent.isBuiltIn ? L("Osaurus") : agent.name
+    }
+
+    /// The identity that should head the chat thread / empty state right now.
+    /// In Mode 2 (a discovered/relay agent is selected) this is the *remote*
+    /// agent's name + fetched mascot; otherwise it's the local active agent.
+    /// Drives message-bubble headers so a remote conversation isn't mislabeled
+    /// "Osaurus" with the local avatar.
+    var effectiveChatIdentity: ChatThreadIdentity {
+        if selectedDiscoveredAgentProviderId != nil {
+            let remoteName =
+                selectedDiscoveredAgent?.name
+                ?? selectedRelayAgent?.name
+                ?? L("Remote Agent")
+            return ChatThreadIdentity(
+                name: remoteName,
+                mascotId: pinnedRemoteAgentAvatar,
+                customAvatarPath: nil,
+                isRemote: true
+            )
+        }
+        return ChatThreadIdentity(
+            name: cachedAgentDisplayName,
+            mascotId: cachedActiveAgent.avatar,
+            customAvatarPath: cachedActiveAgent.customAvatarURL?.path,
+            isRemote: false
+        )
     }
 
     private func decodeBackgroundImageAsync(themeConfig: CustomTheme?) {
@@ -534,13 +620,47 @@ final class ChatWindowState: ObservableObject {
                     guard let self,
                         let providerId = self.selectedDiscoveredAgentProviderId
                     else { return }
-                    let providerExists = RemoteProviderManager.shared.configuration.providers
+                    let manager = RemoteProviderManager.shared
+                    let providerExists = manager.configuration.providers
                         .contains(where: { $0.id == providerId })
-                    guard !providerExists else { return }
-                    self.selectedDiscoveredAgent = nil
-                    self.selectedRelayAgent = nil
-                    self.selectedDiscoveredAgentProviderId = nil
-                    self.refreshPairedRelayAgents()
+                    guard providerExists else {
+                        // Provider was removed from settings — leave remote-agent mode.
+                        self.selectedDiscoveredAgent = nil
+                        self.selectedRelayAgent = nil
+                        self.selectedDiscoveredAgentProviderId = nil
+                        self.pinnedRemoteAgentEffectiveModel = nil
+                        self.pinnedRemoteAgentAvatar = nil
+                        self.pinnedRemoteAgentQuickActions = nil
+                        self.remoteAgentConnectionPhase = .idle
+                        self.refreshPairedRelayAgents()
+                        return
+                    }
+                    // Provider still selected: mirror later connect/disconnect/
+                    // error transitions (e.g. the peer drops or reconnects) so
+                    // chat keeps showing an accurate status without overwriting
+                    // the optimistic `.connecting`/`.connected` set by the
+                    // connect flow before the manager publishes its first state.
+                    if let state = manager.providerStates[providerId] {
+                        if let lastError = state.lastError, !lastError.isEmpty,
+                            !state.isConnected, !state.isConnecting
+                        {
+                            self.remoteAgentConnectionPhase = .failed(lastError)
+                        } else if state.isConnected {
+                            // Don't pre-empt the in-flight connect+pin: while
+                            // we're still `.connecting`, the pin flow owns the
+                            // final `.connected` transition (it flips only once
+                            // the model pin resolves, so the gated send releases
+                            // with the right model). Only reflect a *later*
+                            // reconnect (phase was `.failed`/`.connected`) here.
+                            if self.remoteAgentConnectionPhase != .connecting {
+                                self.remoteAgentConnectionPhase = .connected
+                            }
+                        } else if state.isConnecting,
+                            self.remoteAgentConnectionPhase != .connected
+                        {
+                            self.remoteAgentConnectionPhase = .connecting
+                        }
+                    }
                 }
             }
         )

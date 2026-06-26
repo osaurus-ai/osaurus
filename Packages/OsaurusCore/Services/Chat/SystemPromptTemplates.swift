@@ -63,21 +63,24 @@ public enum SystemPromptTemplates {
     public static let agentLoopGuidance = """
         ## Agent loop
 
-        - `todo(markdown)` — write or replace the user-visible task list. For any task with 3+ steps, create it BEFORE starting work, then re-send the full list with the new box checked immediately after finishing each item. Skip only for trivial work.
-        - `complete(summary)` — call once at the very end (never alongside other tools) with WHAT you did + HOW you verified it. Vague placeholders are rejected; report partial work honestly.
+        - Always answer the user in plain text — that reply is what they read and ends the turn.
+        - `todo(markdown)` — OPTIONAL, multi-step (3+) only: create it before starting, then re-send it with the next box checked after each item. Skip direct/single-step work.
+        - `complete(summary)` — OPTIONAL: close a `todo` task with a short WHAT+HOW status (not the answer) in the SAME message as your answer. Not for direct questions or other tools; no vague placeholders.
         - `clarify(question)` — pause and ask exactly one concrete question only when guessing wrong would change the result. For minor preferences pick a sensible default and proceed.
         - `share_artifact(path | content+filename)` — the only way the user sees a generated image, chart, report, code blob, or any file. **The file MUST exist before this call.** Sandbox: save under your home dir (default cwd), not `/tmp`. For inline text/markdown, pass `content`+`filename` and skip the file write.
         """
 
     /// Compact agent-loop cheat-sheet for small-context / small local models
     /// (`prefersCompactPrompt`). Same four tools and the load-bearing rules
-    /// (3+ step todo, complete-alone-at-end, one-question clarify, file-exists
-    /// artifact), one line each.
+    /// (always answer in plain text, OPTIONAL 3+ step todo, OPTIONAL complete
+    /// that only closes a todo alongside the answer, one-question clarify,
+    /// file-exists artifact), one line each.
     public static let agentLoopGuidanceCompact = """
         ## Agent loop
 
-        - `todo(markdown)` — user-visible checklist. For 3+ step tasks, write it before starting, then re-send the full list with each box checked as you finish.
-        - `complete(summary)` — once at the very end, never alongside other tools: WHAT you did + HOW you verified. No vague placeholders.
+        - Always answer the user in plain text; that plain-text reply ends the turn.
+        - `todo(markdown)` — OPTIONAL checklist for multi-step (3+) work; re-send it with each box checked as you finish. Skip single-step or direct questions.
+        - `complete(summary)` — OPTIONAL: only to close a `todo`, in the SAME message as your answer; a short WHAT+HOW status, not the answer. No vague placeholders.
         - `clarify(question)` — last resort, NOT for big or multi-step tasks. If the request is fully specified, just do the work. Ask one concrete question only when a required input is missing or contradictory and no sensible default exists (or the user explicitly asks you to); otherwise assume a reasonable default, proceed, and note it.
         - `share_artifact(path | content+filename)` — the only way the user sees a file/image/report; the file MUST exist first. Sandbox: save under home, not `/tmp`.
         """
@@ -416,14 +419,22 @@ public enum SystemPromptTemplates {
     /// layout. `skills` render before `tools` so the "Skills that govern
     /// tool groups" rule has a visible anchor.
     public struct ManifestPluginGroup: Sendable, Equatable {
+        /// The plugin's tool-group id, used to form the loadable `plugin/<id>`
+        /// in the compact tiered manifest. Empty for synthetic groups that
+        /// have no single loadable group (built-in image tools, the
+        /// standalone-skills bucket); those fall back to listing their
+        /// directly-loadable `tool/`/`skill/` ids inline.
+        public let groupId: String
         public let pluginDisplay: String
         public let skills: [ManifestCapability]
         public let tools: [ManifestCapability]
         public init(
+            groupId: String = "",
             pluginDisplay: String,
             skills: [ManifestCapability],
             tools: [ManifestCapability]
         ) {
+            self.groupId = groupId
             self.pluginDisplay = pluginDisplay
             self.skills = skills
             self.tools = tools
@@ -458,15 +469,91 @@ public enum SystemPromptTemplates {
     ) -> String? {
         guard !groups.isEmpty else { return nil }
 
+        let blocks =
+            compact
+            ? tieredCompactBlocks(groups)
+            : verboseBlocks(groups)
+
+        // The "never deny a listed capability" rule is owned by
+        // `toolGroundingLine` / `groundingDirective` (which co-fire whenever
+        // this section renders), so the intro doesn't restate it. Compact
+        // mode (small-context models) also drops the worked example — the
+        // ids themselves are what stop a small model from denying a
+        // capability, and the example's tokens crowd an 8K window.
+        let intro: String
+        if compact {
+            // Tiered manifest: one `plugin/<id>` line per plugin instead of a
+            // line per tool. A plugin with N tools costs one line, not N, so
+            // the cold first-turn prefill stays bounded as installed plugins
+            // grow — while the model still SEES every plugin (it never has to
+            // guess one exists and `capabilities_discover` for it). Loading
+            // `plugin/<id>` expands the whole group (and runs its governing
+            // skill) in one call.
+            intro = """
+                ## Enabled capabilities
+
+                Enabled for this session. Load a plugin with capabilities_load \
+                using its `plugin/<id>` (e.g. \
+                `capabilities_load({"ids": ["plugin/calendar"]})`); `tool/` and \
+                `skill/` ids load individually.
+                """
+        } else {
+            intro = """
+                ## Enabled capabilities
+
+                These capabilities are enabled for this session. Each line begins \
+                with its loadable id; some are already in your tool schema, others \
+                must be loaded first. To load one, call capabilities_load with its \
+                id exactly as shown \
+                (e.g. `capabilities_load({"ids": ["tool/<name>"]})`).
+
+                Worked example — User: "You have a list_messages tool." If \
+                `tool/list_messages` is listed here, confirm it and capabilities_load \
+                it before use.
+                """
+        }
+
+        return intro + "\n\n" + blocks.joined(separator: "\n")
+    }
+
+    /// Compact (small-context model) rendering: one `plugin/<id>` line per
+    /// plugin. The model loads the id to pull in the whole group, so the menu
+    /// stays one line regardless of how many tools a plugin owns. Synthetic
+    /// groups with no loadable group id (built-in image tools, standalone
+    /// skills) keep listing their directly-loadable `tool/`/`skill/` ids
+    /// inline — there is no `plugin/<id>` to expand and they are few.
+    private static func tieredCompactBlocks(
+        _ groups: [ManifestPluginGroup]
+    ) -> [String] {
+        groups.map { group in
+            guard !group.groupId.isEmpty else {
+                var lines = ["<\(group.pluginDisplay)>"]
+                lines.append(contentsOf: group.skills.map { "  skill/\($0.name)" })
+                lines.append(contentsOf: group.tools.map { "  tool/\($0.name)" })
+                return lines.joined(separator: "\n")
+            }
+            // `skill-governed` tells the model to expect tool-ordering
+            // instructions when it loads the group; loading `plugin/<id>`
+            // surfaces them automatically, so it is a hint, not a step.
+            let governed = group.skills.isEmpty ? "" : " — skill-governed"
+            return "plugin/\(group.groupId) — \(group.pluginDisplay)\(governed)"
+        }
+    }
+
+    /// Verbose (large-context model) rendering: a line per tool/skill with
+    /// its one-line description, capped at `enabledManifestToolCap` total
+    /// tool lines before low-priority plugins collapse to a `+N more`
+    /// pointer. Unchanged from the original manifest behavior.
+    private static func verboseBlocks(
+        _ groups: [ManifestPluginGroup]
+    ) -> [String] {
         var blocks: [String] = []
         var renderedToolLines = 0
 
         for group in groups {
             let skillLines = group.skills.map { skill -> String in
                 let desc = skill.description.isEmpty ? "Plugin skill." : skill.description
-                return compact
-                    ? "  skill/\(skill.name)"
-                    : "  skill/\(skill.name) — \(desc)"
+                return "  skill/\(skill.name) — \(desc)"
             }
 
             let remaining = max(enabledManifestToolCap - renderedToolLines, 0)
@@ -488,7 +575,7 @@ public enum SystemPromptTemplates {
 
             let toolLines = toolsToShow.map { tool -> String in
                 let desc = tool.description.isEmpty ? "(no description)" : tool.description
-                return compact ? "  tool/\(tool.name)" : "  tool/\(tool.name) — \(desc)"
+                return "  tool/\(tool.name) — \(desc)"
             }
 
             var lines = ["<plugin: \(group.pluginDisplay)>"]
@@ -501,39 +588,7 @@ public enum SystemPromptTemplates {
             }
             blocks.append(lines.joined(separator: "\n"))
         }
-
-        // The "never deny a listed capability" rule is owned by
-        // `toolGroundingLine` / `groundingDirective` (which co-fire whenever
-        // this section renders), so the intro doesn't restate it. Compact
-        // mode (small-context models) also drops the worked example — the
-        // ids themselves are what stop a small model from denying a
-        // capability, and the example's tokens crowd an 8K window.
-        let intro: String
-        if compact {
-            intro = """
-                ## Enabled capabilities
-
-                Enabled for this session. Each line begins with its loadable \
-                id; load one before use with capabilities_load \
-                (e.g. `capabilities_load({"ids": ["tool/<name>"]})`).
-                """
-        } else {
-            intro = """
-                ## Enabled capabilities
-
-                These capabilities are enabled for this session. Each line begins \
-                with its loadable id; some are already in your tool schema, others \
-                must be loaded first. To load one, call capabilities_load with its \
-                id exactly as shown \
-                (e.g. `capabilities_load({"ids": ["tool/<name>"]})`).
-
-                Worked example — User: "You have a list_messages tool." If \
-                `tool/list_messages` is listed here, confirm it and capabilities_load \
-                it before use.
-                """
-        }
-
-        return intro + "\n\n" + blocks.joined(separator: "\n")
+        return blocks
     }
 
     /// General rule that replaces the per-plugin "Plugin Companions"
@@ -615,6 +670,18 @@ public enum SystemPromptTemplates {
         - Describe the WHOLE task in a single `goal`. It runs a self-contained sub-agent that perceives, acts, and verifies each step on its own and returns a summary — do not try to script individual clicks from here.
         - Reads and navigation run automatically; edits and anything consequential pause for the user to approve. Write the goal plainly and let that gate handle confirmation — don't ask the user for permission yourself first.
         - Use it for desktop UI automation (filling a form, navigating an app, extracting on-screen content), NOT for shell, files, or web requests — those have dedicated tools.
+        """
+
+    /// Authoritative image-generation directive. Schema-gated on `image_generate`
+    /// in the composer, so it only renders when the tool is actually callable.
+    /// Counters the persona-led refusal ("I'm text-only / I can't make images").
+    public static let imageGenerationGuidance = """
+        ## Image generation
+
+        - You CAN create and edit images directly. When the user asks you to generate, create, make, draw, render, or produce an image, call the `image_generate` tool. To modify a provided image, call `image_edit`.
+        - NEVER reply that you cannot generate images, that you are "text-only", or that you lack an image tool — you have these tools, so use them. Do not redirect the user to another app or a settings page for image creation.
+        - The generated image is shown to the user automatically (it renders inline in the chat). Do not call `share_artifact` for it. If the user asked for a follow-up edit or transformation of that image, continue by calling `image_edit` with `source_paths` set to the saved path from the generate result; otherwise just briefly confirm in one sentence.
+        - The job runs locally in the background and may briefly swap models; that is expected. Make the call and report the result when it returns.
         """
 
     // MARK: - Soul

@@ -40,6 +40,10 @@ struct CellRenderingContext {
     var onSpeak: ((UUID) -> Void)? = nil
     /// attachment or shared-artifact id string → full screen preview from ChatView
     var onUserImagePreview: ((String) -> Void)? = nil
+    /// Document attachment (pasted content or an attached file like a PDF/DOCX)
+    /// → read-only preview sheet from ChatView. Lets users re-read the extracted
+    /// text after the message is sent, mirroring the composer's chip preview.
+    var onDocumentPreview: ((Attachment) -> Void)? = nil
     /// Window-local accumulator of `original -> placeholder` pairs
     /// from the Privacy Filter. Used by `NativeMarkdownView` to
     /// inline-highlight matching spans inside user + assistant
@@ -483,40 +487,55 @@ final class NativeAssistantActionsView: NSView {
     private let copyButton: HeaderCircleActionControl
     private let regenerateButton: HeaderCircleActionControl
     let speakButton: HeaderCircleActionControl
-    /// Opens the Insights tab focused on this turn's request/response log.
-    let insightsButton: HeaderCircleActionControl
+    /// Overflow "…" menu holding the response timestamp and the Inspect action.
+    let overflowButton: HeaderCircleActionControl
 
     private var turnId: UUID = UUID()
+    private var responseTimestamp: Date = Date()
     private var onCopy: ((UUID) -> Void)?
     private var onRegenerate: ((UUID) -> Void)?
     var onSpeak: ((UUID) -> Void)?
+
+    /// Formats the response timestamp for the overflow menu header, e.g.
+    /// "Jun 20, 10:17 PM". Localized template so order/separators follow locale.
+    private static let timestampFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.setLocalizedDateFormatFromTemplate("MMMd jmm")
+        return formatter
+    }()
 
     nonisolated(unsafe) private var ttsObservation: NSObjectProtocol?
     nonisolated(unsafe) private var ttsConfigObservation: NSObjectProtocol?
     private var currentTheme: (any ThemeProtocol)?
     private var speakWidthConstraint: NSLayoutConstraint?
     private var speakLeadingConstraint: NSLayoutConstraint?
+    private var overflowWidthConstraint: NSLayoutConstraint?
+    private var overflowLeadingConstraint: NSLayoutConstraint?
+    /// Image-generation turns render as just the produced image, so Read-aloud
+    /// (nothing to speak) and the overflow "…" Inspect (no request log) collapse
+    /// away — only Copy and Regenerate stay.
+    private var hideSecondaryActions = false
 
     override init(frame: NSRect) {
         let copyControl = HeaderCircleActionControl(action: {})
         let regenControl = HeaderCircleActionControl(action: {})
         let speakControl = HeaderCircleActionControl(action: {})
-        let insightsControl = HeaderCircleActionControl(action: {})
+        let overflowControl = HeaderCircleActionControl(action: {})
         self.copyButton = copyControl
         self.regenerateButton = regenControl
         self.speakButton = speakControl
-        self.insightsButton = insightsControl
+        self.overflowButton = overflowControl
         super.init(frame: frame)
         translatesAutoresizingMaskIntoConstraints = false
 
         copyButton.translatesAutoresizingMaskIntoConstraints = false
         regenerateButton.translatesAutoresizingMaskIntoConstraints = false
         speakButton.translatesAutoresizingMaskIntoConstraints = false
-        insightsButton.translatesAutoresizingMaskIntoConstraints = false
+        overflowButton.translatesAutoresizingMaskIntoConstraints = false
         addSubview(copyButton)
         addSubview(regenerateButton)
         addSubview(speakButton)
-        addSubview(insightsButton)
+        addSubview(overflowButton)
 
         copyButton.setAction { [weak self] in
             guard let self else { return }
@@ -530,21 +549,34 @@ final class NativeAssistantActionsView: NSView {
             guard let self else { return }
             self.onSpeak?(self.turnId)
         }
-        insightsButton.setAction { [weak self] in
+        overflowButton.setAction { [weak self] in
             guard let self else { return }
-            self.openInsights()
+            self.presentOverflowMenu()
         }
 
         let size: CGFloat = 28
-        // Speaker is last; its leading hangs off Insights and collapses to 0
-        // (along with its width) when TTS is disabled so the row tightens up.
+        // Speaker sits between Regenerate and the overflow "…" button. Its
+        // leading hangs off Regenerate and collapses to 0 (along with its width)
+        // when TTS is disabled, so the overflow button slides left to butt
+        // against Regenerate and stays the last button in the row.
         let speakLeading = speakButton.leadingAnchor.constraint(
-            equalTo: insightsButton.trailingAnchor,
+            equalTo: regenerateButton.trailingAnchor,
             constant: 4
         )
         let speakWidth = speakButton.widthAnchor.constraint(equalToConstant: size)
         self.speakLeadingConstraint = speakLeading
         self.speakWidthConstraint = speakWidth
+
+        // Overflow "…" normally follows Speaker and carries the trailing pin, but
+        // collapses (width/leading → 0) for image-only turns the same way Speaker
+        // does for TTS-off, so the row tightens to just Copy / Regenerate.
+        let overflowLeading = overflowButton.leadingAnchor.constraint(
+            equalTo: speakButton.trailingAnchor,
+            constant: 4
+        )
+        let overflowWidth = overflowButton.widthAnchor.constraint(equalToConstant: size)
+        self.overflowLeadingConstraint = overflowLeading
+        self.overflowWidthConstraint = overflowWidth
 
         NSLayoutConstraint.activate([
             copyButton.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -557,19 +589,20 @@ final class NativeAssistantActionsView: NSView {
             regenerateButton.widthAnchor.constraint(equalToConstant: size),
             regenerateButton.heightAnchor.constraint(equalToConstant: size),
 
-            insightsButton.leadingAnchor.constraint(equalTo: regenerateButton.trailingAnchor, constant: 4),
-            insightsButton.centerYAnchor.constraint(equalTo: centerYAnchor),
-            insightsButton.widthAnchor.constraint(equalToConstant: size),
-            insightsButton.heightAnchor.constraint(equalToConstant: size),
-
-            // Speaker follows Insights and carries the trailing pin. When it's
-            // hidden its width/leading collapse to 0, so Insights becomes the
-            // effective last button.
+            // Speaker follows Regenerate. When hidden its width/leading collapse
+            // to 0 so the overflow button becomes the effective third button.
             speakLeading,
             speakButton.centerYAnchor.constraint(equalTo: centerYAnchor),
             speakWidth,
             speakButton.heightAnchor.constraint(equalToConstant: size),
-            speakButton.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor),
+
+            // Overflow "…" is normally last and carries the trailing pin; it
+            // collapses for image-only turns (see overflowLeading/overflowWidth).
+            overflowLeading,
+            overflowButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+            overflowWidth,
+            overflowButton.heightAnchor.constraint(equalToConstant: size),
+            overflowButton.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor),
         ])
 
         ttsObservation = NotificationCenter.default.addObserver(
@@ -606,12 +639,16 @@ final class NativeAssistantActionsView: NSView {
 
     func configure(
         turnId: UUID,
+        timestamp: Date,
         theme: any ThemeProtocol,
+        hideSecondaryActions: Bool,
         onCopy: ((UUID) -> Void)?,
         onRegenerate: ((UUID) -> Void)?,
         onSpeak: ((UUID) -> Void)?
     ) {
         self.turnId = turnId
+        self.responseTimestamp = timestamp
+        self.hideSecondaryActions = hideSecondaryActions
         self.onCopy = onCopy
         self.onRegenerate = onRegenerate
         self.onSpeak = onSpeak
@@ -633,15 +670,59 @@ final class NativeAssistantActionsView: NSView {
             theme: theme,
             iconTint: nil
         )
-        insightsButton.setSymbol(
-            SymbolImageCache.image("waveform.path.ecg.magnifyingglass", accessibilityDescription: L("Insights"))?
+        overflowButton.setSymbol(
+            SymbolImageCache.image("ellipsis", accessibilityDescription: L("More"))?
                 .withSymbolConfiguration(cfg),
-            toolTip: L("View in Insights"),
+            toolTip: L("More"),
             theme: theme,
             iconTint: nil
         )
         applyTTSVisibility()
+        applyOverflowVisibility()
         refreshSpeakIcon()
+    }
+
+    /// Drops a ChatGPT-style overflow menu under the "…" button: a disabled
+    /// header showing when the response arrived, then the Inspect action.
+    private func presentOverflowMenu() {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+
+        let header = NSMenuItem(
+            title: Self.timestampFormatter.string(from: responseTimestamp),
+            action: nil,
+            keyEquivalent: ""
+        )
+        header.isEnabled = false
+        menu.addItem(header)
+        menu.addItem(.separator())
+
+        let inspect = NSMenuItem(
+            title: L("Inspect response"),
+            action: #selector(inspectFromMenu),
+            keyEquivalent: ""
+        )
+        inspect.target = self
+        if let theme = currentTheme {
+            let pointSize = CGFloat(theme.captionSize)
+            let cfg = NSImage.SymbolConfiguration(pointSize: pointSize, weight: .regular)
+            inspect.image = SymbolImageCache.image(
+                "waveform.path.ecg.magnifyingglass",
+                accessibilityDescription: nil
+            )?.withSymbolConfiguration(cfg)
+        }
+        menu.addItem(inspect)
+
+        // Anchor the menu's top-left just under the button's bottom-left so it
+        // opens downward like the ChatGPT overflow menu. The button is a
+        // non-flipped NSView, so its bottom edge is y == 0 and the 4pt gap sits
+        // below it at a negative y.
+        let origin = NSPoint(x: 0, y: -4)
+        menu.popUp(positioning: nil, at: origin, in: overflowButton)
+    }
+
+    @objc private func inspectFromMenu() {
+        openInsights()
     }
 
     /// Opens the Settings → Insights tab, focused on the request/response log
@@ -707,10 +788,19 @@ final class NativeAssistantActionsView: NSView {
         let toolDriven =
             TTSService.shared.playingMessageId == turnId
             && TTSService.shared.activeSpeakCallId != nil
-        let visible = enabled && !toolDriven
+        let visible = enabled && !toolDriven && !hideSecondaryActions
         speakButton.isHidden = !visible
         speakWidthConstraint?.constant = visible ? 28 : 0
         speakLeadingConstraint?.constant = visible ? 4 : 0
+    }
+
+    /// Image-only turns have no request log to inspect, so the overflow "…" button
+    /// collapses (width/leading → 0) the same way Speaker does for TTS-off.
+    private func applyOverflowVisibility() {
+        let visible = !hideSecondaryActions
+        overflowButton.isHidden = !visible
+        overflowWidthConstraint?.constant = visible ? 28 : 0
+        overflowLeadingConstraint?.constant = visible ? 4 : 0
     }
 }
 
@@ -1208,16 +1298,16 @@ final class NativeStatsView: NSView {
         var parts: [String] = []
         if let ttft {
             if ttft < 0.01 {
-                parts.append(String(format: "TTFT %.0fms", ttft * 1000))
+                parts.append(String(format: L("TTFT %.0fms"), ttft * 1000))
             } else {
-                parts.append(String(format: "TTFT %.2fs", ttft))
+                parts.append(String(format: L("TTFT %.2fs"), ttft))
             }
         }
         if let tps = tokensPerSecond {
-            parts.append(String(format: "%.1f tok/s", tps))
+            parts.append(String(format: L("%.1f tok/s"), tps))
         }
         if let count = tokenCount {
-            parts.append("\(count) tokens")
+            parts.append(L("\(count) tokens"))
         }
         // Trailing diagnostic chip — vmlx tells us the model never emitted
         // `</think>` (or the family's close tag) before EOS / max_tokens.
@@ -1234,7 +1324,7 @@ final class NativeStatsView: NSView {
         // Text intentionally does NOT name a specific toggle so the chip
         // reads accurately for every model family.
         if unclosedReasoning {
-            parts.append("⚠ thinking didn't close — answer may be in reasoning above")
+            parts.append(L("⚠ thinking didn't close — answer may be in reasoning above"))
         }
         label.stringValue = parts.joined(separator: " \u{2022} ")
         label.font = NSFont.monospacedDigitSystemFont(
@@ -1378,6 +1468,7 @@ final class NativeMessageCellView: NSTableCellView {
     private var nativeTypingView: NativeTypingIndicatorView?
     private var nativeArtifactView: NativeArtifactCardView?
     private var nativeChartView: NativeChartView?
+    private var nativeFileDiffView: NativeFileDiffView?
     private var nativeStatsView: NativeStatsView?
     private var nativeAssistantActionsView: NativeAssistantActionsView?
     private var nativeEmptyNoticeView: NativeEmptyResponseNoticeView?
@@ -1414,6 +1505,24 @@ final class NativeMessageCellView: NSTableCellView {
     }
     required init?(coder: NSCoder) { fatalError() }
 
+    override func viewDidMoveToSuperview() {
+        super.viewDidMoveToSuperview()
+        // NSTableView frames each cell to its row when the row is first laid
+        // out, but we report measured heights asynchronously (after layout),
+        // so a later noteHeightOfRows resizes the NSTableRowView without
+        // re-framing the cell. The cell then lags its row — even ending up 0pt
+        // tall after a collapse. The content still *draws* (clipsToBounds is
+        // false), so this stayed invisible for every non-interactive cell. But
+        // a 0-height cell returns nil from hitTest before it ever consults its
+        // subviews, so the file-diff card stopped receiving clicks after a
+        // toggle/scroll. Pin the cell to fill its row so its frame always
+        // tracks the row height and hit-testing keeps working.
+        if let row = superview {
+            autoresizingMask = [.width, .height]
+            frame = row.bounds
+        }
+    }
+
     override func layout() {
         super.layout()
     }
@@ -1448,10 +1557,13 @@ final class NativeMessageCellView: NSTableCellView {
                     let textH = mv.measuredHeight(for: max(bubbleW - 24, 100))
                     containerH = 10 + textH + 6
                 }
-                return ceil(max(attachOffset + containerH + 8, 56))
+                // + actions footer reserved below the bubble, then a small
+                // bottom margin so the next (assistant) cell sits close.
+                let footer = NativeCellHeightEstimator.userActionsFooterHeight
+                return ceil(max(attachOffset + containerH + footer + 2, 56))
             }
             // Attachment-only (no text bubble)
-            return ceil(max(8 + userAttachmentsHeight + 8, 56))
+            return ceil(max(8 + userAttachmentsHeight + NativeCellHeightEstimator.userActionsFooterHeight + 2, 56))
         }
 
         var widthPin: NSLayoutConstraint?
@@ -1533,6 +1645,9 @@ final class NativeMessageCellView: NSTableCellView {
         case let .chart(spec):
             configureAsChart(block: block, spec: spec, context: context, sameKind: sameKind)
 
+        case let .fileDiff(diff):
+            configureAsFileDiff(block: block, diff: diff, context: context, sameKind: sameKind)
+
         case let .generationStats(ttft, tokensPerSecond, tokenCount, unclosedReasoning):
             configureAsStats(
                 ttft: ttft,
@@ -1543,8 +1658,14 @@ final class NativeMessageCellView: NSTableCellView {
                 sameKind: sameKind
             )
 
-        case let .assistantActions(turnId):
-            configureAsAssistantActions(turnId: turnId, context: context, sameKind: sameKind)
+        case let .assistantActions(turnId, imageOnly, timestamp):
+            configureAsAssistantActions(
+                turnId: turnId,
+                imageOnly: imageOnly,
+                timestamp: timestamp,
+                context: context,
+                sameKind: sameKind
+            )
 
         case let .emptyResponseNotice(turnId, outputTokens, costMicro, _):
             configureAsEmptyResponseNotice(
@@ -1574,7 +1695,7 @@ final class NativeMessageCellView: NSTableCellView {
             v.leadingAnchor.constraint(equalTo: leadingAnchor),
             v.trailingAnchor.constraint(equalTo: trailingAnchor),
             v.topAnchor.constraint(equalTo: topAnchor),
-            v.heightAnchor.constraint(equalToConstant: 16),
+            v.heightAnchor.constraint(equalToConstant: 8),
         ])
         spacerView = v
     }
@@ -1991,19 +2112,22 @@ final class NativeMessageCellView: NSTableCellView {
                 userTextView = nil
             }
 
-            // Hover action buttons + redaction badge both anchor off
-            // the same view: the bubble when present, the first
-            // attachment stack otherwise. Captured once so the two
-            // layouts stay in sync if we ever reorder the stack.
+            // The hover action buttons anchor off the bubble when present,
+            // or the first attachment stack otherwise — sitting just below it.
             let anchorView = userMessageContainer ?? userImageStack ?? userDocumentStack
             if let anchorView {
                 let hv = NativeHeaderView()
                 hv.translatesAutoresizingMaskIntoConstraints = false
                 addSubview(hv)
                 NSLayoutConstraint.activate([
-                    hv.trailingAnchor.constraint(equalTo: anchorView.leadingAnchor, constant: -8),
-                    hv.centerYAnchor.constraint(equalTo: anchorView.centerYAnchor),
-                    hv.heightAnchor.constraint(equalToConstant: 28),
+                    // Actions sit below the bubble, right-aligned with it
+                    // (ChatGPT-style), rather than floating off its left edge.
+                    hv.trailingAnchor.constraint(equalTo: anchorView.trailingAnchor),
+                    hv.topAnchor.constraint(
+                        equalTo: anchorView.bottomAnchor,
+                        constant: NativeCellHeightEstimator.userActionsTopGap
+                    ),
+                    hv.heightAnchor.constraint(equalToConstant: NativeCellHeightEstimator.userActionsRowHeight),
                     hv.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 8),
                 ])
                 nativeHeaderView = hv
@@ -2124,6 +2248,10 @@ final class NativeMessageCellView: NSTableCellView {
 
             for (index, attachment) in documents.enumerated() {
                 guard let chip = stack.arrangedSubviews[index] as? UserDocumentChipView else { continue }
+                // Every document chip is tappable: re-open the read-only preview
+                // sheet so the user can re-read the file's extracted text (pasted
+                // content or an attached PDF/DOCX) after the message is sent.
+                chip.onTap = context.onDocumentPreview
                 chip.configure(attachment: attachment, theme: theme)
             }
         }
@@ -2232,6 +2360,8 @@ final class NativeMessageCellView: NSTableCellView {
 
     private func configureAsAssistantActions(
         turnId: UUID,
+        imageOnly: Bool,
+        timestamp: Date,
         context: CellRenderingContext,
         sameKind: Bool
     ) {
@@ -2251,7 +2381,9 @@ final class NativeMessageCellView: NSTableCellView {
         }
         nativeAssistantActionsView?.configure(
             turnId: turnId,
+            timestamp: timestamp,
             theme: context.theme,
+            hideSecondaryActions: imageOnly,
             onCopy: context.onCopy,
             onRegenerate: context.onRegenerate,
             onSpeak: context.onSpeak
@@ -2396,6 +2528,56 @@ final class NativeMessageCellView: NSTableCellView {
         }
     }
 
+    // MARK: - File Diff
+
+    private func configureAsFileDiff(
+        block: ContentBlock,
+        diff: FileDiff,
+        context: CellRenderingContext,
+        sameKind: Bool
+    ) {
+        if !sameKind || nativeFileDiffView == nil {
+            removeAllContentViews()
+            let dv = NativeFileDiffView()
+            dv.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(dv)
+            // Weak bottom-to-cell pin (matches the chart/artifact cells): the
+            // card sizes to its own intrinsicContentSize, and this just keeps
+            // the cell content anchored. The cell tracks the row height via
+            // viewDidMoveToSuperview, so this constraint must NOT be strong
+            // enough to stretch the card to fill the row.
+            let bottomToCell = dv.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6)
+            bottomToCell.priority = NSLayoutConstraint.Priority(250)
+            NSLayoutConstraint.activate([
+                dv.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+                dv.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+                dv.topAnchor.constraint(equalTo: topAnchor, constant: 6),
+                bottomToCell,
+            ])
+            nativeFileDiffView = dv
+        }
+        let blockId = block.id
+        // Diff cards default to expanded; the shared `expandedIds` set is reused
+        // with inverted meaning — presence marks a card the user has collapsed.
+        // The height estimator applies the same inversion.
+        let collapsed = context.expandedIds.contains(blockId)
+        nativeFileDiffView?.onToggleCollapse = {
+            context.onToggleExpand(blockId)
+        }
+        nativeFileDiffView?.onHeightChanged = { [weak self] in
+            guard let self, let dv = self.nativeFileDiffView else { return }
+            guard self.currentBlockId == blockId else { return }
+            let h = dv.measuredCardHeight(outerWidth: context.width) + 12
+            context.onHeightMeasured?(h, blockId)
+        }
+        nativeFileDiffView?.configure(
+            diff: diff,
+            collapsed: collapsed,
+            width: context.width,
+            theme: context.theme
+        )
+    }
+
     // MARK: - Unsupported (should never appear; zero-height placeholder)
 
     private func configureAsUnsupported(sameKind: Bool) {
@@ -2428,6 +2610,11 @@ final class NativeMessageCellView: NSTableCellView {
         spacerView?.removeFromSuperview(); spacerView = nil
         nativeHeaderView?.removeFromSuperview(); nativeHeaderView = nil
         nativeHeaderHeightConstraint = nil
+        // Detach the redaction hover controller (and its text view's
+        // `.mouseMoved` tracking flag) deterministically before dropping
+        // the view — this cell-reuse path otherwise bypasses
+        // `NativeMarkdownView`'s own teardown (issue #1632 launch SIGABRT).
+        nativeMarkdownView?.tearDownForReuse()
         nativeMarkdownView?.removeFromSuperview(); nativeMarkdownView = nil
         nativeThinkingView?.removeFromSuperview(); nativeThinkingView = nil
         // Coordinator-cached views: only call `removeFromSuperview` if
@@ -2448,9 +2635,13 @@ final class NativeMessageCellView: NSTableCellView {
         // content — visible as charts bleeding through unrelated rows once
         // the user starts scrolling and recycling kicks in.
         detachIfStillParented(nativeChartView); nativeChartView = nil
+        nativeFileDiffView?.removeFromSuperview(); nativeFileDiffView = nil
         nativeStatsView?.removeFromSuperview(); nativeStatsView = nil
         nativeAssistantActionsView?.removeFromSuperview(); nativeAssistantActionsView = nil
         nativeEmptyNoticeView?.removeFromSuperview(); nativeEmptyNoticeView = nil
+        // User messages carry outbound redactions (PII the user typed), so
+        // the user text view has the same hover controller to tear down.
+        userTextView?.tearDownForReuse()
         userMessageContainer?.removeFromSuperview(); userMessageContainer = nil
         userTextView = nil
         userInlineEditView = nil
@@ -2560,6 +2751,12 @@ private final class UserDocumentChipView: NSView {
     private let nameField = NSTextField(labelWithString: "")
     private let sizeField = NSTextField(labelWithString: "")
 
+    /// Set for pasted-content chips: tapping the chip re-opens the
+    /// read-only preview sheet. `nil` for plain document chips, which
+    /// stay non-interactive.
+    var onTap: ((Attachment) -> Void)?
+    private var attachment: Attachment?
+
     override var intrinsicContentSize: NSSize {
         let nameW = min(nameField.intrinsicContentSize.width, 130)
         let sizeW = sizeField.intrinsicContentSize.width
@@ -2613,6 +2810,7 @@ private final class UserDocumentChipView: NSView {
     required init?(coder: NSCoder) { fatalError() }
 
     func configure(attachment: Attachment, theme: any ThemeProtocol) {
+        self.attachment = attachment
         layer?.backgroundColor = NSColor(theme.secondaryBackground).withAlphaComponent(0.7).cgColor
 
         let summary = attachment.businessDocumentSummary
@@ -2629,6 +2827,42 @@ private final class UserDocumentChipView: NSView {
         sizeField.textColor = NSColor(theme.tertiaryText)
 
         invalidateIntrinsicContentSize()
+    }
+
+    // Tracking-area + `cursorUpdate` rather than `resetCursorRects`: cursor
+    // rects are unreliable for a subview nested inside the message
+    // `NSTableView`/scroll view, but a `.cursorUpdate` tracking area pushes
+    // the pointing hand reliably on hover. Gated on `onTap` so plain
+    // (non-tappable) document chips keep the arrow cursor.
+    private var cursorTrackingArea: NSTrackingArea?
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let cursorTrackingArea { removeTrackingArea(cursorTrackingArea) }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.cursorUpdate, .activeInKeyWindow, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        cursorTrackingArea = area
+    }
+
+    override func cursorUpdate(with event: NSEvent) {
+        if onTap != nil {
+            NSCursor.pointingHand.set()
+        } else {
+            super.cursorUpdate(with: event)
+        }
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        guard let onTap, let attachment else {
+            super.mouseDown(with: event)
+            return
+        }
+        onTap(attachment)
     }
 }
 
@@ -2647,7 +2881,7 @@ private func cgColorsEqual(_ lhs: CGColor?, _ rhs: CGColor?) -> Bool {
 enum ContentBlockKindTag: Equatable {
     case header, paragraph, toolCallGroup, thinking, userMessage, pendingToolCall
     case generationStats, typingIndicator, groupSpacer, sharedArtifact, chart
-    case assistantActions, emptyResponseNotice, other
+    case assistantActions, emptyResponseNotice, fileDiff, other
 }
 
 extension ContentBlockKind {
@@ -2664,6 +2898,7 @@ extension ContentBlockKind {
         case .groupSpacer: return .groupSpacer
         case .sharedArtifact: return .sharedArtifact
         case .chart: return .chart
+        case .fileDiff: return .fileDiff
         case .assistantActions: return .assistantActions
         case .emptyResponseNotice: return .emptyResponseNotice
         }
@@ -2675,6 +2910,14 @@ extension ContentBlockKind {
 /// Provides height estimates for rows without triggering a full SwiftUI layout pass.
 /// Used by the NSTableView height delegate as a fast path.
 enum NativeCellHeightEstimator {
+
+    /// Height of the user-message action row (copy / edit / delete) reserved
+    /// below the bubble, plus its gap to the bubble. Matches the constraints
+    /// installed in `configureAsUserMessage`; shared so the live fit
+    /// (`measureFittedRowHeight`) and the upfront estimate stay in lockstep.
+    static let userActionsRowHeight: CGFloat = 28
+    static let userActionsTopGap: CGFloat = 8
+    static var userActionsFooterHeight: CGFloat { userActionsRowHeight + userActionsTopGap }
 
     /// Inner height of the assistant header row (avatar + name + actions),
     /// without the 12pt top/bottom cell padding. Must match the constraints
@@ -2696,7 +2939,7 @@ enum NativeCellHeightEstimator {
     ) -> CGFloat {
         switch block.kind {
         case .groupSpacer:
-            return 16
+            return 8
 
         case .header:
             // 12 top + header content + 12 bottom; content grows with avatar size
@@ -2767,7 +3010,13 @@ enum NativeCellHeightEstimator {
                 h += 10 + textH + 6
             }
 
-            h += 8  // bottom margin
+            // Actions footer (copy / edit / delete) reserved below the bubble,
+            // matching the constraints in `configureAsUserMessage`.
+            if !text.isEmpty || docCount > 0 || imageCount > 0 {
+                h += userActionsFooterHeight
+            }
+
+            h += 2  // small bottom margin — keep the assistant reply close
             return max(h, 48)
 
         case let .toolCallGroup(calls):
@@ -2816,6 +3065,22 @@ enum NativeCellHeightEstimator {
                 ? p
                 : (6 + 16 + p)
             return h
+
+        case let .fileDiff(diff):
+            // Diff cards reuse `expandedIds` with inverted meaning, so
+            // `isExpanded == true` here marks a card the user collapsed.
+            // configureAsFileDiff reports measuredCardHeight(...) + 12 for the
+            // cell top/bottom inset — match that.
+            let header = NativeFileDiffView.headerHeight
+            if isExpanded { return header + 12 }
+            let innerW = max(width - 32 - 14 - 8, 100)
+            let chars = max(Int(innerW / 7), 20)
+            var lineRows = 0
+            for line in diff.lines {
+                lineRows += max(1, (line.text.count + chars - 1) / chars)
+            }
+            let fontLineHeight: CGFloat = max(10, CGFloat(theme.codeSize) - 1) * 1.35
+            return header + 6 + CGFloat(lineRows) * fontLineHeight + 6 + 12
         }
     }
 }

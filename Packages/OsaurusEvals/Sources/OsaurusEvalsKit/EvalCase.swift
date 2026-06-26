@@ -145,6 +145,29 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// `id` must be a valid UUID; seeding the exact id the query references
         /// is the point. Other domains ignore this field.
         public let seedAgents: [SeedAgent]?
+        /// SQL executed against the run agent's database BEFORE the loop
+        /// starts (requires `agentCapabilities.dbEnabled`). Each entry may be
+        /// a multi-statement script (`CREATE TABLE …; INSERT …;`) and runs
+        /// through the same `db_execute` path the agent uses, so a case can
+        /// stage "yesterday's" rows, a table to soft-delete/restore, or any
+        /// baseline state the query then builds on. Runs after the eval agent
+        /// is installed and before the model sees the task. Other domains
+        /// ignore this.
+        ///
+        /// Gotcha: a bare `CREATE TABLE t (...)` here is a *raw* table — it
+        /// lacks the reserved system columns (`id`, `_created_at`,
+        /// `_updated_at`, `_deleted_at`) that `db_create_table` adds. That's
+        /// fine for cases that only read it back with `db_query`/`db_execute`,
+        /// but the typed tools that stamp/read those columns (`db_import`,
+        /// `db_schema`, soft-delete) will fail with `no such column:
+        /// _updated_at`. If a case seeds a table the model then drives a typed
+        /// tool at, declare the system columns explicitly so the seed matches
+        /// a real agent table:
+        /// `CREATE TABLE t (id INTEGER PRIMARY KEY AUTOINCREMENT, …,`
+        /// `_created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),`
+        /// `_updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),`
+        /// `_deleted_at INTEGER);`
+        public let seedSql: [String]?
 
         public init(
             requirePlugins: [String]? = nil,
@@ -155,7 +178,8 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             workspaceFiles: [WorkspaceFile]? = nil,
             agentCapabilities: AgentCapabilitiesFixture? = nil,
             sandbox: SandboxFixture? = nil,
-            seedAgents: [SeedAgent]? = nil
+            seedAgents: [SeedAgent]? = nil,
+            seedSql: [String]? = nil
         ) {
             self.requirePlugins = requirePlugins
             self.seedMethods = seedMethods
@@ -166,6 +190,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.agentCapabilities = agentCapabilities
             self.sandbox = sandbox
             self.seedAgents = seedAgents
+            self.seedSql = seedSql
         }
     }
 
@@ -280,11 +305,26 @@ public struct EvalCase: Sendable, Codable, Identifiable {
     /// may contain directories (`src/main.swift`).
     public struct WorkspaceFile: Sendable, Codable {
         public let path: String
-        public let contents: String
+        /// Inline file body. Optional now that a file can pull its bytes
+        /// from a committed fixture via `contentsFromFixture` — that keeps a
+        /// 500-row CSV out of the case JSON. `contents` wins when both are
+        /// set; an empty file results when neither is.
+        public let contents: String?
+        /// Relative path to a committed fixture whose bytes become this
+        /// file's contents. Resolved by the agent_loop runner under
+        /// `Packages/OsaurusEvals/Fixtures/` (with a `Fixtures/AgentDB/`
+        /// fallback), so large import fixtures live next to the suite
+        /// instead of inline.
+        public let contentsFromFixture: String?
 
-        public init(path: String, contents: String) {
+        public init(
+            path: String,
+            contents: String? = nil,
+            contentsFromFixture: String? = nil
+        ) {
             self.path = path
             self.contents = contents
+            self.contentsFromFixture = contentsFromFixture
         }
     }
 
@@ -403,6 +443,14 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// the arguments it passes (`argsMustContain`), and which tools it must
         /// NOT touch — plus an optional LLM-judge rubric.
         public let defaultAgent: DefaultAgentExpectations?
+        /// Distillation expectation for `domain == "screen_context"` cases.
+        /// Pure-data: replays a captured/synthetic accessibility tree
+        /// (`ScreenContextFixture`) through `ScreenContextDistiller` via the
+        /// `FixtureCUDriver` and scores deterministic matchers against the
+        /// rendered `[Screen Context]` block (plus an optional LLM-judge
+        /// rubric). The deterministic matchers run with NO model, so the lane
+        /// is CI-safe like `computer_use` / `schema`.
+        public let screenContext: ScreenContextExpectations?
 
         public init(
             schema: SchemaExpectations? = nil,
@@ -417,7 +465,8 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             agentLoop: AgentLoopExpectations? = nil,
             computerUse: ComputerUseExpectations? = nil,
             computerUseLoop: ComputerUseLoopExpectations? = nil,
-            defaultAgent: DefaultAgentExpectations? = nil
+            defaultAgent: DefaultAgentExpectations? = nil,
+            screenContext: ScreenContextExpectations? = nil
         ) {
             self.schema = schema
             self.toolEnvelope = toolEnvelope
@@ -432,6 +481,78 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.computerUse = computerUse
             self.computerUseLoop = computerUseLoop
             self.defaultAgent = defaultAgent
+            self.screenContext = screenContext
+        }
+    }
+
+    /// Expectation for `domain == "screen_context"` cases. Carries the scene
+    /// (a `ScreenContextFixture`, referenced by `fixture` path or inlined as
+    /// `scene`) plus matchers scored against the distiller's rendered block:
+    ///   - **Deterministic** (CI-safe, no model): `mustContain` /
+    ///     `mustNotContain` substring gates, `noiseRegexMustNotMatch` (a regex
+    ///     that must NOT match — e.g. a bare-version-token line), the focused
+    ///     field's `focusedRoleEquals` / `selectedTextContains` /
+    ///     `viewingContains`, the `gistContains` "Doing:" check, and
+    ///     `orderedContains` (A appears before B — pins the editor-beats-chrome
+    ///     ranking).
+    ///   - **LLM judge** (optional, off-CI): every `rubric` condition graded
+    ///     against the rendered block.
+    /// A case passes only when every present matcher passes.
+    public struct ScreenContextExpectations: Sendable, Codable {
+        /// Relative path to a fixture JSON, resolved under
+        /// `Packages/OsaurusEvals/Fixtures/ScreenContext/`. Mutually exclusive
+        /// with `scene` (inline wins when both are present).
+        public let fixture: String?
+        /// An inline fixture — handy for committed synthetic cases that don't
+        /// want a separate file. Takes precedence over `fixture`.
+        public let scene: ScreenContextFixture?
+        /// Substrings the rendered block MUST contain.
+        public let mustContain: [String]?
+        /// Substrings the rendered block must NOT contain (the noise gate).
+        public let mustNotContain: [String]?
+        /// Regular expressions (matched multi-line) that must NOT match the
+        /// rendered block — e.g. `(?m)^- \d+\.\d+\.\d+$` for a standalone
+        /// version-number bullet.
+        public let noiseRegexMustNotMatch: [String]?
+        /// The focused element's friendly role must equal this (e.g. `text area`).
+        public let focusedRoleEquals: String?
+        /// The focused element's selected text must contain this substring.
+        public let selectedTextContains: String?
+        /// Substrings the focused element's "Viewing:" slice must contain.
+        public let viewingContains: [String]?
+        /// Substrings the activity gist ("Doing:" line) must contain.
+        public let gistContains: [String]?
+        /// Ordered-subsequence assertions over the rendered block: for each
+        /// inner array, every element must appear, in order (the first strictly
+        /// before the next). Pins ranking, e.g. editor body before sidebar.
+        public let orderedContains: [[String]]?
+        /// Natural-language conditions for the LLM judge (optional, off-CI).
+        public let rubric: [String]?
+
+        public init(
+            fixture: String? = nil,
+            scene: ScreenContextFixture? = nil,
+            mustContain: [String]? = nil,
+            mustNotContain: [String]? = nil,
+            noiseRegexMustNotMatch: [String]? = nil,
+            focusedRoleEquals: String? = nil,
+            selectedTextContains: String? = nil,
+            viewingContains: [String]? = nil,
+            gistContains: [String]? = nil,
+            orderedContains: [[String]]? = nil,
+            rubric: [String]? = nil
+        ) {
+            self.fixture = fixture
+            self.scene = scene
+            self.mustContain = mustContain
+            self.mustNotContain = mustNotContain
+            self.noiseRegexMustNotMatch = noiseRegexMustNotMatch
+            self.focusedRoleEquals = focusedRoleEquals
+            self.selectedTextContains = selectedTextContains
+            self.viewingContains = viewingContains
+            self.gistContains = gistContains
+            self.orderedContains = orderedContains
+            self.rubric = rubric
         }
     }
 
@@ -534,6 +655,17 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// Per-tool transcript hygiene audits (call-count bounds, error
         /// ceilings, argument substrings). The folder-tool discipline lane.
         public let toolUsageAudit: [ToolUsageAudit]?
+        /// Optional context-cost ceiling: the run FAILS if the estimated
+        /// input (prompt + frozen tool schema, summed across every model
+        /// step) exceeds this. Mirrors `computer_use_loop`'s
+        /// `scoredMaxModelTokens`; nil → reported, not scored. Pin this on a
+        /// case once the optimization loop has established a good value so a
+        /// later prompt/tool regression that re-bloats context fails the case
+        /// instead of silently costing tokens.
+        public let scoredMaxPromptTokens: Int?
+        /// Optional total-cost ceiling (input + output, summed across steps).
+        /// nil → reported, not scored.
+        public let scoredMaxTotalTokens: Int?
 
         public init(
             maxIterations: Int? = nil,
@@ -558,7 +690,9 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             artifactShared: ArtifactSharedAssertion? = nil,
             scheduledRun: ScheduledRunAssertion? = nil,
             dbState: [DbStateAssertion]? = nil,
-            toolUsageAudit: [ToolUsageAudit]? = nil
+            toolUsageAudit: [ToolUsageAudit]? = nil,
+            scoredMaxPromptTokens: Int? = nil,
+            scoredMaxTotalTokens: Int? = nil
         ) {
             self.maxIterations = maxIterations
             self.mustCallTools = mustCallTools
@@ -583,6 +717,8 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.scheduledRun = scheduledRun
             self.dbState = dbState
             self.toolUsageAudit = toolUsageAudit
+            self.scoredMaxPromptTokens = scoredMaxPromptTokens
+            self.scoredMaxTotalTokens = scoredMaxTotalTokens
         }
 
         /// One workspace-file assertion. `path` is relative to the
@@ -657,21 +793,34 @@ public struct EvalCase: Sendable, Codable, Identifiable {
 
         /// One post-run SQL check against the run agent's database.
         /// `expectRowCountAtLeast` floors the returned row count;
-        /// `expectFirstValue` string-compares the first column of the
-        /// first row (numbers compared by canonical string form).
+        /// `expectRowCountEquals` pins it exactly; `expectFirstValue`
+        /// string-compares the first column of the first row (numbers
+        /// compared by canonical string form); `expectColumns` pins the
+        /// returned column names in order (the shape of a transform/view);
+        /// `expectValues` string-compares the FIRST row column-by-column so a
+        /// computed aggregate row (e.g. a daily trend) can be asserted whole.
         public struct DbStateAssertion: Sendable, Codable {
             public let sql: String
             public let expectRowCountAtLeast: Int?
+            public let expectRowCountEquals: Int?
             public let expectFirstValue: String?
+            public let expectColumns: [String]?
+            public let expectValues: [String]?
 
             public init(
                 sql: String,
                 expectRowCountAtLeast: Int? = nil,
-                expectFirstValue: String? = nil
+                expectRowCountEquals: Int? = nil,
+                expectFirstValue: String? = nil,
+                expectColumns: [String]? = nil,
+                expectValues: [String]? = nil
             ) {
                 self.sql = sql
                 self.expectRowCountAtLeast = expectRowCountAtLeast
+                self.expectRowCountEquals = expectRowCountEquals
                 self.expectFirstValue = expectFirstValue
+                self.expectColumns = expectColumns
+                self.expectValues = expectValues
             }
         }
 

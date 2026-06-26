@@ -181,8 +181,10 @@ command-not-found failures at the executable path/PATH fix. For HTTP/SSE
 providers, diagnostics show whether the global proxy is active, disabled, or
 ignored because the saved URL failed validation. Local MCP rows also include the
 last explicit health snapshot and a capture-policy row. The capture row is policy
-only: screenshot/capture access remains off unless a trusted plugin is installed,
-enabled, opted in by the user, granted permission, and invoked interactively.
+only for remote-provider tools: screenshot/capture access remains off unless a
+trusted plugin is installed, enabled, opted in by the user, granted permission,
+and invoked interactively. The in-app `/screenshot` command is separate from
+remote MCP providers and is not exposed through external tool surfaces.
 
 ---
 

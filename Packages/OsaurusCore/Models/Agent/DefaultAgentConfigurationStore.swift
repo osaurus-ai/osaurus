@@ -85,7 +85,24 @@ public enum DefaultAgentConfigurationStore {
             }
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            try encoder.encode(configuration).write(to: url, options: .atomic)
+            let data = try encoder.encode(configuration)
+            // Persist off the main thread. Tests (override directory / root)
+            // read the file back immediately, so they write synchronously.
+            ConfigDiskWriter.write(
+                data,
+                to: url,
+                synchronous: overrideDirectory != nil || OsaurusPaths.overrideRoot != nil,
+                onError: { error in
+                    let desc = error.localizedDescription
+                    print("[Osaurus] Failed to save default-agent.json: \(desc)")
+                    Task { @MainActor in
+                        ToastManager.shared.error(
+                            L("Couldn't save default agent settings"),
+                            message: desc
+                        )
+                    }
+                }
+            )
         } catch {
             print("[Osaurus] Failed to save default-agent.json: \(error)")
             ToastManager.shared.error(

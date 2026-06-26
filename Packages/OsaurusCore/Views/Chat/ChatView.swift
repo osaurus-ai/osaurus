@@ -160,6 +160,7 @@ final class ChatSession: ObservableObject {
     @Published var selectedModel: String? = nil
     @Published var pickerItems: [ModelPickerItem] = []
     @Published var activeModelOptions: [String: ModelOptionValue] = [:]
+    @Published var imageComposerSettings = ImageComposerSettings()
     @Published var hasAnyModel: Bool = false
     @Published var isDiscoveringModels: Bool = true
     /// When true, voice input auto-restarts after AI responds (continuous conversation mode)
@@ -214,6 +215,18 @@ final class ChatSession: ObservableObject {
     /// nil when the feature is off or nothing was captured). Cleared on
     /// `reset()` / `load(from:)`. Not persisted.
     private var frozenScreenContext: String?
+
+    /// Estimated token cost of `frozenScreenContext`, surfaced as a dedicated
+    /// "Screen Context" line in the Context Budget popover (mirrors
+    /// `cachedMemoryTokens`). Kept in sync by `refreshScreenContextPreview`
+    /// pre-send and locked alongside the snapshot on the first send so the
+    /// line persists for the rest of the session instead of being dropped.
+    private var cachedScreenContextTokens: Int = 0
+
+    /// True once the first send has locked `frozenScreenContext` for this
+    /// session. Until then the welcome-screen preview may re-capture as the
+    /// user switches foreground apps; afterwards the snapshot is fixed.
+    private var isScreenContextFrozen: Bool = false
 
     /// Cached welcome/pre-send preview `ComposedContext`, used by
     /// `estimatedContextBreakdown` when no real send context exists yet.
@@ -314,6 +327,18 @@ final class ChatSession: ObservableObject {
     /// Weak back-reference to the owning window state (set by ChatWindowState).
     weak var windowState: ChatWindowState?
 
+    /// True when this window is pointed at a paired/discovered remote Osaurus
+    /// *agent* (Mode 2 — "talk to the agent"). The signal is the selected
+    /// relay/discovered agent provider, which is set only by
+    /// `connectToRelayAgent` / `connectToDiscoveredAgent` and cleared by
+    /// `adoptAgent`. Plain model picks (Mode 1 — "use the device" for
+    /// inference) never set it, so an `.osaurus` device model chosen on a local
+    /// agent stays in Mode 1. Drives bare-request composition and `/run`
+    /// routing in `send(...)`.
+    var isRemoteAgentTarget: Bool {
+        windowState?.selectedDiscoveredAgentProviderId != nil
+    }
+
     private var currentTask: Task<Void, Never>?
     private var activeRunId: UUID?
     private var activeRunContext: RunContext?
@@ -328,6 +353,13 @@ final class ChatSession: ObservableObject {
     nonisolated(unsafe) private var remoteModelsObserver: NSObjectProtocol?
     nonisolated(unsafe) private var modelSelectionCancellable: AnyCancellable?
     nonisolated(unsafe) private var agentAutoSpeakCancellable: AnyCancellable?
+    /// Direct subscription to the shared model-picker cache. The
+    /// `.remoteProviderModelsChanged` notification bridge above only
+    /// *triggers* a rebuild; this makes the session's `pickerItems`
+    /// follow the cache's atomic `items` assignment so a newly connected
+    /// remote provider shows up in the picker live, without reopening the
+    /// window (mirrors `AgentsView`'s `$items` subscription).
+    nonisolated(unsafe) private var modelCacheCancellable: AnyCancellable?
     /// Flag to prevent auto-persist during initial load or programmatic resets
     private var isLoadingModel: Bool = false
 
@@ -366,6 +398,12 @@ final class ChatSession: ObservableObject {
     /// signals a single sandbox toggle emits. See the pipeline in `init()`
     /// for why memory and `SandboxManager.State` are deliberately excluded.
     nonisolated(unsafe) private var contextEstimateCancellable: AnyCancellable?
+
+    /// Separate from `contextEstimateCancellable` because a screen-context
+    /// refresh runs an Accessibility walk — too heavy for the cheap per-signal
+    /// budget pipeline. Re-captures the pre-send preview when the feature is
+    /// toggled or the foreground app changes, until the first send locks it.
+    nonisolated(unsafe) private var screenContextCancellable: AnyCancellable?
 
     init() {
         // Warm the agent-secret account memo off the main thread before the
@@ -406,6 +444,18 @@ final class ChatSession: ObservableObject {
         ) { [weak self] _ in
             Task { @MainActor in await self?.refreshPickerItems() }
         }
+
+        // Follow the shared cache reactively. `ModelPickerItemCache`
+        // already observes the same notifications and rebuilds `items`
+        // atomically; subscribing here guarantees the session's picker
+        // tracks that rebuild even when the notification-driven refresh
+        // above races the connect that produced it. Fires immediately
+        // with the current snapshot, which `applyPickerItems` no-ops when
+        // unchanged.
+        modelCacheCancellable = ModelPickerItemCache.shared.$items
+            .sink { [weak self] items in
+                Task { @MainActor in self?.applyPickerItems(items) }
+            }
 
         // Mirror AgentTodoStore -> currentTodo so the inline UI block
         // updates whenever the agent calls `todo`. Filter by this window's
@@ -491,18 +541,22 @@ final class ChatSession: ObservableObject {
             .sink { [weak self] newModel in
                 guard let self = self, !self.isLoadingModel, let model = newModel else { return }
                 let pid = self.agentId ?? Agent.defaultId
-                AgentManager.shared.updateDefaultModel(for: pid, model: model)
+                // Mode 2 (remote agent run): the model is pinned to the remote
+                // agent's own model. Don't write that pin into the LOCAL agent's
+                // saved default — otherwise selecting a remote agent would
+                // silently overwrite the local agent's preferred model. Mode 1
+                // (plain model picks on a local agent) still persists normally.
+                if self.windowState?.selectedDiscoveredAgentProviderId == nil {
+                    AgentManager.shared.updateDefaultModel(for: pid, model: model)
+                }
 
                 self.loadActiveModelOptions(for: model)
+                self.applyImageModelDefaults(for: model)
 
-                // Clear pending image attachments when switching to a non-VLM model
-                let newModelSupportsImages: Bool = {
-                    if model.lowercased() == "foundation" { return false }
-                    guard let option = self.pickerItems.first(where: { $0.id == model }) else { return false }
-                    if case .remote = option.source { return true }
-                    return option.isVLM
-                }()
-                if !newModelSupportsImages {
+                // Clear pending image attachments when switching to a non-VLM
+                // model. Computed against the NEW model id, since `@Published`
+                // emits before `selectedModel` updates.
+                if !Self.modelSupportsImages(modelId: model, pickerItems: self.pickerItems) {
                     self.pendingAttachments = []
                 }
 
@@ -548,6 +602,29 @@ final class ChatSession: ObservableObject {
                 Task { @MainActor in self?.refreshPreviewEstimate() }
             }
 
+        // Screen-context preview: re-capture when the user toggles the feature
+        // or switches foreground apps, so the "Screen Context" budget line and
+        // the composer chip stay exact before the first send locks the
+        // snapshot. Kept off the pipeline above because the capture is an
+        // Accessibility walk; debounced harder to coalesce rapid app switches.
+        let screenContextSignals: [AnyPublisher<Void, Never>] = [
+            ScreenContextSettings.shared.$injectionEnabled
+                .map { _ in () }.eraseToAnyPublisher(),
+            FrontmostAppTracker.shared.$lastNonSelfAppName
+                .map { _ in () }.eraseToAnyPublisher(),
+        ]
+        screenContextCancellable = Publishers.MergeMany(screenContextSignals)
+            .debounce(for: .milliseconds(300), scheduler: RunLoop.main)
+            .sink { [weak self] _ in
+                Task { @MainActor in
+                    guard let self, !self.isStreaming, !self.isScreenContextFrozen
+                    else { return }
+                    if await self.refreshScreenContextPreview() {
+                        self.objectWillChange.send()
+                    }
+                }
+            }
+
         // Always reconcile on init: the cache may already be loaded with a
         // snapshot taken before remote providers finished connecting (or
         // before this window's notification observer was registered, in
@@ -583,6 +660,8 @@ final class ChatSession: ObservableObject {
         agentAutoSpeakCancellable = nil
         promptQueueCancellable = nil
         contextEstimateCancellable = nil
+        modelCacheCancellable = nil
+        screenContextCancellable = nil
     }
 
     private func loadActiveModelOptions(for model: String?) {
@@ -644,11 +723,20 @@ final class ChatSession: ObservableObject {
             selectedModel = pickerItems.firstChatCapable?.id
         }
         loadActiveModelOptions(for: selectedModel)
+        applyImageModelDefaults(for: selectedModel)
         isLoadingModel = false
     }
 
     func refreshPickerItems() async {
         let newOptions = await ModelPickerItemCache.shared.buildModelPickerItems()
+        applyPickerItems(newOptions)
+    }
+
+    /// Reconcile the session against a fresh picker list. Shared by the
+    /// explicit `refreshPickerItems()` (which first triggers a rebuild) and
+    /// the `$items` subscription (which receives the cache's already-rebuilt
+    /// list). Idempotent: a no-op when the option ids are unchanged.
+    func applyPickerItems(_ newOptions: [ModelPickerItem]) {
         let newOptionIds = newOptions.map { $0.id }
         let optionsChanged = pickerItems.map({ $0.id }) != newOptionIds
 
@@ -673,6 +761,7 @@ final class ChatSession: ObservableObject {
         isLoadingModel = true
         selectedModel = newSelected
         loadActiveModelOptions(for: selectedModel)
+        applyImageModelDefaults(for: selectedModel)
         isLoadingModel = false
         hasAnyModel = !newOptions.isEmpty
     }
@@ -680,10 +769,21 @@ final class ChatSession: ObservableObject {
     /// Check if the currently selected model supports images (VLM)
     var selectedModelSupportsImages: Bool {
         guard let model = selectedModel else { return false }
-        if model.lowercased() == "foundation" { return false }
-        if ModelMediaCapabilities.from(modelId: model).supportsImage { return true }
-        guard let option = pickerItems.first(where: { $0.id == model }) else { return false }
-        if case .remote = option.source { return true }
+        return Self.modelSupportsImages(modelId: model, pickerItems: pickerItems)
+    }
+
+    /// Whether `modelId` can accept image input. Remote models are NOT assumed
+    /// vision-capable: a plain remote provider (incl. a Mode 1 `.osaurus`
+    /// device) exposes a flat model list with no capability metadata, so a
+    /// remote item's `isVLM` is false unless the id-based heuristic matched or
+    /// router metadata set it — sending images to a non-VLM remote model just
+    /// gets rejected upstream.
+    static func modelSupportsImages(modelId: String, pickerItems: [ModelPickerItem]) -> Bool {
+        if modelId.lowercased() == "foundation" { return false }
+        if ModelMediaCapabilities.from(modelId: modelId).supportsImage { return true }
+        guard let option = pickerItems.first(where: { $0.id == modelId }) else { return false }
+        // Image-edit models accept image input (osaurus image-edit feature).
+        if option.imageCapabilities?.imageEdit == true { return true }
         return option.isVLM
     }
 
@@ -701,6 +801,20 @@ final class ChatSession: ObservableObject {
     var selectedPickerItem: ModelPickerItem? {
         guard let model = selectedModel else { return nil }
         return pickerItems.first { $0.id == model }
+    }
+
+    var selectedImagePickerItem: ModelPickerItem? {
+        guard let model = selectedModel else { return nil }
+        return pickerItems.first { $0.id == model && $0.source.isImageGeneration }
+    }
+
+    private func applyImageModelDefaults(for model: String?) {
+        guard let model,
+            let item = pickerItems.first(where: { $0.id == model && $0.source.isImageGeneration })
+        else { return }
+        var settings = imageComposerSettings
+        settings.applyModelDefaults(steps: item.imageDefaultSteps, guidance: item.imageDefaultGuidance)
+        imageComposerSettings = settings
     }
 
     /// True when the selected model is served by the managed Osaurus Router
@@ -767,6 +881,14 @@ final class ChatSession: ObservableObject {
     /// rebuilds. Skipping it removes one of two rebuilds per switch.
     private var suppressVisibleBlockRebuild = false
 
+    /// Mode 2 override for the per-turn header name baked into `visibleBlocks`.
+    /// When non-nil (a remote agent owns the chat), thread headers show the
+    /// remote agent's name instead of the local agent's — without it, blocks
+    /// always baked the local name and the thread read "Osaurus". `ChatView`
+    /// keeps this in sync with `ChatWindowState.effectiveChatIdentity`; nil
+    /// restores the local-agent name.
+    var threadAgentDisplayName: String?
+
     /// Flattened content blocks for NSTableView rendering.
     /// Read-through to `visibleBlocksStore.blocks` so existing call sites
     /// (helpers, checks that don't need to drive re-renders) keep working.
@@ -805,7 +927,10 @@ final class ChatSession: ObservableObject {
 
     private func rebuildVisibleBlocksImpl() {
         let agent = AgentManager.shared.agent(for: agentId ?? Agent.defaultId)
-        let displayName = agent?.isBuiltIn == true ? L("Osaurus") : (agent?.name ?? L("Osaurus"))
+        let localName = agent?.isBuiltIn == true ? L("Osaurus") : (agent?.name ?? L("Osaurus"))
+        // In Mode 2 the remote agent owns the conversation, so its name heads
+        // the thread; otherwise fall back to the local agent's name.
+        let displayName = threadAgentDisplayName ?? localName
         let streamingTurnId = isStreaming ? turns.last?.id : nil
 
         if MockChatData.isEnabled {
@@ -887,6 +1012,7 @@ final class ChatSession: ObservableObject {
         if let ctx = cachedContext {
             return .from(
                 context: ctx,
+                screenContextTokens: cachedScreenContextTokens,
                 conversationTokens: conversationTokens,
                 inputTokens: inputTokens,
                 outputTokens: outputTokens
@@ -910,6 +1036,7 @@ final class ChatSession: ObservableObject {
             manifest: preview.manifest,
             toolTokens: preview.toolTokens,
             memoryTokens: cachedMemoryTokens,
+            screenContextTokens: cachedScreenContextTokens,
             conversationTokens: conversationTokens,
             inputTokens: inputTokens,
             outputTokens: outputTokens
@@ -1218,6 +1345,106 @@ final class ChatSession: ObservableObject {
         rebuildVisibleBlocks()
     }
 
+    /// Capture a screenshot from the local `/screenshot` slash command and
+    /// append it through the existing artifact-card renderer. This is a
+    /// user-initiated UI action, not a model-callable tool surface.
+    @MainActor
+    func captureScreenshotFromSlashCommand() {
+        guard !isStreaming else {
+            ToastManager.shared.infoLocalized(
+                "Screenshot Deferred",
+                message: "Stop the current response before capturing a screenshot."
+            )
+            return
+        }
+
+        if sessionId == nil {
+            sessionId = UUID()
+            createdAt = Date()
+            isDirty = true
+        }
+        guard let contextId = sessionId?.uuidString else {
+            ToastManager.shared.errorLocalized(
+                "Screenshot Failed",
+                message: "No active chat session is available for storing the screenshot."
+            )
+            return
+        }
+
+        Task { [weak self] in
+            do {
+                let captured = try await ScreenshotCaptureService.shared.capture(
+                    options: ScreenshotCaptureOptions(
+                        contextId: contextId,
+                        description: "Screenshot captured from chat"
+                    )
+                )
+                await MainActor.run {
+                    self?.appendCapturedScreenshotArtifact(captured)
+                    ToastManager.shared.successLocalized(
+                        "Screenshot Captured",
+                        message: "Added the screenshot to this chat."
+                    )
+                }
+            } catch let error as ScreenshotCaptureError {
+                await MainActor.run {
+                    self?.showScreenshotCaptureError(error)
+                }
+            } catch {
+                await MainActor.run {
+                    _ = ToastManager.shared.errorLocalized(
+                        "Screenshot Failed",
+                        message: "Screenshot capture failed."
+                    )
+                }
+            }
+        }
+    }
+
+    @MainActor
+    private func appendCapturedScreenshotArtifact(_ captured: CapturedScreenshotArtifact) {
+        let turn = ChatTurn(
+            role: .assistant,
+            content: "",
+            sharedArtifacts: [captured.artifact]
+        )
+        turns.append(turn)
+        isDirty = true
+        rebuildVisibleBlocks()
+        save()
+    }
+
+    @MainActor
+    private func showScreenshotCaptureError(_ error: ScreenshotCaptureError) {
+        switch error {
+        case .missingScreenRecordingPermission:
+            ToastManager.shared.errorLocalized(
+                "Screen Recording Required",
+                message: "Grant Screen Recording in macOS Privacy & Security, then retry /screenshot."
+            )
+        case .missingSession:
+            ToastManager.shared.errorLocalized(
+                "Screenshot Failed",
+                message: "No active chat session is available for storing the screenshot."
+            )
+        case .noDisplay:
+            ToastManager.shared.errorLocalized(
+                "Screenshot Failed",
+                message: "No capturable display is available."
+            )
+        case .pngEncodingFailed:
+            ToastManager.shared.errorLocalized(
+                "Screenshot Failed",
+                message: "PNG encoding failed."
+            )
+        case .writeFailed:
+            ToastManager.shared.errorLocalized(
+                "Screenshot Failed",
+                message: "The screenshot was captured but could not be written."
+            )
+        }
+    }
+
     /// Clear the Privacy Filter `RedactionMap` for this conversation
     /// (and the chat-side highlight accumulator) without otherwise
     /// affecting the turn history, draft, or attachments. Useful when
@@ -1279,6 +1506,8 @@ final class ChatSession: ObservableObject {
         cachedPreviewContext = nil
         // A new conversation re-freezes its screen context on the next send.
         frozenScreenContext = nil
+        cachedScreenContextTokens = 0
+        isScreenContextFrozen = false
         visibleBlocksStore.blocks = []
         visibleBlocksStore.groupHeaderMap = [:]
 
@@ -1313,11 +1542,13 @@ final class ChatSession: ObservableObject {
     /// cancellation. The UI uses `loading` to render a skeleton, and both
     /// `idle` and `failed` to render the static fallback.
     func loadGenerativeGreetingIfNeeded(agent: Agent) {
-        guard agent.shouldUseGenerativeGreetings else {
-            generativeGreetingState = .idle
-            generativeGreetingKey = nil
-            generativeGreetingTask?.cancel()
-            generativeGreetingTask = nil
+        // No local greeting generation when the feature is off, or for a
+        // remote-agent chat (Mode 2) — the latter would load a local model
+        // purely for empty-state flavor text and stamp the local persona onto a
+        // remote conversation. The empty state shows the remote agent's
+        // name/avatar and the static greeting instead.
+        guard !isRemoteAgentTarget, agent.shouldUseGenerativeGreetings else {
+            resetGenerativeGreeting()
             return
         }
 
@@ -1576,6 +1807,8 @@ final class ChatSession: ObservableObject {
         cachedPreviewContext = nil
         // A loaded conversation re-freezes its screen context on its next send.
         frozenScreenContext = nil
+        cachedScreenContextTokens = 0
+        isScreenContextFrozen = false
         suppressVisibleBlockRebuild = false
         rebuildVisibleBlocks()
 
@@ -1600,6 +1833,50 @@ final class ChatSession: ObservableObject {
         let newTokens = ContextBudgetManager.estimateTokens(for: context)
         guard newTokens != cachedMemoryTokens else { return false }
         cachedMemoryTokens = newTokens
+        return true
+    }
+
+    /// Recompute the cached screen-context token estimate (and, pre-send,
+    /// (re)capture the frozen snapshot) so the Context Budget popover shows a
+    /// "Screen Context" line that matches what the next send will inject.
+    /// Returns `true` when the value changed. Mirrors `refreshMemoryTokens`:
+    /// does NOT emit `objectWillChange` — the caller coalesces the refresh.
+    ///
+    /// Off (or nothing on screen / no Accessibility, which `captureForChat`
+    /// reports as an empty render) ⇒ nothing is injected, so the estimate is
+    /// zeroed and the unlocked preview block is dropped. Once the first send
+    /// has locked the snapshot (`isScreenContextFrozen`), the block is kept and
+    /// only its token count is reconciled.
+    private func refreshScreenContextPreview() async -> Bool {
+        guard ScreenContextSettings.shared.injectionEnabled else {
+            let changed =
+                cachedScreenContextTokens != 0
+                || (!isScreenContextFrozen && frozenScreenContext != nil)
+            cachedScreenContextTokens = 0
+            if !isScreenContextFrozen { frozenScreenContext = nil }
+            return changed
+        }
+
+        if isScreenContextFrozen {
+            let tokens =
+                frozenScreenContext.map {
+                    ContextBudgetManager.estimateTokens(for: $0)
+                } ?? 0
+            guard tokens != cachedScreenContextTokens else { return false }
+            cachedScreenContextTokens = tokens
+            return true
+        }
+
+        // Pre-send: capture the current foreground snapshot. `captureForChat`
+        // returns an empty render when Accessibility is missing or nothing
+        // useful is on screen, which collapses to no budget line.
+        let rendered = await ScreenContextDistiller.captureForChat().render()
+        let block: String? = rendered.isEmpty ? nil : rendered
+        let tokens = block.map { ContextBudgetManager.estimateTokens(for: $0) } ?? 0
+        guard block != frozenScreenContext || tokens != cachedScreenContextTokens
+        else { return false }
+        frozenScreenContext = block
+        cachedScreenContextTokens = tokens
         return true
     }
 
@@ -1667,7 +1944,8 @@ final class ChatSession: ObservableObject {
     private func refreshContextEstimates() async {
         let previewChanged = recomputePreviewContext()
         let memoryChanged = await refreshMemoryTokens()
-        if previewChanged || memoryChanged {
+        let screenChanged = await refreshScreenContextPreview()
+        if previewChanged || memoryChanged || screenChanged {
             objectWillChange.send()
         }
     }
@@ -1774,6 +2052,34 @@ final class ChatSession: ObservableObject {
                 reason: reason,
                 executionMode: executionMode
             )
+        }
+    }
+
+    /// Convert a successful native image tool result into the same enriched
+    /// artifact envelope that `share_artifact` uses, so generated/edited images
+    /// render as first-class chat cards.
+    private func processNativeImageToolResult(
+        toolName: String,
+        toolResult: String
+    ) async -> String {
+        guard let sessionId else { return toolResult }
+        let contextId = sessionId.uuidString
+        let outcome = await Task.detached(priority: .userInitiated) {
+            NativeImageToolArtifactBridge.processFirstImageArtifact(
+                toolName: toolName,
+                toolResult: toolResult,
+                contextId: contextId,
+                contextType: .chat
+            )
+        }.value
+
+        guard let outcome else { return toolResult }
+        switch outcome {
+        case .success(let processed):
+            return ToolEnvelope.success(tool: toolName, text: processed.enrichedToolResult)
+        case .failure(let reason):
+            NSLog("[NativeImageToolArtifactBridge] artifact promotion failed for %@: %@", toolName, String(describing: reason))
+            return toolResult
         }
     }
 
@@ -2060,8 +2366,16 @@ final class ChatSession: ObservableObject {
     /// container). When the user has a host folder mounted but sandbox is
     /// off, that wins — folder tools must enter the schema or
     /// `excludedToolNames(.none)` will hide them entirely.
+    /// Folder context to thread into an agent's execution mode. The Default
+    /// (configuration) agent never works against a host folder, so it resolves
+    /// to nil even when a folder is globally active — keeping the budget
+    /// preview and the sent prompt folder-less and consistent.
+    private func activeFolderContext(for agentId: UUID) -> FolderContext? {
+        agentId == Agent.defaultId ? nil : FolderContextService.shared.currentContext
+    }
+
     private func estimatedChatExecutionMode(agentId: UUID) -> ExecutionMode {
-        let folder = FolderContextService.shared.currentContext
+        let folder = activeFolderContext(for: agentId)
         let autonomous = AgentManager.shared.effectiveAutonomousExec(for: agentId)?.enabled == true
         let resolved = ToolRegistry.shared.resolveExecutionMode(
             folderContext: folder,
@@ -2269,7 +2583,7 @@ final class ChatSession: ObservableObject {
             await SandboxToolRegistrar.shared.registerTools(for: agentId)
         }
         return ToolRegistry.shared.resolveExecutionMode(
-            folderContext: FolderContextService.shared.currentContext,
+            folderContext: activeFolderContext(for: agentId),
             autonomousEnabled: autonomous
         )
     }
@@ -2345,7 +2659,43 @@ final class ChatSession: ObservableObject {
             for try await delta in stream {
                 if !isRunActive(runId) {
                     await processor.finalize()
+                    // Cancelled mid-run: don't leave a remote tool chip
+                    // shimmering forever — settle any still-running rows.
+                    currentTurn.finalizeRemoteToolActivity()
                     return ([], currentTurn)
+                }
+                // Mode 2 (remote agent run): the remote device executes the
+                // tools and streams back only a sanitized trace (name + phase +
+                // error state — never raw args/results). Accumulate it into a
+                // persistent per-turn tool-call group so the observer keeps a
+                // visible record of every tool the remote agent ran
+                // (running → done/failed), instead of a chip that vanished the
+                // instant the tool finished. The activity is display-only and is
+                // never re-sent as history (see `ChatTurn.remoteToolActivity`).
+                if let trace = StreamingAgentToolHint.decode(delta) {
+                    let callKey =
+                        (trace.callId?.isEmpty == false) ? trace.callId! : trace.name
+                    switch trace.phase {
+                    case "started":
+                        currentTurn.noteRemoteToolStarted(callId: callKey, name: trace.name)
+                    default:
+                        // "completed" (or anything terminal) stamps the result.
+                        currentTurn.noteRemoteToolFinished(
+                            callId: callKey,
+                            name: trace.name,
+                            isError: trace.isError
+                        )
+                    }
+                    if trace.endRun {
+                        currentTurn.finalizeRemoteToolActivity()
+                    }
+                    RemoteAgentRunLog.client(
+                        "tool trace phase=\(trace.phase) "
+                            + "name=\(trace.name.isEmpty ? "<unknown>" : trace.name) "
+                            + "isError=\(trace.isError) endRun=\(trace.endRun)"
+                    )
+                    rebuildVisibleBlocks()
+                    continue
                 }
                 // Server-side tool call complete: add the call card + result turn to the chat log
                 if let done = StreamingToolHint.decodeDone(delta) {
@@ -2500,6 +2850,19 @@ final class ChatSession: ObservableObject {
         // dropped on dealloc.
         await processor.finalize()
 
+        // Mode 2 safety net: if the stream ended without an explicit
+        // `endRun` trace (clean end, network cutoff, or a peer that doesn't
+        // send one), settle any remote tool rows still marked "running" so
+        // none shimmer indefinitely. No-op for non-remote turns.
+        currentTurn.finalizeRemoteToolActivity()
+        if currentTurn.hasRemoteToolActivity {
+            RemoteAgentRunLog.client(
+                "stream end remoteTools=\(currentTurn.remoteToolActivity.count) "
+                    + "contentDeltas=\(uiDeltaCount) reasoningDeltas=\(uiReasoningDeltaCount) "
+                    + "finalContentLen=\(currentTurn.contentLength)"
+            )
+        }
+
         if let first = firstDeltaTime {
             currentTurn.timeToFirstToken = first.timeIntervalSince(streamStartTime)
             // Stamp the steady-state tok/s. Single source of truth across
@@ -2636,6 +2999,140 @@ final class ChatSession: ObservableObject {
         }
     #endif
 
+    /// True when `id` names an on-device image-generation model in the picker
+    /// catalog. Drives the image-vs-LLM branch in `send`.
+    func isImageGenerationModel(_ id: String?) -> Bool {
+        guard let id, !id.isEmpty else { return false }
+        return ModelPickerItemCache.shared.items.contains {
+            $0.id == id && $0.source.isImageGeneration
+        }
+    }
+
+    /// Run a text→image generation for the active image model, streaming
+    /// progress into `turn` and rendering the final PNG as a markdown image
+    /// (the existing assistant markdown renderer displays `file://` images).
+    /// Honors the run lifecycle: cancelling `currentTask` cancels the consume
+    /// loop, which soft-cancels the underlying job.
+    func runImageGeneration(
+        prompt: String,
+        attachments: [Attachment],
+        settings: ImageComposerSettings,
+        into turn: ChatTurn,
+        runId: UUID
+    ) async {
+        guard let model = selectedModel, !model.isEmpty else {
+            turn.content = L("Image generation failed: no model selected")
+            rebuildVisibleBlocks()
+            return
+        }
+        guard !prompt.isEmpty else {
+            turn.content = L("Enter a prompt to generate an image.")
+            rebuildVisibleBlocks()
+            return
+        }
+        guard let imageItem = selectedImagePickerItem else {
+            turn.content = L("Image generation failed: selected model is not an image model.")
+            rebuildVisibleBlocks()
+            return
+        }
+
+        turn.content = L("Generating image…")
+        rebuildVisibleBlocks()
+
+        var lastRebuild = Date.distantPast
+        func refresh(force: Bool = false) {
+            let now = Date()
+            if force || now.timeIntervalSince(lastRebuild) >= 0.1 {
+                lastRebuild = now
+                rebuildVisibleBlocks()
+            }
+        }
+
+        var reachedTerminal = false
+        let sourceImages = attachments.loadImages()
+        let stream: AsyncThrowingStream<ImageGenerationEvent, Error>
+        if imageItem.imageCapabilities?.imageEdit == true || imageItem.imageKind == "imageEdit" {
+            guard !sourceImages.isEmpty else {
+                turn.content = L("Attach one source image to edit with this model.")
+                rebuildVisibleBlocks()
+                return
+            }
+            let params = ImageEditParameters(
+                model: model,
+                prompt: prompt,
+                sourceImages: sourceImages,
+                negativePrompt: settings.normalizedNegativePrompt,
+                strength: settings.clampedStrength,
+                width: settings.clampedWidth,
+                height: settings.clampedHeight,
+                steps: settings.clampedSteps,
+                guidance: settings.clampedGuidance,
+                seed: settings.normalizedSeed
+            )
+            stream = await ImageGenerationService.shared.edit(params, jobID: runId.uuidString)
+        } else {
+            guard sourceImages.isEmpty else {
+                turn.content = L("Selected image model does not accept source images.")
+                rebuildVisibleBlocks()
+                return
+            }
+            let params = ImageGenerationParameters(
+                model: model,
+                prompt: prompt,
+                negativePrompt: settings.normalizedNegativePrompt,
+                width: settings.clampedWidth,
+                height: settings.clampedHeight,
+                steps: settings.clampedSteps,
+                guidance: settings.clampedGuidance,
+                seed: settings.normalizedSeed,
+                numImages: 1,
+                outputFormat: .png
+            )
+            stream = await ImageGenerationService.shared.generate(params, jobID: runId.uuidString)
+        }
+        do {
+            for try await event in stream {
+                guard isRunActive(runId) else { break }
+                switch event {
+                case .loadingModel:
+                    turn.content = L("Loading image model…")
+                    refresh()
+                case .step(let step, let total, _):
+                    turn.content = "\(L("Generating image…")) \(step)/\(total)"
+                    refresh()
+                case .preview:
+                    break
+                case .completed(let images):
+                    reachedTerminal = true
+                    if images.isEmpty {
+                        turn.content = L("Image generation produced no image.")
+                    } else {
+                        turn.content = images
+                            .map { "![\(prompt)](\($0.url.absoluteString))" }
+                            .joined(separator: "\n\n")
+                    }
+                    refresh(force: true)
+                case .failed(let message, _):
+                    reachedTerminal = true
+                    turn.content = "\(L("Image generation failed:")) \(message)"
+                    refresh(force: true)
+                case .cancelled:
+                    if !reachedTerminal {
+                        reachedTerminal = true
+                        turn.content = L("Image generation cancelled.")
+                    }
+                    refresh(force: true)
+                }
+            }
+        } catch {
+            if !reachedTerminal {
+                turn.content = "\(L("Image generation failed:")) \(error)"
+                refresh(force: true)
+            }
+        }
+        isDirty = true
+    }
+
     func send(_ text: String, attachments: [Attachment] = []) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let hasContent = !trimmed.isEmpty || !attachments.isEmpty
@@ -2730,6 +3227,7 @@ final class ChatSession: ObservableObject {
         // streaming pipeline (e.g. from a sandbox plugin running on a
         // detached task) couldn't tell what agent they belonged to.
         let turnAgentId = agentId ?? Agent.defaultId
+        let imageSettings = imageComposerSettings
 
         currentTask = Task { @MainActor [weak self] in
             guard let self else { return }
@@ -2748,6 +3246,21 @@ final class ChatSession: ObservableObject {
                 // Must refresh block memoizer before first delta — otherwise visibleBlocks stays
                 // user-only while isStreaming is true and the table early-returns without assistant rows.
                 rebuildVisibleBlocks()
+
+                // Image-generation models route through ImageGenerationService
+                // (a second MLX graph, gated exclusive to LLM eval) instead of
+                // the chat engine. The same run lifecycle (defer finalizeRun,
+                // currentTask cancellation) applies.
+                if self.isImageGenerationModel(self.selectedModel) {
+                    await self.runImageGeneration(
+                        prompt: trimmed,
+                        attachments: attachments,
+                        settings: imageSettings,
+                        into: assistantTurn,
+                        runId: runId
+                    )
+                    return
+                }
 
                 #if DEBUG
                     // Dev aid: stream a canned tool-call timeline instead of the real
@@ -2814,12 +3327,24 @@ final class ChatSession: ObservableObject {
                     // session and injected onto the latest user message — so it
                     // flows through the Privacy Filter — in
                     // `loopHooks.buildMessages` below.
-                    if ScreenContextSettings.shared.injectionEnabled,
-                        self.frozenScreenContext == nil
+                    if !isRemoteAgentTarget,
+                        ScreenContextSettings.shared.injectionEnabled,
+                        !self.isScreenContextFrozen
                     {
-                        let snapshot = await ScreenContextDistiller.captureForChat()
-                        self.frozenScreenContext = snapshot.render()
-                        guard isRunActive(runId) else { return }
+                        // A welcome-screen preview may have already captured the
+                        // snapshot (reused as-is to avoid a second Accessibility
+                        // walk); otherwise capture it now.
+                        if self.frozenScreenContext == nil {
+                            let snapshot = await ScreenContextDistiller.captureForChat()
+                            let rendered = snapshot.render()
+                            self.frozenScreenContext = rendered.isEmpty ? nil : rendered
+                            guard isRunActive(runId) else { return }
+                        }
+                        self.cachedScreenContextTokens =
+                            self.frozenScreenContext.map {
+                                ContextBudgetManager.estimateTokens(for: $0)
+                            } ?? 0
+                        self.isScreenContextFrozen = true
                     }
 
                     let context = await SystemPromptComposer.composeChatContext(
@@ -2837,7 +3362,12 @@ final class ChatSession: ObservableObject {
                     )
                     guard isRunActive(runId) else { return }
 
-                    var sys = context.prompt
+                    // Mode 2 (remote agent run): send NO local system prompt.
+                    // The remote agent composes its own persona/memory/tools on
+                    // the bare conversation server-side, so anything we'd inject
+                    // here (local agent prompt, plugin instructions, one-off
+                    // skill) would leak the caller's context onto the agent.
+                    var sys = isRemoteAgentTarget ? "" : context.prompt
 
                     // Plugin-dispatched tasks (host->dispatch) carry their
                     // source plugin id on the session. Append that plugin's
@@ -2849,7 +3379,8 @@ final class ChatSession: ObservableObject {
                     // dropped on the dispatch path, leaving the model
                     // unaware of plugin-specific contracts (e.g. Telegram's
                     // `[reply_token …]` / `reply` / `reply_typing` flow).
-                    if let pid = sourcePluginId,
+                    if !isRemoteAgentTarget,
+                        let pid = sourcePluginId,
                         let pluginInstructions = PluginInstructionsResolver.instructions(
                             pluginId: pid,
                             agentId: agentId
@@ -2858,19 +3389,23 @@ final class ChatSession: ObservableObject {
                         sys = sys.isEmpty ? pluginInstructions : sys + "\n\n" + pluginInstructions
                     }
 
-                    // Inject one-off skill if the user selected one via slash command
+                    // Inject one-off skill if the user selected one via slash command.
+                    // Consume the pending id either way, but never append in Mode 2
+                    // (the request must stay bare).
                     if let skillId = pendingOneOffSkillId {
                         pendingOneOffSkillId = nil
-                        if let skill = SkillManager.shared.skill(for: skillId) {
+                        if !isRemoteAgentTarget, let skill = SkillManager.shared.skill(for: skillId) {
                             let section = await SkillManager.shared.buildFullInstructions(for: skill)
                             sys += "\n\n## Active Skill: \(skill.name)\n\n\(section)"
                         }
                     }
 
-                    // Frozen for the whole run (deferred-schema policy): the
-                    // tool schema never changes mid-run, even after
-                    // `capabilities_load` — see the drain block below.
-                    let toolSpecs = context.tools
+                    // Each agent-loop iteration is a fresh provider request.
+                    // `capabilities_load` may refresh this array for the next
+                    // same-turn request after validating the loaded schemas. In
+                    // Mode 2 we still send no tools: the remote agent advertises
+                    // and executes its own tools server-side and streams text.
+                    var toolSpecs = isRemoteAgentTarget ? [] : context.tools
                     let isManualTools = liveToolMode == .manual
                     cachedContext = context
 
@@ -2891,6 +3426,7 @@ final class ChatSession: ObservableObject {
                     }
 
                     budgetTracker.snapshot(context: context)
+                    budgetTracker.updateScreenContext(tokens: cachedScreenContextTokens)
 
                     let effectiveMaxTokensForAgent = AgentManager.shared.effectiveMaxTokens(for: effectiveAgentId)
 
@@ -3120,15 +3656,10 @@ final class ChatSession: ObservableObject {
                         }
 
                         // Tools loaded via capabilities_load / sandbox_plugin_register.
-                        // Deferred-schema policy (KV stability): loaded tools
-                        // are callable IMMEDIATELY — the registry dispatches by
-                        // name and schema visibility is not an execution gate —
-                        // but `toolSpecs` stays FROZEN for the rest of this run.
-                        // Hot-patching it mid-run rewrote the rendered `<tools>`
-                        // block and busted the paged-KV cache for the whole
-                        // conversation. The names persist into the session's
-                        // tool union so the next user turn composes their full
-                        // schemas in.
+                        // Each loop iteration is a fresh model request, so it
+                        // is safe to expose validated schemas on the NEXT
+                        // iteration in this same user turn. We still never
+                        // mutate an in-flight stream.
                         if inv.toolName == "capabilities_load"
                             || inv.toolName == "sandbox_plugin_register"
                         {
@@ -3136,18 +3667,26 @@ final class ChatSession: ObservableObject {
                             // unrelated run; persist only in auto mode (manual
                             // mode keeps the user's explicit tool set fixed).
                             let newTools = await CapabilityLoadBuffer.shared.drain()
-                            if !isManualTools, !newTools.isEmpty {
-                                if !ToolEnvelope.isError(resultText) {
-                                    resultText += AgentToolLoop.deferredSchemaNotice
-                                }
+                            if !newTools.isEmpty {
+                                let activation = AgentToolLoop.activateCapabilitySchemas(
+                                    loadedTools: newTools,
+                                    currentTools: toolSpecs,
+                                    mode: .sameTurnNextRequest
+                                )
+                                toolSpecs = activation.tools
+                                resultText = AgentToolLoop.annotateCapabilityLoadResult(
+                                    resultText,
+                                    activation: activation.report
+                                )
                                 if let sid = self.sessionId {
-                                    let names = newTools.map { $0.function.name }
-                                    let snapshot = context.alwaysLoadedNames
-                                    await SessionToolStateStore.shared.appendLoadedTools(
-                                        self.sessionStateKey(sid),
-                                        names: names,
-                                        fallbackAlwaysLoadedNames: snapshot
-                                    )
+                                    if !isManualTools {
+                                        let snapshot = context.alwaysLoadedNames
+                                        await SessionToolStateStore.shared.appendLoadedTools(
+                                            self.sessionStateKey(sid),
+                                            names: activation.report.allToolNames,
+                                            fallbackAlwaysLoadedNames: snapshot
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -3156,6 +3695,14 @@ final class ChatSession: ObservableObject {
                             resultText = await self.processShareArtifactResult(
                                 toolResult: resultText,
                                 executionMode: executionMode
+                            )
+                            if let artifact = SharedArtifact.fromEnrichedToolResult(resultText) {
+                                await PluginManager.shared.notifyArtifactHandlers(artifact: artifact)
+                            }
+                        } else if NativeImageToolArtifactBridge.isNativeImageTool(inv.toolName) {
+                            resultText = await self.processNativeImageToolResult(
+                                toolName: inv.toolName,
+                                toolResult: resultText
                             )
                             if let artifact = SharedArtifact.fromEnrichedToolResult(resultText) {
                                 await PluginManager.shared.notifyArtifactHandlers(artifact: artifact)
@@ -3509,23 +4056,11 @@ final class ChatSession: ObservableObject {
                                 )
                             }
 
-                            // Memory now lives on the latest user message instead of
-                            // the system prompt — keeps the system prefix byte-stable
-                            // across turns so the MLX paged KV cache can reuse the
-                            // entire conversation prefix.
-                            SystemPromptComposer.injectMemoryPrefix(context.memorySection, into: &msgs)
-
-                            // Opt-in: prepend the frozen screen-context snapshot
-                            // to the latest user message (same seam as memory).
-                            // Keeps the system prefix KV-stable and routes the
-                            // snapshot through the Privacy Filter on cloud sends.
-                            if ScreenContextSettings.shared.injectionEnabled {
-                                SystemPromptComposer.injectScreenContextPrefix(
-                                    self.frozenScreenContext,
-                                    into: &msgs
-                                )
-                            }
-
+                            // Conversation tokens are measured BEFORE the memory
+                            // + screen-context prefixes are injected, so each is
+                            // attributed to its own budget row (Memory / Screen
+                            // Context) instead of being double-counted inside the
+                            // Conversation total.
                             let convTokens =
                                 msgs
                                 .filter { $0.role != "system" }
@@ -3534,6 +4069,31 @@ final class ChatSession: ObservableObject {
                                 tokens: convTokens,
                                 finishedOutputTurn: assistantTurn
                             )
+
+                            // Memory now lives on the latest user message instead of
+                            // the system prompt — keeps the system prefix byte-stable
+                            // across turns so the MLX paged KV cache can reuse the
+                            // entire conversation prefix. Skipped in Mode 2: this is
+                            // the *local* agent's memory and must not ride along to
+                            // the remote agent, which applies its own.
+                            if !self.isRemoteAgentTarget {
+                                SystemPromptComposer.injectMemoryPrefix(
+                                    context.memorySection,
+                                    into: &msgs
+                                )
+                            }
+
+                            // Opt-in: prepend the frozen screen-context snapshot
+                            // to the latest user message (same seam as memory).
+                            // Keeps the system prefix KV-stable and routes the
+                            // snapshot through the Privacy Filter on cloud sends.
+                            // Skipped in Mode 2 (no local context leaves the client).
+                            if !self.isRemoteAgentTarget, ScreenContextSettings.shared.injectionEnabled {
+                                SystemPromptComposer.injectScreenContextPrefix(
+                                    self.frozenScreenContext,
+                                    into: &msgs
+                                )
+                            }
                             // `overBudget` (protected first message + tail
                             // alone exceed the budget after every compaction
                             // lever) ends the run with a distinct exit
@@ -3571,7 +4131,12 @@ final class ChatSession: ObservableObject {
                                 attempt: attempt
                             )
                             var req = ChatCompletionRequest(
-                                model: self.selectedModel ?? "default",
+                                // Mode 2: the wire omits the model and routing is
+                                // by provider id, so don't pass the local
+                                // `selectedModel` — it can lag the async agent pin
+                                // and would only leak a stale prefix internally.
+                                model: self.isRemoteAgentTarget
+                                    ? "default" : (self.selectedModel ?? "default"),
                                 messages: msgs,
                                 temperature: effectiveTemp,
                                 max_tokens: effectiveMaxTokensForAgent,
@@ -3586,6 +4151,30 @@ final class ChatSession: ObservableObject {
                                 session_id: self.sessionId?.uuidString
                             )
                             req.samplingParametersAreImplicit = true
+                            // Mode 2 routing signal: tells `RemoteProviderService`
+                            // to target the peer's `/agents/{address}/run`
+                            // endpoint (remote agent runs fully server-side). The
+                            // local `model` placeholder above is dropped from the
+                            // wire entirely (`RemoteChatRequest.encode`), so the
+                            // peer resolves its own live effective model. False =
+                            // Mode 1 (plain remote inference via
+                            // `/chat/completions`).
+                            req.runAsRemoteAgent = self.isRemoteAgentTarget
+                            // Mode 2 routing: target the selected agent's
+                            // provider directly (by id), so a stale
+                            // `selectedModel` can never redirect the run to a
+                            // different local provider. `ChatEngine` resolves
+                            // the service from this id and ignores the model
+                            // string for agent runs.
+                            req.remoteAgentProviderId =
+                                self.isRemoteAgentTarget
+                                ? self.windowState?.selectedDiscoveredAgentProviderId : nil
+                            // Insights fidelity: in Mode 2 the wire omits the
+                            // model, so log the agent's live effective model
+                            // instead of the local prefixed fallback.
+                            req.remoteAgentLogModel =
+                                self.isRemoteAgentTarget
+                                ? self.windowState?.pinnedRemoteAgentEffectiveModel : nil
                             req.modelOptions =
                                 self.activeModelOptions.isEmpty ? nil : self.activeModelOptions
                             req.ttftTrace = ttftTrace
@@ -3793,7 +4382,8 @@ final class ChatSession: ObservableObject {
                         policy: AgentLoopPolicy(
                             maxIterations: maxAttempts,
                             stopOnToolRejection: true,
-                            dedupeNoticeEnabled: true
+                            dedupeNoticeEnabled: true,
+                            maxDataMovementSteps: min(16, maxAttempts)
                         ),
                         state: taskState,
                         hooks: loopHooks
@@ -3835,6 +4425,18 @@ final class ChatSession: ObservableObject {
                                 session_id: sessionId?.uuidString
                             )
                             finalReq.samplingParametersAreImplicit = true
+                            finalReq.runAsRemoteAgent = isRemoteAgentTarget
+                            // Carry the agent provider id on this path too so
+                            // the route-by-provider invariant holds for *every*
+                            // Mode 2 request — a `runAsRemoteAgent` send with no
+                            // provider id would fall back to model-string
+                            // routing (the exact mis-route this fix removes).
+                            finalReq.remoteAgentProviderId =
+                                isRemoteAgentTarget
+                                ? windowState?.selectedDiscoveredAgentProviderId : nil
+                            finalReq.remoteAgentLogModel =
+                                isRemoteAgentTarget
+                                ? windowState?.pinnedRemoteAgentEffectiveModel : nil
                             finalReq.modelOptions = activeModelOptions.isEmpty ? nil : activeModelOptions
                             finalReq.turnId = assistantTurn.id
                             // Distinct logical step (the post-cap summarizing
@@ -3908,7 +4510,21 @@ final class ChatSession: ObservableObject {
                     assistantTurn.content = pfError.localizedDescription
                     lastStreamError = pfError.localizedDescription
                 } catch {
-                    assistantTurn.content = ChatErrorMessages.assistantMessage(for: error)
+                    let errorMessage = ChatErrorMessages.assistantMessage(for: error)
+                    // Preserve any text the model already streamed before the
+                    // failure (common when a remote agent disconnects
+                    // mid-stream): append the error as a trailing notice
+                    // instead of replacing the partial answer. Only overwrite
+                    // when nothing was streamed yet so an empty bubble still
+                    // shows the actionable error on its own.
+                    let streamedSoFar = assistantTurn.content.trimmingCharacters(
+                        in: .whitespacesAndNewlines
+                    )
+                    if streamedSoFar.isEmpty {
+                        assistantTurn.content = errorMessage
+                    } else {
+                        assistantTurn.content += "\n\n\(errorMessage)"
+                    }
                     lastStreamError = error.localizedDescription
                     noteInsufficientFundsIfNeeded(error: error, blockedTurn: assistantTurn)
                 }
@@ -3973,6 +4589,10 @@ struct ChatView: View {
     @State private var editingTurnId: UUID?
     @State private var editText: String = ""
     @State private var userImagePreview: NSImage?
+    /// Pasted-content attachment whose read-only preview sheet is showing.
+    /// Set when the user taps a pasted-content chip in a sent message;
+    /// cleared on dismiss.
+    @State private var pastedContentPreview: Attachment?
     // Bonjour agent connection
     @State private var pendingDiscoveredAgent: DiscoveredAgent? = nil
     // Minimap
@@ -4049,16 +4669,164 @@ struct ChatView: View {
     /// endpoints, etc.). Since user-configured providers are always
     /// intentional, they should be visible regardless of Bonjour state.
     private var filteredPickerItems: [ModelPickerItem] {
-        if let providerId = windowState.selectedDiscoveredAgentProviderId {
-            // Bonjour agent active: show only that agent's models.
-            return session.pickerItems.filter {
-                if case .remote(_, let id) = $0.source { return id == providerId }
-                return false
+        guard let providerId = windowState.selectedDiscoveredAgentProviderId else {
+            // No remote agent selected (Mode 1 / local): show everything —
+            // local, foundation, and user-configured remote providers, including
+            // the device's own models so they can be picked for remote inference.
+            return session.pickerItems
+        }
+        // Mode 2 (remote agent run): the model is pinned to the agent's own
+        // model — surface ONLY the selected item so the picker can't switch it.
+        // While the pin is still resolving (or the effective model isn't in the
+        // device catalog), fall back to the provider's chat-capable models so
+        // the chip still shows the right device instead of going blank.
+        if let selected = session.selectedModel,
+            let item = session.pickerItems.first(where: { $0.id == selected }),
+            Self.isProviderItem(item, providerId: providerId)
+        {
+            return [item]
+        }
+        return session.pickerItems.filter { Self.isProviderItem($0, providerId: providerId) }
+    }
+
+    /// True when `item` is a remote model served by `providerId`.
+    private static func isProviderItem(_ item: ModelPickerItem, providerId: UUID) -> Bool {
+        if case .remote(_, let id) = item.source { return id == providerId }
+        return false
+    }
+
+    /// The model id with its single provider-name prefix segment removed, e.g.
+    /// `coco/mlx-community/Qwen3-4B` -> `mlx-community/Qwen3-4B`. Mirrors the
+    /// `"<slug>/<modelId>"` prefixing done by `RemoteProviderManager`, so it
+    /// recovers the device-side model id to compare against `effective_model`.
+    private static func unprefixedModelTail(_ id: String) -> String {
+        guard let slash = id.firstIndex(of: "/") else { return id }
+        return String(id[id.index(after: slash)...])
+    }
+
+    /// Text for the pinned model chip (Mode 2). Resolves to the remote agent's
+    /// live effective model when known — cleaned via the matching catalog item,
+    /// else the raw id. While the effective model is still loading (or isn't in
+    /// the device catalog), falls back to the remote agent's name, then
+    /// "Default", so the chip never implies a specific device model that isn't
+    /// the agent's. Returns nil when no remote agent is selected (the chip is
+    /// interactive then and resolves its own label).
+    private var pinnedModelChipLabel: String? {
+        guard let providerId = windowState.selectedDiscoveredAgentProviderId else { return nil }
+        if let effective = windowState.pinnedRemoteAgentEffectiveModel, !effective.isEmpty {
+            if let item = session.pickerItems.first(where: {
+                Self.isProviderItem($0, providerId: providerId)
+                    && Self.unprefixedModelTail($0.id) == effective
+            }) {
+                return item.displayName
+            }
+            return effective
+        }
+        return windowState.selectedDiscoveredAgent?.name
+            ?? windowState.selectedRelayAgent?.name
+            ?? L("Default")
+    }
+
+    /// Compact Mode 2 connection status shown above the composer: an actionable
+    /// error with Retry on failure. The connecting affordance lives in the
+    /// empty-state security badge (which morphs "Securing connection…" -> lock),
+    /// so this row only surfaces on `.failed`; it's empty otherwise and when
+    /// not in remote-agent mode.
+    @ViewBuilder
+    private var remoteAgentConnectionNotice: some View {
+        if windowState.selectedDiscoveredAgentProviderId != nil {
+            switch windowState.remoteAgentConnectionPhase {
+            case .failed(let message):
+                connectionFailedNotice(message)
+            case .idle, .connected, .connecting:
+                // The connecting affordance now lives in the empty-state
+                // security badge (it morphs "Securing connection…" -> lock),
+                // so there's no separate connecting chip above the composer.
+                EmptyView()
             }
         }
-        // No Bonjour agent: show everything — local, foundation, and
-        // user-configured remote providers.
-        return session.pickerItems
+    }
+
+    /// Connection-failure chip: the error message plus a Retry that re-runs the
+    /// connect + model-pin flow.
+    private func connectionFailedNotice(_ message: String) -> some View {
+        remoteAgentNoticeRow(tint: theme.warningColor) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: CGFloat(theme.captionSize), weight: .semibold))
+                .foregroundColor(theme.warningColor)
+            Text(message)
+                .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                .foregroundColor(theme.primaryText)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+            Button(action: { retryRemoteAgentConnection() }) {
+                Text(L("Retry"))
+                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .semibold))
+                    .foregroundColor(theme.accentColor)
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    /// Shared chip chrome for the Mode 2 status rows (connecting / error): a
+    /// content-hugging, centered rounded chip with a subtle tinted fill and
+    /// hairline border, matching the empty-state security badge and the rest
+    /// of the app's chrome. The `tint` conveys intent (accent while
+    /// connecting, warning on failure) so the two phases differ only in their
+    /// content and color, not their shape.
+    @ViewBuilder
+    private func remoteAgentNoticeRow<Content: View>(
+        tint: Color,
+        @ViewBuilder _ content: () -> Content
+    ) -> some View {
+        HStack(spacing: 8) { content() }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(tint.opacity(theme.isDark ? 0.14 : 0.10))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(tint.opacity(0.22), lineWidth: 1)
+            )
+            .padding(.bottom, 8)
+            .transition(.opacity.combined(with: .scale(scale: 0.96)))
+    }
+
+    /// Re-run the connect + model-pin flow after a failure (Retry button).
+    private func retryRemoteAgentConnection() {
+        guard let providerId = windowState.selectedDiscoveredAgentProviderId else { return }
+        pinRemoteAgentModelAfterConnect(providerId: providerId)
+    }
+
+    /// Resolve and apply the pinned model for a selected remote agent (Mode 2).
+    /// Prefers the agent's live effective model (`pinnedRemoteAgentEffectiveModel`,
+    /// matched against the provider's prefixed picker ids); otherwise keeps an
+    /// already-correct provider selection or falls back to the provider's first
+    /// chat-capable model. Routing only needs the provider to be right — Mode 2
+    /// sends `model: "default"` on the wire, so the agent's live model is always
+    /// what actually runs.
+    @MainActor
+    private func applyRemoteAgentModelPin(providerId: UUID) {
+        let items = session.pickerItems
+        if let effective = windowState.pinnedRemoteAgentEffectiveModel,
+            let item = items.first(where: {
+                Self.isProviderItem($0, providerId: providerId)
+                    && Self.unprefixedModelTail($0.id) == effective
+            })
+        {
+            if session.selectedModel != item.id { session.selectedModel = item.id }
+            return
+        }
+        let currentIsFromProvider =
+            items.first(where: { $0.id == session.selectedModel })
+            .map { Self.isProviderItem($0, providerId: providerId) } ?? false
+        if !currentIsFromProvider,
+            let first = items.filter({ Self.isProviderItem($0, providerId: providerId) }).firstChatCapable
+        {
+            session.selectedModel = first.id
+        }
     }
 
     /// Observed session - needed to properly propagate @Published changes from ChatSession
@@ -4303,6 +5071,14 @@ struct ChatView: View {
                                     .animation(theme.springAnimation(), value: isPromptOverlayActive)
                             }
 
+                            // Mode 2 connection status (connecting / error +
+                            // Retry) shown directly above the composer so the
+                            // gated send has a visible explanation.
+                            remoteAgentConnectionNotice
+                                .frame(maxWidth: 1100)
+                                .frame(maxWidth: .infinity)
+                                .animation(theme.springAnimation(), value: windowState.remoteAgentConnectionPhase)
+
                             // Floating input card. Dimmed and
                             // hit-test-disabled while a prompt overlay
                             // is mounted so the prompt's embedded
@@ -4334,6 +5110,7 @@ struct ChatView: View {
                                 contextBreakdown: observedSession.estimatedContextBreakdown,
                                 sessionSpendMicro: observedSession.sessionRouterSpendMicro,
                                 showSessionSpend: observedSession.isOsaurusRouterSession,
+                                imageComposerSettings: $observedSession.imageComposerSettings,
                                 onSend: { manualText in
                                     if let manualText = manualText {
                                         observedSession.input = manualText
@@ -4352,7 +5129,9 @@ struct ChatView: View {
                                 agentId: windowState.agentId,
                                 windowId: windowState.windowId,
                                 isCompact: windowState.showSidebar,
+                                isEmptyChat: !observedSession.hasVisibleThreadMessages,
                                 onClearChat: { observedSession.reset() },
+                                onCaptureScreenshot: { observedSession.captureScreenshotFromSlashCommand() },
                                 onSkillSelected: { skillId in
                                     observedSession.pendingOneOffSkillId = skillId
                                 },
@@ -4361,7 +5140,13 @@ struct ChatView: View {
                                 queuedSend: $observedSession.queuedSend,
                                 onSendNow: { observedSession.sendNowInterrupting() },
                                 onCancelQueued: { observedSession.cancelQueuedSend() },
-                                onAddCredits: { showTopUpSheet = true }
+                                onAddCredits: { showTopUpSheet = true },
+                                isModelPinned: windowState.selectedDiscoveredAgentProviderId != nil,
+                                pinnedModelLabel: pinnedModelChipLabel,
+                                remoteConnectionPending: windowState.remoteAgentConnectionPhase
+                                    == .connecting,
+                                isRemoteAgentRun: windowState.selectedDiscoveredAgentProviderId
+                                    != nil
                             )
                             .frame(maxWidth: 1100)
                             .frame(maxWidth: .infinity)
@@ -4480,30 +5265,34 @@ struct ChatView: View {
         .onDisappear {
             cleanupKeyMonitor()
         }
-        .onChange(of: observedSession.pickerItems) { _, newItems in
+        .onChange(of: observedSession.pickerItems) { _, _ in
+            // Remote agent active: (re)apply the pinned model when the device's
+            // models arrive after the async connect. No agent → leave the user's
+            // selection alone.
             guard let providerId = windowState.selectedDiscoveredAgentProviderId else { return }
-            let providerItems = newItems.filter {
-                if case .remote(_, let id) = $0.source { return id == providerId }
-                return false
-            }
-            guard let firstItem = providerItems.firstChatCapable else { return }
-            let currentIsFromProvider =
-                newItems.first(where: { $0.id == session.selectedModel }).map {
-                    if case .remote(_, let id) = $0.source { return id == providerId }
-                    return false
-                } ?? false
-            if !currentIsFromProvider {
-                session.selectedModel = firstItem.id
-            }
+            applyRemoteAgentModelPin(providerId: providerId)
         }
         .onChange(of: windowState.selectedDiscoveredAgentProviderId) { _, providerId in
             guard providerId == nil else { return }
-            // Bonjour agent deselected — restore agent's preferred model
+            // Remote agent deselected — drop the pin and restore the local
+            // agent's preferred model.
+            windowState.pinnedRemoteAgentEffectiveModel = nil
             let agentModel = AgentManager.shared.effectiveModel(for: windowState.agentId)
             if let model = agentModel, session.pickerItems.contains(where: { $0.id == model }) {
                 session.selectedModel = model
             } else {
                 session.selectedModel = session.pickerItems.firstChatCapable?.id
+            }
+        }
+        .onChange(of: windowState.effectiveChatIdentity, initial: true) { _, identity in
+            // Keep the thread's baked header name in sync with whoever owns the
+            // chat: the remote agent in Mode 2, else the local agent (nil =
+            // local default). Rebuild so already-rendered turns pick up the
+            // change immediately (e.g. a remote agent renamed mid-session).
+            let override = identity.isRemote ? identity.name : nil
+            if session.threadAgentDisplayName != override {
+                session.threadAgentDisplayName = override
+                session.rebuildVisibleBlocks()
             }
         }
         .environment(\.theme, windowState.theme)
@@ -4538,6 +5327,8 @@ struct ChatView: View {
                         AppDelegate.shared?.showManagementWindow(initialTab: .storage)
                     case .openPrivacySettings:
                         AppDelegate.shared?.showManagementWindow(initialTab: .privacy)
+                    case .openComputerUseSettings:
+                        AppDelegate.shared?.showManagementWindow(initialTab: .computerUse)
                     case .openCredits:
                         AppDelegate.shared?.showManagementWindow(initialTab: .credits)
                     }
@@ -4546,7 +5337,16 @@ struct ChatView: View {
             .environment(\.theme, windowState.theme)
         }
         .sheet(item: $pendingDiscoveredAgent) { agent in
-            if agent.address != nil {
+            if agent.isUnverifiableSecureChannelPeer {
+                // Claims encryption (osc=1) but advertised no address to pin —
+                // an inconsistent advertisement (spoof, or a peer that needs to
+                // upgrade / assign an identity). Refuse rather than connect
+                // without any identity verification.
+                UnverifiablePeerSheet(agentName: agent.name) {
+                    pendingDiscoveredAgent = nil
+                }
+                .environment(\.theme, windowState.theme)
+            } else if agent.address != nil {
                 PairingSheet(agent: agent) { apiKey, isPermanent in
                     connectToDiscoveredAgent(agent, token: apiKey, isEphemeral: !isPermanent)
                     pendingDiscoveredAgent = nil
@@ -4623,8 +5423,11 @@ struct ChatView: View {
     }
 
     private func connectToDiscoveredAgent(_ agent: DiscoveredAgent, token: String, isEphemeral: Bool = true) {
-        // Strip trailing dot from mDNS hostnames (e.g. "device.local." -> "device.local")
-        let rawHost = agent.host ?? "localhost"
+        // Prefer the stable `.local` hostname, falling back to the resolved IP
+        // when it's missing (some networks block multicast `.local`
+        // resolution). Strip the trailing dot from mDNS hostnames
+        // (e.g. "device.local." -> "device.local").
+        let rawHost = agent.connectHost ?? "localhost"
         let host = rawHost.hasSuffix(".") ? String(rawHost.dropLast()) : rawHost
         let manager = RemoteProviderManager.shared
 
@@ -4646,7 +5449,10 @@ struct ChatView: View {
             } else {
                 manager.updateProvider(updated, apiKey: nil)
             }
-            Task { try? await manager.connect(providerId: existing.id) }
+            // The connect is owned by `pinRemoteAgentModelAfterConnect` below so
+            // the first model refresh / effective-model pin runs *after* the
+            // provider is connected (otherwise the picker stays empty until the
+            // window is reopened).
         } else {
             // Use basePath="" so URLs are constructed directly as /agents/{id}/run
             let provider = RemoteProvider(
@@ -4669,9 +5475,69 @@ struct ChatView: View {
         windowState.selectedRelayAgent = nil
         windowState.selectedDiscoveredAgent = agent
         windowState.selectedDiscoveredAgentProviderId = providerId
+        windowState.pinnedRemoteAgentEffectiveModel = nil
+        windowState.pinnedRemoteAgentAvatar = nil
+        windowState.pinnedRemoteAgentQuickActions = nil
         windowState.refreshPairedRelayAgents()
         session.reset()
-        Task { await session.refreshPickerItems() }
+        pinRemoteAgentModelAfterConnect(providerId: providerId)
+    }
+
+    /// After selecting a remote agent (Mode 2), refresh the picker, resolve the
+    /// agent's live effective model, and pin the chip to it. Survives the async
+    /// connect race: the effective-model fetch runs independently of model
+    /// discovery, and `applyRemoteAgentModelPin` re-runs from `onChange` when
+    /// the device's models arrive.
+    private func pinRemoteAgentModelAfterConnect(providerId: UUID) {
+        let provider = RemoteProviderManager.shared.configuration.providers.first {
+            $0.id == providerId
+        }
+        windowState.remoteAgentConnectionPhase = .connecting
+        Task {
+            // Ensure the provider is connected before refreshing models /
+            // resolving the pin, so the first refresh sees the connected
+            // provider's model list rather than an empty one. `connect` is
+            // idempotent and tolerates the auto-connect that
+            // add/updateProvider may also kick off. A secure-channel handshake
+            // failure now throws (see `fetchOsaurusModels`) so connect failure
+            // surfaces here instead of leaving a phantom "connected" pill.
+            do {
+                try await RemoteProviderManager.shared.connect(providerId: providerId)
+            } catch {
+                guard windowState.selectedDiscoveredAgentProviderId == providerId else { return }
+                windowState.remoteAgentConnectionPhase = .failed(
+                    ChatErrorMessages.remoteConnectFailure(error)
+                )
+                return
+            }
+            guard windowState.selectedDiscoveredAgentProviderId == providerId else { return }
+            await session.refreshPickerItems()
+            if let provider {
+                // One metadata fetch resolves the live model + avatar + name so
+                // Mode 2 can both pin the model chip and surface the remote
+                // agent's own identity (avatar/name) in chat.
+                let metadata = await RemoteProviderService.fetchOsaurusAgentMetadata(
+                    from: provider
+                )
+                guard windowState.selectedDiscoveredAgentProviderId == providerId else { return }
+                windowState.pinnedRemoteAgentEffectiveModel = metadata?.effectiveModel
+                windowState.pinnedRemoteAgentAvatar = metadata?.avatar
+                windowState.pinnedRemoteAgentQuickActions = metadata?.quickActions
+                // Keep the persisted paired-agent label/avatar honest (no-op for
+                // ephemeral Bonjour peers without a RemoteAgent record).
+                if let address = provider.remoteAgentAddress, !address.isEmpty {
+                    RemoteAgentManager.shared.updateLiveMetadata(
+                        forAddress: address,
+                        name: metadata?.name,
+                        description: metadata?.description,
+                        avatar: metadata?.avatar
+                    )
+                }
+            }
+            guard windowState.selectedDiscoveredAgentProviderId == providerId else { return }
+            applyRemoteAgentModelPin(providerId: providerId)
+            windowState.remoteAgentConnectionPhase = .connected
+        }
     }
 
     private func connectToRelayAgent(_ relay: PairedRelayAgent) {
@@ -4688,13 +5554,16 @@ struct ChatView: View {
         updated.port = nil
         updated.enabled = true
         manager.updateProvider(updated, apiKey: nil)
-        Task { try? await manager.connect(providerId: relay.providerId) }
+        // Connect is owned by `pinRemoteAgentModelAfterConnect` (see note there).
 
         windowState.selectedDiscoveredAgent = nil
         windowState.selectedRelayAgent = relay
         windowState.selectedDiscoveredAgentProviderId = relay.providerId
+        windowState.pinnedRemoteAgentEffectiveModel = nil
+        windowState.pinnedRemoteAgentAvatar = nil
+        windowState.pinnedRemoteAgentQuickActions = nil
         session.reset()
-        Task { await session.refreshPickerItems() }
+        pinRemoteAgentModelAfterConnect(providerId: relay.providerId)
     }
 
     // MARK: - Empty State
@@ -4712,6 +5581,23 @@ struct ChatView: View {
             ?? (windowState.agentId == Agent.defaultId
                 ? AgentQuickAction.defaultConfigurationQuickActions
                 : AgentQuickAction.defaultChatQuickActions)
+    }
+
+    /// Description shown beneath the remote agent's name in the empty state.
+    /// Prefers the Bonjour-advertised description, then the persisted paired
+    /// record's (refreshed from live metadata on connect). nil → neutral default.
+    private var remoteAgentDescriptionForEmptyState: String? {
+        if let discovered = windowState.selectedDiscoveredAgent {
+            let d = discovered.agentDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !d.isEmpty { return d }
+        }
+        if let providerId = windowState.selectedDiscoveredAgentProviderId,
+            let remote = RemoteAgentManager.shared.remoteAgent(forProviderId: providerId)
+        {
+            let d = remote.description.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !d.isEmpty { return d }
+        }
+        return nil
     }
 
     @ViewBuilder
@@ -4737,7 +5623,11 @@ struct ChatView: View {
             },
             onOpenOnboarding: nil,
             activeDiscoveredAgent: windowState.selectedDiscoveredAgent,
-            activeRelayAgent: windowState.selectedRelayAgent
+            activeRelayAgent: windowState.selectedRelayAgent,
+            remoteAgentAvatar: windowState.pinnedRemoteAgentAvatar,
+            remoteAgentDescription: remoteAgentDescriptionForEmptyState,
+            remoteAgentQuickActions: windowState.pinnedRemoteAgentQuickActions,
+            isConnecting: windowState.remoteAgentConnectionPhase == .connecting
         )
         .transition(.opacity.combined(with: .scale(scale: 0.98)))
         .modifier(
@@ -4808,7 +5698,11 @@ struct ChatView: View {
         // objectWillChange, if visibleBlocks were @Published) and/or delay the
         // reactivity needed by the table. `IsolatedThreadView` observes the
         // store directly, so only *its* body re-runs on per-token updates
-        let displayName = windowState.cachedAgentDisplayName
+        // Use the effective chat identity so a Mode 2 remote conversation is
+        // headed by the *remote* agent's name + mascot, not the local agent
+        // (which always rendered "Osaurus" with the local avatar).
+        let identity = windowState.effectiveChatIdentity
+        let displayName = identity.name
         let lastAssistantTurnId = session.lastAssistantTurnIdForThread
         let blocks = session.visibleBlocks
         let minimapMarkers = buildMinimapMarkers(from: blocks)
@@ -4827,8 +5721,8 @@ struct ChatView: View {
                 store: session.visibleBlocksStore,
                 width: width,
                 agentName: displayName,
-                agentAvatar: windowState.cachedActiveAgent.avatar,
-                agentCustomAvatarPath: windowState.cachedActiveAgent.customAvatarURL?.path,
+                agentAvatar: identity.mascotId,
+                agentCustomAvatarPath: identity.customAvatarPath,
                 isStreaming: session.isStreaming,
                 lastAssistantTurnId: lastAssistantTurnId,
                 expandedBlocksStore: session.expandedBlocksStore,
@@ -4845,6 +5739,7 @@ struct ChatView: View {
                 onConfirmEdit: confirmEditAndRegenerate,
                 onCancelEdit: cancelEditing,
                 onUserImagePreview: openUserAttachmentPreview(attachmentId:),
+                onDocumentPreview: { pastedContentPreview = $0 },
                 onVisibleTopUserTurnChanged: { turnId in
                     activeMinimapTurnId = turnId
                 },
@@ -4911,6 +5806,11 @@ struct ChatView: View {
             if let img = userImagePreview {
                 ImageFullScreenView(image: img, altText: "")
                     .imageFullScreenSheetPresentation()
+            }
+        }
+        .sheet(item: $pastedContentPreview) { attachment in
+            PastedContentSheet(attachment: attachment) {
+                pastedContentPreview = nil
             }
         }
         // re-pin to bottom when any in-chat prompt overlay opens. previously
@@ -5009,6 +5909,7 @@ private struct IsolatedThreadView: View {
     let onConfirmEdit: (() -> Void)?
     let onCancelEdit: (() -> Void)?
     let onUserImagePreview: ((String) -> Void)?
+    var onDocumentPreview: ((Attachment) -> Void)? = nil
     var onVisibleTopUserTurnChanged: ((UUID?) -> Void)? = nil
     var scrollToTurnId: UUID? = nil
     var scrollToTurnTrigger: Int = 0
@@ -5044,6 +5945,7 @@ private struct IsolatedThreadView: View {
             onConfirmEdit: onConfirmEdit,
             onCancelEdit: onCancelEdit,
             onUserImagePreview: onUserImagePreview,
+            onDocumentPreview: onDocumentPreview,
             onVisibleTopUserTurnChanged: onVisibleTopUserTurnChanged,
             scrollToTurnId: scrollToTurnId,
             scrollToTurnTrigger: scrollToTurnTrigger,
@@ -5101,6 +6003,18 @@ extension ChatView {
     /// Copy a turn's thinking + content to the clipboard
     private func copyTurnContent(turnId: UUID) {
         guard let turn = session.turns.first(where: { $0.id == turnId }) else { return }
+
+        // Image-generation replies are just the rendered image — copy the actual
+        // image to the clipboard instead of the raw `![](file://…)` markdown.
+        if !turn.contentIsBlank, !turn.hasRenderableThinking,
+            ContentBlock.isImageOnlyContent(turn.visibleContent),
+            let imageURL = Self.firstLocalImageURL(in: turn.visibleContent)
+        {
+            // Reads the file and writes to the pasteboard off the main thread.
+            ImageActions.copyImageFileToClipboard(at: imageURL)
+            return
+        }
+
         var textToCopy = ""
         if turn.hasRenderableThinking {
             textToCopy += turn.thinking
@@ -5112,6 +6026,22 @@ extension ChatView {
         guard !textToCopy.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(textToCopy, forType: .string)
+    }
+
+    /// Extracts the first local file URL from a standalone `![](…)` image line.
+    private static func firstLocalImageURL(in content: String) -> URL? {
+        guard
+            let regex = try? NSRegularExpression(pattern: #"!\[[^\]]*\]\(([^)]+)\)"#)
+        else { return nil }
+        let range = NSRange(content.startIndex..<content.endIndex, in: content)
+        guard let match = regex.firstMatch(in: content, range: range),
+            match.numberOfRanges > 1,
+            let urlRange = Range(match.range(at: 1), in: content)
+        else { return nil }
+        let urlString = content[urlRange].trimmingCharacters(in: .whitespaces)
+        let url = URL(string: urlString)
+        if url?.isFileURL == true { return url }
+        return nil
     }
 
     /// Stable callback for regenerate action - prevents closure recreation
@@ -5337,6 +6267,57 @@ extension ChatView {
     }
 }
 
+// MARK: - Unverifiable Peer Sheet
+
+/// Shown when a discovered peer claims Secure Channel support (`osc=1`) but
+/// advertised no crypto address to pin. We refuse the connection rather than
+/// proceed without any identity verification: a genuine, current Osaurus peer
+/// always advertises its address alongside `osc=1`, so this combination means
+/// either a spoofed advertisement or a peer that must upgrade / assign an
+/// identity. Refusal-only — there is no "connect anyway".
+private struct UnverifiablePeerSheet: View {
+    let agentName: String
+    let onClose: () -> Void
+
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.shield.fill")
+                        .font(theme.font(size: 16, weight: .semibold))
+                        .foregroundColor(theme.warningColor)
+                    Text("Can't verify \(agentName)", bundle: .module)
+                        .font(theme.font(size: 16, weight: .semibold))
+                        .foregroundColor(theme.primaryText)
+                }
+
+                Text(
+                    "This agent advertised that it supports encryption but didn't include a verifiable identity, so it can't be paired securely. It may be impersonating another device, or the other device may need to update Osaurus.",
+                    bundle: .module
+                )
+                .font(theme.font(size: 13))
+                .foregroundColor(theme.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+
+            HStack {
+                Spacer()
+                Button {
+                    onClose()
+                } label: {
+                    Text("Close", bundle: .module)
+                }
+                .keyboardShortcut(.defaultAction)
+                .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding(24)
+        .frame(width: 380)
+    }
+}
+
 // MARK: - Bonjour Token Sheet
 
 /// Sheet shown when the user selects a Bonjour-discovered remote agent.
@@ -5415,6 +6396,32 @@ private struct PairingSheet: View {
                 .font(theme.font(size: 13))
                 .foregroundColor(theme.secondaryText)
                 .fixedSize(horizontal: false, vertical: true)
+            }
+
+            // Surface the cryptographic identity that pairing will pin and
+            // verify, so the user confirms *who* they're connecting to rather
+            // than trusting only the (unauthenticated) advertised display name.
+            if let fingerprint = agent.addressFingerprint {
+                HStack(spacing: 8) {
+                    Image(systemName: "checkmark.shield.fill")
+                        .font(theme.font(size: 13))
+                        .foregroundColor(theme.accentColor)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Verifying identity", bundle: .module)
+                            .font(theme.font(size: 11))
+                            .foregroundColor(theme.secondaryText)
+                        Text(fingerprint)
+                            .font(.system(size: 12, design: .monospaced))
+                            .foregroundColor(theme.primaryText)
+                            .textSelection(.enabled)
+                    }
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(theme.accentColor.opacity(0.08))
+                )
             }
 
             if let error = errorMessage {
@@ -5497,6 +6504,7 @@ private enum PairingClient {
         case denied
         case challengeFailed
         case identityMismatch
+        case unverifiablePeer
 
         var errorDescription: String? {
             switch self {
@@ -5508,11 +6516,23 @@ private enum PairingClient {
             case .challengeFailed: return "Could not obtain a pairing challenge from the remote device."
             case .identityMismatch:
                 return "The remote device could not prove it owns the discovered agent identity."
+            case .unverifiablePeer:
+                return
+                    "This agent claims to support encryption but didn't advertise a verifiable identity, so pairing was refused."
             }
         }
     }
 
     static func pair(with agent: DiscoveredAgent) async throws -> (apiKey: String, isPermanent: Bool) {
+        // Defense-in-depth: refuse a peer claiming Secure Channel support
+        // (osc=1) that advertised no address to pin. The address-gated
+        // verification below would otherwise be skipped entirely, leaving the
+        // server unauthenticated. (The sheet routing already diverts these to
+        // a refusal view; this guard fails closed if pair() is ever reached.)
+        guard !agent.isUnverifiableSecureChannelPeer else {
+            throw PairingError.unverifiablePeer
+        }
+
         let context = LAContext()
         context.touchIDAuthenticationAllowableReuseDuration = 300
 
@@ -5525,7 +6545,9 @@ private enum PairingClient {
 
         let connectorAddress = try PairingKey.deriveAddress(masterKey: masterKey)
 
-        let rawHost = agent.host ?? ""
+        // Prefer the `.local` hostname; fall back to the resolved IP when the
+        // peer advertised no hostname (or it can't be resolved on this network).
+        let rawHost = agent.connectHost ?? ""
         guard !rawHost.isEmpty else { throw PairingError.missingHost }
         let host = rawHost.hasSuffix(".") ? String(rawHost.dropLast()) : rawHost
 

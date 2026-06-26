@@ -1,0 +1,39 @@
+{
+  "apps": [
+    { "pid": 501, "bundleId": "com.apple.mail", "name": "Mail", "active": true, "hidden": false }
+  ],
+  "activeWindow": {
+    "pid": 501,
+    "app": "Mail",
+    "title": "Project Update - Reply",
+    "x": 0, "y": 0, "w": 1280, "h": 860
+  },
+  "windowsByPid": {
+    "501": [
+      { "windowId": 1, "title": "Project Update - Reply", "focused": true, "minimized": false, "x": 0, "y": 0, "w": 1280, "h": 860 }
+    ]
+  },
+  "snapshot": {
+    "app": "Mail",
+    "focusedWindow": "Project Update - Reply",
+    "truncated": false,
+    "windows": [
+      { "id": 1, "title": "Project Update - Reply", "focused": true, "x": 0, "y": 0, "w": 1280, "h": 860 }
+    ],
+    "elements": [
+      { "id": "mailbox", "role": "statictext", "value": "Inbox", "focused": false, "enabled": true, "x": 24, "y": 96, "w": 150, "h": 20, "actions": [] },
+      { "id": "message", "role": "statictext", "value": "Maya Example: Please send the launch checklist before noon.", "focused": false, "enabled": true, "x": 260, "y": 112, "w": 650, "h": 24, "actions": [] },
+      { "id": "to", "role": "textfield", "label": "To", "value": "team@example.test", "focused": false, "enabled": true, "x": 300, "y": 188, "w": 720, "h": 28, "actions": [] },
+      { "id": "subject", "role": "textfield", "label": "Subject", "value": "Re: Project Update", "focused": false, "enabled": true, "x": 300, "y": 226, "w": 720, "h": 28, "actions": [] },
+      { "id": "body", "role": "textarea", "label": "Message Body", "value": "Hi team,\nThe draft checklist covers the release notes, owner review, and rollback plan.\nI will send the final version after the fixture pass.", "selectedText": "draft checklist", "focused": true, "enabled": true, "x": 300, "y": 280, "w": 820, "h": 460, "actions": [] },
+      { "id": "send", "role": "button", "label": "Send", "focused": false, "enabled": true, "x": 1120, "y": 792, "w": 72, "h": 32, "actions": [] }
+    ]
+  },
+  "focusedContent": {
+    "role": "textarea",
+    "label": "Message Body",
+    "value": "Hi team,\nThe draft checklist covers the release notes, owner review, and rollback plan.\nI will send the final version after the fixture pass.",
+    "selectedText": "draft checklist",
+    "viewport": "The draft checklist covers the release notes, owner review, and rollback plan."
+  }
+}

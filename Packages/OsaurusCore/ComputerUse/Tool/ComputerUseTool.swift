@@ -164,7 +164,8 @@ final class ComputerUseTool: OsaurusTool, PermissionedTool, @unchecked Sendable 
                 vision = VisionContext(
                     modelAcceptsImages: ComputerUseTool.modelAcceptsImages(model),
                     modelIsLocal: ModelManager.findInstalledModel(named: model) != nil,
-                    cloudConsent: CloudVisionConsent.shared.isGranted
+                    cloudConsent: CloudVisionConsent.shared.isGranted,
+                    cloudScrubMode: CloudVisionConsent.shared.scrubMode
                 )
             } else {
                 vision = .none
@@ -222,6 +223,9 @@ final class ComputerUseTool: OsaurusTool, PermissionedTool, @unchecked Sendable 
             interrupt: interrupt,
             confirm: { preview in
                 await ComputerUsePromptQueue.shared.requestConfirmation(preview, toolCallId: toolCallId)
+            },
+            requestCloudVisionConsent: {
+                await ComputerUsePromptQueue.shared.requestCloudVisionConsent(toolCallId: toolCallId)
             },
             limits: limits,
             policySummary: policySummary,

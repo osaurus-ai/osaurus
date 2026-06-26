@@ -235,9 +235,229 @@ struct AgentDatabaseTests {
         #expect(OnboardingPrompt.block.contains("db_insert"))
         #expect(OnboardingPrompt.block.contains("db_query"))
         #expect(OnboardingPrompt.block.contains("db_delete"))
+        // The bulk-ingestion guidance must be present so the model reaches
+        // for db_import instead of looping single-row writes.
+        #expect(OnboardingPrompt.block.contains("db_import"))
         // And it still calls out the soft-delete contract explicitly.
         #expect(
             OnboardingPrompt.block.lowercased().contains("soft delete")
         )
+    }
+
+    // MARK: - Bulk ingest (importRows / insertMany)
+
+    @Test
+    func importRowsInsertModeLoadsEveryRow() throws {
+        let db = try makeDB()
+        try db.createTable(
+            name: "commits",
+            purpose: "ingest test",
+            columns: [
+                AgentColumnSpec(name: "sha", type: "TEXT", nullable: false),
+                AgentColumnSpec(name: "additions", type: "INTEGER", nullable: false),
+            ],
+            indexes: [],
+            actor: .agent,
+            runId: nil
+        )
+        let rows: [[String: AgentSQLValue]] = (1 ... 250).map { i in
+            ["sha": .text("sha-\(i)"), "additions": .integer(Int64(i))]
+        }
+        // No keyColumns => append/insert semantics, one host call for 250 rows.
+        let written = try db.importRows(table: "commits", rows: rows, actor: .user, runId: nil)
+        #expect(written == 250)
+        let count = try db.query(sql: "SELECT COUNT(*) FROM commits")
+        #expect(count.rows[0][0] == .integer(250))
+        let sum = try db.query(sql: "SELECT SUM(additions) FROM commits")
+        #expect(sum.rows[0][0] == .integer(Int64((1 ... 250).reduce(0, +))))
+    }
+
+    @Test
+    func importRowsUpsertModeDedupesOnKeyColumns() throws {
+        let db = try makeDB()
+        // A unique index on the key column is what makes ON CONFLICT(slug)
+        // resolve to an update instead of erroring.
+        try db.createTable(
+            name: "repos",
+            purpose: "upsert test",
+            columns: [
+                AgentColumnSpec(name: "slug", type: "TEXT", nullable: false),
+                AgentColumnSpec(name: "stars", type: "INTEGER", nullable: false),
+            ],
+            indexes: [AgentIndexSpec(name: "repos_slug_uq", columns: ["slug"], unique: true)],
+            actor: .agent,
+            runId: nil
+        )
+        _ = try db.importRows(
+            table: "repos",
+            rows: [
+                ["slug": .text("a"), "stars": .integer(1)],
+                ["slug": .text("b"), "stars": .integer(2)],
+            ],
+            keyColumns: ["slug"],
+            actor: .user,
+            runId: nil
+        )
+        _ = try db.importRows(
+            table: "repos",
+            rows: [
+                ["slug": .text("a"), "stars": .integer(10)],  // conflict -> update
+                ["slug": .text("c"), "stars": .integer(3)],  // new -> insert
+            ],
+            keyColumns: ["slug"],
+            actor: .user,
+            runId: nil
+        )
+        let count = try db.query(sql: "SELECT COUNT(*) FROM repos")
+        #expect(count.rows[0][0] == .integer(3))  // a, b, c — not 4
+        let a = try db.query(
+            sql: "SELECT stars FROM repos WHERE slug = ?1",
+            params: [.text("a")]
+        )
+        #expect(a.rows[0][0] == .integer(10))  // updated, not duplicated
+    }
+
+    @Test
+    func insertManyReturnsARowidForEveryRow() throws {
+        let db = try makeDB()
+        try db.createTable(
+            name: "scores",
+            purpose: "bulk insert test",
+            columns: [
+                AgentColumnSpec(name: "player", type: "TEXT", nullable: false),
+                AgentColumnSpec(name: "points", type: "INTEGER", nullable: false),
+            ],
+            indexes: [],
+            actor: .agent,
+            runId: nil
+        )
+        let ids = try db.insertMany(
+            table: "scores",
+            rows: [
+                ["player": .text("p1"), "points": .integer(10)],
+                ["player": .text("p2"), "points": .integer(20)],
+                ["player": .text("p3"), "points": .integer(30)],
+            ],
+            actor: .agent,
+            runId: nil
+        )
+        #expect(ids.count == 3)
+        #expect(Set(ids).count == 3)  // distinct rowids
+        let total = try db.query(sql: "SELECT SUM(points) FROM scores")
+        #expect(total.rows[0][0] == .integer(60))
+    }
+
+    // MARK: - Multi-statement db_execute
+
+    @Test
+    func executeRunsEveryStatementInAScript() throws {
+        let db = try makeDB()
+        let result = try db.execute(
+            sql: "CREATE TABLE t (a INTEGER); INSERT INTO t (a) VALUES (1); INSERT INTO t (a) VALUES (2);",
+            actor: .agent,
+            runId: nil
+        )
+        // CREATE doesn't move total_changes; two single-row inserts do.
+        #expect(result.rowsAffected == 2)
+        let count = try db.query(sql: "SELECT COUNT(*) FROM t")
+        #expect(count.rows[0][0] == .integer(2))
+    }
+
+    @Test
+    func executeMultiStatementTransformAggregatesInOneCall() throws {
+        let db = try makeDB()
+        _ = try db.execute(
+            sql: """
+                CREATE TABLE raw (day TEXT, amount INTEGER);
+                INSERT INTO raw (day, amount) VALUES ('d1', 10), ('d1', 20), ('d2', 5);
+                CREATE TABLE totals (day TEXT, total INTEGER);
+                INSERT INTO totals (day, total) SELECT day, SUM(amount) FROM raw GROUP BY day;
+                """,
+            actor: .agent,
+            runId: nil
+        )
+        let top = try db.query(sql: "SELECT day, total FROM totals ORDER BY total DESC")
+        #expect(top.rows.count == 2)
+        #expect(top.rows[0][0] == .text("d1"))
+        #expect(top.rows[0][1] == .integer(30))
+    }
+
+    // MARK: - Forbidden SQL guardrails
+
+    @Test
+    func forbiddenReasonBlocksDangerousStatements() {
+        // Legacy destructive set.
+        #expect(AgentDatabase.forbiddenReason(in: "DROP TABLE notes") != nil)
+        #expect(AgentDatabase.forbiddenReason(in: "TRUNCATE notes") != nil)
+        #expect(AgentDatabase.forbiddenReason(in: "DELETE FROM notes") != nil)  // no WHERE
+        // Sandbox escapes.
+        #expect(AgentDatabase.forbiddenReason(in: "ATTACH DATABASE 'x.db' AS y") != nil)
+        #expect(AgentDatabase.forbiddenReason(in: "DETACH DATABASE y") != nil)
+        #expect(AgentDatabase.forbiddenReason(in: "SELECT load_extension('evil')") != nil)
+        // Privileged PRAGMA write (flips journal mode / FK enforcement).
+        #expect(AgentDatabase.forbiddenReason(in: "PRAGMA journal_mode = WAL") != nil)
+        // Tampering with the audit / system tables bypasses the contract.
+        #expect(AgentDatabase.forbiddenReason(in: "DELETE FROM _changelog WHERE id = 1") != nil)
+        #expect(AgentDatabase.forbiddenReason(in: "INSERT INTO _views (name) VALUES ('x')") != nil)
+    }
+
+    @Test
+    func forbiddenReasonAllowsReadOnlyAndScopedWrites() {
+        #expect(AgentDatabase.forbiddenReason(in: "SELECT 1") == nil)
+        #expect(AgentDatabase.forbiddenReason(in: "SELECT * FROM notes WHERE id = 1") == nil)
+        // Read-only PRAGMAs (no `=`) stay allowed.
+        #expect(AgentDatabase.forbiddenReason(in: "PRAGMA table_info(notes)") == nil)
+        // A DELETE *with* a WHERE on a user table is allowed.
+        #expect(AgentDatabase.forbiddenReason(in: "DELETE FROM notes WHERE id = 1") == nil)
+    }
+
+    @Test
+    func executeRejectsForbiddenStatementAndDataSurvives() throws {
+        let db = try makeDB()
+        try db.createTable(
+            name: "keepme",
+            purpose: "guardrail test",
+            columns: [AgentColumnSpec(name: "label", type: "TEXT", nullable: false)],
+            indexes: [],
+            actor: .agent,
+            runId: nil
+        )
+        _ = try db.insert(table: "keepme", row: ["label": .text("one")], actor: .agent, runId: nil)
+        #expect(throws: AgentDatabaseError.self) {
+            _ = try db.execute(sql: "DROP TABLE keepme", actor: .agent, runId: nil)
+        }
+        let count = try db.query(sql: "SELECT COUNT(*) FROM keepme")
+        #expect(count.rows[0][0] == .integer(1))
+    }
+
+    // MARK: - Query paging (limit / offset / truncated)
+
+    @Test
+    func queryHonorsLimitAndOffsetAndTruncationFlag() throws {
+        let db = try makeDB()
+        try db.createTable(
+            name: "nums",
+            purpose: "paging test",
+            columns: [AgentColumnSpec(name: "n", type: "INTEGER", nullable: false)],
+            indexes: [],
+            actor: .agent,
+            runId: nil
+        )
+        let rows: [[String: AgentSQLValue]] = (1 ... 25).map { ["n": .integer(Int64($0))] }
+        _ = try db.importRows(table: "nums", rows: rows, actor: .agent, runId: nil)
+
+        // Page 1: rows 1..10, more remain -> truncated.
+        let page1 = try db.query(sql: "SELECT n FROM nums ORDER BY n", limit: 10, offset: 0)
+        #expect(page1.rows.count == 10)
+        #expect(page1.rows.first?[0] == .integer(1))
+        #expect(page1.rows.last?[0] == .integer(10))
+        #expect(page1.truncated)
+
+        // Last page: offset 20 leaves only 5 rows -> not truncated.
+        let page3 = try db.query(sql: "SELECT n FROM nums ORDER BY n", limit: 10, offset: 20)
+        #expect(page3.rows.count == 5)
+        #expect(page3.rows.first?[0] == .integer(21))
+        #expect(page3.rows.last?[0] == .integer(25))
+        #expect(page3.truncated == false)
     }
 }

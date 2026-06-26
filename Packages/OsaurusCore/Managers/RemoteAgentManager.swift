@@ -64,6 +64,66 @@ public final class RemoteAgentManager: ObservableObject {
         return remoteAgents.first { $0.agentAddress.lowercased() == lower }
     }
 
+    /// Find the paired remote agent backed by a given `RemoteProvider` id.
+    public func remoteAgent(forProviderId providerId: UUID) -> RemoteAgent? {
+        remoteAgents.first { $0.providerId == providerId }
+    }
+
+    /// Resolve the paired `RemoteAgent` id for a remote provider so chat
+    /// surfaces (the toolbar settings gear) can deep-link into
+    /// `RemoteAgentDetailView`. Matches on the backing provider id first, then
+    /// falls back to the provider's configured remote-agent address so
+    /// relay-paired agents (whose provider was minted separately) resolve too.
+    /// Returns `nil` for ephemeral Bonjour peers with no stored record.
+    public func remoteAgentDetailId(forProviderId providerId: UUID) -> UUID? {
+        if let direct = remoteAgent(forProviderId: providerId)?.id { return direct }
+        if let provider = RemoteProviderManager.shared.configuration.providers
+            .first(where: { $0.id == providerId }),
+            let address = provider.remoteAgentAddress, !address.isEmpty
+        {
+            return remoteAgent(forAddress: address)?.id
+        }
+        return nil
+    }
+
+    /// Refresh a paired remote agent's display metadata from its live
+    /// `GET /agents/{id}` response (called on connect). The name captured at
+    /// pair time can go stale if the owner renames their agent, and avatars
+    /// were never captured at all — this keeps the local label/avatar honest.
+    /// Empty name/description are ignored so a degraded response can't blank an
+    /// existing label; only writes (and posts a change) when something actually
+    /// differs. No-ops for addresses we don't have a `RemoteAgent` record for
+    /// (e.g. ephemeral Bonjour peers) — the in-window pin still surfaces those.
+    public func updateLiveMetadata(
+        forAddress address: String,
+        name: String?,
+        description: String?,
+        avatar: String?
+    ) {
+        guard var agent = remoteAgent(forAddress: address) else { return }
+        var changed = false
+        if let name = name?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !name.isEmpty, name != agent.name
+        {
+            agent.name = name
+            changed = true
+        }
+        if let description = description?.trimmingCharacters(in: .whitespacesAndNewlines),
+            description != agent.description
+        {
+            agent.description = description
+            changed = true
+        }
+        if avatar != agent.avatar {
+            agent.avatar = avatar
+            changed = true
+        }
+        guard changed else { return }
+        RemoteAgentStore.save(agent)
+        refresh()
+        NotificationCenter.default.post(name: .remoteAgentsChanged, object: agent.id)
+    }
+
     // MARK: - Pair via Invite
 
     /// Decode `relayBaseURL` and POST the invite back. Returns the persisted

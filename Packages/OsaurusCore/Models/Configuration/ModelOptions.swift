@@ -160,12 +160,12 @@ struct DSV4ReasoningProfile: ModelProfile {
     static let options: [ModelOptionDefinition] = [
         ModelOptionDefinition(
             id: "reasoningEffort",
-            label: "Reasoning Mode",
+            label: L("Reasoning Mode"),
             icon: "brain.head.profile",
             kind: .segmented([
-                ModelOptionSegment(id: "instruct", label: "Instruct"),
-                ModelOptionSegment(id: "high", label: "Reasoning"),
-                ModelOptionSegment(id: "max", label: "Max"),
+                ModelOptionSegment(id: "instruct", label: L("Instruct")),
+                ModelOptionSegment(id: "high", label: L("Reasoning")),
+                ModelOptionSegment(id: "max", label: L("Max")),
             ])
         )
     ]
@@ -206,13 +206,13 @@ struct OpenAIReasoningProfile: ModelProfile {
     static let options: [ModelOptionDefinition] = [
         ModelOptionDefinition(
             id: "reasoningEffort",
-            label: "Reasoning Effort",
+            label: L("Reasoning Effort"),
             icon: "brain",
             kind: .segmented([
-                ModelOptionSegment(id: "minimal", label: "Minimal"),
-                ModelOptionSegment(id: "low", label: "Low"),
-                ModelOptionSegment(id: "medium", label: "Medium"),
-                ModelOptionSegment(id: "high", label: "High"),
+                ModelOptionSegment(id: "minimal", label: L("Minimal")),
+                ModelOptionSegment(id: "low", label: L("Low")),
+                ModelOptionSegment(id: "medium", label: L("Medium")),
+                ModelOptionSegment(id: "high", label: L("High")),
             ])
         )
     ]
@@ -237,7 +237,7 @@ struct QwenThinkingProfile: ModelProfile {
     static let options: [ModelOptionDefinition] = [
         ModelOptionDefinition(
             id: "disableThinking",
-            label: "Disable Thinking",
+            label: L("Disable Thinking"),
             icon: "brain.head.profile",
             kind: .toggle(default: true)
         )
@@ -270,7 +270,7 @@ struct NemotronThinkingProfile: ModelProfile {
     static let options: [ModelOptionDefinition] = [
         ModelOptionDefinition(
             id: "disableThinking",
-            label: "Disable Thinking",
+            label: L("Disable Thinking"),
             icon: "brain.head.profile",
             kind: .toggle(default: true)
         )
@@ -305,7 +305,7 @@ struct LagunaThinkingProfile: ModelProfile {
     static let options: [ModelOptionDefinition] = [
         ModelOptionDefinition(
             id: "disableThinking",
-            label: "Disable Thinking",
+            label: L("Disable Thinking"),
             icon: "brain.head.profile",
             kind: .toggle(default: true)
         )
@@ -340,12 +340,12 @@ struct Hy3ReasoningProfile: ModelProfile {
     static let options: [ModelOptionDefinition] = [
         ModelOptionDefinition(
             id: "reasoningEffort",
-            label: "Reasoning Effort",
+            label: L("Reasoning Effort"),
             icon: "brain.head.profile",
             kind: .segmented([
-                ModelOptionSegment(id: "no_think", label: "Off"),
-                ModelOptionSegment(id: "low", label: "Low"),
-                ModelOptionSegment(id: "high", label: "High"),
+                ModelOptionSegment(id: "no_think", label: L("Off")),
+                ModelOptionSegment(id: "low", label: L("Low")),
+                ModelOptionSegment(id: "high", label: L("High")),
             ])
         )
     ]
@@ -384,7 +384,7 @@ struct LingRuntimeProfile: ModelProfile {
     static let options: [ModelOptionDefinition] = [
         ModelOptionDefinition(
             id: "disableThinking",
-            label: "Disable Thinking",
+            label: L("Disable Thinking"),
             icon: "brain.head.profile",
             kind: .toggle(default: true)
         )
@@ -416,7 +416,7 @@ struct ZayaThinkingProfile: ModelProfile {
     static let options: [ModelOptionDefinition] = [
         ModelOptionDefinition(
             id: "disableThinking",
-            label: "Disable Thinking",
+            label: L("Disable Thinking"),
             icon: "brain.head.profile",
             kind: .toggle(default: true)
         )
@@ -446,7 +446,7 @@ struct Gemma4RuntimeProfile: ModelProfile {
     static let options: [ModelOptionDefinition] = [
         ModelOptionDefinition(
             id: "disableThinking",
-            label: "Disable Thinking",
+            label: L("Disable Thinking"),
             icon: "brain.head.profile",
             kind: .toggle(default: true)
         )
@@ -475,7 +475,7 @@ struct AutoThinkingProfile: ModelProfile {
     static let options: [ModelOptionDefinition] = [
         ModelOptionDefinition(
             id: "disableThinking",
-            label: "Disable Thinking",
+            label: L("Disable Thinking"),
             icon: "brain.head.profile",
             kind: .toggle(default: false)
         )
@@ -491,7 +491,7 @@ struct AutoThinkingProfile: ModelProfile {
 // MARK: - Shared Segments
 
 private let geminiAspectRatioSegments: [ModelOptionSegment] = [
-    ModelOptionSegment(id: "auto", label: "Auto"),
+    ModelOptionSegment(id: "auto", label: L("Auto")),
     ModelOptionSegment(id: "1:1", label: "1:1"),
     ModelOptionSegment(id: "2:3", label: "2:3"),
     ModelOptionSegment(id: "3:2", label: "3:2"),
@@ -505,7 +505,7 @@ private let geminiAspectRatioSegments: [ModelOptionSegment] = [
 ]
 
 private let geminiExtendedAspectRatioSegments: [ModelOptionSegment] = [
-    ModelOptionSegment(id: "auto", label: "Auto"),
+    ModelOptionSegment(id: "auto", label: L("Auto")),
     ModelOptionSegment(id: "1:1", label: "1:1"),
     ModelOptionSegment(id: "1:4", label: "1:4"),
     ModelOptionSegment(id: "1:8", label: "1:8"),
@@ -523,8 +523,8 @@ private let geminiExtendedAspectRatioSegments: [ModelOptionSegment] = [
 ]
 
 private let geminiOutputTypeSegments: [ModelOptionSegment] = [
-    ModelOptionSegment(id: "textAndImage", label: "Text & Image"),
-    ModelOptionSegment(id: "imageOnly", label: "Image Only"),
+    ModelOptionSegment(id: "textAndImage", label: L("Text & Image")),
+    ModelOptionSegment(id: "imageOnly", label: L("Image Only")),
 ]
 
 // MARK: - Gemini 3.1 Flash Image Profile (Nano Banana 2)
@@ -541,16 +541,16 @@ struct Gemini31FlashImageProfile: ModelProfile {
     static let options: [ModelOptionDefinition] = [
         ModelOptionDefinition(
             id: "aspectRatio",
-            label: "Aspect Ratio",
+            label: L("Aspect Ratio"),
             icon: "aspectratio",
             kind: .segmented(geminiExtendedAspectRatioSegments)
         ),
         ModelOptionDefinition(
             id: "imageSize",
-            label: "Resolution",
+            label: L("Resolution"),
             icon: "arrow.up.right.and.arrow.down.left",
             kind: .segmented([
-                ModelOptionSegment(id: "auto", label: "Auto"),
+                ModelOptionSegment(id: "auto", label: L("Auto")),
                 ModelOptionSegment(id: "512px", label: "0.5K"),
                 ModelOptionSegment(id: "1K", label: "1K"),
                 ModelOptionSegment(id: "2K", label: "2K"),
@@ -559,7 +559,7 @@ struct Gemini31FlashImageProfile: ModelProfile {
         ),
         ModelOptionDefinition(
             id: "outputType",
-            label: "Output",
+            label: L("Output"),
             icon: "photo.on.rectangle",
             kind: .segmented(geminiOutputTypeSegments)
         ),
@@ -587,16 +587,16 @@ struct GeminiProImageProfile: ModelProfile {
     static let options: [ModelOptionDefinition] = [
         ModelOptionDefinition(
             id: "aspectRatio",
-            label: "Aspect Ratio",
+            label: L("Aspect Ratio"),
             icon: "aspectratio",
             kind: .segmented(geminiAspectRatioSegments)
         ),
         ModelOptionDefinition(
             id: "imageSize",
-            label: "Resolution",
+            label: L("Resolution"),
             icon: "arrow.up.right.and.arrow.down.left",
             kind: .segmented([
-                ModelOptionSegment(id: "auto", label: "Auto"),
+                ModelOptionSegment(id: "auto", label: L("Auto")),
                 ModelOptionSegment(id: "1K", label: "1K"),
                 ModelOptionSegment(id: "2K", label: "2K"),
                 ModelOptionSegment(id: "4K", label: "4K"),
@@ -604,7 +604,7 @@ struct GeminiProImageProfile: ModelProfile {
         ),
         ModelOptionDefinition(
             id: "outputType",
-            label: "Output",
+            label: L("Output"),
             icon: "photo.on.rectangle",
             kind: .segmented(geminiOutputTypeSegments)
         ),
@@ -631,13 +631,13 @@ struct GeminiFlashImageProfile: ModelProfile {
     static let options: [ModelOptionDefinition] = [
         ModelOptionDefinition(
             id: "aspectRatio",
-            label: "Aspect Ratio",
+            label: L("Aspect Ratio"),
             icon: "aspectratio",
             kind: .segmented(geminiAspectRatioSegments)
         ),
         ModelOptionDefinition(
             id: "outputType",
-            label: "Output",
+            label: L("Output"),
             icon: "photo.on.rectangle",
             kind: .segmented(geminiOutputTypeSegments)
         ),
@@ -664,23 +664,23 @@ struct VeniceModelProfile: ModelProfile {
     static let options: [ModelOptionDefinition] = [
         ModelOptionDefinition(
             id: "enableWebSearch",
-            label: "Web Search",
+            label: L("Web Search"),
             icon: "magnifyingglass",
             kind: .segmented([
-                ModelOptionSegment(id: "off", label: "Off"),
-                ModelOptionSegment(id: "on", label: "On"),
-                ModelOptionSegment(id: "auto", label: "Auto"),
+                ModelOptionSegment(id: "off", label: L("Off")),
+                ModelOptionSegment(id: "on", label: L("On")),
+                ModelOptionSegment(id: "auto", label: L("Auto")),
             ])
         ),
         ModelOptionDefinition(
             id: "disableThinking",
-            label: "Disable Thinking",
+            label: L("Disable Thinking"),
             icon: "brain.head.profile",
             kind: .toggle(default: true)
         ),
         ModelOptionDefinition(
             id: "includeVeniceSystemPrompt",
-            label: "Venice System Prompt",
+            label: L("Venice System Prompt"),
             icon: "text.bubble",
             kind: .toggle(default: true)
         ),

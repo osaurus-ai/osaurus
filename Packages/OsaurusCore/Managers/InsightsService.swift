@@ -156,6 +156,8 @@ final class InsightsService: ObservableObject {
                 if log.source != .httpAPI { return false }
             case .plugin:
                 if log.source != .plugin { return false }
+            case .p2p:
+                if log.source != .p2p { return false }
             }
 
             switch method {
@@ -287,6 +289,79 @@ final class InsightsService: ObservableObject {
         sourceFilter = .all
         methodFilter = .all
     }
+
+    // MARK: - Connection Activity
+
+    /// Outbound activity for a paired remote agent, keyed by its provider id.
+    /// Drives the Activity section of `RemoteAgentDetailView`.
+    func activity(forProviderId providerId: UUID) -> ConnectionActivitySummary {
+        summarize(logs.filter { $0.connection?.providerId == providerId })
+    }
+
+    /// Inbound activity attributed to a specific paired access key (host side).
+    /// Drives per-connection usage in the Remote Connections view.
+    func activity(forAccessKeyId keyId: String) -> ConnectionActivitySummary {
+        let trimmed = keyId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return ConnectionActivitySummary() }
+        return summarize(logs.filter { $0.connection?.accessKeyId == trimmed })
+    }
+
+    /// Inbound activity for an agent-address audience (host-side fallback for
+    /// rows whose individual key id hasn't been attributed yet).
+    func activity(forAudience audience: String) -> ConnectionActivitySummary {
+        let trimmed = audience.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return ConnectionActivitySummary() }
+        return summarize(logs.filter { $0.connection?.audience == trimmed })
+    }
+
+    private func summarize(_ matched: [RequestLog]) -> ConnectionActivitySummary {
+        guard !matched.isEmpty else { return ConnectionActivitySummary() }
+        let speeds = matched.compactMap { $0.tokensPerSecond }
+        let avg = speeds.isEmpty ? 0 : speeds.reduce(0, +) / Double(speeds.count)
+        return ConnectionActivitySummary(
+            requestCount: matched.count,
+            lastUsed: matched.map(\.timestamp).max(),
+            averageSpeed: avg,
+            totalOutputTokens: matched.reduce(0) { $0 + ($1.outputTokens ?? 0) }
+        )
+    }
+
+    /// Focus the Insights tab on the most recent outbound request for a provider.
+    @discardableResult
+    func focus(providerId: UUID) -> Bool {
+        guard let match = logs.first(where: { $0.connection?.providerId == providerId })
+        else { return false }
+        focus(log: match)
+        return true
+    }
+
+    /// Focus the Insights tab on the most recent inbound request for an access key.
+    @discardableResult
+    func focus(accessKeyId: String) -> Bool {
+        let trimmed = accessKeyId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+            let match = logs.first(where: { $0.connection?.accessKeyId == trimmed })
+        else { return false }
+        focus(log: match)
+        return true
+    }
+}
+
+/// Aggregate usage for a remote connection, derived from the in-memory ring
+/// buffer. Used by `RemoteAgentDetailView` (outbound, by providerId) and the
+/// host-side Remote Connections view (inbound, by accessKeyId / audience).
+struct ConnectionActivitySummary: Equatable {
+    var requestCount: Int = 0
+    var lastUsed: Date?
+    /// Average tok/s across matched inference rows that recorded a speed.
+    var averageSpeed: Double = 0
+    var totalOutputTokens: Int = 0
+
+    var isEmpty: Bool { requestCount == 0 }
+
+    var formattedAvgSpeed: String {
+        averageSpeed > 0 ? String(format: "%.1f tok/s", averageSpeed) : "-"
+    }
 }
 
 // MARK: - Supporting Types
@@ -296,6 +371,7 @@ enum SourceFilter: String, CaseIterable {
     case chatUI = "Chat"
     case httpAPI = "HTTP"
     case plugin = "Plugin"
+    case p2p = "P2P"
 
     var displayName: String {
         switch self {
@@ -303,6 +379,7 @@ enum SourceFilter: String, CaseIterable {
         case .chatUI: return L("Chat")
         case .httpAPI: return "HTTP"
         case .plugin: return L("Plugin")
+        case .p2p: return L("P2P")
         }
     }
 }
@@ -456,7 +533,8 @@ extension InsightsService {
         finishReason: RequestLog.FinishReason? = nil,
         errorMessage: String? = nil,
         wireRequestBody: Data? = nil,
-        wireResponseBody: Data? = nil
+        wireResponseBody: Data? = nil,
+        connection: RequestConnectionInfo? = nil
     ) {
         let trimmedRequest = truncateBody(requestBody)
         let trimmedResponse = truncateBody(responseBody)
@@ -494,7 +572,8 @@ extension InsightsService {
                 finishReason: finishReason,
                 errorMessage: errorMessage,
                 wireRequestBody: trimmedWireRequest,
-                wireResponseBody: trimmedWireResponse
+                wireResponseBody: trimmedWireResponse,
+                connection: connection
             )
             shared.log(log)
         }
@@ -521,14 +600,16 @@ extension InsightsService {
         requestBody: String? = nil,
         responseBody: String? = nil,
         wireRequestBody: Data? = nil,
-        wireResponseBody: Data? = nil
+        wireResponseBody: Data? = nil,
+        connection: RequestConnectionInfo? = nil,
+        path: String = "/chat/completions"
     ) {
         logRequest(
             source: source,
             turnId: turnId,
             requestId: requestId,
             method: "POST",
-            path: "/chat/completions",
+            path: path,
             statusCode: errorMessage != nil ? 500 : 200,
             durationMs: durationMs,
             requestBody: requestBody,
@@ -542,8 +623,22 @@ extension InsightsService {
             finishReason: finishReason,
             errorMessage: errorMessage,
             wireRequestBody: wireRequestBody,
-            wireResponseBody: wireResponseBody
+            wireResponseBody: wireResponseBody,
+            connection: connection
         )
+    }
+
+    /// Resolve the Insights source category for an HTTP-logged request.
+    /// In-app chat (`method == "CHAT"`) stays `.chatUI`. Anything that arrived
+    /// over the Secure Channel is another Osaurus peer (remote chat completions
+    /// or a remote agent run) and is surfaced under `.p2p`; all other
+    /// local/LAN HTTP traffic remains `.httpAPI`.
+    nonisolated static func inboundSource(
+        method: String,
+        transport: RequestTransport?
+    ) -> RequestSource {
+        if method == "CHAT" { return .chatUI }
+        return transport == .secureChannel ? .p2p : .httpAPI
     }
 
     /// Logs HTTP requests with optional inference data
@@ -563,9 +658,10 @@ extension InsightsService {
         maxTokens: Int? = nil,
         toolCalls: [ToolCallLog]? = nil,
         finishReason: RequestLog.FinishReason? = nil,
-        errorMessage: String? = nil
+        errorMessage: String? = nil,
+        connection: RequestConnectionInfo? = nil
     ) {
-        let source: RequestSource = method == "CHAT" ? .chatUI : .httpAPI
+        let source = Self.inboundSource(method: method, transport: connection?.transport)
 
         logRequest(
             source: source,
@@ -583,7 +679,8 @@ extension InsightsService {
             maxTokens: maxTokens,
             toolCalls: toolCalls,
             finishReason: finishReason,
-            errorMessage: errorMessage
+            errorMessage: errorMessage,
+            connection: connection
         )
     }
 }

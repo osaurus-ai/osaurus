@@ -14,8 +14,10 @@
 //  reserved system tables and the tab renders an empty-state nudge.
 //
 
+import AppKit
 import Foundation
 import SwiftUI
+import UniformTypeIdentifiers
 
 // MARK: - Schema Tab
 
@@ -361,6 +363,13 @@ public struct DataTabView: View {
     /// once the user clicks the inline `x`. Persisted across
     /// sessions so power users don't keep seeing it.
     @AppStorage("agentDataTipDismissed") private var dataTipDismissed: Bool = false
+    /// True while a host import (button or drag-drop) is parsing + loading.
+    @State private var isImporting: Bool = false
+    /// Transient success line shown under the control bar after an import
+    /// (e.g. "Imported 500 rows into `commits`"). Dismissable.
+    @State private var importSummary: String? = nil
+    /// Drives the drag-drop highlight while a file hovers over the grid.
+    @State private var isDropTargeted: Bool = false
 
     public init(agentId: UUID, initialSelectedTable: String? = nil) {
         self.agentId = agentId
@@ -372,11 +381,25 @@ public struct DataTabView: View {
             controlBar
                 .padding(.horizontal, 16)
                 .padding(.vertical, 10)
+            if let summary = importSummary {
+                importSummaryBanner(summary)
+            }
             Divider().foregroundColor(theme.primaryBorder)
             content
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(theme.primaryBackground)
+        .overlay {
+            if isDropTargeted {
+                RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(theme.accentColor, style: StrokeStyle(lineWidth: 2, dash: [6]))
+                    .padding(6)
+                    .allowsHitTesting(false)
+            }
+        }
+        .onDrop(of: [.fileURL], isTargeted: $isDropTargeted) { providers in
+            handleDrop(providers)
+        }
         .task { await loadTables() }
         .onChange(of: agentId) { _, _ in
             Task { await loadTables() }
@@ -497,6 +520,25 @@ public struct DataTabView: View {
                     .localizedHelp("The result was capped at 500 rows.")
             }
             Button {
+                presentImportPanel()
+            } label: {
+                HStack(spacing: 5) {
+                    if isImporting {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Image(systemName: "square.and.arrow.down")
+                    }
+                    Text(localized: "Import")
+                }
+                .font(.system(size: 11, weight: .medium))
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .disabled(isImporting)
+            .localizedHelp(
+                "Import a CSV, TSV, JSON, or JSONL file into the selected table or a new one. You can also drag a file onto this tab."
+            )
+            Button {
                 exportCSV()
             } label: {
                 Label(localized: "Export CSV", systemImage: "square.and.arrow.up")
@@ -506,6 +548,34 @@ public struct DataTabView: View {
             .controlSize(.small)
             .disabled(rows.isEmpty)
         }
+    }
+
+    /// Thin info banner shown after a successful import. Mirrors the
+    /// `dataTipCaption` styling so it reads as part of the surface, not a
+    /// modal interruption.
+    @ViewBuilder
+    private func importSummaryBanner(_ summary: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "checkmark.circle")
+                .font(.system(size: 10))
+                .foregroundColor(theme.accentColor)
+            Text(verbatim: summary)
+                .font(.system(size: 11))
+                .foregroundColor(theme.secondaryText)
+            Spacer(minLength: 0)
+            Button {
+                importSummary = nil
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundColor(theme.tertiaryText)
+            }
+            .buttonStyle(.plain)
+            .localizedHelp("Dismiss")
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 6)
+        .background(theme.accentColor.opacity(0.08))
     }
 
     /// `?` button next to the filter picker. Opens a small popover
@@ -934,6 +1004,112 @@ public struct DataTabView: View {
         } catch {
             loadError = error.localizedDescription
         }
+    }
+
+    // MARK: - Host import (actor=user)
+
+    /// Open a file picker for the supported import formats. Runs on the
+    /// MainActor (NSOpenPanel is AppKit-only) and hands the chosen URL to
+    /// `importFile`.
+    @MainActor
+    private func presentImportPanel() {
+        guard !isImporting else { return }
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        var types: [UTType] = [.commaSeparatedText, .tabSeparatedText, .json, .plainText]
+        if let jsonl = UTType(filenameExtension: "jsonl") { types.append(jsonl) }
+        if let ndjson = UTType(filenameExtension: "ndjson") { types.append(ndjson) }
+        panel.allowedContentTypes = types
+        panel.message = String(
+            localized: "Choose a CSV, TSV, JSON, or JSONL file to import.",
+            bundle: .module
+        )
+        panel.prompt = String(localized: "Import", bundle: .module)
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        Task { await importFile(url: url) }
+    }
+
+    /// Accept a file dragged onto the tab. Loads the first droppable URL and
+    /// routes it through the same `importFile` path as the button.
+    private func handleDrop(_ providers: [NSItemProvider]) -> Bool {
+        guard !isImporting,
+            let provider = providers.first(where: { $0.canLoadObject(ofClass: URL.self) })
+        else { return false }
+        _ = provider.loadObject(ofClass: URL.self) { url, _ in
+            guard let url else { return }
+            Task { @MainActor in await importFile(url: url) }
+        }
+        return true
+    }
+
+    /// Parse `url` off the main thread, then bulk-load it through the shared
+    /// `AgentImportRunner` with the write stamped `actor=user` — the same
+    /// task-local pattern the inline row editor uses. Imports into the
+    /// selected table, or a new table named after the file when none is
+    /// selected.
+    @MainActor
+    private func importFile(url: URL) async {
+        guard !isImporting else { return }
+        loadError = nil
+        importSummary = nil
+        isImporting = true
+        defer { isImporting = false }
+
+        let table = selectedTable ?? suggestedTableName(from: url)
+        do {
+            let parsed = try await Task.detached(priority: .userInitiated) {
+                () throws -> DatabaseImport.Parsed in
+                let didAccess = url.startAccessingSecurityScopedResource()
+                defer { if didAccess { url.stopAccessingSecurityScopedResource() } }
+                return try AgentImportRunner.parse(url: url)
+            }.value
+
+            let outcome = try ChatExecutionContext.$currentRunActor.withValue("user") {
+                try AgentImportRunner.run(
+                    agentId: agentId,
+                    table: table,
+                    parsed: parsed,
+                    sourceLabel: url.lastPathComponent
+                )
+            }
+
+            await loadTables()
+            selectedTable = outcome.table
+            await reloadRows()
+
+            var line =
+                "Imported \(outcome.rowsImported) "
+                + (outcome.rowsImported == 1 ? "row" : "rows")
+                + " into `\(outcome.table)`"
+            if outcome.createdTable { line += " (new table)" }
+            if !outcome.droppedColumns.isEmpty {
+                let n = outcome.droppedColumns.count
+                line += " · ignored \(n) unmatched column" + (n == 1 ? "" : "s")
+            }
+            importSummary = line
+        } catch {
+            loadError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        }
+    }
+
+    /// Derive a safe SQLite table name from a file name (lowercased, only
+    /// letters/digits/underscores, never leading with a digit).
+    private func suggestedTableName(from url: URL) -> String {
+        let base = url.deletingPathExtension().lastPathComponent.lowercased()
+        var out = ""
+        for ch in base {
+            if ch.isLetter || ch.isNumber {
+                out.append(ch)
+            } else if ch == "_" || ch == "-" || ch == " " {
+                out.append("_")
+            }
+        }
+        while out.contains("__") { out = out.replacingOccurrences(of: "__", with: "_") }
+        out = out.trimmingCharacters(in: CharacterSet(charactersIn: "_"))
+        if let first = out.first, first.isNumber { out = "t_" + out }
+        return out.isEmpty ? "imported_data" : out
     }
 
     private func rowValue(_ row: [AgentSQLValue], forColumnNamed name: String) -> AgentSQLValue {

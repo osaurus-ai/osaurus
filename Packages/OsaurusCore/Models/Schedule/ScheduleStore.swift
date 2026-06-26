@@ -70,12 +70,18 @@ public enum ScheduleStore {
     /// Save a schedule to disk
     public static func save(_ schedule: Schedule) {
         let url = fileURL(for: schedule.id)
+        let previous = load(id: schedule.id)
+        var scheduleToSave = schedule
+        if let previous {
+            scheduleToSave.mergeRunHistory(previous.runHistory)
+        }
+        applyHistoryTransitions(to: &scheduleToSave, previous: previous)
 
         do {
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
             encoder.dateEncodingStrategy = .iso8601
-            let data = try encoder.encode(schedule)
+            let data = try encoder.encode(scheduleToSave)
             try data.write(to: url, options: [.atomic])
         } catch {
             print("[Osaurus] Failed to save schedule \(schedule.id): \(error)")
@@ -118,5 +124,17 @@ public enum ScheduleStore {
         for schedule in schedules {
             save(schedule)
         }
+    }
+
+    private static func applyHistoryTransitions(to schedule: inout Schedule, previous: Schedule?) {
+        if previous?.lastTriggeredAt != schedule.lastTriggeredAt, let triggeredAt = schedule.lastTriggeredAt {
+            schedule.recordRunStarted(at: triggeredAt)
+        }
+
+        if previous?.lastRunAt != schedule.lastRunAt, let lastRunAt = schedule.lastRunAt {
+            schedule.recordRunSucceeded(endedAt: lastRunAt, chatSessionId: schedule.lastChatSessionId)
+        }
+
+        schedule.trimRunHistory()
     }
 }

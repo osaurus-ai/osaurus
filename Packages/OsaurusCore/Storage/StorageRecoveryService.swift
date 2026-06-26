@@ -30,6 +30,7 @@ public actor StorageRecoveryService {
     /// Canonical store identifiers shared by health, diagnostics, and recovery.
     public enum Store: String, Sendable, CaseIterable {
         case memory
+        case agentChannels = "agent-channels"
         case chatHistory = "chat-history"
         case method
         case tool = "tool-index"
@@ -39,6 +40,7 @@ public actor StorageRecoveryService {
         public var path: String {
             switch self {
             case .memory: return OsaurusPaths.memoryDatabaseFile().path
+            case .agentChannels: return OsaurusPaths.agentChannelMessagesDatabaseFile().path
             case .chatHistory: return OsaurusPaths.chatHistoryDatabaseFile().path
             case .method: return OsaurusPaths.methodsDatabaseFile().path
             case .tool: return OsaurusPaths.toolIndexDatabaseFile().path
@@ -51,6 +53,7 @@ public actor StorageRecoveryService {
         public var displayName: String {
             switch self {
             case .memory: return "Memory"
+            case .agentChannels: return "Agent channels"
             case .chatHistory: return "Chat history"
             case .method: return "Methods"
             case .tool: return "Tool index"
@@ -79,6 +82,8 @@ public actor StorageRecoveryService {
             case .memory:
                 try MemoryDatabase.shared.open()
                 await MemorySearchService.shared.initialize()
+            case .agentChannels:
+                try AgentChannelMessageStore.shared.open()
             case .chatHistory:
                 try ChatHistoryDatabase.shared.open()
             case .method:
@@ -122,6 +127,11 @@ public actor StorageRecoveryService {
         await MainActor.run { StorageMutationGate.shared.beginMutating() }
         let handles = OsaurusDatabaseHandle.allOpenHandles
         for handle in handles { handle.closer() }
+
+        // Close the (unregistered) plugin/agent connections too so the
+        // quarantine move can't run underneath a live fd.
+        AgentDatabaseStore.shared.closeAll()
+        PluginDatabase.closeAllOpen()
 
         let destination = StorageFile.quarantine(path: path, reason: "reset \(store.rawValue)")
         StorageFile.removeSidecars(for: path)

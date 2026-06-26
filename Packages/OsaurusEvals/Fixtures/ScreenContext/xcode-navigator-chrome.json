@@ -1,0 +1,37 @@
+{
+  "_comment": "Synthetic Xcode scene reproducing the REAL navigator noise: the Project Navigator's file rows are editable 'textfield' elements whose value is a bare file name (no label), plus a commit-hash 'statictext' in the status/blame gutter. These must be dropped from 'On screen' while the focused Source Editor's code leads via 'Viewing:'. This is the faithful version of the user's original complaint (sidebar identifiers, not just version numbers).",
+  "apps": [
+    { "pid": 404, "bundleId": "com.apple.dt.Xcode", "name": "Xcode", "active": true, "hidden": false }
+  ],
+  "activeWindow": {
+    "pid": 404, "app": "Xcode", "title": "osaurus — StorageMutationGate.swift", "x": 0, "y": 0, "w": 1600, "h": 1000
+  },
+  "windowsByPid": {
+    "404": [
+      { "windowId": 1, "title": "osaurus — StorageMutationGate.swift", "focused": true, "minimized": false, "x": 0, "y": 0, "w": 1600, "h": 1000 }
+    ]
+  },
+  "snapshot": {
+    "app": "Xcode",
+    "focusedWindow": "osaurus — StorageMutationGate.swift",
+    "truncated": false,
+    "windows": [
+      { "id": 1, "title": "osaurus — StorageMutationGate.swift", "focused": true, "x": 0, "y": 0, "w": 1600, "h": 1000 }
+    ],
+    "elements": [
+      { "id": "ed", "role": "textarea", "label": "Source Editor", "value": "func gate(_ mutation: StorageMutation) throws { guard isEnabled else { return } if isClosed { throw StorageError.gateClosed } try mutation.apply() }", "focused": true, "enabled": true, "x": 360, "y": 80, "w": 900, "h": 880, "actions": [] },
+      { "id": "nav-hdr", "role": "statictext", "value": "Package Dependencies", "focused": false, "enabled": true, "x": 20, "y": 60, "w": 200, "h": 18, "actions": [] },
+      { "id": "nav1", "role": "textfield", "value": "AppDelegate", "focused": false, "enabled": true, "x": 30, "y": 90, "w": 180, "h": 18, "actions": [] },
+      { "id": "nav2", "role": "textfield", "value": "ServerController", "focused": false, "enabled": true, "x": 30, "y": 110, "w": 180, "h": 18, "actions": [] },
+      { "id": "nav3", "role": "textfield", "value": "RouteHandler", "focused": false, "enabled": true, "x": 30, "y": 130, "w": 180, "h": 18, "actions": [] },
+      { "id": "blame", "role": "statictext", "value": "d35c074", "focused": false, "enabled": true, "x": 320, "y": 80, "w": 70, "h": 16, "actions": [] },
+      { "id": "jump", "role": "popupbutton", "value": "ServerController", "focused": false, "enabled": true, "x": 700, "y": 56, "w": 160, "h": 22, "actions": [] }
+    ]
+  },
+  "focusedContent": {
+    "role": "textarea",
+    "label": "Source Editor",
+    "value": "func gate(_ mutation: StorageMutation) throws { guard isEnabled else { return } if isClosed { throw StorageError.gateClosed } try mutation.apply() }",
+    "viewport": "func gate(_ mutation: StorageMutation) throws { guard isEnabled else { return } if isClosed { throw StorageError.gateClosed } try mutation.apply() }"
+  }
+}

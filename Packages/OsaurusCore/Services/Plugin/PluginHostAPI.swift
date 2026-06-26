@@ -1525,7 +1525,8 @@ final class PluginHostContext: @unchecked Sendable {
                     policy: AgentLoopPolicy(
                         maxIterations: prep.options.maxIterations,
                         stopOnToolRejection: false,
-                        dedupeNoticeEnabled: false
+                        dedupeNoticeEnabled: false,
+                        maxDataMovementSteps: min(16, prep.options.maxIterations)
                     ),
                     state: taskState,
                     hooks: hooks
@@ -1543,6 +1544,14 @@ final class PluginHostContext: @unchecked Sendable {
                 return Self.jsonString([
                     "error": "context_overflow",
                     "message": AgentToolLoop.overBudgetMessage,
+                    "tool_calls_executed": toolCallsExecuted,
+                    "shared_artifacts": sharedArtifacts,
+                ])
+            }
+            if exit == .emptyResponseExhausted {
+                return Self.jsonString([
+                    "error": "empty_tool_task_completion",
+                    "message": AgentToolLoop.emptyToolTaskFallback,
                     "tool_calls_executed": toolCallsExecuted,
                     "shared_artifacts": sharedArtifacts,
                 ])
@@ -1999,7 +2008,8 @@ final class PluginHostContext: @unchecked Sendable {
                     policy: AgentLoopPolicy(
                         maxIterations: prep.options.maxIterations,
                         stopOnToolRejection: false,
-                        dedupeNoticeEnabled: false
+                        dedupeNoticeEnabled: false,
+                        maxDataMovementSteps: min(16, prep.options.maxIterations)
                     ),
                     state: taskState,
                     hooks: hooks
@@ -2017,6 +2027,16 @@ final class PluginHostContext: @unchecked Sendable {
                 return Self.jsonString([
                     "error": "context_overflow",
                     "message": AgentToolLoop.overBudgetMessage,
+                    "tool_calls_executed": toolCallsExecuted,
+                    "shared_artifacts": sharedArtifacts,
+                ])
+            }
+            if exit == .emptyResponseExhausted {
+                emit(Self.chunkPayload(id: cid, delta: [:], finishReason: "empty_response"))
+                persistPartial(lastContent)
+                return Self.jsonString([
+                    "error": "empty_tool_task_completion",
+                    "message": AgentToolLoop.emptyToolTaskFallback,
                     "tool_calls_executed": toolCallsExecuted,
                     "shared_artifacts": sharedArtifacts,
                 ])

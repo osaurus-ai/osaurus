@@ -70,13 +70,39 @@ public enum EvalRunner {
         }
 
         await ModelOverride.withSelection(model) {
+            // Warm the model's JIT'd Metal kernels once, BEFORE any scored
+            // case, exactly as a production server warms a bundle when it
+            // becomes resident. The first decode on a fresh process pays a
+            // one-time, multi-second kernel-compilation cost (the cold-start
+            // TTFT outlier); without this the cost lands on whichever case
+            // happens to run first and pollutes that case's TTFT with a
+            // startup artifact. Warming here makes every scored case measure
+            // the warm steady-state per-request TTFT a running server actually
+            // delivers. Idempotent per (process, model) and best-effort:
+            // remote/unknown ids and load failures are no-ops, so a model that
+            // can't warm just pays its cold cost on the first case as before.
+            // Latency-only — warm-up output is discarded and never changes
+            // what the model emits on the scored cases.
+            //
+            // `OSAURUS_EVALS_DISABLE_WARMUP=1` skips this so the optimization
+            // loop can run a clean same-binary A/B (warm-up OFF reproduces the
+            // pre-warm-up cold-start: the one-time JIT lands on the first
+            // scored case; warm-up ON moves it off the request path).
+            if ProcessInfo.processInfo.environment["OSAURUS_EVALS_DISABLE_WARMUP"] != "1" {
+                await ModelWarmup.warmUp(modelId: modelLabel)
+            } else {
+                FileHandle.standardError.write(
+                    Data("[evals] warm-up DISABLED (OSAURUS_EVALS_DISABLE_WARMUP=1)\n".utf8)
+                )
+            }
             for testCase in suite.cases {
                 if let filter, !testCase.id.contains(filter) { continue }
                 let row = await runOne(
                     testCase,
                     modelId: modelLabel,
                     thresholdOverride: thresholdOverride,
-                    embedCosineFloorOverride: embedCosineFloorOverride
+                    embedCosineFloorOverride: embedCosineFloorOverride,
+                    suiteDirectory: suite.directory
                 )
                 rows.append(annotatedWithCaseNotes(row, from: testCase))
             }
@@ -136,41 +162,45 @@ public enum EvalRunner {
         _ testCase: EvalCase,
         modelId: String,
         thresholdOverride: Float? = nil,
-        embedCosineFloorOverride: Float? = nil
+        embedCosineFloorOverride: Float? = nil,
+        suiteDirectory: URL
     ) async -> EvalCaseReport {
         guard resourceSampledDomains.contains(testCase.domain) else {
             return await dispatchCase(
                 testCase,
                 modelId: modelId,
                 thresholdOverride: thresholdOverride,
-                embedCosineFloorOverride: embedCosineFloorOverride
+                embedCosineFloorOverride: embedCosineFloorOverride,
+                suiteDirectory: suiteDirectory
             )
         }
-        // Wrap model/embedder-driven cases with a peak-RAM sampler and a
-        // before/after KV-cache snapshot. The sampler keeps observing the
-        // physical footprint while the main actor is blocked inside MLX
-        // decode; the KV delta proves prefix reuse across loop iterations.
-        let sampler = PeakMemorySampler.start()
+        // Wrap model/embedder-driven cases with a peak-RAM + CPU sampler and
+        // a before/after KV-cache snapshot. The sampler keeps observing the
+        // physical footprint and CPU time while the main actor is blocked
+        // inside MLX decode; the KV delta proves prefix reuse across loop
+        // iterations.
+        let sampler = ResourceSampler.start()
         let kvBefore = await ModelRuntime.batchDiagnosticsSnapshot()
         let row = await dispatchCase(
             testCase,
             modelId: modelId,
             thresholdOverride: thresholdOverride,
-            embedCosineFloorOverride: embedCosineFloorOverride
+            embedCosineFloorOverride: embedCosineFloorOverride,
+            suiteDirectory: suiteDirectory
         )
         let kvAfter = await ModelRuntime.batchDiagnosticsSnapshot()
-        let peakMb = sampler.stop()
-        return mergeResourceTelemetry(into: row, peakMb: peakMb, kvBefore: kvBefore, kvAfter: kvAfter)
+        let sample = sampler.stop()
+        return mergeResourceTelemetry(into: row, sample: sample, kvBefore: kvBefore, kvAfter: kvAfter)
     }
 
-    /// Fold runner-level resource telemetry (peak RAM + KV-prefix delta)
+    /// Fold runner-level resource telemetry (peak RAM, CPU%, KV-prefix delta)
     /// into a case row, preserving any generation telemetry the domain
     /// runner already attached (decode tok/s, TTFT, prefill from the
     /// agent-loop transcript). KV deltas are only recorded when both
     /// snapshots exist (a remote-only run has neither).
     private static func mergeResourceTelemetry(
         into row: EvalCaseReport,
-        peakMb: Double?,
+        sample: ResourceSample,
         kvBefore: BatchDiagnosticsSnapshot?,
         kvAfter: BatchDiagnosticsSnapshot?
     ) -> EvalCaseReport {
@@ -178,11 +208,17 @@ public enum EvalRunner {
         var missesDelta: Int?
         var ssmHitsDelta: Int?
         var ssmReDerivesDelta: Int?
+        var diskL2HitsDelta: Int?
+        var diskL2MissesDelta: Int?
+        var diskL2StoresDelta: Int?
         if let before = kvBefore, let after = kvAfter {
             hitsDelta = after.prefixHits - before.prefixHits
             missesDelta = after.prefixMisses - before.prefixMisses
             ssmHitsDelta = after.ssmCompanionHits - before.ssmCompanionHits
             ssmReDerivesDelta = after.ssmCompanionReDerives - before.ssmCompanionReDerives
+            diskL2HitsDelta = after.diskL2Hits - before.diskL2Hits
+            diskL2MissesDelta = after.diskL2Misses - before.diskL2Misses
+            diskL2StoresDelta = after.diskL2Stores - before.diskL2Stores
         }
         let existing = row.telemetry
         let merged = EvalCaseTelemetry(
@@ -190,11 +226,20 @@ public enum EvalRunner {
             prefillTokensPerSecond: existing?.prefillTokensPerSecond,
             ttftMs: existing?.ttftMs,
             completionTokens: existing?.completionTokens,
-            peakPhysFootprintMb: peakMb,
+            promptTokensTotal: existing?.promptTokensTotal,
+            peakContextTokens: existing?.peakContextTokens,
+            totalModelTokens: existing?.totalModelTokens,
+            modelSteps: existing?.modelSteps,
+            peakPhysFootprintMb: sample.peakPhysFootprintMb,
+            meanCpuPercent: sample.meanCpuPercent,
+            peakCpuPercent: sample.peakCpuPercent,
             kvPrefixHitsDelta: hitsDelta,
             kvPrefixMissesDelta: missesDelta,
             ssmCompanionHitsDelta: ssmHitsDelta,
-            ssmCompanionReDerivesDelta: ssmReDerivesDelta
+            ssmCompanionReDerivesDelta: ssmReDerivesDelta,
+            diskL2HitsDelta: diskL2HitsDelta,
+            diskL2MissesDelta: diskL2MissesDelta,
+            diskL2StoresDelta: diskL2StoresDelta
         )
         guard !merged.isEmpty else { return row }
         return EvalCaseReport(
@@ -216,7 +261,8 @@ public enum EvalRunner {
         _ testCase: EvalCase,
         modelId: String,
         thresholdOverride: Float? = nil,
-        embedCosineFloorOverride: Float? = nil
+        embedCosineFloorOverride: Float? = nil,
+        suiteDirectory: URL
     ) async -> EvalCaseReport {
         let label = testCase.label ?? testCase.id
 
@@ -239,6 +285,12 @@ public enum EvalRunner {
             return runComputerUseCase(testCase, modelId: modelId)
         case "computer_use_loop":
             return await runComputerUseLoopCase(testCase, modelId: modelId)
+        case "screen_context":
+            return await runScreenContextCase(
+                testCase,
+                modelId: modelId,
+                suiteDirectory: suiteDirectory
+            )
         case "capability_search":
             return await runCapabilitySearchCase(
                 testCase,

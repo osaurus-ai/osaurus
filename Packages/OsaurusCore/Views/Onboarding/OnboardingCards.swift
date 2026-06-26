@@ -144,6 +144,10 @@ struct OnboardingRowBadge {
         case warning
         /// Red chip — used for high-risk compatibility warnings.
         case error
+        /// Filled accent pill — the high-signal "Recommended" tag that points
+        /// brand-new users at the default model in the chooser dialog. Distinct
+        /// from `.success` (green) so it doesn't read as another "Downloaded".
+        case accent
         /// Category chip whose color, icon, and label all come from the
         /// `ModelUseCase`. The badge's `text` field is unused for this
         /// style — `OnboardingBadgeChip` reads from the enum directly.
@@ -533,8 +537,10 @@ struct OnboardingCalloutBanner: View {
 
 // MARK: - Badge Chip
 
-/// Small chip used for `OnboardingRowCard` badges.
-private struct OnboardingBadgeChip: View {
+/// Small chip used for `OnboardingRowCard` badges. Also reused directly by the
+/// Configure AI home card's selected-model inset so its precision / Downloaded /
+/// size chips stay pixel-identical to the ones in the model chooser.
+struct OnboardingBadgeChip: View {
     let badge: OnboardingRowBadge
 
     @Environment(\.theme) private var theme
@@ -572,6 +578,19 @@ private struct OnboardingBadgeChip: View {
                 icon: "xmark.octagon.fill",
                 color: theme.errorColor
             )
+        case .accent:
+            HStack(spacing: 3) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 9, weight: .semibold))
+                Text(badge.text)
+                    .font(theme.font(size: 10, weight: .semibold))
+                    .lineLimit(1)
+            }
+            .fixedSize(horizontal: true, vertical: false)
+            .foregroundColor(theme.onboardingOnAccent)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(shape.fill(theme.accentColor))
         case .useCase(let useCase):
             HStack(spacing: 3) {
                 Image(systemName: useCase.iconName)

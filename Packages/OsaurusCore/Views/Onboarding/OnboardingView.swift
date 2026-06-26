@@ -87,8 +87,19 @@ public struct OnboardingView: View {
                 body: { bodySlot },
                 cta: { ctaSlot }
             )
+
+            // Hosted at the window root (above the chrome, not inside the
+            // clipped body) so the "Choose your model" dialog can dim the whole
+            // step and center over it — the previous popover overflowed the body
+            // region and covered the footer CTA.
+            if currentStep == .configureAI && configureAIState.isChoosingModel {
+                ConfigureModelChooserModal(state: configureAIState)
+                    .transition(.opacity)
+                    .zIndex(2)
+            }
         }
         .frame(width: OnboardingMetrics.windowWidth, height: OnboardingMetrics.windowHeight)
+        .animation(theme.springAnimation(), value: configureAIState.isChoosingModel)
         .onAppear {
             onPreferredSizeChange?(
                 CGSize(
@@ -515,6 +526,17 @@ public struct OnboardingView: View {
         // the `brain_source` dimension that joins the path choice to activation.
         FeatureTelemetry.recordOnboardingBrainSource(
             configureAIState.selectedBrainSource?.telemetryValue
+        )
+
+        // Gate the managed Osaurus Router on an explicit Cloud choice. The
+        // router defaults on (`OsaurusRouter.isEnabled`), so without this it
+        // would be injected for everyone — including local / bring-your-own-key
+        // users who never opted into hosted routing. Enable it only when the
+        // user picked Osaurus Cloud; otherwise turn it off (reversible later via
+        // the Credits/Dashboard toggle). Must run before `pinSelectedBrainModel`
+        // so the hosted path's `connectOsaurusRouterIfPossible` sees it enabled.
+        RemoteProviderManager.shared.setOsaurusRouterEnabled(
+            configureAIState.selectedBrainSource == .hostedOsaurus
         )
 
         // Pin the new/active agent's default model to the brain the user chose

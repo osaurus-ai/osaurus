@@ -32,6 +32,10 @@ public enum MLXModelDownloadCache {
     /// value is a valid hit — callers distinguish "not cached" from "cached
     /// nil" via the `hit` flag rather than the value.
     private nonisolated(unsafe) static var dateStorage: [String: Date?] = [:]
+    /// `isVLM` results. Computing this reads `config.json` off disk for
+    /// downloaded models, which is enough to trip the main-thread hang
+    /// watchdog when the Models / onboarding grid evaluates it per row.
+    private nonisolated(unsafe) static var vlmStorage: [String: Bool] = [:]
     private nonisolated(unsafe) static var didInstallObserver = false
     private nonisolated(unsafe) static var observerToken: NSObjectProtocol?
 
@@ -66,12 +70,28 @@ public enum MLXModelDownloadCache {
         lock.unlock()
     }
 
+    /// Cached `isVLM` lookup. `nil` means the id was never stored.
+    public static func cachedVLM(for modelId: String) -> Bool? {
+        ensureObserverInstalled()
+        lock.lock()
+        defer { lock.unlock() }
+        return vlmStorage[modelId]
+    }
+
+    public static func setVLM(_ value: Bool, for modelId: String) {
+        ensureObserverInstalled()
+        lock.lock()
+        vlmStorage[modelId] = value
+        lock.unlock()
+    }
+
     /// Invalidate a single entry. Call after a targeted change that
     /// flips a specific model's downloaded state.
     public static func invalidate(modelId: String) {
         lock.lock()
         storage.removeValue(forKey: modelId)
         dateStorage.removeValue(forKey: modelId)
+        vlmStorage.removeValue(forKey: modelId)
         lock.unlock()
     }
 
@@ -82,6 +102,7 @@ public enum MLXModelDownloadCache {
         lock.lock()
         storage.removeAll(keepingCapacity: true)
         dateStorage.removeAll(keepingCapacity: true)
+        vlmStorage.removeAll(keepingCapacity: true)
         lock.unlock()
     }
 

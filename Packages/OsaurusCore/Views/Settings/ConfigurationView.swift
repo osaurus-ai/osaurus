@@ -17,41 +17,15 @@ struct ConfigurationView: View {
     @State private var successMessage: String?
     @State private var isResetting = false
 
-    /// Usage-analytics consent. Mirrors `TelemetryService.shared.isEnabled`
-    /// (opt-in: true only once the user has granted it). Applied immediately on
-    /// change rather than via "Save Changes", like the notification toggles,
-    /// since it's a privacy switch.
-    @State private var tempTelemetryEnabled: Bool = false
 
-    /// Crash-reporting consent. Mirrors `CrashReportingService.shared.isEnabled`
-    /// (opt-out: defaults on). Applied immediately on change, as above.
-    @State private var tempCrashReportingEnabled: Bool = true
-
-    // Chat settings state
+    // General settings state. The chat-mode generation knobs and folder
+    // tool-permission policies moved to the dedicated Chat tab
+    // (`ChatSettingsView`); the global hotkey and core model still live
+    // here because the General section owns them.
     @State private var tempChatHotkey: Hotkey? = nil
-    @State private var tempSystemPrompt: String = ""
-    @State private var tempChatTemperature: String = ""
-    @State private var tempChatMaxTokens: String = ""
-    @State private var tempChatContextLength: String = ""
-    @State private var tempChatTopP: String = ""
-    @State private var tempChatMaxToolAttempts: String = ""
-    @State private var tempDisableTools: Bool = true
-    @State private var tempMemoryEnabled: Bool = false
     @State private var tempCoreModelProvider: String = ""
     @State private var tempCoreModelName: String = ""
     @State private var coreModelPickerItems: [ModelPickerItem] = []
-    @State private var tempEnableClipboardMonitoring: Bool = false
-    /// Smooth streaming: pace the visible reveal at ~180 tok/s regardless
-    /// of how fast / bursty the network delivers tokens. Default on.
-    /// Bound to `UserDefaults` key `chatSmoothStreamingEnabled` which
-    /// `StreamingDeltaProcessor` reads per delta.
-    @AppStorage("chatSmoothStreamingEnabled") private var smoothStreamingEnabled: Bool = true
-    /// Free-text "voice" instruction for AI-generated empty-state
-    /// greetings — the global default voice. The on/off is per-agent
-    /// (`AgentSettings.generativeGreetingsEnabled`). Empty = use the
-    /// built-in playful default. Per-agent overrides live on
-    /// `AgentSettings.greetingPersona`.
-    @State private var tempGreetingPersona: String = ""
 
     // Server / Local Inference settings now live in the Server →
     // Settings tab. Their state was deleted with the inline UI.
@@ -64,27 +38,83 @@ struct ConfigurationView: View {
     @State private var tempToastMaxConcurrent: String = ""
 
     /// Baseline of the save-relevant fields as last loaded or saved. The
-    /// "Save Changes" button is disabled while the live form equals this,
-    /// so a pristine settings screen reads as "nothing to save" rather
-    /// than an always-armed button. Fields applied immediately on change
-    /// (privacy toggles, toasts, smooth streaming, beta channel) are
-    /// deliberately excluded — they never flow through `saveConfiguration`.
+    /// debounced auto-save is gated on the live form differing from this, so a
+    /// pristine settings screen never writes to disk. Fields applied
+    /// immediately on change (privacy toggles, toasts, smooth streaming, beta
+    /// channel) are deliberately excluded — they never flow through
+    /// `saveConfiguration`.
     @State private var savedFormState: SaveableFormState?
+
+    /// Debounced auto-save. Save-relevant edits persist ~0.6s after the user
+    /// stops, so there's no explicit "Save Changes" button. `autoSaveTask` is
+    /// the pending debounce that each new edit cancels and reschedules.
+    @State private var autoSaveTask: Task<Void, Never>?
+
+    /// Last-loaded/saved full `ServerConfiguration`, kept so `saveConfiguration`
+    /// can preserve the server fields this screen doesn't edit without a
+    /// synchronous `ServerConfigurationStore.load()` disk read on the main
+    /// thread each (auto-)save.
+    @State private var loadedServerConfig: ServerConfiguration = .default
 
     // Search (passed from sidebar)
     @Binding var searchText: String
 
+    /// Drives scroll-to + glow when a settings-search result lands on this tab.
+    @ObservedObject private var highlightCoordinator = SettingsHighlightCoordinator.shared
+
     init(searchText: Binding<String> = .constant("")) {
         self._searchText = searchText
+    }
+
+    /// Scrolls a freshly-landed search target into view. The control itself
+    /// glows via its `settingsLandingAnchor`; this only handles positioning.
+    /// `id` must be one of this tab's anchors (a no-op otherwise, including
+    /// anchors that belong to other tabs).
+    private func scrollToLandingTarget(_ id: String?, proxy: ScrollViewProxy) {
+        guard let id, id.hasPrefix("settings.") else { return }
+        // Defer a beat so the tab's layout settles before scrolling.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            withAnimation(.easeInOut(duration: 0.3)) {
+                proxy.scrollTo(id, anchor: .center)
+            }
+        }
     }
 
     private var isSearching: Bool {
         !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    private func matchesSearch(_ texts: String...) -> Bool {
+    private func matchesSearch(_ texts: [String]) -> Bool {
         guard isSearching else { return true }
-        return texts.contains { SearchService.matches(query: searchText, in: $0) }
+        // Token/substring only (no fuzzy subsequence) so section visibility
+        // aligns with the field-level glow — both key off the same matching,
+        // and prose labels don't trip non-obvious subsequence hits.
+        return texts.contains { SearchService.matches(query: searchText, in: $0, allowFuzzy: false) }
+    }
+
+    // Per-section search keywords. Each section's visibility gate and the
+    // no-results empty state both read from these, so a query that matches no
+    // section reliably surfaces the empty state instead of a blank pane.
+    private static let generalKeywords = [
+        "General", "System", "Hotkey", "Login", "Start at Login", "Beta", "Updates",
+        "Core Model", "CLI", "Command Line", "Install", "Symlink", "Maintenance",
+        "Reset", "Factory Reset", "Wipe",
+    ]
+    private static let notificationsKeywords = [
+        "Notifications", "Toast", "Position", "Timeout", "Alerts", "Concurrent", "Background",
+    ]
+    private static let legalKeywords = [
+        "Legal", "Terms", "Terms of Service", "Privacy", "Privacy Policy", "Policy", "About",
+    ]
+
+    private static let allSearchKeywordGroups: [[String]] = [
+        generalKeywords, notificationsKeywords, legalKeywords,
+    ]
+
+    /// True when an active query matches at least one section. Drives the
+    /// no-results empty state.
+    private var hasAnySearchMatch: Bool {
+        Self.allSearchKeywordGroups.contains { matchesSearch($0) }
     }
 
     /// A tappable legal link styled as a settings row. Opens the canonical
@@ -108,37 +138,41 @@ struct ConfigurationView: View {
         .buttonStyle(.plain)
     }
 
-    var body: some View {
-        ZStack {
-            VStack(spacing: 0) {
-                // Header
-                headerView
-                    .opacity(hasAppeared ? 1 : 0)
-                    .offset(y: hasAppeared ? 0 : -10)
-                    .animation(.spring(response: 0.4, dampingFraction: 0.8), value: hasAppeared)
+    /// Shown when an active search matches no settings section, so the detail
+    /// pane never reads as blank/broken. Echoes the query and offers a clear
+    /// action that mirrors the sidebar field's clear button.
+    private var searchEmptyState: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 26))
+                .foregroundColor(theme.tertiaryText)
+            Text("No settings match \"\(searchText)\"", bundle: .module)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundColor(theme.secondaryText)
+                .multilineTextAlignment(.center)
+            Text("Try a different term, like \u{201C}hotkey\u{201D} or \u{201C}privacy\u{201D}.", bundle: .module)
+                .font(.system(size: 12))
+                .foregroundColor(theme.tertiaryText)
+                .multilineTextAlignment(.center)
+            Button {
+                searchText = ""
+            } label: {
+                Text("Clear search", bundle: .module)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(theme.accentColor)
+            }
+            .buttonStyle(.plain)
+            .pointingHandCursor()
+            .padding(.top, 4)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 64)
+    }
 
-                // Scrollable content area
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 24) {
-                        // MARK: - General Section
-                        if matchesSearch(
-                            "General",
-                            "System",
-                            "Hotkey",
-                            "Login",
-                            "Start at Login",
-                            "Beta",
-                            "Updates",
-                            "Core Model",
-                            "CLI",
-                            "Command Line",
-                            "Install",
-                            "Symlink",
-                            "Maintenance",
-                            "Reset",
-                            "Factory Reset",
-                            "Wipe"
-                        ) {
+    /// Extracted from `body` to keep the settings expression under Swift's
+    /// type-checker complexity limit.
+    @ViewBuilder private var generalSection: some View {
+                        if matchesSearch(Self.generalKeywords) {
                             SettingsSection(title: "General", icon: "gear") {
                                 VStack(alignment: .leading, spacing: 20) {
                                     Text("Application behavior and system integration.", bundle: .module)
@@ -146,7 +180,7 @@ struct ConfigurationView: View {
                                         .foregroundColor(theme.secondaryText)
 
                                     // Global Hotkey
-                                    SettingsField(label: "Global Hotkey") {
+                                    SettingsField(label: "Global Hotkey", anchorId: "settings.general.hotkey") {
                                         HotkeyRecorder(value: $tempChatHotkey)
                                     }
 
@@ -154,6 +188,7 @@ struct ConfigurationView: View {
                                     SettingsToggle(
                                         title: L("Start at Login"),
                                         description: "Launch Osaurus when you sign in",
+                                        anchorId: "settings.general.login",
                                         isOn: $tempStartAtLogin
                                     )
 
@@ -167,12 +202,13 @@ struct ConfigurationView: View {
                                         title: L("Beta Updates"),
                                         description:
                                             "Receive pre-release updates with new features before they're generally available",
+                                        anchorId: "settings.general.updates",
                                         isOn: $updater.isBetaChannel
                                     )
 
                                     SettingsDivider()
 
-                                    SettingsSubsection(label: "Core Model") {
+                                    SettingsSubsection(label: "Core Model", anchorId: "settings.general.coreModel") {
                                         VStack(alignment: .leading, spacing: 8) {
                                             coreModelPicker
                                             Text(
@@ -187,7 +223,7 @@ struct ConfigurationView: View {
                                     SettingsDivider()
 
                                     // Command Line Tool
-                                    SettingsSubsection(label: "Command Line Tool") {
+                                    SettingsSubsection(label: "Command Line Tool", anchorId: "settings.general.cli") {
                                         VStack(alignment: .leading, spacing: 12) {
                                             Text(
                                                 "Install the `osaurus` CLI into your PATH for terminal access.",
@@ -247,7 +283,7 @@ struct ConfigurationView: View {
                                     SettingsDivider()
 
                                     // Maintenance
-                                    SettingsSubsection(label: "Maintenance") {
+                                    SettingsSubsection(label: "Maintenance", anchorId: "settings.general.reset") {
                                         VStack(alignment: .leading, spacing: 12) {
                                             Text(
                                                 "Troubleshoot or reset the application. A factory reset permanently deletes all data and settings.",
@@ -269,269 +305,27 @@ struct ConfigurationView: View {
                                 }
                             }
                         }
+    }
 
-                        // MARK: - Privacy Section
-                        if matchesSearch(
-                            "Privacy",
-                            "Telemetry",
-                            "Analytics",
-                            "Usage Data",
-                            "Tracking",
-                            "Diagnostics"
-                        ) {
-                            SettingsSection(title: "Privacy", icon: "hand.raised") {
-                                VStack(alignment: .leading, spacing: 20) {
-                                    Text(
-                                        "Control what anonymous data Osaurus collects.",
-                                        bundle: .module
-                                    )
-                                    .font(.system(size: 12))
-                                    .foregroundColor(theme.secondaryText)
+    var body: some View {
+        ZStack {
+            VStack(spacing: 0) {
+                // Header
+                headerView
+                    .opacity(hasAppeared ? 1 : 0)
+                    .offset(y: hasAppeared ? 0 : -10)
+                    .animation(.spring(response: 0.4, dampingFraction: 0.8), value: hasAppeared)
 
-                                    SettingsToggle(
-                                        title: L("Share Anonymous Usage Data"),
-                                        description:
-                                            "Send anonymous, aggregated usage analytics to help improve Osaurus. Never includes your chats, prompts, files, or keys. Turn off any time.",
-                                        isOn: $tempTelemetryEnabled
-                                    )
-                                    .onChange(of: tempTelemetryEnabled) { _, newValue in
-                                        TelemetryService.shared.setEnabled(newValue)
-                                    }
-
-                                    SettingsToggle(
-                                        title: L("Send Crash Reports"),
-                                        description:
-                                            "Send anonymous crash and freeze reports so we can fix what breaks. Never includes your chats, prompts, files, or keys. Turn off any time.",
-                                        isOn: $tempCrashReportingEnabled
-                                    )
-                                    .onChange(of: tempCrashReportingEnabled) { _, newValue in
-                                        CrashReportingService.shared.setEnabled(newValue)
-                                    }
-                                }
-                            }
-                        }
-
-                        // MARK: - Chat Section
-                        if matchesSearch(
-                            "Chat",
-                            "System Prompt",
-                            "Temperature",
-                            "Max Tokens",
-                            "Context Length",
-                            "Top P",
-                            "Max Tool Attempts",
-                            "Generation",
-                            "Memory",
-                            "Tools"
-                        ) {
-                            SettingsSection(title: "Chat", icon: "message") {
-                                VStack(alignment: .leading, spacing: 20) {
-                                    Text("Configure how chat mode generates responses.", bundle: .module)
-                                        .font(.system(size: 12))
-                                        .foregroundColor(theme.secondaryText)
-
-                                    // System Prompt
-                                    StyledSettingsTextArea(
-                                        label: "System Prompt",
-                                        text: $tempSystemPrompt,
-                                        placeholder: "Enter the default Osaurus agent's instructions...",
-                                        hint: "Optional. Persona for the built-in Osaurus agent."
-                                    )
-
-                                    // Generation Settings
-                                    SettingsSubsection(label: "Generation") {
-                                        VStack(alignment: .leading, spacing: 12) {
-                                            SettingsSliderField(
-                                                label: "Temperature",
-                                                help: "Randomness (0–2). Higher = more creative",
-                                                text: $tempChatTemperature,
-                                                range: 0 ... 2,
-                                                step: 0.1,
-                                                defaultValue: 0.7,
-                                                formatString: "%.1f"
-                                            )
-                                            SettingsStepperField(
-                                                label: "Max Tokens",
-                                                help: "Maximum response tokens",
-                                                text: $tempChatMaxTokens,
-                                                range: 1 ... 65536,
-                                                step: 1024,
-                                                defaultValue: 16384
-                                            )
-                                            SettingsStepperField(
-                                                label: "Context Length",
-                                                help: "Context window for remote models",
-                                                text: $tempChatContextLength,
-                                                range: 2048 ... 256000,
-                                                step: 1024,
-                                                defaultValue: 128000
-                                            )
-                                            SettingsSliderField(
-                                                label: "Top P Override",
-                                                help: "Sampling diversity (0–1)",
-                                                text: $tempChatTopP,
-                                                range: 0 ... 1,
-                                                step: 0.05,
-                                                defaultValue: 1.0,
-                                                formatString: "%.2f"
-                                            )
-                                            SettingsStepperField(
-                                                label: "Max Tool Attempts",
-                                                help: "Max consecutive tool calls per turn",
-                                                text: $tempChatMaxToolAttempts,
-                                                range: 1 ... 50,
-                                                step: 1,
-                                                defaultValue: 15
-                                            )
-                                        }
-                                    }
-
-                                    SettingsDivider()
-
-                                    SettingsSubsection(label: "Display") {
-                                        SettingsToggle(
-                                            title: L("Smooth streaming"),
-                                            description:
-                                                "Pace incoming tokens at a steady rate so streaming looks like a typewriter across all providers. Disable to render tokens as soon as they arrive — useful with very fast remote providers that you'd rather see complete instantly.",
-                                            isOn: $smoothStreamingEnabled
-                                        )
-                                    }
-
-                                    SettingsDivider()
-
-                                    SettingsSubsection(label: "Tools") {
-                                        VStack(alignment: .leading, spacing: 8) {
-                                            Toggle(
-                                                isOn: Binding(
-                                                    get: { !tempDisableTools },
-                                                    set: { tempDisableTools = !$0 }
-                                                )
-                                            ) {
-                                                Text("Enable tools", bundle: .module)
-                                                    .font(.system(size: 12))
-                                            }
-                                            Text(
-                                                "Let agents use built-in and plugin tools. Turn off to send messages directly to the model with no tool specs or capability injection (chat-only).",
-                                                bundle: .module
-                                            )
-                                            .font(.system(size: 11))
-                                            .foregroundColor(theme.tertiaryText)
-                                        }
-                                    }
-
-                                    SettingsDivider()
-
-                                    SettingsSubsection(label: "Memory") {
-                                        VStack(alignment: .leading, spacing: 8) {
-                                            Toggle(isOn: $tempMemoryEnabled) {
-                                                Text("Enable memory", bundle: .module)
-                                                    .font(.system(size: 12))
-                                            }
-                                            Text(
-                                                "Inject persistent memory (identity, pinned facts, episodes) into the chat. A relevance gate decides whether memory is needed per-turn, with a single ~800 token budget when it is. Enable for agents that benefit from long-term context.",
-                                                bundle: .module
-                                            )
-                                            .font(.system(size: 11))
-                                            .foregroundColor(theme.tertiaryText)
-                                        }
-                                    }
-
-                                    SettingsDivider()
-
-                                    SettingsSubsection(label: "Clipboard") {
-                                        VStack(alignment: .leading, spacing: 8) {
-                                            Toggle(isOn: $tempEnableClipboardMonitoring) {
-                                                Text("Enable clipboard monitoring", bundle: .module)
-                                                    .font(.system(size: 12))
-                                            }
-                                            Text(
-                                                "Automatically detect and offer text from any app as context. Includes 'grab selection' feature when summoning Osaurus.",
-                                                bundle: .module
-                                            )
-                                            .font(.system(size: 11))
-                                            .foregroundColor(theme.tertiaryText)
-                                        }
-                                    }
-
-                                    SettingsDivider()
-
-                                    SettingsSubsection(label: "Generative Greetings") {
-                                        VStack(alignment: .leading, spacing: 12) {
-                                            Text(
-                                                "Default voice for AI-generated greetings + quick actions. Turn greetings on per agent under the agent's Features tab; each agent can also override this voice in its Customization tab.",
-                                                bundle: .module
-                                            )
-                                            .font(.system(size: 11))
-                                            .foregroundColor(theme.tertiaryText)
-
-                                            personalityEditorBlock
-                                        }
-                                    }
-
-                                }
-                            }
-                        }
-
-                        // MARK: - Tool Permissions Section
-                        if matchesSearch(
-                            "Tool Permissions",
-                            "Permissions",
-                            "Folder",
-                            "File",
-                            "Shell",
-                            "Git",
-                            "Write",
-                            "Delete",
-                            "Move",
-                            "Copy"
-                        ) {
-                            ToolPermissionsSection()
-                        }
-
-                        // MARK: - Server settings moved
-                        // The Server (Port/Expose/CORS) and Local
-                        // Inference (Top P, eviction, idle residency)
-                        // sections previously lived here. They're now
-                        // the canonical home of the Server → Settings
-                        // tab in `ServerView`, which is backed by
-                        // `VMLXServerRuntimeSettings`. A small
-                        // pointer card surfaces the move when the
-                        // user searches for any of those keywords.
-                        if matchesSearch(
-                            "Server",
-                            "Port",
-                            "Network",
-                            "Expose",
-                            "CORS",
-                            "Origins",
-                            "Allowed Origins",
-                            "Local Inference",
-                            "Inference",
-                            "Sampling",
-                            "Top P",
-                            "Eviction",
-                            "Idle Residency",
-                            "Keep model loaded"
-                        ) {
-                            ServerSettingsMovedNotice()
-                        }
-
-                        // MARK: - Voice Section
-                        if matchesSearch("Voice", "Parakeet", "Transcription", "Model", "Speech") {
-                            VoiceSettingsSection()
-                        }
+                // Scrollable content area
+                ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 24) {
+                        // MARK: - General Section
+                        generalSection
 
                         // MARK: - Notifications Section
-                        if matchesSearch(
-                            "Notifications",
-                            "Toast",
-                            "Position",
-                            "Timeout",
-                            "Alerts",
-                            "Concurrent",
-                            "Background"
-                        ) {
-                            SettingsSection(title: "Notifications", icon: "bell") {
+                        if matchesSearch(Self.notificationsKeywords) {
+                            SettingsSection(title: "Notifications", icon: "bell", anchorId: "settings.notifications.toasts") {
                                 VStack(alignment: .leading, spacing: 20) {
                                     // Enable Toasts Toggle
                                     SettingsToggle(
@@ -605,16 +399,8 @@ struct ConfigurationView: View {
                         }
 
                         // MARK: - Legal Section
-                        if matchesSearch(
-                            "Legal",
-                            "Terms",
-                            "Terms of Service",
-                            "Privacy",
-                            "Privacy Policy",
-                            "Policy",
-                            "About"
-                        ) {
-                            SettingsSection(title: "Legal", icon: "doc.text") {
+                        if matchesSearch(Self.legalKeywords) {
+                            SettingsSection(title: "Legal", icon: "doc.text", anchorId: "settings.legal") {
                                 VStack(alignment: .leading, spacing: 12) {
                                     Text(
                                         "Review the agreements that govern your use of Osaurus.",
@@ -635,12 +421,26 @@ struct ConfigurationView: View {
                             }
                         }
 
+                        // MARK: - No Results
+                        if isSearching && !hasAnySearchMatch {
+                            searchEmptyState
+                        }
+
                     }
                     .padding(.horizontal, 24)
                     .padding(.vertical, 24)
                     .frame(maxWidth: .infinity)
                 }
                 .opacity(hasAppeared ? 1 : 0)
+                // When a settings-search result lands here, scroll its control
+                // into view (the control glows itself via `settingsLandingAnchor`).
+                .onChange(of: highlightCoordinator.pending) { _, id in
+                    scrollToLandingTarget(id, proxy: proxy)
+                }
+                .onAppear {
+                    scrollToLandingTarget(highlightCoordinator.pending, proxy: proxy)
+                }
+                }
             }
 
             // Success toast overlay
@@ -696,8 +496,6 @@ struct ConfigurationView: View {
         .environment(\.theme, themeManager.currentTheme)
         .onAppear {
             loadConfiguration()
-            tempTelemetryEnabled = TelemetryService.shared.isEnabled
-            tempCrashReportingEnabled = CrashReportingService.shared.isEnabled
             withAnimation(.easeOut(duration: 0.25).delay(0.05)) {
                 hasAppeared = true
             }
@@ -705,67 +503,36 @@ struct ConfigurationView: View {
         .onReceive(ModelPickerItemCache.shared.$items) { options in
             coreModelPickerItems = options
         }
+        // Any edit to a save-relevant field reschedules the debounced save.
+        // `currentFormState` is the same snapshot the dirty check uses, so
+        // immediately-applied toggles (privacy, toasts, …) don't trigger it.
+        .onChange(of: currentFormState) { _, _ in scheduleAutoSave() }
+        // Persist a pending edit if the user leaves before the debounce fires.
+        .onDisappear { flushPendingSave() }
     }
 
-    // MARK: - Generative Greetings — Personality Editor
+    // MARK: - Auto-Save
 
-    /// Inline label row + multi-line editor + hint, replacing the
-    /// previous `StyledSettingsTextArea` here. We need a custom layout
-    /// so the "Reset to Default" button can sit next to the label and
-    /// reveal/hide based on whether the editor matches the built-in
-    /// default. The editor itself never renders an empty state — see
-    /// `loadConfiguration` for the prefill convention.
-    @ViewBuilder
-    private var personalityEditorBlock: some View {
-        let defaultText = GenerativeGreetingService.defaultPersonaInstruction
-        let isAtDefault =
-            tempGreetingPersona.trimmingCharacters(in: .whitespacesAndNewlines)
-            == defaultText.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Text("Personality (default for all agents)", bundle: .module)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
-                Spacer()
-                if !isAtDefault {
-                    Button {
-                        tempGreetingPersona = defaultText
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "arrow.uturn.backward")
-                                .font(.system(size: 10, weight: .semibold))
-                            Text("Reset to Default", bundle: .module)
-                                .font(.system(size: 11, weight: .medium))
-                        }
-                        .foregroundColor(theme.accentColor)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-
-            TextEditor(text: $tempGreetingPersona)
-                .font(.system(size: 13, design: .monospaced))
-                .foregroundColor(theme.primaryText)
-                .scrollContentBackground(.hidden)
-                .frame(minHeight: 100, maxHeight: 200)
-                .padding(10)
-                .background(
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(theme.inputBackground)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10)
-                                .stroke(theme.inputBorder, lineWidth: 1)
-                        )
-                )
-
-            Text(
-                "Shapes the voice of AI-generated empty-state greetings and quick actions. Each agent can override this in its Customization tab.",
-                bundle: .module
-            )
-            .font(.system(size: 11))
-            .foregroundColor(theme.tertiaryText)
+    /// Reschedule the debounced save. No-op while the form matches the saved
+    /// baseline — so loading the tab (which sets `temp*` then re-baselines)
+    /// and immediately-applied toggles never trigger a write.
+    private func scheduleAutoSave() {
+        guard hasUnsavedChanges else { return }
+        autoSaveTask?.cancel()
+        autoSaveTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 600_000_000)
+            guard !Task.isCancelled, hasUnsavedChanges else { return }
+            saveConfiguration()
         }
+    }
+
+    /// Cancel any pending debounce and save right now if the form is dirty.
+    /// Called on disappear so a half-typed change isn't lost when the window
+    /// closes before the 0.6s debounce elapses.
+    private func flushPendingSave() {
+        autoSaveTask?.cancel()
+        autoSaveTask = nil
+        if hasUnsavedChanges { saveConfiguration() }
     }
 
     // MARK: - Success Toast
@@ -793,41 +560,36 @@ struct ConfigurationView: View {
             }
             .help(
                 Text(
-                    "Restore view-only settings to recommended defaults (does not affect saved configuration)",
+                    "Restore view settings to recommended defaults (saved automatically, like any change)",
                     bundle: .module
                 )
             )
-            HeaderPrimaryButton("Save Changes", icon: "checkmark") {
-                saveConfiguration()
-            }
-            .disabled(!hasUnsavedChanges)
         }
     }
 
     // MARK: - Configuration Loading
 
     /// Wrapper so we can hand a single immutable snapshot back to
-    /// MainActor instead of four typed return values. `Sendable` is
+    /// MainActor instead of several typed return values. `Sendable` is
     /// required for `Task.detached`.
     private struct ConfigurationSnapshot: Sendable {
         let server: ServerConfiguration
         let chat: ChatConfiguration
-        let memory: MemoryConfiguration
         let toast: ToastConfiguration
     }
 
     /// Asynchronous loader. The original synchronous version of this
-    /// method called four `…ConfigurationStore.load()` functions on the
+    /// method called the `…ConfigurationStore.load()` functions on the
     /// main thread inside `.onAppear`, blocking SwiftUI from committing
-    /// the post-appear frame with default values while four
+    /// the post-appear frame with default values while the
     /// `JSONDecoder`+disk reads ran. On a fresh tab visit this was
     /// dozens of ms of visible jank. The detached task below moves the
-    /// pure JSON reads (`MemoryConfigurationStore`, `ToastConfigurationStore`
-    /// are already nonisolated) off the main thread; the two remaining
-    /// `@MainActor`-bound stores hop back briefly via `MainActor.run`,
-    /// but the disk reads inside them happen on a separate tick so
-    /// SwiftUI has already painted the shell. The result is applied
-    /// in a single MainActor batch via `applyLoadedConfiguration(_:)`.
+    /// pure JSON reads (`ToastConfigurationStore` is already nonisolated)
+    /// off the main thread; the remaining `@MainActor`-bound stores hop
+    /// back briefly via `MainActor.run`, but the disk reads inside them
+    /// happen on a separate tick so SwiftUI has already painted the
+    /// shell. The result is applied in a single MainActor batch via
+    /// `applyLoadedConfiguration(_:)`.
     private func loadConfiguration() {
         Task { @MainActor in
             // Yield once so SwiftUI gets to commit the post-`.onAppear`
@@ -844,12 +606,10 @@ struct ConfigurationView: View {
                 async let chat: ChatConfiguration = MainActor.run {
                     ChatConfigurationStore.load()
                 }
-                let memory = MemoryConfigurationStore.load()
                 let toast = ToastConfigurationStore.load()
                 return await ConfigurationSnapshot(
                     server: server,
                     chat: chat,
-                    memory: memory,
                     toast: toast
                 )
             }.value
@@ -860,37 +620,16 @@ struct ConfigurationView: View {
 
     private func applyLoadedConfiguration(_ snapshot: ConfigurationSnapshot) {
         let configuration = snapshot.server
+        loadedServerConfig = configuration
         tempStartAtLogin = configuration.startAtLogin
         tempHideDockIcon = configuration.hideDockIcon
 
         let chat = snapshot.chat
+        // The General section owns the global hotkey and the core model;
+        // the chat-mode generation knobs moved to the Chat tab.
         tempChatHotkey = chat.hotkey
-        // The Default agent's persona and tool-off flag now live on
-        // `DefaultAgentConfiguration` (split off from `ChatConfiguration`
-        // in Phase B). Settings UI reads/writes go through the new store
-        // so user edits land where `AgentManager.effective*` reads them.
-        let defaultAgent = DefaultAgentConfigurationStore.load()
-        tempSystemPrompt = defaultAgent.systemPrompt
-        tempChatTemperature = defaultAgent.temperature.map { String($0) } ?? ""
-        tempChatMaxTokens = defaultAgent.maxTokens.map(String.init) ?? ""
-        tempChatContextLength = chat.contextLength.map(String.init) ?? ""
-        tempChatTopP = chat.topPOverride.map { String($0) } ?? ""
-        tempChatMaxToolAttempts = chat.maxToolAttempts.map(String.init) ?? ""
-        tempDisableTools = defaultAgent.disableTools
-        tempMemoryEnabled = snapshot.memory.enabled
         tempCoreModelProvider = chat.coreModelProvider ?? ""
         tempCoreModelName = chat.coreModelName ?? ""
-        tempEnableClipboardMonitoring = chat.enableClipboardMonitoring
-        // Storage convention: empty string = "use the built-in default."
-        // The editor never displays an empty state — we hydrate it with
-        // the built-in default so the text is selectable, copyable, and
-        // editable in place. `saveConfiguration` collapses an unedited
-        // default back to "" so future updates to the built-in copy
-        // still propagate to users who never changed it.
-        tempGreetingPersona =
-            chat.greetingPersona.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? GenerativeGreetingService.defaultPersonaInstruction
-            : chat.greetingPersona
 
         let toastConfig = snapshot.toast
         tempToastPosition = toastConfig.position
@@ -921,22 +660,8 @@ struct ConfigurationView: View {
         tempHideDockIcon = serverDefaults.hideDockIcon
 
         tempChatHotkey = chatDefaults.hotkey
-        tempSystemPrompt = ""
-        tempChatTemperature = ""
-        tempChatMaxTokens = ""
-        tempChatContextLength = ""
-        tempChatTopP = ""
-        tempChatMaxToolAttempts = ""
-        tempDisableTools = true
-        tempMemoryEnabled = false
         tempCoreModelProvider = chatDefaults.coreModelProvider ?? ""
         tempCoreModelName = chatDefaults.coreModelName ?? ""
-        tempEnableClipboardMonitoring = chatDefaults.enableClipboardMonitoring
-        // Match `loadConfiguration`: hydrate the editor with the
-        // built-in default rather than leaving it blank. Saving with
-        // this exact text collapses back to "" so future default
-        // updates still flow through.
-        tempGreetingPersona = GenerativeGreetingService.defaultPersonaInstruction
 
         showSuccess("Settings restored to defaults")
     }
@@ -970,24 +695,14 @@ struct ConfigurationView: View {
     // MARK: - Dirty-State Tracking
 
     /// Snapshot of exactly the fields that `saveConfiguration` persists.
-    /// Compared against the live form to decide whether "Save Changes"
-    /// has anything to do.
+    /// Compared against the live form to decide whether the debounced
+    /// auto-save has anything to write.
     private struct SaveableFormState: Equatable {
         var startAtLogin: Bool
         var hideDockIcon: Bool
         var hotkey: Hotkey?
-        var systemPrompt: String
-        var temperature: String
-        var maxTokens: String
-        var contextLength: String
-        var topP: String
-        var maxToolAttempts: String
-        var disableTools: Bool
-        var memoryEnabled: Bool
         var coreModelProvider: String
         var coreModelName: String
-        var enableClipboardMonitoring: Bool
-        var greetingPersona: String
     }
 
     /// Live snapshot of the save-relevant fields, built from the current
@@ -997,18 +712,8 @@ struct ConfigurationView: View {
             startAtLogin: tempStartAtLogin,
             hideDockIcon: tempHideDockIcon,
             hotkey: tempChatHotkey,
-            systemPrompt: tempSystemPrompt,
-            temperature: tempChatTemperature,
-            maxTokens: tempChatMaxTokens,
-            contextLength: tempChatContextLength,
-            topP: tempChatTopP,
-            maxToolAttempts: tempChatMaxToolAttempts,
-            disableTools: tempDisableTools,
-            memoryEnabled: tempMemoryEnabled,
             coreModelProvider: tempCoreModelProvider,
-            coreModelName: tempCoreModelName,
-            enableClipboardMonitoring: tempEnableClipboardMonitoring,
-            greetingPersona: tempGreetingPersona
+            coreModelName: tempCoreModelName
         )
     }
 
@@ -1023,7 +728,9 @@ struct ConfigurationView: View {
     // MARK: - Configuration Saving
 
     private func saveConfiguration() {
-        let previousServerCfg = ServerConfigurationStore.load() ?? ServerConfiguration.default
+        // Use the cached last-loaded server config instead of a synchronous
+        // disk read; the store writes back off the main thread below.
+        let previousServerCfg = loadedServerConfig
         let previousChatCfg = ChatConfigurationStore.load()
 
         var configuration = previousServerCfg
@@ -1034,85 +741,18 @@ struct ConfigurationView: View {
         let startAtLoginChanged = previousServerCfg.startAtLogin != configuration.startAtLogin
 
         ServerConfigurationStore.save(configuration)
+        loadedServerConfig = configuration
 
-        let trimmedTemp = tempChatTemperature.trimmingCharacters(in: .whitespacesAndNewlines)
-        let parsedTemp: Float? = {
-            guard !trimmedTemp.isEmpty, let v = Float(trimmedTemp) else { return nil }
-            return max(0.0, min(2.0, v))
-        }()
-
-        let trimmedMax = tempChatMaxTokens.trimmingCharacters(in: .whitespacesAndNewlines)
-        let parsedMax: Int? = {
-            guard !trimmedMax.isEmpty, let v = Int(trimmedMax) else { return nil }
-            return max(1, v)
-        }()
-
-        let trimmedContext = tempChatContextLength.trimmingCharacters(in: .whitespacesAndNewlines)
-        let parsedContext: Int? = {
-            guard !trimmedContext.isEmpty, let v = Int(trimmedContext) else { return nil }
-            return max(2048, v)
-        }()
-
-        let trimmedTopPChat = tempChatTopP.trimmingCharacters(in: .whitespacesAndNewlines)
-        let parsedTopP: Float? = {
-            guard !trimmedTopPChat.isEmpty, let v = Float(trimmedTopPChat) else { return nil }
-            return max(0.0, min(1.0, v))
-        }()
-
-        let parsedMaxToolAttempts: Int? = {
-            let s = tempChatMaxToolAttempts.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !s.isEmpty, let v = Int(s) else { return nil }
-            return max(1, min(50, v))
-        }()
-
-        let existingDefaultModel = previousChatCfg.defaultModel
-        let chatCfg = ChatConfiguration(
-            hotkey: tempChatHotkey,
-            // `systemPrompt` is owned by `DefaultAgentConfiguration` now;
-            // we write it to that store below. Persisting it as "" here
-            // keeps the JSON shape valid (the field is non-optional in
-            // the struct) without re-introducing the split-source-of-
-            // truth bug Phase B set out to fix.
-            systemPrompt: "",
-            temperature: nil,
-            maxTokens: nil,
-            contextLength: parsedContext,
-            topPOverride: parsedTopP,
-            maxToolAttempts: parsedMaxToolAttempts,
-            defaultModel: existingDefaultModel,
-            coreModelProvider: tempCoreModelProvider.isEmpty ? nil : tempCoreModelProvider,
-            coreModelName: tempCoreModelName.isEmpty ? nil : tempCoreModelName,
-            disableTools: false,
-            enableClipboardMonitoring: tempEnableClipboardMonitoring,
-            greetingPersona: {
-                // Collapse an unedited built-in default back to "" so
-                // the storage stays in "inherit the default" mode.
-                // Trim before comparison so trailing whitespace from
-                // the editor doesn't accidentally diverge.
-                let trimmed = tempGreetingPersona.trimmingCharacters(in: .whitespacesAndNewlines)
-                let defaultTrimmed = GenerativeGreetingService.defaultPersonaInstruction
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                return trimmed == defaultTrimmed ? "" : tempGreetingPersona
-            }()
-        )
+        // Load-modify-write: this view owns only the global hotkey and the
+        // core model within `ChatConfiguration`. The chat-mode generation
+        // knobs (context length, top-P, tool attempts, clipboard, greeting
+        // persona) are owned by the Chat tab, so we preserve whatever is on
+        // disk for them rather than reconstructing the whole struct.
+        var chatCfg = previousChatCfg
+        chatCfg.hotkey = tempChatHotkey
+        chatCfg.coreModelProvider = tempCoreModelProvider.isEmpty ? nil : tempCoreModelProvider
+        chatCfg.coreModelName = tempCoreModelName.isEmpty ? nil : tempCoreModelName
         ChatConfigurationStore.save(chatCfg)
-
-        // Persist default-agent specific fields to their own store.
-        var defaultAgentCfg = DefaultAgentConfigurationStore.load()
-        defaultAgentCfg.systemPrompt = tempSystemPrompt
-        defaultAgentCfg.temperature = parsedTemp
-        defaultAgentCfg.maxTokens = parsedMax
-        defaultAgentCfg.disableTools = tempDisableTools
-        DefaultAgentConfigurationStore.save(defaultAgentCfg)
-
-        // Persist memory enable toggle. Budgets are not user-adjustable in
-        // this UI — users can edit MemoryConfiguration.json directly for
-        // advanced tuning.
-        var memoryCfg = MemoryConfigurationStore.load()
-        if memoryCfg.enabled != tempMemoryEnabled {
-            memoryCfg.enabled = tempMemoryEnabled
-            MemoryConfigurationStore.save(memoryCfg)
-        }
 
         let hotkeyChanged = previousChatCfg.hotkey != chatCfg.hotkey
 
@@ -1133,11 +773,9 @@ struct ConfigurationView: View {
             // RuntimeConfig invalidation flow.
         }
 
-        // Re-baseline so the button disarms again now that the live form
+        // Re-baseline so the dirty check clears now that the live form
         // matches what's persisted.
         savedFormState = currentFormState
-
-        showSuccess(L("Settings saved successfully"))
     }
 
     // MARK: - Core Model Picker
@@ -1468,355 +1106,3 @@ private struct ToastPositionPicker: View {
 // `SettingsButtonStyle`) now live in
 // `Packages/OsaurusCore/Views/Settings/Shared/SettingsPrimitives.swift`
 // so the Server → Settings tab can reuse them.
-
-// MARK: - Server Settings Moved Notice
-
-/// Surfaces when the user searches for Server/Local Inference
-/// keywords inside the legacy Configuration view. Links to the new
-/// Server → Settings tab where those controls now live.
-private struct ServerSettingsMovedNotice: View {
-    @ObservedObject private var themeManager = ThemeManager.shared
-
-    var body: some View {
-        let theme = themeManager.currentTheme
-        Button(action: openServerSettings) {
-            HStack(spacing: 12) {
-                Image(systemName: "arrow.right.circle.fill")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(theme.accentColor)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Server settings moved", bundle: .module)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
-                    Text(
-                        "Port, network exposure, CORS, top-P, model eviction, and idle residency now live in Server → Settings, backed by the vmlx server-runtime contract.",
-                        bundle: .module
-                    )
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.secondaryText)
-                    .multilineTextAlignment(.leading)
-                }
-                Spacer()
-                Text("Open", bundle: .module)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(theme.accentColor)
-            }
-            .padding(14)
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(theme.cardBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12)
-                            .stroke(theme.accentColor.opacity(0.25), lineWidth: 1)
-                    )
-            )
-        }
-        .buttonStyle(PlainButtonStyle())
-    }
-
-    private func openServerSettings() {
-        AppDelegate.shared?.showManagementWindow(initialTab: .server)
-    }
-}
-
-// MARK: - Styled Settings Text Area
-
-private struct StyledSettingsTextArea: View {
-    @ObservedObject private var themeManager = ThemeManager.shared
-
-    let label: String
-    @Binding var text: String
-    let placeholder: String
-    let hint: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(LocalizedStringKey(label), bundle: .module)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(themeManager.currentTheme.secondaryText)
-
-            ZStack(alignment: .topLeading) {
-                // Themed placeholder overlay
-                if text.isEmpty {
-                    Text(LocalizedStringKey(placeholder), bundle: .module)
-                        .font(.system(size: 13, design: .monospaced))
-                        .foregroundColor(themeManager.currentTheme.placeholderText)
-                        .padding(.top, 12)
-                        .padding(.leading, 12)
-                        .allowsHitTesting(false)
-                }
-
-                TextEditor(text: $text)
-                    .font(.system(size: 13, design: .monospaced))
-                    .foregroundColor(themeManager.currentTheme.primaryText)
-                    .scrollContentBackground(.hidden)
-                    .frame(minHeight: 100, maxHeight: 160)
-                    .padding(10)
-            }
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(themeManager.currentTheme.inputBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .stroke(themeManager.currentTheme.inputBorder, lineWidth: 1)
-                    )
-            )
-
-            Text(LocalizedStringKey(hint), bundle: .module)
-                .font(.system(size: 11))
-                .foregroundColor(themeManager.currentTheme.tertiaryText)
-        }
-    }
-}
-
-// MARK: - Voice Settings Section
-
-private struct VoiceSettingsSection: View {
-    @ObservedObject private var themeManager = ThemeManager.shared
-    @ObservedObject private var modelManager = SpeechModelManager.shared
-    @ObservedObject private var speechService = SpeechService.shared
-
-    var body: some View {
-        SettingsSection(title: "Voice (Advanced)", icon: "waveform") {
-            VStack(alignment: .leading, spacing: 20) {
-                Text("Configure voice settings directly in the Voice tab.", bundle: .module)
-                    .font(.system(size: 12))
-                    .foregroundColor(themeManager.currentTheme.secondaryText)
-
-                // Status info
-                HStack(spacing: 12) {
-                    // Model status
-                    HStack(spacing: 6) {
-                        if speechService.isLoadingModel {
-                            ProgressView()
-                                .scaleEffect(0.5)
-                                .frame(width: 8, height: 8)
-                        } else {
-                            Circle()
-                                .fill(
-                                    speechService.isModelLoaded
-                                        ? themeManager.currentTheme.successColor
-                                        : themeManager.currentTheme.tertiaryText
-                                )
-                                .frame(width: 8, height: 8)
-                        }
-                        Text(modelStatusText)
-                            .font(.system(size: 11))
-                            .foregroundColor(themeManager.currentTheme.secondaryText)
-                    }
-
-                    Spacer()
-
-                    // Quick link to Voice tab
-                    Button(action: {
-                        AppDelegate.shared?.showManagementWindow(initialTab: .voice)
-                    }) {
-                        HStack(spacing: 4) {
-                            Image(systemName: "arrow.right.circle")
-                                .font(.system(size: 11))
-                            Text("Open Voice Tab", bundle: .module)
-                                .font(.system(size: 11, weight: .medium))
-                        }
-                        .foregroundColor(themeManager.currentTheme.accentColor)
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                }
-                .padding(10)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(themeManager.currentTheme.tertiaryBackground)
-                )
-            }
-        }
-    }
-
-    private var modelStatusText: String {
-        if speechService.isLoadingModel {
-            return "Loading model..."
-        } else if speechService.isModelLoaded {
-            if let modelId = speechService.loadedModelId,
-                let model = modelManager.availableModels.first(where: { $0.id == modelId })
-            {
-                return model.name
-            }
-            return "Model Loaded"
-        } else if modelManager.downloadedModelsCount == 0 {
-            return "No models downloaded"
-        } else {
-            return "Model not loaded"
-        }
-    }
-
-}
-
-// MARK: - Tool Permissions Section
-
-private struct ToolPermissionsSection: View {
-    @ObservedObject private var themeManager = ThemeManager.shared
-    @State private var refreshId = UUID()
-
-    // (name, display, desc, destructive, defaultPolicy)
-    //
-    // The dedicated `file_move` / `file_copy` / `file_delete` /
-    // `dir_create` / `batch` rows were dropped when those tools were
-    // folded into `shell_run` (`mv` / `cp` / `rm` / `mkdir`). Settings
-    // for those names will still load from the persisted config (the
-    // tool registry just won't have anything to dispatch them to), so
-    // existing user preferences keep working.
-    private static let folderTools:
-        [(name: String, display: String, desc: String, destructive: Bool, defaultPolicy: ToolPermissionPolicy)] = [
-            ("file_write", L("Write Files"), L("Create and modify files"), false, .auto),
-            ("file_edit", L("Edit Files"), L("Edit file content with search/replace"), false, .auto),
-            ("shell_run", L("Run Shell Commands"), L("Execute shell commands in the folder"), true, .ask),
-            ("git_commit", L("Git Commit"), L("Commit changes to git repository"), true, .ask),
-        ]
-
-    var body: some View {
-        SettingsSection(title: "Tool Permissions", icon: "lock.shield") {
-            VStack(alignment: .leading, spacing: 16) {
-                // Permissions
-                SettingsSubsection(label: "Permissions") {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text(
-                            "Control how folder tools execute when chat has access to a working folder.",
-                            bundle: .module
-                        )
-                        .font(.system(size: 12))
-                        .foregroundColor(themeManager.currentTheme.secondaryText)
-
-                        VStack(spacing: 0) {
-                            ForEach(Self.folderTools, id: \.name) { tool in
-                                ToolPermissionRow(
-                                    name: tool.name,
-                                    displayName: tool.display,
-                                    description: tool.desc,
-                                    isDestructive: tool.destructive,
-                                    defaultPolicy: tool.defaultPolicy,
-                                    onPolicyChange: { refreshId = UUID() }
-                                )
-                            }
-                        }
-                        .background(
-                            RoundedRectangle(cornerRadius: 10)
-                                .fill(themeManager.currentTheme.inputBackground)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 10)
-                                        .stroke(themeManager.currentTheme.inputBorder, lineWidth: 1)
-                                )
-                        )
-                        .id(refreshId)
-
-                        HStack {
-                            Spacer()
-                            Button(action: resetAllToDefault) {
-                                HStack(spacing: 6) {
-                                    Image(systemName: "arrow.counterclockwise")
-                                        .font(.system(size: 11))
-                                    Text("Reset All to Default", bundle: .module)
-                                        .font(.system(size: 12, weight: .medium))
-                                }
-                            }
-                            .buttonStyle(SettingsButtonStyle())
-                            .localizedHelp("Reset all tool permissions to default")
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private func resetAllToDefault() {
-        for tool in Self.folderTools {
-            ToolRegistry.shared.clearPolicy(for: tool.name)
-        }
-        refreshId = UUID()
-    }
-}
-
-// MARK: - Tool Permission Row
-
-private struct ToolPermissionRow: View {
-    @ObservedObject private var themeManager = ThemeManager.shared
-    /// Observing `ToolRegistry` here is what lets us read the configured
-    /// policy from memory instead of doing a synchronous `tools.json`
-    /// disk read in every body evaluation. `setPolicy()` updates the
-    /// registry's `@Published configuration`, which republishes here.
-    @ObservedObject private var toolRegistry = ToolRegistry.shared
-    @State private var isHovered = false
-    /// Cached configured policy. Sourced from `ToolRegistry.shared` on
-    /// `.onAppear` and refreshed when the registry publishes a change.
-    /// Avoids the per-render `ToolConfigurationStore.load()` (which used
-    /// to call `JSONDecoder().decode` and `FileManager.fileExists`).
-    @State private var configuredPolicy: ToolPermissionPolicy?
-
-    let name: String
-    let displayName: String
-    let description: String
-    let isDestructive: Bool
-    let defaultPolicy: ToolPermissionPolicy
-    let onPolicyChange: () -> Void
-
-    /// Returns the effective policy (configured or default)
-    private var effectivePolicy: ToolPermissionPolicy {
-        configuredPolicy ?? defaultPolicy
-    }
-
-    var body: some View {
-        HStack(spacing: 12) {
-            if isDestructive {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: 11))
-                    .foregroundColor(themeManager.currentTheme.warningColor)
-                    .frame(width: 16)
-            } else {
-                Color.clear.frame(width: 16)
-            }
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(displayName)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(themeManager.currentTheme.primaryText)
-                Text(LocalizedStringKey(description), bundle: .module)
-                    .font(.system(size: 10))
-                    .foregroundColor(themeManager.currentTheme.tertiaryText)
-            }
-
-            Spacer()
-
-            Picker(
-                "",
-                selection: Binding(
-                    get: { effectivePolicy },
-                    set: { newValue in
-                        toolRegistry.setPolicy(newValue, for: name)
-                        configuredPolicy = toolRegistry.configuredPolicy(for: name)
-                        onPolicyChange()
-                    }
-                )
-            ) {
-                Text("Auto", bundle: .module).tag(ToolPermissionPolicy.auto)
-                Text("Ask", bundle: .module).tag(ToolPermissionPolicy.ask)
-                Text("Deny", bundle: .module).tag(ToolPermissionPolicy.deny)
-            }
-            .pickerStyle(.segmented)
-            .frame(width: 150)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(isHovered ? themeManager.currentTheme.tertiaryBackground.opacity(0.5) : Color.clear)
-        .onHover { isHovered = $0 }
-        .onAppear {
-            configuredPolicy = toolRegistry.configuredPolicy(for: name)
-        }
-        .onReceive(toolRegistry.objectWillChange) { _ in
-            // Registry's `@Published configuration` republishes on any
-            // `setPolicy` / `clearPolicy` call (including the bulk
-            // "Reset All to Default" flow). Re-read in case another
-            // row mutated our key.
-            let latest = toolRegistry.configuredPolicy(for: name)
-            if latest != configuredPolicy {
-                configuredPolicy = latest
-            }
-        }
-    }
-}

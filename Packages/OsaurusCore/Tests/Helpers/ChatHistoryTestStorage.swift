@@ -43,7 +43,23 @@ enum ChatHistoryTestStorage {
             SandboxManager.State.shared.status = .notProvisioned
 
             let previousRoot = OsaurusPaths.overrideRoot
+            let previousChatConfig = ChatConfigurationStore.load()
+            let previousDefaultAgentOverride = DefaultAgentConfigurationStore.overrideDirectory
             OsaurusPaths.overrideRoot = root
+            var isolatedChatConfig = previousChatConfig
+            isolatedChatConfig.disableTools = true
+            ChatConfigurationStore.save(isolatedChatConfig)
+            DefaultAgentConfigurationStore.overrideDirectory = root.appendingPathComponent("config")
+            DefaultAgentConfigurationStore.resetCacheForTests()
+            DefaultAgentConfigurationStore.save(
+                DefaultAgentConfiguration(
+                    disableTools: true,
+                    autonomousExec: nil,
+                    toolSelectionMode: .manual,
+                    manualToolNames: [],
+                    manualSkillNames: []
+                )
+            )
             StorageKeyManager.shared._setKeyForTesting(
                 SymmetricKey(data: Data(repeating: 0x44, count: 32))
             )
@@ -52,7 +68,10 @@ enum ChatHistoryTestStorage {
             defer {
                 ChatSessionStore._resetForTesting()
                 StorageKeyManager.shared.wipeCache()
+                ChatConfigurationStore.save(previousChatConfig)
                 OsaurusPaths.overrideRoot = previousRoot
+                DefaultAgentConfigurationStore.overrideDirectory = previousDefaultAgentOverride
+                DefaultAgentConfigurationStore.resetCacheForTests()
                 AgentManager.shared.refresh()
                 SandboxManager.State.shared.availability = previousAvailability
                 SandboxManager.State.shared.status = previousStatus

@@ -13,6 +13,7 @@ struct ModelPickerItem: Identifiable, Hashable {
     enum Source: Hashable {
         case foundation
         case local  // MLX models
+        case imageGeneration  // on-device image models (vMLXFlux)
         case remote(providerName: String, providerId: UUID)
 
         var displayName: String {
@@ -21,6 +22,8 @@ struct ModelPickerItem: Identifiable, Hashable {
                 return "Foundation"
             case .local:
                 return "Local Models"
+            case .imageGeneration:
+                return "Image Models"
             case .remote(let providerName, _):
                 return providerName
             }
@@ -31,6 +34,7 @@ struct ModelPickerItem: Identifiable, Hashable {
             switch self {
             case .foundation: return "foundation"
             case .local: return "local"
+            case .imageGeneration: return "image"
             case .remote(_, let providerId): return "remote-\(providerId.uuidString)"
             }
         }
@@ -41,9 +45,18 @@ struct ModelPickerItem: Identifiable, Hashable {
                 return 0
             case .local:
                 return 1
-            case .remote:
+            case .imageGeneration:
                 return 2
+            case .remote:
+                return 3
             }
+        }
+
+        /// True for the on-device image-generation source. Chat routes these
+        /// through `ImageGenerationService` instead of the LLM engine.
+        var isImageGeneration: Bool {
+            if case .imageGeneration = self { return true }
+            return false
         }
     }
 
@@ -86,6 +99,13 @@ struct ModelPickerItem: Identifiable, Hashable {
     /// filter the Osaurus tab by context limit; `nil` when unknown.
     let contextLength: Int?
 
+    /// Image-generation metadata. Nil for text/remote chat models.
+    let imageKind: String?
+    let imageCapabilities: ImageModelCapabilities?
+    let imageDefaultSteps: Int?
+    let imageDefaultGuidance: Float?
+    let imageReady: Bool
+
     init(
         id: String,
         displayName: String,
@@ -97,7 +117,12 @@ struct ModelPickerItem: Identifiable, Hashable {
         description: String? = nil,
         inputPriceMicroPerMTok: Int64? = nil,
         outputPriceMicroPerMTok: Int64? = nil,
-        contextLength: Int? = nil
+        contextLength: Int? = nil,
+        imageKind: String? = nil,
+        imageCapabilities: ImageModelCapabilities? = nil,
+        imageDefaultSteps: Int? = nil,
+        imageDefaultGuidance: Float? = nil,
+        imageReady: Bool = false
     ) {
         self.id = id
         self.displayName = displayName
@@ -110,6 +135,11 @@ struct ModelPickerItem: Identifiable, Hashable {
         self.inputPriceMicroPerMTok = inputPriceMicroPerMTok
         self.outputPriceMicroPerMTok = outputPriceMicroPerMTok
         self.contextLength = contextLength
+        self.imageKind = imageKind
+        self.imageCapabilities = imageCapabilities
+        self.imageDefaultSteps = imageDefaultSteps
+        self.imageDefaultGuidance = imageDefaultGuidance
+        self.imageReady = imageReady
     }
 
     /// Check if model matches search query using fuzzy matching.
@@ -143,6 +173,22 @@ extension ModelPickerItem {
             isVLM: model.isVLM,
             isEmbedding: model.isEmbedding,
             description: model.description
+        )
+    }
+
+    /// Create an on-device image-generation model picker item.
+    static func fromImageModel(_ model: ImageModelInfo) -> ModelPickerItem {
+        ModelPickerItem(
+            id: model.id,
+            displayName: model.displayName,
+            source: .imageGeneration,
+            quantization: model.quantizationBits.map { "\($0)-bit" },
+            description: model.ready ? nil : model.blockedReasons.first,
+            imageKind: model.kind,
+            imageCapabilities: model.capabilities,
+            imageDefaultSteps: model.defaultSteps,
+            imageDefaultGuidance: model.defaultGuidance,
+            imageReady: model.ready
         )
     }
 
@@ -275,9 +321,28 @@ extension ModelPickerItem {
             // catalog, so an embedding repo can appear here. The flag is
             // detected from the bundle's config.json at item construction.
             return !isEmbedding
+        case .imageGeneration:
+            // Image models produce images, not chat completions — never a
+            // default chat pick (but still selectable to enter image mode).
+            return false
         case .remote:
             return !Self.isLikelyEmbeddingOrRerankerID(id)
         }
+    }
+
+    var isLocalTextDelegateCandidate: Bool {
+        if case .local = source {
+            return isLikelyChatCapable
+        }
+        return false
+    }
+
+    var isImageGenerationDelegateCandidate: Bool {
+        source.isImageGeneration && imageReady && (imageCapabilities?.textToImage == true)
+    }
+
+    var isImageEditDelegateCandidate: Bool {
+        source.isImageGeneration && imageReady && (imageCapabilities?.imageEdit == true)
     }
 
     /// Ranking used only when Chat needs an automatic fallback selection.
@@ -289,6 +354,8 @@ extension ModelPickerItem {
     var defaultChatSelectionRank: Int {
         let lower = id.lowercased()
         switch source {
+        case .imageGeneration:
+            return 40
         case .local:
             if lower.contains("gemma-4"), lower.contains("qat"),
                 lower.contains("osaurusai--"),
@@ -496,6 +563,43 @@ extension Array where Element == ModelPickerItem {
         return ranked?.element ?? first
     }
 
+    var localTextDelegateCandidates: [ModelPickerItem] {
+        filter(\.isLocalTextDelegateCandidate)
+    }
+
+    var imageGenerationDelegateCandidates: [ModelPickerItem] {
+        filter(\.isImageGenerationDelegateCandidate)
+    }
+
+    var imageEditDelegateCandidates: [ModelPickerItem] {
+        filter(\.isImageEditDelegateCandidate)
+    }
+
+    func agentDelegationCandidate(
+        id: String?,
+        kind: AgentDelegationModelKind
+    ) -> ModelPickerItem? {
+        guard let id else { return nil }
+        let trimmed = id.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        return candidates(for: kind).first { $0.id == trimmed }
+    }
+
+    func defaultAgentDelegationCandidate(kind: AgentDelegationModelKind) -> ModelPickerItem? {
+        candidates(for: kind).first
+    }
+
+    private func candidates(for kind: AgentDelegationModelKind) -> [ModelPickerItem] {
+        switch kind {
+        case .localTextDelegate:
+            return localTextDelegateCandidates
+        case .imageGeneration:
+            return imageGenerationDelegateCandidates
+        case .imageEdit:
+            return imageEditDelegateCandidates
+        }
+    }
+
     /// Group models by source for display in sections
     func groupedBySource() -> [(source: ModelPickerItem.Source, models: [ModelPickerItem])] {
         var groups: [ModelPickerItem.Source: [ModelPickerItem]] = [:]
@@ -526,7 +630,8 @@ extension Array where Element == ModelPickerItem {
             switch model.source {
             case .foundation:
                 foundationModels.append(model)
-            case .local:
+            case .local, .imageGeneration:
+                // On-device image models live in the Local tab alongside LLMs.
                 localModels.append(model)
             case .remote(let providerName, _):
                 let key = model.source.uniqueKey

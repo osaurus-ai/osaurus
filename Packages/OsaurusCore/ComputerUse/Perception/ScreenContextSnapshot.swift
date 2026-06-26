@@ -29,18 +29,33 @@ public struct ScreenContextSnapshot: Sendable, Equatable {
         }
     }
 
-    /// The element the user is actively interacting with (usually a text input).
+    /// The element the user is actively interacting with (usually a text input
+    /// or the focused editor).
     public struct FocusedElement: Sendable, Equatable {
         public let role: String
         public let label: String?
         public let placeholder: String?
         public let value: String?
+        /// The currently selected substring, when any ("Selected text:").
+        public let selectedText: String?
+        /// A cursor-centered / visible slice of a large editor's content — what
+        /// the user is actually looking at ("Viewing:").
+        public let viewing: String?
 
-        public init(role: String, label: String?, placeholder: String?, value: String?) {
+        public init(
+            role: String,
+            label: String?,
+            placeholder: String?,
+            value: String?,
+            selectedText: String? = nil,
+            viewing: String? = nil
+        ) {
             self.role = role
             self.label = label
             self.placeholder = placeholder
             self.value = value
+            self.selectedText = selectedText
+            self.viewing = viewing
         }
     }
 
@@ -50,6 +65,16 @@ public struct ScreenContextSnapshot: Sendable, Equatable {
     public let workingWindowTitle: String?
     public let activityGist: String?
     public let focusedElement: FocusedElement?
+    /// High-precision behavioral context parsed from the working window title —
+    /// the channel the user is in, the file they're editing ("Active:"). Empty
+    /// unless a confident pattern matched (a plain document/site title yields
+    /// nothing, so we never assert a phantom context).
+    public let activeContext: [String]
+    /// Ambient status indicators read from the focused window's status-bar strip
+    /// (git branch, problems count, language/position) — labeled controls the
+    /// on-screen content sampler drops as chrome, surfaced here as behavior
+    /// ("Status:").
+    public let statusSignals: [String]
     public let windows: [WindowRef]
     public let sampledContents: [String]
 
@@ -60,6 +85,8 @@ public struct ScreenContextSnapshot: Sendable, Equatable {
         workingWindowTitle: String? = nil,
         activityGist: String? = nil,
         focusedElement: FocusedElement? = nil,
+        activeContext: [String] = [],
+        statusSignals: [String] = [],
         windows: [WindowRef] = [],
         sampledContents: [String] = []
     ) {
@@ -69,6 +96,8 @@ public struct ScreenContextSnapshot: Sendable, Equatable {
         self.workingWindowTitle = workingWindowTitle
         self.activityGist = activityGist
         self.focusedElement = focusedElement
+        self.activeContext = activeContext
+        self.statusSignals = statusSignals
         self.windows = windows
         self.sampledContents = sampledContents
     }
@@ -90,6 +119,8 @@ public struct ScreenContextSnapshot: Sendable, Equatable {
         (activityGist?.isEmpty ?? true)
             && workingApp == nil
             && focusedElement == nil
+            && activeContext.isEmpty
+            && statusSignals.isEmpty
             && windows.isEmpty
             && sampledContents.isEmpty
     }
@@ -112,8 +143,23 @@ public struct ScreenContextSnapshot: Sendable, Equatable {
             lines.append("Doing: \(gist)")
         }
 
+        // Behavioral context first (what the user is in / their working state),
+        // then the focused-element drill-down below.
+        if !activeContext.isEmpty {
+            lines.append("Active: " + activeContext.joined(separator: " · "))
+        }
+        if !statusSignals.isEmpty {
+            lines.append("Status: " + statusSignals.joined(separator: " · "))
+        }
+
         if let focused = focusedElement {
             lines.append("Focused field: \(Self.describe(focused))")
+            if let viewing = focused.viewing, !viewing.isEmpty {
+                lines.append("Viewing: \(viewing)")
+            }
+            if let selected = focused.selectedText, !selected.isEmpty {
+                lines.append("Selected text: \"\(selected)\"")
+            }
         }
 
         if !windows.isEmpty {
@@ -144,13 +190,20 @@ public struct ScreenContextSnapshot: Sendable, Equatable {
         if let label = element.label, !label.isEmpty {
             parts.append("\"\(label)\"")
         }
+        // When a viewing slice is present it carries the content on its own
+        // "Viewing:" line, so don't also dump the (clipped) value here.
+        if element.viewing != nil {
+            return parts.joined(separator: " ")
+        }
         if let value = element.value, !value.isEmpty {
             parts.append("— value: \"\(value)\"")
         } else if let placeholder = element.placeholder, !placeholder.isEmpty {
             parts.append("— empty (placeholder: \"\(placeholder)\")")
-        } else {
-            parts.append("— empty")
         }
+        // Otherwise show just the role (+ label). We don't append "— empty"
+        // because a contentless focused element is often unreadable (an
+        // inaccessible Electron/Monaco editor), not genuinely empty — claiming
+        // "empty" there would feed the model a phantom fact.
         return parts.joined(separator: " ")
     }
 }

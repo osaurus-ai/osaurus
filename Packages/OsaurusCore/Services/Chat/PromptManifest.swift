@@ -10,6 +10,15 @@
 import CryptoKit
 import Foundation
 
+// MARK: - PromptSectionID
+
+/// Stable IDs for sections that other proof and budget paths inspect by name.
+public enum PromptSectionID {
+    public static let platform = "platform"
+    public static let persona = "persona"
+    public static let memory = "memory"
+}
+
 // MARK: - PromptSection
 
 /// One logical block of the system prompt (e.g. base identity, sandbox, memory).
@@ -73,12 +82,12 @@ public struct PromptManifest: Sendable {
 
     /// Tokens from sections that are NOT the memory section.
     public var systemPromptTokens: Int {
-        sections.filter { $0.id != "memory" }.reduce(0) { $0 + $1.estimatedTokens }
+        sections.filter { $0.id != PromptSectionID.memory }.reduce(0) { $0 + $1.estimatedTokens }
     }
 
     /// Tokens from the memory section specifically.
     public var memoryTokens: Int {
-        section("memory")?.estimatedTokens ?? 0
+        section(PromptSectionID.memory)?.estimatedTokens ?? 0
     }
 
     public func section(_ id: String) -> PromptSection? {
@@ -123,6 +132,106 @@ public struct PromptManifest: Sendable {
         let hash = prefixHash.prefix(16)
         lines.append("  Static prefix:       \(String(format: "%5d", staticPrefixTokens)) (hash: \(hash))")
         return lines.joined(separator: "\n")
+    }
+
+    public func systemPromptInjectionTrace(expectedPrompt: String) -> SystemPromptInjectionTrace {
+        return systemPromptInjectionTrace(
+            expectedPrompt: expectedPrompt,
+            renderedPrompt: PromptRenderer.render(sections)
+        )
+    }
+
+    public func systemPromptInjectionTrace(
+        expectedPrompt: String,
+        renderedPrompt: String
+    ) -> SystemPromptInjectionTrace {
+        let expected = expectedPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !expected.isEmpty else {
+            return SystemPromptInjectionTrace(expectedPromptWasEmpty: true)
+        }
+
+        let matchingSectionIds = sections.compactMap { section in
+            section.content.contains(expected) ? section.id : nil
+        }
+
+        return SystemPromptInjectionTrace(
+            expectedPromptWasEmpty: false,
+            matchingSectionIds: matchingSectionIds,
+            staticPrefixContainsExpectedPrompt: staticPrefixContent.contains(expected),
+            renderedPromptContainsExpectedPrompt: renderedPrompt.contains(expected),
+            memorySectionContainsExpectedPrompt: section(PromptSectionID.memory)?.content.contains(expected) == true
+        )
+    }
+}
+
+/// Source-level evidence that a configured agent prompt reached the static
+/// system prompt surface. This does not prove a model obeyed the prompt; it
+/// only proves the composer handed the expected text to the runtime path.
+public struct SystemPromptInjectionTrace: Sendable, Equatable {
+    public let expectedPromptWasEmpty: Bool
+    public let matchingSectionIds: [String]
+    public let staticPrefixContainsExpectedPrompt: Bool
+    public let renderedPromptContainsExpectedPrompt: Bool
+    public let memorySectionContainsExpectedPrompt: Bool
+
+    public init(
+        expectedPromptWasEmpty: Bool = false,
+        matchingSectionIds: [String] = [],
+        staticPrefixContainsExpectedPrompt: Bool = false,
+        renderedPromptContainsExpectedPrompt: Bool = false,
+        memorySectionContainsExpectedPrompt: Bool = false
+    ) {
+        self.expectedPromptWasEmpty = expectedPromptWasEmpty
+        self.matchingSectionIds = matchingSectionIds
+        self.staticPrefixContainsExpectedPrompt = staticPrefixContainsExpectedPrompt
+        self.renderedPromptContainsExpectedPrompt = renderedPromptContainsExpectedPrompt
+        self.memorySectionContainsExpectedPrompt = memorySectionContainsExpectedPrompt
+    }
+
+    public var personaSectionContainsExpectedPrompt: Bool {
+        matchingSectionIds.contains(PromptSectionID.persona)
+    }
+
+    public var passed: Bool {
+        !expectedPromptWasEmpty
+            && personaSectionContainsExpectedPrompt
+            && staticPrefixContainsExpectedPrompt
+            && renderedPromptContainsExpectedPrompt
+    }
+
+    public var reasonCodes: [String] {
+        var codes: [String] = []
+        if expectedPromptWasEmpty {
+            codes.append("empty_expected_prompt")
+        }
+        codes.append(
+            personaSectionContainsExpectedPrompt
+                ? "present_in_persona_section"
+                : "missing_persona_section"
+        )
+        codes.append(
+            staticPrefixContainsExpectedPrompt
+                ? "present_in_static_prefix"
+                : "missing_static_prefix"
+        )
+        codes.append(
+            renderedPromptContainsExpectedPrompt
+                ? "present_in_rendered_prompt"
+                : "missing_rendered_prompt"
+        )
+        if memorySectionContainsExpectedPrompt {
+            codes.append("present_in_memory_section")
+        }
+        return codes
+    }
+}
+
+enum PromptRenderer {
+    static func render(_ sections: [PromptSection]) -> String {
+        sections
+            .map { $0.content.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n\n")
     }
 }
 
@@ -186,12 +295,12 @@ struct ComposedContext: Sendable {
     /// `SessionToolState.frozenManifest` on first compose so turn 2+ can echo
     /// it back via `ComposeRequest.frozenManifest`, keeping the static
     /// system-prompt prefix byte-identical for KV-cache reuse.
-    var enabledManifest: String? = nil
+    var enabledManifest: String?
     /// Rendered SOUL.md content this compose resolved (or nil outside sandbox
     /// mode / when the file is missing or empty). Callers stash this on
     /// `SessionToolState.frozenSoul` on first compose so turn 2+ can echo it
     /// back via `ComposeRequest.frozenSoul`, so a mid-session SOUL edit can't
     /// rewrite the static prefix (the file's contract: edits apply next
     /// session).
-    var soul: String? = nil
+    var soul: String?
 }

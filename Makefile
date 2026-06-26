@@ -10,7 +10,7 @@ WORKSPACE := osaurus.xcworkspace
 DERIVED := build/DerivedData
 XCODEBUILD_FLAGS ?=
 
-.PHONY: help cli app install-cli serve status test ci-test clean bench-setup bench-ingest bench-ingest-chunks bench-run bench evals-prep evals evals-verbose evals-report evals-all evals-all-verbose evals-all-report evals-loop evals-matrix evals-diff evals-contribute evals-compat
+.PHONY: help cli app install-cli serve status test ci-test clean bench-setup bench-ingest bench-ingest-chunks bench-run bench evals-prep evals evals-verbose evals-report evals-all evals-all-verbose evals-all-report evals-capture-screen evals-loop evals-matrix evals-diff evals-contribute evals-compat
 
 help:
 	@echo "Targets:"
@@ -30,6 +30,7 @@ help:
 	@echo "  evals-all           Run every suite under Packages/OsaurusEvals/Suites/* (MODEL=, FILTER=)"
 	@echo "  evals-all-verbose   Same as 'evals-all' plus per-case raw LLM response"
 	@echo "  evals-all-report    Same as 'evals-all' but writes per-suite JSON to EVALS_OUT_DIR (build/evals/)"
+	@echo "  evals-capture-screen Capture a real app's screen context into a (gitignored) fixture (APP=, OUT=)"
 	@echo "  evals-loop          Optimization loop: run all suites per model + scoreboard + diff (MODELS=, BASELINE=, RECORD=1 LABEL= to commit reports/SNAPSHOT+history)"
 	@echo "  evals-matrix        Cross-model scoreboard from a reports dir (DIR=, HISTORY= LABEL= to append a trend row)"
 	@echo "  evals-diff          All-domain before/after diff (BASELINE=, CURRENT=)"
@@ -243,6 +244,21 @@ evals-all-report: evals-prep
 	echo ""; \
 	echo "Wrote per-suite reports to $(EVALS_OUT_DIR)/"; \
 	exit $$rc
+
+# Capture a real app's screen context into a ScreenContextFixture JSON for the
+# `screen_context` eval suite. Local-only: needs Accessibility permission for
+# the process running it (grant your terminal in System Settings → Privacy &
+# Security → Accessibility). Defaults to the frontmost app and a timestamped
+# file under the gitignored Fixtures/ScreenContext/local/ dir. RENDER=1 also
+# prints the exact injected block (the fast capture→diagnose loop).
+#   make evals-capture-screen
+#   make evals-capture-screen APP=Xcode RENDER=1
+#   make evals-capture-screen APP=Safari OUT=/tmp/safari.json
+evals-capture-screen:
+	@swift run --package-path Packages/OsaurusEvals osaurus-evals capture-screen \
+		$(if $(APP),--app "$(APP)",) \
+		$(if $(OUT),--out $(OUT),) \
+		$(if $(RENDER),--render,)
 
 # Optimization-loop backbone: prep → run every suite per model into a
 # timestamped dir → cross-model matrix (scoreboard) → optional diff vs a

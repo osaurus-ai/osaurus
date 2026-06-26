@@ -36,7 +36,7 @@ struct AccessKeyIntegrationTests {
 
         let validator = APIKeyValidator.forAlice()
         let result = validator.validate(rawKey: token)
-        guard case .valid(let issuer, _) = result else {
+        guard case .valid(let issuer, _, _) = result else {
             Issue.record("Expected .valid, got \(result)")
             return
         }
@@ -65,7 +65,7 @@ struct AccessKeyIntegrationTests {
             extraWhitelist: [agentAddress]
         )
         let result = validator.validate(rawKey: token)
-        guard case .valid(let issuer, _) = result else {
+        guard case .valid(let issuer, _, _) = result else {
             Issue.record("Expected .valid for agent key, got \(result)")
             return
         }
@@ -130,7 +130,7 @@ struct AccessKeyIntegrationTests {
 
         let validatorWithBob = APIKeyValidator.forAlice(extraWhitelist: [TestKeys.bobAddress])
         let result = validatorWithBob.validate(rawKey: bobToken)
-        guard case .valid(let issuer, _) = result else {
+        guard case .valid(let issuer, _, _) = result else {
             Issue.record("Expected .valid for whitelisted Bob, got \(result)")
             return
         }

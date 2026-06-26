@@ -62,18 +62,29 @@ struct AgentLoopPolicy: Sendable {
     /// firing, so it nags at most once per threshold window.
     var todoStalenessThreshold: Int = 4
 
+    /// Hard cap on "data-movement" iterations that are refunded instead of
+    /// charged against `maxIterations`. An iteration qualifies only when
+    /// EVERY tool call in it is a *successful* bulk DB load (`db_import`, or
+    /// `db_insert`/`db_upsert` with `rows[]`). 0 disables the relief (the
+    /// default, so non-agent surfaces and tests are unaffected). Set > 0 on
+    /// agent-run surfaces; it is naturally scoped to DB-enabled agents
+    /// because only they can land a successful `db_*` bulk call.
+    var maxDataMovementSteps: Int = 0
+
     init(
         maxIterations: Int,
         budgetWarningThreshold: Int = 3,
         stopOnToolRejection: Bool,
         dedupeNoticeEnabled: Bool,
-        todoStalenessThreshold: Int = 4
+        todoStalenessThreshold: Int = 4,
+        maxDataMovementSteps: Int = 0
     ) {
         self.maxIterations = max(1, maxIterations)
         self.budgetWarningThreshold = budgetWarningThreshold
         self.stopOnToolRejection = stopOnToolRejection
         self.dedupeNoticeEnabled = dedupeNoticeEnabled
         self.todoStalenessThreshold = max(1, todoStalenessThreshold)
+        self.maxDataMovementSteps = max(0, maxDataMovementSteps)
     }
 }
 
@@ -484,10 +495,16 @@ enum AgentLoopBudget {
         // If the iteration ends in a tool result, notices ride alongside it as
         // tool-role environment feedback (captured before we append, so every
         // notice keeps that result's `tool_call_id`); otherwise they fall back
-        // to a trailing user turn.
+        // to a trailing user turn. Native image generate->edit is the narrow
+        // exception: Gemma treats a second tool-role message as low-salience
+        // environment chatter after the generated image, so only that
+        // continuation notice is promoted to a transient user turn.
         let trailingTool = (msgs.last?.role == "tool") ? msgs.last : nil
+        let nativeImageGenerateResult = trailingTool.map(isNativeImageGenerateToolResult) ?? false
         for notice in notices {
-            if let trailingTool {
+            if nativeImageGenerateResult, isNativeImageEditContinuationNotice(notice) {
+                msgs.append(ChatMessage(role: "user", content: notice))
+            } else if let trailingTool {
                 msgs.append(
                     ChatMessage(
                         role: "tool",
@@ -501,6 +518,29 @@ enum AgentLoopBudget {
             }
         }
         return msgs
+    }
+
+    private static func isNativeImageGenerateToolResult(_ message: ChatMessage) -> Bool {
+        guard message.role == "tool",
+            let content = message.content,
+            ToolEnvelope.isSuccess(content),
+            let data = content.data(using: .utf8),
+            let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            dict["tool"] as? String == "image_generate",
+            let payload = dict["result"] as? [String: Any],
+            payload["kind"] as? String == "native_image_generation_job",
+            let images = payload["images"] as? [[String: Any]]
+        else { return false }
+        return images.contains { image in
+            guard let path = image["path"] as? String else { return false }
+            return !path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+    }
+
+    private static func isNativeImageEditContinuationNotice(_ notice: String) -> Bool {
+        notice.contains("`image_edit`")
+            && notice.contains("source_paths")
+            && notice.contains("previous `image_generate` result")
     }
 
     /// Like `trimPreservingSystemPrefix`, but also reports whether the
@@ -553,6 +593,9 @@ enum AgentToolLoop {
         /// surface emits a distinct "context cannot fit" envelope instead
         /// of sending a doomed request.
         case overBudget
+        /// Empty-turn recovery exhausted after at least one tool result had
+        /// already landed, so the task may be truncated rather than merely blank.
+        case emptyResponseExhausted
     }
 
     struct RunResult: Equatable, Sendable {
@@ -585,10 +628,61 @@ enum AgentToolLoop {
     static let emptyTurnFallback =
         "I wasn't able to generate a response to that. Please try rephrasing your request."
 
+    static let emptyToolTaskFallback =
+        "The model returned empty output after tool execution. The agent task may be incomplete; retry with less context or continue from the latest tool result."
+
     /// The iteration-budget warning staged when the remaining budget
     /// drops to the policy threshold.
     static func budgetWarningNotice(remaining: Int, maxIterations: Int) -> String {
         "[System Notice] Tool call budget: \(remaining) of \(maxIterations) remaining. Wrap up your current work and provide a summary."
+    }
+
+    /// Staged once per run, the first time a data-movement step is refunded,
+    /// so the model learns it can lean on bulk loads without burning budget.
+    static func dataMovementReliefNotice(cap: Int) -> String {
+        "[System Notice] Bulk data-movement steps (db_import, or db_insert/db_upsert with `rows[]`) don't count against your tool-call budget — up to \(cap) such steps. Prefer them for loading or moving large data."
+    }
+
+    /// True when `outcome` is a successful bulk DB load that should be
+    /// refunded by the data-movement budget rather than charged against
+    /// `maxIterations`. Deduped replays and failures never qualify.
+    static func isSuccessfulDataMovement(_ outcome: AgentLoopToolOutcome) -> Bool {
+        guard !outcome.wasError, !outcome.wasDeduped else { return false }
+        guard
+            isDataMovementCall(
+                name: outcome.invocation.toolName,
+                argsJSON: outcome.invocation.jsonArguments
+            )
+        else { return false }
+        return envelopeReportsSuccess(outcome.result)
+    }
+
+    /// A data-movement call is `db_import`, or `db_insert`/`db_upsert` in
+    /// their bulk (`rows[]`) form. Single-row writes are organic agent work
+    /// and stay on the normal budget.
+    static func isDataMovementCall(name: String, argsJSON: String) -> Bool {
+        switch name {
+        case "db_import":
+            return true
+        case "db_insert", "db_upsert":
+            guard let data = argsJSON.data(using: .utf8),
+                let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                let rows = obj["rows"] as? [Any]
+            else { return false }
+            return !rows.isEmpty
+        default:
+            return false
+        }
+    }
+
+    /// Parse a tool-result envelope and report whether it was a success
+    /// (`"ok": true`). A failure envelope (e.g. quota exceeded) must NOT be
+    /// refunded.
+    static func envelopeReportsSuccess(_ result: String) -> Bool {
+        guard let data = result.data(using: .utf8),
+            let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return false }
+        return (obj["ok"] as? Bool) == true
     }
 
     /// Shared user-facing text for the `.overBudget` exit: the request
@@ -827,13 +921,153 @@ enum AgentToolLoop {
         "[System Notice] Your todo list still has \(pending) unchecked item\(pending == 1 ? "" : "s") and has not been updated recently. If you finished any, re-send the full list with those boxes checked now; if the plan changed, rewrite the list."
     }
 
-    /// Appended to a successful `capabilities_load` result under the
-    /// deferred-schema policy: the loaded tool is callable immediately
-    /// (registry dispatch is by name), but the rendered tool-schema block
-    /// stays frozen until the next compose so the prompt prefix — and the
-    /// paged-KV cache built on it — stays byte-stable mid-run.
+    /// Legacy prose kept only for older call sites/tests. New code must use
+    /// `annotateCapabilityLoadResult(_:activation:)` so the tool result remains
+    /// one valid JSON envelope with a structured activation object.
     static let deferredSchemaNotice =
-        "\nNote: loaded tools are callable NOW — call them by name with JSON arguments. Their full schemas will appear in the tool list from the next user turn."
+        "\nNote: the tools just loaded are callable NOW — invoke them directly by name with JSON arguments. Do NOT call capabilities_discover or capabilities_load for them again; they are already available. Their schemas are omitted from the tool list until the next user turn, but calling them by name works immediately."
+
+    /// Maximum number of schema-activation continuation attempts a surface may
+    /// perform when it cannot expose newly loaded schemas on the next agent-loop
+    /// model request. The shared loop surfaces can safely update the next
+    /// request's `tools` array, so they report `continuation.required = false`;
+    /// stricter providers still get a bounded, machine-readable contract.
+    static let maxCapabilityActivationContinuations = 2
+
+    enum CapabilitySchemaActivationMode: Sendable {
+        case sameTurnNextRequest
+        case continuationRequired
+
+        var rawValue: String {
+            switch self {
+            case .sameTurnNextRequest: return "same_turn_next_request"
+            case .continuationRequired: return "continuation_required"
+            }
+        }
+    }
+
+    struct CapabilitySchemaActivationReport: Sendable {
+        let mode: CapabilitySchemaActivationMode
+        let activatedToolNames: [String]
+        let duplicateToolNames: [String]
+        let diagnostics: [CapabilitySchemaDiagnostic]
+        let maxContinuationRetries: Int
+
+        var isEmpty: Bool {
+            activatedToolNames.isEmpty && duplicateToolNames.isEmpty && diagnostics.isEmpty
+        }
+
+        var allToolNames: [String] {
+            AgentToolLoop.orderedUnique(activatedToolNames + duplicateToolNames)
+        }
+
+        func dictionary() -> [String: Any] {
+            let continuationRequired: Bool
+            switch mode {
+            case .sameTurnNextRequest:
+                continuationRequired = false
+            case .continuationRequired:
+                continuationRequired = true
+            }
+
+            return [
+                "kind": "capability_schema_activation",
+                "mode": mode.rawValue,
+                "status": continuationRequired
+                    ? "continuation_required"
+                    : "activated_for_same_turn_next_request",
+                "schema_visible_on_next_agent_loop_request": !continuationRequired,
+                "activated_tool_names": activatedToolNames,
+                "duplicate_tool_names": duplicateToolNames,
+                "diagnostics": diagnostics.map { $0.dictionary() },
+                "instruction":
+                    "Do not call capabilities_discover or capabilities_load for these tools again in this turn. Call the activated tool by name with JSON arguments.",
+                "continuation": [
+                    "required": continuationRequired,
+                    "max_retries": maxContinuationRetries,
+                    "retry_after": "recompose_request_with_loaded_tool_schema",
+                    "bounded": true,
+                ],
+            ]
+        }
+    }
+
+    /// Merge schemas loaded via `capabilities_load` into the active request
+    /// schema for the next loop iteration. This is safe for the shared loop
+    /// surfaces because every iteration is a fresh provider request; no current
+    /// streaming request is mutated mid-flight.
+    @MainActor
+    static func activateCapabilitySchemas(
+        loadedTools: [Tool],
+        currentTools: [Tool],
+        mode: CapabilitySchemaActivationMode = .sameTurnNextRequest,
+        maxContinuationRetries: Int = maxCapabilityActivationContinuations
+    ) -> (tools: [Tool], report: CapabilitySchemaActivationReport) {
+        var byName = Dictionary(currentTools.map { ($0.function.name, $0) }) { _, latest in latest }
+        var activated: [String] = []
+        var duplicates: [String] = []
+
+        for tool in loadedTools {
+            let name = tool.function.name
+            if byName[name] == nil {
+                activated.append(name)
+            } else {
+                duplicates.append(name)
+            }
+            byName[name] = tool
+        }
+
+        let merged = SystemPromptComposer.canonicalToolOrder(Array(byName.values))
+        let report = CapabilitySchemaActivationReport(
+            mode: mode,
+            activatedToolNames: orderedUnique(activated),
+            duplicateToolNames: orderedUnique(duplicates),
+            diagnostics: [],
+            maxContinuationRetries: max(1, maxContinuationRetries)
+        )
+        return (merged, report)
+    }
+
+    /// Keep a `capabilities_load` result as a single valid `ToolEnvelope`
+    /// success and attach machine-readable activation metadata under
+    /// `result.activation`. If the result is an error or cannot be decoded,
+    /// return it unchanged rather than fabricating a success.
+    static func annotateCapabilityLoadResult(
+        _ result: String,
+        activation: CapabilitySchemaActivationReport
+    ) -> String {
+        guard !activation.isEmpty, !ToolEnvelope.isError(result),
+            let data = result.data(using: .utf8),
+            var envelope = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            (envelope["ok"] as? Bool) == true
+        else { return result }
+
+        var payload: [String: Any]
+        if let existing = envelope["result"] as? [String: Any] {
+            payload = existing
+        } else if let existing = envelope["result"] {
+            payload = ["value": existing]
+        } else {
+            payload = [:]
+        }
+        payload["activation"] = activation.dictionary()
+        envelope["result"] = payload
+
+        guard JSONSerialization.isValidJSONObject(envelope),
+            let encoded = try? JSONSerialization.data(withJSONObject: envelope, options: [.sortedKeys]),
+            let json = String(data: encoded, encoding: .utf8)
+        else { return result }
+        return json
+    }
+
+    private static func orderedUnique(_ names: [String]) -> [String] {
+        var seen = Set<String>()
+        var ordered: [String] = []
+        for name in names where seen.insert(name).inserted {
+            ordered.append(name)
+        }
+        return ordered
+    }
 
     /// Stable call-id assignment: preserve the model-supplied id when
     /// present (OpenAI `call_xxx`), otherwise mint one in the same shape.
@@ -873,6 +1107,12 @@ enum AgentToolLoop {
         // Last iteration that carried a `todo` call (0 = run start), for
         // the staleness check below.
         var lastTodoIteration = 0
+        // Data-movement relief bookkeeping: how many bulk-load iterations
+        // have been refunded so far, and whether we've told the model about
+        // the relief yet (staged once per run).
+        var dataMovementStepsUsed = 0
+        var announcedDataMovementRelief = false
+        var completedToolWork = false
 
         while iteration < policy.maxIterations {
             if await hooks.isCancelled() {
@@ -926,6 +1166,10 @@ enum AgentToolLoop {
                     // Not charged against the tool-iteration budget.
                     iteration -= 1
                     continue
+                }
+                if completedToolWork {
+                    await hooks.emitFallbackText?(Self.emptyToolTaskFallback)
+                    return RunResult(exit: .emptyResponseExhausted, iterations: iteration)
                 }
                 // Recovery exhausted: guarantee a visible message instead of
                 // a silent dead-end, then end the run.
@@ -1177,6 +1421,32 @@ enum AgentToolLoop {
                 }
 
                 await hooks.onBatchComplete(outcomes)
+                if !outcomes.isEmpty {
+                    completedToolWork = true
+                }
+
+                // Data-movement relief: when an iteration's tool calls
+                // are ALL successful bulk loads (db_import / bulk
+                // db_insert|db_upsert), it's real progress that shouldn't
+                // spend the model's reasoning budget. Refund the iteration and
+                // charge a separate, hard-capped budget instead so a large
+                // ingest doesn't starve the agent of steps to actually reason
+                // over the data it just loaded.
+                if policy.maxDataMovementSteps > 0,
+                    dataMovementStepsUsed < policy.maxDataMovementSteps,
+                    !outcomes.isEmpty,
+                    outcomes.allSatisfy({ Self.isSuccessfulDataMovement($0) })
+                {
+                    dataMovementStepsUsed += 1
+                    iteration -= 1
+                    if !announcedDataMovementRelief {
+                        announcedDataMovementRelief = true
+                        pendingStateNotice = Self.dataMovementReliefNotice(
+                            cap: policy.maxDataMovementSteps
+                        )
+                    }
+                    continue
+                }
 
                 // Per-iteration budget bookkeeping: one decrement per model
                 // step regardless of how many tools the batch ran.

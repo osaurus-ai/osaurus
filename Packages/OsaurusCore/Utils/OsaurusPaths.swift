@@ -122,6 +122,11 @@ public enum OsaurusPaths {
         root().appendingPathComponent("chat-history", isDirectory: true)
     }
 
+    /// Provider-neutral Agent Channel message state.
+    public static func agentChannels() -> URL {
+        root().appendingPathComponent("agent-channels", isDirectory: true)
+    }
+
     /// Schedules directory
     public static func schedules() -> URL {
         root().appendingPathComponent("schedules", isDirectory: true)
@@ -140,6 +145,14 @@ public enum OsaurusPaths {
     /// Cache directory
     public static func cache() -> URL {
         root().appendingPathComponent("cache", isDirectory: true)
+    }
+
+    /// Output directory for locally generated images (vMLXFlux). The image
+    /// engine writes the final PNG here and returns the URL; the chat layer
+    /// copies the bytes into its attachment store and HTTP `response_format:url`
+    /// callers receive a `file://` path under this directory.
+    public static func generatedImages() -> URL {
+        root().appendingPathComponent("generated-images", isDirectory: true)
     }
 
     /// Disk KV cache directory used by vmlx-swift's `DiskCache` (L2 tier).
@@ -459,6 +472,9 @@ public enum OsaurusPaths {
     public static func memoryDatabaseFile() -> URL { memory().appendingPathComponent("memory.sqlite") }
     public static func chatHistoryDatabaseFile() -> URL {
         chatHistory().appendingPathComponent("history.sqlite")
+    }
+    public static func agentChannelMessagesDatabaseFile() -> URL {
+        agentChannels().appendingPathComponent("messages.sqlite")
     }
     public static func methodsDatabaseFile() -> URL { methods().appendingPathComponent("methods.sqlite") }
     /// Encrypted on-device Osaurus Router billing ledger: `~/.osaurus/billing/ledger.sqlite`.

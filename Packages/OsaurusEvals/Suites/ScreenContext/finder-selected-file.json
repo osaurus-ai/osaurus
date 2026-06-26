@@ -1,0 +1,24 @@
+{
+  "id": "screen_context.finder-selected-file",
+  "domain": "screen_context",
+  "label": "Screen context • Finder selected file is visible",
+  "query": "(ambient capture)",
+  "notes": "Finder list/outline shape: the focused outline reports the selected file, and the surrounding file list surfaces as on-screen context without requiring action policy.",
+  "fixtures": {},
+  "expect": {
+    "screenContext": {
+      "fixture": "finder-selected-file.json",
+      "focusedRoleEquals": "outline",
+      "selectedTextContains": "Synthetic Strategy Brief.pdf",
+      "gistContains": ["In Finder", "Design Assets"],
+      "mustContain": [
+        "In Finder",
+        "Focused field: outline \"Files\"",
+        "Selected text:",
+        "Synthetic Strategy Brief.pdf",
+        "Fixture Screenshot Set"
+      ],
+      "mustNotContain": ["Favorites"]
+    }
+  }
+}

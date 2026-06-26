@@ -20,10 +20,11 @@ private func formatModelName(_ model: String) -> String {
 // MARK: - Agents View
 
 struct AgentsView: View {
-    /// Shared spring used for grid ↔ detail navigation. Centralized so the
-    /// transition feels identical whether the user opens a local agent, a
-    /// remote agent, or a freshly-duplicated one.
-    fileprivate static let navTransition = Animation.spring(response: 0.35, dampingFraction: 0.85)
+    /// Shared animation for grid ↔ detail navigation. A quick cross-fade (no
+    /// horizontal slide) so opening an agent reads like the rest of the app's
+    /// tab/content swaps rather than a push. Centralized so it feels identical
+    /// whether the user opens a local agent, a remote agent, or a duplicate.
+    fileprivate static let navTransition = Animation.easeInOut(duration: 0.2)
 
     /// Two-column grid layout reused by the main agent grid and the
     /// "Paired Remote Agents" section in the empty state.
@@ -35,6 +36,7 @@ struct AgentsView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
     @ObservedObject private var agentManager = AgentManager.shared
     @ObservedObject private var remoteAgentManager = RemoteAgentManager.shared
+    @ObservedObject private var managementState = ManagementStateManager.shared
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
@@ -77,7 +79,7 @@ struct AgentsView: View {
         ZStack {
             if selectedAgent == nil && selectedRemoteAgentId == nil {
                 gridContent
-                    .transition(.opacity.combined(with: .move(edge: .leading)))
+                    .transition(.opacity)
             }
 
             if let agent = selectedAgent {
@@ -96,10 +98,16 @@ struct AgentsView: View {
                         }
                     },
                     onSwitchAgent: { newAgent in selectedAgent = newAgent },
+                    onSwitchRemoteAgent: { remoteId in
+                        withAnimation(Self.navTransition) {
+                            selectedAgent = nil
+                            selectedRemoteAgentId = remoteId
+                        }
+                    },
                     showSuccess: showSuccess
                 )
                 .id(agent.id)
-                .transition(.opacity.combined(with: .move(edge: .trailing)))
+                .transition(.opacity)
             }
 
             if let remoteId = selectedRemoteAgentId {
@@ -112,10 +120,23 @@ struct AgentsView: View {
                         withAnimation(Self.navTransition) { selectedRemoteAgentId = nil }
                         showSuccess("Removed remote agent")
                     },
-                    onChat: { _ in ChatWindowManager.shared.toggleLastFocused() }
+                    onChat: { remote in
+                        ChatWindowManager.shared.openChat(
+                            withRemoteAgentProviderId: remote.providerId
+                        )
+                    },
+                    onSwitchAgent: { newAgent in
+                        withAnimation(Self.navTransition) {
+                            selectedRemoteAgentId = nil
+                            selectedAgent = newAgent
+                        }
+                    },
+                    onSwitchRemoteAgent: { newRemoteId in
+                        selectedRemoteAgentId = newRemoteId
+                    }
                 )
                 .id(remoteId)
-                .transition(.opacity.combined(with: .move(edge: .trailing)))
+                .transition(.opacity)
             }
 
             if let message = successMessage {
@@ -153,10 +174,19 @@ struct AgentsView: View {
                 hasAppeared = true
             }
             consumeDeeplinkIfPossible()
+            applyPendingRemoteAgentDetail()
         }
         .onChange(of: agentManager.agents) { _, _ in
             // Agent list may load asynchronously after the view appears.
             consumeDeeplinkIfPossible()
+        }
+        .onChange(of: remoteAgentManager.remoteAgents) { _, _ in
+            // Paired remote agents can load after the view appears; retry the
+            // pending deep-link once the target record is known.
+            applyPendingRemoteAgentDetail()
+        }
+        .onReceive(managementState.$pendingRemoteAgentDetailId) { _ in
+            applyPendingRemoteAgentDetail()
         }
         .onReceive(NotificationCenter.default.publisher(for: .agentDetailDeeplink)) { note in
             // Notification-tap deep-link router (spec §3.3). Resolves
@@ -294,7 +324,11 @@ struct AgentsView: View {
             onSelect: {
                 withAnimation(Self.navTransition) { selectedRemoteAgentId = remote.id }
             },
-            onChat: { ChatWindowManager.shared.toggleLastFocused() },
+            onChat: {
+                ChatWindowManager.shared.openChat(
+                    withRemoteAgentProviderId: remote.providerId
+                )
+            },
             onRemove: {
                 _ = remoteAgentManager.remove(id: remote.id)
                 showSuccess("Removed remote agent")
@@ -353,6 +387,21 @@ struct AgentsView: View {
         withAnimation(Self.navTransition) {
             selectedRemoteAgentId = nil
             selectedAgent = agent
+        }
+    }
+
+    /// Open a paired remote agent's detail view in response to a deep-link
+    /// (`ManagementStateManager.pendingRemoteAgentDetailId`, e.g. from the chat
+    /// empty-state gear). Mirrors `PluginsView.applyPendingPluginDetailRequest`:
+    /// waits until the matching `RemoteAgent` record is known (the list can load
+    /// after this view appears), then navigates and clears the request.
+    private func applyPendingRemoteAgentDetail() {
+        guard let pendingId = managementState.pendingRemoteAgentDetailId else { return }
+        guard remoteAgentManager.remoteAgent(for: pendingId) != nil else { return }
+        managementState.pendingRemoteAgentDetailId = nil
+        withAnimation(Self.navTransition) {
+            selectedAgent = nil
+            selectedRemoteAgentId = pendingId
         }
     }
 
@@ -750,6 +799,11 @@ private enum DetailTab: String, CaseIterable {
     case capabilities
     case customization
     case network
+    /// Host-side "who can reach this agent" surface. Lists the access keys /
+    /// invites granted to remote peers, their inbound usage, and a Revoke
+    /// action. Visible for every agent; the content gates itself to agents
+    /// that actually have a shareable identity (`agentAddress`).
+    case connections
     case sandbox
     case automation
     case memory
@@ -784,6 +838,7 @@ private enum DetailTab: String, CaseIterable {
         case .capabilities: return L("Capabilities")
         case .customization: return L("Customization")
         case .network: return L("Network")
+        case .connections: return L("Remote Connections")
         case .sandbox: return L("Sandbox")
         case .automation: return L("Automation")
         case .memory: return L("Memory")
@@ -801,6 +856,7 @@ private enum DetailTab: String, CaseIterable {
         case .capabilities: return "wrench.and.screwdriver"
         case .customization: return "paintpalette.fill"
         case .network: return "network"
+        case .connections: return "person.2.badge.key"
         case .sandbox: return "shippingbox"
         case .automation: return "clock.badge.checkmark"
         case .memory: return "brain.head.profile"
@@ -818,6 +874,8 @@ private enum DetailTab: String, CaseIterable {
         case .capabilities: return L("Pick which tools and skills this agent can use.")
         case .customization: return L("Avatar, empty state, and visual theme.")
         case .network: return L("Bonjour discovery and relay tunnel.")
+        case .connections:
+            return L("Peers granted access to this agent — usage and revocation.")
         case .sandbox: return L("Container-based code execution.")
         case .automation: return L("Schedules and file watchers for autonomous behavior.")
         case .memory: return L("Conversation history, pinned facts, and episode summaries.")
@@ -846,26 +904,6 @@ private enum AgentTab: Hashable {
     case failedPlugin(String)
 }
 
-// MARK: - Tab Bar Preference Keys
-
-/// Reports the natural width of the tab strip's HStack content (i.e. the
-/// width *before* any horizontal scroll clipping). Compared against the
-/// viewport width to decide whether the strip overflows.
-private struct TabBarContentWidthKey: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = max(value, nextValue())
-    }
-}
-
-/// Reports the visible width of the tab strip's ScrollView container.
-private struct TabBarViewportWidthKey: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = max(value, nextValue())
-    }
-}
-
 // MARK: - Agent Detail View
 
 struct AgentDetailView: View {
@@ -885,6 +923,9 @@ struct AgentDetailView: View {
     let onBack: () -> Void
     let onDelete: (Agent) -> Void
     let onSwitchAgent: (Agent) -> Void
+    /// Switch the detail pane to a paired remote agent (selected from the
+    /// shared agent switcher). The parent flips its `selectedRemoteAgentId`.
+    let onSwitchRemoteAgent: (UUID) -> Void
     let showSuccess: (String) -> Void
 
     init(
@@ -892,12 +933,14 @@ struct AgentDetailView: View {
         onBack: @escaping () -> Void,
         onDelete: @escaping (Agent) -> Void,
         onSwitchAgent: @escaping (Agent) -> Void,
+        onSwitchRemoteAgent: @escaping (UUID) -> Void,
         showSuccess: @escaping (String) -> Void
     ) {
         self.agent = agent
         self.onBack = onBack
         self.onDelete = onDelete
         self.onSwitchAgent = onSwitchAgent
+        self.onSwitchRemoteAgent = onSwitchRemoteAgent
         self.showSuccess = showSuccess
     }
 
@@ -933,9 +976,19 @@ struct AgentDetailView: View {
     /// Custom agents only; the Features section shows the toggle and
     /// `saveAgent` folds it into the persisted `AgentSettings` block.
     @State private var computerUseEnabled: Bool = false
+    /// Per-agent opt-in for the Spawn / Delegation feature (`spawn` /
+    /// `local_delegate` / `image_generate` / `image_edit` tools). Custom agents
+    /// only; the Features section shows the toggle and `debouncedSave` persists it
+    /// into `AgentSettings.spawnDelegationEnabled`.
+    @State private var spawnDelegationEnabled: Bool = false
     /// Per-agent autonomy ceiling for Computer Use (PR2). `nil` means no
     /// ceiling. Mirrored from / into `AgentSettings.computerUseCeiling`.
     @State private var computerUseCeiling: AutonomyCeiling? = nil
+    /// Display mirror of `Agent.hostWorkspacePath`. Drives the Host Files row
+    /// so the selected folder updates immediately after the user picks/clears
+    /// it (the persisted bookmark on `Agent.hostWorkspaceBookmark` is the real
+    /// grant). `nil` means no host folder is granted.
+    @State private var hostWorkspacePath: String? = nil
     /// Per-agent on/off for the chat empty-state generative greeting.
     /// Default off, like the other capability flags; the agent opts in
     /// from the Features tab. Drives whether the Empty State section
@@ -1019,7 +1072,6 @@ struct AgentDetailView: View {
     /// Data tab via the Schema-tab "Browse" deep-link. Same lifecycle
     /// as `pendingFocusedViewName`.
     @State private var pendingFocusedTableName: String? = nil
-    @State private var hasAppeared = false
     @State private var saveIndicator: String?
     @State private var saveDebounceTask: Task<Void, Never>?
     @State private var showDeleteConfirm = false
@@ -1046,13 +1098,6 @@ struct AgentDetailView: View {
     /// still-broken plugin.
     @State private var pendingFailedPluginRetry: String?
     @State private var pendingFailedPluginUninstall: String?
-    /// Captured by `GeometryReader`s wrapped around the tab strip so the
-    /// "scrollable" affordance (right-edge fade + chevron) only renders when
-    /// the tab content actually overflows the viewport AND the user hasn't
-    /// already scrolled to the trailing edge.
-    @State private var tabBarContentWidth: CGFloat = 0
-    @State private var tabBarViewportWidth: CGFloat = 0
-    @State private var tabBarScrollOffset: CGFloat = 0
     /// Bumped on `.toolsListChanged` so plugin tabs re-evaluate after async
     /// `PluginManager.loadAll()` — `PluginManager` is not Observable, so without
     /// this the tab strip can stay empty if the user opened this view before
@@ -1067,14 +1112,6 @@ struct AgentDetailView: View {
     @State private var chatSessions: [ChatSessionData] = []
     @State private var agentPlugins: [PluginManager.LoadedPlugin] = []
     @State private var agentFailedPlugins: [PluginManager.FailedPlugin] = []
-    private var tabsOverflowRight: Bool {
-        // 1pt fudge so pixel-aligned end-of-scroll positions don't leave a
-        // phantom indicator on screen.
-        tabBarContentWidth > tabBarViewportWidth + tabBarScrollOffset + 1
-    }
-    private var tabsOverflowLeft: Bool {
-        tabBarScrollOffset > 1
-    }
 
     private var currentAgent: Agent {
         agentManager.agent(for: agent.id) ?? agent
@@ -1211,8 +1248,10 @@ struct AgentDetailView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(theme.primaryBackground)
-        .opacity(hasAppeared ? 1 : 0)
-        .animation(.easeOut(duration: 0.2), value: hasAppeared)
+        // No internal fade-in here: the parent's navigation transition
+        // (spring slide + opacity) already animates this view's entrance. A
+        // second easeOut opacity curve on top read as an inconsistent
+        // "slide-then-fade", unlike the rest of the app's detail navigations.
         .onAppear {
             loadAgentData()
             loadMemoryData()
@@ -1222,7 +1261,6 @@ struct AgentDetailView: View {
             DispatchQueue.main.async {
                 isInitialLoadComplete = true
             }
-            withAnimation { hasAppeared = true }
         }
         .onChange(of: agent.id) { _, _ in
             refreshDetailCaches()
@@ -1503,90 +1541,42 @@ struct AgentDetailView: View {
     /// Tapping the identity block opens the agent switcher popover; editing the
     /// name / description happens inside the Configure tab's Identity section.
     private var detailHeaderBar: some View {
-        HStack(spacing: 12) {
-            Button(action: onBack) {
+        AgentDetailHeaderBar(
+            onBack: onBack,
+            identity: { identityButton },
+            status: {
+                if let indicator = saveIndicator {
+                    HStack(spacing: 4) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 10))
+                        Text(indicator)
+                            .font(.system(size: 11, weight: .medium))
+                    }
+                    .foregroundColor(theme.successColor)
+                    .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                }
+            },
+            actions: {
                 HStack(spacing: 6) {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 12, weight: .semibold))
-                    Text("Agents", bundle: .module)
-                        .font(.system(size: 13, weight: .medium))
+                    AgentDetailHeaderActionButton(
+                        icon: "square.and.arrow.up",
+                        tint: theme.accentColor,
+                        help: "Share Agent",
+                        action: { showingShareSheet = true }
+                    )
+                    AgentDetailHeaderActionButton(
+                        icon: "trash",
+                        tint: theme.errorColor,
+                        help: "Delete",
+                        action: { showDeleteConfirm = true }
+                    )
                 }
-                .foregroundColor(theme.accentColor)
             }
-            .buttonStyle(PlainButtonStyle())
-
-            // Vertical hairline so the back button reads as distinct from the
-            // identity block even when the agent name is long.
-            Rectangle()
-                .fill(theme.primaryBorder)
-                .frame(width: 1, height: 16)
-                .opacity(0.6)
-
-            identityButton
-
-            Spacer(minLength: 8)
-
-            if let indicator = saveIndicator {
-                HStack(spacing: 4) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 10))
-                    Text(indicator)
-                        .font(.system(size: 11, weight: .medium))
-                }
-                .foregroundColor(theme.successColor)
-                .transition(.opacity.combined(with: .scale(scale: 0.9)))
-            }
-
-            HStack(spacing: 6) {
-                headerActionButton(
-                    icon: "square.and.arrow.up",
-                    tint: theme.accentColor,
-                    help: "Share Agent",
-                    action: { showingShareSheet = true }
-                )
-                headerActionButton(
-                    icon: "trash",
-                    tint: theme.errorColor,
-                    help: "Delete",
-                    action: { showDeleteConfirm = true }
-                )
-            }
-        }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 10)
-        .background(
-            theme.secondaryBackground
-                .overlay(
-                    Rectangle()
-                        .fill(theme.primaryBorder)
-                        .frame(height: 1),
-                    alignment: .bottom
-                )
         )
         .sheet(isPresented: $showingShareSheet) {
             ShareAgentSheet(agent: currentAgent)
                 .environment(\.theme, themeManager.currentTheme)
         }
-    }
-
-    /// 28x28 circular icon button used by the detail header for Share / Delete.
-    /// Background is a 10–12% tint of the foreground color so destructive vs.
-    /// accent intent reads at a glance without shouting.
-    private func headerActionButton(
-        icon: String,
-        tint: Color,
-        help: LocalizedStringKey,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            Image(systemName: icon)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(tint)
-                .frame(width: 28, height: 28)
-                .background(Circle().fill(tint.opacity(0.12)))
-        }
-        .buttonStyle(PlainButtonStyle())
-        .help(Text(help, bundle: .module))
     }
 
     /// Compact tappable identity block (avatar + name + optional description) inside
@@ -1597,39 +1587,13 @@ struct AgentDetailView: View {
         Button {
             showingAgentSwitcher = true
         } label: {
-            HStack(spacing: 10) {
-                AgentAvatarView(
-                    mascotId: avatar,
-                    name: name,
-                    tint: agentColor,
-                    diameter: 28,
-                    monogramFontSize: 13,
-                    borderWidth: 1.5
-                )
-                .animation(.spring(response: 0.3), value: name)
-                .animation(.spring(response: 0.3), value: avatar)
-
-                VStack(alignment: .leading, spacing: 1) {
-                    HStack(spacing: 6) {
-                        Text(name.isEmpty ? L("Untitled Agent") : name)
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundColor(theme.primaryText)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                        Image(systemName: "chevron.down")
-                            .font(.system(size: 8, weight: .semibold))
-                            .foregroundColor(theme.tertiaryText)
-                    }
-                    if !description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        Text(description)
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.tertiaryText)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                    }
-                }
-                .frame(maxWidth: 260, alignment: .leading)
-            }
+            AgentDetailIdentityLabel(
+                mascotId: avatar,
+                name: name,
+                tint: agentColor,
+                subtitle: description,
+                showsChevron: true
+            )
             .contentShape(Rectangle())
         }
         .buttonStyle(PlainButtonStyle())
@@ -1639,102 +1603,28 @@ struct AgentDetailView: View {
         }
     }
 
-    /// Popover content listing every custom agent for quick navigation. Tapping a
-    /// row swaps the detail view to that agent (the parent uses `.id(agent.id)` to
-    /// force a clean state reload). Built-in / Default agent is excluded — it has
-    /// its own settings surface elsewhere and isn't represented in the Agents grid.
+    /// Quick-navigation popover listing every custom local agent AND every
+    /// paired remote agent. Tapping a local row swaps the detail view to that
+    /// agent (the parent uses `.id(agent.id)` to force a clean reload); tapping
+    /// a remote row hands off to `onSwitchRemoteAgent`. Built-in / Default agent
+    /// is excluded — it has its own settings surface and isn't in the grid.
     private var agentSwitcherPopover: some View {
-        let switchableAgents = agentManager.agents
-            .filter { !$0.isBuiltIn }
-
-        return VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 6) {
-                Image(systemName: "person.2.fill")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(theme.tertiaryText)
-                Text("Switch Agent", bundle: .module)
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundColor(theme.tertiaryText)
-                    .tracking(0.5)
-                Spacer()
-                Text("\(switchableAgents.count)", bundle: .module)
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(theme.tertiaryText)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 1)
-                    .background(Capsule().fill(theme.inputBackground))
-            }
-            .padding(.horizontal, 14)
-            .padding(.top, 12)
-            .padding(.bottom, 8)
-
-            Divider().opacity(0.5)
-
-            ScrollView {
-                VStack(spacing: 2) {
-                    ForEach(switchableAgents, id: \.id) { other in
-                        agentSwitcherRow(other)
-                    }
-                }
-                .padding(.vertical, 6)
-                .padding(.horizontal, 6)
-            }
-            .frame(maxHeight: 360)
-        }
-        .frame(width: 280)
-        .background(theme.cardBackground)
-    }
-
-    private func agentSwitcherRow(_ other: Agent) -> some View {
-        let isCurrent = other.id == agent.id
-        let color = agentColorFor(other.name)
-        return Button {
-            showingAgentSwitcher = false
-            if !isCurrent {
+        AgentSwitcherPopover(
+            localAgents: agentManager.agents.filter { !$0.isBuiltIn },
+            remoteAgents: RemoteAgentManager.shared.remoteAgents,
+            currentLocalAgentId: agent.id,
+            currentRemoteAgentId: nil,
+            onSelectLocal: { other in
+                showingAgentSwitcher = false
                 onSwitchAgent(other)
-            }
-        } label: {
-            HStack(spacing: 10) {
-                AgentAvatarView(
-                    mascotId: other.avatar,
-                    name: other.name,
-                    tint: color,
-                    diameter: 26,
-                    customImageURL: other.customAvatarURL,
-                    monogramFontSize: 11,
-                    borderWidth: 1.5
-                )
-
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(other.name.isEmpty ? L("Untitled Agent") : other.name)
-                        .font(.system(size: 12, weight: isCurrent ? .semibold : .medium))
-                        .foregroundColor(theme.primaryText)
-                        .lineLimit(1)
-                    if !other.description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        Text(other.description)
-                            .font(.system(size: 10))
-                            .foregroundColor(theme.tertiaryText)
-                            .lineLimit(1)
-                    }
-                }
-
-                Spacer(minLength: 4)
-
-                if isCurrent {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundColor(theme.accentColor)
-                }
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(isCurrent ? theme.accentColor.opacity(0.10) : Color.clear)
-            )
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
+            },
+            onSelectRemote: { remote in
+                showingAgentSwitcher = false
+                onSwitchRemoteAgent(remote.id)
+            },
+            onDismiss: { showingAgentSwitcher = false }
+        )
+        .environment(\.theme, themeManager.currentTheme)
     }
 
     // MARK: - Tab Bar
@@ -1743,8 +1633,8 @@ struct AgentDetailView: View {
         switch tab {
         case .builtIn(let dt):
             switch dt {
-            case .configure, .capabilities, .customization, .network, .sandbox,
-                .home, .schema, .data, .views, .activity:
+            case .configure, .capabilities, .customization, .network, .connections,
+                .sandbox, .home, .schema, .data, .views, .activity:
                 return nil
             case .automation:
                 let count = linkedSchedules.count + linkedWatchers.count
@@ -1764,190 +1654,55 @@ struct AgentDetailView: View {
     }
 
     /// Horizontally scrollable tab bar — built-in tabs stay leftmost, then one
-    /// per plugin. Wrapping in `ScrollView(.horizontal)` keeps every tab
-    /// reachable when many plugins are installed; the right-edge fade + chevron
-    /// signal the strip is scrollable when content overflows.
+    /// per plugin, then any failed-plugin warning tabs. The shared
+    /// `AgentDetailTabStrip` owns the scroll / overflow-fade / chevron chrome,
+    /// so this view only maps the agent's tab sources into items.
     private var tabBar: some View {
-        ScrollViewReader { proxy in
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 0) {
-                    // IMPORTANT: read from `currentAgent`, not the captured
-                    // `agent` prop. The prop is frozen at view construction
-                    // and never reflects toggle changes; `currentAgent`
-                    // re-fetches from `AgentManager` so flipping
-                    // `Enable Database` in Configure causes the DB tabs
-                    // (Home/Schema/Data/Views/Activity) to appear here.
-                    ForEach(DetailTab.allTabsForAgent(currentAgent), id: \.self) { tab in
-                        tabButton(for: .builtIn(tab), label: tab.label, icon: tab.icon)
-                            .id(AgentTab.builtIn(tab))
-                    }
-                    ForEach(agentPlugins, id: \.plugin.id) { loaded in
-                        tabButton(
-                            for: .plugin(loaded.plugin.id),
-                            label: loaded.plugin.manifest.name ?? loaded.plugin.id,
-                            icon: "puzzlepiece.extension"
-                        )
-                        .id(AgentTab.plugin(loaded.plugin.id))
-                    }
-                    // Failed plugins surface AFTER successfully loaded ones
-                    // so the warning tabs cluster on the trailing edge of
-                    // the strip — visually obvious without crowding the
-                    // happy-path tabs. Each shows a structured error +
-                    // Retry button via `failedPluginTabContent`.
-                    ForEach(agentFailedPlugins, id: \.pluginId) { failed in
-                        tabButton(
-                            for: .failedPlugin(failed.pluginId),
-                            label: failedPluginTabLabel(for: failed),
-                            icon: "exclamationmark.triangle.fill"
-                        )
-                        .id(AgentTab.failedPlugin(failed.pluginId))
-                    }
-                }
-                .padding(.horizontal, 4)
-                .background(
-                    GeometryReader { inner in
-                        Color.clear.preference(
-                            key: TabBarContentWidthKey.self,
-                            value: inner.size.width
-                        )
-                    }
+        AgentDetailTabStrip(items: tabItems, selection: $selectedTab)
+    }
+
+    /// Built-in + plugin + failed-plugin tabs as `AgentDetailTabStrip` items.
+    /// IMPORTANT: read from `currentAgent`, not the captured `agent` prop — the
+    /// prop is frozen at view construction, while `currentAgent` re-fetches from
+    /// `AgentManager` so flipping `Enable Database` in Configure causes the DB
+    /// tabs (Home/Schema/Data/Views/Activity) to appear here.
+    private var tabItems: [AgentDetailTabItem<AgentTab>] {
+        var items: [AgentDetailTabItem<AgentTab>] = []
+        for tab in DetailTab.allTabsForAgent(currentAgent) {
+            items.append(
+                AgentDetailTabItem(
+                    id: .builtIn(tab),
+                    label: tab.label,
+                    icon: tab.icon,
+                    badgeCount: tabBadgeCount(for: .builtIn(tab))
                 )
-            }
-            .background(
-                GeometryReader { outer in
-                    Color.clear.preference(
-                        key: TabBarViewportWidthKey.self,
-                        value: outer.size.width
-                    )
-                }
             )
-            .onPreferenceChange(TabBarContentWidthKey.self) { tabBarContentWidth = $0 }
-            .onPreferenceChange(TabBarViewportWidthKey.self) { tabBarViewportWidth = $0 }
-            // `onScrollGeometryChange` is the canonical macOS 15+ way to
-            // observe scroll offset; the older GeometryReader-in-named-
-            // coordinate-space pattern is flaky on horizontal AppKit-backed
-            // scroll views and was leaving the trailing indicator stuck on.
-            .onScrollGeometryChange(for: CGFloat.self) { geometry in
-                geometry.contentOffset.x
-            } action: { _, newOffset in
-                tabBarScrollOffset = max(0, newOffset)
-            }
-            // Edge fades on whichever side has off-screen content. `mask`
-            // runs before any overlay, so the chevrons sit ON TOP of the
-            // fades rather than being faded themselves.
-            .mask(tabBarFadeMask)
-            .overlay(alignment: .leading) {
-                if tabsOverflowLeft { scrollMoreChevron(direction: .leading) }
-            }
-            .overlay(alignment: .trailing) {
-                if tabsOverflowRight { scrollMoreChevron(direction: .trailing) }
-            }
-            .animation(.easeOut(duration: 0.2), value: tabsOverflowLeft)
-            .animation(.easeOut(duration: 0.2), value: tabsOverflowRight)
-            // Auto-scroll the active tab into view when it changes (tap or programmatic).
-            .onChange(of: selectedTab) { _, newValue in
-                withAnimation(.easeOut(duration: 0.2)) {
-                    proxy.scrollTo(newValue, anchor: .center)
-                }
-            }
         }
-    }
-
-    /// Linear gradient used as the tab strip's mask. Fades whichever side
-    /// has content scrolled off; both sides can fade at once if the user is
-    /// in the middle of an overflowed strip.
-    private var tabBarFadeMask: LinearGradient {
-        let fadeStart: CGFloat = 0.06  // ~6% of the strip on the leading edge
-        let fadeEnd: CGFloat = 0.94  // ~6% on the trailing edge
-        var stops: [Gradient.Stop] = []
-        stops.append(.init(color: tabsOverflowLeft ? .clear : .black, location: 0.0))
-        if tabsOverflowLeft {
-            stops.append(.init(color: .black, location: fadeStart))
-        }
-        if tabsOverflowRight {
-            stops.append(.init(color: .black, location: fadeEnd))
-        }
-        stops.append(.init(color: tabsOverflowRight ? .clear : .black, location: 1.0))
-        return LinearGradient(stops: stops, startPoint: .leading, endPoint: .trailing)
-    }
-
-    /// Floating "more →"/"← more" affordance pinned to whichever edge has
-    /// off-screen content. Sits above the fade mask so it stays fully opaque,
-    /// and is `allowsHitTesting(false)` so it never swallows tab taps.
-    private func scrollMoreChevron(direction: HorizontalEdge) -> some View {
-        Image(systemName: direction == .leading ? "chevron.left" : "chevron.right")
-            .font(.system(size: 10, weight: .bold))
-            .foregroundColor(theme.accentColor)
-            .frame(width: 20, height: 20)
-            .background(
-                Circle()
-                    .fill(theme.primaryBackground)
-                    .overlay(Circle().strokeBorder(theme.accentColor.opacity(0.25), lineWidth: 1))
+        for loaded in agentPlugins {
+            items.append(
+                AgentDetailTabItem(
+                    id: .plugin(loaded.plugin.id),
+                    label: loaded.plugin.manifest.name ?? loaded.plugin.id,
+                    icon: "puzzlepiece.extension",
+                    badgeCount: tabBadgeCount(for: .plugin(loaded.plugin.id))
+                )
             )
-            .shadow(
-                color: Color.black.opacity(0.08),
-                radius: 4,
-                x: direction == .leading ? 1 : -1,
-                y: 1
+        }
+        // Failed plugins surface AFTER successfully loaded ones so the warning
+        // tabs cluster on the trailing edge of the strip — visually obvious
+        // without crowding the happy-path tabs. Each shows a structured error +
+        // Retry button via `failedPluginTabContent`.
+        for failed in agentFailedPlugins {
+            items.append(
+                AgentDetailTabItem(
+                    id: .failedPlugin(failed.pluginId),
+                    label: failedPluginTabLabel(for: failed),
+                    icon: "exclamationmark.triangle.fill",
+                    isWarning: true
+                )
             )
-            .padding(direction == .leading ? .leading : .trailing, 2)
-            .allowsHitTesting(false)
-            .transition(.opacity.combined(with: .scale(scale: 0.7)))
-    }
-
-    private func tabButton(for tab: AgentTab, label: String, icon: String) -> some View {
-        let isSelected = selectedTab == tab
-        // Failed plugin tabs use the system warning color regardless of
-        // selection state so the user can spot them at a glance even
-        // in a long tab strip; the accent color is reserved for the
-        // happy-path "selected" signal.
-        let isFailed: Bool = {
-            if case .failedPlugin = tab { return true }
-            return false
-        }()
-        let foreground: Color
-        if isFailed {
-            foreground = .orange
-        } else if isSelected {
-            foreground = theme.accentColor
-        } else {
-            foreground = theme.tertiaryText
         }
-        return Button {
-            selectedTab = tab
-        } label: {
-            VStack(spacing: 0) {
-                HStack(spacing: 5) {
-                    Image(systemName: icon)
-                        .font(.system(size: 11, weight: isSelected ? .semibold : .regular))
-
-                    Text(label)
-                        .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
-
-                    if let count = tabBadgeCount(for: tab) {
-                        Text("\(count)", bundle: .module)
-                            .font(.system(size: 9, weight: .bold, design: .rounded))
-                            .foregroundColor(isSelected ? theme.accentColor : theme.tertiaryText)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1)
-                            .background(
-                                Capsule()
-                                    .fill(isSelected ? theme.accentColor.opacity(0.12) : theme.inputBackground)
-                            )
-                    }
-                }
-                .foregroundColor(foreground)
-                .padding(.horizontal, 12)
-                .padding(.top, 10)
-                .padding(.bottom, 8)
-
-                Rectangle()
-                    .fill(isSelected ? (isFailed ? Color.orange : theme.accentColor) : Color.clear)
-                    .frame(height: 2)
-            }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(PlainButtonStyle())
+        return items
     }
 
     private func tabHelperText(_ text: String) -> some View {
@@ -2008,6 +1763,8 @@ struct AgentDetailView: View {
             customizationTabContent
         case .builtIn(.network):
             networkTabContent
+        case .builtIn(.connections):
+            connectionsTabContent
         case .builtIn(.sandbox):
             sandboxTabContent
         case .builtIn(.automation):
@@ -2438,6 +2195,12 @@ struct AgentDetailView: View {
         tabHelperText(DetailTab.network.helperText)
         bonjourSection
         relaySection
+    }
+
+    @ViewBuilder
+    private var connectionsTabContent: some View {
+        tabHelperText(DetailTab.connections.helperText)
+        AgentConnectionsSection(agent: currentAgent)
     }
 
     @ViewBuilder
@@ -2912,11 +2675,33 @@ struct AgentDetailView: View {
                         databaseFeatureRow
                     }
 
+                    // Spawn / Delegation is custom-agents-only (like Computer Use).
+                    if agent.id != Agent.defaultId {
+                        featureGroup(
+                            "Spawn & Delegation",
+                            description: "Let this agent spawn helper jobs and sub-agents."
+                        ) {
+                            featureToggleRow(
+                                title: "Spawn & Delegation",
+                                subtitle:
+                                    "Give the agent the spawn / local_delegate / image_generate / image_edit tools — it can offload bounded tasks to a sub-agent persona or a local model, and generate or edit images. Default models, RAM-safety, and permissions are configured in Settings → Spawn.",
+                                isOn: $spawnDelegationEnabled
+                            )
+                        }
+                    }
+
                     featureGroup(
                         "Code Execution",
                         description: "Run code and commands in an isolated sandbox."
                     ) {
                         sandboxExecSubsection
+                    }
+
+                    featureGroup(
+                        "Host Files",
+                        description: "Let the agent read and write files inside a folder you choose."
+                    ) {
+                        hostWorkspaceFolderRow
                     }
 
                     Text(
@@ -4103,6 +3888,110 @@ struct AgentDetailView: View {
         }
     }
 
+    /// Host Files row (Configure → Features). Lets the user grant this agent a
+    /// real macOS folder it may read and write inside — including over an
+    /// authenticated remote agent run (Secure Channel, agent-scoped key). The
+    /// grant is a security-scoped bookmark persisted on the agent; writes are
+    /// confined to the folder and shell/git stay denied on the remote surface.
+    /// Independent of the Linux sandbox, so it renders regardless of sandbox
+    /// availability.
+    @ViewBuilder
+    private var hostWorkspaceFolderRow: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(hostWorkspacePath ?? L("No folder selected"))
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(
+                            hostWorkspacePath == nil ? theme.tertiaryText : theme.primaryText
+                        )
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Text(
+                        "The agent can read and write files within this folder, including over authenticated remote agent runs. Writes stay inside the folder; shell and git remain disabled.",
+                        bundle: .module
+                    )
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.tertiaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer()
+                Button {
+                    chooseHostWorkspaceFolder()
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "folder")
+                            .font(.system(size: 10, weight: .semibold))
+                        Text(
+                            hostWorkspacePath == nil ? L("Choose…") : L("Change…")
+                        )
+                        .font(.system(size: 11, weight: .medium))
+                    }
+                    .foregroundColor(theme.accentColor)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(theme.accentColor.opacity(0.08))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .stroke(theme.accentColor.opacity(0.2), lineWidth: 1)
+                            )
+                    )
+                }
+                .buttonStyle(.plain)
+                if hostWorkspacePath != nil {
+                    Button {
+                        clearHostWorkspaceFolder()
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(theme.tertiaryText)
+                            .padding(6)
+                    }
+                    .buttonStyle(.plain)
+                    .help(L("Remove host folder access"))
+                }
+            }
+        }
+    }
+
+    /// Present a folder picker, mint a security-scoped bookmark, and persist it
+    /// on the agent. Mirrors `FolderContextService.selectFolder`'s panel but
+    /// stores the grant per-agent instead of in the process-wide context.
+    private func chooseHostWorkspaceFolder() {
+        Task { @MainActor in
+            let panel = NSOpenPanel()
+            panel.canChooseFiles = false
+            panel.canChooseDirectories = true
+            panel.canCreateDirectories = true
+            panel.allowsMultipleSelection = false
+            panel.title = L("Select Host Workspace Folder")
+            panel.message = L("Choose a folder this agent may read and write inside.")
+            panel.prompt = L("Select")
+
+            guard await panel.beginModal() == .OK, let url = panel.url else { return }
+            guard let bookmark = FolderContextService.makeSecurityScopedBookmark(for: url) else {
+                ToastManager.shared.error(L("Failed to grant folder access"))
+                return
+            }
+            guard var updated = agentManager.agent(for: agent.id) else { return }
+            updated.hostWorkspaceBookmark = bookmark
+            updated.hostWorkspacePath = url.path
+            agentManager.update(updated)
+            hostWorkspacePath = url.path
+        }
+    }
+
+    /// Revoke the agent's host folder grant.
+    private func clearHostWorkspaceFolder() {
+        guard var updated = agentManager.agent(for: agent.id) else { return }
+        updated.hostWorkspaceBookmark = nil
+        updated.hostWorkspacePath = nil
+        agentManager.update(updated)
+        hostWorkspacePath = nil
+    }
+
     /// Sandbox execution toggles, surfaced inside the Configure tab's
     /// Features section via the shared `featureCard` visual so they match
     /// the rest of the section. `interactive` is false when the sandbox is
@@ -5062,7 +4951,9 @@ struct AgentDetailView: View {
         searchMemoryEnabled = agent.settings.searchMemoryEnabled
         selfSchedulingEnabled = agent.settings.selfSchedulingEnabled
         computerUseEnabled = agent.settings.computerUseEnabled
+        spawnDelegationEnabled = agent.settings.spawnDelegationEnabled
         computerUseCeiling = agent.settings.computerUseCeiling
+        hostWorkspacePath = agent.hostWorkspacePath
         generativeGreetingsEnabled = agent.settings.generativeGreetingsEnabled
         // Hydrate the Personality editor with the resolved default
         // (global persona, falling back to built-in) when the agent has
@@ -5271,7 +5162,8 @@ struct AgentDetailView: View {
                 searchMemoryEnabled: searchMemoryEnabled,
                 selfSchedulingEnabled: selfSchedulingEnabled,
                 computerUseEnabled: computerUseEnabled,
-                computerUseCeiling: computerUseEnabled ? computerUseCeiling : nil
+                computerUseCeiling: computerUseEnabled ? computerUseCeiling : nil,
+                spawnDelegationEnabled: spawnDelegationEnabled
             ),
             order: current.order
         )
@@ -5604,54 +5496,388 @@ private struct ClickableHistoryRow<Content: View>: View {
     }
 }
 
-// MARK: - Detail Section Component
+// MARK: - Remote Connections (host side)
 
-private struct AgentDetailSection<Content: View>: View {
-    @Environment(\.theme) private var theme
+/// A single peer/grant row in the host-side "Remote Connections" tab. Backed
+/// either by a minted agent-scoped access key (a LAN pairing or a redeemed
+/// relay invite) or by a still-pending relay invite that hasn't been redeemed
+/// into a key yet. `internal` (not file-private) so the pure assembly in
+/// `RemoteConnectionsModel` is unit-testable.
+struct ConnectionRow: Identifiable, Equatable {
+    enum Status: Equatable {
+        case active
+        /// LAN pairing key that lives only for this app session
+        /// (`TemporaryPairedKeyStore`).
+        case temporary
+        case expired
+        case revoked
+        /// Issued relay invite that nobody has redeemed yet — no key exists.
+        case pending
+    }
 
+    /// Stable id — `key-<uuid>` for minted keys, `invite-<nonce>` for pending
+    /// invites — so SwiftUI keeps row identity stable across reloads.
+    let id: String
     let title: String
-    let icon: String
-    var subtitle: String? = nil
-    @ViewBuilder let content: () -> Content
+    let status: Status
+    let createdAt: Date?
+    let expiresAt: Date?
+    /// Key nonce used to attribute inbound Insights rows. `nil` for pending
+    /// invites (no key minted until redemption).
+    let accessKeyNonce: String?
+    /// Revoke target — exactly one of these is set per row.
+    let keyId: UUID?
+    let inviteNonce: String?
+
+    var canRevoke: Bool {
+        switch status {
+        case .active, .temporary, .pending: return true
+        case .expired, .revoked: return false
+        }
+    }
+}
+
+/// Pure assembly for the host-side Remote Connections list. Kept free of any
+/// singletons or `@MainActor` UI state so the merge / status-mapping contract
+/// (revoked → `.revoked`, expired → `.expired`, temporary LAN keys →
+/// `.temporary`, unredeemed invites → `.pending`) is unit-testable. The live
+/// view feeds it `APIKeyManager` keys, `AgentInviteStore` invites, and a
+/// `TemporaryPairedKeyStore` predicate.
+enum RemoteConnectionsModel {
+    static func rows(
+        keys: [AccessKeyInfo],
+        invites: [IssuedInviteRecord],
+        isTemporary: (UUID) -> Bool
+    ) -> [ConnectionRow] {
+        var result: [ConnectionRow] = []
+
+        for key in keys.sorted(by: { $0.createdAt > $1.createdAt }) {
+            let status: ConnectionRow.Status
+            if key.revoked {
+                status = .revoked
+            } else if key.isExpired {
+                status = .expired
+            } else if isTemporary(key.id) {
+                status = .temporary
+            } else {
+                status = .active
+            }
+            result.append(
+                ConnectionRow(
+                    id: "key-\(key.id.uuidString)",
+                    title: key.label,
+                    status: status,
+                    createdAt: key.createdAt,
+                    expiresAt: key.expiresAt,
+                    accessKeyNonce: key.nonce,
+                    keyId: key.id,
+                    inviteNonce: nil
+                )
+            )
+        }
+
+        // Still-pending relay invites: issued, not yet redeemed (no key), and
+        // not past expiry. Redeemed invites already appear above as their
+        // minted key, so only surface the ones that haven't connected yet.
+        for invite in invites
+        where invite.displayStatus == .active && invite.accessKeyId == nil {
+            result.append(
+                ConnectionRow(
+                    id: "invite-\(invite.nonce)",
+                    title: L("Pending invite · \(String(invite.nonce.prefix(8)))…"),
+                    status: .pending,
+                    createdAt: invite.issuedAt,
+                    expiresAt: invite.expirationDate,
+                    accessKeyNonce: nil,
+                    keyId: nil,
+                    inviteNonce: invite.nonce
+                )
+            )
+        }
+
+        return result
+    }
+}
+
+/// Owner-side view of who can reach a shared agent: the granted keys / invites,
+/// their inbound usage (attributed via `RequestConnectionInfo.accessKeyId`), and
+/// a per-peer Revoke. Gates itself to agents that have a shareable identity.
+@MainActor
+private struct AgentConnectionsSection: View {
+    @ObservedObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var insights = InsightsService.shared
+    private var theme: ThemeProtocol { themeManager.currentTheme }
+
+    let agent: Agent
+
+    @State private var rows: [ConnectionRow] = []
+    @State private var revokeConfirm: ConnectionRow?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 10) {
-                Image(systemName: icon)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.accentColor)
-                    .frame(width: 20)
+        Group {
+            if agent.agentAddress == nil {
+                notShareableState
+            } else if rows.isEmpty {
+                noConnectionsState
+            } else {
+                connectionsList
+            }
+        }
+        .onAppear(perform: reload)
+        // Inbound attribution shows up as new Insights rows; the debounced
+        // `totalRequestCount` is the cheapest "something changed" signal to
+        // re-summarize per-key usage without polling.
+        .onChange(of: insights.totalRequestCount) { _, _ in reload() }
+        .onChange(of: agent.id) { _, _ in reload() }
+        .themedAlert(
+            L("Revoke access?"),
+            isPresented: Binding(
+                get: { revokeConfirm != nil },
+                set: { if !$0 { revokeConfirm = nil } }
+            ),
+            message: revokeConfirm.map(revokeMessage(for:)) ?? "",
+            primaryButton: .destructive(L("Revoke")) {
+                if let target = revokeConfirm { revoke(target) }
+                revokeConfirm = nil
+            },
+            secondaryButton: .cancel(L("Cancel"))
+        )
+    }
 
-                Text(title.uppercased())
-                    .font(.system(size: 11, weight: .bold))
+    // MARK: States
+
+    private var notShareableState: some View {
+        AgentDetailSection(title: L("Remote Connections"), icon: "person.2.badge.key") {
+            AgentSectionEmptyState(
+                icon: "person.crop.circle.badge.xmark",
+                title: "Not shared yet",
+                hint:
+                    "This agent has no shareable identity. Pair it over your network or generate a relay invite from the header Share button, then connected peers will appear here."
+            )
+        }
+    }
+
+    private var noConnectionsState: some View {
+        AgentDetailSection(title: L("Remote Connections"), icon: "person.2.badge.key") {
+            AgentSectionEmptyState(
+                icon: "antenna.radiowaves.left.and.right.slash",
+                title: "No connections yet",
+                hint:
+                    "Peers you pair with — or who redeem an invite to this agent — show up here with their usage and a way to revoke access."
+            )
+        }
+    }
+
+    private var connectionsList: some View {
+        AgentDetailSection(title: L("Remote Connections"), icon: "person.2.badge.key") {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(
+                    "Peers granted access to this agent. Revoking takes effect immediately.",
+                    bundle: .module
+                )
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
+
+                ForEach(rows) { row in
+                    connectionRow(row)
+                }
+            }
+        }
+    }
+
+    // MARK: Row
+
+    @ViewBuilder
+    private func connectionRow(_ row: ConnectionRow) -> some View {
+        let activity = row.accessKeyNonce.map { insights.activity(forAccessKeyId: $0) }
+        HStack(spacing: 10) {
+            statusBadge(for: row.status)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(row.title)
+                    .font(.system(size: 12, weight: .medium))
                     .foregroundColor(theme.primaryText)
-                    .tracking(0.5)
+                    .lineLimit(1)
 
-                if let subtitle = subtitle {
-                    Text(subtitle)
-                        .font(.system(size: 11))
+                metaLine(row)
+
+                if let activity, !activity.isEmpty {
+                    usageLine(activity)
+                } else if row.status == .pending {
+                    Text("Waiting to be redeemed", bundle: .module)
+                        .font(.system(size: 9))
+                        .foregroundColor(theme.tertiaryText)
+                } else {
+                    Text("No requests yet", bundle: .module)
+                        .font(.system(size: 9))
                         .foregroundColor(theme.tertiaryText)
                 }
-
-                Spacer()
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 14)
 
-            VStack(alignment: .leading, spacing: 12) {
-                content()
+            Spacer(minLength: 8)
+
+            if activity?.isEmpty == false {
+                Button {
+                    viewInInsights(row)
+                } label: {
+                    HStack(spacing: 4) {
+                        Text("Insights", bundle: .module)
+                            .font(.system(size: 11, weight: .medium))
+                        Image(systemName: "arrow.up.right")
+                            .font(.system(size: 9, weight: .semibold))
+                    }
+                    .foregroundColor(theme.accentColor)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .localizedHelp("View this connection's requests in Insights")
             }
-            .padding(.horizontal, 16)
-            .padding(.bottom, 16)
+
+            if row.canRevoke {
+                Button {
+                    revokeConfirm = row
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 10))
+                        Text("Revoke", bundle: .module)
+                            .font(.system(size: 11, weight: .semibold))
+                    }
+                    .foregroundColor(theme.errorColor)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .localizedHelp("Revoke this peer's access")
+            }
         }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
         .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(theme.cardBorder, lineWidth: 1)
-                )
+            RoundedRectangle(cornerRadius: 8)
+                .fill(theme.inputBackground.opacity(0.5))
         )
+    }
+
+    private func metaLine(_ row: ConnectionRow) -> some View {
+        HStack(spacing: 6) {
+            if let created = row.createdAt {
+                Text(
+                    "Added \(created.formatted(date: .abbreviated, time: .omitted))",
+                    bundle: .module
+                )
+            }
+            if let expires = row.expiresAt {
+                Text(verbatim: "·")
+                Text(
+                    "Expires \(expires.formatted(date: .abbreviated, time: .omitted))",
+                    bundle: .module
+                )
+            } else if row.status != .pending {
+                Text(verbatim: "·")
+                Text("No expiry", bundle: .module)
+            }
+        }
+        .font(.system(size: 9))
+        .foregroundColor(theme.tertiaryText)
+        .lineLimit(1)
+    }
+
+    private func usageLine(_ activity: ConnectionActivitySummary) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "chart.bar.fill")
+                .font(.system(size: 8))
+            Text("\(activity.requestCount) requests", bundle: .module)
+            if let last = activity.lastUsed {
+                Text(verbatim: "·")
+                Text(
+                    "Last \(last.formatted(.relative(presentation: .named)))",
+                    bundle: .module
+                )
+            }
+            if activity.averageSpeed > 0 {
+                Text(verbatim: "·")
+                Text(verbatim: String(format: "%.0f tok/s", activity.averageSpeed))
+            }
+        }
+        .font(.system(size: 9))
+        .foregroundColor(theme.secondaryText)
+        .lineLimit(1)
+    }
+
+    private func statusBadge(for status: ConnectionRow.Status) -> some View {
+        let (color, label, icon): (Color, String, String) = {
+            switch status {
+            case .active:
+                return (theme.successColor, L("Active"), "checkmark.circle.fill")
+            case .temporary:
+                return (theme.accentColor, L("Temporary"), "clock.arrow.circlepath")
+            case .pending:
+                return (theme.warningColor, L("Pending"), "hourglass")
+            case .expired:
+                return (theme.tertiaryText, L("Expired"), "clock.badge.xmark.fill")
+            case .revoked:
+                return (theme.errorColor, L("Revoked"), "xmark.circle.fill")
+            }
+        }()
+        return HStack(spacing: 3) {
+            Image(systemName: icon).font(.system(size: 8))
+            Text(label).font(.system(size: 9, weight: .semibold))
+        }
+        .foregroundColor(color)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 2)
+        .background(Capsule().fill(color.opacity(0.12)))
+    }
+
+    // MARK: Behaviour
+
+    private func reload() {
+        guard let address = agent.agentAddress else {
+            rows = []
+            return
+        }
+        rows = RemoteConnectionsModel.rows(
+            keys: APIKeyManager.shared.listKeys(forAudience: address),
+            invites: AgentInviteStore.list(for: agent.id),
+            isTemporary: { TemporaryPairedKeyStore.shared.isTemporary(id: $0) }
+        )
+    }
+
+    private func revoke(_ row: ConnectionRow) {
+        if let keyId = row.keyId {
+            // Mark revoked (keep the row so it flips to a "Revoked" badge and
+            // preserves the audit trail) — takes effect immediately via the
+            // validator epoch bump inside `revoke(id:)`.
+            APIKeyManager.shared.revoke(id: keyId)
+        } else if let nonce = row.inviteNonce {
+            // Revoking an invite removes it from the ledger and, if it had
+            // already minted a key, revokes that key too.
+            let linkedKeyId = AgentInviteStore.revoke(nonce: nonce, for: agent.id)
+            if let linkedKeyId {
+                APIKeyManager.shared.revoke(id: linkedKeyId)
+            }
+        }
+        reload()
+    }
+
+    /// Copy varies with what the peer is mid-flight: an active grant cuts a
+    /// live connection, a pending invite just stops the link from working.
+    private func revokeMessage(for row: ConnectionRow) -> String {
+        switch row.status {
+        case .pending:
+            return L("The invite link will stop working. Anyone trying to use it will be turned away.")
+        default:
+            return L("This peer will lose access immediately. Their access key will be revoked.")
+        }
+    }
+
+    private func viewInInsights(_ row: ConnectionRow) {
+        if let nonce = row.accessKeyNonce {
+            _ = InsightsService.shared.focus(accessKeyId: nonce)
+        }
+        ManagementStateManager.shared.selectedTab = .insights
     }
 }
 

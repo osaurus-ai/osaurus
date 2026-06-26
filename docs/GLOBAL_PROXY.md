@@ -1,26 +1,34 @@
 # Global Proxy
 
-This note defines the first foundation for global proxy support tracked by
+This note defines global proxy support tracked by
 [#1091](https://github.com/osaurus-ai/osaurus/issues/1091) and the older
 [#232](https://github.com/osaurus-ai/osaurus/issues/232). The goal is a single
-validated proxy endpoint that later call-site migrations can apply to all
-outbound network traffic without weakening TLS, persistence, or plugin
-boundaries.
+validated proxy endpoint that outbound network traffic can apply without
+weakening TLS, persistence, or plugin boundaries.
 
 ## Status
 
-The current rollout adds the validated URL format, URLSession factory, settings
-persistence, and call-site wiring for remote provider traffic, HTTP/SSE MCP
-provider discovery, MCP auth-challenge probes, model downloads, and Hugging Face
-lookups. Plugin HTTP, relay, theme sharing, GitHub skill import, sandbox
-provisioning, local health checks, and per-provider overrides remain follow-up
-work so the shared network policy can be reviewed in bounded steps.
+The current rollout includes the validated URL format, shared URLSession
+factory, settings persistence, and call-site wiring for remote provider traffic,
+HTTP/SSE MCP provider discovery, MCP auth-challenge probes, model downloads,
+Hugging Face lookups, plugin HTTP, plugin repository refreshes, plugin artifact
+installs, relay, theme sharing, GitHub skill import, and sandbox provisioning.
+Local loopback health checks remain direct by design. Per-provider proxy
+selection and model mirror selection remain separate designs.
 
 Provider and MCP provider cards now expose a copyable **Global proxy**
 diagnostic row. A valid proxy row shows the redacted endpoint. A missing proxy
 row says requests use direct networking. An invalid saved proxy URL is shown as
 ignored with the validation reason, instead of silently looking like a network
 failure.
+
+Server settings also show a proxy status line:
+
+- **Disabled** means the proxy URL is blank and new outbound sessions use direct
+  networking.
+- **Configured** means the URL validated and was saved; new outbound sessions
+  apply that endpoint when they are created.
+- **Invalid** means the typed value failed validation and is not saved.
 
 ## Proxy Policy
 
@@ -43,7 +51,8 @@ than through URL userinfo or query strings.
 
 ## URLSession Factory
 
-`GlobalProxyConfiguration` parses and validates the user-facing proxy URL.
+`GlobalProxyConfiguration` in `OsaurusNetworking` parses and validates the
+user-facing proxy URL.
 `GlobalProxyURLSessionFactory` copies a caller's `URLSessionConfiguration`,
 applies the shaped `connectionProxyDictionary`, and builds a `URLSession`
 without installing any custom TLS delegate. Certificate validation remains the
@@ -60,16 +69,18 @@ instead of calling `ServerConfigurationStore` so background networking services
 can create sessions synchronously without crossing the Settings UI's main-actor
 store boundary.
 
+`OsaurusRepository` uses the same `OsaurusNetworking` parser/factory but reads
+only the lightweight `server.json.globalProxyURL` field through `ToolsPaths`.
+That keeps plugin marketplace refreshes and plugin artifact installs on the
+same proxy policy without making the repository package depend on
+`OsaurusCore`.
+
 ## Rollout Plan
 
-1. Migrate the remaining URLSession call sites in small PRs. Known affected
-   paths include plugin fetch/search traffic, GitHub skill requests, relay
-   traffic, theme sharing, sandbox provisioning, local health checks, and
-   per-provider override flows.
-2. Add smoke coverage with a stub proxy that records CONNECT/HTTP/SOCKS attempts
+1. Add smoke coverage with a stub proxy that records CONNECT/HTTP/SOCKS attempts
    for provider and model-download flows. Include a DNS-leak check before
    marking #1091 complete.
-3. Keep per-provider proxy selection and model mirror selection as separate
+2. Keep per-provider proxy selection and model mirror selection as separate
    designs. The global endpoint is intentionally simpler and should apply before
    more granular routing is considered.
 

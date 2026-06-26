@@ -299,6 +299,7 @@ enum FeatureTelemetry {
         case .chatUI: return "chat_ui"
         case .httpAPI: return "http_api"
         case .plugin: return "plugin"
+        case .p2p: return "p2p"
         }
     }
 

@@ -1,0 +1,38 @@
+{
+  "id": "agentdb.pagination",
+  "domain": "agent_loop",
+  "label": "agentdb • page a result set with limit/offset",
+  "query": "Your agent database already has a table named numbers with a single INTEGER column n holding the values 1 through 25. Without loading the whole table at once, use db_query's limit and offset to page through it in ascending order and tell me the value of n in the 23rd row.",
+  "notes": "WS4 proof: exercises the new db_query limit/offset paging. seedSql stages the 25 rows before the run. argsMustContain pins that the model actually used offset rather than slurping the table; the answer (n=23) is only reachable by addressing the 23rd row.",
+  "fixtures": {
+    "agentCapabilities": {
+      "dbEnabled": true
+    },
+    "seedSql": [
+      "CREATE TABLE numbers (n INTEGER); INSERT INTO numbers (n) VALUES (1),(2),(3),(4),(5),(6),(7),(8),(9),(10),(11),(12),(13),(14),(15),(16),(17),(18),(19),(20),(21),(22),(23),(24),(25);"
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 10,
+      "mustCallTools": [
+        "db_query"
+      ],
+      "toolUsageAudit": [
+        {
+          "tool": "db_query",
+          "argsMustContain": "offset"
+        }
+      ],
+      "dbState": [
+        {
+          "sql": "SELECT COUNT(*) FROM numbers",
+          "expectFirstValue": "25"
+        }
+      ],
+      "finalTextContains": [
+        "23"
+      ]
+    }
+  }
+}

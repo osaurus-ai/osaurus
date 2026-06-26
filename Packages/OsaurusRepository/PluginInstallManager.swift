@@ -343,7 +343,7 @@ public final class PluginInstallManager: @unchecked Sendable {
     // MARK: - Download / unzip
     private func download(toTempFileFrom url: URL, declaredSize: Int?) async throws -> URL {
         let boundedDeclaredSize = try Self.validatedDeclaredArtifactSize(declaredSize)
-        let (downloadedURL, response) = try await URLSession.shared.download(from: url)
+        let (downloadedURL, response) = try await RepositoryGlobalProxySettings.sharedSession().download(from: url)
         var movedDownloadedFile = false
         defer {
             if !movedDownloadedFile {

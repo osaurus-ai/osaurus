@@ -73,6 +73,8 @@ struct EmptyStateView: View {
             return L("No models available")
         case .downloaded:
             return L("No downloaded models")
+        case .images:
+            return L("No image models")
         }
     }
 
@@ -87,6 +89,8 @@ struct EmptyStateView: View {
             return L("Language models will appear here")
         case .downloaded:
             return L("Downloaded models will appear here")
+        case .images:
+            return L("Image models will appear here")
         }
     }
 }

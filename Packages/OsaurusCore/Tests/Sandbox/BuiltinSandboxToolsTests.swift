@@ -791,10 +791,14 @@ struct BuiltinSandboxToolsTests {
         let runner = MockSandboxToolCommandRunner(
             rootResults: [],
             agentResults: [
+                // Diff capture reads the file before and after the edit; the
+                // reads emit a `1`/`0` existence marker line then the contents.
+                .init(stdout: "1\nold()", stderr: "", exitCode: 0),  // readForDiff (before)
                 .init(stdout: "", stderr: "", exitCode: 0),  // mkdir tmp
                 .init(stdout: "", stderr: "", exitCode: 0),  // printf old
                 .init(stdout: "", stderr: "", exitCode: 0),  // printf new
                 .init(stdout: "replaced 1 line(s) with 1 line(s)", stderr: "", exitCode: 0),  // python
+                .init(stdout: "1\nnew()", stderr: "", exitCode: 0),  // readForDiff (after)
             ]
         )
 

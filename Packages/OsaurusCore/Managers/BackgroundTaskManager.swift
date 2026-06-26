@@ -22,6 +22,15 @@ public final class BackgroundTaskManager: ObservableObject {
     /// All background tasks keyed by task ID
     @Published public private(set) var backgroundTasks: [UUID: BackgroundTaskState] = [:]
 
+    /// Render-ready ordering of toast-visible tasks (`showToast == true`),
+    /// sorted by status priority then recency. Recomputed only when the
+    /// task set or a task's observable state changes, so SwiftUI body
+    /// evaluations read a ready array instead of re-running filter+sort on
+    /// every access (a single `NotchView` body reads the ordering dozens of
+    /// times). Refreshes piggyback on the manager's `objectWillChange`, so
+    /// this stays a plain stored property rather than `@Published`.
+    public private(set) var sortedToastTasks: [BackgroundTaskState] = []
+
     // MARK: - Private State
 
     /// Combined cancellables for each task (session + state observers)
@@ -66,7 +75,42 @@ public final class BackgroundTaskManager: ObservableObject {
             viewUpdateSubject
             .throttle(for: .milliseconds(50), scheduler: DispatchQueue.main, latest: true)
             .sink { [weak self] in
-                self?.objectWillChange.send()
+                guard let self else { return }
+                // A task's own state (status / createdAt-relative ordering)
+                // may have changed, so refresh the cached ordering before
+                // driving the throttled view update.
+                self.recomputeSortedToastTasks()
+                self.objectWillChange.send()
+            }
+    }
+
+    // MARK: - Toast Ordering
+
+    /// Status ordering for the notch: awaiting input first, then running,
+    /// then terminal states. Lower sorts earlier.
+    private static func statusSortPriority(_ status: BackgroundTaskStatus) -> Int {
+        switch status {
+        case .awaitingClarification: return 0
+        case .running: return 1
+        case .completed: return 2
+        case .cancelled: return 3
+        }
+    }
+
+    /// Rebuild `sortedToastTasks` from the current task set. Cheap (the set
+    /// is capped at a handful of tasks) but kept off the per-render path by
+    /// only running when the set or a task's state actually changes.
+    private func recomputeSortedToastTasks() {
+        sortedToastTasks =
+            backgroundTasks.values
+            // Headless dispatchers (e.g. webhook responders) opt out of the
+            // notch by setting `showToast = false`. The task is still tracked
+            // for completion signaling — it just doesn't render.
+            .filter { $0.showToast }
+            .sorted { a, b in
+                let ap = Self.statusSortPriority(a.status), bp = Self.statusSortPriority(b.status)
+                if ap != bp { return ap < bp }
+                return a.createdAt > b.createdAt
             }
     }
 
@@ -191,6 +235,7 @@ public final class BackgroundTaskManager: ObservableObject {
         state.releaseReferences()
 
         backgroundTasks.removeValue(forKey: backgroundId)
+        recomputeSortedToastTasks()
     }
 
     /// Cancel all active background tasks. Called during app termination.
@@ -568,6 +613,7 @@ public final class BackgroundTaskManager: ObservableObject {
     /// Register a new task state and log an initial activity entry.
     private func registerTask(_ state: BackgroundTaskState) {
         backgroundTasks[state.id] = state
+        recomputeSortedToastTasks()
         state.appendActivity(kind: .info, title: "Running in background")
         emitPluginEvent(state, type: .started, json: PluginHostContext.serializeStartedEvent(state: state))
     }
@@ -578,6 +624,7 @@ public final class BackgroundTaskManager: ObservableObject {
         /// a real `ExecutionContext` + MLX-backed engine.
         func registerTaskForTesting(_ state: BackgroundTaskState) {
             backgroundTasks[state.id] = state
+            recomputeSortedToastTasks()
         }
     #endif
 

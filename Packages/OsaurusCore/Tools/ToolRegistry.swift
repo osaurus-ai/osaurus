@@ -111,6 +111,15 @@ final class ToolRegistry: ObservableObject {
 
     @Published private var toolsByName: [String: OsaurusTool] = [:]
     @Published private var configuration: ToolConfiguration = ToolConfigurationStore.load()
+
+    /// Memoized result of `listTools()`. Building it sorts every tool and
+    /// constructs each one's `parameters` JSON schema, which is slow enough to
+    /// trip the main-thread hang watchdog when it runs on render paths (the
+    /// system prompt preview pipeline calls it through an 80 ms debounce).
+    /// Invalidated from `objectWillChange`, so any `@Published` mutation
+    /// (register / unregister / enablement) clears it automatically.
+    private var cachedListTools: [ToolEntry]?
+    private var cacheInvalidations = Set<AnyCancellable>()
     /// Names of tools registered via registerBuiltInTools (always loaded).
     private(set) var builtInToolNames: Set<String> = []
 
@@ -162,6 +171,11 @@ final class ToolRegistry: ObservableObject {
 
     private init() {
         registerBuiltInTools()
+        // Any mutation to a `@Published` store fires `objectWillChange`; drop
+        // the memoized tool list so the next read rebuilds it from fresh state.
+        objectWillChange
+            .sink { [weak self] in self?.cachedListTools = nil }
+            .store(in: &cacheInvalidations)
     }
 
     /// Register built-in tools that are always available.
@@ -188,6 +202,12 @@ final class ToolRegistry: ObservableObject {
             SearchMemoryTool(),
             // Inline data visualization rendered as a chart card.
             RenderChartTool(),
+            // Native local image generation. Tool body enforces the separate
+            // Agent Delegation permission defaults and low-RAM unload policy.
+            LocalTextDelegateTool(),
+            SpawnTool(),
+            NativeImageGenerateTool(),
+            NativeImageEditTool(),
             // Agent DB feature (spec §6). The system prompt composer
             // gates these per-agent via `Agent.settings.dbEnabled`;
             // registering them as built-ins means agents that *do*
@@ -198,6 +218,7 @@ final class ToolRegistry: ObservableObject {
             DBMigrateTool(),
             DBInsertTool(),
             DBUpsertTool(),
+            DBImportTool(),
             DBUpdateTool(),
             DBDeleteTool(),
             DBRestoreTool(),
@@ -248,7 +269,40 @@ final class ToolRegistry: ObservableObject {
         if configChanged {
             ToolConfigurationStore.save(configuration)
         }
+
+        // for tool in Self.agentChannelTools {
+        //     registerNativeDynamicTool(tool)
+        // }
     }
+
+    private static let agentChannelTools: [OsaurusTool] = [
+        // First-party Agent Channel tools. Discord is the first executable
+        // channel driver, but the model-facing action vocabulary is shared
+        // by future Slack, Telegram, and custom JSON channel connections.
+        AgentChannelListConnectionsTool(),
+        AgentChannelDiagnosticsTool(),
+        AgentChannelListSpacesTool(),
+        AgentChannelListRoomsTool(),
+        AgentChannelReadMessagesTool(),
+        AgentChannelReadThreadTool(),
+        AgentChannelSearchMessagesTool(),
+        AgentChannelDraftMessageTool(),
+        AgentChannelSendMessageTool(),
+        AgentChannelReplyThreadTool(),
+    ]
+
+    nonisolated static let agentChannelToolNames: Set<String> = [
+        "agent_channel_list_connections",
+        "agent_channel_diagnostics",
+        "agent_channel_list_spaces",
+        "agent_channel_list_rooms",
+        "agent_channel_read_messages",
+        "agent_channel_read_thread",
+        "agent_channel_search_messages",
+        "agent_channel_draft_message",
+        "agent_channel_send_message",
+        "agent_channel_reply_thread",
+    ]
 
     /// Register a plain (non-bucketed) tool. Used by built-in registration
     /// and folder-tool installation; sandbox / MCP / plugin paths use the
@@ -327,8 +381,10 @@ final class ToolRegistry: ObservableObject {
 
     /// Get specs for specific tools by name (ignores enabled state).
     func specs(forTools toolNames: [String]) -> [Tool] {
+        let delegationExcluded = agentDelegationExcludedToolNames()
         return toolNames.compactMap { name in
-            toolsByName[name]?.asOpenAITool()
+            guard !delegationExcluded.contains(name) else { return nil }
+            return toolsByName[name]?.asOpenAITool()
         }
     }
 
@@ -342,15 +398,44 @@ final class ToolRegistry: ObservableObject {
     /// arbitrary shell commands. These names refuse with a structured
     /// envelope regardless of registration state and are hidden from
     /// `/mcp/tools` listings.
-    public nonisolated static let externallyDeniedToolNames: Set<String> = [
+    nonisolated public static let externallyDeniedToolNames: Set<String> = [
         "file_write", "file_edit", "shell_run", "git_commit", "file_undo",
+        "agent_channel_list_connections", "agent_channel_diagnostics",
+        "agent_channel_list_spaces", "agent_channel_list_rooms",
+        "agent_channel_read_messages", "agent_channel_read_thread",
+        "agent_channel_search_messages", "agent_channel_draft_message",
+        "agent_channel_send_message", "agent_channel_reply_thread",
+    ]
+
+    /// Subset of `externallyDeniedToolNames` that an AUTHENTICATED,
+    /// folder-bounded remote agent run may use (gated on
+    /// `ChatExecutionContext.authenticatedHostFolderRoot`). Host *file*
+    /// mutation is permitted — confined to the granted folder by the folder
+    /// tools' own captured root — so a paired peer can have the agent create
+    /// or edit files in the folder its owner chose. `shell_run` /
+    /// `git_commit` / `file_undo` are deliberately NOT here: they stay denied
+    /// on every external surface regardless of authentication.
+    nonisolated static let hostFolderAllowedWhenAuthenticated: Set<String> = [
+        "file_write", "file_edit",
     ]
 
     /// Whether `name` is blocked for the current execution because an
     /// external surface (`ChatExecutionContext.isExternalSurface`) is
-    /// driving the call.
+    /// driving the call. An authenticated, folder-bounded remote agent run
+    /// (`authenticatedHostFolderRoot` set) is allowed the host file tools in
+    /// `hostFolderAllowedWhenAuthenticated`; the `/mcp/call` bridge, loopback,
+    /// plaintext, and cross-agent callers never set that task-local, so they
+    /// remain fully denied.
     nonisolated static func isDeniedForCurrentSurface(_ name: String) -> Bool {
-        ChatExecutionContext.isExternalSurface && externallyDeniedToolNames.contains(name)
+        guard ChatExecutionContext.isExternalSurface,
+            externallyDeniedToolNames.contains(name)
+        else { return false }
+        if ChatExecutionContext.authenticatedHostFolderRoot != nil,
+            hostFolderAllowedWhenAuthenticated.contains(name)
+        {
+            return false
+        }
+        return true
     }
 
     /// The structured refusal handed to external callers for denied
@@ -359,7 +444,7 @@ final class ToolRegistry: ObservableObject {
         ToolEnvelope.failure(
             kind: .rejected,
             message:
-                "'\(tool)' is not available to external callers. Folder write and shell tools can only run from the Osaurus app.",
+                "'\(tool)' is not available to external callers. This tool can only run from the Osaurus app.",
             tool: tool
         )
     }
@@ -381,7 +466,7 @@ final class ToolRegistry: ObservableObject {
                 code: 3,
                 userInfo: [
                     NSLocalizedDescriptionKey:
-                        "'\(name)' is not available to external callers. Folder write and shell tools can only run from the Osaurus app."
+                        "'\(name)' is not available to external callers. This tool can only run from the Osaurus app."
                 ]
             )
         }
@@ -397,11 +482,13 @@ final class ToolRegistry: ObservableObject {
             let requirements = permissioned.requirements
 
             // Check system permissions and prompt the user for any that are missing
-            let missingSystemPermissions = SystemPermissionService.shared.missingPermissions(from: requirements)
+            let missingSystemPermissions = await SystemPermissionService.shared.missingPermissions(
+                from: requirements)
             for permission in missingSystemPermissions {
                 _ = await SystemPermissionService.shared.requestPermissionAndWait(permission)
             }
-            let stillMissing = SystemPermissionService.shared.missingPermissions(from: requirements)
+            let stillMissing = await SystemPermissionService.shared.missingPermissions(
+                from: requirements)
             if !stillMissing.isEmpty {
                 let missingNames = stillMissing.map { $0.displayName }.joined(separator: ", ")
                 throw NSError(
@@ -495,10 +582,24 @@ final class ToolRegistry: ObservableObject {
     /// `kind: .unavailable` "still initializing" notice so the model knows
     /// to retry rather than pivot.
     func execute(
-        name: String,
+        name rawName: String,
         argumentsJSON: String,
         permissionGateResolved: Bool = false
     ) async throws -> String {
+        // The capabilities manifest lists deferred tools to the model as
+        // `tool/<name>` (SystemPromptTemplates.enabledCapabilitiesManifest). Some
+        // models copy that `tool/` prefix verbatim into a tool call even for a
+        // first-class function tool, yielding a spurious tool_not_found. Worse,
+        // the default agent can't self-heal — capabilities_load is gated off for
+        // it — so it just gives up and refuses ("I cannot generate images").
+        // Resolve to the model's real intent by stripping a `tool/` prefix when
+        // the bare name isn't registered but the stripped one is, mirroring the
+        // `tool/` handling in CapabilityTools.resolve.
+        var name = rawName
+        if toolsByName[name] == nil, name.hasPrefix("tool/") {
+            let stripped = String(name.dropFirst("tool/".count))
+            if toolsByName[stripped] != nil { name = stripped }
+        }
         // External-surface deny list: refuse workspace-mutating tool
         // classes for HTTP/MCP-initiated executions regardless of
         // registration state or permission policy.
@@ -546,12 +647,28 @@ final class ToolRegistry: ObservableObject {
             // embedding search, shell, network) so the /tmp log can separate
             // tool-execution latency from model decode between agent-loop steps.
             let toolExecStart = CFAbsoluteTimeGetCurrent()
-            PrefillDebugLog.shared.log("       TOOL-EXEC-BEGIN name=\(name)")
+            if PrefillDebugLog.shared.isEnabled {
+                // Capture the (coerced) call arguments so the log shows WHICH
+                // capability a load targeted — e.g. `plugin/calendar` — since
+                // the tool name alone can't. Single-lined and truncated to
+                // bound log size and avoid dumping large tool payloads (file
+                // contents, shell scripts) verbatim into /tmp.
+                let flat = effectiveArgumentsJSON.replacingOccurrences(of: "\n", with: " ")
+                let argsForLog = flat.count > 200 ? String(flat.prefix(200)) + "…" : flat
+                PrefillDebugLog.shared.log("       TOOL-EXEC-BEGIN name=\(name) args=\(argsForLog)")
+            }
+            // Captured for the END line below: the result of a `capabilities_*`
+            // call (which tools a `plugin/<id>` load expanded to, or what a
+            // discover returned). Scoped to capability tools ONLY — other tool
+            // results (file contents, shell/web output) can be large or
+            // sensitive and have no place in this diagnostic.
+            var resultForLog: String? = nil
             defer {
-                PrefillDebugLog.shared.log(
+                var line =
                     "       TOOL-EXEC-END   name=\(name) "
-                        + "ms=\(Int((CFAbsoluteTimeGetCurrent() - toolExecStart) * 1000))"
-                )
+                    + "ms=\(Int((CFAbsoluteTimeGetCurrent() - toolExecStart) * 1000))"
+                if let resultForLog { line += " result=\(resultForLog)" }
+                PrefillDebugLog.shared.log(line)
             }
             // Run the tool body off MainActor so long-running tools (file
             // I/O, network, shell) don't contend with SwiftUI layout on the
@@ -573,7 +690,7 @@ final class ToolRegistry: ObservableObject {
             // relying on each caller to remember. Inert outside combined
             // mode, leaving plain folder + plain sandbox modes untouched.
             let policy = combinedHostReadPolicy
-            return try await ChatExecutionContext.$hostReadOnlyScope.withValue(policy.scope) {
+            let result = try await ChatExecutionContext.$hostReadOnlyScope.withValue(policy.scope) {
                 try await ChatExecutionContext.$allowHostSecretReads.withValue(policy.allowSecretReads) {
                     try await ChatExecutionContext.$sandboxReadBridge.withValue(combinedSandboxReadBridge) {
                         if tool.bypassRegistryTimeout {
@@ -596,6 +713,11 @@ final class ToolRegistry: ObservableObject {
                     }
                 }
             }
+            if PrefillDebugLog.shared.isEnabled, name.hasPrefix("capabilities_") {
+                let flat = result.replacingOccurrences(of: "\n", with: " ")
+                resultForLog = flat.count > 300 ? String(flat.prefix(300)) + "…" : flat
+            }
+            return result
         }
     }
 
@@ -787,30 +909,38 @@ final class ToolRegistry: ObservableObject {
             return raw
         }
 
-        let cap = ToolOutputCaps.universalResult
-        let isEnvelope = ToolEnvelope.isSuccess(raw) || ToolEnvelope.isError(raw)
+        // Lossless formatting compaction at ingest. Runs AFTER the
+        // secret-prompt guard (the marker must reach the chat loop byte-exact)
+        // and BEFORE the cap, so an external pretty-JSON payload that crushes
+        // back under the cap avoids truncation entirely. Meaning-preserving and
+        // deterministic, so the KV-prefix stays byte-stable. See
+        // `ToolOutputCompressor`.
+        let payload = ToolOutputCompressor.compact(raw)
 
-        if raw.count <= cap {
-            return isEnvelope ? raw : ToolEnvelope.success(tool: tool, text: raw)
+        let cap = ToolOutputCaps.universalResult
+        let isEnvelope = ToolEnvelope.isSuccess(payload) || ToolEnvelope.isError(payload)
+
+        if payload.count <= cap {
+            return isEnvelope ? payload : ToolEnvelope.success(tool: tool, text: payload)
         }
 
         // Head-biased: at the registry backstop the front of an oversized
         // payload is what identifies it (the recovery hint rides in the
         // envelope, not the marker).
-        let truncatedContent = HeadTailTruncation.apply(raw, cap: cap, headFraction: 2.0 / 3.0)
+        let truncatedContent = HeadTailTruncation.apply(payload, cap: cap, headFraction: 2.0 / 3.0)
         let hint =
             "Output exceeded the per-call cap and was truncated (head and tail kept). "
             + "Re-run with narrower arguments — filters, `max_results`, line ranges, or "
             + "head/tail options — to retrieve the missing region."
 
-        if ToolEnvelope.isError(raw) {
+        if ToolEnvelope.isError(payload) {
             return ToolEnvelope.failure(
                 kind: .executionError,
                 message: "Tool '\(tool)' failed and its error output exceeded the per-call cap. " + hint,
                 tool: tool,
                 metadata: [
                     "truncated": true,
-                    "original_chars": raw.count,
+                    "original_chars": payload.count,
                     "content": truncatedContent,
                 ]
             )
@@ -820,7 +950,7 @@ final class ToolRegistry: ObservableObject {
             result: [
                 "kind": "truncated_output",
                 "truncated": true,
-                "original_chars": raw.count,
+                "original_chars": payload.count,
                 "content": truncatedContent,
             ] as [String: Any],
             warnings: [hint]
@@ -898,9 +1028,17 @@ final class ToolRegistry: ObservableObject {
     // MARK: - Listing / Enablement
 
     /// Returns all registered tools with global enabled state.
+    /// Memoized via `cachedListTools`; the result is reused until a registry
+    /// mutation invalidates it (see `cachedListTools`).
     func listTools() -> [ToolEntry] {
-        return toolsByName.values
-            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        if let cached = cachedListTools { return cached }
+        let entries = toolsByName.values
+            // Locale-independent compare: tool names are identifiers, so
+            // `localizedCaseInsensitiveCompare`'s ICU/locale round-trip was
+            // pure overhead — and it made a cold rebuild trip the main-thread
+            // hang watchdog. A fixed order is also better for KV-cache
+            // stability across users with different locales.
+            .sorted { $0.name.caseInsensitiveCompare($1.name) == .orderedAscending }
             .map { t in
                 ToolEntry(
                     name: t.name,
@@ -909,6 +1047,8 @@ final class ToolRegistry: ObservableObject {
                     parameters: t.parameters
                 )
             }
+        cachedListTools = entries
+        return entries
     }
 
     /// Number of registered tools. O(1), and crucially avoids building the
@@ -1175,6 +1315,33 @@ final class ToolRegistry: ObservableObject {
 
     // MARK: - Plugin Tool Registration
 
+    /// Register a first-party native tool that should be loaded on demand
+    /// instead of joining the always-loaded built-in baseline. This is for
+    /// system-owned dynamic surfaces such as Agent Channels; plugin-owned tools
+    /// must use `registerPluginTool(_:)` so ownership diagnostics stay correct.
+    func registerNativeDynamicTool(_ tool: OsaurusTool) {
+        let firstTime =
+            toolsByName[tool.name] == nil
+            && !configuration.enabled.keys.contains(tool.name)
+        toolsByName[tool.name] = tool
+        sandboxToolNames.remove(tool.name)
+        builtInSandboxToolNames.remove(tool.name)
+        mcpToolNames.remove(tool.name)
+        pluginToolNames.remove(tool.name)
+        if firstTime {
+            setEnabled(true, for: tool.name)
+        }
+        Task {
+            await ToolIndexService.shared.onToolRegistered(
+                name: tool.name,
+                description: tool.description,
+                runtime: .native,
+                tokenCount: Self.estimateTokenCount(tool),
+                parameters: tool.parameters
+            )
+        }
+    }
+
     /// Register a tool from a native dylib plugin.
     /// Auto-enables the tool on first registration so it is immediately usable;
     /// subsequent registrations (e.g. hot-reload) preserve the user's choice.
@@ -1261,6 +1428,16 @@ final class ToolRegistry: ObservableObject {
         Self.folderToolNames.union(builtInSandboxToolNames)
     }
 
+    static let agentDelegationTextToolNames: Set<String> = ["local_delegate"]
+    static let agentDelegationSpawnToolNames: Set<String> = ["spawn"]
+    static let agentDelegationImageToolNames: Set<String> = ["image_generate", "image_edit"]
+    /// All agent-delegation tool names — used by the authoritative per-agent
+    /// `spawnDelegationEnabled` gate in `SystemPromptComposer.resolveTools`.
+    static let agentDelegationAllToolNames: Set<String> =
+        agentDelegationTextToolNames
+        .union(agentDelegationSpawnToolNames)
+        .union(agentDelegationImageToolNames)
+
     /// Read-only snapshot of the built-in sandbox tool names. Exposed so the
     /// composer's canonical-order helper can group them at the top of the
     /// `<tools>` block without reaching into private state.
@@ -1305,6 +1482,22 @@ final class ToolRegistry: ObservableObject {
         }
         if mode.usesHostFolderTools || mode.usesSandboxTools {
             excluded.formUnion(folderConflictingToolNames)
+        }
+        excluded.formUnion(agentDelegationExcludedToolNames())
+        return excluded
+    }
+
+    private func agentDelegationExcludedToolNames() -> Set<String> {
+        let config = AgentDelegationConfigurationStore.snapshot()
+        var excluded: Set<String> = []
+        if !config.textDelegationToolAvailable {
+            excluded.formUnion(Self.agentDelegationTextToolNames)
+        }
+        if !config.anyAgentSpawnable {
+            excluded.formUnion(Self.agentDelegationSpawnToolNames)
+        }
+        if !config.imageDelegationActive {
+            excluded.formUnion(Self.agentDelegationImageToolNames)
         }
         return excluded
     }
@@ -1405,6 +1598,11 @@ final class ToolRegistry: ObservableObject {
             details.append(L("globally disabled"))
         }
 
+        if agentDelegationExcludedToolNames().contains(toolName) {
+            appendReason(.disabled)
+            details.append(L("agent delegation is disabled in Settings"))
+        }
+
         if dynamic, let agentAllowedNames, !agentAllowedNames.contains(toolName) {
             appendReason(.hiddenByAgentScope)
             details.append(L("not enabled for this agent"))
@@ -1457,6 +1655,7 @@ final class ToolRegistry: ObservableObject {
     /// Returns the plugin or provider name that a tool belongs to, if any.
     func groupName(for toolName: String) -> String? {
         guard let tool = toolsByName[toolName] else { return nil }
+        if Self.agentChannelToolNames.contains(toolName) { return "agent_channels" }
         if let ext = tool as? ExternalTool { return ext.pluginId }
         if let mcp = tool as? MCPProviderTool { return mcp.providerName }
         if let sandbox = tool as? SandboxPluginTool { return sandbox.plugin.id }
@@ -1466,6 +1665,7 @@ final class ToolRegistry: ObservableObject {
     private func availabilityRuntimeLabel(for toolName: String, builtIn: Bool) -> String {
         if isSandboxTool(toolName) { return L("sandbox") }
         if isMCPTool(toolName) { return "mcp" }
+        if Self.agentChannelToolNames.contains(toolName) { return L("native") }
         if isPluginTool(toolName) { return L("plugin") }
         if builtIn { return L("builtin") }
         return L("native")

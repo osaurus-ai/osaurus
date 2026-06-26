@@ -91,6 +91,7 @@ struct MessageTableRepresentable: NSViewRepresentable {
     let onConfirmEdit: (() -> Void)?
     let onCancelEdit: (() -> Void)?
     var onUserImagePreview: ((String) -> Void)? = nil
+    var onDocumentPreview: ((Attachment) -> Void)? = nil
 
     // Minimap support
     var onVisibleTopUserTurnChanged: ((UUID?) -> Void)? = nil
@@ -189,6 +190,18 @@ struct MessageTableRepresentable: NSViewRepresentable {
         coordinator.tableView?.sizeLastColumnToFit()
     }
 
+    /// Break the hover closures (which capture the coordinator) and stop any
+    /// further `mouseMoved`/`mouseExited` dispatch when SwiftUI tears down
+    /// the representable. Belt-and-suspenders against the launch SIGABRT: a
+    /// detached table must not keep firing tracking events into a
+    /// tearing-down coordinator (issue #1632).
+    static func dismantleNSView(_ scrollView: NSScrollView, coordinator: Coordinator) {
+        if let table = scrollView.documentView as? HoverTrackingTableView {
+            table.onMouseMoved = nil
+            table.onMouseExited = nil
+        }
+    }
+
     // MARK: - View Factory Helpers
 
     private func renderingContext(for coordinator: Coordinator) -> CellRenderingContext {
@@ -218,6 +231,7 @@ struct MessageTableRepresentable: NSViewRepresentable {
             onDelete: onDelete,
             onSpeak: onSpeak,
             onUserImagePreview: onUserImagePreview,
+            onDocumentPreview: onDocumentPreview,
             sessionRedactions: sessionRedactions,
             hasChartBeenDrawn: { [weak coordinator] id in
                 coordinator?.drawnChartBlockIds.contains(id) ?? false
@@ -262,6 +276,7 @@ struct MessageTableRepresentable: NSViewRepresentable {
             onDelete: onDelete,
             onSpeak: onSpeak,
             onUserImagePreview: onUserImagePreview,
+            onDocumentPreview: onDocumentPreview,
             sessionRedactions: sessionRedactions
         )
     }
@@ -537,10 +552,18 @@ extension MessageTableRepresentable {
 
         func setupHoverTracking(on tableView: HoverTrackingTableView) {
             tableView.onMouseMoved = { [weak self] event in
-                self?.handleMouseMoved(with: event)
+                // Defer hover handling off AppKit's `mouseMoved:` dispatch.
+                // `setHoveredGroup` can `configureCell` visible rows —
+                // rebuilding their subviews and tracking areas — and
+                // mutating the tracking-area set while the manager is
+                // mid-dispatch can trip `-[_NSTrackingAreaAKManager
+                // mouseMoved:]` (issue #1632). `locationInWindow` is a value
+                // type, safe to carry one runloop tick.
+                let windowPoint = event.locationInWindow
+                DispatchQueue.main.async { self?.handleMouseMoved(windowPoint: windowPoint) }
             }
             tableView.onMouseExited = { [weak self] in
-                self?.setHoveredGroup(nil)
+                DispatchQueue.main.async { self?.setHoveredGroup(nil) }
             }
         }
 
@@ -563,9 +586,8 @@ extension MessageTableRepresentable {
             if let row {
                 let blockId = blockIds[row]
                 heightCache.removeValue(forKey: blockId)
-                if let cell = tableView?.view(atColumn: 0, row: row, makeIfNecessary: false) as? NativeMessageCellView,
-                    let block = blockLookup[blockId]
-                {
+                let cell = tableView?.view(atColumn: 0, row: row, makeIfNecessary: false) as? NativeMessageCellView
+                if let cell, let block = blockLookup[blockId] {
                     configureCell(cell, with: block)
                 }
                 // let the hosting view settle before re-measuring
@@ -1122,10 +1144,10 @@ extension MessageTableRepresentable {
 
         // MARK: - Hover Tracking
 
-        private func handleMouseMoved(with event: NSEvent) {
+        private func handleMouseMoved(windowPoint: NSPoint) {
             ChatPerfTrace.shared.count("hover.mouseMoved")
             guard let tableView else { return setHoveredGroup(nil) }
-            let point = tableView.convert(event.locationInWindow, from: nil)
+            let point = tableView.convert(windowPoint, from: nil)
             let row = tableView.row(at: point)
 
             guard row >= 0, row < blockIds.count,
@@ -1194,7 +1216,9 @@ extension MessageTableRepresentable {
             else { return 44 }
 
             // return cached height if we have it
-            if let cached = heightCache[block.id] { return cached }
+            if let cached = heightCache[block.id] {
+                return cached
+            }
 
             // `expandedIds` is the sole source of truth and the thinking blocks
             // start collapsed by default and open only when the user taps

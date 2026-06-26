@@ -16,8 +16,6 @@ private let heroAvatarDiameter: CGFloat = 64
 /// Font size for the icon/monogram inside a hero avatar (built-in `person.fill`
 /// placeholder and `AgentAvatarView` monogram fallback).
 private let heroAvatarIconFontSize: CGFloat = 28
-/// Font size for the SF Symbol inside the remote-hero avatar (relay / discovered).
-private let heroAvatarRemoteIconFontSize: CGFloat = 24
 
 // MARK: - Shimmer Fade-In
 
@@ -128,6 +126,21 @@ struct ChatEmptyState: View {
     let onOpenOnboarding: (() -> Void)?
     var activeDiscoveredAgent: DiscoveredAgent? = nil
     var activeRelayAgent: PairedRelayAgent? = nil
+    /// Mascot avatar id of the active remote agent (Mode 2), resolved from its
+    /// live metadata on connect. nil = monogram fallback on the remote name.
+    var remoteAgentAvatar: String? = nil
+    /// The active remote agent's description, used as the empty-state subtitle
+    /// so the remote agent introduces itself instead of the generic default.
+    var remoteAgentDescription: String? = nil
+    /// The active remote agent's custom Action Bar (chat quick actions),
+    /// resolved from its live metadata on connect. nil/empty = the neutral
+    /// chat defaults, so the swap to fetched actions animates in after connect.
+    var remoteAgentQuickActions: [AgentQuickAction]? = nil
+    /// True while the Mode 2 remote-agent connection (and its secure-channel
+    /// handshake) is still resolving. Drives the security badge's loader
+    /// variant: the chat isn't actually encrypted until the channel is up, so
+    /// the badge shows "Securing connection…" instead of claiming E2E early.
+    var isConnecting: Bool = false
 
     @State private var hasAppeared = false
     @Environment(\.theme) private var theme
@@ -143,12 +156,43 @@ struct ChatEmptyState: View {
         return nil
     }
 
+    /// True when this empty state heads a Mode 2 remote-agent conversation.
+    private var isRemoteChat: Bool {
+        activeRelayAgent != nil || activeDiscoveredAgent != nil
+    }
+
+    /// Display name of the active remote agent (Mode 2), if any. Drives the
+    /// empty-state title so a remote conversation is headed by the remote
+    /// agent's own name rather than the local agent's greeting.
+    private var remoteAgentName: String? {
+        if let relay = activeRelayAgent {
+            let trimmed = relay.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        }
+        if let discovered = activeDiscoveredAgent {
+            let trimmed = discovered.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        }
+        return nil
+    }
+
+    /// Remote agent name with a safe fallback, for the hero avatar seed/title
+    /// when the advertised name happens to be blank.
+    private var remoteDisplayName: String {
+        remoteAgentName ?? L("Remote Agent")
+    }
+
     /// Title text rendered above the subtitle. Resolution order:
-    /// 1. AI-generated greeting (when ready), 2. per-agent override
-    /// (`Agent.chatGreeting`), 3. time-of-day default. Whitespace-only
-    /// strings are treated as nil so a cleared field falls through to
-    /// the next layer.
+    /// 1. Remote agent name (Mode 2 — this chat is the remote agent, not the
+    /// local one), 2. AI-generated greeting (when ready), 3. per-agent override
+    /// (`Agent.chatGreeting`), 4. time-of-day default. Whitespace-only strings
+    /// are treated as nil so a cleared field falls through to the next layer.
     private var greetingText: String {
+        // A remote agent owns the conversation: never surface the local
+        // agent's generative/custom greeting here.
+        if isRemoteChat {
+            return remoteDisplayName
+        }
         if let g = readyGreeting?.greeting,
             !g.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         {
@@ -166,6 +210,17 @@ struct ChatEmptyState: View {
     /// `greetingText`: AI-generated → per-agent override
     /// (`Agent.chatSubtitle`) → localized default.
     private var subtitleText: LocalizedStringKey {
+        // Remote agent run: surface the remote agent's own description (so it
+        // introduces itself), never the local agent's generative/custom
+        // subtitle. Falls back to the neutral default when it has none.
+        if isRemoteChat {
+            if let d = remoteAgentDescription?.trimmingCharacters(in: .whitespacesAndNewlines),
+                !d.isEmpty
+            {
+                return LocalizedStringKey(d)
+            }
+            return "How can I help you today?"
+        }
         if let s = readyGreeting?.subtitle,
             !s.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         {
@@ -183,6 +238,14 @@ struct ChatEmptyState: View {
     /// configured shortcuts when they arrive; the user's custom shortcuts
     /// (or the static defaults) act as the fallback.
     private var effectiveQuickActions: [AgentQuickAction] {
+        // Mode 2: surface the remote agent's own Action Bar when it advertised
+        // one over the Secure Channel; otherwise fall back to neutral chat
+        // defaults (never the local agent's shortcuts — e.g. a local coding
+        // agent's actions don't represent a remote research agent).
+        if isRemoteChat {
+            if let remote = remoteAgentQuickActions, !remote.isEmpty { return remote }
+            return AgentQuickAction.defaultChatQuickActions
+        }
         if let g = readyGreeting?.actions, !g.isEmpty { return g }
         return quickActions
     }
@@ -209,6 +272,19 @@ struct ChatEmptyState: View {
     private var generativeFingerprint: String {
         guard let g = readyGreeting else { return "static" }
         return "gen:\(g.greeting)|\(g.subtitle)|\(g.actions.count)"
+    }
+
+    /// Fingerprint for the quick-action grid so the shimmer + staggered entrance
+    /// re-fires when the actions change. Remote: keyed on the *stored* fetched
+    /// action ids (stable across renders) so it fires once when the Action Bar
+    /// lands. Local: reuse `generativeFingerprint` — default/generative actions
+    /// mint fresh ids per access, so id-keying there would churn every render.
+    private var quickActionsFingerprint: String {
+        if isRemoteChat {
+            guard let remote = remoteAgentQuickActions, !remote.isEmpty else { return "static" }
+            return "remote:\(remote.count):" + remote.map { $0.id.uuidString }.joined(separator: ",")
+        }
+        return generativeFingerprint
     }
 
     /// Stable identity for the subtitle Text so SwiftUI treats each
@@ -323,8 +399,8 @@ struct ChatEmptyState: View {
                     .offset(y: hasAppeared ? 0 : 15)
                     .animation(theme.springAnimation().delay(0.17), value: hasAppeared)
 
-                if let status = remoteEncryptionStatus {
-                    encryptionBadge(status)
+                if securityBadgeState != nil {
+                    securityBadge
                         .opacity(hasAppeared ? 1 : 0)
                         .offset(y: hasAppeared ? 0 : 12)
                         .animation(theme.springAnimation().delay(0.24), value: hasAppeared)
@@ -335,64 +411,125 @@ struct ChatEmptyState: View {
             if !effectiveQuickActions.isEmpty {
                 staggeredQuickActions
                     .shimmerFadeIn(
-                        trigger: generativeFingerprint == "static" ? nil : generativeFingerprint,
+                        trigger: quickActionsFingerprint == "static" ? nil : quickActionsFingerprint,
                         highlight: theme.accentColorLight
                     )
-                    .animation(theme.springAnimation(), value: generativeFingerprint)
+                    .animation(theme.springAnimation(), value: quickActionsFingerprint)
             }
         }
     }
 
     @ViewBuilder
     private var heroAvatar: some View {
-        if let relay = activeRelayAgent {
-            remoteHeroAvatar(systemImage: "antenna.radiowaves.left.and.right", seed: relay.name)
-        } else if let discovered = activeDiscoveredAgent {
-            remoteHeroAvatar(systemImage: "network", seed: discovered.name)
+        if isRemoteChat {
+            // Match the local hero: the remote agent's own mascot (surfaced over
+            // the Secure Channel), falling back to a monogram on its name.
+            AgentAvatarView(
+                mascotId: remoteAgentAvatar,
+                name: remoteDisplayName,
+                tint: agentColorFor(remoteDisplayName),
+                diameter: heroAvatarDiameter,
+                customImageURL: nil,
+                monogramFontSize: heroAvatarIconFontSize,
+                borderWidth: 0,
+                bleedsToEdge: true
+            )
         } else {
             HeroAgentAvatar(agent: activeAgent)
         }
     }
 
-    /// Small capsule under the greeting that tells the user whether this
-    /// remote conversation is protected by the Secure Channel.
-    private func encryptionBadge(_ status: RemoteEncryptionStatus) -> some View {
-        let encrypted = status == .endToEndEncrypted
-        let tint = encrypted ? theme.successColor : theme.warningColor
-        return HStack(spacing: 5) {
-            Image(systemName: encrypted ? "lock.fill" : "exclamationmark.triangle.fill")
-                .font(.system(size: 9, weight: .semibold))
-            if encrypted {
-                Text("End-to-end encrypted", bundle: .module)
-            } else {
-                Text("Peer needs an Osaurus upgrade for encrypted chat", bundle: .module)
-            }
-        }
-        .font(.system(size: 11, weight: .medium))
-        .foregroundColor(tint)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 4)
-        .background(Capsule().fill(tint.opacity(theme.isDark ? 0.14 : 0.10)))
-        .help(
-            encrypted
-                ? L(
-                    "Agent traffic is protected by the Osaurus Secure Channel: forward-secret, mutually authenticated end-to-end encryption."
-                )
-                : L(
-                    "This peer runs an older Osaurus without the Secure Channel. Agent chat is refused until it upgrades — no plaintext fallback."
-                )
-        )
+    /// Presentation state for the security badge under the greeting.
+    /// `connecting` takes precedence — the secure channel isn't up yet, so we
+    /// must not claim encryption — and once connected it reflects the transport
+    /// status. nil = not a remote chat / nothing to show (no badge).
+    private enum SecurityBadgeState: Hashable {
+        case connecting
+        case encrypted
+        case peerNeedsUpgrade
     }
 
-    private func remoteHeroAvatar(systemImage: String, seed: String) -> some View {
-        ZStack {
-            Circle()
-                .fill(theme.accentColorLight.opacity(theme.isDark ? 0.18 : 0.12))
-            Image(systemName: systemImage)
-                .font(.system(size: heroAvatarRemoteIconFontSize, weight: .semibold))
-                .foregroundColor(theme.accentColorLight)
+    private var securityBadgeState: SecurityBadgeState? {
+        if isConnecting { return .connecting }
+        switch remoteEncryptionStatus {
+        case .endToEndEncrypted: return .encrypted
+        case .peerNeedsUpgrade: return .peerNeedsUpgrade
+        case nil: return nil
         }
-        .frame(width: heroAvatarDiameter, height: heroAvatarDiameter)
+    }
+
+    private func securityBadgeTint(_ state: SecurityBadgeState) -> Color {
+        switch state {
+        case .connecting: return theme.accentColor
+        case .encrypted: return theme.successColor
+        case .peerNeedsUpgrade: return theme.warningColor
+        }
+    }
+
+    @ViewBuilder
+    private func securityBadgeIcon(_ state: SecurityBadgeState) -> some View {
+        switch state {
+        case .connecting:
+            MorphingStatusIcon(state: .active, accentColor: theme.accentColor, size: 12)
+        case .encrypted, .peerNeedsUpgrade:
+            Image(systemName: state == .encrypted ? "lock.fill" : "exclamationmark.triangle.fill")
+                .font(.system(size: 9, weight: .semibold))
+        }
+    }
+
+    private func securityBadgeLabel(_ state: SecurityBadgeState) -> Text {
+        switch state {
+        case .connecting:
+            return Text("Securing connection…", bundle: .module)
+        case .encrypted:
+            return Text("End-to-end encrypted", bundle: .module)
+        case .peerNeedsUpgrade:
+            return Text("Peer needs an Osaurus upgrade for encrypted chat", bundle: .module)
+        }
+    }
+
+    private func securityBadgeHelp(_ state: SecurityBadgeState) -> String {
+        switch state {
+        case .connecting:
+            return L(
+                "Establishing the Osaurus Secure Channel — forward-secret, mutually authenticated end-to-end encryption. Not encrypted until connected."
+            )
+        case .encrypted:
+            return L(
+                "Agent traffic is protected by the Osaurus Secure Channel: forward-secret, mutually authenticated end-to-end encryption."
+            )
+        case .peerNeedsUpgrade:
+            return L(
+                "This peer runs an older Osaurus without the Secure Channel. Agent chat is refused until it upgrades — no plaintext fallback."
+            )
+        }
+    }
+
+    /// Single capsule under the greeting that *morphs* between the connect
+    /// loader and the resolved transport-security state. Same chrome/padding
+    /// across states so it never resize-jumps; the tint springs from accent
+    /// (connecting) to success (encrypted) / warning (needs upgrade), the icon
+    /// crossfades spinner -> lock, and the label content-transitions in place.
+    @ViewBuilder
+    private var securityBadge: some View {
+        if let state = securityBadgeState {
+            let tint = securityBadgeTint(state)
+            HStack(spacing: 5) {
+                securityBadgeIcon(state)
+                    .frame(width: 14, height: 14)
+                    .id(state)
+                    .transition(.opacity)
+                securityBadgeLabel(state)
+                    .contentTransition(.opacity)
+            }
+            .font(.system(size: 11, weight: .medium))
+            .foregroundColor(tint)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
+            .background(Capsule().fill(tint.opacity(theme.isDark ? 0.14 : 0.10)))
+            .animation(theme.springAnimation(), value: state)
+            .help(securityBadgeHelp(state))
+        }
     }
 
     private var staggeredQuickActions: some View {

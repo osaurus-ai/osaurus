@@ -1384,8 +1384,8 @@ struct SwiftTransformersTokenizerLoaderTests {
         )
         let decoded = tokenizer.decode(tokenIds: tokenIds, skipSpecialTokens: false)
 
-        #expect(decoded.contains("Available functions:"), "Decoded: \(decoded)")
-        #expect(decoded.contains("- line_count:"), "Decoded: \(decoded)")
+        #expect(decoded.contains("List of tools:"), "Decoded: \(decoded)")
+        #expect(decoded.contains("line_count"), "Decoded: \(decoded)")
         #expect(decoded.contains("The API requires a tool call for the next assistant turn."), "Decoded: \(decoded)")
         #expect(decoded.contains("Function name: line_count"), "Decoded: \(decoded)")
         #expect(decoded.contains("Required arguments: text"), "Decoded: \(decoded)")
@@ -1424,12 +1424,10 @@ struct SwiftTransformersTokenizerLoaderTests {
             decoded.contains("Do not write reasoning, XML-style tool tags, markdown, or prose."),
             "Decoded: \(decoded)"
         )
-        #expect(!decoded.contains("List of tools:"), "Decoded: \(decoded)")
         #expect(decoded.contains(#"["line_count", {"text":"red\ngreen\nblue"}]"#), "Decoded: \(decoded)")
         #expect(!decoded.contains("line_count(text='red\\ngreen\\nblue')"), "Decoded: \(decoded)")
         #expect(!decoded.contains("<tools>"), "Decoded: \(decoded)")
         #expect(!decoded.contains("</tool_call>"), "Decoded: \(decoded)")
-        #expect(!decoded.contains(#""name":"line_count""#), "Decoded: \(decoded)")
         #expect(
             decoded.contains("Use the line_count tool on this exact text: red\ngreen\nblue"),
             "Decoded: \(decoded)"

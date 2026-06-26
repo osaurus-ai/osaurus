@@ -28,6 +28,27 @@ struct SessionPreflightCacheTests {
     }
 
     @Test
+    func sessionToolStateStore_appendLoadedToolsPersistsIdempotently() async {
+        let sessionId = "same-turn-load-\(UUID().uuidString)"
+        await SessionToolStateStore.shared.appendLoadedTools(
+            sessionId,
+            names: ["miyo_search", "miyo_search"],
+            fallbackAlwaysLoadedNames: ["capabilities_load"]
+        )
+        await SessionToolStateStore.shared.appendLoadedTools(
+            sessionId,
+            names: ["calendar_lookup"],
+            fallbackAlwaysLoadedNames: nil
+        )
+
+        let state = await SessionToolStateStore.shared.get(sessionId)
+        #expect(state?.loadedToolNames == ["miyo_search", "calendar_lookup"])
+        #expect(state?.initialAlwaysLoadedNames == ["capabilities_load"])
+
+        await SessionToolStateStore.shared.invalidate(sessionId)
+    }
+
+    @Test
     func resolveTools_includesAdditionalToolNames() async {
         await withSessionPreflightAgent { agentId in
 

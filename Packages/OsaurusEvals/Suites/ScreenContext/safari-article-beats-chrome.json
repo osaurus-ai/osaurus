@@ -1,0 +1,22 @@
+{
+  "id": "screen_context.safari-article-beats-chrome",
+  "domain": "screen_context",
+  "label": "Screen context • Safari article body beats nav chrome",
+  "query": "(ambient capture)",
+  "notes": "A reading scene with no focused input: the large article body (a big static-text block) is the real on-screen signal and must lead the sample ahead of small sidebar chrome (Reading List / Downloads), while bare browser/build version tokens are dropped.",
+  "fixtures": {},
+  "expect": {
+    "screenContext": {
+      "fixture": "safari-article.json",
+      "gistContains": ["In Safari"],
+      "mustContain": ["In Safari", "On screen:", "accessibility tree"],
+      "mustNotContain": ["16.5", "2.1"],
+      "noiseRegexMustNotMatch": ["(?m)^- v?\\d+\\.\\d+(\\.\\d+)?$"],
+      "orderedContains": [["accessibility tree", "Reading List"]],
+      "rubric": [
+        "Indicates the user is reading an article about macOS accessibility",
+        "Does not surface the browser/build version numbers as on-screen content"
+      ]
+    }
+  }
+}

@@ -11,22 +11,132 @@ import Foundation
 
 // MARK: - CapabilityLoadBuffer
 
+/// Structured diagnostic for a dynamically-loaded tool schema that cannot be
+/// exposed safely. Dynamic schemas must fail closed: a missing/malformed
+/// provider schema is not silently replaced with `{}` because that teaches the
+/// model to call an underspecified tool and then rely on parser repair.
+struct CapabilitySchemaDiagnostic: Sendable {
+    let toolName: String
+    let kind: ToolEnvelope.Kind
+    let message: String
+    let field: String?
+    let expected: String?
+
+    func dictionary() -> [String: Any] {
+        var dict: [String: Any] = [
+            "tool_name": toolName,
+            "kind": kind.rawValue,
+            "message": message,
+        ]
+        if let field { dict["field"] = field }
+        if let expected { dict["expected"] = expected }
+        return dict
+    }
+}
+
 /// Shared buffer for communicating newly loaded tool specs from capabilities_load
 /// back to the execution loop. The loop drains pending tools after each
 /// capabilities_load call and appends them to the active tool set.
 actor CapabilityLoadBuffer {
     static let shared = CapabilityLoadBuffer()
 
-    private var pendingTools: [Tool] = []
+    private var pendingToolOrder: [String] = []
+    private var pendingToolsByName: [String: Tool] = [:]
 
-    func add(_ tool: Tool) {
-        pendingTools.append(tool)
+    @discardableResult
+    func add(_ tool: Tool) -> CapabilitySchemaDiagnostic? {
+        if let diagnostic = Self.validateDynamicToolSchema(tool) {
+            return diagnostic
+        }
+        let name = tool.function.name
+        if pendingToolsByName[name] == nil {
+            pendingToolOrder.append(name)
+        }
+        // Idempotent duplicate loads in one turn: keep one activation slot,
+        // but let the latest spec replace an earlier copy if the registry
+        // refreshed it before the buffer drained.
+        pendingToolsByName[name] = tool
+        return nil
     }
 
     func drain() -> [Tool] {
-        let tools = pendingTools
-        pendingTools = []
+        let tools = pendingToolOrder.compactMap { pendingToolsByName[$0] }
+        pendingToolOrder = []
+        pendingToolsByName = [:]
         return tools
+    }
+
+    static func validateDynamicToolSchema(_ tool: Tool) -> CapabilitySchemaDiagnostic? {
+        let name = tool.function.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else {
+            return CapabilitySchemaDiagnostic(
+                toolName: tool.function.name,
+                kind: .invalidArgs,
+                message: "Loaded tool schema is missing a function name.",
+                field: "name",
+                expected: "non-empty function name"
+            )
+        }
+        guard tool.type == "function" else {
+            return CapabilitySchemaDiagnostic(
+                toolName: name,
+                kind: .invalidArgs,
+                message: "Loaded tool '\(name)' has unsupported tool type '\(tool.type)'.",
+                field: "type",
+                expected: "function"
+            )
+        }
+        guard let parameters = tool.function.parameters else {
+            // Existing no-argument tools legitimately use nil parameters; the
+            // OpenAI encoder normalizes nil to an empty object schema.
+            return nil
+        }
+        guard case .object(let schema) = parameters else {
+            return CapabilitySchemaDiagnostic(
+                toolName: name,
+                kind: .invalidArgs,
+                message: "Loaded tool '\(name)' has a non-object parameter schema.",
+                field: "parameters",
+                expected: "JSON Schema object with type: object"
+            )
+        }
+        guard case .string("object")? = schema["type"] else {
+            return CapabilitySchemaDiagnostic(
+                toolName: name,
+                kind: .invalidArgs,
+                message: "Loaded tool '\(name)' parameter schema must declare type: object.",
+                field: "parameters.type",
+                expected: "object"
+            )
+        }
+        if let properties = schema["properties"], case .object = properties {
+            // Valid.
+        } else if schema["properties"] != nil {
+            return CapabilitySchemaDiagnostic(
+                toolName: name,
+                kind: .invalidArgs,
+                message: "Loaded tool '\(name)' parameter schema has non-object properties.",
+                field: "parameters.properties",
+                expected: "object mapping property names to schemas"
+            )
+        }
+        if let required = schema["required"] {
+            guard case .array(let values) = required,
+                values.allSatisfy({
+                    if case .string = $0 { return true }
+                    return false
+                })
+            else {
+                return CapabilitySchemaDiagnostic(
+                    toolName: name,
+                    kind: .invalidArgs,
+                    message: "Loaded tool '\(name)' parameter schema has malformed required fields.",
+                    field: "parameters.required",
+                    expected: "array of strings"
+                )
+            }
+        }
+        return nil
     }
 }
 
@@ -488,7 +598,8 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
         "Load capabilities into the current session by ID. IDs come from the Enabled capabilities list "
         + "or from `capabilities_discover` results — do not invent IDs. After loading, the named tools are "
         + "callable for the rest of the session; a named skill's instructions are returned in this tool's "
-        + "result for you to follow. Example: `{\"ids\": [\"tool/sandbox_exec\", \"skill/plot-data\"]}`."
+        + "result for you to follow. A `plugin/<id>` id loads that plugin's whole tool group (and any "
+        + "governing skill) in one call. Example: `{\"ids\": [\"plugin/calendar\", \"tool/sandbox_exec\", \"skill/plot-data\"]}`."
 
     let parameters: JSONValue? = .object([
         "type": .string("object"),
@@ -498,7 +609,7 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
                 "type": .string("array"),
                 "items": .object(["type": .string("string")]),
                 "description": .string(
-                    "IDs from the Enabled capabilities list or capabilities_discover results (e.g. 'method/abc', 'tool/sandbox_exec', 'skill/swift-best-practices')"
+                    "IDs from the Enabled capabilities list or capabilities_discover results (e.g. 'plugin/calendar', 'method/abc', 'tool/sandbox_exec', 'skill/swift-best-practices')"
                 ),
             ])
         ]),
@@ -528,7 +639,8 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
                         kind: .invalidArgs,
                         message:
                             "Invalid ID format '\(id)' — expected `<type>/<id>` "
-                            + "(e.g. `tool/sandbox_exec`, `skill/plot-data`). Use IDs from the Enabled capabilities list or `capabilities_discover`."
+                            + "(e.g. `tool/sandbox_exec`, `skill/plot-data`). Use IDs from the Enabled capabilities list or `capabilities_discover`.",
+                        field: "ids"
                     )
                 )
                 continue
@@ -545,13 +657,15 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
                 outcome = await loadTool(rawId)
             case "skill":
                 outcome = await loadSkill(rawId)
+            case "plugin":
+                outcome = await loadPlugin(rawId)
             default:
                 outcome = .failure(
                     LoadFailure(
                         kind: .invalidArgs,
                         message:
                             "Unknown type '\(typePrefix)' in ID '\(id)' "
-                            + "(expected `tool`, `skill`, or `method`)."
+                            + "(expected `tool`, `skill`, `plugin`, or `method`)."
                     )
                 )
             }
@@ -566,12 +680,19 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
         // taught small models to treat misses as wins.
         if sections.isEmpty, let first = failures.first {
             let combined = failures.map(\.message).joined(separator: "\n")
+            // A bad/unknown capability id is deterministic: capability ids are
+            // a closed vocabulary, so re-issuing the identical call cannot
+            // succeed. Mark those (and policy refusals) non-retryable — only a
+            // genuine runtime error is worth retrying as-is. This also keeps
+            // the flag consistent with the deterministic-error replay guard.
+            let deterministicKinds: Set<ToolEnvelope.Kind> = [.rejected, .invalidArgs, .notFound]
             return ToolEnvelope.failure(
                 kind: first.kind,
                 message: combined,
-                field: first.kind == .invalidArgs ? "ids" : nil,
+                field: first.field ?? (first.kind == .invalidArgs ? "ids" : nil),
+                expected: first.expected,
                 tool: name,
-                retryable: first.kind != .rejected
+                retryable: !deterministicKinds.contains(first.kind)
             )
         }
 
@@ -590,6 +711,8 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
     private struct LoadFailure {
         let kind: ToolEnvelope.Kind
         let message: String
+        var field: String? = nil
+        var expected: String? = nil
     }
 
     private enum LoadOutcome {
@@ -747,6 +870,15 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
                 )
             )
         }
+        guard !availability.reasonCodes.contains(.disabled) else {
+            return .failure(
+                LoadFailure(
+                    kind: .rejected,
+                    message:
+                        "Tool '\(toolId)' is disabled. availability: \(availability.compactSummary)"
+                )
+            )
+        }
         // Built-in tools are always loaded via alwaysLoadedSpecs, so skip the
         // enabled check — rejecting them here is misleading since they're callable.
         guard isEnabled || isBuiltIn else {
@@ -767,7 +899,16 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
                 )
             )
         }
-        await CapabilityLoadBuffer.shared.add(spec)
+        if let diagnostic = await CapabilityLoadBuffer.shared.add(spec) {
+            return .failure(
+                LoadFailure(
+                    kind: diagnostic.kind,
+                    message: diagnostic.message,
+                    field: diagnostic.field,
+                    expected: diagnostic.expected
+                )
+            )
+        }
         return .success("Tool '\(toolId)' loaded and available.\n")
     }
 
@@ -807,10 +948,23 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
     private func bufferToolSpecs(named names: [String]) async -> String {
         guard !names.isEmpty else { return "" }
         let specs = await MainActor.run { ToolRegistry.shared.specs(forTools: names) }
+        var loadedNames: [String] = []
+        var skippedLines: [String] = []
         for spec in specs {
-            await CapabilityLoadBuffer.shared.add(spec)
+            if let diagnostic = await CapabilityLoadBuffer.shared.add(spec) {
+                skippedLines.append("Skipped tool '\(diagnostic.toolName)': \(diagnostic.message)")
+            } else {
+                loadedNames.append(spec.function.name)
+            }
         }
-        return "Auto-loaded tools: \(names.joined(separator: ", "))\n"
+        var output = ""
+        if !loadedNames.isEmpty {
+            output += "Auto-loaded tools: \(loadedNames.joined(separator: ", "))\n"
+        }
+        if !skippedLines.isEmpty {
+            output += skippedLines.joined(separator: "\n") + "\n"
+        }
+        return output
     }
 
     private func loadSkill(_ skillName: String) async -> LoadOutcome {
@@ -842,38 +996,120 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
 
         // A plugin skill governs its sibling tools, so auto-load the plugin's
         // whole dynamic tool group (agent-scoped) instead of forcing a
-        // separate `capabilities_load` per tool. Sorted for a deterministic,
-        // KV-stable load order and a predictable cap boundary.
+        // separate `capabilities_load` per tool.
         if let pluginId = skill.pluginId, !pluginId.isEmpty {
-            let allowedNames = await grantedToolNamesForCurrentAgent()
-            let groupToolNames = await MainActor.run {
-                ToolRegistry.shared.listDynamicTools()
-                    .filter { ToolRegistry.shared.groupName(for: $0.name) == pluginId }
-                    .map(\.name)
-                    .filter { allowedNames?.contains($0) ?? true }
-            }
-            .sorted()
+            output += await bufferPluginGroup(pluginId: pluginId)
+        }
+        return .success(output)
+    }
 
-            // Size guard: a skill governing a very large plugin would
-            // otherwise dump every sibling tool's schema into the live tool
-            // channel on a single load — unnecessary context the model rarely
-            // needs all of, and a needless bloat of the `<tools>` block. Cap
-            // the auto-load at the same ceiling the enabled-capabilities
-            // manifest uses; the model can pull any remaining tool by id with
-            // `capabilities_load`.
-            let cap = SystemPromptTemplates.enabledManifestToolCap
-            if groupToolNames.count > cap {
-                let loaded = Array(groupToolNames.prefix(cap))
-                let deferred = Array(groupToolNames.dropFirst(cap))
-                output += await bufferToolSpecs(named: loaded)
-                output +=
-                    "\(groupToolNames.count) tools belong to this skill's plugin; "
-                    + "auto-loaded the first \(cap). Load any of the remaining "
-                    + "\(deferred.count) by id with `capabilities_load` "
-                    + "(e.g. `tool/\(deferred.first ?? "")`).\n"
-            } else {
-                output += await bufferToolSpecs(named: groupToolNames)
+    /// Buffer every agent-allowed dynamic tool in `pluginId`'s group, capped
+    /// at `enabledManifestToolCap`, and return the human-facing summary line.
+    /// Sorted for a deterministic, KV-stable load order and a predictable cap
+    /// boundary. Shared by the skill-governed auto-load (`skill/<name>`) and
+    /// the `plugin/<id>` group loader.
+    ///
+    /// Size guard: a very large plugin would otherwise dump every sibling
+    /// tool's schema into the live tool channel on a single load — context the
+    /// model rarely needs all of, and needless `<tools>` bloat. Past the cap,
+    /// the model can pull any remaining tool by id with `capabilities_load`.
+    private func bufferPluginGroup(pluginId: String) async -> String {
+        let allowedNames = await grantedToolNamesForCurrentAgent()
+        let groupToolNames = await MainActor.run {
+            ToolRegistry.shared.listDynamicTools()
+                .filter { ToolRegistry.shared.groupName(for: $0.name) == pluginId }
+                .map(\.name)
+                .filter { allowedNames?.contains($0) ?? true }
+        }
+        .sorted()
+        guard !groupToolNames.isEmpty else { return "" }
+
+        let cap = SystemPromptTemplates.enabledManifestToolCap
+        if groupToolNames.count > cap {
+            let loaded = Array(groupToolNames.prefix(cap))
+            let deferred = Array(groupToolNames.dropFirst(cap))
+            var summary = await bufferToolSpecs(named: loaded)
+            summary +=
+                "\(groupToolNames.count) tools belong to this plugin; "
+                + "auto-loaded the first \(cap). Load any of the remaining "
+                + "\(deferred.count) by id with `capabilities_load` "
+                + "(e.g. `tool/\(deferred.first ?? "")`).\n"
+            return summary
+        }
+        return await bufferToolSpecs(named: groupToolNames)
+    }
+
+    /// Load a whole plugin tool group by its `plugin/<id>` manifest id. This
+    /// is the compact-manifest entry point: the tiered manifest lists one
+    /// `plugin/<id>` per plugin, and loading it pulls in the group's tools
+    /// plus any governing skill's instructions in a single call.
+    private func loadPlugin(_ rawId: String) async -> LoadOutcome {
+        if ChatExecutionContext.currentAgentId == Agent.defaultId {
+            return .failure(
+                LoadFailure(
+                    kind: .rejected,
+                    message:
+                        "Plugin loading is disabled for the configuration agent. "
+                        + "Use `capabilities_discover` to find a configuration tool (osaurus_*_<verb>) "
+                        + "and load it directly."
+                )
+            )
+        }
+
+        // Resolve the manifest id to a concrete tool-group id. The tiered
+        // manifest emits the exact group id, so an exact match is the common
+        // path; the case-insensitive and display-name fallbacks tolerate a
+        // model that copies the friendly name instead.
+        let resolved = await MainActor.run { () -> String? in
+            let groupIds = Set(
+                ToolRegistry.shared.listDynamicTools()
+                    .compactMap { ToolRegistry.shared.groupName(for: $0.name) }
+                    .filter { !$0.isEmpty }
+            )
+            if groupIds.contains(rawId) { return rawId }
+            if let ci = groupIds.first(where: { $0.caseInsensitiveCompare(rawId) == .orderedSame }) {
+                return ci
             }
+            return groupIds.first { gid in
+                guard let display = PluginManager.shared.loadedPlugin(for: gid)?.plugin.manifest.name
+                else { return false }
+                return display.caseInsensitiveCompare(rawId) == .orderedSame
+            }
+        }
+        guard let pluginId = resolved else {
+            return .failure(
+                LoadFailure(
+                    kind: .notFound,
+                    message:
+                        "Plugin '\(rawId)' not found. Use the `plugin/<id>` exactly as shown in "
+                        + "the Enabled capabilities list, or call `capabilities_discover`."
+                )
+            )
+        }
+
+        // Governing skill(s) first — their instructions teach the tool
+        // ordering a name-only manifest can't convey. Mirrors `loadSkill`.
+        var output = ""
+        let governingSkills = await MainActor.run {
+            SkillManager.shared.skills.filter { $0.enabled && $0.pluginId == pluginId }
+        }
+        for skill in governingSkills {
+            output += "## Skill: \(skill.name)\n"
+            if !skill.description.isEmpty {
+                output += "*\(skill.description)*\n\n"
+            }
+            output += skill.instructions
+            output += "\n\n"
+        }
+
+        output += await bufferPluginGroup(pluginId: pluginId)
+        guard !output.isEmpty else {
+            return .failure(
+                LoadFailure(
+                    kind: .notFound,
+                    message: "Plugin '\(pluginId)' has no loadable tools or skills for this agent."
+                )
+            )
         }
         return .success(output)
     }

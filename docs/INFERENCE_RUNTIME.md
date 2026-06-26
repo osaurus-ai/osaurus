@@ -106,8 +106,12 @@ evidence:
 - `visibleOutput` requires non-empty visible assistant text.
 - `noParserMarkerLeak` rejects visible/runtime marker leaks such as tool-call,
   reasoning, DSML, or streaming sentinel fragments.
-- `multiTurnCoherency` and `systemPromptInjection` require explicit positive
-  probes rather than a single happy-path answer.
+- `multiTurnCoherency` requires an explicit positive follow-up probe rather
+  than a single happy-path answer.
+- `systemPromptInjection` requires both source trace evidence showing the
+  configured agent prompt reached the composed static `persona`/prefix surface
+  and a positive live model probe showing the model obeyed that prompt. Source
+  trace alone is contract coverage, not runtime proof.
 - `ramFootprint` and `cancellation` require physical-footprint and cleanup
   evidence before a RAM or cancel row can be called proven.
 - `cacheHit` applies topology-specific checks: full-attention rows need KV,
@@ -150,7 +154,8 @@ Use `scripts/live-proof/render-runtime-proof-matrix.py` to render the latest
 [`RUNTIME_VALIDATION_STANDARD.md`](RUNTIME_VALIDATION_STANDARD.md). The renderer
 also writes a read-only JSON surface for inspection workflows, and it keeps the
 #903 system-prompt-injection and #1163 Hy3/harmony schema rows `unproven` until
-real live artifacts exist.
+real live artifacts exist. A #903 row needs both the source prompt trace and the
+live probe artifact before it can move to `proven`.
 
 osaurus deliberately does not pass `GenerateParameters.maxKVSize` -- a
 global rotating cache window forced from the app layer conflicted with
@@ -183,7 +188,7 @@ the `LayerKind.deepseekV4` disk serializer instead of generic paged KV blocks.
 | `ModelLease` | Pins a model name for the lifetime of one stream so eviction (`unload`, `clearAll`, GC) blocks until the lease drops to zero. |
 | `ModelResidencyManager` | Schedules Osaurus-owned idle unload policy after the final lease drops; it never owns execution, KV cache, or disk cache deletion. |
 | `PluginHostAPI` per-plugin in-flight cap | Caps concurrent inference calls per plugin (default 2). Excess returns `plugin_busy`. |
-| `MetalGate.enterEmbedding` | Embedding service (`MetalSafeEmbedder`) opt-in serialization point. The generation surface of the gate was retired; only embeddings call into it today. |
+| `MetalGate` (`enterGeneration` / `enterEmbedding` / `enterModelLoad`) | Serializes GPU producers across families so concurrent command buffers can't trip `AGXG17XFamilyCommandBuffer` asserts. Generation (`gen:<model>`, shared per model) gates `MLXBatchAdapter.prepareInput` and the live-voice audio pre-encode (`ModelRuntime.preencodeLiveVoiceAudioIfResident`); embedding (`MetalSafeEmbedder`) and model load are exclusive. |
 
 ## Residency policy
 
@@ -296,7 +301,7 @@ sentinels.
 | `RuntimeConfig.swift` | Server-side default `topP`. |
 | `InferenceFeatureFlags.swift` | Single user-tunable: `mlxBatchEngineMaxBatchSize`. |
 | `RuntimeProofValidation.swift` | Source-level validation for runtime proof rows and issue-closure evidence. |
-| `MetalGate.swift` | Embedding-only counter (kept as the canonical hook for any future MLX-vs-CoreML interlock). |
+| `MetalGate.swift` | Cross-family GPU serialization gate. `enterGeneration` (shared per model) wraps `MLXBatchAdapter.prepareInput` + the live-voice audio pre-encode; `enterEmbedding` and `enterModelLoad` are exclusive. |
 | `ModelLease.swift` | Per-model refcount; `unload(name)` waits for `count == 0` before freeing buffers. |
 | `ModelResidencyManager.swift` | Per-model idle timers and health snapshots for the Settings residency policy. |
 | `NATIVE_SWIFT_IMAGE_GENERATION_INTEGRATION.md` | Pending native Swift image-generation lane and release gate. |

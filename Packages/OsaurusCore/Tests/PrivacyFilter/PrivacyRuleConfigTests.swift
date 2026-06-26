@@ -193,9 +193,9 @@ struct PrivacyRuleConfigTests {
     @Test func config_roundTrip_preservesAllFields() throws {
         let original = PrivacyFilterConfiguration(
             enabled: true,
+            aiDetectionEnabled: true,
             providerOverrides: ["abc": false],
             skipCodeBlocks: false,
-            confidenceThreshold: 0.7,
             alwaysApproveByDefault: true,
             builtinPatternEnabled: [.phone: false, .email: true, .url: true, .accountNumber: true],
             presetRules: [PrivacyRulePresets.iban.id: true],
@@ -204,21 +204,39 @@ struct PrivacyRuleConfigTests {
                     name: "Internal",
                     pattern: "CUST-[0-9]+",
                     category: .secret,
-                    enabled: true
-                )
+                    enabled: true,
+                    caseSensitive: false,
+                    placeholderLabel: "CUSTOMER"
+                ),
+                PrivacyRule(
+                    name: "Codename",
+                    pattern: "",
+                    category: .secret,
+                    kind: .builder,
+                    builder: RuleBuilder(matchType: .exactWord, terms: ["Bluebird"])
+                ),
             ]
         )
         let data = try JSONEncoder().encode(original)
         let decoded = try JSONDecoder().decode(PrivacyFilterConfiguration.self, from: data)
         #expect(decoded.enabled == original.enabled)
+        #expect(decoded.aiDetectionEnabled == true)
         #expect(decoded.providerOverrides == original.providerOverrides)
         #expect(decoded.skipCodeBlocks == original.skipCodeBlocks)
-        #expect(decoded.confidenceThreshold == original.confidenceThreshold)
         #expect(decoded.alwaysApproveByDefault == original.alwaysApproveByDefault)
         #expect(decoded.builtinPatternEnabled[.phone] == false)
         #expect(decoded.presetRules[PrivacyRulePresets.iban.id] == true)
-        #expect(decoded.customRules.count == 1)
-        #expect(decoded.customRules.first?.name == "Internal")
+        #expect(decoded.customRules.count == 2)
+
+        let internalRule = decoded.customRules.first { $0.name == "Internal" }
+        #expect(internalRule?.caseSensitive == false)
+        #expect(internalRule?.placeholderLabel == "CUSTOMER")
+
+        let codename = decoded.customRules.first { $0.name == "Codename" }
+        #expect(codename?.kind == .builder)
+        #expect(codename?.builder?.matchType == .exactWord)
+        #expect(codename?.builder?.terms == ["Bluebird"])
+        #expect(codename?.effectivePattern == #"\b(?:Bluebird)\b"#)
     }
 
     /// Old on-disk configs (pre-configurable-regex) didn't carry the
@@ -238,6 +256,12 @@ struct PrivacyRuleConfigTests {
         let data = legacyJSON.data(using: .utf8)!
         let decoded = try JSONDecoder().decode(PrivacyFilterConfiguration.self, from: data)
         #expect(decoded.enabled == true)
+        // An older file predates the AI/regex split and carries no
+        // `aiDetectionEnabled` key. Upgrading users had the model doing
+        // detection, so the decoder default is `true` (the now-removed
+        // `confidenceThreshold` key is harmlessly ignored). A FRESH
+        // install instead gets `false` via `.default` (see below).
+        #expect(decoded.aiDetectionEnabled == true)
         // Every built-in category present and defaulted to enabled.
         for category in PrivacyFilterConfiguration.builtinPatternCategories {
             #expect(
@@ -275,5 +299,34 @@ struct PrivacyRuleConfigTests {
     @Test func isPresetEnabled_missingKey_defaultsToFalse() {
         let config = PrivacyFilterConfiguration()
         #expect(config.isPresetEnabled(PrivacyRulePresets.awsKey.id) == false)
+    }
+
+    /// A fresh install (no on-disk file -> `.default`) runs regex-only:
+    /// the ~2.8 GB model is opt-in, so AI detection starts OFF.
+    @Test func config_default_aiDetectionDisabledForFreshInstall() {
+        #expect(PrivacyFilterConfiguration.default.aiDetectionEnabled == false)
+    }
+
+    /// Old custom rules (pre rule-builder) carry only the regex fields.
+    /// A single missing key must decode to defaults, never throw —
+    /// otherwise `PrivacyFilterStore.load` would discard the whole
+    /// config and reset every privacy setting.
+    @Test func rule_decodeLegacy_fillsBuilderDefaults() throws {
+        let legacyRuleJSON = """
+            {
+              "id": "5B3D2C1A-0000-0000-0000-000000000001",
+              "name": "Old",
+              "pattern": "CUST-[0-9]+",
+              "category": "secret",
+              "enabled": true
+            }
+            """
+        let data = legacyRuleJSON.data(using: .utf8)!
+        let decoded = try JSONDecoder().decode(PrivacyRule.self, from: data)
+        #expect(decoded.kind == .regex)
+        #expect(decoded.caseSensitive == true)
+        #expect(decoded.builder == nil)
+        #expect(decoded.placeholderLabel == nil)
+        #expect(decoded.effectivePattern == "CUST-[0-9]+")
     }
 }

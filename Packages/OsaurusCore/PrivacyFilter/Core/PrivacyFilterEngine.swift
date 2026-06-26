@@ -148,13 +148,15 @@ public final class PrivacyFilterEngine {
     public func detect(
         in text: String,
         map: RedactionMap,
-        skipCodeBlocks: Bool = true
+        skipCodeBlocks: Bool = true,
+        useModel: Bool = true
     ) async throws -> [DetectedEntity] {
         try await detect(
             in: text,
             map: map,
             skipCodeBlocks: skipCodeBlocks,
-            ruleset: .allBuiltins()
+            ruleset: .allBuiltins(),
+            useModel: useModel
         )
     }
 
@@ -162,13 +164,23 @@ public final class PrivacyFilterEngine {
     /// Used by `PrivacyFilterPipeline` to pass the user's current
     /// configuration (which built-ins are on, which presets are
     /// enabled, what custom rules are defined) into the regex layer.
+    ///
+    /// `useModel` decouples the on-device classifier from the
+    /// deterministic regex layer. When false the model is never
+    /// invoked and a missing/unloaded kit is NOT an error — the
+    /// regex layer runs standalone (the "AI detection off" path that
+    /// lets the filter work without the ~2.8 GB bundle). When true
+    /// the kit is required and `.notLoaded` is thrown if absent.
     func detect(
         in text: String,
         map: RedactionMap,
         skipCodeBlocks: Bool,
-        ruleset: RegexEntityDetector.EffectiveRuleSet
+        ruleset: RegexEntityDetector.EffectiveRuleSet,
+        useModel: Bool
     ) async throws -> [DetectedEntity] {
-        guard let kit else { throw PrivacyFilterEngineError.notLoaded }
+        if useModel {
+            guard kit != nil else { throw PrivacyFilterEngineError.notLoaded }
+        }
 
         let (scanText, restore): (String, (Range<String.Index>) -> Range<String.Index>?)
         if skipCodeBlocks {
@@ -181,10 +193,18 @@ public final class PrivacyFilterEngine {
         }
 
         let entities: [Entity]
-        do {
-            entities = try await kit.extractEntities(from: scanText)
-        } catch {
-            throw PrivacyFilterEngineError.detectionFailed(error.localizedDescription)
+        if useModel, let kit {
+            do {
+                entities = try await kit.extractEntities(from: scanText)
+            } catch {
+                throw PrivacyFilterEngineError.detectionFailed(error.localizedDescription)
+            }
+        } else {
+            // Regex-only path: no model pass. The classifier-only
+            // categories (person / address / date / secret) simply
+            // won't be detected unless a regex/preset/custom rule
+            // covers them.
+            entities = []
         }
 
         // Run the deterministic regex layer on the same scan text so
@@ -204,7 +224,8 @@ public final class PrivacyFilterEngine {
                     category: category,
                     original: entity.text,
                     range: entity.range,
-                    source: .model
+                    source: .model,
+                    label: nil
                 )
             )
         }
@@ -214,7 +235,8 @@ public final class PrivacyFilterEngine {
                     category: match.category,
                     original: match.original,
                     range: match.range,
-                    source: .regex
+                    source: .regex,
+                    label: match.label
                 )
             )
         }
@@ -224,11 +246,12 @@ public final class PrivacyFilterEngine {
         // code-block mask to a `nil` (entirely masked) and collect
         // the survivors. We do this BEFORE interning so we don't pay
         // for placeholders we're about to throw away.
-        var surviving: [(category: EntityCategory, original: String, range: Range<String.Index>)] = []
+        var surviving: [(category: EntityCategory, original: String, range: Range<String.Index>, label: String?)] =
+            []
         surviving.reserveCapacity(resolved.count)
         for match in resolved {
             guard let restored = restore(match.range) else { continue }
-            surviving.append((match.category, match.original, restored))
+            surviving.append((match.category, match.original, restored, match.label))
         }
 
         // Second pass: batch-intern in a single actor hop. Previous
@@ -236,7 +259,7 @@ public final class PrivacyFilterEngine {
         // segment cost 30 hops × segment_count. `internBatch` is
         // idempotent per-original (same semantics as `intern`).
         let placeholders = await map.internBatch(
-            surviving.map { (original: $0.original, category: $0.category) }
+            surviving.map { (original: $0.original, category: $0.category, label: $0.label) }
         )
 
         var out: [DetectedEntity] = []
@@ -250,6 +273,44 @@ public final class PrivacyFilterEngine {
                     placeholder: placeholders[idx]
                 )
             )
+        }
+        return out
+    }
+
+    /// Model-only NER spans (`person` / `address` / `date` / `secret`, plus
+    /// any other category the on-device classifier emits) for a single text,
+    /// with NO regex layer and NO `RedactionMap` interning. Returns `[]` when
+    /// the engine isn't loaded.
+    ///
+    /// This is the seam the screenshot `FrameScrubber` uses: it already runs
+    /// the deterministic `RegexEntityDetector` layer itself (over OCR'd text),
+    /// and only needs the model's categories on top so a screenshot bound for
+    /// a cloud model masks the same `person`/`address`/`secret` spans the text
+    /// Privacy Filter would — not just the regex-detectable ones. Best-effort
+    /// warms the bundle once (same posture as `applyOutbound`'s lazy load) so a
+    /// cold engine doesn't silently degrade a consented cloud-vision scrub.
+    public func modelSpans(in text: String)
+        async -> [(category: EntityCategory, range: Range<String.Index>)]
+    {
+        guard !text.isEmpty else { return [] }
+        if kit == nil {
+            let bundleDir = PrivacyFilterModelBundle.directoryURL()
+            if PrivacyFilterModelBundle.exists(at: bundleDir) {
+                try? await loadIfNeeded(bundle: bundleDir)
+            }
+        }
+        guard let kit else { return [] }
+        let entities: [Entity]
+        do {
+            entities = try await kit.extractEntities(from: text)
+        } catch {
+            return []
+        }
+        var out: [(category: EntityCategory, range: Range<String.Index>)] = []
+        out.reserveCapacity(entities.count)
+        for entity in entities {
+            guard let category = EntityCategory(entity.type) else { continue }
+            out.append((category, entity.range))
         }
         return out
     }
@@ -306,6 +367,9 @@ public final class PrivacyFilterEngine {
         let original: String
         let range: Range<String.Index>
         let source: Source
+        /// Custom placeholder label carried from a custom regex rule;
+        /// `nil` for model spans, built-ins, and presets.
+        let label: String?
         enum Source { case model, regex }
     }
 

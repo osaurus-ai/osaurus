@@ -14,6 +14,9 @@ real-model run.
   SHA, model bundle path, model revision, and Package.resolved entries.
 - Do not claim speed, cache, or coherence from source reading alone. Source
   tests are contract guards. Runtime claims need logs or benchmark artifacts.
+- Do not close system-prompt injection from source reading alone. A source trace
+  must show the configured agent prompt reached the composed static prompt, and
+  a live model probe must show the selected runtime obeyed it.
 - Keep cache claims topology-specific. "Cache works" is not a valid result.
   Say which cache tier was used and which model cache family was exercised.
 - Test both the direct engine path and the Osaurus app/API path when the change

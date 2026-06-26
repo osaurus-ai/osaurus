@@ -521,6 +521,7 @@ connect these providers through a custom endpoint.
 | OpenAI reasoning models (o-series, gpt-5+) | Require `max_completion_tokens` (reject `max_tokens`); forbid `temperature`/`top_p`. | Detected by model-id profile; parameters switched/omitted automatically. |
 | Mistral, Groq, OpenRouter, DeepSeek, … (strict OpenAI-compat) | Reject `max_completion_tokens` (HTTP 422). | `max_tokens` emitted by default for non-reasoning models. |
 | xAI, Groq, OpenRouter | Accept full JSON Schema in tool parameters. | No sanitization — full schemas sent as-is. |
+| OpenAI-compatible streaming (xAI/Grok, Azure OpenAI) | Per-request token `usage` is only returned mid-stream when `stream_options.include_usage` is set, and the final usage chunk arrives **after** `finish_reason` (including on tool-call turns). Without it, streamed remote runs report 0 completion tokens. | Osaurus sets `stream_options.include_usage` on streaming requests to these upstreams, briefly defers the tool-call dispatch so the trailing usage chunk lands first, then surfaces the real `completion_tokens` as the same in-band stats hint the local runtime emits. Throughput (`tok/s`) is the provider's value when present, else left nil — never fabricated. Other providers and the non-streaming path are byte-identical on the wire. |
 
 ## Known model findings
 

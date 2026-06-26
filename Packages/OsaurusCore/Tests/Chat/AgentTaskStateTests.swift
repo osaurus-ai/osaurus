@@ -212,6 +212,26 @@ struct AgentTaskStateTests {
         #expect(held == env, "the replay must be the exact prior envelope, not a collapsed form")
     }
 
+    /// `capabilities_load` is a path-less deterministic-error tool: a failing
+    /// `invalid_args` load is held and replayed (with an escalation notice)
+    /// instead of re-executing, so a model can't burn iterations re-issuing
+    /// the same bad capability id.
+    @Test func dedupe_capabilitiesLoadInvalidArgsIsHeld() {
+        let state = AgentTaskState()
+        let args = #"{"ids":["plugin/Scite.AI"]}"#
+        let err = ToolEnvelope.failure(
+            kind: .invalidArgs,
+            message: "Unknown type 'plugin'",
+            tool: "capabilities_load",
+            retryable: false
+        )
+        state.record(name: "capabilities_load", argsJSON: args, result: err)
+        #expect(state.heldResult(name: "capabilities_load", argsJSON: args) == err)
+        #expect(state.lastReplayNotice?.contains("capabilities_load") == true)
+        // A different id set is a different call — not held.
+        #expect(state.heldResult(name: "capabilities_load", argsJSON: #"{"ids":["skill/other"]}"#) == nil)
+    }
+
     // MARK: - Next-step nudge
 
     /// Reactive: a single listing does NOT nudge (a capable model that
@@ -631,5 +651,58 @@ struct AgentTaskStateTests {
         }
         // The dedupe path still declines to short-circuit non-read tools.
         #expect(state.heldResult(name: "sandbox_exec", argsJSON: args) == nil)
+    }
+
+    // MARK: - Native image generation → follow-up edit bias (#88)
+
+    @Test func nativeImageResultBiasesFollowUpEditToSavedPath() throws {
+        let state = AgentTaskState()
+        let envelope = ToolEnvelope.success(
+            tool: "image_generate",
+            result: [
+                "kind": "native_image_generation_job",
+                "status": "completed",
+                "images": [
+                    [
+                        "path": "/tmp/osaurus-images/generated-cube.png",
+                        "url": "file:///tmp/osaurus-images/generated-cube.png",
+                        "seed": 123,
+                    ]
+                ],
+            ] as [String: Any]
+        )
+
+        state.record(name: "image_generate", argsJSON: #"{"prompt":"make a red cube"}"#, result: envelope)
+
+        let bias = try #require(state.nextStepBias())
+        #expect(bias.contains("image_edit"))
+        #expect(bias.contains("/tmp/osaurus-images/generated-cube.png"))
+        #expect(bias.contains("source_paths"))
+    }
+
+    @Test func nativeImageEditResultDoesNotBiasAnotherEdit() {
+        let state = AgentTaskState()
+        let envelope = ToolEnvelope.success(
+            tool: "image_edit",
+            result: [
+                "kind": "native_image_generation_job",
+                "status": "completed",
+                "images": [
+                    [
+                        "path": "/tmp/osaurus-images/edited-cube.png",
+                        "url": "file:///tmp/osaurus-images/edited-cube.png",
+                        "seed": 456,
+                    ]
+                ],
+            ] as [String: Any]
+        )
+
+        state.record(
+            name: "image_edit",
+            argsJSON: #"{"source_paths":["/tmp/osaurus-images/generated-cube.png"],"prompt":"make it green"}"#,
+            result: envelope
+        )
+
+        #expect(state.nextStepBias() == nil)
     }
 }

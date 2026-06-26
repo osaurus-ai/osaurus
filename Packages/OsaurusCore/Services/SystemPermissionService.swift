@@ -764,10 +764,33 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
         return permissions.allSatisfy { isGranted($0) }
     }
 
-    /// Get missing permissions from a list of required permissions
-    func missingPermissions(from requirements: [String]) -> [SystemPermission] {
+    /// Get missing permissions from a list of required permissions.
+    ///
+    /// Resolved off the main actor: the live `isGranted` runs the
+    /// authorization-status APIs synchronously, and EventKit's
+    /// `EKEventStore.authorizationStatus(for:)` makes a synchronous XPC
+    /// round-trip that can hang for seconds. This is reached from
+    /// `ToolRegistry.runPermissionGate` on the main actor, so the thread-safe
+    /// checks run in a detached task; the few permissions whose state lives on
+    /// the main actor (location / automation) fall back to the cached state,
+    /// which the periodic refresh and delegate callbacks keep fresh.
+    func missingPermissions(from requirements: [String]) async -> [SystemPermission] {
         let systemPermissions = requirements.compactMap { SystemPermission(rawValue: $0) }
-        return systemPermissions.filter { !isGranted($0) }
+        guard !systemPermissions.isEmpty else { return [] }
+
+        let offMain: [SystemPermission: Bool] = await Task.detached(priority: .userInitiated) {
+            var states: [SystemPermission: Bool] = [:]
+            for permission in systemPermissions {
+                if let granted = Self.isGrantedOffMain(permission) {
+                    states[permission] = granted
+                }
+            }
+            return states
+        }.value
+
+        return systemPermissions.filter { permission in
+            !(offMain[permission] ?? cachedIsGranted(permission))
+        }
     }
 
     /// Check if a requirement string represents a system permission

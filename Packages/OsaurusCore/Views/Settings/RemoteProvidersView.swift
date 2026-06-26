@@ -8,6 +8,13 @@
 import AppKit
 import SwiftUI
 
+/// Lets the connectivity filter drive the header `HeaderTabsRow`, so the
+/// Providers tab uses the same segmented control as every other settings tab.
+/// `title` maps to the existing `displayName`.
+extension ProviderConnectivityFilter: AnimatedTabItem {
+    var title: String { displayName }
+}
+
 struct RemoteProvidersView: View {
     @ObservedObject private var manager = RemoteProviderManager.shared
     @ObservedObject private var themeManager = ThemeManager.shared
@@ -86,19 +93,40 @@ struct RemoteProvidersView: View {
 
     // MARK: - Header
 
+    @ViewBuilder
     private var headerView: some View {
-        ManagerHeaderWithActions(
-            title: L("Providers"),
-            subtitle: subtitleText
-        ) {
-            if userConfiguredProviders.count > 1 {
-                HeaderIconButton("list.bullet.indent", help: "Reorder providers") {
-                    showReorderSheet = true
-                }
+        // Once providers exist, the connectivity filter rides the header
+        // `tabsRow` like every other settings tab. The empty state has nothing
+        // to filter, so it falls back to the plain actions header (same pattern
+        // as `ThemesView`).
+        if userConfiguredProviders.isEmpty {
+            ManagerHeaderWithActions(
+                title: L("Providers"),
+                subtitle: subtitleText
+            ) {
+                headerActions
             }
-            HeaderPrimaryButton("Add Provider", icon: "plus") {
-                addSheetConfig = AddSheetConfig(preset: nil)
+        } else {
+            ManagerHeaderWithTabs(
+                title: L("Providers"),
+                subtitle: subtitleText
+            ) {
+                headerActions
+            } tabsRow: {
+                HeaderTabsRow(selection: $providerFilter)
             }
+        }
+    }
+
+    @ViewBuilder
+    private var headerActions: some View {
+        if userConfiguredProviders.count > 1 {
+            HeaderIconButton("list.bullet.indent", help: "Reorder providers") {
+                showReorderSheet = true
+            }
+        }
+        HeaderPrimaryButton("Add Provider", icon: "plus") {
+            addSheetConfig = AddSheetConfig(preset: nil)
         }
     }
 
@@ -210,30 +238,53 @@ struct RemoteProvidersView: View {
     private var connectivityCenterView: some View {
         ProviderConnectivityCenterPanel(
             snapshot: connectivitySnapshot,
-            filter: $providerFilter,
             isReconnecting: reconnectingAll,
             onReconnectAll: reconnectAllProviders,
             onCopyReport: copyConnectivityReport
         )
     }
 
+    @ViewBuilder
     private var providerListView: some View {
-        VStack(spacing: 12) {
-            ForEach(visibleProviderReports) { report in
-                ProviderCardView(
-                    report: report,
-                    state: report.state,
-                    isReconnecting: reconnectingProviderIds.contains(report.id),
-                    onReconnect: { reconnectProvider(report.provider) },
-                    onCopyDiagnostics: { copyDiagnostics(report.diagnostics) },
-                    onEdit: { editingProvider = report.provider },
-                    onDelete: { manager.removeProvider(id: report.id) },
-                    onToggleEnabled: { enabled in
-                        manager.setEnabled(enabled, for: report.id)
-                    }
-                )
+        if visibleProviderReports.isEmpty {
+            // Providers exist, but none match the active connectivity filter
+            // (e.g. "Attention" with nothing flagged). Show a placeholder
+            // rather than a blank gap below the filter.
+            filteredEmptyState
+        } else {
+            VStack(spacing: 12) {
+                ForEach(visibleProviderReports) { report in
+                    ProviderCardView(
+                        report: report,
+                        state: report.state,
+                        isReconnecting: reconnectingProviderIds.contains(report.id),
+                        onReconnect: { reconnectProvider(report.provider) },
+                        onCopyDiagnostics: { copyDiagnostics(report.diagnostics) },
+                        onEdit: { editingProvider = report.provider },
+                        onDelete: { manager.removeProvider(id: report.id) },
+                        onToggleEnabled: { enabled in
+                            manager.setEnabled(enabled, for: report.id)
+                        }
+                    )
+                }
             }
         }
+    }
+
+    private var filteredEmptyState: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "line.3.horizontal.decrease.circle")
+                .font(.system(size: 26))
+                .foregroundColor(theme.tertiaryText)
+            Text("Nothing to show here", bundle: .module)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundColor(theme.secondaryText)
+            Text("No providers match this filter.", bundle: .module)
+                .font(.system(size: 12))
+                .foregroundColor(theme.tertiaryText)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 48)
     }
 
     private func refreshCredentialPresence() {
@@ -310,7 +361,6 @@ private struct ProviderConnectivityCenterPanel: View {
     @Environment(\.theme) private var theme
 
     let snapshot: ProviderConnectivitySnapshot
-    @Binding var filter: ProviderConnectivityFilter
     let isReconnecting: Bool
     let onReconnectAll: () -> Void
     let onCopyReport: () -> Void
@@ -387,13 +437,6 @@ private struct ProviderConnectivityCenterPanel: View {
                     color: theme.infoColor
                 )
             }
-
-            Picker("", selection: $filter) {
-                ForEach(ProviderConnectivityFilter.allCases, id: \.self) { option in
-                    Text(option.displayName).tag(option)
-                }
-            }
-            .pickerStyle(.segmented)
         }
         .padding(16)
         .background(

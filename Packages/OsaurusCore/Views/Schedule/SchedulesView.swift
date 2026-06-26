@@ -7,6 +7,7 @@
 
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 // MARK: - Schedules View
 
@@ -19,6 +20,9 @@ struct SchedulesView: View {
 
     @State private var isCreating = false
     @State private var editingSchedule: Schedule?
+    @State private var historySchedule: Schedule?
+    @State private var scheduleSummaries: [UUID: ScheduleAutomationSummary] = [:]
+    @State private var summaryLoadTask: Task<Void, Never>?
     @State private var hasAppeared = false
     @State private var successMessage: String?
 
@@ -71,21 +75,36 @@ struct SchedulesView: View {
                                 schedule in
                                 ScheduleCard(
                                     schedule: schedule,
+                                    summary: displaySummary(for: schedule),
                                     isRunning: scheduleManager.isRunning(schedule.id),
                                     animationDelay: Double(index) * 0.05,
                                     hasAppeared: hasAppeared,
                                     onToggle: { enabled in
                                         scheduleManager.setEnabled(schedule.id, enabled: enabled)
+                                        scheduleManager.refresh()
+                                        reloadHistorySummaries()
+                                        showSuccess(
+                                            enabled ? "Resumed \"\(schedule.name)\"" : "Paused \"\(schedule.name)\""
+                                        )
                                     },
                                     onRunNow: {
                                         scheduleManager.runNow(schedule.id)
+                                        scheduleManager.refresh()
+                                        reloadHistorySummaries()
                                         showSuccess("Started \"\(schedule.name)\"")
+                                    },
+                                    onShowHistory: {
+                                        historySchedule = schedule
+                                    },
+                                    onExportSummary: {
+                                        exportSummary(for: schedule)
                                     },
                                     onEdit: {
                                         editingSchedule = schedule
                                     },
                                     onDelete: {
                                         scheduleManager.delete(id: schedule.id)
+                                        reloadHistorySummaries()
                                         showSuccess("Deleted \"\(schedule.name)\"")
                                     }
                                 )
@@ -125,6 +144,7 @@ struct SchedulesView: View {
                         isEnabled: schedule.isEnabled
                     )
                     isCreating = false
+                    reloadHistorySummaries()
                     showSuccess("Created \"\(schedule.name)\"")
                 },
                 onCancel: {
@@ -138,6 +158,7 @@ struct SchedulesView: View {
                 onSave: { updated in
                     scheduleManager.update(updated)
                     editingSchedule = nil
+                    reloadHistorySummaries()
                     showSuccess("Updated \"\(updated.name)\"")
                 },
                 onCancel: {
@@ -145,8 +166,18 @@ struct SchedulesView: View {
                 }
             )
         }
+        .sheet(item: $historySchedule) { schedule in
+            ScheduleHistorySheet(
+                schedule: schedule,
+                summary: displaySummary(for: schedule),
+                onExport: {
+                    exportSummary(for: schedule)
+                }
+            )
+        }
         .onAppear {
             scheduleManager.refresh()
+            reloadHistorySummaries()
             withAnimation(.easeOut(duration: 0.25).delay(0.05)) {
                 hasAppeared = true
             }
@@ -154,6 +185,14 @@ struct SchedulesView: View {
         }
         .onChange(of: managementState.pendingScheduleEditId) { _, _ in
             consumePendingScheduleEditRequest()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .scheduleExecutionCompleted)) { _ in
+            scheduleManager.refresh()
+            reloadHistorySummaries()
+        }
+        .onDisappear {
+            summaryLoadTask?.cancel()
+            summaryLoadTask = nil
         }
     }
 
@@ -164,6 +203,7 @@ struct SchedulesView: View {
     private func consumePendingScheduleEditRequest() {
         guard let pending = managementState.pendingScheduleEditId else { return }
         scheduleManager.refresh()
+        reloadHistorySummaries()
         if let match = scheduleManager.schedules.first(where: { $0.id == pending }) {
             editingSchedule = match
         }
@@ -180,6 +220,7 @@ struct SchedulesView: View {
         ) {
             HeaderIconButton("arrow.clockwise", help: "Refresh schedules") {
                 scheduleManager.refresh()
+                reloadHistorySummaries()
             }
             HeaderPrimaryButton("Create Schedule", icon: "plus") {
                 isCreating = true
@@ -199,6 +240,90 @@ struct SchedulesView: View {
             }
         }
     }
+
+    private func reloadHistorySummaries() {
+        let schedules = scheduleManager.schedules
+        let scheduleIds = Set(schedules.map(\.id))
+        let now = Date()
+        var summaries = scheduleSummaries.filter { scheduleIds.contains($0.key) }
+        for schedule in schedules where summaries[schedule.id] == nil {
+            summaries[schedule.id] = placeholderSummary(for: schedule, asOf: now)
+        }
+        scheduleSummaries = summaries
+
+        summaryLoadTask?.cancel()
+        summaryLoadTask = Task { @MainActor in
+            let loadedSummaries = await ScheduleHistoryService.shared.summariesOffMain(
+                for: schedules,
+                runLimit: 8,
+                asOf: now
+            )
+            guard !Task.isCancelled else { return }
+            scheduleSummaries = loadedSummaries
+        }
+    }
+
+    private func displaySummary(for schedule: Schedule) -> ScheduleAutomationSummary {
+        scheduleSummaries[schedule.id] ?? placeholderSummary(for: schedule)
+    }
+
+    private func placeholderSummary(for schedule: Schedule, asOf now: Date = Date()) -> ScheduleAutomationSummary {
+        let runs = Array(schedule.runHistory.prefix(8))
+        return ScheduleAutomationSummary(
+            scheduleId: schedule.id,
+            generatedAt: now,
+            nextRun: schedule.nextRunPreview(asOf: now),
+            runs: runs,
+            lastError: latestLocalError(in: runs)
+        )
+    }
+
+    private func latestLocalError(in runs: [ScheduleRunHistoryEntry]) -> ScheduleLastErrorDiagnostic? {
+        for run in runs {
+            guard run.status == .failed || (run.status != .succeeded && run.errorMessage != nil),
+                let message = run.errorMessage,
+                !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            else { continue }
+
+            return ScheduleLastErrorDiagnostic(
+                runId: run.id,
+                occurredAt: run.endedAt ?? run.startedAt,
+                message: message,
+                status: run.status
+            )
+        }
+        return nil
+    }
+
+    private func exportSummary(for schedule: Schedule) {
+        let service = ScheduleHistoryService.shared
+        let filenameSummary = displaySummary(for: schedule)
+
+        let panel = NSSavePanel()
+        panel.title = L("Export")
+        panel.prompt = L("Export")
+        panel.nameFieldStringValue = service.suggestedExportFilename(
+            for: schedule,
+            generatedAt: filenameSummary.generatedAt
+        )
+        panel.allowedContentTypes = [UTType(filenameExtension: "md") ?? .plainText]
+        panel.canCreateDirectories = true
+
+        Task { @MainActor in
+            guard await panel.beginModal() == .OK, let url = panel.url else { return }
+            let summary = await service.summaryOffMain(for: schedule, runLimit: Schedule.maxRunHistoryEntries)
+            let markdown = service.markdownSummary(for: schedule, summary: summary)
+            do {
+                try await Task.detached(priority: .utility) {
+                    try markdown.write(to: url, atomically: true, encoding: .utf8)
+                }.value
+                scheduleSummaries[schedule.id] = summary
+                showSuccess("Exported \"\(schedule.name)\"")
+            } catch {
+                showSuccess("Export failed: \(error.localizedDescription)")
+            }
+        }
+    }
 }
 
 // MARK: - Schedule Card
@@ -208,11 +333,14 @@ private struct ScheduleCard: View {
     @ObservedObject private var agentManager = AgentManager.shared
 
     let schedule: Schedule
+    let summary: ScheduleAutomationSummary
     let isRunning: Bool
     let animationDelay: Double
     let hasAppeared: Bool
     let onToggle: (Bool) -> Void
     let onRunNow: () -> Void
+    let onShowHistory: () -> Void
+    let onExportSummary: () -> Void
     let onEdit: () -> Void
     let onDelete: () -> Void
 
@@ -295,6 +423,20 @@ private struct ScheduleCard: View {
                             }
                         }
                         .disabled(isRunning)
+                        Button(action: onShowHistory) {
+                            Label {
+                                Text("History", bundle: .module)
+                            } icon: {
+                                Image(systemName: "clock.arrow.circlepath")
+                            }
+                        }
+                        Button(action: onExportSummary) {
+                            Label {
+                                Text("Export…", bundle: .module)
+                            } icon: {
+                                Image(systemName: "square.and.arrow.up")
+                            }
+                        }
                         Divider()
                         Button {
                             onToggle(!schedule.isEnabled)
@@ -337,6 +479,12 @@ private struct ScheduleCard: View {
                         .lineLimit(2)
                         .lineSpacing(2)
                         .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                nextRunPreview
+
+                if let lastError = summary.lastError {
+                    lastErrorPreview(lastError)
                 }
 
                 Spacer(minLength: 0)
@@ -432,14 +580,95 @@ private struct ScheduleCard: View {
 
     // MARK: - Compact Stats
 
+    private var nextRunPreview: some View {
+        HStack(spacing: 8) {
+            Image(systemName: nextRunIcon)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(nextRunColor)
+                .frame(width: 14)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Next run", bundle: .module)
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundColor(theme.tertiaryText)
+                Text(summary.nextRun.description)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(nextRunColor.opacity(0.08))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(nextRunColor.opacity(0.18), lineWidth: 1)
+                )
+        )
+    }
+
+    private var nextRunIcon: String {
+        switch summary.nextRun.state {
+        case .scheduled:
+            return "clock"
+        case .due:
+            return "bell.badge.fill"
+        case .paused:
+            return "pause.circle"
+        case .exhausted:
+            return "checkmark.circle"
+        }
+    }
+
+    private var nextRunColor: Color {
+        switch summary.nextRun.state {
+        case .scheduled:
+            return theme.accentColor
+        case .due:
+            return .orange
+        case .paused:
+            return .orange
+        case .exhausted:
+            return theme.tertiaryText
+        }
+    }
+
+    private func lastErrorPreview(_ diagnostic: ScheduleLastErrorDiagnostic) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(theme.errorColor)
+                .frame(width: 14)
+            Text(diagnostic.message)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(theme.errorColor)
+                .lineLimit(1)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(theme.errorColor.opacity(0.08))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(theme.errorColor.opacity(0.18), lineWidth: 1)
+                )
+        )
+    }
+
     @ViewBuilder
     private var compactStats: some View {
         HStack(spacing: 0) {
             statItem(icon: schedule.frequency.frequencyType.icon, text: schedule.frequency.shortDescription)
 
-            if let nextRun = schedule.nextRunDescription {
+            if let latest = summary.latestRun {
                 statDot
-                statItem(icon: "clock", text: nextRun)
+                statItem(icon: latest.status.iconName, text: latest.status.displayName)
             }
 
             if let agentName = agent?.name, agent?.isBuiltIn == false {
@@ -467,6 +696,396 @@ private struct ScheduleCard: View {
             .fill(theme.tertiaryText.opacity(0.4))
             .frame(width: 3, height: 3)
             .padding(.horizontal, 8)
+    }
+}
+
+// MARK: - Schedule History Sheet
+
+private struct ScheduleHistorySheet: View {
+    @Environment(\.theme) private var theme
+    @Environment(\.dismiss) private var dismiss
+
+    let schedule: Schedule
+    let summary: ScheduleAutomationSummary
+    let onExport: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    overview
+
+                    if let diagnostic = summary.lastError {
+                        diagnosticPanel(diagnostic)
+                    }
+
+                    runsSection
+                }
+                .padding(24)
+            }
+
+            footer
+        }
+        .frame(width: 640, height: 560)
+        .background(theme.primaryBackground)
+    }
+
+    private var header: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "clock.arrow.circlepath")
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundColor(theme.accentColor)
+                .frame(width: 36, height: 36)
+                .background(Circle().fill(theme.accentColor.opacity(0.12)))
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("History", bundle: .module)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+                Text(schedule.name)
+                    .font(.system(size: 12))
+                    .foregroundColor(theme.secondaryText)
+                    .lineLimit(1)
+            }
+
+            Spacer()
+
+            Button {
+                dismiss()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(theme.secondaryText)
+                    .frame(width: 28, height: 28)
+                    .background(Circle().fill(theme.tertiaryBackground))
+            }
+            .buttonStyle(.plain)
+            .keyboardShortcut(.escape, modifiers: [])
+        }
+        .padding(.horizontal, 24)
+        .padding(.vertical, 18)
+        .background(theme.secondaryBackground)
+    }
+
+    private var overview: some View {
+        HStack(spacing: 12) {
+            ScheduleHistoryMetric(
+                icon: schedule.isEnabled ? "checkmark.circle.fill" : "pause.circle.fill",
+                title: "State",
+                value: schedule.isEnabled ? "Enabled" : "Paused",
+                color: schedule.isEnabled ? theme.successColor : .orange
+            )
+            ScheduleHistoryMetric(
+                icon: summary.nextRun.state.iconName,
+                title: "Next run",
+                value: summary.nextRun.description,
+                color: summary.nextRun.state.color(theme: theme)
+            )
+            ScheduleHistoryMetric(
+                icon: "list.bullet.rectangle",
+                title: "Runs",
+                value: "\(summary.runs.count)",
+                color: theme.accentColor
+            )
+        }
+    }
+
+    private func diagnosticPanel(_ diagnostic: ScheduleLastErrorDiagnostic) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundColor(theme.errorColor)
+                Text("Diagnostics", bundle: .module)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+                Spacer()
+                Text(formatDate(diagnostic.occurredAt))
+                    .font(.system(size: 10))
+                    .foregroundColor(theme.tertiaryText)
+            }
+
+            Text(diagnostic.message)
+                .font(.system(size: 12))
+                .foregroundColor(theme.errorColor)
+                .textSelection(.enabled)
+
+            Text("Run ID: \(diagnostic.runId.uuidString)", bundle: .module)
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundColor(theme.tertiaryText)
+                .textSelection(.enabled)
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(theme.errorColor.opacity(0.08))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(theme.errorColor.opacity(0.18), lineWidth: 1)
+                )
+        )
+    }
+
+    private var runsSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Recent Runs", bundle: .module)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+                Spacer()
+            }
+
+            if summary.runs.isEmpty {
+                VStack(spacing: 8) {
+                    Image(systemName: "clock.badge.questionmark")
+                        .font(.system(size: 22, weight: .medium))
+                        .foregroundColor(theme.tertiaryText)
+                    Text("No runs yet.", bundle: .module)
+                        .font(.system(size: 12))
+                        .foregroundColor(theme.secondaryText)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 36)
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(theme.secondaryBackground)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10)
+                                .stroke(theme.cardBorder, lineWidth: 1)
+                        )
+                )
+            } else {
+                VStack(spacing: 8) {
+                    ForEach(summary.runs) { run in
+                        ScheduleRunHistoryRow(run: run)
+                    }
+                }
+            }
+        }
+    }
+
+    private var footer: some View {
+        HStack(spacing: 12) {
+            Spacer()
+            Button(action: { dismiss() }) {
+                Text("Close", bundle: .module)
+            }
+            .buttonStyle(ScheduleSecondaryButtonStyle())
+
+            Button {
+                onExport()
+            } label: {
+                Label {
+                    Text("Export…", bundle: .module)
+                } icon: {
+                    Image(systemName: "square.and.arrow.up")
+                }
+            }
+            .buttonStyle(SchedulePrimaryButtonStyle())
+        }
+        .padding(.horizontal, 24)
+        .padding(.vertical, 16)
+        .background(
+            theme.secondaryBackground
+                .overlay(Rectangle().fill(theme.primaryBorder).frame(height: 1), alignment: .top)
+        )
+    }
+
+    private func formatDate(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        return formatter.string(from: date)
+    }
+}
+
+private struct ScheduleHistoryMetric: View {
+    @Environment(\.theme) private var theme
+
+    let icon: String
+    let title: String
+    let value: String
+    let color: Color
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: icon)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(color)
+                .frame(width: 28, height: 28)
+                .background(Circle().fill(color.opacity(0.12)))
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(verbatim: title)
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundColor(theme.tertiaryText)
+                Text(value)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(theme.secondaryBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(theme.cardBorder, lineWidth: 1)
+                )
+        )
+    }
+}
+
+private struct ScheduleRunHistoryRow: View {
+    @Environment(\.theme) private var theme
+
+    let run: ScheduleRunHistoryEntry
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: run.status.iconName)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(run.status.color(theme: theme))
+                .frame(width: 28, height: 28)
+                .background(Circle().fill(run.status.color(theme: theme).opacity(0.12)))
+
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 8) {
+                    Text(run.status.displayName)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(theme.primaryText)
+                    Text(formatDate(run.startedAt))
+                        .font(.system(size: 10))
+                        .foregroundColor(theme.tertiaryText)
+                    Spacer()
+                    if let duration = run.durationSeconds {
+                        Text(formatDuration(duration))
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundColor(theme.secondaryText)
+                    }
+                }
+
+                HStack(spacing: 8) {
+                    if let sessionId = run.chatSessionId {
+                        Label(String(sessionId.uuidString.prefix(8)), systemImage: "bubble.left.and.bubble.right")
+                            .font(.system(size: 10))
+                            .foregroundColor(theme.tertiaryText)
+                    }
+                    if let error = run.errorMessage, !error.isEmpty {
+                        Text(error)
+                            .font(.system(size: 10))
+                            .foregroundColor(theme.errorColor)
+                            .lineLimit(1)
+                    } else if let preview = run.instructionsPreview {
+                        Text(preview)
+                            .font(.system(size: 10))
+                            .foregroundColor(theme.tertiaryText)
+                            .lineLimit(1)
+                    }
+                    Spacer()
+                }
+            }
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(theme.secondaryBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(theme.cardBorder, lineWidth: 1)
+                )
+        )
+    }
+
+    private func formatDate(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        return formatter.string(from: date)
+    }
+
+    private func formatDuration(_ duration: TimeInterval) -> String {
+        if duration < 1 { return "<1s" }
+        if duration < 60 { return "\(Int(duration.rounded()))s" }
+        let minutes = Int(duration) / 60
+        let seconds = Int(duration) % 60
+        return "\(minutes)m \(seconds)s"
+    }
+}
+
+private extension ScheduleRunStatus {
+    var displayName: String {
+        switch self {
+        case .running:
+            return L("Running")
+        case .succeeded:
+            return L("Completed")
+        case .failed:
+            return L("Failed")
+        case .cancelled:
+            return L("Cancelled")
+        case .skipped:
+            return "Skipped"
+        }
+    }
+
+    var iconName: String {
+        switch self {
+        case .running:
+            return "play.circle.fill"
+        case .succeeded:
+            return "checkmark.circle.fill"
+        case .failed:
+            return "exclamationmark.triangle.fill"
+        case .cancelled:
+            return "xmark.circle.fill"
+        case .skipped:
+            return "forward.end.circle.fill"
+        }
+    }
+
+    func color(theme: ThemeProtocol) -> Color {
+        switch self {
+        case .running:
+            return theme.accentColor
+        case .succeeded:
+            return theme.successColor
+        case .failed:
+            return theme.errorColor
+        case .cancelled, .skipped:
+            return .orange
+        }
+    }
+}
+
+private extension ScheduleNextRunPreviewState {
+    var iconName: String {
+        switch self {
+        case .scheduled:
+            return "clock"
+        case .due:
+            return "bell.badge.fill"
+        case .paused:
+            return "pause.circle.fill"
+        case .exhausted:
+            return "checkmark.circle.fill"
+        }
+    }
+
+    func color(theme: ThemeProtocol) -> Color {
+        switch self {
+        case .scheduled:
+            return theme.accentColor
+        case .due, .paused:
+            return .orange
+        case .exhausted:
+            return theme.tertiaryText
+        }
     }
 }
 
@@ -867,7 +1486,7 @@ private struct WeekdayButton: View {
     @State private var isHovering = false
 
     private var dayLetter: String {
-        String(Calendar.current.shortWeekdaySymbols[day - 1].prefix(1))
+        String(Calendar.current.veryShortWeekdaySymbols[day - 1])
     }
 
     var body: some View {
@@ -1652,6 +2271,11 @@ struct ScheduleEditorSheet: View {
             || selectedFolderPath != original.folderPath
             || selectedFolderBookmark != original.folderBookmark
             || buildFrequency() != original.frequency
+    }
+
+    private var existingRunHistory: [ScheduleRunHistoryEntry] {
+        if case .edit(let schedule) = mode { return schedule.runHistory }
+        return []
     }
 
     var body: some View {
@@ -2555,6 +3179,7 @@ struct ScheduleEditorSheet: View {
             lastRunAt: existingLastRunAt,
             lastTriggeredAt: existingLastTriggeredAt,
             lastChatSessionId: existingLastChatSessionId,
+            runHistory: existingRunHistory,
             createdAt: existingCreatedAt ?? Date(),
             updatedAt: Date()
         )

@@ -77,6 +77,7 @@ struct ElementInfo: Encodable, Sendable {
     let roleDescription: String?
     let label: String?
     let value: String?
+    let selectedText: String?
     let placeholder: String?
     let path: String?
     let windowId: Int?
@@ -207,9 +208,29 @@ struct TraversalResult: Encodable, Sendable {
 final class AccessibilityManager: @unchecked Sendable {
     static let shared = AccessibilityManager()
 
-    /// Maximum time (seconds) any AX call is allowed to block. Without this,
-    /// a wedged target app would hang the agent indefinitely.
-    private static let axMessagingTimeout: Float = 3.0
+    /// Maximum time (seconds) any single AX call is allowed to block before it
+    /// returns a timeout error. Applied per-app via `axApp` (and globally on the
+    /// system-wide element in `init`) so a wedged target app can't stall the
+    /// off-main driver queue indefinitely on any one call.
+    static let axMessagingTimeout: Float = 1.5
+
+    /// Overall wall-clock budget for a single `traverse`. Even when each AX call
+    /// stays under `axMessagingTimeout`, a huge or partially-wedged tree can
+    /// accumulate many slow calls; the traversal bails (marking the result
+    /// `truncated`) once this elapses so a capture still returns promptly.
+    static let traversalDeadline: TimeInterval = 2.0
+
+    /// Osaurus's own process id.
+    static let selfPid: Int32 = ProcessInfo.processInfo.processIdentifier
+
+    /// Whether `pid` is Osaurus itself. The native driver must NEVER resolve the
+    /// current process's AX tree on the off-main driver queue: querying our own
+    /// elements re-enters AppKit/SwiftUI accessibility *in-process*, which
+    /// evaluates SwiftUI `body` and trips its main-thread assertion
+    /// (`_dispatch_assert_queue_fail`) when it runs off the main thread. We also
+    /// never want to perceive or drive our own UI through Computer Use, so every
+    /// AX entry point treats self as "nothing to perceive".
+    static func isSelf(_ pid: Int32) -> Bool { pid == selfPid }
 
     private var snapshots: [Int: [String: CachedElement]] = [:]
     private var snapshotPids: [Int: Int32] = [:]
@@ -223,6 +244,11 @@ final class AccessibilityManager: @unchecked Sendable {
     private static let maxSnapshotsToRetain: Int = 6
     /// Pids we've already nudged into exposing their full AX tree (Electron).
     private var preparedPids: Set<Int32> = []
+    /// Pids whose readiness wait we've already run once. The content gate keeps
+    /// checking these on every capture (cheap), but never pays the timeout again
+    /// — so an app that genuinely exposes no AX text (canvas/WebGL) isn't taxed
+    /// the full budget on each capture, only on first touch.
+    private var awaitedPids: Set<Int32> = []
     private let lock = NSLock()
 
     private init() {
@@ -233,19 +259,55 @@ final class AccessibilityManager: @unchecked Sendable {
         )
     }
 
+    // MARK: Off-main execution
+
+    /// Serializes ALL native-driver AX IPC and input synthesis off the main
+    /// thread, so a slow/wedged target app blocks this background queue instead
+    /// of the UI run loop. One operation at a time preserves input-event
+    /// ordering and AX-cache coherence — the same single-threaded guarantee the
+    /// old main-actor hop provided, just off the main thread.
+    static let serialQueue = DispatchQueue(
+        label: "com.osaurus.computeruse.driver",
+        qos: .userInitiated
+    )
+
+    /// Run blocking native-driver work (AX IPC, input synthesis) on
+    /// `serialQueue` and await its result, keeping the main thread responsive.
+    static func runOffMain<T: Sendable>(_ body: @escaping @Sendable () -> T) async -> T {
+        await withCheckedContinuation { continuation in
+            serialQueue.async { continuation.resume(returning: body()) }
+        }
+    }
+
+    /// Create an application AX element with the per-app messaging timeout
+    /// applied. Setting the timeout on the system-wide element alone does not
+    /// reliably propagate to per-application elements, so every site that needs
+    /// an app element goes through here to bound how long a single AX call can
+    /// block.
+    static func axApp(_ pid: Int32) -> AXUIElement {
+        let app = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(app, axMessagingTimeout)
+        return app
+    }
+
     // MARK: Electron / Chromium accessibility
 
-    /// Nudge a Chromium/Electron app into building its full accessibility tree.
+    /// Nudge a Chromium/Electron/WebKit app into building its full accessibility
+    /// tree.
     ///
-    /// Chromium only materializes its AX tree when an assistive client sets
-    /// `AXManualAccessibility` on the app element; until then apps like Slack,
-    /// VS Code, and Discord expose almost nothing (a window with no children),
-    /// which is why a plain traverse of Slack returns only the menu bar plus a
-    /// stray field. Cocoa apps ignore the attribute harmlessly, so this is safe
-    /// to apply to every pid. Idempotent per pid — the first call sets the flag,
-    /// the tree then builds asynchronously (see `waitForAccessibilityTree`).
+    /// Two app families hide their tree until an assistive client asks for it:
+    /// Chromium/Electron (Slack, VS Code, Discord, Chrome) only materialize their
+    /// AX tree when `AXManualAccessibility` is set on the app element, and
+    /// WebKit/Safari only expose the web a11y tree when `AXEnhancedUserInterface`
+    /// is set. Until then a plain traverse returns almost nothing (a window with
+    /// no children, or just the browser chrome). Set BOTH — each app honors the
+    /// one it understands and Cocoa apps ignore both harmlessly, so this is safe
+    /// to apply to every pid. Idempotent per pid — the first call sets the flags,
+    /// the tree then builds asynchronously (see `prepareAndAwaitTree`).
     @discardableResult
     func prepareForAccessibility(pid: Int32) -> Bool {
+        // Never poke our own process (see `isSelf`).
+        if Self.isSelf(pid) { return false }
         lock.lock()
         if preparedPids.contains(pid) {
             lock.unlock()
@@ -256,7 +318,126 @@ final class AccessibilityManager: @unchecked Sendable {
 
         let app = AXUIElementCreateApplication(pid)
         AXUIElementSetAttributeValue(app, "AXManualAccessibility" as CFString, true as CFTypeRef)
+        AXUIElementSetAttributeValue(
+            app,
+            "AXEnhancedUserInterface" as CFString,
+            true as CFTypeRef
+        )
         return true
+    }
+
+    /// Atomically record that `pid`'s readiness wait has run. Returns true if it
+    /// had ALREADY run (so the caller skips paying the timeout again). Kept
+    /// synchronous so the `NSLock` is never touched from an async context.
+    private func markAwaited(_ pid: Int32) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        if awaitedPids.contains(pid) { return true }
+        awaitedPids.insert(pid)
+        return false
+    }
+
+    /// Prepare `pid` for accessibility and, when its focused window hasn't
+    /// rendered real content yet, briefly wait for the async subtree to build
+    /// before the caller traverses.
+    ///
+    /// Chromium/Electron/WebKit populate their tree asynchronously after the
+    /// flags flip (see `prepareForAccessibility`), so a one-shot read — the
+    /// ambient screen-context capture, or the loop's first perceive — otherwise
+    /// sees just the menu bar / browser chrome (Slack returns nothing; Chrome
+    /// returns only the address bar, because its `AXWebArea` doesn't exist in the
+    /// tree yet). The gate is `focusedWindowHasContent`, which waits for actual
+    /// readable text (a built `webarea`, a focused value, or static body text)
+    /// rather than a bare node count — so a browser whose page tree hasn't built
+    /// isn't declared "ready" on its toolbar alone.
+    ///
+    /// Native apps that already expose text return on the first check (instant).
+    /// The timeout only elapses for an app that exposes no AX text within the
+    /// budget (a blank page, or a canvas/WebGL app), and we pay it at most once
+    /// per pid — subsequent captures still re-check cheaply (picking up a page
+    /// that built late) but never block again. The poll runs on the off-main
+    /// driver queue because it issues blocking AX reads.
+    func prepareAndAwaitTree(pid: Int32, timeout: TimeInterval = 1.6) async {
+        // Resolving our own focused window re-enters SwiftUI off-main and traps
+        // (see `isSelf`); there is nothing of ours to wait for.
+        if Self.isSelf(pid) { return }
+        prepareForAccessibility(pid: pid)
+        if await Self.runOffMain({ Self.focusedWindowHasContent(pid: pid) }) { return }
+
+        // Only pay the timeout once per pid: a contentless app (canvas/blank)
+        // shouldn't block every capture, just the first.
+        if markAwaited(pid) { return }
+
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            try? await Task.sleep(nanoseconds: 80_000_000)
+            if await Self.runOffMain({ Self.focusedWindowHasContent(pid: pid) }) { return }
+        }
+    }
+
+    /// Whether the focused window already carries readable content — the signal
+    /// that it's worth traversing now rather than waiting for an async build.
+    /// Ready when ANY of:
+    ///   1. the focused element exposes text (a native input/editor — instant);
+    ///   2. a `webarea` HAS children — a browser page finished rendering into AX
+    ///      (the part that lags well behind the browser chrome);
+    ///   3. the window already carries real static/heading/text-area body text
+    ///      (a normal Cocoa app showing content).
+    /// A bare node count is deliberately NOT enough: a browser's toolbar is dozens
+    /// of nodes with no readable text, and treating that as "ready" is exactly
+    /// what skipped the wait for the page. Bounded BFS so it stays cheap on huge
+    /// trees.
+    private static func focusedWindowHasContent(pid: Int32) -> Bool {
+        let app = Self.axApp(pid)
+
+        func readableLength(_ element: AXUIElement) -> Int {
+            guard let value = axCopyAttribute(element, kAXValueAttribute as String) as? String
+            else { return 0 }
+            return value.trimmingCharacters(in: .whitespacesAndNewlines).count
+        }
+
+        // 1. A focused element that already exposes text → ready immediately.
+        if let focused = axElement(axCopyAttribute(app, kAXFocusedUIElementAttribute as String)),
+            readableLength(focused) > 0
+        {
+            return true
+        }
+
+        // The focused window (else the first window).
+        let window =
+            axElement(axCopyAttribute(app, kAXFocusedWindowAttribute as String))
+            ?? (axCopyAttribute(app, kAXWindowsAttribute as String) as? [AXUIElement])?.first
+        guard let window else { return false }
+
+        // ~16 chars of static/heading/text-area body = a couple of words, enough
+        // to tell "a normal app showing text" from "browser chrome only".
+        let readableThreshold = 16
+        let maxVisited = 400
+        let maxDepth = 12
+        var readable = 0
+        var visited = 0
+        var queue: [(element: AXUIElement, depth: Int)] = [(window, 0)]
+        while !queue.isEmpty, visited < maxVisited {
+            let (element, depth) = queue.removeFirst()
+            visited += 1
+            if let role = axCopyAttribute(element, kAXRoleAttribute as String) as? String {
+                switch normalizeRole(role) {
+                case "webarea":
+                    // 2. Built page → ready; empty page → still building.
+                    if axElementHasChildren(element) { return true }
+                case "statictext", "heading", "textarea":
+                    // 3. Accumulate real body text.
+                    readable += readableLength(element)
+                    if readable >= readableThreshold { return true }
+                default:
+                    break
+                }
+            }
+            if depth < maxDepth {
+                for child in axChildren(element) { queue.append((child, depth + 1)) }
+            }
+        }
+        return false
     }
 
     // MARK: Snapshot lifecycle
@@ -383,12 +564,40 @@ final class AccessibilityManager: @unchecked Sendable {
         "staticrtext",
     ]
 
+    /// Text-bearing roles whose `kAXSelectedTextAttribute` is worth reading.
+    /// Excludes `securetextfield` so a password selection is never captured.
+    static let textSelectionRoles: Set<String> = [
+        "textfield",
+        "textarea",
+        "searchfield",
+        "combobox",
+        "statictext",
+        "staticrtext",
+        "webarea",
+    ]
+
     // MARK: Traversal entry point
 
     /// Traverse the accessibility tree for a given PID with filtering and optional search.
     /// Begins a new snapshot. Element IDs in the result are valid until the cache
     /// rotates them out (after the next snapshot beyond the retention limit).
     func traverse(filter: ElementFilter, search: SearchOptions? = nil) -> TraversalResult {
+        // Never traverse our own process: resolving Osaurus's AX tree re-enters
+        // SwiftUI/AppKit accessibility in-process (evaluating `body`), which
+        // traps on the off-main driver queue — and we never perceive our own UI.
+        if Self.isSelf(filter.pid) {
+            return TraversalResult(
+                snapshotId: beginNewSnapshot(pid: filter.pid),
+                pid: filter.pid,
+                app: getAppName(for: filter.pid) ?? "Osaurus",
+                focusedWindow: nil,
+                elementCount: 0,
+                truncated: false,
+                windows: [],
+                elements: []
+            )
+        }
+
         // Ensure Chromium/Electron targets have been asked to expose their tree.
         // Idempotent and cheap after the first call; covers apps reached via a
         // bare capture (not just `open`). The tree may still be settling on the
@@ -398,8 +607,11 @@ final class AccessibilityManager: @unchecked Sendable {
 
         let snapshotId = beginNewSnapshot(pid: filter.pid)
 
-        let app = AXUIElementCreateApplication(filter.pid)
+        let app = Self.axApp(filter.pid)
         let appName = getAppName(for: filter.pid) ?? "Unknown"
+
+        // Overall wall-clock budget for this traversal (see `traversalDeadline`).
+        let deadline = Date().addingTimeInterval(Self.traversalDeadline)
 
         let maxDepth = filter.maxDepth ?? 20
         let maxElements: Int = {
@@ -471,7 +683,7 @@ final class AccessibilityManager: @unchecked Sendable {
         var truncated = false
 
         for window in orderedWindows {
-            if elements.count >= maxElements {
+            if elements.count >= maxElements || Date() >= deadline {
                 truncated = true
                 break
             }
@@ -489,6 +701,7 @@ final class AccessibilityManager: @unchecked Sendable {
                 depth: 0,
                 maxDepth: maxDepth,
                 maxElements: maxElements,
+                deadline: deadline,
                 interactiveOnly: interactiveOnly,
                 allowedRoles: allowedRoles,
                 textNeedle: textNeedle,
@@ -515,6 +728,7 @@ final class AccessibilityManager: @unchecked Sendable {
                 depth: 0,
                 maxDepth: maxDepth,
                 maxElements: maxElements,
+                deadline: deadline,
                 interactiveOnly: interactiveOnly,
                 allowedRoles: allowedRoles,
                 textNeedle: textNeedle,
@@ -549,6 +763,7 @@ final class AccessibilityManager: @unchecked Sendable {
         depth: Int,
         maxDepth: Int,
         maxElements: Int,
+        deadline: Date,
         interactiveOnly: Bool,
         allowedRoles: Set<String>?,
         textNeedle: String?,
@@ -563,7 +778,10 @@ final class AccessibilityManager: @unchecked Sendable {
         truncated: inout Bool
     ) {
         if depth > maxDepth { return }
-        if elements.count >= maxElements {
+        // Stop at the element cap or the overall wall-clock budget — a huge or
+        // wedged tree can accrue many slow AX calls even under the per-call
+        // timeout, so the deadline still guarantees a prompt (truncated) return.
+        if elements.count >= maxElements || Date() >= deadline {
             truncated = true
             return
         }
@@ -593,6 +811,14 @@ final class AccessibilityManager: @unchecked Sendable {
         let roleDescription = nonEmpty(getAttribute(element, kAXRoleDescriptionAttribute) as? String)
         let value = stringifyValue(getAttribute(element, kAXValueAttribute))
         let placeholder = nonEmpty(getAttribute(element, kAXPlaceholderValueAttribute) as? String)
+        // Selection only exists on text-bearing roles; gate the extra AX read
+        // to those so a 200-element traversal doesn't pay an IPC per button for
+        // an attribute it can't have. Secure fields are excluded so a password
+        // selection is never captured.
+        let selectedText =
+            Self.textSelectionRoles.contains(normalizedRole)
+            ? nonEmpty(getAttribute(element, kAXSelectedTextAttribute) as? String)
+            : nil
 
         let actions = getSupportedActions(element)
         let enabled = (getAttribute(element, kAXEnabledAttribute) as? Bool) ?? true
@@ -656,6 +882,7 @@ final class AccessibilityManager: @unchecked Sendable {
                     roleDescription: roleDescription,
                     label: label,
                     value: value,
+                    selectedText: selectedText,
                     placeholder: placeholder,
                     path: nextPath,
                     windowId: windowId,
@@ -689,7 +916,7 @@ final class AccessibilityManager: @unchecked Sendable {
         }
 
         for child in children {
-            if elements.count >= maxElements {
+            if elements.count >= maxElements || Date() >= deadline {
                 truncated = true
                 break
             }
@@ -698,6 +925,7 @@ final class AccessibilityManager: @unchecked Sendable {
                 depth: depth + 1,
                 maxDepth: maxDepth,
                 maxElements: maxElements,
+                deadline: deadline,
                 interactiveOnly: interactiveOnly,
                 allowedRoles: allowedRoles,
                 textNeedle: textNeedle,
@@ -816,7 +1044,9 @@ struct FocusedElementSummary: Codable, Sendable {
 /// Capture the current focused window title and focused element for a given pid.
 /// Returns nil if pid is unknown or accessibility query fails.
 func computeFocusDelta(pid: Int32) -> FocusDelta? {
-    let app = AXUIElementCreateApplication(pid)
+    // Never read our own focused element off-main (see `AccessibilityManager.isSelf`).
+    if AccessibilityManager.isSelf(pid) { return nil }
+    let app = AccessibilityManager.axApp(pid)
 
     var focusedWindowTitle: String?
     var winRef: CFTypeRef?
@@ -856,6 +1086,210 @@ func computeFocusDelta(pid: Int32) -> FocusDelta? {
 
     if focusedWindowTitle == nil && focused == nil { return nil }
     return FocusDelta(focusedWindow: focusedWindowTitle, focusedElement: focused)
+}
+
+// MARK: - Focused Content (screen context)
+
+/// A direct read of the focused UI element's text, captured independently of the
+/// bounded snapshot traversal. Internal mirror of the contract's
+/// `CUFocusedContent` that `NativeMacDriver` maps across the driver boundary.
+struct FocusedContentInfo: Sendable {
+    let role: String
+    let label: String?
+    let placeholder: String?
+    let value: String?
+    let selectedText: String?
+    let viewport: String?
+}
+
+/// Read the focused UI element of `pid` directly: role/label/placeholder, the
+/// (capped) value, the current selection, and a cursor-centered or visible
+/// viewport slice for large text areas. Returns nil when nothing is focused or
+/// the element exposes nothing readable, so the distiller can fall back to the
+/// traversal's focused element.
+///
+/// `valueCap` bounds how much of a huge document (e.g. a multi-thousand-line
+/// source file's `AXValue`) we copy before slicing — a defensive guard against
+/// pulling a multi-MB string into memory. `viewportRadius` is how many UTF-16
+/// units around the caret the cursor-centered fallback keeps.
+func computeFocusedContent(
+    pid: Int32,
+    valueCap: Int = 200_000,
+    viewportRadius: Int = 1_200
+) -> FocusedContentInfo? {
+    // Never read our own focused element off-main (see `AccessibilityManager.isSelf`).
+    if AccessibilityManager.isSelf(pid) { return nil }
+    let app = AccessibilityManager.axApp(pid)
+
+    var elRef: CFTypeRef?
+    guard
+        AXUIElementCopyAttributeValue(app, kAXFocusedUIElementAttribute as CFString, &elRef)
+            == .success,
+        let element = axElement(elRef)
+    else { return nil }
+
+    func attr(_ name: String) -> CFTypeRef? {
+        var ref: CFTypeRef?
+        return AXUIElementCopyAttributeValue(element, name as CFString, &ref) == .success
+            ? ref : nil
+    }
+    func trimmed(_ s: String?) -> String? {
+        guard let s = s else { return nil }
+        let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
+        return t.isEmpty ? nil : t
+    }
+
+    let rawRole = (attr(kAXRoleAttribute) as? String) ?? "unknown"
+    let role = AccessibilityManager.normalizeRole(rawRole)
+
+    // Label cascade mirrors the traversal's (title -> description -> paired UI).
+    let label =
+        trimmed(attr(kAXTitleAttribute) as? String)
+        ?? trimmed(attr(kAXDescriptionAttribute) as? String)
+        ?? trimmed(attr("AXLabelValue") as? String)
+        ?? {
+            if let titleUI = axElement(attr("AXTitleUIElement")) {
+                var ref: CFTypeRef?
+                if AXUIElementCopyAttributeValue(titleUI, kAXValueAttribute as CFString, &ref)
+                    == .success
+                {
+                    return trimmed(ref as? String)
+                }
+            }
+            return nil
+        }()
+    let placeholder = trimmed(attr(kAXPlaceholderValueAttribute) as? String)
+
+    // Never read the contents (value/selection/viewport) of a secure field —
+    // that's a password.
+    if role == "securetextfield" {
+        if role == "unknown", label == nil, placeholder == nil { return nil }
+        return FocusedContentInfo(
+            role: role,
+            label: label,
+            placeholder: placeholder,
+            value: nil,
+            selectedText: nil,
+            viewport: nil
+        )
+    }
+
+    let rawValue = attr(kAXValueAttribute) as? String
+    let selectedText = trimmed(attr(kAXSelectedTextAttribute) as? String)
+    let viewport = focusedViewport(element: element, rawValue: rawValue, radius: viewportRadius)
+
+    // The `value` field is trimmed and capped (the viewport already used the
+    // full string for caret math above).
+    var value = trimmed(rawValue)
+    if let v = value, v.count > valueCap {
+        value = String(v.prefix(valueCap)) + "…"
+    }
+
+    if role == "unknown", label == nil, placeholder == nil, value == nil,
+        selectedText == nil, viewport == nil
+    {
+        return nil
+    }
+
+    return FocusedContentInfo(
+        role: role,
+        label: label,
+        placeholder: placeholder,
+        value: value,
+        selectedText: selectedText,
+        viewport: viewport
+    )
+}
+
+/// Extract the "what I'm looking at" slice of a focused text element: the
+/// visible character range when the element exposes one, else a window of
+/// `radius` units centered on the caret. Returns nil when the value is small
+/// enough that the whole thing already IS the viewport (the distiller shows the
+/// value in that case).
+private func focusedViewport(
+    element: AXUIElement,
+    rawValue: String?,
+    radius: Int
+) -> String? {
+    // 1) Visible character range -> the exact on-screen text. Preferred because
+    // it needs no manual offset math and reflects scroll position.
+    if let visible = parameterizedString(
+        element: element,
+        rangeAttribute: kAXVisibleCharacterRangeAttribute as String,
+        stringAttribute: kAXStringForRangeParameterizedAttribute as String
+    ) {
+        let t = visible.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !t.isEmpty { return visible }
+    }
+
+    // 2) Caret-centered slice of the full value. AX offsets are UTF-16, so slice
+    // in the UTF-16 view and convert back, guarding surrogate boundaries.
+    guard let rawValue = rawValue, !rawValue.isEmpty else { return nil }
+    let utf16 = rawValue.utf16
+    let total = utf16.count
+    // Small enough that the whole value is the viewport; let the distiller show
+    // `value` instead of a redundant slice.
+    if total <= radius * 2 { return nil }
+
+    var caret = 0
+    var rangeRef: CFTypeRef?
+    if AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &rangeRef)
+        == .success,
+        let axVal = axValue(rangeRef)
+    {
+        var cfRange = CFRange()
+        if AXValueGetValue(axVal, .cfRange, &cfRange) { caret = cfRange.location }
+    }
+
+    let start = max(0, min(caret - radius, max(0, total - radius * 2)))
+    let end = min(total, start + radius * 2)
+    guard start < end,
+        let startU = utf16.index(utf16.startIndex, offsetBy: start, limitedBy: utf16.endIndex),
+        let endU = utf16.index(utf16.startIndex, offsetBy: end, limitedBy: utf16.endIndex),
+        let s = String.Index(startU, within: rawValue),
+        let e = String.Index(endU, within: rawValue),
+        s < e
+    else {
+        // A surrogate boundary defeated the conversion — fall back to a prefix.
+        return String(rawValue.prefix(radius * 2))
+    }
+    var slice = String(rawValue[s ..< e])
+    if start > 0 { slice = "…" + slice }
+    if end < total { slice += "…" }
+    return slice
+}
+
+/// Read a parameterized string-for-range value (`stringAttribute`) using the
+/// element's current range value (`rangeAttribute`, e.g. the visible character
+/// range). Returns nil when the element doesn't support these AX APIs. The range
+/// length is bounded so a pathologically large "visible" report can't pull the
+/// whole document.
+private func parameterizedString(
+    element: AXUIElement,
+    rangeAttribute: String,
+    stringAttribute: String,
+    maxLength: Int = 4_000
+) -> String? {
+    var rangeRef: CFTypeRef?
+    guard
+        AXUIElementCopyAttributeValue(element, rangeAttribute as CFString, &rangeRef) == .success,
+        let rangeVal = axValue(rangeRef)
+    else { return nil }
+    var cfRange = CFRange()
+    guard AXValueGetValue(rangeVal, .cfRange, &cfRange), cfRange.length > 0 else { return nil }
+    if cfRange.length > maxLength { cfRange.length = maxLength }
+    guard let boundedValue = AXValueCreate(.cfRange, &cfRange) else { return nil }
+    var strRef: CFTypeRef?
+    guard
+        AXUIElementCopyParameterizedAttributeValue(
+            element,
+            stringAttribute as CFString,
+            boundedValue,
+            &strRef
+        ) == .success,
+        let s = strRef as? String
+    else { return nil }
+    return s
 }
 
 // MARK: - App Opener
@@ -969,18 +1403,23 @@ private func waitUntilReady(
     }
 }
 
+/// Copy a single AX attribute, returning nil when the element doesn't expose it.
+private func axCopyAttribute(_ element: AXUIElement, _ attribute: String) -> CFTypeRef? {
+    var value: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success
+    else { return nil }
+    return value
+}
+
+/// The element's AX children (empty when it exposes none).
+private func axChildren(_ element: AXUIElement) -> [AXUIElement] {
+    (axCopyAttribute(element, kAXChildrenAttribute as String) as? [AXUIElement]) ?? []
+}
+
 /// Whether an AX element reports at least one child. Used to detect that an
 /// Electron window's tree has finished building after `AXManualAccessibility`.
 private func axElementHasChildren(_ element: AXUIElement) -> Bool {
-    var childrenValue: CFTypeRef?
-    guard
-        AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &childrenValue)
-            == .success,
-        let children = childrenValue as? [AXUIElement]
-    else {
-        return false
-    }
-    return !children.isEmpty
+    !axChildren(element).isEmpty
 }
 
 private func launchApplication(
@@ -1073,7 +1512,11 @@ func listRunningApps() -> AppListResult {
 
 func listWindowsForPid(_ pid: Int32) -> WindowListResult {
     let appName = NSRunningApplication(processIdentifier: pid)?.localizedName ?? "Unknown"
-    let app = AXUIElementCreateApplication(pid)
+    // Never enumerate our own windows off-main (see `AccessibilityManager.isSelf`).
+    if AccessibilityManager.isSelf(pid) {
+        return WindowListResult(pid: pid, app: appName, windows: [])
+    }
+    let app = AccessibilityManager.axApp(pid)
 
     // Focused window for the `focused: true` flag.
     var focusedRef: CFTypeRef?
@@ -1176,7 +1619,14 @@ func getActiveWindow() -> MacActiveWindowInfo? {
     let pid = frontApp.processIdentifier
     let appName = frontApp.localizedName ?? "Unknown"
 
-    let app = AXUIElementCreateApplication(pid)
+    // When Osaurus itself is frontmost there's no external active window to
+    // report, and resolving our own AX tree off-main traps in SwiftUI (see
+    // `AccessibilityManager.isSelf`). Returning nil also keeps callers that seed
+    // a target pid from the frontmost app (e.g. the Computer Use loop) from
+    // ever pointing at ourselves.
+    if AccessibilityManager.isSelf(pid) { return nil }
+
+    let app = AccessibilityManager.axApp(pid)
 
     var windowRef: CFTypeRef?
     guard

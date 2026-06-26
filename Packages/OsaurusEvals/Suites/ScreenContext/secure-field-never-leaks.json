@@ -1,0 +1,24 @@
+{
+  "id": "screen_context.secure-field-never-leaks",
+  "domain": "screen_context",
+  "label": "Screen context • secure field value never leaks",
+  "query": "(ambient capture)",
+  "notes": "A Safari sign-in scene with a focused password field (direct focused-content read) and a second, non-focused secure field. The distiller's secure-field guard must surface the focused field's role/label but NEVER its value/selection, and the on-screen sampler must render the non-focused secure field as hidden rather than dumping its value. Pins the P2 secure-field traversal guard: neither secret value may appear anywhere in the rendered block, while ordinary on-screen text still flows.",
+  "fixtures": {},
+  "expect": {
+    "screenContext": {
+      "fixture": "safari-secure-login.json",
+      "focusedRoleEquals": "secure field",
+      "gistContains": ["In Safari"],
+      "mustContain": [
+        "In Safari",
+        "Focused field:",
+        "Sign in to continue"
+      ],
+      "mustNotContain": [
+        "hunter2-DoNotLeak-9921",
+        "old-secret-PleaseHide-7788"
+      ]
+    }
+  }
+}

@@ -6,6 +6,7 @@
 //  network, enabling the agent selector to list peers from other devices.
 //
 
+import Darwin
 import Foundation
 import os
 
@@ -22,6 +23,25 @@ public struct PairedRelayAgent: Identifiable, Equatable, Sendable {
     public let remoteAgentAddress: String
     /// The local provider ID used to connect to this agent.
     public let providerId: UUID
+    /// Mascot avatar id (e.g. "green") from the persisted `RemoteAgent` record
+    /// (refreshed from the agent's live metadata on connect), so the picker can
+    /// render the agent's own avatar instead of a generic glyph. nil = monogram
+    /// fallback on the name (e.g. a paired agent that hasn't connected yet).
+    public let avatar: String?
+
+    public init(
+        id: UUID,
+        name: String,
+        remoteAgentAddress: String,
+        providerId: UUID,
+        avatar: String? = nil
+    ) {
+        self.id = id
+        self.name = name
+        self.remoteAgentAddress = remoteAgentAddress
+        self.providerId = providerId
+        self.avatar = avatar
+    }
 }
 
 // MARK: - DiscoveredAgent
@@ -33,6 +53,11 @@ public struct DiscoveredAgent: Identifiable, Equatable, Sendable {
     public let agentDescription: String
     public let address: String?
     public let host: String?
+    /// A numeric IP (preferring IPv4) parsed from the service's resolved
+    /// addresses. Used as a connection fallback when the mDNS `.local`
+    /// `host` is missing or cannot be resolved on the current network (some
+    /// enterprise/VPN setups block multicast `.local` resolution).
+    public let resolvedIP: String?
     public let port: Int
     /// Whether the peer advertised Secure Channel support (`osc=1` in its
     /// TXT record). Peers without it predate end-to-end encryption and will
@@ -42,6 +67,35 @@ public struct DiscoveredAgent: Identifiable, Equatable, Sendable {
 
     /// Internal key that matches the NetService name for lookup/removal.
     internal let serviceName: String
+
+    /// Best connectable host: the stable `.local` name when present,
+    /// otherwise the resolved numeric IP. `nil` only when neither resolved.
+    public var connectHost: String? {
+        if let host, !host.isEmpty { return host }
+        if let resolvedIP, !resolvedIP.isEmpty { return resolvedIP }
+        return nil
+    }
+
+    /// A short, human-verifiable rendering of the pinned crypto `address`
+    /// (e.g. `0x742d35…bD18`), shown at the pairing decision point so the
+    /// user verifies the cryptographic identity rather than only the
+    /// attacker-controllable display name. `nil` when no address is advertised.
+    public var addressFingerprint: String? {
+        guard let address, !address.isEmpty else { return nil }
+        let hex = address.hasPrefix("0x") ? String(address.dropFirst(2)) : address
+        guard hex.count > 12 else { return address }
+        return "0x\(hex.prefix(6))…\(hex.suffix(4))"
+    }
+
+    /// True when the peer claims Secure Channel support (`osc=1`) but
+    /// advertised no crypto address to pin. A genuine Osaurus peer always
+    /// advertises its address alongside `osc=1`; the inconsistent combination
+    /// is the signature of a spoofed advertisement (or a buggy peer), so the
+    /// pairing flow refuses it rather than silently skipping the server
+    /// identity check that the addressless branch would otherwise bypass.
+    public var isUnverifiableSecureChannelPeer: Bool {
+        supportsSecureChannel && (address ?? "").isEmpty
+    }
 }
 
 // MARK: - BonjourBrowser
@@ -63,6 +117,10 @@ public final class BonjourBrowser: NSObject, ObservableObject {
     @Published public private(set) var discoveredAgents: [DiscoveredAgent] = []
 
     private var core: BonjourBrowserCore?
+    /// Whether the background browse thread has been started. Browsing begins
+    /// lazily (see `startIfNeeded`) so the singleton can be constructed — e.g.
+    /// to subscribe to `$discoveredAgents` — without probing the LAN.
+    private var hasStarted = false
 
     /// Grace period before a `didRemove` actually drops an agent from the
     /// published list. mDNS TTL flaps (sleep/wake, Wi-Fi roam, cache expiry
@@ -74,7 +132,12 @@ public final class BonjourBrowser: NSObject, ObservableObject {
 
     private override init() {
         super.init()
-        let core = BonjourBrowserCore(
+        // The core is created but NOT started here. Merely constructing the
+        // singleton (every chat window subscribes to `$discoveredAgents`) must
+        // not begin an always-on mDNS browse or trigger the Local Network
+        // permission prompt for users who never use peer discovery. The browse
+        // starts the first time a discovery surface appears (`startIfNeeded`).
+        self.core = BonjourBrowserCore(
             serviceType: BonjourAdvertiser.serviceType,
             onResolved: { agent in
                 Task { @MainActor [weak self] in self?.upsert(agent) }
@@ -83,8 +146,19 @@ public final class BonjourBrowser: NSObject, ObservableObject {
                 Task { @MainActor [weak self] in self?.remove(serviceName: serviceName) }
             }
         )
-        self.core = core
-        core.start()
+    }
+
+    // MARK: - Lifecycle
+
+    /// Begin browsing for peers if it hasn't started yet. Idempotent and cheap
+    /// to call from `onAppear` / popover-open of any discovery surface (e.g.
+    /// the agent picker). Once started, the browse runs for the process
+    /// lifetime so an active discovered-agent chat keeps re-resolving across
+    /// network changes.
+    public func startIfNeeded() {
+        guard !hasStarted else { return }
+        hasStarted = true
+        core?.start()
     }
 
     // MARK: - Private
@@ -123,7 +197,11 @@ public final class BonjourBrowser: NSObject, ObservableObject {
 /// touched only on that thread; resolved agents are delivered through the
 /// `@Sendable` callbacks. The browser lives for the process lifetime, so the
 /// thread and its run loop are never torn down.
-private final class BonjourBrowserCore: NSObject, @unchecked Sendable {
+///
+/// Module-internal (not `private`) so its pure static helpers
+/// (`firstResolvedIP`, `searchRetryDelay`) can be unit-tested via
+/// `@testable import`.
+final class BonjourBrowserCore: NSObject, @unchecked Sendable {
     private let serviceType: String
     private let onResolved: @Sendable (DiscoveredAgent) -> Void
     private let onRemoved: @Sendable (String) -> Void
@@ -134,6 +212,11 @@ private final class BonjourBrowserCore: NSObject, @unchecked Sendable {
     private var resolvingServices: [String: NetService] = [:]
     /// Service names whose first resolve failed and have one retry in flight.
     private var retriedResolves: Set<String> = []
+    /// Consecutive failed/aborted browse starts, reset by a successful
+    /// `willSearch`. Bounds the re-`searchForServices` backoff. Touched only on
+    /// the browser run-loop thread.
+    private var searchRetryCount = 0
+    static let maxSearchRetries = 5
 
     static let logger = Logger(subsystem: "com.osaurus", category: "bonjour")
 
@@ -192,11 +275,74 @@ private final class BonjourBrowserCore: NSObject, @unchecked Sendable {
             agentDescription: desc,
             address: addr,
             host: service.hostName,
+            resolvedIP: Self.firstResolvedIP(from: service.addresses),
             port: Int(service.port),
             supportsSecureChannel: osc,
             serviceName: service.name
         )
         onResolved(agent)
+    }
+
+    // MARK: - Address Parsing
+
+    /// Extract a numeric IP (preferring IPv4) from a service's resolved
+    /// `addresses`, used as a connection fallback when the `.local` hostname is
+    /// missing or unresolvable. Pure/static so it's unit-testable.
+    static func firstResolvedIP(from addresses: [Data]?) -> String? {
+        guard let addresses, !addresses.isEmpty else { return nil }
+        var ipv6Fallback: String?
+        for data in addresses {
+            let parsed: String? = data.withUnsafeBytes { raw in
+                guard let base = raw.baseAddress, raw.count >= MemoryLayout<sockaddr>.size else {
+                    return nil
+                }
+                let sa = base.assumingMemoryBound(to: sockaddr.self)
+                var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+                let status = getnameinfo(
+                    sa,
+                    socklen_t(data.count),
+                    &host,
+                    socklen_t(host.count),
+                    nil,
+                    0,
+                    NI_NUMERICHOST
+                )
+                guard status == 0 else { return nil }
+                return String(cString: host)
+            }
+            guard let ip = parsed, !ip.isEmpty else { continue }
+            // Prefer IPv4 (routable on the LAN we discovered the peer on); keep
+            // the first IPv6 only as a fallback.
+            if ip.contains(".") { return ip }
+            if ipv6Fallback == nil { ipv6Fallback = ip }
+        }
+        return ipv6Fallback
+    }
+
+    // MARK: - Browse Restart
+
+    /// Backoff before the `attempt`-th browse restart (0-based): 1s, 2s, 4s, …
+    /// capped at 30s. Returns nil once the retry budget is exhausted.
+    static func searchRetryDelay(attempt: Int) -> TimeInterval? {
+        guard attempt < maxSearchRetries else { return nil }
+        return min(pow(2.0, Double(max(0, attempt))), 30.0)
+    }
+
+    /// Schedule a bounded re-`searchForServices` on the browser's run loop.
+    /// Called from the browse-failure delegate callbacks (same thread).
+    func scheduleSearchRetry() {
+        guard let delay = Self.searchRetryDelay(attempt: searchRetryCount) else {
+            Self.logger.error(
+                "Giving up Bonjour browse after \(Self.maxSearchRetries, privacy: .public) attempts"
+            )
+            return
+        }
+        searchRetryCount += 1
+        let timer = Timer(timeInterval: delay, repeats: false) { [weak self] _ in
+            guard let self, let browser = self.browser else { return }
+            browser.searchForServices(ofType: self.serviceType, inDomain: "")
+        }
+        RunLoop.current.add(timer, forMode: .default)
     }
 }
 
@@ -207,11 +353,39 @@ private final class BonjourBrowserCore: NSObject, @unchecked Sendable {
 // `resolvingServices` only on that thread.
 
 extension BonjourBrowserCore: NetServiceBrowserDelegate {
+    func netServiceBrowserWillSearch(_ browser: NetServiceBrowser) {
+        // A successful (re)start re-arms the retry budget.
+        searchRetryCount = 0
+    }
+
+    func netServiceBrowser(
+        _ browser: NetServiceBrowser,
+        didNotSearch errorDict: [String: NSNumber]
+    ) {
+        // The browse never started — most often a denied Local Network
+        // permission or mDNSResponder not yet ready. Surface it (silent
+        // zero-discovery is the worst outcome) and retry with bounded backoff.
+        Self.logger.error(
+            "Bonjour browse failed to start: \(errorDict, privacy: .public)"
+        )
+        scheduleSearchRetry()
+    }
+
+    func netServiceBrowserDidStopSearch(_ browser: NetServiceBrowser) {
+        // We never call `stop()` ourselves, so an unsolicited stop means the
+        // browse ended unexpectedly (e.g. mDNSResponder churn). Restart it
+        // under the same bounded backoff.
+        Self.logger.error("Bonjour browse stopped unexpectedly; restarting")
+        scheduleSearchRetry()
+    }
+
     func netServiceBrowser(
         _ browser: NetServiceBrowser,
         didFind service: NetService,
         moreComing: Bool
     ) {
+        // Finding a service proves the browse is healthy; re-arm the budget.
+        searchRetryCount = 0
         service.delegate = self
         resolvingServices[service.name] = service
         service.resolve(withTimeout: 5.0)

@@ -35,11 +35,35 @@ public struct VisionContext: Sendable, Equatable {
     /// Whether the user granted cloud-vision consent. Only consulted for remote
     /// models — a local model never crosses the trust boundary.
     public let cloudConsent: Bool
+    /// How a screenshot bound for a cloud model is redacted. Defaults to
+    /// `.allText` (mask every recognized region — nothing readable leaves the
+    /// device); a user can opt into `.pii` (mask only detected sensitive text)
+    /// from Settings → Computer Use. Resolved once at run start so it can't
+    /// change under a running loop. Ignored for on-device models.
+    public let cloudScrubMode: ScrubMode
 
-    public init(modelAcceptsImages: Bool, modelIsLocal: Bool, cloudConsent: Bool) {
+    public init(
+        modelAcceptsImages: Bool,
+        modelIsLocal: Bool,
+        cloudConsent: Bool,
+        cloudScrubMode: ScrubMode = .allText
+    ) {
         self.modelAcceptsImages = modelAcceptsImages
         self.modelIsLocal = modelIsLocal
         self.cloudConsent = cloudConsent
+        self.cloudScrubMode = cloudScrubMode
+    }
+
+    /// A copy with cloud-vision consent overridden — used when a run obtains
+    /// just-in-time consent mid-loop (the snapshot taken at run start stays
+    /// otherwise unchanged).
+    public func withConsent(_ granted: Bool) -> VisionContext {
+        VisionContext(
+            modelAcceptsImages: modelAcceptsImages,
+            modelIsLocal: modelIsLocal,
+            cloudConsent: granted,
+            cloudScrubMode: cloudScrubMode
+        )
     }
 
     /// A context that never attaches pixels — the safe default for non-chat
@@ -85,5 +109,21 @@ public enum VisionAttachment {
             )
         else { return .none }
         return .needsScrubForCloud(image)
+    }
+
+    /// Whether this frame WOULD reach a cloud model if the user granted consent.
+    /// True only when pixels exist, the model is remote + image-capable, and
+    /// Screen Recording is on — i.e. consent is the only thing standing between
+    /// the run and a (scrubbed) cloud-vision attach. The loop uses this to offer
+    /// a just-in-time "enable Cloud vision" prompt instead of silently staying
+    /// AX-only. Pure + synchronous for testability.
+    public static func wouldAttachWithConsent(
+        image: CUImage?,
+        context: VisionContext,
+        availability: MacDriverAvailability
+    ) -> Bool {
+        guard image != nil, context.modelAcceptsImages, !context.modelIsLocal else { return false }
+        guard !context.cloudConsent else { return false }
+        return availability.screenRecording
     }
 }

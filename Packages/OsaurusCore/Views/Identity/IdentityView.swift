@@ -50,6 +50,7 @@ struct IdentityView: View {
                     phaseContent
                 }
                 .padding(24)
+                .settingsLandingAnchor("identity.keys")
             }
             .opacity(hasAppeared ? 1 : 0)
         }

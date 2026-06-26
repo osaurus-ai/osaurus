@@ -232,14 +232,31 @@ public struct AutonomyPolicy: Codable, Sendable, Equatable {
         case allowlist
     }
 
-    /// Normalize an app name / bundle id for case-insensitive matching.
+    /// Normalize an app name / bundle id for case-insensitive matching: trim,
+    /// lowercase, drop a trailing `.app`, and collapse internal whitespace runs
+    /// so "Safari.app", "safari", and "System  Settings" compare cleanly against
+    /// "Safari" / "system settings". Deliberately does NOT alias a bundle id to
+    /// its last path component (e.g. `com.evil.notes` → `notes`): that would let
+    /// a non-allowlisted app match an allowlist entry, weakening a security
+    /// control. Matching stays exact on the normalized form.
     public static func normalize(_ app: String) -> String {
-        app.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        var s = app.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if s.hasSuffix(".app") { s = String(s.dropLast(4)) }
+        let parts = s.split(whereSeparator: { $0 == " " || $0 == "\t" || $0 == "\n" })
+        return parts.joined(separator: " ")
     }
 
     /// Whether an app may be driven at all. The allowlist is checked first,
     /// before any disposition. An unknown (`nil`) app under an active
     /// allowlist is rejected — we can't confirm it's permitted.
+    ///
+    /// Scope decision: the allowlist gates ACTIONS (and `open`), not perception.
+    /// `observe` / `find` / the initial perceive are read-only and never mutate
+    /// an app; what may LEAVE the device from perception is governed separately
+    /// by the cloud-vision consent + `FrameScrubber` boundary. Gating perception
+    /// on the allowlist would only block the agent from reading an
+    /// already-frontmost window the user can see themselves, with no privacy
+    /// gain, so it is intentionally not gated here.
     public func isAppAllowed(_ app: String?) -> Bool {
         guard let allowlist, !allowlist.isEmpty else { return true }
         guard let app, !app.isEmpty else { return false }
@@ -268,4 +285,35 @@ public struct AutonomyPolicy: Codable, Sendable, Equatable {
     /// The shipped default policy: balanced everywhere, no per-app overrides,
     /// no allowlist.
     public static var defaultPolicy: AutonomyPolicy { AutonomyPolicy() }
+
+    // MARK: - Dangerous-app guardrail
+
+    /// Apps where an action can run code, change system state, or expose
+    /// secrets — so an action there ALWAYS confirms, regardless of the preset,
+    /// per-app override, or ceiling. This is a safety FLOOR that's independent
+    /// of the (often-empty) user allowlist: it can only make an action stricter,
+    /// never weaken one, and the user can still approve at the prompt. Matched
+    /// against the normalized app name or bundle id, by substring, so
+    /// "Terminal", "com.apple.Terminal", and "Apple Terminal" all match.
+    public static let forcedConfirmAppNeedles: Set<String> = [
+        "terminal", "iterm", "ghostty", "alacritty", "kitty", "warp",
+        "xterm", "console",
+        "keychain access", "com.apple.keychainaccess",
+        "system settings", "system preferences", "com.apple.systempreferences",
+        "activity monitor", "com.apple.activitymonitor",
+        "disk utility", "com.apple.diskutility",
+        "script editor", "com.apple.scripteditor",
+        "automator", "com.apple.automator",
+        "1password", "bitwarden", "dashlane", "lastpass",
+    ]
+
+    /// Whether driving `app` must always confirm because it's a sensitive app
+    /// (see `forcedConfirmAppNeedles`). `nil`/empty apps don't match — the
+    /// allowlist already rejects unknown apps under a restricted policy.
+    public func requiresForcedConfirm(app: String?) -> Bool {
+        guard let app else { return false }
+        let n = Self.normalize(app)
+        guard !n.isEmpty else { return false }
+        return Self.forcedConfirmAppNeedles.contains { n.contains($0) }
+    }
 }

@@ -1,0 +1,24 @@
+{
+  "id": "screen_context.mail-compose-reply",
+  "domain": "screen_context",
+  "label": "Screen context • Mail compose reply surfaces draft",
+  "query": "(ambient capture)",
+  "notes": "Native Mail compose shape: the focused message-body text area carries the draft, selection, and viewport while nearby message text remains secondary on-screen context.",
+  "fixtures": {},
+  "expect": {
+    "screenContext": {
+      "fixture": "mail-compose-reply.json",
+      "focusedRoleEquals": "text area",
+      "selectedTextContains": "draft checklist",
+      "viewingContains": ["rollback plan"],
+      "gistContains": ["In Mail", "Project Update - Reply"],
+      "mustContain": [
+        "In Mail",
+        "Focused field: text area \"Message Body\"",
+        "Viewing:",
+        "Selected text:",
+        "Maya Example"
+      ]
+    }
+  }
+}

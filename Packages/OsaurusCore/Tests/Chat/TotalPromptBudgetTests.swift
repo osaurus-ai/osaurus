@@ -99,23 +99,36 @@ struct TotalPromptBudgetTests {
             maxBytes: SystemPromptComposer.soulSmallMaxBytes
         )
 
-        // Enabled manifest at the 70-tool cap, compact (the `.small` form).
-        let bigTools = (0 ..< SystemPromptTemplates.enabledManifestToolCap).map {
-            SystemPromptTemplates.ManifestCapability(
-                name: "plugin_tool_\($0)",
-                description: "Does a focused thing with the service"
+        // Voluminous install, compact (`.small`) form. Under tiering each
+        // plugin costs ONE manifest line regardless of its tool count, so the
+        // compact manifest now scales with plugin COUNT, not tool count —
+        // model a heavy install (25 plugins, some skill-governed) to bound
+        // that growth.
+        let manyPlugins = (0 ..< 25).map { i in
+            SystemPromptTemplates.ManifestPluginGroup(
+                groupId: "service.plugin_\(i)",
+                pluginDisplay: "Service Plugin \(i)",
+                skills: i % 4 == 0
+                    ? [
+                        SystemPromptTemplates.ManifestCapability(
+                            name: "Guide \(i)",
+                            description: "How to drive the plugin tools"
+                        )
+                    ]
+                    : [],
+                tools: (0 ..< 6).map {
+                    SystemPromptTemplates.ManifestCapability(
+                        name: "tool_\(i)_\($0)",
+                        description: "Does a focused thing with the service"
+                    )
+                }
             )
         }
-        let manifest = makeManifest(
-            pluginDisplay: "Big Plugin",
-            skills: [
-                SystemPromptTemplates.ManifestCapability(
-                    name: "Big Plugin Guide",
-                    description: "How to drive the plugin tools"
-                )
-            ],
-            tools: bigTools
-        )
+        let manifest =
+            SystemPromptTemplates.enabledCapabilitiesManifest(
+                groups: manyPlugins,
+                compact: true
+            ) ?? ""
 
         let sections: [String] = [
             SystemPromptTemplates.platformIdentity,
@@ -152,7 +165,10 @@ struct TotalPromptBudgetTests {
     /// The everyday `.small` configuration: modest manifest, no plugin
     /// creation, no SOUL yet, no secrets/packages.
     private func typicalSmallPrompt() -> String {
+        // A real plugin tiers to ONE line under the compact manifest
+        // regardless of its tool count — so 10 tools cost one line, not ten.
         let manifest = makeManifest(
+            groupId: "osaurus.mail",
             pluginDisplay: "Mail",
             skills: [],
             tools: (0 ..< 10).map {
@@ -186,6 +202,7 @@ struct TotalPromptBudgetTests {
     }
 
     private func makeManifest(
+        groupId: String,
         pluginDisplay: String,
         skills: [SystemPromptTemplates.ManifestCapability],
         tools: [SystemPromptTemplates.ManifestCapability]
@@ -193,6 +210,7 @@ struct TotalPromptBudgetTests {
         SystemPromptTemplates.enabledCapabilitiesManifest(
             groups: [
                 SystemPromptTemplates.ManifestPluginGroup(
+                    groupId: groupId,
                     pluginDisplay: pluginDisplay,
                     skills: skills,
                     tools: tools
@@ -211,7 +229,7 @@ struct TotalPromptBudgetTests {
         let total = promptTokens + toolTokens
         let window = ContextSizeResolver.smallCeiling  // 8192
 
-        // The full worst case (70-tool manifest + plugin creator + SOUL
+        // The full worst case (many-plugin manifest + plugin creator + SOUL
         // at cap) must at minimum fit the window with room for one real
         // exchange. The live number is printed in the failure message so
         // reviewers re-anchor deliberately, not silently.

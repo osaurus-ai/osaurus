@@ -345,6 +345,8 @@ public struct Schedule: Codable, Identifiable, Sendable, Equatable {
     public var lastTriggeredAt: Date?
     /// The chat session ID from the last run (for viewing results)
     public var lastChatSessionId: UUID?
+    /// Bounded local execution history inferred from schedule persistence transitions
+    public var runHistory: [ScheduleRunHistoryEntry]
     /// When the schedule was created
     public let createdAt: Date
     /// When the schedule was last modified
@@ -363,6 +365,7 @@ public struct Schedule: Codable, Identifiable, Sendable, Equatable {
         lastRunAt: Date? = nil,
         lastTriggeredAt: Date? = nil,
         lastChatSessionId: UUID? = nil,
+        runHistory: [ScheduleRunHistoryEntry] = [],
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
@@ -378,6 +381,7 @@ public struct Schedule: Codable, Identifiable, Sendable, Equatable {
         self.lastRunAt = lastRunAt
         self.lastTriggeredAt = lastTriggeredAt
         self.lastChatSessionId = lastChatSessionId
+        self.runHistory = runHistory
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
@@ -390,6 +394,7 @@ public struct Schedule: Codable, Identifiable, Sendable, Equatable {
         case mode  // legacy key (chat / work) — ignored on decode
         case folderPath, folderBookmark
         case frequency, isEnabled, lastRunAt, lastTriggeredAt, lastChatSessionId
+        case runHistory
         case createdAt, updatedAt
     }
 
@@ -412,6 +417,7 @@ public struct Schedule: Codable, Identifiable, Sendable, Equatable {
         lastRunAt = try container.decodeIfPresent(Date.self, forKey: .lastRunAt)
         lastTriggeredAt = try container.decodeIfPresent(Date.self, forKey: .lastTriggeredAt)
         lastChatSessionId = try container.decodeIfPresent(UUID.self, forKey: .lastChatSessionId)
+        runHistory = try container.decodeIfPresent([ScheduleRunHistoryEntry].self, forKey: .runHistory) ?? []
         createdAt = try container.decode(Date.self, forKey: .createdAt)
         updatedAt = try container.decode(Date.self, forKey: .updatedAt)
     }
@@ -430,6 +436,9 @@ public struct Schedule: Codable, Identifiable, Sendable, Equatable {
         try container.encodeIfPresent(lastRunAt, forKey: .lastRunAt)
         try container.encodeIfPresent(lastTriggeredAt, forKey: .lastTriggeredAt)
         try container.encodeIfPresent(lastChatSessionId, forKey: .lastChatSessionId)
+        if !runHistory.isEmpty {
+            try container.encode(runHistory, forKey: .runHistory)
+        }
         try container.encode(createdAt, forKey: .createdAt)
         try container.encode(updatedAt, forKey: .updatedAt)
     }

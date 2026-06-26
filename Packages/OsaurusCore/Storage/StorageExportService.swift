@@ -220,6 +220,11 @@ public actor StorageExportService {
         // the way out (with the new key, which we install before
         // the reopen).
         try OsaurusDatabaseHandle.withAllHandlesQuiesced {
+            // Plugin and per-agent DBs aren't registered handles, so close
+            // their live connections too — the in-place `PRAGMA rekey` below
+            // must not fight an open fd on those files. They reopen lazily.
+            AgentDatabaseStore.shared.closeAll()
+            PluginDatabase.closeAllOpen()
             for target in StorageDatabaseCatalog.databaseTargets() {
                 do {
                     try rekeyDatabase(path: target.path, oldKey: oldKey, newKey: newKey)

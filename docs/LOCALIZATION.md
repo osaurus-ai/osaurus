@@ -18,8 +18,8 @@ All SwiftUI and `String` UI text in **OsaurusCore** must resolve against the **p
 | English | `en` | Source language |
 | German | `de` | Required |
 | Simplified Chinese | `zh-Hans` | Required |
+| Korean | `ko` | Required |
 | Spanish | `es` | Help wanted |
-| Korean | `ko` | Help wanted |
 | Japanese | `ja` | Help wanted |
 | Traditional Chinese | `zh-Hant` | Help wanted |
 
@@ -93,6 +93,8 @@ In Xcode: **Product → Export Localizations…** / **Import Localizations…** 
 | `scripts/i18n/lint-swift-literals.py` | Flag Swift literals that bypass package-bundle localization |
 | `scripts/i18n/merge-locale.py` | Copy one locale from another catalog (existing keys only) |
 | `scripts/i18n/fill-zh-hans.py` | Optional machine-translation backfill (`pip install deep-translator`) |
+| `scripts/i18n/export-untranslated.py` | Export keys missing a locale into batched JSON for (LLM/human) translators |
+| `scripts/i18n/apply-ko.py` | Apply translated JSON maps back into a catalog with placeholder/coverage validation and Xcode-exact formatting (`--locale` is configurable) |
 | `scripts/i18n/prune-catalog.py` | Remove en-only / empty Xcode auto-extraction stubs and stale keys |
 | `scripts/i18n/leaderboard.py` | Generate the translator leaderboard in `TRANSLATORS.md` from merged PRs (needs `gh`) |
 

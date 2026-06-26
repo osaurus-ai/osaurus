@@ -1,0 +1,17 @@
+{
+  "id": "screen_context.xcode-selection-and-viewport",
+  "domain": "screen_context",
+  "label": "Screen context • Xcode selection + viewport surface",
+  "query": "(ambient capture)",
+  "notes": "Same Xcode scene, scoring the two new signals directly: the cursor-centered viewport ('Viewing:') and the user's current selection ('Selected text:'). Pins that a selection is surfaced verbatim and the viewport carries multiple lines of the focused function.",
+  "fixtures": {},
+  "expect": {
+    "screenContext": {
+      "fixture": "xcode-storagemutationgate.json",
+      "focusedRoleEquals": "text area",
+      "selectedTextContains": "StorageError.gateClosed",
+      "viewingContains": ["guard isEnabled", "StorageMutation"],
+      "mustContain": ["Selected text:", "Viewing:"]
+    }
+  }
+}

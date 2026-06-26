@@ -21,7 +21,17 @@ final class BlockMemoizer {
     private var lastThinkingLen = 0
     private var lastPendingToolName: String?
     private var lastPendingToolArgSize = 0
+    /// Remote-agent (Mode 2) tool-activity counter of the streaming turn. A
+    /// trace can change the persistent remote tool chips without touching
+    /// content/thinking length or `pendingToolName`, so without this the fast
+    /// path would keep returning the stale cached blocks and the chips would
+    /// never appear/transition during a remote run.
+    private var lastRemoteToolTick = 0
     private var lastVersion = -1
+    /// The agent name baked into cached header blocks. A change (e.g. switching
+    /// from a local agent to a remote one) must force a full rebuild so stale
+    /// "Osaurus" headers aren't kept by the fast / incremental paths.
+    private var lastAgentName: String?
     /// Must match `streamingTurnId` for the fast path — `generateBlocks` depends on it for typing / prefill UI.
     private var lastStreamingTurnId: UUID?
     private let streamingMaxBlocks = 80
@@ -44,12 +54,18 @@ final class BlockMemoizer {
         let thinkingLen = turns.last?.thinkingLength ?? 0
         let pendingToolName = turns.last?.pendingToolName
         let pendingToolArgSize = turns.last?.pendingToolArgSize ?? 0
+        let remoteToolTick = turns.last?.remoteToolActivityTick ?? 0
+        // The header name is baked into cached blocks; a change must invalidate
+        // the fast / incremental / append paths so headers re-render with it.
+        let agentNameChanged = agentName != lastAgentName
 
         // Fast path: nothing changed (including which turn is streaming — drives typing indicator / placeholders).
-        if count == lastCount && lastId == lastTurnId
+        if !agentNameChanged
+            && count == lastCount && lastId == lastTurnId
             && contentLen == lastContentLen && thinkingLen == lastThinkingLen
             && pendingToolName == lastPendingToolName
             && pendingToolArgSize == lastPendingToolArgSize
+            && remoteToolTick == lastRemoteToolTick
             && version == lastVersion && !cached.isEmpty
             && streamingTurnId == lastStreamingTurnId
         {
@@ -58,13 +74,15 @@ final class BlockMemoizer {
 
         // Incremental: only last turn's content changed during streaming
         let canIncrement =
-            streamingTurnId != nil
+            !agentNameChanged
+            && streamingTurnId != nil
             && count == lastCount && lastId == lastTurnId
             && lastId != nil && !cached.isEmpty
 
         // Append: one or more turns added at the end; previous last turn still matches
         let canAppend =
-            !canIncrement
+            !agentNameChanged
+            && !canIncrement
             && count > lastCount && !cached.isEmpty
             && lastCount >= 1 && turns[lastCount - 1].id == lastTurnId
 
@@ -111,8 +129,10 @@ final class BlockMemoizer {
         lastThinkingLen = thinkingLen
         lastPendingToolName = pendingToolName
         lastPendingToolArgSize = pendingToolArgSize
+        lastRemoteToolTick = remoteToolTick
         lastVersion = version
         lastStreamingTurnId = streamingTurnId
+        lastAgentName = agentName
 
         // incremental path: only rebuild the suffix portion of the map; preserve stable prefix
         if wasIncremental, let prefixEnd = blocks.firstIndex(where: { $0.turnId == turns[count - 1].id }) {
@@ -198,6 +218,7 @@ final class BlockMemoizer {
         lastPendingToolArgSize = 0
         lastVersion = -1
         lastStreamingTurnId = nil
+        lastAgentName = nil
     }
 
     // MARK: - Group Header Map

@@ -27,7 +27,7 @@ struct ToastView: View {
     }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: verticalAlignment, spacing: 12) {
             leadingContent
 
             VStack(alignment: .leading, spacing: 8) {
@@ -55,6 +55,15 @@ struct ToastView: View {
         }
         .frame(maxWidth: 400, alignment: .leading)
         .fixedSize(horizontal: false, vertical: true)
+    }
+
+    /// A title-only toast is a single short row, so center it against the icon.
+    /// Toasts that add a message line or an action button grow taller, where
+    /// top alignment keeps the icon beside the title row.
+    private var verticalAlignment: VerticalAlignment {
+        let hasMessage = toast.message?.isEmpty == false
+        let hasActionButton = hasAction && toast.effectiveActionTitle != nil
+        return (hasMessage || hasActionButton) ? .top : .center
     }
 
     // MARK: - Leading Content

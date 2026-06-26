@@ -1,0 +1,38 @@
+{
+  "apps": [
+    { "pid": 503, "bundleId": "com.apple.Terminal", "name": "Terminal", "active": true, "hidden": false },
+    { "pid": 504, "bundleId": "com.apple.systempreferences", "name": "System Settings", "active": false, "hidden": false }
+  ],
+  "activeWindow": {
+    "pid": 503,
+    "app": "Terminal",
+    "title": "zsh - ScreenContext Lab",
+    "x": 0, "y": 0, "w": 1180, "h": 760
+  },
+  "windowsByPid": {
+    "503": [
+      { "windowId": 1, "title": "zsh - ScreenContext Lab", "focused": true, "minimized": false, "x": 0, "y": 0, "w": 1180, "h": 760 }
+    ],
+    "504": [
+      { "windowId": 2, "title": "Privacy & Security - Accessibility", "focused": false, "minimized": false, "x": 118, "y": 92, "w": 980, "h": 700 }
+    ]
+  },
+  "snapshot": {
+    "app": "Terminal",
+    "focusedWindow": "zsh - ScreenContext Lab",
+    "truncated": false,
+    "windows": [
+      { "id": 1, "title": "zsh - ScreenContext Lab", "focused": true, "x": 0, "y": 0, "w": 1180, "h": 760 }
+    ],
+    "elements": [
+      { "id": "terminal", "role": "textarea", "label": "Terminal", "value": "cd /tmp/screen-context-lab\nsudo synthetic-admin-tool --dry-run\n# awaiting explicit user confirmation", "focused": true, "enabled": true, "x": 18, "y": 42, "w": 1140, "h": 660, "actions": [] },
+      { "id": "prompt", "role": "statictext", "value": "Password prompt is not active; command is staged for review.", "focused": false, "enabled": true, "x": 18, "y": 704, "w": 760, "h": 22, "actions": [] }
+    ]
+  },
+  "focusedContent": {
+    "role": "textarea",
+    "label": "Terminal",
+    "value": "cd /tmp/screen-context-lab\nsudo synthetic-admin-tool --dry-run\n# awaiting explicit user confirmation",
+    "viewport": "sudo synthetic-admin-tool --dry-run\n# awaiting explicit user confirmation"
+  }
+}

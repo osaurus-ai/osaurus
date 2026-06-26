@@ -17,6 +17,9 @@ struct SettingsSection<Content: View>: View {
 
     let title: String
     let icon: String
+    /// Settings-search landing anchor for section-level results (no single
+    /// control to point at), e.g. Notifications or Legal.
+    var anchorId: String? = nil
     @ViewBuilder let content: () -> Content
 
     var body: some View {
@@ -44,6 +47,61 @@ struct SettingsSection<Content: View>: View {
                         .stroke(themeManager.currentTheme.cardBorder, lineWidth: 1)
                 )
         )
+        .settingsLandingAnchor(anchorId)
+    }
+}
+
+// MARK: - Search Highlight
+
+extension View {
+    /// Wraps a control in a soft accent glow while it's the active search-result
+    /// landing target — no border, just a halo that hugs the control's shape. A
+    /// no-op when `active` is false. Driven by `settingsLandingAnchor`.
+    func settingsSearchHighlight(_ active: Bool) -> some View {
+        modifier(SettingsSearchHighlightModifier(active: active))
+    }
+}
+
+private struct SettingsSearchHighlightModifier: ViewModifier {
+    let active: Bool
+    @ObservedObject private var themeManager = ThemeManager.shared
+
+    /// 0 at rest, eased up to 1 and gently back to 0 once when the control
+    /// becomes a match — a single soft breath layered over a faint persistent
+    /// glow, so the matched control stays gently lit without any border.
+    @State private var glow: CGFloat = 0
+
+    /// Half the breath: rise over `breathDuration`, fall over `breathDuration`.
+    private static let breathDuration: Double = 0.9
+
+    private var glowOpacity: Double { active ? 0.22 + 0.5 * Double(glow) : 0 }
+    private var glowRadius: CGFloat { active ? 6 + 14 * glow : 0 }
+
+    func body(content: Content) -> some View {
+        let theme = themeManager.currentTheme
+        content
+            // The glow follows the control's own (rounded) shape — no ring.
+            .shadow(color: theme.accentColor.opacity(glowOpacity), radius: glowRadius)
+            .animation(.easeOut(duration: 0.25), value: active)
+            .onAppear { if active { firePulse() } }
+            .onChange(of: active) { _, isActive in
+                if isActive { firePulse() } else { glow = 0 }
+            }
+    }
+
+    /// One smooth breath: ease the glow up, then — on completion — ease it back
+    /// down to the resting glow. Using the completion handler (rather than a
+    /// repeating / autoreversing animation) keeps the model value honest, so the
+    /// glow can't snap or get stuck bright when it finishes.
+    private func firePulse() {
+        glow = 0
+        withAnimation(.easeInOut(duration: Self.breathDuration)) {
+            glow = 1
+        } completion: {
+            withAnimation(.easeInOut(duration: Self.breathDuration)) {
+                glow = 0
+            }
+        }
     }
 }
 
@@ -54,6 +112,9 @@ struct SettingsField<Content: View>: View {
 
     let label: String
     var hint: String? = nil
+    /// Settings-search landing anchor for the control. When a search result
+    /// targets this id, the control scrolls into view and glows.
+    var anchorId: String? = nil
     @ViewBuilder let content: () -> Content
 
     var body: some View {
@@ -62,7 +123,9 @@ struct SettingsField<Content: View>: View {
                 .font(.system(size: 11, weight: .medium))
                 .foregroundColor(themeManager.currentTheme.secondaryText)
 
+            // Glow the control itself, not the label/hint around it.
             content()
+                .settingsLandingAnchor(anchorId)
 
             if let hint = hint {
                 Text(LocalizedStringKey(hint), bundle: .module)
@@ -79,6 +142,8 @@ struct SettingsSubsection<Content: View>: View {
     @ObservedObject private var themeManager = ThemeManager.shared
 
     let label: String
+    /// Settings-search landing anchor for this subsection.
+    var anchorId: String? = nil
     @ViewBuilder let content: () -> Content
 
     var body: some View {
@@ -99,6 +164,7 @@ struct SettingsSubsection<Content: View>: View {
             content()
                 .padding(.leading, 9)
         }
+        .settingsLandingAnchor(anchorId)
     }
 }
 
@@ -111,6 +177,7 @@ struct StyledSettingsTextField: View {
     @Binding var text: String
     let placeholder: String
     let help: String
+    var anchorId: String? = nil
 
     @State private var isFocused = false
 
@@ -158,6 +225,7 @@ struct StyledSettingsTextField: View {
                             )
                     )
             )
+            .settingsLandingAnchor(anchorId)
 
             if !help.isEmpty {
                 Text(LocalizedStringKey(help), bundle: .module)
@@ -181,6 +249,7 @@ struct SettingsSliderField: View {
     let step: Float
     let defaultValue: Float
     let formatString: String
+    var anchorId: String? = nil
 
     @State private var sliderValue: Float = 0
     @State private var isInitialized = false
@@ -249,6 +318,7 @@ struct SettingsSliderField: View {
                             .stroke(themeManager.currentTheme.inputBorder, lineWidth: 1)
                     )
             )
+            .settingsLandingAnchor(anchorId)
 
             if !help.isEmpty {
                 Text(LocalizedStringKey(help), bundle: .module)
@@ -284,6 +354,7 @@ struct SettingsStepperField: View {
     let range: ClosedRange<Int>
     let step: Int
     let defaultValue: Int
+    var anchorId: String? = nil
 
     @State private var isFocused = false
 
@@ -374,6 +445,7 @@ struct SettingsStepperField: View {
                             )
                     )
             )
+            .settingsLandingAnchor(anchorId)
 
             if !help.isEmpty {
                 Text(LocalizedStringKey(help), bundle: .module)
@@ -403,6 +475,8 @@ struct SettingsToggle: View {
     let title: String
     let description: String
     var badge: String? = nil
+    /// Settings-search landing anchor for this toggle.
+    var anchorId: String? = nil
     @Binding var isOn: Bool
 
     var body: some View {
@@ -438,6 +512,7 @@ struct SettingsToggle: View {
                         .stroke(themeManager.currentTheme.inputBorder, lineWidth: 1)
                 )
         )
+        .settingsLandingAnchor(anchorId)
     }
 }
 

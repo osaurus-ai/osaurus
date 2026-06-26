@@ -102,6 +102,10 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
     /// `resolveTools` — `computer_use` is stripped in BOTH auto and manual
     /// mode unless the agent has opted in.
     public let computerUseEnabled: Bool
+    /// Per-agent opt-in for spawn / agent delegation. Enforced authoritatively in
+    /// `resolveTools` — `spawn` / `local_delegate` / `image_generate` / `image_edit`
+    /// are stripped unless the agent has opted in (AND with the global config gates).
+    public let spawnDelegationEnabled: Bool
 
     public init(
         agentId: UUID,
@@ -118,7 +122,8 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
         speakEnabled: Bool = false,
         searchMemoryEnabled: Bool = false,
         selfSchedulingEnabled: Bool = false,
-        computerUseEnabled: Bool = false
+        computerUseEnabled: Bool = false,
+        spawnDelegationEnabled: Bool = false
     ) {
         self.agentId = agentId
         self.toolsDisabled = toolsDisabled
@@ -135,6 +140,7 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
         self.searchMemoryEnabled = searchMemoryEnabled
         self.selfSchedulingEnabled = selfSchedulingEnabled
         self.computerUseEnabled = computerUseEnabled
+        self.spawnDelegationEnabled = spawnDelegationEnabled
     }
 
     /// Read every `effective*` field in one MainActor batch.
@@ -172,7 +178,8 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
             speakEnabled: caps.speakEnabled,
             searchMemoryEnabled: caps.searchMemoryEnabled,
             selfSchedulingEnabled: caps.selfSchedulingEnabled,
-            computerUseEnabled: caps.computerUseEnabled
+            computerUseEnabled: caps.computerUseEnabled,
+            spawnDelegationEnabled: caps.spawnDelegationEnabled
         )
     }
 }

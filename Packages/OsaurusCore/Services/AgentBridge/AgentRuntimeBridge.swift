@@ -50,6 +50,33 @@ public struct AgentMutationResult: Codable, Sendable {
     }
 }
 
+/// Result envelope from `bridge.insertMany(...)`. `rowIDs` are returned in
+/// input order; `count` is `rowIDs.count` for inserts.
+public struct AgentBulkInsertResult: Codable, Sendable {
+    public var rowIDs: [Int64]
+    public var count: Int
+
+    public init(rowIDs: [Int64], count: Int) {
+        self.rowIDs = rowIDs
+        self.count = count
+    }
+}
+
+/// Result envelope from `bridge.importRows(...)`. `columns` echoes the
+/// resolved target column order so the tool can report what landed without
+/// re-reading the data.
+public struct AgentImportResult: Codable, Sendable {
+    public var table: String
+    public var rowsImported: Int
+    public var columns: [String]
+
+    public init(table: String, rowsImported: Int, columns: [String]) {
+        self.table = table
+        self.rowsImported = rowsImported
+        self.columns = columns
+    }
+}
+
 /// Request passed to `bridge.scheduleNextRun(...)`. The bridge resolves the
 /// owning agent's `AgentScheduleSettings` and applies the clamp ladder; the
 /// `scheduledBy` field distinguishes a self-scheduled run (`.agent`) from
@@ -175,6 +202,37 @@ public protocol AgentRuntimeBridge: Sendable {
         keyColumns: [String],
         row: [String: AgentSQLValue]
     ) throws -> AgentInsertResult
+
+    /// Insert many in-context rows in one (chunked) batch. Back-compat
+    /// sibling of `insert(...)` for the `rows[]` form of `db_insert`.
+    @discardableResult
+    func insertMany(
+        agentId: UUID,
+        table: String,
+        rows: [[String: AgentSQLValue]]
+    ) throws -> AgentBulkInsertResult
+
+    /// Upsert many in-context rows in one (chunked) batch.
+    @discardableResult
+    func upsertMany(
+        agentId: UUID,
+        table: String,
+        keyColumns: [String],
+        rows: [[String: AgentSQLValue]]
+    ) throws -> AgentMutationResult
+
+    /// Host-mediated bulk import. `rows` are parsed on the host (no model
+    /// tokens spent per row). `keyColumns` empty ⇒ insert; non-empty ⇒
+    /// upsert. `columns` is the resolved target column order, echoed back
+    /// in the result.
+    @discardableResult
+    func importRows(
+        agentId: UUID,
+        table: String,
+        rows: [[String: AgentSQLValue]],
+        keyColumns: [String],
+        columns: [String]
+    ) throws -> AgentImportResult
 
     @discardableResult
     func update(

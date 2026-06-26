@@ -28,6 +28,9 @@ struct ManagementView: View {
     // throttles these into a single coalesced snapshot and hoists
     // the expensive Memory SQLite / Keychain probes off the body.
     @ObservedObject private var badgeStore = ManagementBadgeStore.shared
+    /// Observed so the pending landing anchor reaches every tab via the
+    /// environment, re-rendering their glow targets when a result lands.
+    @ObservedObject private var highlightCoordinator = SettingsHighlightCoordinator.shared
 
     @EnvironmentObject private var updater: UpdaterViewModel
 
@@ -77,7 +80,6 @@ struct ManagementView: View {
             .overlay(ThemedAlertHost(scope: .management))
             .onAppear(perform: handleAppear)
             .onChange(of: stateManager.selectedTab) { handleTabChange(to: $1) }
-            .onChange(of: searchText) { handleSearchChange(to: $1) }
             // The pairing deeplink router publishes an invite here when an
             // `osaurus://...?pair=...` URL is opened. Forwarding it through
             // a local @State (`presentingInvite`) gives the sheet a stable
@@ -116,14 +118,32 @@ struct ManagementView: View {
 
 private extension ManagementView {
 
+    var isSearching: Bool {
+        !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     var sidebarNavigation: some View {
         SidebarNavigation(
             selection: selectedTabBinding,
             searchText: $searchText,
             items: sidebarItems
         ) { tabId in
-            contentView(for: tabId)
-                .opacity(hasAppeared ? 1 : 0)
+            Group {
+                // A live query takes over the content pane with cross-tab
+                // results; selecting one navigates to its tab (and clears
+                // the query). Otherwise show the selected tab as usual.
+                if isSearching {
+                    SettingsSearchResultsView(query: searchText) { entry in
+                        handleResultSelected(entry)
+                    }
+                } else {
+                    contentView(for: tabId)
+                }
+            }
+            .opacity(hasAppeared ? 1 : 0)
+            // Propagate the pending landing anchor to every tab so the matched
+            // control glows wherever it lives.
+            .environment(\.settingsLandingPending, highlightCoordinator.pending)
         } footer: {
             updateButton
         }
@@ -142,7 +162,9 @@ private extension ManagementView {
         Binding(
             get: { stateManager.selectedTab.rawValue },
             set: { newValue in
-                if let tab = ManagementTab.resolved(from: newValue) {
+                if let tab = ManagementTab.resolved(from: newValue),
+                    ManagementTab.visibleCases.contains(tab)
+                {
                     stateManager.selectedTab = tab
                 }
             }
@@ -166,6 +188,8 @@ private extension ManagementView {
             AgentsView(deeplinkAgentId: deeplinkAgentId)
         case .plugins:
             PluginsView()
+        case .channels:
+            AgentsView(deeplinkAgentId: deeplinkAgentId)
         case .sandbox:
             SandboxView()
         case .tools:
@@ -192,12 +216,16 @@ private extension ManagementView {
             PermissionsView()
         case .computerUse:
             ComputerUseSettingsView()
+        case .spawn:
+            SpawnSettingsView()
         case .privacy:
             PrivacyView()
         case .identity:
             IdentityView()
         case .storage:
             StorageSettingsView()
+        case .chat:
+            ChatSettingsView()
         case .settings:
             ConfigurationView(searchText: $searchText)
         case .none:
@@ -211,7 +239,7 @@ private extension ManagementView {
 private extension ManagementView {
 
     var sidebarItems: [SidebarItemData] {
-        ManagementTab.allCases.map { tab in
+        ManagementTab.visibleCases.map { tab in
             tab.sidebarItem(
                 badge: badgeCount(for: tab),
                 badgeHighlight: badgeHighlight(for: tab)
@@ -234,6 +262,10 @@ private extension ManagementView {
 private extension ManagementView {
 
     func handleAppear() {
+        if !ManagementTab.visibleCases.contains(stateManager.selectedTab) {
+            stateManager.selectedTab = .agents
+        }
+
         // Delay fade-in to prevent initial layout jank
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
             withAnimation(.easeOut(duration: 0.2)) {
@@ -244,6 +276,11 @@ private extension ManagementView {
     }
 
     func handleTabChange(to newTab: ManagementTab) {
+        guard ManagementTab.visibleCases.contains(newTab) else {
+            stateManager.selectedTab = .agents
+            return
+        }
+
         // Leave a trail of which screen was on-screen so a layout-engine app
         // hang (no first-party frame in the stack) can be localized to a tab.
         CrashReportingService.recordBreadcrumb(
@@ -251,18 +288,32 @@ private extension ManagementView {
             message: "management.tab \(newTab.rawValue)"
         )
 
-        // Clear search when navigating away from settings
-        if newTab != .settings && !searchText.isEmpty {
+        // Changing tabs exits search so the chosen tab shows in full (the
+        // cross-tab results pane only stands in while a query is active).
+        if !searchText.isEmpty {
             searchText = ""
         }
     }
 
-    func handleSearchChange(to newValue: String) {
-        // Auto-navigate to settings when searching
-        if !newValue.isEmpty && stateManager.selectedTab != .settings {
-            withAnimation(.easeOut(duration: 0.2)) {
-                stateManager.selectedTab = .settings
+    /// Navigate to the tab owning a chosen search result, then scroll to and
+    /// glow the matching control. Clearing the query first dismisses the results
+    /// pane so the destination tab renders normally.
+    func handleResultSelected(_ entry: SettingsSearchEntry) {
+        searchText = ""
+        // Route inner navigation before the tab appears, so the destination
+        // opens directly on the right section.
+        if let subTab = entry.subTab {
+            switch entry.tab {
+            case .voice: stateManager.voiceSubTabRequest = subTab
+            case .server: stateManager.serverSectionRequest = subTab
+            default: break
             }
+        }
+        // Arm the landing glow for the specific control; the destination tab
+        // scrolls to its anchor and the control breathes once on arrival.
+        SettingsHighlightCoordinator.shared.request(entry.id)
+        withAnimation(.easeOut(duration: 0.2)) {
+            stateManager.selectedTab = entry.tab
         }
     }
 }

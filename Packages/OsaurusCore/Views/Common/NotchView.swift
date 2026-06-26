@@ -107,27 +107,10 @@ struct NotchView: View {
 
     // MARK: - Derived Properties
 
-    private var sortedTasks: [BackgroundTaskState] {
-        Array(taskManager.backgroundTasks.values)
-            // Headless dispatchers (e.g. webhook responders) opt out of the
-            // notch by setting `showToast = false`. The task is still
-            // tracked for completion signaling — it just doesn't render.
-            .filter { $0.showToast }
-            .sorted { a, b in
-                let ap = statusPriority(a.status), bp = statusPriority(b.status)
-                if ap != bp { return ap < bp }
-                return a.createdAt > b.createdAt
-            }
-    }
-
-    private func statusPriority(_ status: BackgroundTaskStatus) -> Int {
-        switch status {
-        case .awaitingClarification: return 0
-        case .running: return 1
-        case .completed: return 2
-        case .cancelled: return 3
-        }
-    }
+    /// Render-ready, pre-sorted toast tasks. The ordering is computed once in
+    /// `BackgroundTaskManager` when the task set or a task's state changes;
+    /// reading it here avoids re-running filter+sort on every body access.
+    private var sortedTasks: [BackgroundTaskState] { taskManager.sortedToastTasks }
 
     private var activeTask: BackgroundTaskState? {
         guard !sortedTasks.isEmpty else { return nil }

@@ -92,6 +92,64 @@ struct HTTPAuthGateTests {
         #expect((resp as? HTTPURLResponse)?.statusCode == 200)
     }
 
+    // MARK: - Inbound Attribution (host-side Remote Connections)
+
+    /// A valid inbound request must stamp the matched access key's nonce +
+    /// audience + transport onto its `RequestLog`, so the host's Remote
+    /// Connections view can attribute `.httpAPI` traffic to a specific paired
+    /// peer. Drives a real authed `GET /v1/models` and asserts the resulting
+    /// Insights log carries the attribution. The token nonce is unique per run
+    /// so we can find our own row in the shared ring buffer.
+    @Test func validInboundRequest_stampsAccessKeyAndAudienceOntoLog() async throws {
+        let validator = APIKeyValidator.forAlice()
+        let server = try await startAuthTestServer(validator: validator)
+        defer { Task { await server.shutdown() } }
+
+        let nonce = "inbound-attribution-\(UUID().uuidString)"
+        let token = try TokenBuilder.build(
+            privateKey: TestKeys.alicePrivateKey,
+            iss: TestKeys.aliceAddress,
+            aud: TestKeys.aliceAddress,
+            nonce: nonce
+        )
+
+        var request = URLRequest(
+            url: URL(string: "http://\(server.host):\(server.port)/v1/models")!
+        )
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+
+        let (_, resp) = try await URLSession.shared.data(for: request)
+        #expect((resp as? HTTPURLResponse)?.statusCode == 200)
+
+        // The request log is appended via an async main-actor hop, so poll the
+        // shared buffer briefly for our uniquely-nonced row.
+        let log = await Self.findInboundLog(accessKeyId: nonce)
+        let found = try #require(
+            log,
+            "inbound request did not stamp accessKeyId=\(nonce) onto a RequestLog"
+        )
+        #expect(found.source == .httpAPI)
+        #expect(found.connection?.accessKeyId == nonce)
+        #expect(found.connection?.audience == TestKeys.aliceAddress.lowercased())
+        // Plain HTTP (no Secure Channel handshake) is attributed as direct.
+        #expect(found.connection?.transport == .direct)
+    }
+
+    /// Polls `InsightsService` (main-actor) for an inbound log stamped with the
+    /// given access-key nonce. Returns nil if it never appears within ~1s.
+    private static func findInboundLog(accessKeyId: String) async -> RequestLog? {
+        for _ in 0 ..< 40 {
+            let match = await MainActor.run {
+                InsightsService.shared.logs.first {
+                    $0.connection?.accessKeyId == accessKeyId
+                }
+            }
+            if let match { return match }
+            try? await Task.sleep(nanoseconds: 25_000_000)
+        }
+        return nil
+    }
+
     // MARK: - Expired Token → 401
 
     @Test func protectedPath_expiredToken_returns401() async throws {

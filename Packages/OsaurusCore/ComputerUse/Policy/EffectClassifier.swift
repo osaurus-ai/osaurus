@@ -33,6 +33,8 @@ public enum EffectClassifier {
         action: AgentAction,
         resolvedRole: String? = nil,
         resolvedLabel: String? = nil,
+        resolvedValue: String? = nil,
+        resolvedRoleDescription: String? = nil,
         appName: String? = nil,
         recipeSignals: RecipeSignals = .empty
     ) -> EffectClass {
@@ -42,16 +44,31 @@ public enum EffectClassifier {
         let consequential = Self.consequentialSignals.union(recipeSignals.consequential)
         let commit = Self.commitSignals.union(recipeSignals.commit)
 
-        // Intent signals come from the TARGET (what the control is), not the
-        // typed payload — typing the word "delete" into a search box must not
-        // escalate. We scan the resolved label, the model's natural-language
-        // target, and its stated rationale.
+        let role = (resolvedRole ?? "").lowercased()
+        let isTextInput = Self.textInputRoles.contains(role)
+        // An element's `value` is intent-bearing for controls (a button whose
+        // label lives in `AXValue`, a checkbox/segment state) but is USER
+        // CONTENT for text inputs — folding a field's contents into the signal
+        // would re-escalate "type the word delete into a search box", which must
+        // stay an edit. So `value` joins the signal only for non-text-input roles.
+        let valueSignal = isTextInput ? nil : resolvedValue
+
+        // Target text = what the control IS (label + roleDescription + value +
+        // the model's `describe`), excluding the free-text rationale (`note`) so
+        // an icon-only control with a descriptive note isn't treated as labeled.
+        let targetText =
+            [resolvedLabel, resolvedRoleDescription, valueSignal, action.target?.describe]
+            .compactMap { $0 }
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespaces)
+
+        // The vocabulary scan also folds in the rationale (`note`), which often
+        // names the real intent ("send the email", "save with the invitees").
         let signal =
-            [resolvedLabel, action.target?.describe, action.note]
+            [targetText, action.note]
             .compactMap { $0 }
             .joined(separator: " ")
             .lowercased()
-        let role = (resolvedRole ?? "").lowercased()
 
         // 1) Irreversible / cross-boundary commit verbs.
         if baseline >= .navigate, containsAny(signal, consequential) {
@@ -67,7 +84,16 @@ public enum EffectClassifier {
             effect = EffectClass.max(effect, .consequential)
         }
 
-        // 3) ⌘Return / ⌘Enter — the conventional submit/send chord.
+        // 3) A bare commit control (Save / OK / Done / Apply / Create / …) with no
+        //    recipient still commits SOMETHING the user may want to review, so
+        //    raise it to at least `edit`. It then confirms under cautious/balanced
+        //    (the default) but still auto-runs under trusted/autonomous — closing
+        //    the gap where a solo "Save"/"OK" silently auto-ran as `navigate`.
+        if baseline >= .navigate, containsAny(signal, commit) {
+            effect = EffectClass.max(effect, .edit)
+        }
+
+        // 4) ⌘Return / ⌘Enter — the conventional submit/send chord.
         if action.verb == .pressKey {
             let key = (action.key ?? "").lowercased()
             let mods = Set(action.modifiers.map { $0.lowercased() })
@@ -78,14 +104,15 @@ public enum EffectClassifier {
             }
         }
 
-        // 4) Default-stricter on ambiguity: an unidentifiable click target could
-        //    do anything, so confirm it rather than auto-run.
-        if action.verb == .click,
-            (resolvedLabel?.trimmingCharacters(in: .whitespaces).isEmpty ?? true),
-            role.isEmpty,
-            (action.target?.describe?.trimmingCharacters(in: .whitespaces).isEmpty ?? true)
-        {
-            effect = EffectClass.max(effect, .edit)
+        // 5) Default-stricter on ambiguity / icon-only controls: a click whose
+        //    target exposes no readable text — an unidentifiable hit (empty role)
+        //    OR an icon-only button (a known control role with no label/value/
+        //    description) — could do anything, so confirm it rather than auto-run.
+        if action.verb == .click || action.verb == .doubleClick || action.verb == .rightClick {
+            let isControl = role.isEmpty || Self.actionableControlRoles.contains(role)
+            if targetText.isEmpty, isControl {
+                effect = EffectClass.max(effect, .edit)
+            }
         }
 
         return effect
@@ -133,5 +160,26 @@ public enum EffectClassifier {
     static let recipientSignals: Set<String> = [
         "recipient", "recipients", "invitee", "invitees", "attendee", "attendees",
         "guests", "cc", "bcc", "everyone",
+    ]
+
+    /// Roles that act on click (so an UNLABELED one is an icon-only button worth
+    /// confirming). Includes both raw AX (`AXButton`) and friendly (`button`)
+    /// forms since `CUElement.role` carries either depending on the driver.
+    static let actionableControlRoles: Set<String> = [
+        "button", "axbutton",
+        "menubutton", "axmenubutton",
+        "popupbutton", "axpopupbutton",
+        "togglebutton", "axtogglebutton",
+    ]
+
+    /// Text-input roles whose `value` is user content, not control intent — see
+    /// `valueSignal`. Raw AX + friendly forms.
+    static let textInputRoles: Set<String> = [
+        "textfield", "axtextfield",
+        "textarea", "axtextarea",
+        "textview", "axtextview",
+        "searchfield", "axsearchfield",
+        "securefield", "securetextfield", "axsecuretextfield",
+        "combobox", "axcombobox",
     ]
 }

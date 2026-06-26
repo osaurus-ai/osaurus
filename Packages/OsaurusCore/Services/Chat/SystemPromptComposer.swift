@@ -8,6 +8,9 @@
 //
 
 import Foundation
+import os
+
+private let toolResolveLog = Logger(subsystem: "ai.osaurus", category: "ToolResolve")
 
 // MARK: - SystemPromptComposer
 
@@ -27,10 +30,7 @@ public struct SystemPromptComposer: Sendable {
     }
 
     public func render() -> String {
-        sections
-            .map { $0.content.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-            .joined(separator: "\n\n")
+        PromptRenderer.render(sections)
     }
 
     public func manifest() -> PromptManifest {
@@ -44,13 +44,13 @@ public struct SystemPromptComposer: Sendable {
     public mutating func appendBasePrompt(systemPrompt: String) {
         append(
             .static(
-                id: "platform",
+                id: PromptSectionID.platform,
                 label: L("Platform"),
                 content: SystemPromptTemplates.platformIdentity
             )
         )
         let effective = SystemPromptTemplates.effectivePersona(systemPrompt)
-        append(.static(id: "persona", label: L("Persona"), content: effective))
+        append(.static(id: PromptSectionID.persona, label: L("Persona"), content: effective))
     }
 
     // MARK: - Memory Assembly
@@ -281,6 +281,15 @@ public struct SystemPromptComposer: Sendable {
                     + "staticPrefixHash=\(manifest.staticPrefixHash(tools: toolset.tools).prefix(16))\n"
                     + manifest.debugDescription
             )
+            // Dump the rendered enabled-capabilities section verbatim so a
+            // single run shows EXACTLY what the model sees (e.g. the tiered
+            // `plugin/<id>` lines) — the token table above can't reveal the
+            // text. Bounded: the manifest itself is capped.
+            if let manifestText = manifest.section("enabledManifest")?.content,
+                !manifestText.isEmpty
+            {
+                PrefillDebugLog.shared.log("---- ENABLED-MANIFEST (rendered)\n\(manifestText)")
+            }
         }
 
         emitToolDiagnostics(
@@ -623,9 +632,10 @@ public struct SystemPromptComposer: Sendable {
         let groups = deriveEnabledManifest(agentId: agentId)
         // `prefersCompactPrompt` already folds the small/tiny-window cases
         // (existing behaviour) and the local-small-model case (large window,
-        // ≤ param ceiling). Compact drops per-capability descriptions + the
-        // worked example — ~14k → <1k tokens here — while keeping every
-        // loadable id, so tool discovery is unaffected.
+        // ≤ param ceiling). Compact tiers the manifest to one `plugin/<id>`
+        // line per plugin (the model loads the id to expand the group) and
+        // drops the worked example — so cold first-turn prefill stays bounded
+        // as installed plugins grow, while every plugin stays visible.
         let compact = ContextSizeResolver.resolve(modelId: snapshot.model).prefersCompactPrompt
         let section = SystemPromptTemplates.enabledCapabilitiesManifest(
             groups: groups,
@@ -892,6 +902,22 @@ public struct SystemPromptComposer: Sendable {
                     id: "computerUse",
                     label: L("Computer Use"),
                     content: SystemPromptTemplates.computerUseGuidance
+                )
+            )
+        }
+
+        // Image generation: authoritative directive, schema-gated on the actual
+        // tool. Without it, a persona-led model (e.g. the Default "Osaurus
+        // configuration assistant") intermittently refuses image requests with
+        // "I can't generate images / I'm text-only" even though image_generate is
+        // in its schema. Only rendered when the tool resolved, so it stays
+        // KV-cache stable and never advertises a tool the model can't call.
+        if !effectiveToolsOff, resolvedNames.contains("image_generate") {
+            composer.append(
+                .static(
+                    id: "imageGeneration",
+                    label: L("Image Generation"),
+                    content: SystemPromptTemplates.imageGenerationGuidance
                 )
             )
         }
@@ -1226,10 +1252,39 @@ public struct SystemPromptComposer: Sendable {
         let orderedIds = allGroupIds.sorted()
         var groups = orderedIds.map { groupId in
             SystemPromptTemplates.ManifestPluginGroup(
+                groupId: groupId,
                 pluginDisplay: pluginDisplayName(for: groupId),
                 skills: (skillsByGroup[groupId] ?? []).sorted { $0.name < $1.name },
                 tools: (toolsByGroup[groupId] ?? []).sorted { $0.name < $1.name }
             )
+        }
+
+        // Native image generation/editing are built-in tools, so they never
+        // show up in the dynamic-tool walk above. When the user has enabled
+        // Image Jobs, surface them as their own group so the model is told
+        // outright that it can create/edit images — otherwise the compacted
+        // baseline skeleton is the only hint and small models reach for the
+        // search tool instead.
+        if AgentDelegationConfigurationStore.snapshot().imageDelegationActive {
+            let imageCaps =
+                ToolRegistry.shared.listTools()
+                .filter { ToolRegistry.agentDelegationImageToolNames.contains($0.name) }
+                .sorted { $0.name < $1.name }
+                .map {
+                    SystemPromptTemplates.ManifestCapability(
+                        name: $0.name,
+                        description: $0.description
+                    )
+                }
+            if !imageCaps.isEmpty {
+                groups.append(
+                    SystemPromptTemplates.ManifestPluginGroup(
+                        pluginDisplay: "Image Generation",
+                        skills: [],
+                        tools: imageCaps
+                    )
+                )
+            }
         }
 
         // Trailing synthetic group for standalone (non-plugin) skills,
@@ -1416,7 +1471,7 @@ public struct SystemPromptComposer: Sendable {
     /// users who never enable the feature.
     static let agentDBToolNames: Set<String> = [
         "db_schema", "db_create_table", "db_alter_table", "db_migrate",
-        "db_insert", "db_upsert", "db_update", "db_delete", "db_restore",
+        "db_insert", "db_upsert", "db_import", "db_update", "db_delete", "db_restore",
         "db_query", "db_execute",
         // Saved views (spec §6.3 / phase 2).
         "db_define_view", "db_run_view", "db_list_views", "db_drop_view",
@@ -1943,6 +1998,21 @@ public struct SystemPromptComposer: Sendable {
             byName.removeValue(forKey: ComputerUseTool.toolName)
         }
 
+        // Spawn / agent delegation gate. For CUSTOM agents this is an
+        // AUTHORITATIVE per-agent gate, same as Computer Use: the spawn /
+        // local_delegate / image_generate / image_edit tools are stripped unless
+        // the agent's `spawnDelegationEnabled` is on (ANDs with the global
+        // `AgentDelegationConfiguration` family gates applied in alwaysLoadedSpecs).
+        // The DEFAULT / main chat is EXEMPT here — it is governed by the global
+        // Agent Delegation switch in the default-agent surface below (the user's
+        // main chat spawns when delegation is globally on; the first actual call
+        // prompts for permission + model). So we never strip it for the default agent.
+        if snapshot.agentId != Agent.defaultId, !snapshot.spawnDelegationEnabled {
+            for name in ToolRegistry.agentDelegationAllToolNames {
+                byName.removeValue(forKey: name)
+            }
+        }
+
         // Default-agent configure surface:
         //   * For the Default agent, hard-restrict to the consolidated
         //     configure surface (`osaurus_status` / `osaurus_list` /
@@ -1955,8 +2025,17 @@ public struct SystemPromptComposer: Sendable {
         //     Even if a registration path leaks `osaurus_provider` into the
         //     schema, the strip filter keeps the model from seeing it.
         if snapshot.agentId == Agent.defaultId {
-            let allowed = ToolRegistry.defaultAgentAllowedToolNames
+            var allowed = ToolRegistry.defaultAgentAllowedToolNames
                 .union(additionalToolNames)
+            // Spawn UX: the main/default chat may call the delegation tools
+            // (image_generate / image_edit / spawn / local_delegate) when the
+            // global Agent Delegation switch is on. They survive the filter only
+            // if still in `byName` — i.e. the global family gates (applied in
+            // alwaysLoadedSpecs) allowed them. The first actual call prompts for
+            // permission + spawn-model choice.
+            if AgentDelegationConfigurationStore.snapshot().agentDelegationEnabled {
+                allowed.formUnion(ToolRegistry.agentDelegationAllToolNames)
+            }
             byName = byName.filter { allowed.contains($0.key) }
         } else {
             for name in ToolRegistry.configureToolNames {
@@ -1983,7 +2062,18 @@ public struct SystemPromptComposer: Sendable {
             byName = byName.filter { allowed.contains($0.key) }
         }
 
-        return canonicalToolOrder(Array(byName.values))
+        let resolved = canonicalToolOrder(Array(byName.values))
+
+        // Debug aid for the image-delegation tool surfacing: confirms whether
+        // `image_generate` actually reached the model's schema and what the
+        // delegation gate evaluated to at compose time.
+        let imageActive = AgentDelegationConfigurationStore.snapshot().imageDelegationActive
+        let hasImageGenerate = resolved.contains { $0.function.name == "image_generate" }
+        toolResolveLog.debug(
+            "resolveTools agent=\(snapshot.agentId.uuidString, privacy: .public) imageDelegationActive=\(imageActive, privacy: .public) image_generate_in_schema=\(hasImageGenerate, privacy: .public) toolCount=\(resolved.count, privacy: .public)"
+        )
+
+        return resolved
     }
 
     /// Stable order:

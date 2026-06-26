@@ -87,20 +87,25 @@ struct InsightsDetailPane: View {
                 MethodBadgeCompact(method: log.method)
                 HTTPStatusBadgeCompact(statusCode: log.statusCode)
 
-                Text(log.path)
+                Text(Self.abbreviatedPath(log.path))
                     .font(.system(size: 16, weight: .semibold, design: .monospaced))
                     .foregroundColor(theme.primaryText)
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .help(Text(verbatim: log.path))
 
                 Text(log.formattedDuration)
                     .font(.system(size: 13, weight: .semibold, design: .monospaced))
                     .foregroundColor(theme.secondaryText)
             }
 
-            HStack(spacing: 8) {
+            // Wrap to multiple rows rather than overflowing the pane: a
+            // remote-agent run can carry six pills (time, source, model, mode,
+            // relay host, secure) whose fixed-size widths exceed a narrow
+            // detail pane on one line. `FlowLayout` breaks them onto new rows.
+            FlowLayout(spacing: 8) {
                 metaPill(icon: "clock", text: Text(verbatim: log.formattedTimestamp))
                 metaPill(icon: sourceIcon(log.source), text: Text(verbatim: log.source.displayName))
                 if let pluginId = log.pluginId {
@@ -114,8 +119,39 @@ struct InsightsDetailPane: View {
                     metaPill(icon: "cpu", text: Text(verbatim: log.shortModelName), tint: .purple)
                         .help(Text(verbatim: model))
                 }
-                Spacer()
+                if let connection = log.connection {
+                    if let mode = connection.mode, mode != .local {
+                        metaPill(
+                            icon: connectionModeIcon(mode),
+                            text: Text(verbatim: mode.displayName),
+                            tint: .blue
+                        )
+                        .help(Text(verbatim: connection.remoteEndpoint ?? mode.displayName))
+                    }
+                    if let host = connectionHostLabel(connection) {
+                        metaPill(
+                            icon: "antenna.radiowaves.left.and.right",
+                            text: Text(verbatim: host),
+                            tint: .blue
+                        )
+                        .help(Text(verbatim: connection.remoteEndpoint ?? host))
+                    }
+                    if connection.transport == .secureChannel {
+                        metaPill(
+                            icon: "lock.fill",
+                            text: Text("Secure", bundle: .module),
+                            tint: .green
+                        )
+                        .help(
+                            Text(
+                                "End-to-end encrypted via Osaurus Secure Channel",
+                                bundle: .module
+                            )
+                        )
+                    }
+                }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.horizontal, 24)
         .padding(.vertical, 16)
@@ -206,7 +242,73 @@ struct InsightsDetailPane: View {
         case .chatUI: return "bubble.left.and.bubble.right.fill"
         case .httpAPI: return "network"
         case .plugin: return "puzzlepiece.extension.fill"
+        case .p2p: return "antenna.radiowaves.left.and.right"
         }
+    }
+
+    private func connectionModeIcon(_ mode: RequestMode) -> String {
+        switch mode {
+        case .local: return "cpu"
+        case .remoteInference: return "cloud"
+        case .remoteAgentRun: return "person.crop.circle.badge.checkmark"
+        }
+    }
+
+    /// Short host label for the relay/host pill, derived from the connection's
+    /// full endpoint URL. Falls back to nil so the pill is omitted when no
+    /// endpoint was captured. The raw host is abbreviated by
+    /// `InsightsDetailPane.abbreviatedHost` so a long agent address can't blow
+    /// out the header row (the full endpoint stays available via the pill's
+    /// tooltip).
+    private func connectionHostLabel(_ connection: RequestConnectionInfo) -> String? {
+        guard let endpoint = connection.remoteEndpoint,
+            let host = URL(string: endpoint)?.host
+        else { return nil }
+        return Self.abbreviatedHost(host)
+    }
+
+    /// Collapse a long leading crypto-address label (`0x` + 40 hex) in a relay
+    /// host to `0xABCD…F291` — matching `RemoteAgent.shortAddress` /
+    /// `AgentInvite.shortAddress` so the same address reads identically across
+    /// surfaces — while leaving the domain suffix and ordinary hostnames (IPs,
+    /// `.local`, plain domains) untouched. Examples:
+    /// `0x7F5b…40hex…557C7a.agent.osaurus.ai` → `0x7F5b…57C7a.agent.osaurus.ai`;
+    /// `192.168.1.5` → `192.168.1.5`.
+    static func abbreviatedHost(_ host: String) -> String {
+        guard let dot = host.firstIndex(of: ".") else {
+            return shortAddressLabel(host)
+        }
+        return "\(shortAddressLabel(String(host[..<dot])))\(host[dot...])"
+    }
+
+    /// Mirror of `AgentInvite.shortAddress`: short labels pass through, longer
+    /// ones collapse to first-6 + last-4 around an ellipsis.
+    private static func shortAddressLabel(_ label: String) -> String {
+        guard label.count > 12 else { return label }
+        return "\(label.prefix(6))…\(label.suffix(4))"
+    }
+
+    /// Display form of a request path with any long `0x…` agent-address segment
+    /// collapsed to `0xABCD…F291` (matching the relay pill and
+    /// `RemoteAgent.shortAddress`), so a `/v1/agents/0x…40hex…/run` URL stays
+    /// readable instead of dominating the header. Other segments are left as-is;
+    /// the untruncated path remains available via the header tooltip and the
+    /// Copy Request action.
+    static func abbreviatedPath(_ path: String) -> String {
+        path
+            .split(separator: "/", omittingEmptySubsequences: false)
+            .map { segment -> String in
+                let s = String(segment)
+                return isAddressSegment(s) ? shortAddressLabel(s) : s
+            }
+            .joined(separator: "/")
+    }
+
+    /// A path segment that is an `0x`-prefixed hex agent address long enough to
+    /// be worth collapsing (short ids stay verbatim).
+    private static func isAddressSegment(_ segment: String) -> Bool {
+        guard segment.hasPrefix("0x"), segment.count > 12 else { return false }
+        return segment.dropFirst(2).allSatisfy(\.isHexDigit)
     }
 
     private func metaPill(icon: String, text: Text, tint: Color? = nil) -> some View {
@@ -963,6 +1065,9 @@ private struct ParamsTab: View {
                     inferenceSection
                 }
                 metadataSection
+                if let connection = log.connection {
+                    connectionSection(connection)
+                }
                 if let toolCalls = log.toolCalls, !toolCalls.isEmpty {
                     toolCallsSection(toolCalls)
                 }
@@ -1042,6 +1147,48 @@ private struct ParamsTab: View {
                     .overlay(
                         RoundedRectangle(cornerRadius: 8)
                             .stroke(theme.primaryBorder.opacity(0.2), lineWidth: 1)
+                    )
+            )
+        }
+    }
+
+    /// Connection + attribution details for a remote run (outbound relay/host,
+    /// transport, mode) or an attributed inbound request (access key + audience).
+    private func connectionSection(_ connection: RequestConnectionInfo) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionHeader(
+                icon: "antenna.radiowaves.left.and.right",
+                text: Text("Connection", bundle: .module),
+                color: .blue
+            )
+
+            VStack(spacing: 0) {
+                if let mode = connection.mode {
+                    DetailRow(label: Text("Mode", bundle: .module), value: mode.displayName)
+                }
+                if let transport = connection.transport {
+                    DetailRow(
+                        label: Text("Transport", bundle: .module),
+                        value: transport.displayName
+                    )
+                }
+                if let endpoint = connection.remoteEndpoint {
+                    DetailRow(label: Text("Endpoint", bundle: .module), value: endpoint)
+                }
+                if let audience = connection.audience {
+                    DetailRow(label: Text("Audience", bundle: .module), value: audience)
+                }
+                if let keyId = connection.accessKeyId {
+                    DetailRow(label: Text("Access Key", bundle: .module), value: keyId)
+                }
+            }
+            .padding(10)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.blue.opacity(0.05))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(Color.blue.opacity(0.15), lineWidth: 1)
                     )
             )
         }

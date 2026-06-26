@@ -34,7 +34,7 @@ let package = Package(
         // live model, cache, parser, API, and UI evidence.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "d35c0744a4dec6b9a450ed0b2d02ec2010fd5537"
+            revision: "9e0b60f8288ca682913e0e33c20287af6f57281d"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
@@ -49,6 +49,7 @@ let package = Package(
             revision: "3bc52538f16a95d956c575abbc7e0423737dfd64"
         ),
         .package(url: "https://github.com/21-DOT-DEV/swift-secp256k1", exact: "0.21.1"),
+        .package(path: "../OsaurusNetworking"),
         .package(path: "../OsaurusRepository"),
         .package(url: "https://github.com/mgriebling/SwiftMath", from: "1.7.3"),
         .package(url: "https://github.com/raspu/Highlightr", from: "2.3.0"),
@@ -172,8 +173,14 @@ let package = Package(
                 .product(name: "MLXLMCommon", package: "vmlx-swift"),
                 .product(name: "MLXEmbedders", package: "vmlx-swift"),
                 .product(name: "VMLXTokenizers", package: "vmlx-swift"),
+                // Native on-device image generation (mFLUX). Umbrella import
+                // `import vMLXFlux`; shares the one MLX runtime above and is
+                // routed through MetalGate's exclusive image lane (see
+                // ImageGenerationService).
+                .product(name: "vMLXFlux", package: "vmlx-swift"),
                 .product(name: "FluidAudio", package: "FluidAudio"),
                 .product(name: "VecturaKit", package: "VecturaKit"),
+                .product(name: "OsaurusNetworking", package: "OsaurusNetworking"),
                 .product(name: "OsaurusRepository", package: "OsaurusRepository"),
                 .product(name: "P256K", package: "swift-secp256k1"),
                 .product(name: "SwiftMath", package: "SwiftMath"),
@@ -186,7 +193,14 @@ let package = Package(
             ],
             path: ".",
             exclude: ["Tests", "SQLCipher"],
-            resources: [.process("Resources")]
+            resources: [.process("Resources")],
+            swiftSettings: [
+                // `SystemLanguageModel.contextSize` only exists in the macOS 26.4+
+                // SDK. Enable this flag when building against that SDK (or newer) to
+                // read the real on-device context window; leave it off on older SDKs
+                // (≤ 26.2), where FoundationModelService falls back to `nil`.
+                // .define("HAS_FM_CONTEXT_SIZE"),
+            ]
         ),
         .testTarget(
             name: "OsaurusCoreTests",

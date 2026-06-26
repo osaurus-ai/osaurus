@@ -36,6 +36,14 @@ struct OsaurusEvalsCLI {
         switch command {
         case "run":
             await runCommand(Array(args.dropFirst()))
+        case "capture-screen":
+            // Local-only AX capture (NativeMacDriver) → ScreenContextFixture
+            // JSON. No model/MLX load, so a plain exit (no Metal teardown) is
+            // correct and fast.
+            let captureExit = await runCaptureScreen(Array(args.dropFirst()))
+            fflush(stdout)
+            fflush(stderr)
+            exit(captureExit)
         case "agent-loop-lab":
             let labExitCode = await runAgentLoopLab(Array(args.dropFirst()))
             await shutdownAndExit(labExitCode)
@@ -48,6 +56,10 @@ struct OsaurusEvalsCLI {
         case "compat":
             // Pure file aggregation over reports/community/* — no model load.
             exit(runCompat(Array(args.dropFirst())))
+        case "scorecard":
+            // Pure file aggregation over ComputerUse/ComputerUseLoop reports.
+            // No model load, no runtime settings changes.
+            exit(runComputerUseScorecard(Array(args.dropFirst())))
         case "--help", "-h":
             printUsage()
             exit(0)
@@ -655,11 +667,14 @@ struct OsaurusEvalsCLI {
                 osaurus-evals run --suite <dir> [--model <id>] [--filter <substr>] [--out <path>]
                                               [--threshold <float>] [--report-forensics]
                                               [--startup-timeout <seconds>]
+                osaurus-evals capture-screen [--app <name>] [--out <path>]
                 osaurus-evals agent-loop-lab --baseline <path> [--suite <dir> ...] [--model <id>]
                 osaurus-evals diff <baseline> <current> [--out <p>] [--markdown <p>]
                                               [--fail-on-regression]
                 osaurus-evals matrix <reports-dir> [--out <p>] [--markdown <p>]
                 osaurus-evals compat <community-dir> [--out <p>] [--markdown <p>] [--validate]
+                osaurus-evals scorecard <report.json|reports-dir> [...] [--out-dir <dir>]
+                                        [--out <json>] [--markdown <md>]
 
             FLAGS:
                 --suite <dir>         Required. Directory of *.json eval cases
@@ -736,6 +751,10 @@ struct OsaurusEvalsCLI {
                                       selected search-index lanes in isolated
                                       eval storage and skip plugin-required
                                       cases when no plugin is loaded.
+                scorecard             Reads existing EvalReport JSON artifacts
+                                      and writes privacy-safe Computer Use
+                                      scorecard JSON + Markdown. Defaults to
+                                      build/evals/computer-use-scorecard/.
 
             EXAMPLES:
                 osaurus-evals run --suite Suites/CapabilitySearch --model foundation
@@ -743,6 +762,7 @@ struct OsaurusEvalsCLI {
                 osaurus-evals run --suite Suites/CapabilitySearch --threshold 0.25 --report-forensics
                 osaurus-evals run --suite Suites/CapabilitySearch --fail-on-floor
                 osaurus-evals agent-loop-lab --baseline reports/main-agentloop
+                osaurus-evals scorecard build/evals/computer-use.json build/evals/computer-use-loop.json
             """
         print(usage)
     }

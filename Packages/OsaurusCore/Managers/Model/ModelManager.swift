@@ -24,11 +24,15 @@ enum ModelListTab: String, CaseIterable, AnimatedTabItem {
     /// Full catalog rendered as a Recommended carousel + a newest-first grid.
     case all = "Catalog"
 
+    /// On-device image-generation models (vMLXFlux / mflux bundles).
+    case images = "Images"
+
     /// Display name for the tab (required by AnimatedTabItem)
     var title: String {
         switch self {
         case .downloaded: return L("On Device")
         case .all: return L("Catalog")
+        case .images: return L("Images")
         }
     }
 }
@@ -755,22 +759,6 @@ extension ModelManager {
             useCase: .vision
         ),
 
-        // DiffusionGemma — block-diffusion (not autoregressive) multimodal
-        // MoE. `model_type=diffusion_gemma` routes to the vmlx-swift
-        // block-diffusion engine. Shipping as a Top Pick is gated on a real
-        // Osaurus load + decode smoke test (visible coherent output, token/s,
-        // physical footprint within the MXFP8 gate); downgrade to a non-Top
-        // `preview` entry if that proof can't be produced.
-        curated(
-            id: "OsaurusAI/diffusiongemma-26B-A4B-it-MXFP8",
-            description:
-                "DiffusionGemma 26B-A4B — block-diffusion multimodal MoE (~4B active), MXFP8. Images + tools + reasoning, high-precision. 128K context.",
-            isTopSuggestion: true,
-            modelType: "diffusion_gemma",
-            releasedAt: date("2026-06-13"),
-            useCase: .vision
-        ),
-
         // Lower-precision Gemma 4 edge fallbacks (NOT defaults). Within the
         // E-series, 8-bit retains far better than 4-bit (E4B: 17% vs 33%
         // bounce; E2B: median 19 vs 2 messages). The 4-bit builds stay listed
@@ -1235,6 +1223,7 @@ extension ModelManager {
         "osaurusai/gemma-4-26b-a4b-it-jang_2l",
         "osaurusai/gemma-4-26b-a4b-it-jang_4m",
         "osaurusai/gemma-4-26b-a4b-it-mxfp4",
+        "osaurusai/diffusiongemma-26b-a4b-it-mxfp8",
     ]
 }
 

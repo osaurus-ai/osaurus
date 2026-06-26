@@ -48,6 +48,12 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             /// Routing returned `.none` for a non-empty model request for some
             /// other reason (e.g. provider marked disconnected). Maps to 503.
             case noServiceAvailable(requested: String)
+            /// A Mode 2 remote-agent run was requested but the paired agent's
+            /// provider isn't among the connected services (e.g. it
+            /// disconnected mid-flight). Fails closed instead of falling back
+            /// to model-string routing, which could silently retarget a
+            /// different local provider. Maps to 503.
+            case remoteAgentUnavailable
         }
 
         let kind: Kind
@@ -58,6 +64,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                 return "Model '\(requested)' is not installed or registered with any provider."
             case .noServiceAvailable(let requested):
                 return "No service is currently available to handle model '\(requested)'."
+            case .remoteAgentUnavailable:
+                return "The selected remote agent isn't connected. Reconnect to the agent and try again."
             }
         }
 
@@ -66,6 +74,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             switch kind {
             case .modelNotFound: return 404
             case .noServiceAvailable: return 503
+            case .remoteAgentUnavailable: return 503
             }
         }
     }
@@ -157,8 +166,37 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             modelOptions: modelOptions,
             sessionId: request.session_id,
             ttftTrace: trace,
-            idempotencyKey: request.idempotencyKey
+            idempotencyKey: request.idempotencyKey,
+            runAsRemoteAgent: request.runAsRemoteAgent
         )
+
+        // Mode 2 (remote agent run): route to the *selected agent's provider*,
+        // never by the model string. A stale `selectedModel` left over from
+        // earlier local testing (e.g. "fugu/...") must not redirect an agent
+        // run to a different local provider — that produced opaque upstream
+        // 404s ("Model default not found"). The peer resolves its own
+        // effective model server-side, so the model field here is irrelevant.
+        if request.runAsRemoteAgent, let agentProviderId = request.remoteAgentProviderId {
+            let remoteServices = await remoteServicesProvider()
+            if let agentService = Self.remoteAgentService(
+                providerId: agentProviderId,
+                in: remoteServices
+            ) {
+                let effective = request.remoteAgentLogModel ?? request.model
+                RemoteAgentRunLog.client(
+                    "dispatch route=provider providerId=\(agentProviderId.uuidString) effectiveModel=\(effective) reqModel=\(request.model)"
+                )
+                return Dispatch(
+                    route: .service(service: agentService, effectiveModel: effective),
+                    params: params,
+                    remoteServices: remoteServices
+                )
+            }
+            RemoteAgentRunLog.clientError(
+                "dispatch remote agent providerId=\(agentProviderId.uuidString) not in connected services; failing closed"
+            )
+            return Dispatch(route: .none, params: params, remoteServices: remoteServices)
+        }
 
         let services = self.services
         trace?.mark("route_resolve_local")
@@ -253,7 +291,36 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         guard let data = try? encoder.encode(request),
             let s = String(data: data, encoding: .utf8)
         else { return nil }
-        return s
+        return redactInlineImagePayloads(in: s)
+    }
+
+    /// Replace inline base64 image payloads (e.g. Computer Use screenshots) with
+    /// a short marker before the request is handed to the Insights ring buffer.
+    /// Even a `FrameScrubber`-redacted frame shouldn't be retained verbatim in a
+    /// local debug buffer — the marker keeps the request shape inspectable
+    /// without persisting pixels. Text content is left intact (it's already on
+    /// the user's screen, and the panel exists to inspect the request).
+    static func redactInlineImagePayloads(in json: String) -> String {
+        guard
+            let regex = try? NSRegularExpression(pattern: "(;base64,)([A-Za-z0-9+/=]{64,})")
+        else { return json }
+        let matches = regex.matches(
+            in: json,
+            range: NSRange(location: 0, length: (json as NSString).length)
+        )
+        guard !matches.isEmpty else { return json }
+        var result = json as NSString
+        // Apply replacements back-to-front so earlier ranges stay valid.
+        for match in matches.reversed() {
+            let payload = match.range(at: 2)
+            guard payload.location != NSNotFound else { continue }
+            result =
+                result.replacingCharacters(
+                    in: payload,
+                    with: "[redacted \(payload.length)-char image]"
+                ) as NSString
+        }
+        return result as String
     }
 
     /// Pretty-print a `ChatCompletionResponse` for the Insights ring buffer.
@@ -441,7 +508,9 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         turnId: UUID? = nil,
         requestId: String? = nil,
         requestBodyJSON: String? = nil,
-        tools: [Tool]? = nil
+        tools: [Tool]? = nil,
+        connection: RequestConnectionInfo? = nil,
+        logPath: String? = nil
     ) -> ChatCompletionResponse {
         let schemasByName = Dictionary(
             uniqueKeysWithValues: (tools ?? []).map { ($0.function.name, $0.function.parameters) }
@@ -498,7 +567,9 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                 },
                 finishReason: .toolCalls,
                 requestBody: requestBodyJSON,
-                responseBody: serializeResponseForLog(response)
+                responseBody: serializeResponseForLog(response),
+                connection: connection,
+                path: logPath ?? "/chat/completions"
             )
         }
 
@@ -541,46 +612,49 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                 stream: true
             )
 
-            let innerStream: AsyncThrowingStream<String, Error>
+            let source = self.inferenceSource
+            // Connection metadata for a remote send (relay/host, endpoint,
+            // transport, mode). nil for local routes. Only built for chatUI —
+            // HTTP API rows are logged with their own attribution by
+            // HTTPHandler.
+            let remoteConn =
+                source == .chatUI
+                ? Self.remoteConnectionInfo(for: service, runAsRemoteAgent: params.runAsRemoteAgent)
+                : nil
+            // Wire-verification probe: capture the real post-scrub request +
+            // raw response bytes for the Insights "Server" toggle. Set the
+            // task-local around the stream-open so `RemoteProviderService`
+            // snapshots it on producer entry. No probe for local routes.
+            let wireProbe: WireTransportProbe? = remoteConn != nil ? WireTransportProbe() : nil
 
-            // If tools were provided and supported, use message-based tool streaming
-            if Self.allowsLocalToolDispatch(request.tool_choice),
-                let tools = request.tools, !tools.isEmpty, let toolSvc = service as? ToolCapableService
-            {
-                let stopSequences = request.stop ?? []
-                let dispatchToolChoice = Self.localToolChoiceForDispatch(
-                    request.tool_choice,
-                    tools: tools
-                )
-                debugLog("[ChatEngine] streamChat: calling streamWithTools tools=\(tools.count)")
-                trace?.mark("chatengine_streamWithTools_start")
-                innerStream = try await toolSvc.streamWithTools(
-                    messages: messages,
-                    parameters: params,
-                    stopSequences: stopSequences,
-                    tools: tools,
-                    toolChoice: dispatchToolChoice,
-                    requestedModel: request.model
-                )
-                trace?.mark("chatengine_streamWithTools_done")
-                debugLog("[ChatEngine] streamChat: streamWithTools returned")
+            let innerStream: AsyncThrowingStream<String, Error>
+            if let wireProbe {
+                innerStream = try await WireTransportProbe.$current.withValue(wireProbe) {
+                    try await self.openInnerStream(
+                        request: request,
+                        messages: messages,
+                        service: service,
+                        params: params,
+                        trace: trace
+                    )
+                }
             } else {
-                debugLog("[ChatEngine] streamChat: calling streamDeltas")
-                trace?.mark("chatengine_streamDeltas_start")
-                innerStream = try await service.streamDeltas(
+                innerStream = try await self.openInnerStream(
+                    request: request,
                     messages: messages,
-                    parameters: params,
-                    requestedModel: request.model,
-                    stopSequences: request.stop ?? []
+                    service: service,
+                    params: params,
+                    trace: trace
                 )
-                trace?.mark("chatengine_streamDeltas_done")
-                debugLog("[ChatEngine] streamChat: streamDeltas returned")
             }
 
             // Wrap stream to count tokens and log when complete
-            let source = self.inferenceSource
             let inputTokens = estimateInputTokens(messages)
-            let model = effectiveModel
+            let model = Self.loggedModel(
+                for: request,
+                remoteConn: remoteConn,
+                fallback: effectiveModel
+            )
             let temp = temperature
             let maxTok = maxTokens
             // Capture the request body up-front so the producer task does not
@@ -601,12 +675,125 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                 inputTokens: inputTokens,
                 temperature: temp,
                 maxTokens: maxTok,
-                requestBodyJSON: requestBodyJSON
+                requestBodyJSON: requestBodyJSON,
+                connection: remoteConn?.info,
+                logPath: remoteConn?.path,
+                wireProbe: wireProbe
             )
 
         case .none:
+            if request.runAsRemoteAgent, request.remoteAgentProviderId != nil {
+                throw EngineError(kind: .remoteAgentUnavailable)
+            }
             throw EngineError(kind: .modelNotFound(requested: request.model))
         }
+    }
+
+    /// Open the underlying service stream (tools vs plain), preserving the
+    /// debug/trace breadcrumbs. Factored out of `streamChat` so the caller can
+    /// run it inside a `WireTransportProbe.$current` task-local scope for
+    /// remote sends without duplicating the dispatch branch.
+    private func openInnerStream(
+        request: ChatCompletionRequest,
+        messages: [ChatMessage],
+        service: ModelService,
+        params: GenerationParameters,
+        trace: TTFTTrace?
+    ) async throws -> AsyncThrowingStream<String, Error> {
+        if Self.allowsLocalToolDispatch(request.tool_choice),
+            let tools = request.tools, !tools.isEmpty, let toolSvc = service as? ToolCapableService
+        {
+            let stopSequences = request.stop ?? []
+            let dispatchToolChoice = Self.localToolChoiceForDispatch(
+                request.tool_choice,
+                tools: tools
+            )
+            debugLog("[ChatEngine] streamChat: calling streamWithTools tools=\(tools.count)")
+            trace?.mark("chatengine_streamWithTools_start")
+            let toolStream = try await toolSvc.streamWithTools(
+                messages: messages,
+                parameters: params,
+                stopSequences: stopSequences,
+                tools: tools,
+                toolChoice: dispatchToolChoice,
+                requestedModel: request.model
+            )
+            trace?.mark("chatengine_streamWithTools_done")
+            debugLog("[ChatEngine] streamChat: streamWithTools returned")
+            return toolStream
+        } else {
+            debugLog("[ChatEngine] streamChat: calling streamDeltas")
+            trace?.mark("chatengine_streamDeltas_start")
+            let plainStream = try await service.streamDeltas(
+                messages: messages,
+                parameters: params,
+                requestedModel: request.model,
+                stopSequences: request.stop ?? []
+            )
+            trace?.mark("chatengine_streamDeltas_done")
+            debugLog("[ChatEngine] streamChat: streamDeltas returned")
+            return plainStream
+        }
+    }
+
+    /// Mode 2 routing primitive: pick the paired agent's `RemoteProviderService`
+    /// by its `provider.id`, never by the model string — a stale `selectedModel`
+    /// (e.g. a leftover local provider prefix) must not redirect a remote-agent
+    /// run to a different provider. `static` and pure over the immutable
+    /// `provider` `let`, so it's unit-testable without standing up an engine.
+    static func remoteAgentService(
+        providerId: UUID,
+        in remoteServices: [ModelService]
+    ) -> ModelService? {
+        remoteServices.first { ($0 as? RemoteProviderService)?.provider.id == providerId }
+    }
+
+    /// Build Insights connection + attribution metadata for a remote send so a
+    /// remote run shows the real relay/host, endpoint, transport, and mode
+    /// instead of a bare, local-looking model badge. Returns nil for local
+    /// services (nothing remote to describe). Pure function of the immutable
+    /// `RemoteProvider`, so it's safe to call synchronously off the actor.
+    static func remoteConnectionInfo(
+        for service: ModelService,
+        runAsRemoteAgent: Bool
+    ) -> (info: RequestConnectionInfo, path: String)? {
+        guard let remote = service as? RemoteProviderService else { return nil }
+        let provider = remote.provider
+        let isOsaurus = provider.providerType == .osaurus
+        // Mode 2 is the native server-side agent run; everything else routed to
+        // a remote provider is plain inference (Mode 1).
+        let mode: RequestMode = (isOsaurus && runAsRemoteAgent) ? .remoteAgentRun : .remoteInference
+        // Native Osaurus peers always ride the Secure Channel; third-party
+        // providers go direct (TLS) — see `_streamRemote`'s `secureProvider`.
+        let transport: RequestTransport = isOsaurus ? .secureChannel : .direct
+        let endpointURL: URL? =
+            isOsaurus
+            ? remote.osaurusEndpointURL(runAsRemoteAgent: runAsRemoteAgent)
+            : provider.url(for: "/chat/completions")
+        let info = RequestConnectionInfo(
+            providerId: provider.id,
+            remoteEndpoint: endpointURL?.absoluteString ?? provider.displayEndpoint,
+            transport: transport,
+            mode: mode
+        )
+        return (info, endpointURL?.path ?? "/chat/completions")
+    }
+
+    /// Mode 2 honesty: prefer the remote agent's live effective model (carried
+    /// on the request) over the local prefixed fallback the picker pinned, so
+    /// the Insights row doesn't imply the local Apple model ran. Falls back for
+    /// every other route.
+    private static func loggedModel(
+        for request: ChatCompletionRequest,
+        remoteConn: (info: RequestConnectionInfo, path: String)?,
+        fallback: String
+    ) -> String {
+        guard remoteConn?.info.mode == .remoteAgentRun,
+            let m = request.remoteAgentLogModel?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            !m.isEmpty
+        else { return fallback }
+        return m
     }
 
     /// Wraps an async stream to count output tokens and log on completion.
@@ -621,7 +808,10 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         inputTokens: Int,
         temperature: Float?,
         maxTokens: Int,
-        requestBodyJSON: String? = nil
+        requestBodyJSON: String? = nil,
+        connection: RequestConnectionInfo? = nil,
+        logPath: String? = nil,
+        wireProbe: WireTransportProbe? = nil
     ) -> AsyncThrowingStream<String, Error> {
         let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
 
@@ -869,6 +1059,13 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                 let durationMs = Date().timeIntervalSince(startTime) * 1000
                 let toolCallsLog = toolInvocation.map { [ToolCallLog(name: $0.name, arguments: $0.args)] }
 
+                // Snapshot the real wire bytes (post-scrub request + raw
+                // pre-unscrub response) so the Insights "Server" toggle shows
+                // exactly what crossed the network — e.g. the Mode 2
+                // `/agents/{addr}/run` body with `model:"default"`. nil for
+                // local routes (no probe).
+                let wireSnapshot = wireProbe?.snapshot()
+
                 InsightsService.logInference(
                     source: source,
                     turnId: turnId,
@@ -886,7 +1083,11 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                     responseBody: Self.streamResponseBody(
                         accumulated: responseAccumulator,
                         toolInvocation: toolInvocation
-                    )
+                    ),
+                    wireRequestBody: wireSnapshot?.request,
+                    wireResponseBody: (wireSnapshot?.response).flatMap { $0.isEmpty ? nil : $0 },
+                    connection: connection,
+                    path: logPath ?? "/chat/completions"
                 )
             }
         }
@@ -939,6 +1140,21 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                 effectiveModel: effectiveModel,
                 stream: false
             )
+
+            // Remote connection metadata + Mode 2 model honesty, mirroring the
+            // streaming path so non-streamed chatUI rows are equally honest
+            // about relay/host/mode. (Wire-body capture stays on the streaming
+            // path, which is what the chat surface actually drives.)
+            let remoteConn =
+                inferenceSource == .chatUI
+                ? Self.remoteConnectionInfo(for: service, runAsRemoteAgent: params.runAsRemoteAgent)
+                : nil
+            let loggedModel = Self.loggedModel(
+                for: request,
+                remoteConn: remoteConn,
+                fallback: effectiveModel
+            )
+            let loggedPath = remoteConn?.path ?? "/chat/completions"
 
             // Match the streaming path — register the chat generation
             // for the lifetime of the LLM dispatch so distillation can
@@ -1044,7 +1260,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                             source: inferenceSource,
                             turnId: request.turnId,
                             requestId: requestId,
-                            model: effectiveModel,
+                            model: loggedModel,
                             inputTokens: inputTokens,
                             outputTokens: outputTokens,
                             durationMs: durationMs,
@@ -1052,7 +1268,9 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                             maxTokens: maxTokens,
                             finishReason: RequestLog.FinishReason(rawValue: terminalStopReason) ?? .stop,
                             requestBody: requestBodyJSON,
-                            responseBody: Self.serializeResponseForLog(response)
+                            responseBody: Self.serializeResponseForLog(response),
+                            connection: remoteConn?.info,
+                            path: loggedPath
                         )
                     }
 
@@ -1071,7 +1289,9 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                         turnId: request.turnId,
                         requestId: requestId,
                         requestBodyJSON: requestBodyJSON,
-                        tools: tools
+                        tools: tools,
+                        connection: remoteConn?.info,
+                        logPath: loggedPath
                     )
                 } catch let inv as ServiceToolInvocation {
                     return Self.makeToolCallResponse(
@@ -1087,7 +1307,9 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                         turnId: request.turnId,
                         requestId: requestId,
                         requestBodyJSON: requestBodyJSON,
-                        tools: tools
+                        tools: tools,
+                        connection: remoteConn?.info,
+                        logPath: loggedPath
                     )
                 }
             }
@@ -1165,7 +1387,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                     source: inferenceSource,
                     turnId: request.turnId,
                     requestId: requestId,
-                    model: effectiveModel,
+                    model: loggedModel,
                     inputTokens: inputTokens,
                     outputTokens: outputTokens,
                     durationMs: durationMs,
@@ -1173,12 +1395,17 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                     maxTokens: maxTokens,
                     finishReason: RequestLog.FinishReason(rawValue: terminalStopReason) ?? .stop,
                     requestBody: requestBodyJSON,
-                    responseBody: Self.serializeResponseForLog(response)
+                    responseBody: Self.serializeResponseForLog(response),
+                    connection: remoteConn?.info,
+                    path: loggedPath
                 )
             }
 
             return response
         case .none:
+            if request.runAsRemoteAgent, request.remoteAgentProviderId != nil {
+                throw EngineError(kind: .remoteAgentUnavailable)
+            }
             throw EngineError(kind: .modelNotFound(requested: request.model))
         }
     }

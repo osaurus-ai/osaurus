@@ -1,0 +1,52 @@
+{
+  "id": "agentdb.sql-transform",
+  "domain": "agent_loop",
+  "label": "agentdb • multi-statement SQL transform in one db_execute",
+  "query": "Your agent database has a table raw_events with columns day (TEXT) and amount (INTEGER). In a SINGLE db_execute call, run a multi-statement script that creates a table daily_totals(day TEXT, total INTEGER) and fills it with one row per day holding SUM(amount) for that day (use INSERT ... SELECT ... GROUP BY). Then tell me the total for the busiest day.",
+  "notes": "WS3 proof: db_execute must run a CREATE + INSERT...SELECT...GROUP BY script in one transaction (multi-statement support). toolUsageAudit caps db_execute at one call so the transform really is a single script. dbState pins the derived table's shape (expectColumns) and the busiest-day row (expectValues), plus the row count; mustNotCallTools forbids falling back to per-row db_insert.",
+  "fixtures": {
+    "agentCapabilities": {
+      "dbEnabled": true
+    },
+    "seedSql": [
+      "CREATE TABLE raw_events (day TEXT, amount INTEGER); INSERT INTO raw_events (day, amount) VALUES ('2026-06-20',10),('2026-06-20',20),('2026-06-20',30),('2026-06-21',5),('2026-06-21',5);"
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 10,
+      "mustCallTools": [
+        "db_execute"
+      ],
+      "mustNotCallTools": [
+        "db_insert"
+      ],
+      "toolUsageAudit": [
+        {
+          "tool": "db_execute",
+          "maxCalls": 1
+        }
+      ],
+      "dbState": [
+        {
+          "sql": "SELECT COUNT(*) FROM daily_totals",
+          "expectFirstValue": "2"
+        },
+        {
+          "sql": "SELECT day, total FROM daily_totals ORDER BY total DESC",
+          "expectColumns": [
+            "day",
+            "total"
+          ],
+          "expectValues": [
+            "2026-06-20",
+            "60"
+          ]
+        }
+      ],
+      "finalTextContains": [
+        "60"
+      ]
+    }
+  }
+}

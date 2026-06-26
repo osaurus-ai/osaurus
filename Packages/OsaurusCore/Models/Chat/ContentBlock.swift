@@ -51,10 +51,16 @@ enum ContentBlockKind: Equatable {
     case typingIndicator
     case groupSpacer
     case chart(spec: ChartSpec)
+    /// GitHub-style diff card rendered in place of the generic tool-call row
+    /// for `file_write` / `file_edit` edits inside the selected folder.
+    case fileDiff(diff: FileDiff)
     /// Footer row appended to every completed assistant turn.
     /// Replaces the hover-revealed copy/regenerate buttons that used to live in the header,
     /// so moving the mouse over the assistant transcript no longer triggers per-row reconfigures.
-    case assistantActions(turnId: UUID)
+    /// `imageOnly` marks an image-generation result (content is just the rendered
+    /// image), so Read-aloud and the overflow "…" Inspect — which have nothing to
+    /// act on — are hidden. `timestamp` backs the overflow menu's "arrived at" header.
+    case assistantActions(turnId: UUID, imageOnly: Bool, timestamp: Date)
     /// Shown when the Osaurus Router billed a turn that produced no visible
     /// text (and no reasoning/tools). Surfaces the charge honestly with a Retry
     /// affordance instead of silently dropping the turn. `costMicro` is the raw
@@ -111,8 +117,14 @@ enum ContentBlockKind: Equatable {
         case let (.chart(lSpec), .chart(rSpec)):
             return lSpec == rSpec
 
-        case let (.assistantActions(lId), .assistantActions(rId)):
-            return lId == rId
+        case let (.fileDiff(lDiff), .fileDiff(rDiff)):
+            return lDiff == rDiff
+
+        case let (
+            .assistantActions(lId, lImageOnly, lTime),
+            .assistantActions(rId, rImageOnly, rTime)
+        ):
+            return lId == rId && lImageOnly == rImageOnly && lTime == rTime
 
         case let (
             .emptyResponseNotice(lId, lTokens, lCost, lStatus),
@@ -141,7 +153,7 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
         case let .paragraph(_, _, _, role): return role
         case .toolCallGroup, .thinking, .sharedArtifact, .pendingToolCall,
             .generationStats, .typingIndicator, .groupSpacer, .chart, .assistantActions,
-            .emptyResponseNotice:
+            .emptyResponseNotice, .fileDiff:
             return .assistant
         case .userMessage: return .user
         }
@@ -198,6 +210,22 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
     static func toolCallGroup(turnId: UUID, calls: [ToolCallItem], position: BlockPosition) -> ContentBlock {
         ContentBlock(
             id: "toolgroup-\(turnId.uuidString)",
+            turnId: turnId,
+            kind: .toolCallGroup(calls: calls),
+            position: position
+        )
+    }
+
+    /// Display-only tool-call group for remote-agent (Mode 2) activity. Reuses
+    /// the `.toolCallGroup` kind (same rendering / height / caching), but with a
+    /// distinct id so it can never collide with a turn's real tool group in the
+    /// table/diff (it never coexists in Mode 2 — the client runs no tools — but
+    /// the id space stays unambiguous regardless).
+    static func remoteToolActivityGroup(turnId: UUID, calls: [ToolCallItem], position: BlockPosition)
+        -> ContentBlock
+    {
+        ContentBlock(
+            id: "remote-toolgroup-\(turnId.uuidString)",
             turnId: turnId,
             kind: .toolCallGroup(calls: calls),
             position: position
@@ -294,11 +322,13 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
         return ContentBlock(id: "spacer-\(afterTurnId.uuidString)", turnId: turnId, kind: .groupSpacer, position: .only)
     }
 
-    static func assistantActions(turnId: UUID, position: BlockPosition) -> ContentBlock {
+    static func assistantActions(turnId: UUID, imageOnly: Bool, timestamp: Date, position: BlockPosition)
+        -> ContentBlock
+    {
         ContentBlock(
             id: "actions-\(turnId.uuidString)",
             turnId: turnId,
-            kind: .assistantActions(turnId: turnId),
+            kind: .assistantActions(turnId: turnId, imageOnly: imageOnly, timestamp: timestamp),
             position: position
         )
     }
@@ -308,6 +338,20 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
             id: "chart-\(turnId.uuidString)",
             turnId: turnId,
             kind: .chart(spec: spec),
+            position: position
+        )
+    }
+
+    static func fileDiff(
+        turnId: UUID,
+        callId: String,
+        diff: FileDiff,
+        position: BlockPosition
+    ) -> ContentBlock {
+        ContentBlock(
+            id: "filediff-\(callId)",
+            turnId: turnId,
+            kind: .fileDiff(diff: diff),
             position: position
         )
     }
@@ -395,6 +439,7 @@ extension ContentBlock {
             let hasVisibleContent =
                 !turn.visibleContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             let hasRenderableThinking = turn.hasRenderableThinking
+            let hasSharedArtifacts = !turn.sharedArtifacts.isEmpty
 
             if hasRenderableThinking {
                 turnBlocks.append(
@@ -407,6 +452,30 @@ extension ContentBlock {
                         position: .middle
                     )
                 )
+            }
+
+            // Mode 2 remote-agent tool activity, rendered above the answer so it
+            // reads chronologically ("called these tools, then replied"). Each
+            // row is reconstructed from sanitized traces: a missing result keeps
+            // it shimmering ("running"), a failure envelope turns it red, any
+            // other result marks it done. Agent-loop control tools (todo /
+            // complete / clarify) are filtered to match local behavior.
+            if turn.hasRemoteToolActivity {
+                let remoteItems =
+                    turn.remoteToolActivity
+                    .filter { !Self.isAgentLoopToolName($0.function.name) }
+                    .map { call in
+                        ToolCallItem(
+                            call: call,
+                            result: turn.remoteToolResults[call.id],
+                            duration: nil
+                        )
+                    }
+                if !remoteItems.isEmpty {
+                    turnBlocks.append(
+                        .remoteToolActivityGroup(turnId: turn.id, calls: remoteItems, position: .middle)
+                    )
+                }
             }
 
             if hasVisibleContent {
@@ -422,11 +491,20 @@ extension ContentBlock {
                 turnBlocks.append(contentsOf: chartBlocks)
             }
 
+            if hasSharedArtifacts {
+                for artifact in turn.sharedArtifacts {
+                    turnBlocks.append(.sharedArtifact(turnId: turn.id, artifact: artifact, position: .middle))
+                }
+            }
+
             if isStreaming && !hasVisibleContent && !hasRenderableThinking
-                && (turn.toolCalls ?? []).isEmpty && turn.pendingToolName == nil
+                && !hasSharedArtifacts && (turn.toolCalls ?? []).isEmpty && turn.pendingToolName == nil
+                && !turn.hasRemoteToolActivity
             {
                 // During prefill (no content/thinking/tools yet), always show the typing
-                // indicator so the interface doesn't appear frozen.
+                // indicator so the interface doesn't appear frozen. Skipped once a
+                // Mode 2 remote tool is running — the running tool chip already
+                // signals progress, so a typing indicator on top would be noise.
                 // Only add the thinking placeholder when thinking is actually enabled for
                 // this model — non-thinking models don't need it.
                 if thinkingEnabled {
@@ -445,7 +523,8 @@ extension ContentBlock {
             }
 
             if !isStreaming && !hasVisibleContent && !hasRenderableThinking
-                && (turn.toolCalls ?? []).isEmpty && turn.pendingToolName == nil,
+                && !hasSharedArtifacts && (turn.toolCalls ?? []).isEmpty && turn.pendingToolName == nil
+                && !turn.hasRemoteToolActivity,
                 let billing = turn.routerBilling
             {
                 // The router billed this turn but it produced no visible text,
@@ -455,7 +534,8 @@ extension ContentBlock {
                     .emptyResponseNotice(turnId: turn.id, billing: billing, position: .middle)
                 )
             } else if !isStreaming && !hasVisibleContent && !hasRenderableThinking
-                && (turn.toolCalls ?? []).isEmpty && turn.pendingToolName == nil
+                && !hasSharedArtifacts && (turn.toolCalls ?? []).isEmpty && turn.pendingToolName == nil
+                && !turn.hasRemoteToolActivity
                 && (turn.generationTokenCount != nil || turn.generationTokensPerSecond != nil)
             {
                 turnBlocks.append(
@@ -507,7 +587,7 @@ extension ContentBlock {
                     }
 
                     let result = turn.toolResults[call.id]
-                    if call.function.name == "share_artifact",
+                    if Self.isArtifactRenderingToolName(call.function.name),
                         let result,
                         let artifact = Self.parseSharedArtifactFromResult(result)
                     {
@@ -519,6 +599,17 @@ extension ContentBlock {
                     {
                         flushRegularItems()
                         turnBlocks.append(.chart(turnId: turn.id, spec: spec.normalized, position: .middle))
+                    } else if FileDiff.diffProducingToolNames.contains(call.function.name),
+                        let result,
+                        let diff = FileDiff.from(toolResult: result)
+                    {
+                        // Replace the generic tool-call row with a GitHub-style
+                        // diff card so a folder-scoped edit reads as a reviewable
+                        // change rather than an opaque tool invocation.
+                        flushRegularItems()
+                        turnBlocks.append(
+                            .fileDiff(turnId: turn.id, callId: call.id, diff: diff, position: .middle)
+                        )
                     } else {
                         regularItems.append(
                             ToolCallItem(call: call, result: result, duration: turn.toolCallDurations[call.id])
@@ -560,9 +651,19 @@ extension ContentBlock {
             // turn in a consecutive assistant group — intermediate tool-calling turns in
             // an agent loop don't get their own footer.
             if !isStreaming && turn.role == .assistant && isLastInGroup,
-                hasVisibleContent || hasRenderableThinking || !(turn.toolCalls ?? []).isEmpty
+                hasVisibleContent || hasRenderableThinking || hasSharedArtifacts || !(turn.toolCalls ?? []).isEmpty
             {
-                turnBlocks.append(.assistantActions(turnId: turn.id, position: .last))
+                // An image-generation reply renders as just the produced image, so
+                // Read-aloud (nothing to speak) and the overflow Inspect (no request
+                // log) are hidden — only Copy and Regenerate stay.
+                let imageOnly =
+                    hasVisibleContent && !hasRenderableThinking
+                    && (turn.toolCalls ?? []).isEmpty
+                    && Self.isImageOnlyContent(turn.visibleContent)
+                turnBlocks.append(
+                    .assistantActions(
+                        turnId: turn.id, imageOnly: imageOnly, timestamp: turn.createdAt, position: .last)
+                )
             }
 
             blocks.append(contentsOf: assignPositions(to: turnBlocks))
@@ -612,6 +713,10 @@ extension ContentBlock {
     /// Reconstructs a SharedArtifact from an enriched share_artifact tool result.
     private static func parseSharedArtifactFromResult(_ result: String) -> SharedArtifact? {
         SharedArtifact.fromEnrichedToolResult(result)
+    }
+
+    private static func isArtifactRenderingToolName(_ name: String) -> Bool {
+        name == "share_artifact" || NativeImageToolArtifactBridge.isNativeImageTool(name)
     }
 
     /// Parses a ChartSpec from a render_chart tool result marker.
@@ -784,6 +889,27 @@ extension ContentBlock {
 
     static func isAgentLoopToolName(_ name: String) -> Bool {
         agentLoopToolNames.contains(name)
+    }
+
+    /// True when the trimmed content is nothing but one or more standalone
+    /// markdown images — the shape an image-generation reply takes. Used to
+    /// drop the Insights / Read-aloud footer actions, which have nothing to
+    /// act on for a pure-image turn.
+    private static let standaloneImageLineRegex = try? NSRegularExpression(
+        pattern: #"^!\[[^\]]*\]\([^)]+\)$"#
+    )
+
+    static func isImageOnlyContent(_ content: String) -> Bool {
+        guard let regex = standaloneImageLineRegex else { return false }
+        let lines = content
+            .split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        guard !lines.isEmpty else { return false }
+        return lines.allSatisfy { line in
+            let range = NSRange(line.startIndex..<line.endIndex, in: line)
+            return regex.firstMatch(in: line, range: range) != nil
+        }
     }
 
     private static func assignPositions(to blocks: [ContentBlock]) -> [ContentBlock] {

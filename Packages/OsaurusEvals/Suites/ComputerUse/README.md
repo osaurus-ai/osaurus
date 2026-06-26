@@ -29,6 +29,22 @@ Packages/OsaurusEvals/.build/debug/osaurus-evals run \
 
 `--model` is irrelevant (no model is invoked); `auto` keeps current config.
 
+## Scorecard
+
+After writing `ComputerUse` / `ComputerUseLoop` report JSON with `--out`, build
+the privacy-safe regression summary with:
+
+```bash
+swift run --package-path Packages/OsaurusEvals osaurus-evals scorecard \
+  build/evals/computer-use.json \
+  build/evals/computer-use-loop.json
+```
+
+The default outputs are
+`build/evals/computer-use-scorecard/scorecard.{json,md}`. See
+[`docs/COMPUTER_USE_EVIDENCE.md`](../../../docs/COMPUTER_USE_EVIDENCE.md) for
+the artifact contract and exit-code semantics.
+
 ## Case schema (`expect.computerUse`)
 
 | field | meaning |

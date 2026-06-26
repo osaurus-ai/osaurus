@@ -34,6 +34,21 @@ enum RegexEntityDetector {
         let category: EntityCategory
         let original: String
         let range: Range<String.Index>
+        /// Custom placeholder label (sanitized uppercase letters) from
+        /// a custom rule, or `nil` to use the category default prefix.
+        let label: String?
+
+        init(
+            category: EntityCategory,
+            original: String,
+            range: Range<String.Index>,
+            label: String? = nil
+        ) {
+            self.category = category
+            self.original = original
+            self.range = range
+            self.label = label
+        }
     }
 
     /// Bundle of compiled regex rules to run on a single text. Built
@@ -64,6 +79,9 @@ enum RegexEntityDetector {
     struct CompiledRule: @unchecked Sendable {
         let category: EntityCategory
         let regex: NSRegularExpression
+        /// Custom placeholder label from a custom rule, `nil` for
+        /// built-ins / presets (which always use the category prefix).
+        let label: String?
     }
 
     /// Run every active pattern over `text` and return non-overlapping
@@ -109,7 +127,8 @@ enum RegexEntityDetector {
                     Match(
                         category: rule.category,
                         original: String(text[stringRange]),
-                        range: stringRange
+                        range: stringRange,
+                        label: rule.label
                     )
                 )
             }
@@ -346,15 +365,19 @@ extension RegexEntityDetector {
     ///  - reject patterns that match the empty string on a probe
     ///    (catastrophic-loop guard)
     /// Returns the compiled regex on success.
-    static func safeCompile(_ source: String) -> Result<NSRegularExpression, CompileError> {
+    static func safeCompile(
+        _ source: String,
+        caseSensitive: Bool = true
+    ) -> Result<NSRegularExpression, CompileError> {
         let trimmed = source.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty { return .failure(.empty) }
         if trimmed.count > maxPatternLength {
             return .failure(.tooLong(trimmed.count))
         }
+        let options: NSRegularExpression.Options = caseSensitive ? [] : [.caseInsensitive]
         let regex: NSRegularExpression
         do {
-            regex = try NSRegularExpression(pattern: trimmed, options: [])
+            regex = try NSRegularExpression(pattern: trimmed, options: options)
         } catch {
             return .failure(.invalid(error.localizedDescription))
         }
@@ -390,6 +413,7 @@ extension RegexEntityDetector {
     private struct CacheKey: Hashable {
         let id: String
         let pattern: String
+        let caseSensitive: Bool
     }
 
     /// Compile (or fetch from cache) a preset.
@@ -399,30 +423,43 @@ extension RegexEntityDetector {
         guard let regex = cachedCompile(id: "preset:" + preset.id, pattern: preset.pattern) else {
             return nil
         }
-        return CompiledRule(category: preset.category, regex: regex)
+        return CompiledRule(category: preset.category, regex: regex, label: nil)
     }
 
-    /// Compile (or fetch from cache) a user-defined custom rule.
+    /// Compile (or fetch from cache) a user-defined custom rule. The
+    /// effective pattern resolves the builder when `kind == .builder`;
+    /// the case-sensitivity flag flows into the compile options (and
+    /// the cache key) so toggling case re-compiles.
     fileprivate static func compiledCustom(_ rule: PrivacyRule) -> CompiledRule? {
+        guard let pattern = rule.effectivePattern else { return nil }
         guard
             let regex = cachedCompile(
                 id: "custom:" + rule.id.uuidString,
-                pattern: rule.pattern
+                pattern: pattern,
+                caseSensitive: rule.caseSensitive
             )
         else {
             return nil
         }
-        return CompiledRule(category: rule.category, regex: regex)
+        return CompiledRule(
+            category: rule.category,
+            regex: regex,
+            label: rule.effectivePlaceholderLabel
+        )
     }
 
-    private static func cachedCompile(id: String, pattern: String) -> NSRegularExpression? {
-        let key = CacheKey(id: id, pattern: pattern)
+    private static func cachedCompile(
+        id: String,
+        pattern: String,
+        caseSensitive: Bool = true
+    ) -> NSRegularExpression? {
+        let key = CacheKey(id: id, pattern: pattern, caseSensitive: caseSensitive)
         compileCacheLock.lock()
         let cached = compileCache[key]
         compileCacheLock.unlock()
         if let cached { return cached }
 
-        switch safeCompile(pattern) {
+        switch safeCompile(pattern, caseSensitive: caseSensitive) {
         case .success(let regex):
             compileCacheLock.lock()
             compileCache[key] = regex

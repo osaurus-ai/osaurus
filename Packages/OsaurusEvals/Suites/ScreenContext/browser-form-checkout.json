@@ -1,0 +1,23 @@
+{
+  "id": "screen_context.browser-form-checkout",
+  "domain": "screen_context",
+  "label": "Screen context • browser form focused field",
+  "query": "(ambient capture)",
+  "notes": "Browser form shape: a focused text field surfaces its current value while labeled sibling fields and page copy provide the surrounding form context.",
+  "fixtures": {},
+  "expect": {
+    "screenContext": {
+      "fixture": "browser-form-checkout.json",
+      "focusedRoleEquals": "text field",
+      "gistContains": ["In Google Chrome", "Request Access - Example"],
+      "mustContain": [
+        "In Google Chrome",
+        "Focused field: text field \"Team name\"",
+        "Synthetic Platform Team",
+        "Request access",
+        "Justification: Need temporary access"
+      ],
+      "orderedContains": [["Synthetic Platform Team", "Request access"]]
+    }
+  }
+}

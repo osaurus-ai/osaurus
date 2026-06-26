@@ -151,6 +151,19 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
     public var settings: AgentSettings
     /// User-defined position. `nil` falls to the end, sorted alphabetically.
     public var order: Int?
+    /// Security-scoped bookmark (created on this machine) for a host folder
+    /// the agent may read/write inside. Persisted so the grant survives
+    /// relaunch. When set, an authenticated remote agent run (Secure Channel,
+    /// agent-scoped) gets host file tools (`file_read`/`file_write`/`file_edit`)
+    /// confined to this folder — shell/git stay denied. `nil` means no host
+    /// folder is granted and remote runs fall back to sandbox-only tools.
+    /// The bookmark is machine-local (it lives on the agent's own host); a
+    /// paired caller never sees it.
+    public var hostWorkspaceBookmark: Data?
+    /// Human-readable path of `hostWorkspaceBookmark` for display in the agent
+    /// editor. Advisory only — `hostWorkspaceBookmark` is the source of truth
+    /// for access; this can go stale if the folder is moved/renamed.
+    public var hostWorkspacePath: String?
 
     public init(
         id: UUID = UUID(),
@@ -182,7 +195,9 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         autoSpeak: Bool? = nil,
         ttsVoice: String? = nil,
         settings: AgentSettings = .defaultDisabled,
-        order: Int? = nil
+        order: Int? = nil,
+        hostWorkspaceBookmark: Data? = nil,
+        hostWorkspacePath: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -214,6 +229,8 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         self.ttsVoice = ttsVoice
         self.settings = settings
         self.order = order
+        self.hostWorkspaceBookmark = hostWorkspaceBookmark
+        self.hostWorkspacePath = hostWorkspacePath
     }
 
     // MARK: - Custom avatar resolution
@@ -344,6 +361,9 @@ extension Agent {
         ttsVoice = try c.decodeIfPresent(String.self, forKey: .ttsVoice)
         settings = try c.decodeIfPresent(AgentSettings.self, forKey: .settings) ?? .defaultDisabled
         order = try c.decodeIfPresent(Int.self, forKey: .order)
+        // Added after initial release; absent in older agent JSON.
+        hostWorkspaceBookmark = try c.decodeIfPresent(Data.self, forKey: .hostWorkspaceBookmark)
+        hostWorkspacePath = try c.decodeIfPresent(String.self, forKey: .hostWorkspacePath)
     }
 }
 
@@ -454,6 +474,9 @@ public struct AgentCapabilities: Sendable, Equatable {
     public var selfSchedulingEnabled: Bool
     /// Computer Use (`computer_use` entry tool) exposed to the model.
     public var computerUseEnabled: Bool
+    /// Spawn / agent delegation (`spawn` / `local_delegate` / `image_generate` /
+    /// `image_edit`) exposed to the model — per-agent opt-in.
+    public var spawnDelegationEnabled: Bool
 
     public init(
         toolsEnabled: Bool,
@@ -463,7 +486,8 @@ public struct AgentCapabilities: Sendable, Equatable {
         speakEnabled: Bool,
         searchMemoryEnabled: Bool,
         selfSchedulingEnabled: Bool,
-        computerUseEnabled: Bool = false
+        computerUseEnabled: Bool = false,
+        spawnDelegationEnabled: Bool = false
     ) {
         self.toolsEnabled = toolsEnabled
         self.memoryEnabled = memoryEnabled
@@ -473,6 +497,7 @@ public struct AgentCapabilities: Sendable, Equatable {
         self.searchMemoryEnabled = searchMemoryEnabled
         self.selfSchedulingEnabled = selfSchedulingEnabled
         self.computerUseEnabled = computerUseEnabled
+        self.spawnDelegationEnabled = spawnDelegationEnabled
     }
 }
 
@@ -705,6 +730,12 @@ public struct AgentSettings: Codable, Sendable, Equatable {
     /// This is the spec's "SOUL.md ceiling" expressed as settings rather
     /// than parsed prose.
     public var computerUseCeiling: AutonomyCeiling?
+    /// Per-agent opt-in for spawn / agent delegation (`spawn` / `local_delegate` /
+    /// `image_generate` / `image_edit`). Default off; gated authoritatively in
+    /// `resolveTools` (stripped unless enabled). The global
+    /// `AgentDelegationConfiguration` still supplies the defaults (models, load
+    /// policy, RAM safety, permissions, budgets); this is the per-agent enable.
+    public var spawnDelegationEnabled: Bool
 
     public init(
         dbEnabled: Bool,
@@ -717,7 +748,8 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         searchMemoryEnabled: Bool = false,
         selfSchedulingEnabled: Bool = false,
         computerUseEnabled: Bool = false,
-        computerUseCeiling: AutonomyCeiling? = nil
+        computerUseCeiling: AutonomyCeiling? = nil,
+        spawnDelegationEnabled: Bool = false
     ) {
         self.dbEnabled = dbEnabled
         self.schedule = schedule
@@ -730,6 +762,7 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         self.selfSchedulingEnabled = selfSchedulingEnabled
         self.computerUseEnabled = computerUseEnabled
         self.computerUseCeiling = computerUseCeiling
+        self.spawnDelegationEnabled = spawnDelegationEnabled
     }
 
     public init(from decoder: Decoder) throws {
@@ -766,6 +799,8 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         selfSchedulingEnabled = try c.decodeIfPresent(Bool.self, forKey: .selfSchedulingEnabled) ?? false
         // Default off; back-compat for agents that predate the feature.
         computerUseEnabled = try c.decodeIfPresent(Bool.self, forKey: .computerUseEnabled) ?? false
+        spawnDelegationEnabled =
+            try c.decodeIfPresent(Bool.self, forKey: .spawnDelegationEnabled) ?? false
         // Optional; absent means no ceiling (user policy applies as-is).
         computerUseCeiling = try c.decodeIfPresent(
             AutonomyCeiling.self,
@@ -785,6 +820,7 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         case selfSchedulingEnabled
         case computerUseEnabled
         case computerUseCeiling
+        case spawnDelegationEnabled
         // Read-only legacy key — never encoded after migration.
         case generativeGreetings
     }
@@ -802,6 +838,7 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         try c.encode(selfSchedulingEnabled, forKey: .selfSchedulingEnabled)
         try c.encode(computerUseEnabled, forKey: .computerUseEnabled)
         try c.encodeIfPresent(computerUseCeiling, forKey: .computerUseCeiling)
+        try c.encode(spawnDelegationEnabled, forKey: .spawnDelegationEnabled)
     }
 
     /// Default settings for newly created agents (and for back-compat decoding of

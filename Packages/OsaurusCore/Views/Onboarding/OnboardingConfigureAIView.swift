@@ -2,58 +2,42 @@
 //  OnboardingConfigureAIView.swift
 //  osaurus
 //
-//  Onboarding step 3 — pick where the model brain lives (a curated local
-//  MLX model, or any cloud / locally-hosted provider) and configure it
-//  inline.
+//  Onboarding step 3 — "Give your dino a brain". Local-first: a single home
+//  screen leads with "Run on your Mac" (the recommended default — a curated
+//  MLX model that runs locally), demotes the managed "Osaurus Cloud" option to
+//  a secondary "want more power?" card, and tucks bring-your-own-key behind a
+//  quiet drill-in row.
 //
-//  Apple Intelligence was removed from this step: it's too limited (no
-//  tools, no web, no agent work) to be a first-class first-run option.
-//  Users with `FoundationModelService` available can still configure it
-//  post-onboarding from Settings.
+//  Apple Intelligence was removed from this step: it's too limited (no tools,
+//  no web, no agent work) to be a first-class first-run option. Users with
+//  `FoundationModelService` available can still configure it post-onboarding
+//  from Settings.
 //
 //  Split into:
-//   - `ConfigureAIState`: ObservableObject holding path/substate selection,
-//     connection-test progress, and the substate slide direction (lives at
-//     OnboardingView level).
-//   - `ConfigureAIBody`: the body slot — sticky segmented path picker plus a
-//     per-path substate body that slides direction-aware between picker
-//     and drilled-in forms.
-//   - `ConfigureAICTA`: the footer primary action, dispatched per substate.
+//   - `ConfigureAIState`: ObservableObject holding the home selection (local
+//     vs hosted), the drilled-in screen (download / bring-your-own-key),
+//     connection-test progress, and the slide direction (lives at the
+//     OnboardingView level so it survives step transitions).
+//   - `ConfigureAIBody`: the body slot — a two-column shell whose right column
+//     is the home screen, sliding direction-aware into the download and
+//     bring-your-own-key sub-screens.
+//   - `ConfigureAICTA`: the footer primary action, dispatched per screen.
 //
 
 import SwiftUI
 
-// MARK: - Path
+// MARK: - Screen / substates
 
-enum ConfigurePath: String, CaseIterable {
-    case local
-    case apiProvider
-
-    var title: LocalizedStringKey {
-        switch self {
-        case .local: return "Local"
-        // Renamed from "Cloud" once the managed cloud option (Osaurus Cloud) was
-        // promoted to its own always-visible lead card above the tabs: this tab
-        // is now strictly the bring-your-own-key path, so "Cloud" would collide.
-        case .apiProvider: return "Your own key"
-        }
-    }
-
-    var icon: String {
-        switch self {
-        case .local: return "internaldrive"
-        case .apiProvider: return "key"
-        }
-    }
-}
-
-// MARK: - Local / API substates
-
-enum LocalSubstate: Equatable {
-    case picker
+/// The top-level screen within the Configure AI step. `home` shows the local +
+/// cloud cards and the bring-your-own-key entry row; the other two are
+/// drilled-in sub-screens reached from home.
+enum ConfigureScreen: Equatable {
+    case home
     case downloading
+    case byok
 }
 
+/// Bring-your-own-key drill-in depth (inside `ConfigureScreen.byok`).
 enum APISubstate: Equatable {
     case picker
     /// "Use an API key" drill-in: grouped list of API-key vendors, the local
@@ -67,8 +51,6 @@ enum APITestResult: Equatable {
     case success
     case failure(String)
 }
-
-// MARK: - Auth choice protocol
 
 // MARK: - Resolved provider config
 
@@ -125,23 +107,25 @@ struct CustomProviderForm {
 
 @MainActor
 final class ConfigureAIState: ObservableObject {
-    @Published var selectedPath: ConfigurePath = .local
-    @Published var localSubstate: LocalSubstate = .picker
+    /// The screen currently shown. Starts at `home` (local + cloud cards plus
+    /// the bring-your-own-key entry row).
+    @Published var screen: ConfigureScreen = .home
+
+    /// Bring-your-own-key drill-in depth. Only meaningful while
+    /// `screen == .byok`.
     @Published var apiSubstate: APISubstate = .picker
 
-    /// Whether the always-visible Osaurus Cloud lead card is the active brain
-    /// selection. It sits above the Local / Your-own-key tabs and is selected by
-    /// default, so the lowest-friction path is the landing state. The flag is
-    /// "sticky": switching tabs never changes it; it only clears when the user
-    /// actively commits to an alternative (taps a local model, drills into a
-    /// bring-your-own-key provider), and is re-asserted by tapping the card.
-    /// Drives the Continue CTA at the top-level pickers.
-    @Published var isHostedSelected: Bool = true
+    /// Whether the managed "Osaurus Cloud" card is the active brain selection.
+    /// Defaults to `false`: the step is local-first, so "Run on your Mac" is the
+    /// pre-selected recommended default. Flipped on by tapping the cloud card,
+    /// and off by tapping the local card, picking a local model, or drilling
+    /// into a bring-your-own-key provider.
+    @Published var isHostedSelected: Bool = false
 
     /// The brain the user committed to on this step. Recorded at the proceed
     /// moment for each path (with no payment side effect) and read by
-    /// `finishOnboarding` to pin hosted routing and persist the analytics
-    /// dimension for the first `message_sent`.
+    /// `finishOnboarding` to pin routing and persist the analytics dimension for
+    /// the first `message_sent`.
     @Published var selectedBrainSource: BrainSource? = nil
 
     /// The local model id to record as the active agent's default when the user
@@ -166,23 +150,13 @@ final class ConfigureAIState: ObservableObject {
         return addedProviderId
     }
 
-    /// Guards `applyDefaultPathIfNeeded(totalMemoryGB:)` so the RAM-based
-    /// default path is only ever applied once. Without it a user who manually
-    /// switched back to Local would be bounced to Cloud again on the next
-    /// `onAppear`.
-    private var didApplyDefaultPath = false
-
-    /// Direction the next substate transition should travel. Mirrors the
-    /// global step `OnboardingDirection` so the substate slide reads as a
-    /// natural continuation of the outer navigation language.
+    /// Direction the next screen transition should travel. Mirrors the global
+    /// step `OnboardingDirection` so the sub-screen slide reads as a natural
+    /// continuation of the outer navigation language.
     @Published var substateDirection: OnboardingDirection = .forward
 
     // Local
     @Published var selectedModel: MLXModel? = nil
-    /// Whether the local picker has expanded past the single opinionated
-    /// default to reveal the remaining eligible models. Lives on the state
-    /// (not the body view) so the choice survives step slide transitions.
-    @Published var showAllLocalModels = false
 
     // API
     @Published var apiKey: String = ""
@@ -211,45 +185,18 @@ final class ConfigureAIState: ObservableObject {
     /// both finalize. Reset whenever credentials are cleared (back / reselect).
     var hasFinalizedAPI = false
 
-    /// Whether the Local tab should be offered at all on this Mac. RAM is an
-    /// advisory fit signal only; users can still choose local models on small
-    /// machines because mmap-backed runtimes may succeed under macOS memory
-    /// compression/paging even when a static estimate looks tight.
-    static func isLocalTabAvailable(totalMemoryGB: Double) -> Bool {
-        true
-    }
-
-    /// Paths offered on this Mac.
-    func availablePaths(totalMemoryGB: Double) -> [ConfigurePath] {
-        [.local, .apiProvider]
-    }
-
-    // No footer caption on either tab. The reassurance copy crowded the footer,
-    // and — more importantly — a caption on one tab but not the other makes the
-    // footer (and thus the centered left-column dino) jump in height when the
-    // user switches tabs. Keeping both captionless holds the layout steady.
+    // No footer caption. The reassurance copy crowded the footer, and a caption
+    // present on one screen but not another makes the footer (and thus the
+    // centered left-column dino) jump in height.
     var footerCaption: LocalizedStringKey? { nil }
-
-    func selectPath(_ path: ConfigurePath) {
-        // Path changes are lateral, but we treat them as forward motion so
-        // the substate body slides in from the trailing edge consistently.
-        substateDirection = .forward
-        selectedPath = path
-        if path != .local { localSubstate = .picker }
-        if path != .apiProvider { resetAPIState(direction: .forward) }
-        // The hosted lead card lives above the tabs, so switching tabs is pure
-        // navigation — it must not change the hosted selection. The flag only
-        // clears when the user commits to a model / provider below.
-        testResult = nil
-    }
 
     // MARK: Back handling
 
     /// The global header back button always exits the Configure AI step.
-    /// Sub-substates (key form, custom form, local downloading) have their
-    /// own in-section back rows, so the header back button doesn't double
-    /// as both global-step nav AND substate nav — that ambiguity used to
-    /// confuse users.
+    /// Sub-screens (download, bring-your-own-key forms) have their own
+    /// in-section back rows, so the header back button doesn't double as both
+    /// global-step nav AND sub-screen nav — that ambiguity used to confuse
+    /// users.
     func handleBack(parentBack: () -> Void) {
         parentBack()
     }
@@ -297,19 +244,8 @@ final class ConfigureAIState: ObservableObject {
         }
     }
 
-    /// Picks the lowest-friction default tab for this Mac on first appearance.
-    /// Local remains available even on low-RAM Macs; compatibility only affects
-    /// the recommended model and warning badges.
-    func applyDefaultPathIfNeeded(totalMemoryGB: Double) {
-        guard !didApplyDefaultPath else { return }
-        // `totalMemoryGB == 0` means the monitor hasn't reported yet; wait for
-        // a real value before committing to a default.
-        guard totalMemoryGB > 0 else { return }
-        didApplyDefaultPath = true
-    }
-
     /// Auto-selects the recommended local pick — the best model this Mac can
-    /// run — so the picker lands on a sensible default the user can just
+    /// run — so the home screen lands on a sensible default the user can just
     /// accept. The rule is hardware-deterministic:
     ///
     ///   1. If a curated top pick is already on disk, keep it. The user
@@ -356,9 +292,9 @@ final class ConfigureAIState: ObservableObject {
     ///   3. The smallest comfortable top pick; or, if nothing is comfortable,
     ///      the smallest candidate overall (never the largest).
     ///
-    /// The 26B-A4B QAT MoE, DiffusionGemma, and the larger Qwen/Nemotron
-    /// flagships are intentionally excluded from (1)/(2): they stay selectable
-    /// Top Picks in the carousel but are never auto-selected.
+    /// The 26B-A4B QAT MoE and the larger Qwen/Nemotron flagships are
+    /// intentionally excluded from (1)/(2): they stay selectable Top Picks but
+    /// are never auto-selected.
     static func recommendedLocalPick(
         from candidates: [MLXModel],
         totalMemoryGB: Double
@@ -386,12 +322,56 @@ final class ConfigureAIState: ObservableObject {
         return smallest(comfortable) ?? smallest(candidates)
     }
 
-    /// Tapping a local model row makes it the active brain, superseding the
-    /// hosted lead card above. Kept side-effect-light (no `withAnimation`) so the
-    /// footer CTA doesn't morph through the shared transaction.
+    /// Tapping a local model row (in the "Change" popover) makes it the active
+    /// brain, superseding the hosted card. Kept side-effect-light (no
+    /// `withAnimation`) so the footer CTA doesn't morph through the shared
+    /// transaction.
     func selectLocalModel(_ model: MLXModel) {
         isHostedSelected = false
         selectedModel = model
+    }
+
+    /// Tapping the "Run on your Mac" card selects the local brain without
+    /// changing which model is picked.
+    func selectLocalBrain() {
+        isHostedSelected = false
+    }
+
+    // MARK: Model chooser (centered modal)
+
+    /// Whether the centered "Choose your model" dialog is open. It's hosted at
+    /// the OnboardingView window root so it can dim the whole step and center
+    /// over it — a popover trapped in the small, clipped body region overflowed
+    /// the window and covered the footer CTA.
+    @Published var isChoosingModel: Bool = false
+
+    /// The model highlighted inside the chooser before the user confirms. The
+    /// draft lets brand-new users browse without committing: `commitModelChooser`
+    /// applies it, Cancel discards it.
+    @Published var draftModel: MLXModel? = nil
+
+    /// Open the chooser, seeding the highlight from the current selection.
+    func openModelChooser() {
+        draftModel = selectedModel
+        isChoosingModel = true
+    }
+
+    /// Highlight a model inside the chooser (no commit yet).
+    func selectDraftModel(_ model: MLXModel) {
+        draftModel = model
+    }
+
+    /// Apply the highlighted model as the active local brain and close.
+    func commitModelChooser() {
+        if let model = draftModel {
+            selectLocalModel(model)
+        }
+        isChoosingModel = false
+    }
+
+    /// Close the chooser without changing the selection.
+    func cancelModelChooser() {
+        isChoosingModel = false
     }
 
     func startLocalDownloadOrContinue(onComplete: () -> Void) {
@@ -404,7 +384,7 @@ final class ConfigureAIState: ObservableObject {
             return
         }
         substateDirection = .forward
-        localSubstate = .downloading
+        screen = .downloading
         startLocalDownload()
     }
 
@@ -423,15 +403,41 @@ final class ConfigureAIState: ObservableObject {
         ModelManager.shared.resumeDownload(model.id)
     }
 
-    /// Cancels an in-flight or paused download and returns the user to the
-    /// model picker. Used by the inline Cancel control on the downloading
-    /// screen so the user has a clear escape route — the previous version
-    /// only had the small back chevron at the top of the section.
+    /// Cancels an in-flight or paused download and returns the user to the home
+    /// screen. Used by the inline Cancel control on the downloading screen so
+    /// the user has a clear escape route — the previous version only had the
+    /// small back chevron at the top of the section.
     func cancelLocalDownload() {
         if let model = selectedModel {
             ModelManager.shared.cancelDownload(model.id)
         }
-        popLocalToPicker()
+        popToHome()
+    }
+
+    // MARK: Navigation
+
+    /// Any drilled-in sub-screen → home (backward slide).
+    func popToHome() {
+        substateDirection = .backward
+        screen = .home
+        isChoosingModel = false
+    }
+
+    /// Home → bring-your-own-key flow (forward slide). Drilling into BYOK drops
+    /// the hosted selection so Continue doesn't advance the hosted path.
+    func showBYOK() {
+        substateDirection = .forward
+        isHostedSelected = false
+        apiSubstate = .picker
+        screen = .byok
+        isChoosingModel = false
+    }
+
+    /// BYOK top-level picker → home (backward slide). Clears any entered
+    /// credentials so a stale secret never leaks across selections.
+    func popBYOKToHome() {
+        resetAPIState(direction: .backward)
+        screen = .home
     }
 
     // MARK: API
@@ -480,9 +486,8 @@ final class ConfigureAIState: ObservableObject {
     }
 
     /// Resets the API substate back to the picker. Direction defaults to
-    /// `.backward` so the substate slide reads as "popping out", but
-    /// callers can pass `.forward` when this is invoked as a side-effect
-    /// of a forward path switch.
+    /// `.backward` so the slide reads as "popping out", but callers can pass
+    /// `.forward` when this is invoked as a side-effect of a forward switch.
     func resetAPIState(direction: OnboardingDirection = .backward) {
         substateDirection = direction
         apiSubstate = .picker
@@ -506,8 +511,8 @@ final class ConfigureAIState: ObservableObject {
     /// API-key sub-list).
     func showAPIKeyPicker() {
         substateDirection = .forward
-        // Drilling into a bring-your-own-key flow drops the hosted lead
-        // selection so Continue doesn't advance the hosted path by mistake.
+        // Drilling into a bring-your-own-key flow drops the hosted selection so
+        // Continue doesn't advance the hosted path by mistake.
         isHostedSelected = false
         apiSubstate = .apiKeyPicker
     }
@@ -516,10 +521,6 @@ final class ConfigureAIState: ObservableObject {
     func popAPIKeyPickerToTop() {
         substateDirection = .backward
         apiSubstate = .picker
-        // Selection is sticky: backing out of a bring-your-own-key flow leaves
-        // the hosted card deselected (the lead card shows its unselected state),
-        // so the user can re-tap it to reassert hosted rather than having it
-        // silently re-selected under them.
     }
 
     /// Back out of a provider form. A form entered via the OAuth-first top level
@@ -536,8 +537,6 @@ final class ConfigureAIState: ObservableObject {
         let returnToTop = selectedAuthMethod.isOAuth
         clearAPICredentials()
         apiSubstate = returnToTop ? .picker : .apiKeyPicker
-        // Selection stays sticky on back (see `popAPIKeyPickerToTop`): the hosted
-        // card keeps its deselected state until the user taps it again.
     }
 
     /// Picker → form drill-in. Tapping a provider card immediately advances
@@ -550,7 +549,7 @@ final class ConfigureAIState: ObservableObject {
     /// is no in-form fork, so we pin the auth mode here at selection time.
     func selectAPIPreset(_ preset: ProviderPreset, preferAPIKey: Bool = false) {
         substateDirection = .forward
-        // Choosing a bring-your-own-key provider supersedes the hosted lead.
+        // Choosing a bring-your-own-key provider supersedes the hosted card.
         isHostedSelected = false
         if let entry = ProviderCatalog.entry(for: preset) {
             selectedAuthMethod = preferAPIKey ? .apiKey : (entry.authMethods.first ?? .apiKey)
@@ -564,17 +563,11 @@ final class ConfigureAIState: ObservableObject {
 
     // MARK: Hosted (Osaurus, Venice-backed)
 
-    /// Tapping the always-visible hosted lead card re-asserts the recommended
-    /// selection, superseding any local model / provider the user had picked.
-    /// Because the card lives above the tabs and stays selectable even after a
-    /// drill-in, selecting it also collapses any in-progress provider form /
-    /// API-key sub-list / local-download view back to the top-level pickers.
-    /// Otherwise hosted could read as "selected" while a provider's own form and
-    /// footer action were still on screen.
+    /// Tapping the "Osaurus Cloud" card makes hosted the active brain selection,
+    /// superseding any local model the user had picked.
     func selectHostedOsaurus() {
         isHostedSelected = true
-        resetAPIState(direction: .backward)
-        localSubstate = .picker
+        screen = .home
     }
 
     /// Commit the hosted brain and advance. Selection is intentionally NOT a
@@ -589,12 +582,6 @@ final class ConfigureAIState: ObservableObject {
             privacyTier: HostedOption.default.privacyTier
         )
         onComplete()
-    }
-
-    /// Local downloading → picker (backward).
-    func popLocalToPicker() {
-        substateDirection = .backward
-        localSubstate = .picker
     }
 
     func resolvedAPIConfig() -> ResolvedProviderConfig? {
@@ -726,18 +713,16 @@ struct ConfigureAIBody: View {
 
     @Environment(\.theme) private var theme
     @ObservedObject private var modelManager = ModelManager.shared
-    /// Drives the capability filter on the local picker. `totalMemoryGB`
-    /// is populated synchronously in `SystemMonitorService.init`, so the
-    /// first onboarding frame already has a real value to classify
-    /// curated top suggestions against.
+    /// Drives the capability filter on the local model popover. `totalMemoryGB`
+    /// is populated synchronously in `SystemMonitorService.init`, so the first
+    /// onboarding frame already has a real value to classify curated top
+    /// suggestions against.
     /// Non-observing on purpose. We only ever read `totalMemoryGB` — total
-    /// physical RAM, a runtime constant populated synchronously in
-    /// `SystemMonitorService.init` (see `body`'s comment below). Observing via
-    /// `@ObservedObject` subscribed this deep onboarding tree to the service's
-    /// 2s CPU/memory publishes, forcing a full re-render every tick. On a
-    /// memory-pressured machine those re-renders were slow enough to trip the
-    /// app-hang watchdog. A plain reference reads the same constant without
-    /// subscribing to publishes that can never change our output.
+    /// physical RAM, a runtime constant. Observing via `@ObservedObject`
+    /// subscribed this deep onboarding tree to the service's 2s CPU/memory
+    /// publishes, forcing a full re-render every tick. A plain reference reads
+    /// the same constant without subscribing to publishes that can never change
+    /// our output.
     private let systemMonitor = SystemMonitorService.shared
 
     var body: some View {
@@ -746,146 +731,49 @@ struct ConfigureAIBody: View {
             leftHeadline: "Pick a brain",
             leftBody:
                 "Run a brain on your Mac, or plug in one you already pay for. You can swap brains any time, and your chats come along.",
-            subtitle: pathSubtitle,
-            // We manage our own inner scroll: the segmented control stays
-            // pinned at the top while the substate body scrolls beneath it.
+            subtitle: "Your dino runs on your Mac. Add more power whenever you want.",
+            // We manage our own inner scroll: each screen owns its scrolling so
+            // the slide transition stays crisp.
             useScrollView: false
         ) {
-            VStack(alignment: .leading, spacing: 14) {
-                // Osaurus Cloud is a top-level choice that lives outside the tab
-                // system: always visible and selectable, even after the user
-                // drills into a provider form / API-key sub-list / local
-                // download. Tab navigation happens entirely below it and never
-                // hides it — it just deselects while an alternative is active.
-                hostedLeadCard
-
-                if showsModeToggle {
-                    // The Local / Your-own-key tabs (and their "or" divider) are
-                    // the run-it-yourself alternatives. They show only at the
-                    // top-level pickers; once the user drills in, the in-section
-                    // Back row owns navigation within the tab.
-                    orRunYourOwnDivider
-                    pathSegmentedControl
-                }
-
-                // Substate envelope. Clipped horizontally so the slide
-                // transition never bleeds into the left column, but
-                // vertically scaled (`y: 4`) so card hover shadows can
-                // escape the substate region without being trimmed at
-                // the scroll-area edges.
-                ZStack(alignment: .topLeading) {
-                    substateContainer
-                        .id(substateID)
-                        .transition(substateTransition)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                .clipShape(Rectangle().scale(x: 1, y: 4))
-                .animation(.spring(response: 0.5, dampingFraction: 0.85), value: substateID)
+            // Screen envelope. Clipped horizontally so the slide transition
+            // never bleeds into the left column, but vertically scaled (`y: 4`)
+            // so card hover shadows can escape the screen region without being
+            // trimmed at the scroll-area edges.
+            ZStack(alignment: .topLeading) {
+                screenContainer
+                    .id(substateID)
+                    .transition(substateTransition)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .clipShape(Rectangle().scale(x: 1, y: 4))
+            .animation(.spring(response: 0.5, dampingFraction: 0.85), value: substateID)
         }
         .onAppear {
-            state.applyDefaultPathIfNeeded(totalMemoryGB: systemMonitor.totalMemoryGB)
             state.ensureLocalSelection(totalMemoryGB: systemMonitor.totalMemoryGB)
         }
     }
 
-    // MARK: - Path subtitle
-
-    /// Single neutral line for the whole step. The hosted lead card is now the
-    /// first element, so a per-tab subtitle above it (e.g. "runs on your Mac")
-    /// would contradict the card. The card copy and tab labels carry the
-    /// per-path nuance instead.
-    private var pathSubtitle: LocalizedStringKey {
-        "Pick the brain that powers your dino — switch any time."
-    }
-
-    // MARK: - Path Segmented Control
-
-    /// Binding that drives the shared `OnboardingSegmentedControl` while
-    /// preserving the side effects on `state.selectPath(_:)` (substate
-    /// reset, slide direction). A direct `$state.selectedPath` binding
-    /// would skip those.
-    private var pathBinding: Binding<ConfigurePath> {
-        Binding(
-            get: { state.selectedPath },
-            set: { state.selectPath($0) }
-        )
-    }
-
-    /// Paths offered on this Mac, gated by available memory (Cloud-only on
-    /// sub-24GB machines). Computed from the live monitor reading rather than
-    /// `state` so the first frame is already correct — no Local-tab flash.
-    private var availablePaths: [ConfigurePath] {
-        state.availablePaths(totalMemoryGB: systemMonitor.totalMemoryGB)
-    }
-
-    /// The mode toggle is the single top-level nav: show it only on the two
-    /// top-level pickers, and only when there's actually a choice to make.
-    /// Once the user drills into the API-key hub / a form / a download, the
-    /// in-section "Back" row owns navigation instead.
-    private var showsModeToggle: Bool {
-        guard availablePaths.count > 1 else { return false }
-        switch state.selectedPath {
-        case .local: return state.localSubstate == .picker
-        case .apiProvider: return state.apiSubstate == .picker
-        }
-    }
-
-    private var pathSegmentedControl: some View {
-        OnboardingSegmentedControl(
-            selection: pathBinding,
-            items: availablePaths.map {
-                OnboardingSegmentItem(tag: $0, title: $0.title, icon: $0.icon)
-            }
-        )
-    }
-
-    /// Thin "or" rule separating the recommended hosted lead card from the
-    /// run-it-yourself tabs beneath it, so the hierarchy reads as
-    /// "recommended default ··· alternatives".
-    private var orRunYourOwnDivider: some View {
-        HStack(spacing: 10) {
-            dividerRule
-            Text("Or run your own brain", bundle: .module)
-                .font(theme.font(size: 11, weight: .medium))
-                .foregroundColor(theme.tertiaryText)
-                .fixedSize()
-            dividerRule
-        }
-        .padding(.vertical, 2)
-    }
-
-    private var dividerRule: some View {
-        Rectangle()
-            .fill(theme.primaryBorder.opacity(0.6))
-            .frame(height: 1)
-            .frame(maxWidth: .infinity)
-    }
-
-    // MARK: - Substate dispatch
+    // MARK: - Screen dispatch
 
     private var substateID: String {
-        switch state.selectedPath {
-        case .local:
-            switch state.localSubstate {
-            case .picker: return "local-picker"
-            case .downloading: return "local-downloading"
-            }
-        case .apiProvider:
+        switch state.screen {
+        case .home: return "home"
+        case .downloading: return "downloading"
+        case .byok:
             switch state.apiSubstate {
-            case .picker: return "api-picker"
-            case .apiKeyPicker: return "api-key-picker"
-            case .keyForm(let p): return "api-key-\(p.rawValue)"
-            case .customForm: return "api-custom"
+            case .picker: return "byok-picker"
+            case .apiKeyPicker: return "byok-key-picker"
+            case .keyForm(let p): return "byok-key-\(p.rawValue)"
+            case .customForm: return "byok-custom"
             }
         }
     }
 
     /// Direction-aware horizontal slide that mirrors the global step
-    /// transition's vocabulary: pure offset, no opacity. Sized to the
-    /// substate region width so the body slides cleanly off one edge
-    /// while the next slides in from the opposite edge.
+    /// transition's vocabulary: pure offset, no opacity. Sized to the screen
+    /// region width so the body slides cleanly off one edge while the next
+    /// slides in from the opposite edge.
     private var substateTransition: AnyTransition {
         let dx = OnboardingMetrics.substateSlideOffset
         let inOffset = state.substateDirection == .forward ? dx : -dx
@@ -896,34 +784,29 @@ struct ConfigureAIBody: View {
         )
     }
 
-    /// Substate container — owns its own scrolling and in-section back row
-    /// when the user has drilled into a sub-substate (key form, custom form,
-    /// downloading). The segmented control above stays pinned in place.
+    /// Screen container — owns its own scrolling and in-section back row when
+    /// the user has drilled into a sub-screen (download, bring-your-own-key).
     @ViewBuilder
-    private var substateContainer: some View {
-        switch state.selectedPath {
-        case .local: localSubstateContainer
-        case .apiProvider: apiSubstateContainer
-        }
-    }
-
-    @ViewBuilder
-    private var localSubstateContainer: some View {
-        switch state.localSubstate {
-        case .picker:
-            OnboardingScrollContainer { localPickerView }
+    private var screenContainer: some View {
+        switch state.screen {
+        case .home:
+            OnboardingScrollContainer { homeView }
         case .downloading:
-            substateWithBackBar(onBack: { state.popLocalToPicker() }) {
+            substateWithBackBar(onBack: { state.popToHome() }) {
                 localDownloadingView
             }
+        case .byok:
+            byokContainer
         }
     }
 
     @ViewBuilder
-    private var apiSubstateContainer: some View {
+    private var byokContainer: some View {
         switch state.apiSubstate {
         case .picker:
-            OnboardingScrollContainer { apiPickerView }
+            substateWithBackBar(onBack: { state.popBYOKToHome() }) {
+                apiPickerView
+            }
         case .apiKeyPicker:
             substateWithBackBar(onBack: { state.popAPIKeyPickerToTop() }) {
                 apiKeyPickerView
@@ -939,10 +822,9 @@ struct ConfigureAIBody: View {
         }
     }
 
-    /// Sub-substate frame: an in-context back row (drills out to the
-    /// picker) followed by the substate body wrapped in the shared
-    /// scroll container for any overflow (key forms, custom-provider
-    /// form, etc.).
+    /// Sub-screen frame: an in-context back row (drills out to home / one level
+    /// up) followed by the body wrapped in the shared scroll container for any
+    /// overflow (key forms, custom-provider form, etc.).
     private func substateWithBackBar<C: View>(
         onBack: @escaping () -> Void,
         @ViewBuilder content: () -> C
@@ -954,7 +836,7 @@ struct ConfigureAIBody: View {
     }
 
     private func substateBackRow(onBack: @escaping () -> Void) -> some View {
-        // Always a plain "Back" — the section title was redundant breadcrumb
+        // Always a plain "Back" — a section title was redundant breadcrumb
         // noise (and truncated awkwardly, e.g. "Use an API k…").
         Button(action: onBack) {
             HStack(spacing: 6) {
@@ -973,185 +855,296 @@ struct ConfigureAIBody: View {
         .localizedHelp("Back")
     }
 
-    // MARK: - Local picker
+    // MARK: - Home screen
 
-    /// Top-suggestion curated models paired with their compatibility
-    /// verdict against the current `totalMemoryGB`. `.unknown` is treated
-    /// as "let through" — same fail-open behavior as
-    /// `ModelFilterState.PerformanceFilter.hideTooLarge`, so the list
-    /// isn't blank during startup before the system monitor reports.
-    private var topSuggestionsWithCompatibility: [(model: MLXModel, compatibility: ModelCompatibility)] {
-        let totalMemoryGB = systemMonitor.totalMemoryGB
-        return modelManager.suggestedModels
-            .filter(\.isTopSuggestion)
-            .map { ($0, $0.compatibility(totalMemoryGB: totalMemoryGB)) }
+    private var homeView: some View {
+        VStack(spacing: 12) {
+            runOnYourMacCard
+            wantMorePowerDivider
+            osaurusCloudCard
+            useYourOwnKeyRow
+        }
     }
 
-    /// What the local picker renders: the curated top suggestions only.
-    ///
-    /// Onboarding is intentionally opinionated — it surfaces only our curated
-    /// top picks (downloaded ones still appear, badged "Downloaded"), so the
-    /// first-run list never balloons with ad-hoc / auto-fetched models the
-    /// user happens to have on disk. The full catalog lives in the Models tab.
-    private var localPickerModels: [(model: MLXModel, compatibility: ModelCompatibility)] {
-        topSuggestionsWithCompatibility
+    // MARK: Run on your Mac (recommended, local)
+
+    /// The recommended local card. Tapping the upper region selects the local
+    /// brain; the model inset's "Change" control opens the model popover.
+    private var runOnYourMacCard: some View {
+        OnboardingGlassCard(isSelected: !state.isHostedSelected) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .top, spacing: 14) {
+                    localBrainIcon
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(spacing: 8) {
+                            Text("Run on your Mac", bundle: .module)
+                                .font(theme.font(size: 14, weight: .semibold))
+                                .foregroundColor(theme.primaryText)
+                                .lineLimit(1)
+                                .layoutPriority(2)
+                            recommendedBadge
+                            Spacer(minLength: 8)
+                        }
+                        Text(
+                            "Free, private, and works offline. Uses some memory while it runs.",
+                            bundle: .module
+                        )
+                        .font(theme.font(size: 12))
+                        .foregroundColor(theme.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                    }
+                    selectionRadio(!state.isHostedSelected)
+                }
+                .contentShape(Rectangle())
+                .onTapGesture { state.selectLocalBrain() }
+
+                localModelInset
+            }
+            .padding(.horizontal, OnboardingMetrics.cardPaddingH)
+            .padding(.vertical, OnboardingMetrics.cardPaddingV)
+        }
+        .animation(.spring(response: 0.35, dampingFraction: 0.9), value: state.isHostedSelected)
+    }
+
+    /// Leading accent badge for the local card, mirroring `OnboardingRowCard`'s
+    /// selected-icon treatment (accent fill + glow when selected).
+    private var localBrainIcon: some View {
+        ZStack {
+            if !state.isHostedSelected {
+                Circle()
+                    .fill(theme.accentColor)
+                    .blur(radius: 8)
+                    .frame(
+                        width: OnboardingMetrics.cardIcon - 8,
+                        height: OnboardingMetrics.cardIcon - 8
+                    )
+            }
+            Circle()
+                .fill(!state.isHostedSelected ? theme.accentColor : theme.cardBackground)
+                .frame(width: OnboardingMetrics.cardIcon, height: OnboardingMetrics.cardIcon)
+            Image(systemName: "cpu")
+                .font(.system(size: 18, weight: .medium))
+                .foregroundColor(!state.isHostedSelected ? .white : theme.secondaryText)
+        }
+    }
+
+    /// The selected-model chip under the local card body: model name + a
+    /// Downloaded / size badge + a "Change" control that opens the model dialog.
+    private var localModelInset: some View {
+        HStack(spacing: 8) {
+            Text(state.selectedModel?.simplifiedName ?? L("Choose a model"))
+                .font(theme.font(size: 13, weight: .semibold))
+                .foregroundColor(theme.primaryText)
+                .lineLimit(1)
+            localInsetPrecisionBadge
+            localInsetBadge
+            Spacer(minLength: 8)
+            changeButton
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(theme.tertiaryBackground)
+        )
+    }
+
+    /// The friendly precision tag (e.g. "High precision") for the selected
+    /// model, mirroring the chip in the chooser so the card matches what the
+    /// user tapped — `simplifiedName` alone can't tell two same-size builds
+    /// apart. Reuses `OnboardingBadgeChip` so the styling can't drift from the
+    /// chooser's chips.
+    @ViewBuilder
+    private var localInsetPrecisionBadge: some View {
+        if let model = state.selectedModel, let precision = onboardingPrecisionTag(for: model) {
+            OnboardingBadgeChip(badge: OnboardingRowBadge(precision))
+        }
     }
 
     @ViewBuilder
-    private var localPickerView: some View {
-        let pairs = localPickerModels
-        if !pairs.isEmpty {
-            // Be opinionated: surface a single recommended pick (the model
-            // `ensureLocalSelection` chose) and tuck everything else behind a
-            // disclosure, so first-run isn't a wall of model choices.
-            let featuredId = state.selectedModel?.id
-            let featured = pairs.first(where: { $0.model.id == featuredId }) ?? pairs.first
-            let rest = pairs.filter { $0.model.id != featured?.model.id }
-
-            VStack(spacing: OnboardingMetrics.cardSpacing) {
-                computeIntensiveCallout
-                if let featured {
-                    localModelCard(for: featured)
-                }
-                if !rest.isEmpty {
-                    localMoreOptionsDisclosure(count: rest.count)
-                    if state.showAllLocalModels {
-                        ForEach(rest, id: \.model.id) { pair in
-                            localModelCard(for: pair)
-                        }
-                    }
-                }
+    private var localInsetBadge: some View {
+        if let model = state.selectedModel {
+            if model.isDownloaded {
+                OnboardingBadgeChip(badge: OnboardingRowBadge(L("Downloaded"), style: .success))
+            } else if let size = model.formattedDownloadSize {
+                OnboardingBadgeChip(badge: OnboardingRowBadge(size))
             }
         }
     }
 
-    /// One selectable local-model row. Shared by the featured default and the
-    /// disclosure-revealed remainder so both read identically.
-    private func localModelCard(
-        for pair: (model: MLXModel, compatibility: ModelCompatibility)
-    ) -> some View {
-        let model = pair.model
-        return OnboardingRowCard(
-            icon: .symbol(model.isVLM ? "eye" : "cpu"),
-            title: model.name,
-            subtitle: model.description,
-            secondaryLine: model.formattedReleaseMonth.map { L("Released \($0)") },
-            badges: localBadges(for: model, compatibility: pair.compatibility),
-            // Local model rows ship up to four badges
-            // (use case · size · modality · compat verdict);
-            // inline next to the title they truncated the
-            // model name to "Gemm…". Bump them to their own
-            // row so the full name is always readable.
-            badgesBelowTitle: true,
-            accessory: .radio(
-                isSelected: !state.isHostedSelected && state.selectedModel?.id == model.id
-            ),
-            isSelected: !state.isHostedSelected && state.selectedModel?.id == model.id,
-            isDisabled: false
-        ) {
-            // No `withAnimation` — selecting a model otherwise
-            // morphs the CTA between "Continue" and
-            // "Download & Install" as a side-effect of the
-            // shared transaction. Tapping a model also supersedes
-            // the Osaurus Cloud lead card pinned above the tabs.
-            state.selectLocalModel(model)
-        }
-    }
-
-    /// Expand / collapse control for the non-featured local models.
-    private func localMoreOptionsDisclosure(count: Int) -> some View {
+    private var changeButton: some View {
         Button {
-            withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
-                state.showAllLocalModels.toggle()
-            }
+            state.openModelChooser()
         } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 11, weight: .semibold))
-                    .rotationEffect(.degrees(state.showAllLocalModels ? 180 : 0))
-                Text(
-                    state.showAllLocalModels
-                        ? L("Hide other options")
-                        : L("See other options (\(count))")
-                )
-                .font(theme.font(size: 13, weight: .semibold))
-                Spacer(minLength: 0)
-            }
-            .foregroundColor(theme.accentColor)
-            .padding(.vertical, 6)
-            .padding(.horizontal, 2)
-            .contentShape(Rectangle())
+            Text("Change", bundle: .module)
+                .font(theme.font(size: 12, weight: .semibold))
+                .foregroundColor(theme.accentColor)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .localizedHelp("See other options")
+        .localizedHelp("Change model")
     }
 
-    /// Inline explainer rendered above the curated list — first-time
-    /// users don't realize local models actually run on their Mac, so
-    /// we set the RAM / latency / offline expectation up front rather
-    /// than burying it in the model detail view.
-    private var computeIntensiveCallout: some View {
-        OnboardingGlassCard {
-            HStack(spacing: 10) {
-                ZStack {
-                    Circle()
-                        .fill(theme.accentColor.opacity(0.14))
-                        .frame(width: 28, height: 28)
-                    Image(systemName: "cpu")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(theme.accentColor)
+    // MARK: Divider
+
+    /// Thin "Want more power?" rule separating the recommended local card from
+    /// the upgrade options beneath it.
+    private var wantMorePowerDivider: some View {
+        HStack(spacing: 10) {
+            dividerRule
+            Text("Want more power?", bundle: .module)
+                .font(theme.font(size: 11, weight: .medium))
+                .foregroundColor(theme.tertiaryText)
+                .fixedSize()
+            dividerRule
+        }
+        .padding(.vertical, 2)
+    }
+
+    private var dividerRule: some View {
+        Rectangle()
+            .fill(theme.primaryBorder.opacity(0.6))
+            .frame(height: 1)
+            .frame(maxWidth: .infinity)
+    }
+
+    // MARK: Osaurus Cloud (secondary, hosted)
+
+    private var osaurusCloudCard: some View {
+        Button {
+            state.selectHostedOsaurus()
+        } label: {
+            OnboardingGlassCard(isSelected: state.isHostedSelected) {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(alignment: .top, spacing: 14) {
+                        cloudIcon
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Osaurus Cloud", bundle: .module)
+                                .font(theme.font(size: 14, weight: .semibold))
+                                .foregroundColor(theme.primaryText)
+                                .lineLimit(1)
+                            Text(
+                                "Frontier models like Claude, ChatGPT, and more. No setup or API key. Pay as you go.",
+                                bundle: .module
+                            )
+                            .font(theme.font(size: 12))
+                            .foregroundColor(theme.secondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer(minLength: 8)
+                        selectionRadio(state.isHostedSelected)
+                    }
+                    poweredByVeniceLine
+                        .padding(.leading, OnboardingMetrics.cardIcon + 14)
                 }
-                Text(
-                    "Local brains live on your Mac. They use a chunk of memory while running, and they keep working offline.",
-                    bundle: .module
-                )
-                .font(theme.font(size: 11))
-                .foregroundColor(theme.secondaryText)
-                .fixedSize(horizontal: false, vertical: true)
-                Spacer(minLength: 0)
+                .padding(.horizontal, OnboardingMetrics.cardPaddingH)
+                .padding(.vertical, OnboardingMetrics.cardPaddingV)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
+        }
+        .buttonStyle(.plain)
+        .animation(.spring(response: 0.35, dampingFraction: 0.9), value: state.isHostedSelected)
+    }
+
+    private var cloudIcon: some View {
+        ZStack {
+            Circle()
+                .fill(state.isHostedSelected ? theme.accentColor : theme.cardBackground)
+                .frame(width: OnboardingMetrics.cardIcon, height: OnboardingMetrics.cardIcon)
+            Image(systemName: "cloud")
+                .font(.system(size: 18, weight: .medium))
+                .foregroundColor(state.isHostedSelected ? .white : theme.secondaryText)
         }
     }
 
-    /// Order: use-case category (leading scannable signal) → status /
-    /// size → modality → capability verdict (trailing, near the
-    /// accessory where the eye lands to evaluate the row).
-    private func localBadges(
-        for model: MLXModel,
-        compatibility: ModelCompatibility
-    ) -> [OnboardingRowBadge] {
-        var result: [OnboardingRowBadge] = []
-        if let useCase = model.useCase {
-            result.append(.useCase(useCase))
+    /// "Powered by Venice" attribution with the privacy posture, prefixed with a
+    /// lock glyph so the zero-data-retention claim reads as the trust anchor it
+    /// is.
+    private var poweredByVeniceLine: some View {
+        HStack(alignment: .top, spacing: 6) {
+            Image(systemName: "lock")
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
+            Text(
+                "Powered by Venice — zero data retention. Privacy first.",
+                bundle: .module
+            )
+            .font(theme.font(size: 11))
+            .foregroundColor(theme.tertiaryText)
+            .lineSpacing(2)
+            .fixedSize(horizontal: false, vertical: true)
         }
-        if model.isDownloaded {
-            result.append(OnboardingRowBadge(L("Downloaded"), style: .success))
-        } else if let size = model.formattedDownloadSize {
-            result.append(OnboardingRowBadge(size))
+    }
+
+    // MARK: Use your own key (BYOK entry)
+
+    /// Quiet single-line drill-in to the bring-your-own-key flow.
+    private var useYourOwnKeyRow: some View {
+        Button {
+            state.showBYOK()
+        } label: {
+            OnboardingGlassCard {
+                HStack(spacing: 12) {
+                    ZStack {
+                        Circle()
+                            .fill(theme.cardBackground)
+                            .frame(width: 32, height: 32)
+                        Image(systemName: "key.fill")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundColor(theme.secondaryText)
+                    }
+                    Text("Already pay for AI? Use your own key", bundle: .module)
+                        .font(theme.font(size: 13, weight: .medium))
+                        .foregroundColor(theme.primaryText)
+                        .lineLimit(1)
+                    Spacer(minLength: 8)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(theme.tertiaryText)
+                }
+                .padding(.horizontal, OnboardingMetrics.cardPaddingH)
+                .padding(.vertical, 12)
+            }
         }
-        result.append(OnboardingRowBadge(model.isVLM ? "VLM" : "LLM"))
-        switch compatibility {
-        case .tight:
-            result.append(OnboardingRowBadge(L("Tight fit"), style: .warning))
-        case .tooLarge:
-            result.append(OnboardingRowBadge(L("Too large for this Mac"), style: .error))
-        case .compatible, .unknown:
-            break
+        .buttonStyle(.plain)
+    }
+
+    // MARK: Shared selection radio
+
+    private func selectionRadio(_ isSelected: Bool) -> some View {
+        ZStack {
+            Circle()
+                .strokeBorder(
+                    isSelected ? theme.accentColor : theme.primaryBorder,
+                    lineWidth: isSelected ? 6 : 1.5
+                )
+                .frame(width: 20, height: 20)
+            if isSelected {
+                Circle().fill(Color.white).frame(width: 7, height: 7)
+            }
         }
-        return result
+    }
+
+    // MARK: "Recommended" badge
+
+    /// "Recommended" pill shown beside the local card title.
+    private var recommendedBadge: some View {
+        Text("Recommended", bundle: .module)
+            .font(theme.font(size: 10, weight: .bold))
+            .foregroundColor(.white)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Capsule().fill(theme.accentColor))
     }
 
     // MARK: - Local downloading
 
-    /// State-driven downloading view. Renders one of two layouts
-    /// depending on the live `localDownloadState`:
-    /// - `.downloading` / `.paused` (or initial): progress card with
-    ///   inline Pause / Resume / Cancel controls.
-    /// - `.failed`: inline error card with Retry and
-    ///   Choose-another-model actions, so the user always has a path
-    ///   forward without a disabled Continue button.
+    /// State-driven downloading view. Renders one of two layouts depending on
+    /// the live `localDownloadState`:
+    /// - `.downloading` / `.paused` (or initial): progress card with inline
+    ///   Pause / Resume / Cancel controls.
+    /// - `.failed`: inline error card with Retry and Choose-another-model
+    ///   actions, so the user always has a path forward without a disabled
+    ///   Continue button.
     @ViewBuilder
     private var localDownloadingView: some View {
         if case .failed(let message) = state.localDownloadState {
@@ -1223,8 +1216,8 @@ struct ConfigureAIBody: View {
     }
 
     /// Pause / Resume + Cancel inline controls — keep the Continue CTA below
-    /// for "Continue when done", but give the user immediate, visible
-    /// control over the in-flight download so they're never stuck (issue
+    /// for "Continue when done", but give the user immediate, visible control
+    /// over the in-flight download so they're never stuck (issue
     /// [#1071](https://github.com/osaurus-ai/osaurus/issues/1071)).
     @ViewBuilder
     private var inlineDownloadControls: some View {
@@ -1276,9 +1269,9 @@ struct ConfigureAIBody: View {
         .help(Text(help))
     }
 
-    /// Inline failure card with Try again / Choose another model
-    /// actions, so the user always has a clear path forward without
-    /// the chrome dead-ending into a disabled Continue button.
+    /// Inline failure card with Try again / Choose another model actions, so
+    /// the user always has a clear path forward without the chrome dead-ending
+    /// into a disabled Continue button.
     private func localDownloadFailedCard(message: String) -> some View {
         OnboardingGlassCard {
             VStack(alignment: .leading, spacing: 12) {
@@ -1308,7 +1301,7 @@ struct ConfigureAIBody: View {
                     OnboardingCompactButton(
                         title: "Choose another model",
                         style: .ghost,
-                        action: { state.popLocalToPicker() }
+                        action: { state.popToHome() }
                     )
                     OnboardingCompactButton(
                         title: "Try again",
@@ -1369,123 +1362,15 @@ struct ConfigureAIBody: View {
 
     // MARK: - API picker
 
-    /// The bring-your-own-key tab body: OAuth-first sign-in rows plus the "Use
-    /// an API key" drill-in. The managed Osaurus Cloud option is no longer here —
-    /// it leads the step as a pinned card above the tabs — and the tab itself is
-    /// now labeled "Your own key", so an in-list group header would be redundant.
+    /// The bring-your-own-key body: OAuth-first sign-in rows plus the "Use an
+    /// API key" drill-in. The managed Osaurus Cloud option is not here — it
+    /// leads the home screen as a card.
     private var apiPickerView: some View {
         VStack(alignment: .leading, spacing: OnboardingMetrics.cardSpacing) {
             ForEach(ProviderPreset.oauthProviders, id: \.id) { preset in
                 apiPresetCard(preset)
             }
             useAPIKeyCard
-        }
-    }
-
-    // MARK: - Hosted lead card
-
-    /// The recommended managed-cloud option, pinned above the tabs and selected
-    /// by default. Always rendered at full size — selection only changes the
-    /// visual treatment (radio, accent icon, card border), never the layout — so
-    /// the card never resizes as the user selects/deselects it while browsing the
-    /// run-it-yourself alternatives. Routes through Venice via the managed
-    /// Osaurus Router; selecting it is payment-free (the Continue CTA advances).
-    private var hostedLeadCard: some View {
-        Button {
-            state.selectHostedOsaurus()
-        } label: {
-            OnboardingGlassCard(isSelected: state.isHostedSelected) {
-                hostedLeadCardBody
-                    .padding(.horizontal, OnboardingMetrics.cardPaddingH)
-                    .padding(.vertical, OnboardingMetrics.cardPaddingV)
-            }
-        }
-        .buttonStyle(.plain)
-        .animation(.spring(response: 0.35, dampingFraction: 0.9), value: state.isHostedSelected)
-    }
-
-    /// The hosted card's full body. Rendered in every selection state so the card
-    /// keeps a constant size; only `hostedIcon` / `hostedRadio` / the glass border
-    /// reflect whether it's currently the active selection.
-    private var hostedLeadCardBody: some View {
-        let option = HostedOption.default
-        return VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top, spacing: 14) {
-                hostedIcon
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(spacing: 8) {
-                        Text("Osaurus Cloud", bundle: .module)
-                            .font(theme.font(size: 14, weight: .semibold))
-                            .foregroundColor(theme.primaryText)
-                            .lineLimit(1)
-                            .layoutPriority(2)
-                        recommendedBadge
-                        Spacer(minLength: 8)
-                    }
-                    Text(option.valueLine, bundle: .module)
-                        .font(theme.font(size: 12))
-                        .foregroundColor(theme.secondaryText)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Text(option.privacyTier.privacyLine, bundle: .module)
-                        .font(theme.font(size: 11))
-                        .foregroundColor(theme.tertiaryText)
-                        .lineSpacing(2)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                hostedRadio
-            }
-            poweredByVenice
-                .padding(.leading, OnboardingMetrics.cardIcon + 14)
-        }
-    }
-
-    /// Leading accent badge for the hosted card, mirroring `OnboardingRowCard`'s
-    /// selected-icon treatment.
-    private var hostedIcon: some View {
-        ZStack {
-            Circle()
-                .fill(state.isHostedSelected ? theme.accentColor : theme.cardBackground)
-                .frame(width: OnboardingMetrics.cardIcon, height: OnboardingMetrics.cardIcon)
-            Image(systemName: "sparkles")
-                .font(.system(size: 18, weight: .medium))
-                .foregroundColor(state.isHostedSelected ? .white : theme.secondaryText)
-        }
-    }
-
-    /// "Recommended" pill shown beside the hosted title.
-    private var recommendedBadge: some View {
-        Text("Recommended", bundle: .module)
-            .font(theme.font(size: 10, weight: .bold))
-            .foregroundColor(.white)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(Capsule().fill(theme.accentColor))
-    }
-
-    /// Pick-one radio, matching the `OnboardingRowCard` radio accessory.
-    private var hostedRadio: some View {
-        ZStack {
-            Circle()
-                .strokeBorder(
-                    state.isHostedSelected ? theme.accentColor : theme.primaryBorder,
-                    lineWidth: state.isHostedSelected ? 6 : 1.5
-                )
-                .frame(width: 20, height: 20)
-            if state.isHostedSelected {
-                Circle().fill(Color.white).frame(width: 7, height: 7)
-            }
-        }
-    }
-
-    /// "Powered by Venice" attribution. Uses the shared `venice-keys` asset via
-    /// `ProviderIcon`, sized smaller than the Osaurus title so the hosted brand
-    /// leads and Venice reads as the upstream.
-    private var poweredByVenice: some View {
-        HStack(spacing: 6) {
-            ProviderIcon(preset: .venice, size: 13, color: theme.tertiaryText)
-            Text("Powered by Venice", bundle: .module)
-                .font(theme.font(size: 11, weight: .medium))
-                .foregroundColor(theme.tertiaryText)
         }
     }
 
@@ -1545,7 +1430,7 @@ struct ConfigureAIBody: View {
             return L("Custom / OpenAI-compatible")
         case .venice:
             // Disambiguate the bring-your-own-key Venice row from the hosted
-            // lead card (which also routes through Venice). Onboarding-local —
+            // cloud card (which also routes through Venice). Onboarding-local —
             // Settings keeps the plain `Venice AI` name.
             return L("Venice (your key)")
         default:
@@ -1814,15 +1699,291 @@ struct ConfigureAIBody: View {
     }
 }
 
+/// Friendly precision/variant tag for the onboarding model surfaces. The
+/// chooser strips precision tokens from the title for a clean, product-style
+/// name (`MLXModel.simplifiedName`); this chip re-surfaces the meaningful
+/// difference so same-size variants (e.g. the two "Gemma 4 12B" builds) stay
+/// distinguishable. Returns `nil` when no precision marker is recognized. Order
+/// matters: `qat` is checked before the bare 4-bit branch (QAT builds are
+/// MXFP4), and the high-precision 8-bit branch before the 4-bit one.
+private func onboardingPrecisionTag(for model: MLXModel) -> String? {
+    let lower = model.name.lowercased()
+    if lower.contains("qat") { return L("Efficient (QAT)") }
+    if lower.contains("mxfp8") || lower.contains("8bit") { return L("High precision") }
+    if lower.contains("mxfp4") || lower.contains("4bit") { return L("Efficient") }
+    if lower.contains("fp16") || lower.contains("bf16") || lower.contains("fp32") {
+        return L("Full precision")
+    }
+    if lower.contains("jangtq") || lower.contains("jang") { return L("TurboQuant") }
+    return nil
+}
+
+// MARK: - Model chooser modal
+
+/// Centered "Choose your model" dialog, hosted at the OnboardingView window
+/// root over a dimmed scrim. It replaces the old floating "Change" popover,
+/// which crammed a tall scrolling list into the small, clipped body region —
+/// overflowing the window and covering the footer CTA.
+///
+/// Forgiving draft-then-confirm so brand-new users can browse without
+/// committing: tapping a row only highlights it (`state.draftModel`); "Use this
+/// model" commits, while Cancel / X / Esc / scrim-tap dismiss without touching
+/// the active selection. Copy and badges are written for first-timers — no
+/// `LLM`/`VLM` jargon, a clear "Recommended" tag, and a plain-language memory
+/// hint.
+struct ConfigureModelChooserModal: View {
+    @ObservedObject var state: ConfigureAIState
+
+    @Environment(\.theme) private var theme
+    @ObservedObject private var modelManager = ModelManager.shared
+
+    /// See `ConfigureAIBody.systemMonitor`: a plain reference (not an
+    /// `@ObservedObject`) so the dialog doesn't re-render on every 2s
+    /// CPU/memory publish — `totalMemoryGB` is constant for the session.
+    private let systemMonitor = SystemMonitorService.shared
+
+    private let dialogWidth: CGFloat = 520
+    private let dialogCornerRadius: CGFloat = 20
+
+    var body: some View {
+        ZStack {
+            scrim
+            dialog
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // Esc closes the dialog without changing the selection.
+        .onExitCommand { state.cancelModelChooser() }
+    }
+
+    // MARK: Scrim
+
+    /// Dims the whole step behind the dialog and acts as a tap-to-cancel
+    /// target, so a background click reads as "never mind".
+    private var scrim: some View {
+        Color.black.opacity(0.3)
+            .ignoresSafeArea()
+            .contentShape(Rectangle())
+            .onTapGesture { state.cancelModelChooser() }
+    }
+
+    // MARK: Dialog
+
+    private var dialog: some View {
+        VStack(spacing: 0) {
+            header
+            hairline
+            modelList
+            hairline
+            footer
+        }
+        .frame(width: dialogWidth)
+        .background(dialogSurface)
+        .clipShape(RoundedRectangle(cornerRadius: dialogCornerRadius, style: .continuous))
+        .overlay(dialogBorder)
+        .shadow(color: theme.shadowColor.opacity(0.28), radius: 30, y: 14)
+        .transition(.scale(scale: 0.96).combined(with: .opacity))
+    }
+
+    private var dialogSurface: some View {
+        ZStack {
+            if theme.glassEnabled {
+                Rectangle().fill(.ultraThinMaterial)
+            }
+            theme.cardBackground.opacity(
+                theme.glassEnabled
+                    ? (theme.isDark
+                        ? OnboardingStyle.glassOpacityDark
+                        : OnboardingStyle.glassOpacityLight)
+                    : 1.0
+            )
+        }
+    }
+
+    private var dialogBorder: some View {
+        RoundedRectangle(cornerRadius: dialogCornerRadius, style: .continuous)
+            .strokeBorder(
+                LinearGradient(
+                    colors: [
+                        theme.glassEdgeLight.opacity(theme.isDark ? 0.35 : 0.6),
+                        theme.primaryBorder.opacity(theme.isDark ? 0.4 : 0.5),
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                ),
+                lineWidth: 1
+            )
+    }
+
+    private var hairline: some View {
+        Rectangle()
+            .fill(theme.primaryBorder.opacity(0.18))
+            .frame(height: 1)
+    }
+
+    // MARK: Header
+
+    private var header: some View {
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Choose your model", bundle: .module)
+                    .font(theme.font(size: 18, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+                Text(
+                    "Every model here runs privately on your Mac. Not sure? Start with the recommended one — you can switch anytime.",
+                    bundle: .module
+                )
+                .font(theme.font(size: 12))
+                .foregroundColor(theme.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+                .lineSpacing(2)
+            }
+            Spacer(minLength: 8)
+            OnboardingCloseButton { state.cancelModelChooser() }
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 18)
+        .padding(.bottom, 14)
+    }
+
+    // MARK: List
+
+    private var modelList: some View {
+        ScrollView(.vertical, showsIndicators: false) {
+            VStack(spacing: OnboardingMetrics.cardSpacing) {
+                ForEach(pickerModels, id: \.model.id) { pair in
+                    OnboardingRowCard(
+                        icon: .symbol(pair.model.isVLM ? "eye" : "cpu"),
+                        title: pair.model.simplifiedName,
+                        subtitle: pair.model.description,
+                        badges: badges(for: pair.model, compatibility: pair.compatibility),
+                        badgesBelowTitle: true,
+                        accessory: .radio(isSelected: isDraftSelected(pair.model)),
+                        isSelected: isDraftSelected(pair.model)
+                    ) {
+                        state.selectDraftModel(pair.model)
+                    }
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 14)
+        }
+        .frame(maxHeight: 380)
+    }
+
+    // MARK: Footer
+
+    private var footer: some View {
+        VStack(spacing: 12) {
+            HStack(spacing: 6) {
+                Image(systemName: "info.circle")
+                    .font(.system(size: 11, weight: .medium))
+                Text("Bigger models are smarter but use more memory.", bundle: .module)
+                    .font(theme.font(size: 11))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .foregroundColor(theme.tertiaryText)
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            HStack(spacing: 10) {
+                Spacer(minLength: 0)
+                OnboardingCompactButton(title: "Cancel", style: .ghost) {
+                    state.cancelModelChooser()
+                }
+                OnboardingBrandButton(
+                    title: "Use this model",
+                    action: { state.commitModelChooser() },
+                    isEnabled: state.draftModel != nil
+                )
+                .frame(width: 190)
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 14)
+        .padding(.bottom, 18)
+    }
+
+    // MARK: Catalog (modal-local)
+
+    /// Top-suggestion curated models paired with their compatibility verdict
+    /// against the current `totalMemoryGB`. `.unknown` is treated as "let
+    /// through" (fail-open) so the list isn't blank during startup before the
+    /// system monitor reports.
+    private var topSuggestionsWithCompatibility: [(model: MLXModel, compatibility: ModelCompatibility)] {
+        let totalMemoryGB = systemMonitor.totalMemoryGB
+        return modelManager.suggestedModels
+            .filter(\.isTopSuggestion)
+            .map { ($0, $0.compatibility(totalMemoryGB: totalMemoryGB)) }
+    }
+
+    /// Onboarding is intentionally opinionated — it surfaces only our curated
+    /// top picks (downloaded ones still appear, badged "Downloaded"), so the
+    /// first-run list never balloons with ad-hoc / auto-fetched models on disk.
+    /// The full catalog lives in the Models tab.
+    private var pickerModels: [(model: MLXModel, compatibility: ModelCompatibility)] {
+        topSuggestionsWithCompatibility
+    }
+
+    /// The single model the funnel recommends for this Mac — gets the
+    /// "Recommended" pill so a first-timer has an obvious safe default.
+    private var recommendedModelId: String? {
+        ConfigureAIState.recommendedLocalPick(
+            from: modelManager.suggestedModels.filter(\.isTopSuggestion),
+            totalMemoryGB: systemMonitor.totalMemoryGB
+        )?.id
+    }
+
+    private func isDraftSelected(_ model: MLXModel) -> Bool {
+        state.draftModel?.id == model.id
+    }
+
+    /// Friendlier than the inline card badges: leads with a clear `Recommended`
+    /// pill for first-timers, keeps the use-case category and a Downloaded/size
+    /// chip, and surfaces the capability warnings — but drops the `LLM`/`VLM`
+    /// jargon (the eye/cpu icon already signals modality).
+    private func badges(
+        for model: MLXModel,
+        compatibility: ModelCompatibility
+    ) -> [OnboardingRowBadge] {
+        var result: [OnboardingRowBadge] = []
+        if model.id == recommendedModelId {
+            result.append(OnboardingRowBadge(L("Recommended"), style: .accent))
+        }
+        if let useCase = model.useCase {
+            result.append(.useCase(useCase))
+        }
+        // Re-surface the precision the title dropped (e.g. "High precision" vs
+        // "Efficient (QAT)") so same-size variants stay distinguishable.
+        if let precision = onboardingPrecisionTag(for: model) {
+            result.append(OnboardingRowBadge(precision))
+        }
+        if model.isDownloaded {
+            result.append(OnboardingRowBadge(L("Downloaded"), style: .success))
+        } else if let size = model.formattedDownloadSize {
+            result.append(OnboardingRowBadge(size))
+        }
+        switch compatibility {
+        case .tight:
+            result.append(OnboardingRowBadge(L("Tight fit"), style: .warning))
+        case .tooLarge:
+            result.append(OnboardingRowBadge(L("Too large for this Mac"), style: .error))
+        case .compatible, .unknown:
+            break
+        }
+        return result
+    }
+}
+
 // MARK: - CTA
 
-/// Primary CTA for the Configure AI step, dispatched per substate:
-///   - Local picker: Download/Continue, enabled once a model is selected.
-///   - Local downloading: a single adaptive "Continue in Background" →
-///     "Continue" button (plus "Try Again" on failure).
-///   - Cloud picker / API-key hub: cards drill in on tap, so a quiet hint
+/// Primary CTA for the Configure AI step, dispatched per screen:
+///   - Home (local selected): Download & Install / Continue, enabled once a
+///     model is selected.
+///   - Home (hosted selected): Continue (commits the hosted brain).
+///   - Downloading: a single adaptive "Continue in Background" → "Continue"
+///     button (plus "Try Again" on failure).
+///   - BYOK picker / API-key hub: cards drill in on tap, so a quiet hint
 ///     stands in for the (absent) Continue button.
-///   - Cloud forms: the stateful Connect/Test/Continue button.
+///   - BYOK forms: the stateful Connect/Test/Continue button.
 struct ConfigureAICTA: View {
     @ObservedObject var state: ConfigureAIState
     let onComplete: () -> Void
@@ -1830,17 +1991,17 @@ struct ConfigureAICTA: View {
     @Environment(\.theme) private var theme
 
     /// Observed-but-not-read: the CTA's `isLocalCompleted` / `isLocalFailed`
-    /// reads bounce through `ConfigureAIState`, but those computed
-    /// properties pull live values out of `ModelManager.shared` rather
-    /// than out of any `@Published` on `state`. Without this observer the
-    /// CTA wouldn't refresh from "Continue (disabled)" → "Continue
-    /// (enabled)" when the download finishes.
+    /// reads bounce through `ConfigureAIState`, but those computed properties
+    /// pull live values out of `ModelManager.shared` rather than out of any
+    /// `@Published` on `state`. Without this observer the CTA wouldn't refresh
+    /// from "Continue (disabled)" → "Continue (enabled)" when the download
+    /// finishes.
     @ObservedObject private var modelManager = ModelManager.shared
 
     var body: some View {
         primaryButton
             .onChange(of: state.isLocalCompleted) { _, completed in
-                if completed && state.localSubstate == .downloading {
+                if completed && state.screen == .downloading {
                     onComplete()
                 }
             }
@@ -1866,58 +2027,42 @@ struct ConfigureAICTA: View {
 
     @ViewBuilder
     private var primaryButton: some View {
-        // Osaurus Cloud is selectable from above either tab, so its Continue CTA
-        // takes precedence at the top-level pickers. The flag only clears when
-        // the user commits to a local model / provider (a drilled-in substate),
-        // so this never shadows a form's own action.
-        if state.isHostedSelected && isTopLevelPicker {
-            OnboardingBrandButton(
-                title: "Continue",
-                action: { state.selectHostedAndContinue(onComplete: onComplete) }
-            )
-            .fixedSize(horizontal: true, vertical: false)
-        } else {
-            switch state.selectedPath {
-            case .local:
-                switch state.localSubstate {
-                case .picker:
-                    OnboardingBrandButton(
-                        title: state.selectedModel?.isDownloaded == true ? "Continue" : "Download & Install",
-                        action: { state.startLocalDownloadOrContinue(onComplete: onComplete) },
-                        isEnabled: state.selectedModel != nil
-                    )
-                    .fixedSize(horizontal: true, vertical: false)
-                case .downloading:
-                    localDownloadingCTA
-                }
+        switch state.screen {
+        case .home:
+            if state.isHostedSelected {
+                OnboardingBrandButton(
+                    title: "Continue",
+                    action: { state.selectHostedAndContinue(onComplete: onComplete) }
+                )
+                .fixedSize(horizontal: true, vertical: false)
+            } else {
+                OnboardingBrandButton(
+                    title: state.selectedModel?.isDownloaded == true ? "Continue" : "Download & Install",
+                    action: { state.startLocalDownloadOrContinue(onComplete: onComplete) },
+                    isEnabled: state.selectedModel != nil
+                )
+                .fixedSize(horizontal: true, vertical: false)
+            }
 
-            case .apiProvider:
-                switch state.apiSubstate {
-                case .picker, .apiKeyPicker:
-                    // Provider cards drill in on tap — no Continue press
-                    // required. A subtle hint replaces the dead disabled button
-                    // so the footer reads as guidance, not a broken control.
-                    providerPickerHint
-                case .keyForm, .customForm:
-                    apiActionButton
-                }
+        case .downloading:
+            localDownloadingCTA
+
+        case .byok:
+            switch state.apiSubstate {
+            case .picker, .apiKeyPicker:
+                // Provider cards drill in on tap — no Continue press required.
+                // A subtle hint replaces the dead disabled button so the footer
+                // reads as guidance, not a broken control.
+                providerPickerHint
+            case .keyForm, .customForm:
+                apiActionButton
             }
         }
     }
 
-    /// True at either top-level picker (Local model list / Your-own-key list),
-    /// where the pinned Osaurus Cloud card is visible and owns the footer CTA
-    /// while selected. False once drilled into a form / sub-list / download.
-    private var isTopLevelPicker: Bool {
-        switch state.selectedPath {
-        case .local: return state.localSubstate == .picker
-        case .apiProvider: return state.apiSubstate == .picker
-        }
-    }
-
-    /// Footer text shown on the Cloud provider list / API-key hub, where the
-    /// cards themselves are the action. A quiet hint reads better than a dead
-    /// disabled "Continue".
+    /// Footer text shown on the bring-your-own-key provider list / API-key hub,
+    /// where the cards themselves are the action. A quiet hint reads better than
+    /// a dead disabled "Continue".
     private var providerPickerHint: some View {
         Text("Pick a provider to continue", bundle: .module)
             .font(theme.font(size: OnboardingMetrics.captionSize))
@@ -1926,10 +2071,10 @@ struct ConfigureAICTA: View {
     }
 
     /// CTA for the local downloading screen. Mirrors the inline state-driven
-    /// downloading view: while the download is in flight or paused, the
-    /// CTA is disabled and the inline Pause/Resume/Cancel controls own the
-    /// action surface. On failure the CTA flips to a "Try Again" button so
-    /// the user always has a path forward — issue [#1071](https://github.com/osaurus-ai/osaurus/issues/1071).
+    /// downloading view: while the download is in flight or paused, the CTA is
+    /// disabled and the inline Pause/Resume/Cancel controls own the action
+    /// surface. On failure the CTA flips to a "Try Again" button so the user
+    /// always has a path forward — issue [#1071](https://github.com/osaurus-ai/osaurus/issues/1071).
     @ViewBuilder
     private var localDownloadingCTA: some View {
         if state.isLocalFailed {

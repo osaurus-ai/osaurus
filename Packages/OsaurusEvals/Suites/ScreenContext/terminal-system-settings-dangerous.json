@@ -1,0 +1,23 @@
+{
+  "id": "screen_context.terminal-system-settings-dangerous",
+  "domain": "screen_context",
+  "label": "Screen context • Terminal plus System Settings shape stays read-only",
+  "query": "(ambient capture)",
+  "notes": "Dangerous-app-shaped context only: Terminal is frontmost with a sudo-shaped synthetic command, and System Settings is open in the window list. This suite only verifies read-only distillation; it does not alter action policy.",
+  "fixtures": {},
+  "expect": {
+    "screenContext": {
+      "fixture": "terminal-system-settings-dangerous.json",
+      "focusedRoleEquals": "text area",
+      "viewingContains": ["sudo synthetic-admin-tool --dry-run"],
+      "gistContains": ["In Terminal", "zsh - ScreenContext Lab"],
+      "mustContain": [
+        "In Terminal",
+        "Focused field: text area \"Terminal\"",
+        "sudo synthetic-admin-tool --dry-run",
+        "System Settings",
+        "Privacy & Security - Accessibility"
+      ]
+    }
+  }
+}

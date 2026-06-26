@@ -35,6 +35,14 @@ public struct EvalCaseDelta: Sendable, Codable, Equatable {
     public let baselinePeakRamMb: Double?
     public let currentPeakRamMb: Double?
     public let peakRamDeltaMb: Double?
+    /// Estimated context tokens per task (prompt + frozen tool schema,
+    /// summed across model steps). A NEGATIVE delta is the optimization-loop
+    /// win: same outcome, fewer tokens.
+    public let baselinePromptTokens: Int?
+    public let currentPromptTokens: Int?
+    public let promptTokensDelta: Int?
+    /// Signed percent change in context tokens (negative = cheaper).
+    public let promptTokensDeltaPct: Double?
     public let notes: [String]
 
     init(
@@ -67,6 +75,17 @@ public struct EvalCaseDelta: Sendable, Codable, Equatable {
             current?.telemetry?.peakPhysFootprintMb,
             baseline?.telemetry?.peakPhysFootprintMb
         )
+        baselinePromptTokens = baseline?.telemetry?.promptTokensTotal
+        currentPromptTokens = current?.telemetry?.promptTokensTotal
+        if let b = baseline?.telemetry?.promptTokensTotal,
+            let c = current?.telemetry?.promptTokensTotal
+        {
+            promptTokensDelta = c - b
+            promptTokensDeltaPct = b > 0 ? Double(c - b) / Double(b) * 100 : nil
+        } else {
+            promptTokensDelta = nil
+            promptTokensDeltaPct = nil
+        }
         notes = current?.notes ?? baseline?.notes ?? []
     }
 }
@@ -211,15 +230,16 @@ public struct EvalDiffSummary: Sendable, Codable, Equatable {
         lines.append("")
         lines.append("## \(title)")
         lines.append("")
-        lines.append("| Case | Domain | Baseline | Current | Δ decode | Δ peak RAM |")
-        lines.append("| --- | --- | --- | --- | ---: | ---: |")
+        lines.append("| Case | Domain | Baseline | Current | Δ decode | Δ peak RAM | Δ ctx tok |")
+        lines.append("| --- | --- | --- | --- | ---: | ---: | ---: |")
         for row in rows {
             let base = row.baselineOutcome?.rawValue ?? "missing"
             let now = row.currentOutcome?.rawValue ?? "missing"
             let decode = row.decodeTpsDeltaPct.map { String(format: "%+.0f%%", $0) } ?? "-"
             let ram = row.peakRamDeltaMb.map { String(format: "%+.0fMB", $0) } ?? "-"
+            let ctx = row.promptTokensDeltaPct.map { String(format: "%+.0f%%", $0) } ?? "-"
             lines.append(
-                "| \(EvalDiff.mdCell(row.id)) | \(row.domain) | \(base) | \(now) | \(decode) | \(ram) |"
+                "| \(EvalDiff.mdCell(row.id)) | \(row.domain) | \(base) | \(now) | \(decode) | \(ram) | \(ctx) |"
             )
         }
     }
@@ -230,9 +250,14 @@ public enum EvalDiff {
     public struct PerfMargins: Sendable {
         public let decodeTpsPct: Double
         public let peakRamMb: Double
-        public init(decodeTpsPct: Double = 10, peakRamMb: Double = 200) {
+        /// Context-token movement (percent) above which a savings is logged
+        /// as a win and a regrowth as a warning. Tighter than the speed
+        /// margin because context cost is the metric this loop targets.
+        public let promptTokensPct: Double
+        public init(decodeTpsPct: Double = 10, peakRamMb: Double = 200, promptTokensPct: Double = 5) {
             self.decodeTpsPct = decodeTpsPct
             self.peakRamMb = peakRamMb
+            self.promptTokensPct = promptTokensPct
         }
     }
 
@@ -389,6 +414,15 @@ public enum EvalDiff {
                 delta.currentPeakRamMb ?? 0
             )
             if ram > 0 { warnings.append(line) } else { wins.append(line) }
+        }
+        if let pct = delta.promptTokensDeltaPct, abs(pct) >= margins.promptTokensPct {
+            let pctStr = String(format: "%+.0f%%", pct)
+            let line =
+                "\(delta.id): ctx tokens \(pctStr) "
+                + "(\(delta.baselinePromptTokens ?? 0) -> \(delta.currentPromptTokens ?? 0))"
+            // Fewer context tokens at equal outcome is the win; more is a
+            // warning the maintainer reviews against the pass-rate change.
+            if pct < 0 { wins.append(line) } else { warnings.append(line) }
         }
     }
 

@@ -25,6 +25,12 @@ struct RuntimeProofValidationTests {
             tokensPerSecond: 18.4,
             generationTokenCount: 42,
             finishReason: "stop",
+            systemPromptEvidence: RuntimeProofSystemPromptEvidence(
+                sourceTracePassed: true,
+                matchingSectionIds: [PromptSectionID.persona],
+                staticPrefixContainsExpectedPrompt: true,
+                renderedPromptContainsExpectedPrompt: true
+            ),
             systemPromptProbePassed: true,
             multiTurnCoherent: true
         )
@@ -120,6 +126,46 @@ struct RuntimeProofValidationTests {
 
         #expect(!result.isAcceptableForProvenClaim)
         #expect(result.blockers.map(\.requirement).contains(.mediaPayload))
+    }
+
+    @Test("system prompt proof requires source trace evidence")
+    func systemPromptProofRequiresSourceTrace() {
+        let row = RuntimeProofRow(
+            modelId: "local-model",
+            scenario: "configured persona probe",
+            verdict: .proven,
+            requirements: [.systemPromptInjection],
+            artifactPaths: ["/tmp/osaurus-proof/system-prompt.json"],
+            systemPromptProbePassed: true
+        )
+
+        let result = RuntimeProofValidator.validate(row)
+
+        #expect(!result.isAcceptableForProvenClaim)
+        #expect(result.blockers.map(\.requirement).contains(.systemPromptInjection))
+    }
+
+    @Test("system prompt source trace alone does not prove live injection")
+    func systemPromptSourceTraceAloneDoesNotPass() {
+        let row = RuntimeProofRow(
+            modelId: "local-model",
+            scenario: "configured persona source trace only",
+            verdict: .proven,
+            requirements: [.systemPromptInjection],
+            artifactPaths: ["/tmp/osaurus-proof/system-prompt.json"],
+            systemPromptEvidence: RuntimeProofSystemPromptEvidence(
+                sourceTracePassed: true,
+                matchingSectionIds: [PromptSectionID.persona],
+                staticPrefixContainsExpectedPrompt: true,
+                renderedPromptContainsExpectedPrompt: true
+            ),
+            systemPromptProbePassed: false
+        )
+
+        let result = RuntimeProofValidator.validate(row)
+
+        #expect(!result.isAcceptableForProvenClaim)
+        #expect(result.blockers.map(\.requirement).contains(.systemPromptInjection))
     }
 
     @Test("failed rows may be preserved with warnings instead of blockers")
