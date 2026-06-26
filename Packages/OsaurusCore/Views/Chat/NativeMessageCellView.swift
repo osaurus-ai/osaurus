@@ -1298,16 +1298,16 @@ final class NativeStatsView: NSView {
         var parts: [String] = []
         if let ttft {
             if ttft < 0.01 {
-                parts.append(String(format: "TTFT %.0fms", ttft * 1000))
+                parts.append(String(format: L("TTFT %.0fms"), ttft * 1000))
             } else {
-                parts.append(String(format: "TTFT %.2fs", ttft))
+                parts.append(String(format: L("TTFT %.2fs"), ttft))
             }
         }
         if let tps = tokensPerSecond {
-            parts.append(String(format: "%.1f tok/s", tps))
+            parts.append(String(format: L("%.1f tok/s"), tps))
         }
         if let count = tokenCount {
-            parts.append("\(count) tokens")
+            parts.append(L("\(count) tokens"))
         }
         // Trailing diagnostic chip — vmlx tells us the model never emitted
         // `</think>` (or the family's close tag) before EOS / max_tokens.
@@ -1324,7 +1324,7 @@ final class NativeStatsView: NSView {
         // Text intentionally does NOT name a specific toggle so the chip
         // reads accurately for every model family.
         if unclosedReasoning {
-            parts.append("⚠ thinking didn't close — answer may be in reasoning above")
+            parts.append(L("⚠ thinking didn't close — answer may be in reasoning above"))
         }
         label.stringValue = parts.joined(separator: " \u{2022} ")
         label.font = NSFont.monospacedDigitSystemFont(

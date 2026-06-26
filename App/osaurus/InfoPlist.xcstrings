@@ -28,6 +28,12 @@
             "state" : "translated",
             "value" : "Osaurus"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus"
+          }
         }
       }
     },
@@ -54,6 +60,12 @@
           }
         },
         "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "osaurus"
+          }
+        },
+        "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "osaurus"
@@ -88,6 +100,12 @@
             "state" : "translated",
             "value" : "Osaurus 插件可能会使用自动化代表你控制其他应用。"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 插件可能會用自動化來代表你控制其他應用。"
+          }
         }
       }
     },
@@ -117,6 +135,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Osaurus 插件可能会访问你的日历，以读取和创建日程。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 插件可能會讀取你的行事曆，用來讀取和建立行事曆。"
           }
         }
       }
@@ -148,6 +172,12 @@
             "state" : "translated",
             "value" : "Osaurus 插件可能会访问你的日历，以读取和创建日程。"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 插件可能會讀取你的行事曆，用來讀取和建立行事曆。"
+          }
         }
       }
     },
@@ -177,6 +207,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Osaurus 插件可能会访问你的联系人，以搜索和读取联系人信息。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 插件可能會存取你的聯絡人，以搜尋和讀取聯絡人資訊。"
           }
         }
       }
@@ -220,6 +256,12 @@
             "state" : "translated",
             "value" : "Osaurus 使用本地网络来发现并连接运行在其他设备上的智能体。"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 使用本地網路來發現並連接執行在其他裝置上的智慧代理。"
+          }
         }
       }
     },
@@ -249,6 +291,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Osaurus 插件可能会访问你的位置，以提供基于位置的服务。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 插件可能會存取你的位置，以提供基於位置的服務。"
           }
         }
       }
@@ -280,6 +328,12 @@
             "state" : "translated",
             "value" : "Osaurus 插件可能会访问你的位置，以提供基于位置的服务。"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 插件可能會存取你的位置，以提供基於位置的服務。"
+          }
         }
       }
     },
@@ -309,6 +363,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Osaurus 使用麦克风通过 FluidAudio 进行设备端语音转写。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 使用麥克風透過 FluidAudio 進行裝置端語音轉寫。"
           }
         }
       }
@@ -340,6 +400,12 @@
             "state" : "translated",
             "value" : "Osaurus 插件可能会访问你的提醒事项，以读取和创建任务。"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 插件可能會存取你的提醒事項，以讀取和建立任務。"
+          }
         }
       }
     },
@@ -369,6 +435,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "只有在你授予屏幕录制访问权限时，Osaurus 才能捕获屏幕截图和系统音频。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "只有在你授予螢幕錄製存取權限時，Osaurus 才能擷取螢幕截圖和系統音訊。"
           }
         }
       }
