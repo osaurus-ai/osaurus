@@ -1486,7 +1486,7 @@ private struct WeekdayButton: View {
     @State private var isHovering = false
 
     private var dayLetter: String {
-        String(Calendar.current.shortWeekdaySymbols[day - 1].prefix(1))
+        String(Calendar.current.veryShortWeekdaySymbols[day - 1])
     }
 
     var body: some View {
