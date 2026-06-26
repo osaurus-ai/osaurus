@@ -39,6 +39,10 @@ struct ModelPickerRow: Equatable, Identifiable {
     let parameterCount: String?
     let quantization: String?
     let isVLM: Bool
+    /// False when the bundle is on disk but not in MLX format — the row is
+    /// dimmed and made non-selectable so the user can't pick a model that
+    /// would fail at load. Defaults to true (every selectable model).
+    let isMLXFormat: Bool
     let providerLabel: String?
 
     init(
@@ -49,6 +53,7 @@ struct ModelPickerRow: Equatable, Identifiable {
         parameterCount: String?,
         quantization: String?,
         isVLM: Bool,
+        isMLXFormat: Bool = true,
         providerLabel: String? = nil
     ) {
         self.modelId = modelId
@@ -58,6 +63,7 @@ struct ModelPickerRow: Equatable, Identifiable {
         self.parameterCount = parameterCount
         self.quantization = quantization
         self.isVLM = isVLM
+        self.isMLXFormat = isMLXFormat
         self.providerLabel = providerLabel
     }
 
@@ -754,7 +760,8 @@ extension ModelPickerTableRepresentable {
 
         private func selectHighlighted() {
             guard let index = highlightedIndex, index < rowIds.count,
-                let row = rowLookup[rowIds[index]]
+                let row = rowLookup[rowIds[index]],
+                row.isMLXFormat
             else { return }
             onSelectModel?(row.modelId)
         }
@@ -862,6 +869,14 @@ extension ModelPickerTableRepresentable {
 
         private func configureModelRow(_ cell: ModelRowCellView, with row: ModelPickerRow) {
             let id = row.modelId
+            // Non-MLX bundles are shown but dimmed and non-selectable: picking
+            // one would just fail at load. Alpha + tooltip are always assigned
+            // (both branches) so a reused cell never keeps a stale dim state.
+            cell.alphaValue = row.isMLXFormat ? 1.0 : 0.45
+            cell.toolTip =
+                row.isMLXFormat
+                ? nil
+                : L("Not an MLX model — the local engine can't load this bundle")
             cell.configure(
                 id: row.id,
                 displayName: row.displayName,
@@ -881,7 +896,10 @@ extension ModelPickerTableRepresentable {
                 descFont: descFont,
                 badgeFont: badgeFont,
                 badgeFontSmall: badgeFontSmall,
-                onSelect: { [weak self] in self?.onSelectModel?(id) }
+                onSelect: { [weak self] in
+                    guard row.isMLXFormat else { return }
+                    self?.onSelectModel?(id)
+                }
             )
         }
 

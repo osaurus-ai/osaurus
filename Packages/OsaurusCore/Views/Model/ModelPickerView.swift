@@ -103,6 +103,7 @@ struct ModelPickerView: View {
             parameterCount: model.parameterCount,
             quantization: model.quantization,
             isVLM: model.isVLM,
+            isMLXFormat: model.isMLXFormat,
             providerLabel: providerLabel
         )
     }
