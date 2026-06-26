@@ -23,6 +23,20 @@ This file is the spec + wiring contract for the current build.
 > default→global / custom→`AgentSettings`). The in-prompt first-use image-model picker is
 > gone (model lives in the tab). §2/§4/§6 below reflect this.
 
+> **No master switch + no Spawn tab (2026-06-26, supersedes every "master switch /
+> `agentDelegationEnabled` / global enable / Settings → Spawn tab" reference below,
+> including §2's gate #1 and §4's `agentDelegationExcludedToolNames`).** The global
+> enable flag is **deleted** — in a per-agent world it was a redundant second gate.
+> Gating is now **only** per-agent: a custom agent via `AgentSettings`, the main chat
+> via its `SubagentConfiguration` pool / image switch. Off-by-default +
+> invisible-at-baseline hold because every agent ships disabled. `ToolRegistry`'s base
+> schema **always** carries the delegation family (a superset); `resolveTools` does all
+> the narrowing. The **dedicated Spawn sidebar tab + `SpawnSettingsView` are deleted**;
+> the three shared runtime knobs (Local Orchestrator Handoff — now **default ON** —
+> RAM-Safety Preflight, Image Load Policy) live in a **"Sub-agents" card in the general
+> Settings tab** (`SubagentSettingsSection` hosted by `ConfigurationView`). Read "master
+> enable / Settings → Spawn" below as "Settings → Sub-agents card, no master enable."
+
 ---
 
 ## 1. What it is

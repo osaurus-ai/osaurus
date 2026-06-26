@@ -2,7 +2,12 @@
 //  SubagentToolAvailabilityTests.swift
 //  osaurusTests
 //
-//  Pins delegation settings as the source of truth for chat tool exposure.
+//  Pins the base-schema contract for the spawn / image delegation family. There
+//  is no global master switch anymore: the family is ALWAYS present in the base
+//  schema (a superset), and the per-agent narrowing happens in
+//  `SystemPromptComposer.resolveTools` (covered by
+//  `SubagentCapabilityRegistryTests.delegationVisibilitySemantics`). Here we pin
+//  the always-present base contract and the execution-time per-agent rejection.
 //
 
 import Foundation
@@ -13,138 +18,53 @@ import Testing
 @Suite("Agent delegation tool availability", .serialized)
 struct SubagentToolAvailabilityTests {
     @Test
-    func imageToolIsAbsentFromDefaultAlwaysLoadedSchema() async throws {
+    func imageAndSpawnAreAlwaysInTheBaseSchema() async throws {
+        // No master switch → the base (no-agent-context) schema always carries
+        // the whole delegation family. Off-by-default is enforced per agent in
+        // `resolveTools`, not by hiding the tools from the base set.
         try await withDelegationSandboxAsync(configuration: .default) {
-            let names = await MainActor.run {
-                Set(ToolRegistry.shared.alwaysLoadedSpecs(mode: .none).map(\.function.name))
-            }
-            #expect(!names.contains("image"))
-        }
-    }
-
-    @Test
-    func imageToolEntersSchemaWhenMasterAndImageDelegationAreEnabled() async throws {
-        try await withDelegationSandboxAsync(
-            configuration: SubagentConfiguration(
-                agentDelegationEnabled: true,
-                imageDelegationEnabled: true
-            )
-        ) {
             let names = await MainActor.run {
                 Set(ToolRegistry.shared.alwaysLoadedSpecs(mode: .none).map(\.function.name))
             }
             #expect(names.contains("image"))
+            #expect(names.contains("spawn"))
         }
     }
 
     @Test
-    func imageBlockedFromSpecLoadingWhenMasterOff() async throws {
-        // The base schema + global spec/availability queries apply only the
-        // MASTER gate (no agent context). With the master off, image is blocked
-        // for everyone.
+    func imageAndSpawnSpecsAreAlwaysLoadable() async throws {
+        // The global spec/availability queries no longer apply a delegation
+        // gate; they return the spec and carry no "agent delegation is disabled"
+        // reason. The agent-scoped narrowing has the agent context these lack.
         try await withDelegationSandboxAsync(configuration: .default) {
-            let (specs, availability) = await MainActor.run {
+            let (imageSpecs, spawnSpecs, imageAvail, spawnAvail) = await MainActor.run {
                 (
-                    ToolRegistry.shared.specs(forTools: ["image"]),
-                    ToolRegistry.shared.availability(forTool: "image")
+                    ToolRegistry.shared.specs(forTools: ["image"]).map(\.function.name),
+                    ToolRegistry.shared.specs(forTools: ["spawn"]).map(\.function.name),
+                    ToolRegistry.shared.availability(forTool: "image"),
+                    ToolRegistry.shared.availability(forTool: "spawn")
                 )
             }
 
-            #expect(specs.isEmpty)
-            #expect(availability.reasonCodes.contains(.disabled))
-            #expect(availability.detail.contains("agent delegation is disabled"))
+            #expect(imageSpecs == ["image"])
+            #expect(spawnSpecs == ["spawn"])
+            #expect(!imageAvail.detail.contains("agent delegation is disabled"))
+            #expect(!spawnAvail.detail.contains("agent delegation is disabled"))
         }
     }
 
     @Test
-    func imageStaysLoadableAtGlobalLevelWhenMasterOnEvenIfMainChatImageOff() async throws {
-        // With the master on, image is loadable at the GLOBAL level even when the
-        // main-chat image switch is off — a custom agent may have enabled it. The
-        // per-agent narrowing (Default → off here) happens in `resolveTools`,
-        // which has the agent context the global query lacks.
-        try await withDelegationSandboxAsync(
-            configuration: SubagentConfiguration(
-                agentDelegationEnabled: true,
-                imageDelegationEnabled: false
-            )
-        ) {
-            let names = await MainActor.run {
-                Set(ToolRegistry.shared.specs(forTools: ["image"]).map(\.function.name))
-            }
-            #expect(names.contains("image"))
-        }
-    }
-
-    @Test
-    func disabledImageDelegationRejectsStaleToolExecution() async throws {
+    func mainChatImageOffRejectsStaleToolExecution() async throws {
+        // The main chat ships with image off; executing the tool anyway is
+        // rejected per-agent ("not enabled for this agent"), not by a global
+        // master gate.
         try await withDelegationSandboxAsync(configuration: .default) {
             let result = try await ImageTool().execute(
                 argumentsJSON: #"{"prompt":"green apple"}"#
             )
 
             #expect(ToolEnvelope.isError(result))
-            #expect(ToolEnvelope.failureMessage(result).contains("disabled in Agent Delegation settings"))
-        }
-    }
-
-    @Test
-    func spawnIsAbsentFromDefaultAlwaysLoadedSchema() async throws {
-        try await withDelegationSandboxAsync(configuration: .default) {
-            let names = await MainActor.run {
-                Set(ToolRegistry.shared.alwaysLoadedSpecs(mode: .none).map(\.function.name))
-            }
-            #expect(!names.contains("spawn"))
-        }
-    }
-
-    @Test
-    func spawnEntersSchemaWhenMasterEnabledAndAnAgentIsSpawnable() async throws {
-        try await withDelegationSandboxAsync(
-            configuration: SubagentConfiguration(
-                agentDelegationEnabled: true,
-                spawnableAgentNames: ["Helper"]
-            )
-        ) {
-            let names = await MainActor.run {
-                Set(ToolRegistry.shared.alwaysLoadedSpecs(mode: .none).map(\.function.name))
-            }
-            #expect(names.contains("spawn"))
-        }
-    }
-
-    @Test
-    func spawnBlockedFromSpecLoadingWhenMasterOff() async throws {
-        // Master off → spawn blocked at the global level for everyone.
-        try await withDelegationSandboxAsync(configuration: .default) {
-            let (specs, availability) = await MainActor.run {
-                (
-                    ToolRegistry.shared.specs(forTools: ["spawn"]),
-                    ToolRegistry.shared.availability(forTool: "spawn")
-                )
-            }
-
-            #expect(specs.isEmpty)
-            #expect(availability.reasonCodes.contains(.disabled))
-            #expect(availability.detail.contains("agent delegation is disabled"))
-        }
-    }
-
-    @Test
-    func spawnStaysLoadableAtGlobalLevelWhenMasterOnEvenIfMainChatPoolEmpty() async throws {
-        // With the master on, spawn is loadable at the GLOBAL level even when the
-        // main-chat pool is empty — a custom agent may have its own spawnable
-        // list. The per-agent narrowing (Default → empty pool here) happens in
-        // `resolveTools`.
-        try await withDelegationSandboxAsync(
-            configuration: SubagentConfiguration(
-                agentDelegationEnabled: true,
-                spawnableAgentNames: []
-            )
-        ) {
-            let names = await MainActor.run {
-                Set(ToolRegistry.shared.specs(forTools: ["spawn"]).map(\.function.name))
-            }
-            #expect(names.contains("spawn"))
+            #expect(ToolEnvelope.failureMessage(result).contains("not enabled for this agent"))
         }
     }
 

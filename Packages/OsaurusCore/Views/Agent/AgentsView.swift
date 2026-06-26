@@ -798,8 +798,9 @@ private enum DetailTab: String, CaseIterable {
     case configure
     case capabilities
     /// Per-agent sub-agent helpers (Computer Use, spawn, image) and their
-    /// inline config. Custom-agents-only — the Default / main chat configures
-    /// these from Settings → Spawn (filtered out via `allTabsForAgent`).
+    /// inline config. Shown for every agent; the Default / main chat binds these
+    /// to the global store and only hides the Computer Use card (handled in
+    /// `visibleSubagentFeatures`).
     case subagents
     case customization
     case network
@@ -882,7 +883,10 @@ private enum DetailTab: String, CaseIterable {
         switch self {
         case .configure: return L("Identity, model, and behavior overrides.")
         case .capabilities: return L("Pick which tools and skills this agent can use.")
-        case .subagents: return L("Helpers this agent can delegate to — Computer Use, spawn, and image.")
+        case .subagents:
+            return L(
+                "Let this agent delegate work — control your Mac, hand tasks to other agents, or generate images."
+            )
         case .customization: return L("Avatar, empty state, and visual theme.")
         case .network: return L("Bonjour discovery and relay tunnel.")
         case .connections:
@@ -994,7 +998,7 @@ struct AgentDetailView: View {
     private var computerUseEnabled: Bool { subagentToggles[.computerUse] ?? false }
     private var spawnDelegationEnabled: Bool { subagentToggles[.spawn] ?? false }
     private var imageEnabled: Bool { subagentToggles[.image] ?? false }
-    /// Per-agent `spawn` allow-list (which personas this agent may spawn).
+    /// Per-agent `spawn` allow-list (which agents this agent may spawn).
     /// Mirrored from / into `AgentSettings.spawnableAgentNames`; empty hides the
     /// `spawn` tool. The Default agent uses the global pool instead.
     @State private var spawnableAgentNames: [String] = []
@@ -3094,10 +3098,8 @@ struct AgentDetailView: View {
     /// the copy lives here in the view layer.
     private struct PerAgentFeature {
         let flag: SubagentCapability.PerAgentFlag
-        let groupTitle: LocalizedStringKey
-        let groupDescription: LocalizedStringKey
-        let toggleTitle: LocalizedStringKey
-        let toggleSubtitle: LocalizedStringKey
+        let title: LocalizedStringKey
+        let subtitle: LocalizedStringKey
     }
 
     /// The per-agent capability cards to render in the Sub-agents tab, derived
@@ -3111,29 +3113,23 @@ struct AgentDetailView: View {
             case .computerUse:
                 return PerAgentFeature(
                     flag: .computerUse,
-                    groupTitle: "Computer Use",
-                    groupDescription: "Let the agent operate macOS apps for you.",
-                    toggleTitle: "Computer Use",
-                    toggleSubtitle:
-                        "Give the agent a tool to drive macOS apps via the accessibility tree — clicking, typing, and reading on-screen content. Reads and navigation run automatically; edits and anything consequential pause for your approval."
+                    title: "Computer Use",
+                    subtitle:
+                        "Let the agent control macOS apps for you — clicking, typing, and reading the screen. Reads and navigation run automatically; edits and anything consequential pause for your approval."
                 )
             case .spawn:
                 return PerAgentFeature(
                     flag: .spawn,
-                    groupTitle: "Spawn",
-                    groupDescription: "Let this agent hand bounded tasks to other personas.",
-                    toggleTitle: "Spawn",
-                    toggleSubtitle:
-                        "Give the agent the `spawn` tool so it can offload a bounded task to one of the personas you allow below. Set this agent's permission and budgets here; RAM-safety and local handoff are system settings."
+                    title: "Spawn",
+                    subtitle:
+                        "Let this agent hand a bounded task to another agent you allow below — the sub-agent runs it and returns just the result. Uses the `spawn` tool."
                 )
             case .image:
                 return PerAgentFeature(
                     flag: .image,
-                    groupTitle: "Image",
-                    groupDescription: "Let this agent generate and edit images.",
-                    toggleTitle: "Image",
-                    toggleSubtitle:
-                        "Give the agent the `image` tool to generate or edit images with a local model. Pick this agent's generation and edit models and permission here; image load policy is a system setting."
+                    title: "Image",
+                    subtitle:
+                        "Let the agent generate and edit images with a local model using the `image` tool."
                 )
             }
         }
@@ -3163,25 +3159,132 @@ struct AgentDetailView: View {
             title: L("Sub-agents"),
             icon: "person.2.wave.2",
             subtitle: L(
-                "Helpers this agent can delegate to. Each is off by default; turn one on to configure it."
+                "Each helper is off by default. Turn one on to set it up."
             )
         ) {
             VStack(alignment: .leading, spacing: 18) {
                 ForEach(visibleSubagentFeatures, id: \.flag) { feature in
-                    featureGroup(feature.groupTitle, description: feature.groupDescription) {
-                        let isOn = subagentEnableBinding(feature.flag)
-                        featureToggleRow(
-                            title: feature.toggleTitle,
-                            subtitle: feature.toggleSubtitle,
+                    let isOn = subagentEnableBinding(feature.flag)
+                    VStack(alignment: .leading, spacing: 6) {
+                        subagentCapabilityCard(
+                            title: feature.title,
+                            subtitle: feature.subtitle,
                             isOn: isOn
                         )
                         if isOn.wrappedValue {
-                            subagentInlineConfig(for: feature.flag)
+                            subagentConfigPanel {
+                                subagentInlineConfig(for: feature.flag)
+                            }
                         }
                     }
                 }
             }
         }
+    }
+
+    /// Capability toggle card for the Sub-agents tab. Mirrors `featureCard`'s
+    /// chrome so it matches the Features tab, but binds directly to the
+    /// per-capability enable binding (which routes the right save) and tints its
+    /// border with the accent color when on, so an active capability is
+    /// scannable at a glance.
+    private func subagentCapabilityCard(
+        title: LocalizedStringKey,
+        subtitle: LocalizedStringKey,
+        isOn: Binding<Bool>
+    ) -> some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title, bundle: .module)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(theme.primaryText)
+                Text(subtitle, bundle: .module)
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.tertiaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 12)
+            Toggle("", isOn: isOn)
+                .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
+                .labelsHidden()
+        }
+        .padding(10)
+        .background(
+            roundedSurface(
+                fill: theme.inputBackground,
+                stroke: isOn.wrappedValue ? theme.accentColor.opacity(0.5) : theme.inputBorder
+            )
+        )
+    }
+
+    /// Calm, clearly subordinate container for a capability's expanded settings.
+    /// Sits just under its toggle card, indented, with a quieter background and a
+    /// single hairline border — so the controls read as "settings for this card"
+    /// instead of more top-level cards.
+    private func subagentConfigPanel<Content: View>(
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            content()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(roundedSurface(fill: theme.tertiaryBackground, stroke: theme.inputBorder))
+        .padding(.leading, 12)
+    }
+
+    /// Hairline separator between control clusters inside `subagentConfigPanel`.
+    private var subagentPanelDivider: some View {
+        Divider().overlay(theme.inputBorder)
+    }
+
+    /// Small footnote line (system-setting pointers, permission requirements)
+    /// inside a sub-agent config panel.
+    private func subagentFootnote(_ text: LocalizedStringKey) -> some View {
+        Text(text, bundle: .module)
+            .font(.system(size: 11))
+            .foregroundColor(theme.tertiaryText)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    /// Leading label (plus an optional one-line description) and a trailing
+    /// control — the shared layout for every borderless row inside a
+    /// `subagentConfigPanel` (permission, budget, model, autonomy ceiling).
+    private func subagentControlRow<Control: View>(
+        _ title: LocalizedStringKey,
+        subtitle: LocalizedStringKey? = nil,
+        @ViewBuilder control: () -> Control
+    ) -> some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title, bundle: .module)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(theme.primaryText)
+                if let subtitle {
+                    Text(subtitle, bundle: .module)
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.tertiaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Spacer(minLength: 12)
+            control()
+        }
+    }
+
+    /// Rounded fill plus a hairline border — the shared surface chrome for the
+    /// Sub-agents capability cards, the nested config panel, and the ceiling
+    /// menu button.
+    private func roundedSurface(
+        fill: Color,
+        stroke: Color,
+        cornerRadius: CGFloat = 8
+    ) -> some View {
+        RoundedRectangle(cornerRadius: cornerRadius)
+            .fill(fill)
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius)
+                    .stroke(stroke, lineWidth: 1)
+            )
     }
 
     /// Whether this editor is the built-in Default / main chat agent. Its
@@ -3237,37 +3340,31 @@ struct AgentDetailView: View {
         switch flag {
         case .computerUse:
             computerUseCeilingRow
-            Text(
-                "Requires Accessibility permission. Grant it and review status in Settings > Computer Use.",
-                bundle: .module
+            subagentFootnote(
+                "Requires Accessibility permission. Grant it and review status in Settings > Computer Use."
             )
-            .font(.system(size: 11))
-            .foregroundColor(theme.tertiaryText)
         case .spawn:
             spawnableAgentsPicker
+            subagentPanelDivider
             subagentPermissionRow(
                 for: SubagentCapabilityRegistry.spawn.id,
                 label: "Permission"
             )
+            subagentPanelDivider
             subagentBudgetRows
-            Text(
-                "Local handoff and RAM-safety for spawn jobs are system settings in Settings → Spawn.",
-                bundle: .module
+            subagentFootnote(
+                "Local handoff and RAM-safety for spawn jobs are system settings in Settings → Sub-agents."
             )
-            .font(.system(size: 11))
-            .foregroundColor(theme.tertiaryText)
         case .image:
             imageModelPickerRows
+            subagentPanelDivider
             subagentPermissionRow(
                 for: SubagentCapabilityRegistry.image.id,
                 label: "Permission"
             )
-            Text(
-                "Image load policy is a system setting in Settings → Spawn.",
-                bundle: .module
+            subagentFootnote(
+                "Image load policy is a system setting in Settings → Sub-agents."
             )
-            .font(.system(size: 11))
-            .foregroundColor(theme.tertiaryText)
         }
     }
 
@@ -3277,6 +3374,7 @@ struct AgentDetailView: View {
     /// automatically) resolves to the first ready model at run time.
     private var imageModelPickerRows: some View {
         VStack(alignment: .leading, spacing: 8) {
+            AgentSheetSectionLabel("Models")
             subagentModelPicker(
                 title: "Generation model",
                 selection: imageGenerationModelSelection,
@@ -3301,11 +3399,7 @@ struct AgentDetailView: View {
         candidates: [ModelPickerItem],
         currentId: String?
     ) -> some View {
-        HStack(spacing: 12) {
-            Text(title, bundle: .module)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(theme.primaryText)
-            Spacer(minLength: 12)
+        subagentControlRow(title) {
             Picker("", selection: selection) {
                 Text("Choose automatically", bundle: .module).tag("")
                 if let currentId,
@@ -3321,25 +3415,13 @@ struct AgentDetailView: View {
             .labelsHidden()
             .frame(maxWidth: 220, alignment: .trailing)
         }
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(theme.inputBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(theme.inputBorder, lineWidth: 1)
-                )
-        )
     }
 
     /// Segmented Ask / Deny / Always permission picker for a delegation kind,
-    /// bound per-agent (custom) or to the global store (main chat).
+    /// bound per-agent (custom) or to the global store (main chat). Borderless —
+    /// it lives inside `subagentConfigPanel`.
     private func subagentPermissionRow(for kindId: String, label: LocalizedStringKey) -> some View {
-        HStack(spacing: 12) {
-            Text(label, bundle: .module)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(theme.primaryText)
-            Spacer(minLength: 12)
+        subagentControlRow(label) {
             Picker("", selection: subagentPermissionBinding(for: kindId)) {
                 ForEach(SubagentPermissionPolicy.allCases, id: \.self) { policy in
                     Text(LocalizedStringKey(policy.displayName), bundle: .module).tag(policy)
@@ -3349,20 +3431,12 @@ struct AgentDetailView: View {
             .labelsHidden()
             .frame(maxWidth: 240)
         }
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(theme.inputBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(theme.inputBorder, lineWidth: 1)
-                )
-        )
     }
 
     /// Token / turn / wall-clock budget steppers for the Spawn card.
     private var subagentBudgetRows: some View {
         VStack(alignment: .leading, spacing: 8) {
+            AgentSheetSectionLabel("Limits")
             subagentBudgetStepper(
                 title: "Max tokens",
                 value: subagentBudgetBinding(\.maxDelegateTokens),
@@ -3390,11 +3464,7 @@ struct AgentDetailView: View {
         range: ClosedRange<Int>,
         step: Int
     ) -> some View {
-        HStack(spacing: 12) {
-            Text(title, bundle: .module)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(theme.primaryText)
-            Spacer(minLength: 12)
+        subagentControlRow(title) {
             Stepper(value: value, in: range, step: step) {
                 Text("\(value.wrappedValue)")
                     .font(.system(size: 12, design: .monospaced))
@@ -3403,15 +3473,6 @@ struct AgentDetailView: View {
             }
             .frame(maxWidth: 180)
         }
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(theme.inputBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(theme.inputBorder, lineWidth: 1)
-                )
-        )
     }
 
     // MARK: - Sub-agent inline config: bindings (per-agent vs main chat)
@@ -3514,65 +3575,55 @@ struct AgentDetailView: View {
         SubagentConfigurationStore.save(mainChatSubagentConfig)
     }
 
-    /// Per-agent `spawn` allow-list: a checklist of the OTHER personas this
+    /// Per-agent `spawn` allow-list: a checklist of the OTHER agents this
     /// agent may launch (an agent can't spawn itself). Writes
     /// `spawnableAgentNames` and debounce-saves, mirroring the global Main Chat
-    /// pool editor in Settings → Spawn.
+    /// pool editor in the Sub-agents tab.
     private var spawnableAgentsPicker: some View {
         let candidates = agentManager.agents.filter { $0.id != agent.id }
         return VStack(alignment: .leading, spacing: 8) {
-            Text("Personas this agent may spawn", bundle: .module)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(theme.secondaryText)
+            AgentSheetSectionLabel("Allowed agents")
             if candidates.isEmpty {
                 Text(
-                    "No other agents yet — create another Agent persona to make it spawnable.",
+                    "No other agents yet — create another agent to make it spawnable.",
                     bundle: .module
                 )
                 .font(.system(size: 11))
                 .foregroundColor(theme.tertiaryText)
             } else {
-                ForEach(candidates) { persona in
-                    spawnablePersonaRow(persona)
+                ForEach(candidates) { candidate in
+                    spawnableAgentRow(candidate)
                 }
             }
         }
     }
 
-    /// One persona row in the per-agent spawnable checklist. Uses a plain
-    /// `Text(persona.name)` (NOT the localized `featureCard`) because the name
-    /// is runtime user data, not a localization key.
-    private func spawnablePersonaRow(_ persona: Agent) -> some View {
+    /// One agent row in the per-agent spawnable checklist. Borderless (it lives
+    /// inside `subagentConfigPanel`) and uses a plain `Text(candidate.name)` (NOT
+    /// the localized `featureCard`) because the name is runtime user data, not a
+    /// localization key.
+    private func spawnableAgentRow(_ candidate: Agent) -> some View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(persona.name)
+                Text(candidate.name)
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(theme.primaryText)
-                if !persona.description.isEmpty {
-                    Text(persona.description)
+                if !candidate.description.isEmpty {
+                    Text(candidate.description)
                         .font(.system(size: 11))
                         .foregroundColor(theme.tertiaryText)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
             Spacer(minLength: 12)
-            Toggle("", isOn: spawnableMembership(persona.name))
+            Toggle("", isOn: spawnableMembership(candidate.name))
                 .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
                 .labelsHidden()
         }
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(theme.inputBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(theme.inputBorder, lineWidth: 1)
-                )
-        )
     }
 
     /// Case-insensitive membership binding into the spawnable pool, de-duping on
-    /// insert so a duplicate persona name can't stack entries. Matches
+    /// insert so a duplicate agent name can't stack entries. Matches
     /// `SubagentToolVisibility.spawnTargetAllowed`'s comparison. Custom agents
     /// write `AgentSettings.spawnableAgentNames`; the main chat writes the global
     /// store's pool.
@@ -3668,20 +3719,10 @@ struct AgentDetailView: View {
     /// global preset picker. "No ceiling" stores nil.
     private var computerUseCeilingRow: some View {
         let selectedPreset = computerUseCeiling?.matchingPreset
-        return HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Autonomy ceiling", bundle: .module)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.primaryText)
-                Text(
-                    "Cap how far this agent can act, even when your global policy is more permissive.",
-                    bundle: .module
-                )
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
-                .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: 12)
+        return subagentControlRow(
+            "Autonomy ceiling",
+            subtitle: "Cap how far this agent can act, even when your global policy is more permissive."
+        ) {
             Menu {
                 Button {
                     computerUseCeiling = nil
@@ -3727,27 +3768,17 @@ struct AgentDetailView: View {
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
                 .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(theme.tertiaryBackground)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 6)
-                                .stroke(theme.inputBorder, lineWidth: 1)
-                        )
+                    roundedSurface(
+                        fill: theme.tertiaryBackground,
+                        stroke: theme.inputBorder,
+                        cornerRadius: 6
+                    )
                 )
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
             .fixedSize()
         }
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(theme.inputBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(theme.inputBorder, lineWidth: 1)
-                )
-        )
     }
 
     private var ceilingMenuLabel: String {

@@ -28,7 +28,6 @@ struct SubagentConfigurationStoreTests {
         let sandbox = lease.sandbox
 
         let config = SubagentConfiguration(
-            agentDelegationEnabled: true,
             localTextDelegationEnabled: true,
             imageDelegationEnabled: true,
             defaultImageGenerationModelId: "  flux  ",
@@ -52,7 +51,6 @@ struct SubagentConfigurationStoreTests {
 
         SubagentConfigurationStore.invalidateSnapshot()
         let reloaded = SubagentConfigurationStore.snapshot()
-        #expect(reloaded.agentDelegationEnabled == true)
         #expect(reloaded.localTextDelegationEnabled == true)
         #expect(reloaded.imageDelegationEnabled == true)
         #expect(reloaded.localOrchestratorTextHandoffActive == true)
@@ -80,11 +78,11 @@ struct SubagentConfigurationStoreTests {
 
         let decoded = try JSONDecoder().decode(SubagentConfiguration.self, from: data)
 
-        #expect(decoded.agentDelegationEnabled == false)
         #expect(decoded.localTextDelegationEnabled == true)
         #expect(decoded.imageDelegationEnabled == false)
-        // Global gate is off, so the handoff stays inactive even with the toggle on.
-        #expect(decoded.localOrchestratorTextHandoffActive == false)
+        // No master switch: the handoff is active whenever its own toggle is on.
+        #expect(decoded.localOrchestratorTextHandoffActive == true)
+        // The main chat's image switch is off here, so image stays inactive.
         #expect(decoded.imageDelegationActive == false)
         #expect(decoded.defaultImageGenerationModelId == "flux")
     }

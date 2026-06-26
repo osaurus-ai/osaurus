@@ -32,7 +32,7 @@ struct DefaultAgentSchemaScopeTests {
         Self.ensureBootstrapped()
         // Isolate the global delegation snapshot: the default-agent schema gates
         // `spawn` / `image` on `SubagentConfigurationStore.snapshot()`, so a
-        // parallel suite that flips the master switch + main-chat pool would
+        // parallel suite that populates the main-chat pool / image switch would
         // otherwise leak `spawn` into this baseline mid-flight (the documented
         // cross-suite snapshot race — see SubagentStoreTestLock).
         let lease = await acquireSubagentStoreSandbox("default-agent-schema-baseline")

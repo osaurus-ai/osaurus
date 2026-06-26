@@ -401,32 +401,34 @@ public enum SettingsSearchIndex {
             keywords: ["screen control", "cursor", "automation", "accessibility", "per-app"]
         ),
 
-        // MARK: Spawn & Delegation
-        // The Spawn tab is system-only now: the master switch + GPU-residency
-        // knobs that apply to every agent. Per-agent spawn/image config (targets,
-        // models, permissions, budgets) — including the built-in main chat — is
-        // configured in each agent's Sub-agents tab (not indexed here).
+        // MARK: Sub-agents (runtime knobs in the Settings tab)
+        // There is no global master switch and no dedicated Spawn tab anymore.
+        // What remains are the shared runtime knobs (local handoff, RAM-safety,
+        // image load policy), folded into the Settings tab as a "Sub-agents"
+        // card. Per-agent spawn/image config (targets, models, permissions,
+        // budgets) — including the built-in main chat — is configured in each
+        // agent's Sub-agents tab (not indexed here).
         .init(
-            id: "spawn.enable",
-            tab: .spawn,
-            section: "System",
-            title: "Spawn & Delegation",
+            id: "settings.subagents",
+            tab: .settings,
+            section: "Sub-agents",
+            title: "Sub-agents",
             keywords: [
                 "spawn", "delegate", "delegation", "sub-agent", "subagent",
-                "helper jobs", "agent delegation", "master", "enable",
+                "helper jobs", "agent delegation",
             ]
         ),
         .init(
-            id: "spawn.handoff",
-            tab: .spawn,
-            section: "System",
+            id: "settings.subagents.handoff",
+            tab: .settings,
+            section: "Sub-agents",
             title: "Local Handoff & RAM Safety",
             keywords: ["handoff", "ram safety", "residency", "unload", "preflight"]
         ),
         .init(
-            id: "spawn.loadPolicy",
-            tab: .spawn,
-            section: "System",
+            id: "settings.subagents.loadPolicy",
+            tab: .settings,
+            section: "Sub-agents",
             title: "Load Policy",
             keywords: ["load policy", "image jobs", "unload", "residency"]
         ),

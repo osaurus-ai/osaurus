@@ -5,8 +5,8 @@
 //  `spawn(agent, input)` — the portable subagent primitive. Resolves a
 //  user-configured, spawnable Agent persona, runs a bounded text subagent on its
 //  model (with the local-orchestrator residency handoff when needed), and returns
-//  only a compact digest. Default OFF; per-agent opt-in via Spawn & Delegation
-//  settings (`spawnableAgentNames`). See docs/SUBAGENT_PORTABLE_DESIGN.md.
+//  only a compact digest. Default OFF; each agent opts in from its Sub-agents tab
+//  (`spawnableAgentNames`). See docs/SUBAGENT_PORTABLE_DESIGN.md.
 //
 
 import Foundation

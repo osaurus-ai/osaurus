@@ -216,8 +216,6 @@ private extension ManagementView {
             PermissionsView()
         case .computerUse:
             ComputerUseSettingsView()
-        case .spawn:
-            SpawnSettingsView()
         case .privacy:
             PrivacyView()
         case .identity:

@@ -16,8 +16,10 @@ struct SubagentConfigurationTests {
     @Test("defaults are low RAM and ask-first")
     func defaultsAreSafe() {
         let config = SubagentConfiguration.default
-        #expect(config.agentDelegationEnabled == false)
-        #expect(config.localTextDelegationEnabled == false)
+        // Local handoff defaults ON so enabling spawn/image on a local-model
+        // agent works without hunting for a second toggle; the RAM-safety
+        // preflight (also on) guards it. Off-by-default lives per agent now.
+        #expect(config.localTextDelegationEnabled == true)
         #expect(config.imageJobLoadPolicy == .agentSingleResidency)
         #expect(config.permissionDefaults.policy(for: "spawn") == .ask)
         #expect(config.permissionDefaults.policy(for: "image") == .ask)
@@ -125,7 +127,7 @@ struct SubagentConfigurationTests {
         // Regression: `.normalized` previously omitted ramSafetyPreflightEnabled, so
         // turning it OFF was silently reverted to the init default (true) on every
         // save/load (the store runs `.normalized` on both). It must survive.
-        var config = SubagentConfiguration(agentDelegationEnabled: true)
+        var config = SubagentConfiguration()
         config.ramSafetyPreflightEnabled = false
 
         #expect(config.normalized.ramSafetyPreflightEnabled == false)
@@ -139,7 +141,7 @@ struct SubagentConfigurationTests {
 
     @Test("normalization preserves spawnable agent names")
     func normalizationPreservesSpawnableNames() {
-        var config = SubagentConfiguration(agentDelegationEnabled: true)
+        var config = SubagentConfiguration()
         config.spawnableAgentNames = ["Researcher", "Coder"]
 
         #expect(config.normalized.spawnableAgentNames == ["Researcher", "Coder"])

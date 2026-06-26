@@ -55,6 +55,13 @@ struct ConfigurationView: View {
     /// thread each (auto-)save.
     @State private var loadedServerConfig: ServerConfiguration = .default
 
+    /// System runtime knobs for sub-agent helper jobs (local handoff, RAM-safety
+    /// preflight, image load policy). Backed by `SubagentConfigurationStore`;
+    /// the per-agent spawn/image config lives in each agent's Sub-agents tab.
+    /// Saved immediately on change (like the toast toggles), not through the
+    /// debounced `saveConfiguration` path.
+    @State private var subagentConfiguration = SubagentConfigurationStore.snapshot()
+
     // Search (passed from sidebar)
     @Binding var searchText: String
 
@@ -105,9 +112,14 @@ struct ConfigurationView: View {
     private static let legalKeywords = [
         "Legal", "Terms", "Terms of Service", "Privacy", "Privacy Policy", "Policy", "About",
     ]
+    private static let subagentKeywords = [
+        "Sub-agents", "subagent", "spawn", "delegate", "delegation", "helper jobs",
+        "handoff", "ram safety", "residency", "unload", "preflight",
+        "load policy", "image jobs",
+    ]
 
     private static let allSearchKeywordGroups: [[String]] = [
-        generalKeywords, notificationsKeywords, legalKeywords,
+        generalKeywords, notificationsKeywords, subagentKeywords, legalKeywords,
     ]
 
     /// True when an active query matches at least one section. Drives the
@@ -306,6 +318,15 @@ struct ConfigurationView: View {
         }
     }
 
+    /// The relocated sub-agent runtime knobs (was the dedicated Spawn tab). The
+    /// component wraps itself in a `SettingsSection` card, so this only adds the
+    /// search-visibility gate.
+    @ViewBuilder private var subagentSection: some View {
+        if matchesSearch(Self.subagentKeywords) {
+            SubagentSettingsSection(configuration: $subagentConfiguration)
+        }
+    }
+
     var body: some View {
         ZStack {
             VStack(spacing: 0) {
@@ -321,6 +342,9 @@ struct ConfigurationView: View {
                         VStack(alignment: .leading, spacing: 24) {
                             // MARK: - General Section
                             generalSection
+
+                            // MARK: - Sub-agents Section (relocated Spawn knobs)
+                            subagentSection
 
                             // MARK: - Notifications Section
                             if matchesSearch(Self.notificationsKeywords) {
@@ -499,12 +523,25 @@ struct ConfigurationView: View {
         .environment(\.theme, themeManager.currentTheme)
         .onAppear {
             loadConfiguration()
+            subagentConfiguration = SubagentConfigurationStore.snapshot()
             withAnimation(.easeOut(duration: 0.25).delay(0.05)) {
                 hasAppeared = true
             }
         }
         .onReceive(ModelPickerItemCache.shared.$items) { options in
             coreModelPickerItems = options
+        }
+        // Sub-agent runtime knobs persist immediately (not via the debounced
+        // `saveConfiguration`). The re-snapshot on the change notification keeps
+        // this in sync if an agent's Sub-agents tab edits the shared store.
+        .onChange(of: subagentConfiguration) { _, newValue in
+            SubagentConfigurationStore.save(newValue)
+        }
+        .onReceive(
+            NotificationCenter.default.publisher(for: .subagentConfigurationChanged)
+        ) { _ in
+            let latest = SubagentConfigurationStore.snapshot()
+            if latest != subagentConfiguration { subagentConfiguration = latest }
         }
         // Any edit to a save-relevant field reschedules the debounced save.
         // `currentFormState` is the same snapshot the dirty check uses, so

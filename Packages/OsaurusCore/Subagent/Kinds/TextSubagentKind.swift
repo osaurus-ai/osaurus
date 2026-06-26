@@ -46,9 +46,10 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
 
     func resolveModel(_ scope: SubagentScope) async throws -> ResolvedModel {
         let config = SubagentConfigurationStore.snapshot()
-        // Per-agent spawnable allow-list: the Default / main chat uses the global
-        // pool (Settings → Spawn → Main Chat); a custom agent uses its own list
-        // (its Sub-agents tab), resolved from the launching agent (`scope`).
+        // Per-agent spawnable allow-list: the Default / main chat uses its own
+        // pool (edited in the main chat's Sub-agents tab); a custom agent uses
+        // its own list (its Sub-agents tab), resolved from the launching agent
+        // (`scope`). There is no global master switch.
         let isDefault = scope.agentId == Agent.defaultId
         // One launching-agent lookup feeds the per-agent spawn allow-list,
         // permission, and budgets (Default / main chat → global config).
@@ -120,7 +121,7 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
             guard config.localOrchestratorTextHandoffActive else {
                 throw SubagentError.denied(
                     "Spawning a different local agent requires \"Local Orchestrator Handoff\" enabled "
-                        + "in Agent Delegation settings (so the chat model can unload to make room)."
+                        + "in Settings → Sub-agents (so the chat model can unload to make room)."
                 )
             }
             self.residencyShouldUnload = true

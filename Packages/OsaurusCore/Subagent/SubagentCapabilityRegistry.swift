@@ -86,12 +86,13 @@ public struct SubagentCapability: Sendable {
         /// Authoritative per-agent flag, stripped in BOTH auto + manual mode
         /// (computer_use). The Default agent never enables it.
         case perAgent
-        /// The spawn / image delegation family. Visibility is resolved per agent
-        /// by `SubagentToolVisibility` (Default → global pool / image switch;
-        /// custom → its own per-agent toggle + allow-list), all ANDed with the
-        /// master `agentDelegationEnabled` switch. `ToolRegistry` applies only
-        /// that master gate to the base schema; the per-agent narrowing happens
-        /// where the agent context is known.
+        /// The spawn / image delegation family. There is no global master
+        /// switch — visibility is resolved per agent by `SubagentToolVisibility`
+        /// (Default / main chat → its own pool / image switch; custom → its own
+        /// per-agent toggle + allow-list). The base schema always carries the
+        /// family (superset); the per-agent narrowing happens where the agent
+        /// context is known. Off-by-default holds because every agent ships with
+        /// the capability disabled until opted in from its Sub-agents tab.
         case delegation
         /// Sandbox-scoped (sandbox_reduce): gated by sandbox registration +
         /// execution mode, NOT stripped in `resolveTools` and not surfaced as a
@@ -270,44 +271,40 @@ public enum SubagentToolVisibility {
     }
 
     /// Whether `spawn` is available for an agent. The Default / main chat is
-    /// governed by the global pool (`anyAgentSpawnable`); a custom agent by its
+    /// governed by its own pool (`anyAgentSpawnable`); a custom agent by its
     /// own toggle AND a non-empty per-agent allow-list (nothing to spawn → hide).
-    /// Both AND the master `agentDelegationEnabled` switch.
+    /// There is no global master switch — each agent opts in for itself.
     static func spawnAvailable(
         isDefault: Bool,
         config: SubagentConfiguration,
         perAgentEnabled: Bool,
         perAgentTargets: [String]
     ) -> Bool {
-        guard config.agentDelegationEnabled else { return false }
-        return isDefault
+        isDefault
             ? config.anyAgentSpawnable
             : (perAgentEnabled && !perAgentTargets.isEmpty)
     }
 
     /// Whether `image` is available for an agent. The Default / main chat is
-    /// governed by the global image switch (`imageDelegationActive`); a custom
-    /// agent by its own toggle. Both AND the master `agentDelegationEnabled`
-    /// switch (parallels `spawnAvailable`'s `anyAgentSpawnable`).
+    /// governed by its own image switch (`imageDelegationActive`); a custom
+    /// agent by its own toggle. There is no global master switch.
     static func imageAvailable(
         isDefault: Bool,
         config: SubagentConfiguration,
         perAgentEnabled: Bool
     ) -> Bool {
-        guard config.agentDelegationEnabled else { return false }
-        return isDefault ? config.imageDelegationActive : perAgentEnabled
+        isDefault ? config.imageDelegationActive : perAgentEnabled
     }
 
     /// Whether a specific `spawn` TARGET persona is reachable from a launching
     /// agent — the execution-time check the spawn kind enforces. Default / main
-    /// chat uses the global pool; a custom agent its own allow-list.
+    /// chat uses its own pool; a custom agent its own allow-list.
     static func spawnTargetAllowed(
         _ name: String,
         isDefault: Bool,
         config: SubagentConfiguration,
         perAgentTargets: [String]
     ) -> Bool {
-        guard config.agentDelegationEnabled else { return false }
         if isDefault { return config.isAgentSpawnable(name) }
         return perAgentTargets.contains { $0.caseInsensitiveCompare(name) == .orderedSame }
     }

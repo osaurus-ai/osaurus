@@ -106,7 +106,7 @@ struct ImageSubagentKindTests {
         var perms = SubagentPermissionDefaults()
         perms.setPolicy(.deny, for: SubagentCapabilityRegistry.image.id)
         SubagentConfigurationStore.save(
-            SubagentConfiguration(agentDelegationEnabled: true, permissionDefaults: perms)
+            SubagentConfiguration(permissionDefaults: perms)
         )
 
         let scope = SubagentScope(sessionId: "s", toolCallId: "t", agentId: Agent.defaultId)
@@ -142,7 +142,7 @@ struct ImageSubagentKindTests {
         var perms = SubagentPermissionDefaults()
         perms.setPolicy(.alwaysAllow, for: SubagentCapabilityRegistry.image.id)
         SubagentConfigurationStore.save(
-            SubagentConfiguration(agentDelegationEnabled: true, permissionDefaults: perms)
+            SubagentConfiguration(permissionDefaults: perms)
         )
 
         let scope = SubagentScope(sessionId: "s", toolCallId: "t", agentId: Agent.defaultId)

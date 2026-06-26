@@ -63,19 +63,10 @@ final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
 
     func resolveModel(_ scope: SubagentScope) async throws -> ResolvedModel {
         let config = SubagentConfigurationStore.snapshot()
-        // Master switch first (system-wide), so the message names the right
-        // control when delegation is off entirely.
-        guard config.agentDelegationEnabled else {
-            throw SubagentError.denied(
-                params.isEdit
-                    ? "Image edit is disabled in Agent Delegation settings."
-                    : "Image generation is disabled in Agent Delegation settings."
-            )
-        }
-        // Per-agent image enable + model: Default / main chat → global image
-        // switch + global configured model; a custom agent → its own
-        // `imageEnabled` toggle + per-agent model, resolved from the launching
-        // agent (`scope`). A nil model falls through to the resolver's
+        // Per-agent image enable + model (no global master switch): Default /
+        // main chat → its own image switch + configured model; a custom agent →
+        // its own `imageEnabled` toggle + per-agent model, resolved from the
+        // launching agent (`scope`). A nil model falls through to the resolver's
         // first-ready-model fallback below.
         let isDefault = scope.agentId == Agent.defaultId
         let settings = await MainActor.run {

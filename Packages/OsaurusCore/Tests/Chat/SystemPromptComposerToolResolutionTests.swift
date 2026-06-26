@@ -623,23 +623,24 @@ struct SystemPromptComposerToolResolutionTests {
 
     // MARK: - Delegation gates (spawn / image — per-capability, per-agent)
 
-    /// Stamp the master delegation switch ON in an isolated subagent-store
-    /// sandbox, run `body`, then reset. Mirrors `SubagentToolAvailabilityTests`'
-    /// cross-suite lock so the global config stays stable while we read the
-    /// delegation-gated schema.
-    private func withSubagentMasterOn(_ body: @MainActor @Sendable () async -> Void) async {
+    /// Run `body` in an isolated subagent-store sandbox with a default global
+    /// config, then reset. There is no master switch anymore; delegation
+    /// visibility is driven entirely by the per-agent snapshot in `resolveTools`.
+    /// Mirrors `SubagentToolAvailabilityTests`' cross-suite lock so the global
+    /// config stays stable while we read the delegation-gated schema.
+    private func withSubagentSandbox(_ body: @MainActor @Sendable () async -> Void) async {
         let lease = await acquireSubagentStoreSandbox("composer-delegation")
         defer { lease.release() }
-        SubagentConfigurationStore.save(SubagentConfiguration(agentDelegationEnabled: true))
+        SubagentConfigurationStore.save(SubagentConfiguration())
         await body()
     }
 
-    /// A custom agent surfaces `image` purely on its OWN `imageEnabled` toggle
-    /// (master on), independent of spawn — `image` is its own per-agent flag now,
-    /// and `resolveTools` resolves each delegation capability separately.
+    /// A custom agent surfaces `image` purely on its OWN `imageEnabled` toggle,
+    /// independent of spawn — `image` is its own per-agent flag now, and
+    /// `resolveTools` resolves each delegation capability separately.
     @Test
     func autoMode_customAgentSurfacesImageIndependentlyOfSpawn() async {
-        await withSubagentMasterOn {
+        await withSubagentSandbox {
             let names = Set(
                 SystemPromptComposer.resolveTools(
                     snapshot: makeSnapshot(imageEnabled: true),
@@ -657,7 +658,7 @@ struct SystemPromptComposerToolResolutionTests {
     /// when its own toggle is off.
     @Test
     func autoMode_customAgentSurfacesSpawnOnlyWithToggleAndTargets() async {
-        await withSubagentMasterOn {
+        await withSubagentSandbox {
             let withTargets = Set(
                 SystemPromptComposer.resolveTools(
                     snapshot: makeSnapshot(
@@ -684,19 +685,23 @@ struct SystemPromptComposerToolResolutionTests {
         }
     }
 
-    /// Master OFF → no delegation tool surfaces for a custom agent regardless of
-    /// its per-agent flags (the master gate is the kill switch).
+    /// Off-by-default now lives at the per-agent level (there is no master kill
+    /// switch): a custom agent that opted into nothing surfaces no delegation
+    /// tools — even when the main chat's OWN pool / image switch are populated,
+    /// they must not leak to another agent.
     @Test
-    func autoMode_masterOffHidesAllDelegationToolsForCustomAgent() async {
-        let lease = await acquireSubagentStoreSandbox("composer-master-off")
+    func autoMode_customAgentWithNoOptInHidesAllDelegationTools() async {
+        let lease = await acquireSubagentStoreSandbox("composer-no-optin")
         defer { lease.release() }
-        SubagentConfigurationStore.save(.default)  // master off
+        SubagentConfigurationStore.save(
+            SubagentConfiguration(spawnableAgentNames: ["Helper"], imageDelegationEnabled: true)
+        )
         let names = Set(
             SystemPromptComposer.resolveTools(
                 snapshot: makeSnapshot(
-                    spawnDelegationEnabled: true,
-                    imageEnabled: true,
-                    spawnableAgentNames: ["Helper"]
+                    spawnDelegationEnabled: false,
+                    imageEnabled: false,
+                    spawnableAgentNames: []
                 ),
                 executionMode: .none
             ).map { $0.function.name }

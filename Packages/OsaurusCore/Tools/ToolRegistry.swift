@@ -378,12 +378,13 @@ final class ToolRegistry: ObservableObject {
             + (tool.description.count / TokenEstimator.charsPerToken)
     }
 
-    /// Get specs for specific tools by name (ignores enabled state).
+    /// Get specs for specific tools by name (ignores enabled state). The spawn /
+    /// image delegation family is never excluded here — there is no global master
+    /// switch; the base set is a superset and the per-agent narrowing happens in
+    /// `SystemPromptComposer.resolveTools` where the launching agent is known.
     func specs(forTools toolNames: [String]) -> [Tool] {
-        let delegationExcluded = agentDelegationExcludedToolNames()
-        return toolNames.compactMap { name in
-            guard !delegationExcluded.contains(name) else { return nil }
-            return toolsByName[name]?.asOpenAITool()
+        toolNames.compactMap { name in
+            toolsByName[name]?.asOpenAITool()
         }
     }
 
@@ -1490,21 +1491,15 @@ final class ToolRegistry: ObservableObject {
         if mode.usesHostFolderTools || mode.usesSandboxTools {
             excluded.formUnion(folderConflictingToolNames)
         }
-        excluded.formUnion(agentDelegationExcludedToolNames())
+        // The spawn / image delegation family is never excluded from the base
+        // schema — there is no global master switch. The base set stays a
+        // superset; the per-agent / Default-vs-custom narrowing happens in
+        // `SystemPromptComposer.resolveTools` (and the HTTP agent-run path) via
+        // `SubagentToolVisibility`, where the launching agent is known. That is
+        // what lets a custom agent surface `spawn` even when the main-chat pool
+        // is empty. Off-by-default still holds: every agent ships with the
+        // capability disabled until opted in from its Sub-agents tab.
         return excluded
-    }
-
-    /// The baseline MASTER gate for the delegation kinds. The base schema has no
-    /// agent context, so it applies only the master `agentDelegationEnabled`
-    /// switch: when delegation is off entirely, the whole family is hidden;
-    /// otherwise every delegation tool stays in the base set and the per-agent /
-    /// Default-vs-custom narrowing happens in `SystemPromptComposer.resolveTools`
-    /// (and the HTTP agent-run path) via `SubagentToolVisibility`, where the
-    /// agent is known. Keeping the base set a superset is what lets a custom
-    /// agent surface `spawn` even when the main-chat pool is empty.
-    private func agentDelegationExcludedToolNames() -> Set<String> {
-        guard !SubagentConfigurationStore.snapshot().agentDelegationEnabled else { return [] }
-        return SubagentToolVisibility.delegationToolNames
     }
 
     /// Sandbox read tools made redundant by the unified, path-routed host
@@ -1601,11 +1596,6 @@ final class ToolRegistry: ObservableObject {
         if dynamic, !isEnabled {
             appendReason(.disabled)
             details.append(L("globally disabled"))
-        }
-
-        if agentDelegationExcludedToolNames().contains(toolName) {
-            appendReason(.disabled)
-            details.append(L("agent delegation is disabled in Settings"))
         }
 
         if dynamic, let agentAllowedNames, !agentAllowedNames.contains(toolName) {

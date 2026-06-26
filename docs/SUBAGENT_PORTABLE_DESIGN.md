@@ -77,6 +77,24 @@ configurable primitive. Almost everything needed already exists.
 > now **system-only** (master enable · handoff · RAM-safety · image load policy). The
 > in-prompt first-use image-model picker (see §8.1 phase 3) is removed — the model is
 > chosen in the tab, so the prompt is a plain allow/deny/always.
+>
+> **Master switch removed + Spawn tab folded into Settings (2026-06-26, supersedes
+> every "master switch" / "global enable" / "Settings → Spawn tab" mention above and
+> in §0.2).** There is **no global `agentDelegationEnabled` flag anymore** — it was a
+> redundant second gate in a per-agent world. Each agent (and the main chat) ships
+> with spawn off / image off / an empty pool, so **off-by-default + invisible-at-
+> baseline now holds purely from the per-agent defaults**; the per-agent opt-in (a
+> custom agent's `AgentSettings`, the main chat's `SubagentConfiguration` pool / image
+> switch) is the **only** gate. `SubagentToolVisibility.{spawn,image}Available` /
+> `spawnTargetAllowed` no longer AND a master flag, and `ToolRegistry`'s base schema
+> always carries the delegation family (a superset narrowed per-agent in
+> `resolveTools`). The **dedicated "Spawn" sidebar tab + `SpawnSettingsView` are
+> deleted**; the three remaining shared runtime knobs (Local Orchestrator Handoff,
+> RAM-Safety Preflight, Image Load Policy) live in a small **"Sub-agents" card inside
+> the general Settings tab** (`SubagentSettingsSection` hosted by `ConfigurationView`).
+> **Local Orchestrator Handoff now defaults ON** (RAM-Safety preflight guards it) so
+> enabling a capability on a local-model agent works without hunting for a second
+> toggle. The §0 "Feature flag" two-gate list below is reduced to gate #2 only.
 
 ---
 

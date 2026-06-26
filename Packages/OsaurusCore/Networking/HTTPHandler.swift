@@ -2859,24 +2859,21 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         // tools as callable SCHEMAS too. `composeChatContext` only surfaces the
         // built-in image tools as a prompt-hint capability (not the schema), so
         // without this an agent-run orchestrator is told it can make images /
-        // delegate but `image`/`spawn`
-        // never reach its `<tools>` block. `specs(forTools:)` returns only the
-        // currently active ones (it applies the same delegation gating), and a
-        // name dedupe keeps composeChatContext's surface authoritative.
+        // delegate but `image`/`spawn` never reach its `<tools>` block.
         // Per-agent gate: only inject the delegation schemas when THIS agent has
-        // opted into spawn/delegation (mirrors the authoritative `resolveTools`
-        // strip). Without this, the explicit injection below would re-add the
-        // tools that the per-agent gate just stripped. `specs(forTools:)` still
-        // applies the global delegation gating on top.
+        // actually opted into spawn/image (mirrors the authoritative
+        // `resolveTools` strip). Without this, the explicit injection below would
+        // re-add tools the per-agent gate just stripped.
         // Mirror the authoritative native-chat `resolveTools` surfacing so the
         // HTTP agent-run path and the in-app chat agree on which sub-agent tools
         // an agent sees: resolve the per-agent visible delegation set through the
         // shared `SubagentToolVisibility` resolver (the same SSOT the native
-        // `resolveTools` strip reads) — Default → global pool / image switch,
-        // custom → its own per-agent toggles + spawnable allow-list, all ANDed
-        // with the master switch. Without this parity the `/agents/{id}/run`
-        // surface drifts from the chat UI (BUG E guard). The tool-name set comes
-        // from the capability registry, not a hardcoded list.
+        // `resolveTools` strip reads) — Default → main-chat pool / image switch,
+        // custom → its own per-agent toggles + spawnable allow-list. There is no
+        // global master switch; the per-agent opt-in is the only gate. Without
+        // this parity the `/agents/{id}/run` surface drifts from the chat UI
+        // (BUG E guard). The tool-name set comes from the capability registry,
+        // not a hardcoded list.
         let visibleDelegation = await MainActor.run { () -> Set<String> in
             let snapshot = AgentConfigSnapshot.capture(agentId: agentUUID)
             return SubagentToolVisibility.visibleDelegationToolNames(

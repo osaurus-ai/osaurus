@@ -33,6 +33,20 @@ Branch: `feat/image-generation-vmlxflux`. Last updated 2026-06-25 (unified sub-a
 > a per-agent `spawnableAgentNames` allow-list, and those matrix rows describe the
 > **Default / main chat** path (global config), which a custom agent now overrides from
 > its **Sub-agents** tab.
+>
+> **Master switch removed + Spawn tab folded into Settings (2026-06-26).** The global
+> `SubagentConfiguration.agentDelegationEnabled` flag is **deleted** — in a per-agent
+> world it was a redundant second gate. Off-by-default + invisible-at-baseline now hold
+> purely from the per-agent defaults (every agent + the main chat ship disabled). The
+> tool-availability rows below that say "master off → hidden / `agentDelegationEnabled=
+> false` → 0 tool-calls" describe a state that **no longer exists**; the base schema
+> always carries the delegation family and `resolveTools` narrows it per agent. The
+> dedicated **Spawn sidebar tab + `SpawnSettingsView` are deleted**: the three shared
+> runtime knobs (Local Orchestrator Handoff — now **default ON** — RAM-Safety Preflight,
+> Image Load Policy) live in a **"Sub-agents" card in the general Settings tab**
+> (`SubagentSettingsSection` hosted by `ConfigurationView`). Where the log below says
+> "Spawn page / `SpawnSettingsView` / master enable," read "Settings → Sub-agents card,
+> no master enable."
 
 ---
 

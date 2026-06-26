@@ -54,17 +54,17 @@ struct SubagentCapabilityRegistryTests {
         )
     }
 
-    @Test("the Default agent uses the global pool/image; a custom agent its own per-agent toggles + list")
+    @Test("the Default agent uses its own pool/image; a custom agent its own per-agent toggles + list")
     func delegationVisibilitySemantics() {
         let custom = UUID()
-        // Master ON, Default pool has one persona, Default image ON.
+        // There is no master switch: the Default / main chat's own pool has one
+        // persona and its image switch is on.
         let config = SubagentConfiguration(
-            agentDelegationEnabled: true,
             spawnableAgentNames: ["Helper"],
             imageDelegationEnabled: true
         )
 
-        // Default agent: governed by the global pool + image switch (its own
+        // Default agent: governed by its own pool + image switch (its own
         // snapshot flags are irrelevant).
         #expect(
             SubagentToolVisibility.visibleDelegationToolNames(
@@ -93,32 +93,20 @@ struct SubagentCapabilityRegistryTests {
             ).isEmpty
         )
 
-        // Master OFF → nothing visible for anyone, regardless of per-agent flags.
-        let off = SubagentConfiguration(
-            agentDelegationEnabled: false,
-            spawnableAgentNames: ["Helper"],
-            imageDelegationEnabled: true
-        )
-        #expect(
-            SubagentToolVisibility.visibleDelegationToolNames(
-                agentId: Agent.defaultId,
-                snapshot: snapshot(agentId: Agent.defaultId),
-                config: off
-            ).isEmpty
-        )
+        // A custom agent that has opted into nothing → nothing visible, even
+        // when the main chat's own pool/image are populated.
         #expect(
             SubagentToolVisibility.visibleDelegationToolNames(
                 agentId: custom,
-                snapshot: snapshot(agentId: custom, spawn: true, image: true, targets: ["X"]),
-                config: off
+                snapshot: snapshot(agentId: custom, spawn: false, image: false, targets: []),
+                config: config
             ).isEmpty
         )
     }
 
-    @Test("spawn target validation: Default uses the global pool; custom uses its own allow-list")
+    @Test("spawn target validation: Default uses its own pool; custom uses its own allow-list")
     func spawnTargetValidation() {
         let config = SubagentConfiguration(
-            agentDelegationEnabled: true,
             spawnableAgentNames: ["Helper"]
         )
         // Default: the global pool decides (case-insensitive).

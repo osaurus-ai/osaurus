@@ -158,16 +158,17 @@ public struct SubagentBudgets: Codable, Equatable, Sendable {
 }
 
 struct SubagentConfiguration: Codable, Equatable, Sendable {
-    var agentDelegationEnabled: Bool
     /// When true, a LOCAL orchestrator chat model may hand off to a local text
     /// `spawn` subagent: the orchestrator is unloaded for the job and reloaded
-    /// after (single-residency handoff). Off by default — a cloud orchestrator
-    /// never needs this. See `ChatResidencyHandoff` / `ResidencyHandoff`.
+    /// after (single-residency handoff). On by default so enabling a capability
+    /// on a local-model agent "just works"; the RAM-Safety preflight guards it,
+    /// and a cloud orchestrator never needs it (nothing resident to unload).
+    /// See `ChatResidencyHandoff` / `ResidencyHandoff`.
     var localTextDelegationEnabled: Bool
-    /// The DEFAULT / main-chat agent's spawnable personas (its `spawn` pool).
+    /// The DEFAULT / main-chat agent's spawnable agents (its `spawn` pool).
     /// Empty by default → the main chat has nothing to spawn until opted in.
     /// Custom agents carry their OWN per-agent list in `AgentSettings`; this
-    /// field governs the main chat only (edited in Settings → Spawn → Main Chat).
+    /// field governs the main chat only (edited in the main chat's Sub-agents tab).
     var spawnableAgentNames: [String]
     /// The DEFAULT / main-chat agent's `image` enable. Custom agents carry their
     /// own `AgentSettings.imageEnabled`; this governs the main chat only.
@@ -184,8 +185,7 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
     var ramSafetyPreflightEnabled: Bool
 
     init(
-        agentDelegationEnabled: Bool = false,
-        localTextDelegationEnabled: Bool = false,
+        localTextDelegationEnabled: Bool = true,
         spawnableAgentNames: [String] = [],
         imageDelegationEnabled: Bool = false,
         defaultImageGenerationModelId: String? = nil,
@@ -195,7 +195,6 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
         budgets: SubagentBudgets = SubagentBudgets(),
         ramSafetyPreflightEnabled: Bool = true
     ) {
-        self.agentDelegationEnabled = agentDelegationEnabled
         self.localTextDelegationEnabled = localTextDelegationEnabled
         self.spawnableAgentNames = spawnableAgentNames
         self.imageDelegationEnabled = imageDelegationEnabled
@@ -211,26 +210,25 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
 
     /// A local orchestrator may hand off to a local text subagent (unload/reload).
     var localOrchestratorTextHandoffActive: Bool {
-        agentDelegationEnabled && localTextDelegationEnabled
+        localTextDelegationEnabled
     }
 
     /// Whether the named persona is reachable via `spawn` from the DEFAULT /
-    /// main chat (master gate + the main-chat pool). Custom agents use their own
-    /// per-agent list via `SubagentToolVisibility.spawnTargetAllowed`.
+    /// main chat (the main-chat pool). Custom agents use their own per-agent list
+    /// via `SubagentToolVisibility.spawnTargetAllowed`.
     func isAgentSpawnable(_ name: String) -> Bool {
-        agentDelegationEnabled
-            && spawnableAgentNames.contains { $0.caseInsensitiveCompare(name) == .orderedSame }
+        spawnableAgentNames.contains { $0.caseInsensitiveCompare(name) == .orderedSame }
     }
 
     /// Whether the DEFAULT / main chat has at least one spawnable persona.
     var anyAgentSpawnable: Bool {
-        agentDelegationEnabled && !spawnableAgentNames.isEmpty
+        !spawnableAgentNames.isEmpty
     }
 
-    /// Whether `image` is active for the DEFAULT / main chat (master + image
-    /// switch). Custom agents gate on their own `AgentSettings.imageEnabled`.
+    /// Whether `image` is active for the DEFAULT / main chat (its image switch).
+    /// Custom agents gate on their own `AgentSettings.imageEnabled`.
     var imageDelegationActive: Bool {
-        agentDelegationEnabled && imageDelegationEnabled
+        imageDelegationEnabled
     }
 
     /// Whether an agent-launched image job must evict resident chat models for
@@ -243,7 +241,6 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
 
     var normalized: SubagentConfiguration {
         SubagentConfiguration(
-            agentDelegationEnabled: agentDelegationEnabled,
             localTextDelegationEnabled: localTextDelegationEnabled,
             spawnableAgentNames: spawnableAgentNames,
             imageDelegationEnabled: imageDelegationEnabled,
@@ -260,7 +257,6 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case agentDelegationEnabled
         case localTextDelegationEnabled
         case spawnableAgentNames
         case imageDelegationEnabled
@@ -275,9 +271,8 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.init(
-            agentDelegationEnabled: try container.decodeIfPresent(Bool.self, forKey: .agentDelegationEnabled) ?? false,
             localTextDelegationEnabled: try container.decodeIfPresent(Bool.self, forKey: .localTextDelegationEnabled)
-                ?? false,
+                ?? true,
             spawnableAgentNames: try container.decodeIfPresent([String].self, forKey: .spawnableAgentNames) ?? [],
             imageDelegationEnabled: try container.decodeIfPresent(Bool.self, forKey: .imageDelegationEnabled) ?? false,
             defaultImageGenerationModelId: try container.decodeIfPresent(

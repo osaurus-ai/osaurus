@@ -65,7 +65,7 @@ struct SpawnToolTests {
 
     /// Per-agent spawnable enforcement: a CUSTOM launching agent may only spawn
     /// personas in its OWN `spawnableAgentNames` list — the global pool does NOT
-    /// apply to it. Here the master switch is on and the global pool lists
+    /// apply to it. Here the main chat's pool lists
     /// "Helper", but the launching agent is a custom agent with an empty list, so
     /// `resolveModel` must reject BEFORE any model/residency work (the
     /// reject-before-evict contract). Binding `ChatExecutionContext.currentAgentId`
@@ -76,7 +76,6 @@ struct SpawnToolTests {
         defer { lease.release() }
         SubagentConfigurationStore.save(
             SubagentConfiguration(
-                agentDelegationEnabled: true,
                 spawnableAgentNames: ["Helper"]
             )
         )
@@ -109,7 +108,6 @@ struct SpawnToolTests {
         perms.setPolicy(.deny, for: SubagentCapabilityRegistry.spawn.id)
         SubagentConfigurationStore.save(
             SubagentConfiguration(
-                agentDelegationEnabled: true,
                 spawnableAgentNames: ["Helper"],
                 permissionDefaults: perms
             )
