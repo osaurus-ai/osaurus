@@ -32,6 +32,11 @@ struct ModelRowView: View {
     /// Callback when user taps the Details button
     let onViewDetails: () -> Void
 
+    /// Callback when the user taps a non-MLX (greyed) card. When set and the
+    /// card is unsupported, this fires instead of `onViewDetails` so the host
+    /// can explain that the model can't be used rather than open its details.
+    var onUnsupportedTap: (() -> Void)? = nil
+
     /// Optional cancel action when downloading or paused
     let onCancel: (() -> Void)?
 
@@ -47,7 +52,13 @@ struct ModelRowView: View {
     @State private var isHovering = false
 
     var body: some View {
-        Button(action: onViewDetails) {
+        Button(action: {
+            if content.isUnsupportedFormat, let onUnsupportedTap {
+                onUnsupportedTap()
+            } else {
+                onViewDetails()
+            }
+        }) {
             VStack(spacing: 0) {
                 gradientHeader
 

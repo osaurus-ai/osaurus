@@ -91,6 +91,10 @@ struct ModelDownloadView: View {
     /// Model to show in the detail sheet
     @State private var modelToShowDetails: MLXModel? = nil
 
+    /// Drives the "model can't be used" alert shown when a greyed (non-MLX)
+    /// card is tapped, instead of opening its detail sheet.
+    @State private var unsupportedModelName: String? = nil
+
     /// Content has appeared (for entrance animation)
     @State private var hasAppeared = false
 
@@ -274,6 +278,17 @@ struct ModelDownloadView: View {
                 },
                 .primary(L("OK")) { modelManager.downloadAlert = nil },
             ]
+        )
+        .themedAlert(
+            L("Model not supported"),
+            isPresented: Binding(
+                get: { unsupportedModelName != nil },
+                set: { if !$0 { unsupportedModelName = nil } }
+            ),
+            message: L(
+                "\(unsupportedModelName ?? "") isn't an MLX model, so it can't be used in Osaurus. The local engine runs MLX-format models only."
+            ),
+            primaryButton: .primary(L("OK")) { unsupportedModelName = nil }
         )
     }
 
@@ -667,6 +682,7 @@ struct ModelDownloadView: View {
             downloadState: modelManager.effectiveDownloadState(for: model),
             metrics: modelManager.downloadMetrics[model.id],
             onViewDetails: { modelToShowDetails = model },
+            onUnsupportedTap: { unsupportedModelName = model.name },
             onCancel: { modelManager.cancelDownload(model.id) },
             onPause: { modelManager.pauseDownload(model.id) },
             onResume: { modelManager.resumeDownload(model.id) }
