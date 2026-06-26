@@ -136,10 +136,14 @@ final class ModelPickerItemCache: ObservableObject {
             // main actor, like the `isVLM` warm-up below.
             let models = ModelManager.discoverLocalModels()
                 .filter { !$0.isEmbedding }
-            // Warm the memoized VLM verdicts while still off the main actor:
-            // `fromMLXModel` below reads `isVLM` on the MainActor, and a cold
-            // cache would otherwise fault one config.json read per model there.
-            for model in models { _ = model.isVLM }
+            // Warm the memoized VLM + MLX-format verdicts while still off the
+            // main actor: `fromMLXModel` below reads both `isVLM` and
+            // `isMLXFormat` on the MainActor, and a cold cache would otherwise
+            // fault config.json / safetensors-header reads per model there.
+            for model in models {
+                _ = model.isVLM
+                _ = model.isMLXFormat
+            }
             return models
         }.value
 

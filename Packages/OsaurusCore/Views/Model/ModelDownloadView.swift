@@ -1479,6 +1479,17 @@ struct ModelDownloadView: View {
         case .images: displayed = []  // image tab renders its own view
         }
 
+        // Warm disk-backed verdicts while still off the main actor. The catalog
+        // cards (`ModelCardContent.init`) read `isVLM` and `isMLXFormat` during
+        // SwiftUI body evaluation on the main thread; without this a cold cache
+        // would fault config.json / safetensors-header reads per card on main
+        // (the Sentry app-hang path). `makeGridLists` always runs inside a
+        // `Task.detached`, so these reads stay off the main thread.
+        for model in displayed {
+            _ = model.isVLM
+            _ = model.isMLXFormat
+        }
+
         return GridLists(suggested: topPicks, others: others, downloaded: downloaded, displayed: displayed)
     }
 
