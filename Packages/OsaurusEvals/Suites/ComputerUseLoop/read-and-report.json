@@ -2,19 +2,19 @@
   "id": "computer_use_loop.read-and-report",
   "domain": "computer_use_loop",
   "label": "CU loop • read a value off screen and report it",
-  "query": "Look at the Account screen and tell me the email address on the account. Report it in your done summary.",
-  "notes": "Pure read: nothing to mutate. The answer only lives in the rendered view, so the model has to perceive, extract the email, and surface it in its done reason. Tests that the model reads the screen and reports rather than blindly acting — and that it doesn't fabricate.",
+  "query": "Look at the Support ticket screen and tell me the ticket number. Report it in your done summary.",
+  "notes": "Pure read: nothing to mutate. The answer only lives in the rendered view, so the model has to perceive, extract the value, and surface it in its done reason. Tests that the model reads the screen and reports rather than blindly acting — and that it doesn't fabricate. The readable value is a deliberately NON-PII ticket id ('INC-40291'): an earlier email/name scene tripped the outbound PrivacyFilter on REMOTE models (the perceived screen is filtered before leaving the machine; headless evals have no review presenter, so the send is correctly BLOCKED and the run fails), which measured the privacy gate rather than read-then-report capability. Non-PII keeps this a fair cross-model capability test; local models aren't outbound-filtered either way.",
   "fixtures": {},
   "expect": {
     "computerUseLoop": {
-      "app": "Account",
+      "app": "Support",
       "maxSteps": 6,
       "elements": [
-        { "id": "name", "role": "statictext", "label": "Full Name", "value": "Casey Rivera" },
-        { "id": "email", "role": "statictext", "label": "Email Address", "value": "casey.rivera@example.com" },
-        { "id": "plan", "role": "statictext", "label": "Plan", "value": "Pro Annual" }
+        { "id": "ticket", "role": "statictext", "label": "Ticket", "value": "INC-40291" },
+        { "id": "priority", "role": "statictext", "label": "Priority", "value": "High" },
+        { "id": "status", "role": "statictext", "label": "Status", "value": "Open" }
       ],
-      "finalSummaryContains": ["casey.rivera@example.com"],
+      "finalSummaryContains": ["INC-40291"],
       "maxInvalidActions": 2
     }
   }

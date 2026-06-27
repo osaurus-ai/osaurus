@@ -423,7 +423,7 @@ extension AgentAction {
                 (raw["_message"] as? String)
                 ?? "Your action did not match the required shape. Check the field names and types."
             if let field = raw["_field"] as? String, !field.isEmpty {
-                return .invalid(reason: "\(message) (problem with `\(field)`)")
+                return .invalid(reason: shapeHint(for: field, base: "\(message) (problem with `\(field)`)"))
             }
             return .invalid(reason: message)
         }
@@ -433,10 +433,13 @@ extension AgentAction {
         let coerced = SchemaValidator.coerceArguments(raw, against: schema)
         let validation = SchemaValidator.validate(arguments: coerced, against: schema)
         guard validation.isValid else {
-            return .invalid(
-                reason: validation.errorMessage
-                    ?? "Your action did not match the required shape. Check the field names and types."
-            )
+            let base =
+                validation.errorMessage
+                ?? "Your action did not match the required shape. Check the field names and types."
+            if let field = validation.field, !field.isEmpty {
+                return .invalid(reason: shapeHint(for: field, base: base))
+            }
+            return .invalid(reason: base)
         }
         guard let dict = coerced as? [String: Any] else {
             return .invalid(reason: "Your action must be a JSON object.")
@@ -488,6 +491,29 @@ extension AgentAction {
             return .invalid(reason: problem)
         }
         return .action(action)
+    }
+
+    /// Append a concrete, worked correction to a schema-rejection reason for
+    /// the handful of fields models most often mis-shape. Pure feedback — it
+    /// only changes the re-ask text the model reads, never the accepted
+    /// values (a malformed action still fails). Helps any model self-correct
+    /// instead of repeating the same wrong shape until the re-ask budget runs
+    /// out (e.g. a 4B that emits `"mark": true`).
+    private static func shapeHint(for field: String, base: String) -> String {
+        switch field {
+        case "mark":
+            return base
+                + " `mark` is the integer in the [N] brackets next to the element"
+                + " — e.g. \"target\": {\"mark\": 1}. Not true/false, a label, or a"
+                + " quoted string. If you don't have a number, drop `mark` and use"
+                + " \"describe\": \"the <role> labelled <text>\" instead."
+        case "target", "to":
+            return base
+                + " `\(field)` is an object: {\"mark\": <number from [N]>} or"
+                + " {\"describe\": \"the <role> labelled <text>\"}."
+        default:
+            return base
+        }
     }
 
     private static func parseTarget(_ value: Any?) -> AgentTarget? {

@@ -1,0 +1,20 @@
+{
+  "id": "subagent.sandbox-reduce-live-exec",
+  "domain": "subagent",
+  "label": "Subagent • live sandbox_reduce (exec + report)",
+  "query": "Reduce a sandbox investigation to a short digest.",
+  "notes": "LIVE. Runs the REAL sandbox_reduce host (SubagentSession + SandboxReduceKind) on the run model, with a deterministic, container-independent task: run one shell command and report its exact stdout. The cross-model signal is whether the model drives the read-only tool loop (sandbox_exec) and distills a faithful digest. SKIPS automatically when the sandbox child tools aren't registered (no container) — the facade pre-flight returns `unavailable`. Tiny-context models SKIP (they can't drive a tool loop).",
+  "fixtures": {},
+  "expect": {
+    "subagent": {
+      "lane": "sandbox_reduce",
+      "task": "Run the shell command `echo osaurus-subagent-eval-7f3a9` in the sandbox and report its exact stdout, verbatim, in your digest.",
+      "maxIterations": 4,
+      "expectSuccess": true,
+      "expectEnvelopeKind": "success",
+      "expectResultKind": "digest",
+      "expectFeedKinds": ["phase"],
+      "summaryContains": ["osaurus-subagent-eval-7f3a9"]
+    }
+  }
+}

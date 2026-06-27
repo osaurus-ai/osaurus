@@ -70,6 +70,54 @@ final class AgentActionDecodeTests: XCTestCase {
         XCTAssertFalse(reason?.localizedCaseInsensitiveContains("missing required") ?? true)
     }
 
+    func testErrorEnvelopeMarkFieldCarriesConcreteShapeHint() {
+        // A bare "must be an integer" doesn't help a model that keeps emitting
+        // `"mark": true`; the re-ask should show the corrected shape + the
+        // `describe` fallback. Model-agnostic feedback — it never changes which
+        // values are accepted, only what the model is told to fix.
+        let json = """
+            {"_error":"invalid_tool_arguments","_message":"Property 'mark' must be an integer","_field":"mark"}
+            """
+        let reason = invalidReason(json)
+        XCTAssertNotNil(reason)
+        XCTAssertTrue(reason?.contains("Property 'mark' must be an integer") ?? false)
+        XCTAssertTrue(
+            reason?.contains("{\"mark\": 1}") ?? false,
+            "Should show a concrete corrected mark; got: \(reason ?? "nil")"
+        )
+        XCTAssertTrue(
+            reason?.localizedCaseInsensitiveContains("true/false") ?? false,
+            "Should call out the boolean mistake; got: \(reason ?? "nil")"
+        )
+        XCTAssertTrue(
+            reason?.contains("describe") ?? false,
+            "Should offer the describe fallback; got: \(reason ?? "nil")"
+        )
+    }
+
+    func testErrorEnvelopeTargetFieldCarriesObjectHint() {
+        let json = """
+            {"_error":"invalid_tool_arguments","_message":"Property 'target' must be an object","_field":"target"}
+            """
+        let reason = invalidReason(json)
+        XCTAssertTrue(reason?.contains("mark") ?? false, "got: \(reason ?? "nil")")
+        XCTAssertTrue(reason?.contains("describe") ?? false, "got: \(reason ?? "nil")")
+    }
+
+    /// A native JSON boolean `mark` is REJECTED, not silently mapped to `1`.
+    /// `ArgumentCoercion.int(true)` happens to return `1` (NSNumber.intValue),
+    /// but the preflight `SchemaValidator` excludes booleans on purpose:
+    /// mapping `true` → "element 1" is a synthetic repair that could click the
+    /// wrong element in a multi-element view. We surface a clear re-ask instead.
+    func testBooleanMarkIsRejectedNotCoercedToOne() {
+        let reason = invalidReason(#"{"verb":"click","target":{"mark":true}}"#)
+        XCTAssertNotNil(reason, "A boolean mark must not decode to a valid action")
+        XCTAssertTrue(
+            reason?.localizedCaseInsensitiveContains("integer") ?? false,
+            "Reason should explain mark must be an integer; got: \(reason ?? "nil")"
+        )
+    }
+
     func testErrorEnvelopeWithoutFieldOmitsFieldSuffix() {
         let json = """
             {"_error":"invalid_tool_arguments","_message":"Bad shape.","_field":""}

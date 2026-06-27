@@ -1,0 +1,24 @@
+{
+  "id": "subagent.cu-live-read-report",
+  "domain": "subagent",
+  "label": "Subagent • computer_use live (read a value and report it)",
+  "query": "Look at the Support ticket screen and tell me the ticket number. Report it in your done summary.",
+  "notes": "LIVE. Pure read: nothing to mutate, so the answer only lives in the rendered view and must be surfaced in the model's done reason (the host success summary). Cross-model discriminator for read-then-report discipline vs. blind action or fabrication. The host maps done->success and carries the done reason as the transcript summary, scored by summaryContains. Tiny-context models SKIP. The readable value is a deliberately NON-PII ticket id ('INC-40291'): an earlier email/name scene tripped the outbound PrivacyFilter on REMOTE models (the perceived screen is filtered before leaving the machine; in a headless eval there's no review presenter, so the send is correctly BLOCKED and the run fails) — that measured the privacy gate, not read-then-report capability. Non-PII keeps this a fair cross-model capability test; local models aren't outbound-filtered either way.",
+  "fixtures": {},
+  "expect": {
+    "subagent": {
+      "lane": "computer_use",
+      "app": "Support",
+      "maxSteps": 6,
+      "elements": [
+        { "id": "ticket", "role": "statictext", "label": "Ticket", "value": "INC-40291" },
+        { "id": "priority", "role": "statictext", "label": "Priority", "value": "High" },
+        { "id": "status", "role": "statictext", "label": "Status", "value": "Open" }
+      ],
+      "expectSuccess": true,
+      "expectEnvelopeKind": "success",
+      "expectResultKind": "computer_use",
+      "summaryContains": ["INC-40291"]
+    }
+  }
+}

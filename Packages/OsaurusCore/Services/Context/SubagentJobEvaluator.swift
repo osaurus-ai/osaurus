@@ -230,22 +230,28 @@ public enum SubagentJobEvaluator {
         )
     }
 
-    /// Run the live spawn lane through the real `SpawnTool` (and thus the
-    /// host + `TextSubagentKind`). The caller is responsible for skipping
-    /// when the persona/model is unavailable — the transcript's
-    /// `envelopeKind` surfaces a `rejected`/`unavailable` envelope so the
-    /// runner can decide skip vs. fail.
-    public static func runSpawn(agent: String, input: String) async -> SubagentJobTranscript {
+    /// Run the live spawn lane through the host + `TextSubagentKind` (the same
+    /// path `SpawnTool` drives). The caller is responsible for skipping when
+    /// the persona/model is unavailable — the transcript's `envelopeKind`
+    /// surfaces a `rejected`/`unavailable` envelope so the runner can decide
+    /// skip vs. fail.
+    ///
+    /// When `modelId` is provided, the spawned persona runs on THAT model
+    /// instead of its own configured one, so `spawn` becomes a real
+    /// cross-model column in the matrix (the production kind otherwise pins to
+    /// the persona's model, which wouldn't vary with the eval `--model`). The
+    /// persona must still exist and be spawnable; only the effective model is
+    /// overridden.
+    public static func runSpawn(
+        agent: String,
+        input: String,
+        modelId: String? = nil
+    ) async -> SubagentJobTranscript {
         let toolCallId = freshToolCallId()
-        let argsJSON = jsonString(["agent": agent, "input": input])
+        let kind = TextSubagentKind(agentName: agent, input: input, modelOverride: modelId)
         let started = Date()
         let envelope = await withEvalScope(toolCallId: toolCallId) {
-            (try? await SpawnTool().execute(argumentsJSON: argsJSON))
-                ?? ToolEnvelope.failure(
-                    kind: .executionError,
-                    message: "spawn tool threw",
-                    tool: "spawn"
-                )
+            await SubagentSession.run(kind, tool: "spawn")
         }
         let latency = Date().timeIntervalSince(started) * 1000
         return transcript(
@@ -290,6 +296,182 @@ public enum SubagentJobEvaluator {
             toolCallId: toolCallId,
             latencyMs: latency
         )
+    }
+
+    /// Run the live `computer_use` lane through the host + `ComputerUseKind`
+    /// against an injected, in-memory `driver` (e.g. `ScriptedCUDriver`) +
+    /// permissive `gate`. The desktop is never touched, so this is safe and
+    /// deterministic in CI.
+    ///
+    /// - `scriptedActions` non-nil drives the loop with NO model call (the
+    ///   CI-safe lane that proves the host wrapper + envelope mapping).
+    /// - `scriptedActions` nil drives the loop with the live `modelId` (the
+    ///   local-vs-frontier planning lane). Callers should pre-skip
+    ///   tiny-context models (which can't use tools) before calling.
+    ///
+    /// The injected `driver` is the caller's, so after this returns the caller
+    /// reads back the world state (final values, clicked ids, verb trace) for
+    /// the substantive "did it work" check; this facade returns only the
+    /// host-parity transcript (envelope/feed/summary).
+    public static func runComputerUse(
+        goal: String,
+        modelId: String,
+        driver: MacDriver,
+        gate: ComputerUseGating,
+        vision: VisionContext = .none,
+        scriptedActions: [String]? = nil,
+        maxSteps: Int = 16
+    ) async -> SubagentJobTranscript {
+        let toolCallId = freshToolCallId()
+        let harness = ComputerUseEvalHarness(
+            modelId: modelId,
+            driver: driver,
+            gate: gate,
+            vision: vision,
+            scriptedActions: scriptedActions
+        )
+        let kind = ComputerUseKind(
+            goal: goal,
+            limits: RunLimits(maxSteps: max(1, maxSteps), wallClockSeconds: 240),
+            evalHarness: harness
+        )
+        let started = Date()
+        let envelope = await withEvalScope(toolCallId: toolCallId) {
+            await SubagentSession.run(kind, tool: "computer_use")
+        }
+        let latency = Date().timeIntervalSince(started) * 1000
+        return transcript(
+            fromEnvelope: envelope,
+            tool: "computer_use",
+            kindId: "computer_use",
+            toolCallId: toolCallId,
+            latencyMs: latency
+        )
+    }
+
+    /// Run the live `sandbox_reduce` lane through the host + `SandboxReduceKind`
+    /// on the active run `modelId`. Pre-flights the sandbox child toolset: when
+    /// it isn't registered (no container on this host) the lane is genuinely
+    /// unavailable, so this returns an `unavailable` transcript that the runner
+    /// SKIPS — never a false failure, and never touching production error
+    /// classification in `SandboxReduceKind`.
+    public static func runSandboxReduce(
+        task: String,
+        modelId: String,
+        paths: [String] = [],
+        maxIterations: Int? = nil
+    ) async -> SubagentJobTranscript {
+        let toolsReady = await MainActor.run {
+            !ToolRegistry.shared.specs(forTools: SandboxReduceTool.childToolAllowlist).isEmpty
+        }
+        guard toolsReady else {
+            return SubagentJobTranscript(
+                tool: "sandbox_reduce",
+                kindId: "sandbox_reduce",
+                succeeded: false,
+                envelopeKind: "unavailable",
+                summary: "",
+                feedEventKinds: [],
+                feedPhases: [],
+                error: "sandbox child tools are not registered on this host (no container).",
+                latencyMs: 0
+            )
+        }
+        let toolCallId = freshToolCallId()
+        let iterations = min(
+            max(maxIterations ?? SandboxReduceTool.defaultIterations, 1),
+            SandboxReduceTool.maxIterations
+        )
+        let kind = SandboxReduceKind(
+            agentId: Agent.defaultId.uuidString,
+            task: task,
+            paths: paths,
+            iterations: iterations,
+            modelOverride: modelId
+        )
+        let started = Date()
+        let envelope = await withEvalScope(toolCallId: toolCallId) {
+            await SubagentSession.run(kind, tool: "sandbox_reduce")
+        }
+        let latency = Date().timeIntervalSince(started) * 1000
+        return transcript(
+            fromEnvelope: envelope,
+            tool: "sandbox_reduce",
+            kindId: "sandbox_reduce",
+            toolCallId: toolCallId,
+            latencyMs: latency
+        )
+    }
+
+    // MARK: - Eval persona seeding
+
+    /// Seed a spawnable persona named `name` for the duration of `body`, then
+    /// restore. Creates an `Agent` with that name (when absent, with a concise
+    /// persona prompt) and adds it to the Default agent's GLOBAL spawnable pool
+    /// (`SubagentConfiguration.spawnableAgentNames`, which the Default/main-chat
+    /// agent the eval scope uses consults), so the `spawn` lane RUNS across
+    /// models on any host instead of skipping for lack of a configured persona.
+    /// Also forces `localTextDelegationEnabled` (the "Local Orchestrator
+    /// Handoff" switch) ON for the run so a LOCAL run model can actually hand
+    /// off to the local text subagent (unload/reload) instead of skipping —
+    /// this is the real documented capability switch (the RAM-safety preflight
+    /// still guards it), so `spawn` becomes a true cross-model column including
+    /// local MLX, not just `foundation`/remote. The whole prior
+    /// `SubagentConfiguration` is snapshotted and restored, and the seeded
+    /// agent removed, leaving a developer's real config untouched. The
+    /// persona's own model is irrelevant — the eval passes the run model as a
+    /// `TextSubagentKind` override. Seed/restore run on the main actor
+    /// (`AgentStore`/`AgentManager` are main-actor state);
+    /// `SubagentConfigurationStore` is nonisolated.
+    public static func withSpawnablePersona<T: Sendable>(
+        name: String,
+        _ body: @Sendable () async -> T
+    ) async -> T {
+        let state:
+            (createdAgentId: UUID?, priorConfig: SubagentConfiguration, configChanged: Bool) =
+                await MainActor.run {
+                    let priorConfig = SubagentConfigurationStore.snapshot()
+                    var createdAgentId: UUID? = nil
+                    let exists = AgentManager.shared.agents.contains {
+                        $0.name.caseInsensitiveCompare(name) == .orderedSame
+                    }
+                    if !exists {
+                        let agent = Agent(
+                            id: UUID(),
+                            name: name,
+                            description: "Seeded by OsaurusEvals for the spawn lane; safe to delete.",
+                            systemPrompt:
+                                "You are a concise sub-agent. Answer the task directly and follow any "
+                                + "formatting instructions exactly. Do not add preamble or commentary."
+                        )
+                        AgentStore.save(agent)
+                        createdAgentId = agent.id
+                    }
+                    var updated = priorConfig
+                    if !priorConfig.isAgentSpawnable(name) {
+                        updated.spawnableAgentNames = priorConfig.spawnableAgentNames + [name]
+                    }
+                    // Enable the local handoff switch so a LOCAL run model can
+                    // spawn the local persona (the chat model unloads to make
+                    // room). Default is on; this only flips a host that disabled
+                    // it, and is restored afterward.
+                    updated.localTextDelegationEnabled = true
+                    let configChanged = updated != priorConfig
+                    if configChanged { SubagentConfigurationStore.save(updated) }
+                    if createdAgentId != nil { AgentManager.shared.refresh() }
+                    return (createdAgentId, priorConfig, configChanged)
+                }
+        let result = await body()
+        await MainActor.run {
+            if let id = state.createdAgentId {
+                AgentStore.delete(id: id)
+                AgentManager.shared.refresh()
+            }
+            if state.configChanged {
+                SubagentConfigurationStore.save(state.priorConfig)
+            }
+        }
+        return result
     }
 
     // MARK: - Shared plumbing

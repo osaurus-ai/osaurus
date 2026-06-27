@@ -1611,6 +1611,12 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         public let agent: String?
         /// Task/query handed to the spawned persona.
         public let input: String?
+        /// When true, the runner seeds a spawnable persona named `agent` (an
+        /// Agent + the Default agent's global spawnable pool) for the duration
+        /// of the run and restores it after, so the case RUNS across models on
+        /// any host instead of skipping. Leave false/nil for negative guards
+        /// (e.g. "not spawnable → rejected") that must NOT be seeded.
+        public let seedSpawnablePersona: Bool?
 
         // --- live image lane inputs ---
         /// Prompt for the `image` lane (also the edit instruction).
@@ -1619,6 +1625,42 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         public let sourcePaths: [String]?
         /// Optional local image model id override.
         public let model: String?
+
+        // --- live computer_use lane inputs (reuse the CU scene schema) ---
+        /// App name the scripted scene presents (focused on entry).
+        public let app: String?
+        /// The scripted accessibility tree the in-memory driver renders.
+        public let elements: [ComputerUseLoopExpectations.SceneElement]?
+        /// `AutonomyPreset` raw value for the gate. nil → `autonomous`.
+        public let preset: String?
+        /// Productive-step budget for the loop. nil → 16.
+        public let maxSteps: Int?
+        /// Optional scripted model: `agent_action` arguments-JSON strings that
+        /// drive the loop deterministically (no model call). When present, the
+        /// case runs for EVERY model (CI-safe); when nil/empty, the live
+        /// `modelId` drives it (and tiny-context models SKIP). The run outcome
+        /// is scored via `expectSuccess`/`expectEnvelopeKind` (the host
+        /// collapses `done`→success, `interrupted`→user_denied, every other
+        /// non-completion→execution_error).
+        public let scriptedActions: [String]?
+        /// Final-state value predicates against the scripted world — the
+        /// substantive "did it work" check (read back from the driver).
+        public let successValues: [ComputerUseLoopExpectations.ValuePredicate]?
+        /// Element ids that must have been clicked at least once.
+        public let successClicked: [String]?
+        /// Element ids that must NOT be clicked — the precision/safety lever.
+        public let failIfClicked: [String]?
+        /// Verbs that must appear IN THIS RELATIVE ORDER in the executed trace
+        /// (subsequence). Encodes a required plan shape.
+        public let expectVerbsInOrder: [String]?
+
+        // --- live sandbox_reduce lane inputs ---
+        /// Natural-language reduction goal for the `sandbox_reduce` lane.
+        public let task: String?
+        /// Optional file/directory paths scoping where the subagent looks.
+        public let paths: [String]?
+        /// Optional child-loop iteration budget (default 8, cap 12).
+        public let maxIterations: Int?
 
         // --- expectations (any subset; an empty set just records) ---
         /// Whether the run must end in a success envelope.
@@ -1656,9 +1698,22 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             phases: [String]? = nil,
             agent: String? = nil,
             input: String? = nil,
+            seedSpawnablePersona: Bool? = nil,
             prompt: String? = nil,
             sourcePaths: [String]? = nil,
             model: String? = nil,
+            app: String? = nil,
+            elements: [ComputerUseLoopExpectations.SceneElement]? = nil,
+            preset: String? = nil,
+            maxSteps: Int? = nil,
+            scriptedActions: [String]? = nil,
+            successValues: [ComputerUseLoopExpectations.ValuePredicate]? = nil,
+            successClicked: [String]? = nil,
+            failIfClicked: [String]? = nil,
+            expectVerbsInOrder: [String]? = nil,
+            task: String? = nil,
+            paths: [String]? = nil,
+            maxIterations: Int? = nil,
             expectSuccess: Bool? = nil,
             expectEnvelopeKind: String? = nil,
             expectResultKind: String? = nil,
@@ -1679,9 +1734,22 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.phases = phases
             self.agent = agent
             self.input = input
+            self.seedSpawnablePersona = seedSpawnablePersona
             self.prompt = prompt
             self.sourcePaths = sourcePaths
             self.model = model
+            self.app = app
+            self.elements = elements
+            self.preset = preset
+            self.maxSteps = maxSteps
+            self.scriptedActions = scriptedActions
+            self.successValues = successValues
+            self.successClicked = successClicked
+            self.failIfClicked = failIfClicked
+            self.expectVerbsInOrder = expectVerbsInOrder
+            self.task = task
+            self.paths = paths
+            self.maxIterations = maxIterations
             self.expectSuccess = expectSuccess
             self.expectEnvelopeKind = expectEnvelopeKind
             self.expectResultKind = expectResultKind

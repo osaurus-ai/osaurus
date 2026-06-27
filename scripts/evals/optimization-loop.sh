@@ -19,6 +19,10 @@ set -uo pipefail
 #                  (requires XAI_API_KEY in the environment).
 #   DET_MODEL      model for the deterministic / model-independent suites
 #                  (no LLM call). Default: "auto".
+#   LLM_SUITES     space-separated per-model suites to run. Default is the full
+#                  set; override to scope a run, e.g.
+#                  LLM_SUITES="Subagent ComputerUseLoop SandboxFrontier".
+#   DET_SUITES     space-separated model-free suites (override to scope/skip).
 #   LOOP_OUT_ROOT  parent dir for timestamped runs. Default build/evals/loop.
 #   BASELINE       dir of a previous run to diff against (enables the gate).
 #   FILTER         only run cases whose id contains this substring.
@@ -59,14 +63,16 @@ SKIP_DET="${SKIP_DET:-0}"
 
 # Suites that never call an LLM (pure-data validators + the embedder-only
 # capability_search lane) — run ONCE with DET_MODEL.
-DET_SUITES=(
-  ArgumentCoercion CapabilitySearch ComputerUse PrefixHash
-  RequestValidation SandboxDiagnostics Schema StreamingHint ToolEnvelope
-)
+# Override with a space-separated DET_SUITES env var (e.g. a scoped run).
+DET_SUITES=(${DET_SUITES:-ArgumentCoercion CapabilitySearch ComputerUse PrefixHash RequestValidation SandboxDiagnostics Schema StreamingHint ToolEnvelope})
 # Suites that drive a model (or the sandbox VM) — run PER model.
-LLM_SUITES=(
-  AgentLoop AgentLoopFrontier CapabilityClaims ComputerUseLoop DefaultAgent SandboxFrontier
-)
+# `Subagent` runs all four subagent flows through the one SubagentSession host:
+# its scripted cases are model-independent (identical per model) while the live
+# lanes (spawn, computer_use-on-scripted-world, sandbox_reduce, image) vary with
+# the run model, so it lands real `subagent` rows in the cross-model matrix.
+# Override with a space-separated LLM_SUITES env var to scope a run, e.g.
+# LLM_SUITES="Subagent ComputerUseLoop SandboxFrontier" for a subagent-focused matrix.
+LLM_SUITES=(${LLM_SUITES:-AgentLoop AgentLoopFrontier CapabilityClaims ComputerUseLoop DefaultAgent SandboxFrontier Subagent})
 
 log() { printf '[opt-loop] %s\n' "$*"; }
 

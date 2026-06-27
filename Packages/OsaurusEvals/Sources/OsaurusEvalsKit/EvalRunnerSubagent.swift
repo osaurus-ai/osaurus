@@ -53,13 +53,20 @@ extension EvalRunner {
             return await scoreSpawnLane(testCase, exp: exp, modelId: modelId, label: label)
         case "image":
             return await scoreImageLane(testCase, exp: exp, modelId: modelId, label: label)
+        case "computer_use":
+            return await scoreComputerUseLane(testCase, exp: exp, modelId: modelId, label: label)
+        case "sandbox_reduce":
+            return await scoreSandboxReduceLane(testCase, exp: exp, modelId: modelId, label: label)
         default:
             return .terminal(
                 id: testCase.id,
                 label: label,
                 domain: testCase.domain,
                 outcome: .errored,
-                notes: ["unknown subagent lane '\(exp.lane)' (expected scripted|spawn|image)"],
+                notes: [
+                    "unknown subagent lane '\(exp.lane)' "
+                        + "(expected scripted|spawn|image|computer_use|sandbox_reduce)"
+                ],
                 modelId: modelId
             )
         }
@@ -123,7 +130,22 @@ extension EvalRunner {
                 modelId: modelId
             )
         }
-        let transcript = await SubagentJobEvaluator.runSpawn(agent: agent, input: input)
+        // Pass the run `modelId` so the spawned persona runs on it (instead of
+        // its own pinned model), making `spawn` a real cross-model column.
+        // Positive cases opt into persona seeding (so they RUN anywhere across
+        // models); negative guards (not-spawnable) must NOT be seeded.
+        let transcript: SubagentJobTranscript
+        if exp.seedSpawnablePersona == true {
+            transcript = await SubagentJobEvaluator.withSpawnablePersona(name: agent) {
+                await SubagentJobEvaluator.runSpawn(agent: agent, input: input, modelId: modelId)
+            }
+        } else {
+            transcript = await SubagentJobEvaluator.runSpawn(
+                agent: agent,
+                input: input,
+                modelId: modelId
+            )
+        }
         return finishLive(testCase, exp: exp, transcript: transcript, lane: "spawn", modelId: modelId, label: label)
     }
 
@@ -151,6 +173,196 @@ extension EvalRunner {
             model: exp.model
         )
         return finishLive(testCase, exp: exp, transcript: transcript, lane: "image", modelId: modelId, label: label)
+    }
+
+    // MARK: - Live computer_use lane (host + scripted driver)
+
+    /// Drive the real `computer_use` host (`SubagentSession` + `ComputerUseKind`)
+    /// against an in-memory `ScriptedCUDriver`, then score BOTH the host-parity
+    /// transcript (envelope/feed/summary) AND the resulting world state (field
+    /// values, clicks, verb trace) read back from the driver. Deterministic
+    /// `scriptedActions` cases run for every model; live cases drive the run
+    /// `modelId` and SKIP tiny-context models (which can't emit tool calls).
+    private static func scoreComputerUseLane(
+        _ testCase: EvalCase,
+        exp: EvalCase.SubagentExpectations,
+        modelId: String,
+        label: String
+    ) async -> EvalCaseReport {
+        guard let app = exp.app, let elements = exp.elements else {
+            return .terminal(
+                id: testCase.id,
+                label: label,
+                domain: testCase.domain,
+                outcome: .errored,
+                notes: ["computer_use lane needs `app` + `elements`"],
+                modelId: modelId
+            )
+        }
+
+        // A scripted scene drives the loop with no model call; otherwise the
+        // live `modelId` does. nil OR empty `scriptedActions` ⇒ live.
+        let isLive = (exp.scriptedActions?.isEmpty ?? true)
+        if isLive {
+            let window = ContextSizeResolver.resolve(modelId: modelId)
+            if window.sizeClass.disablesTools {
+                return .terminal(
+                    id: testCase.id,
+                    label: label,
+                    domain: testCase.domain,
+                    outcome: .skipped,
+                    notes: [
+                        "tools auto-disabled for '\(modelId)': context size class "
+                            + "\(window.sizeClass) (≤\(ContextSizeResolver.tinyCeiling)-token window) "
+                            + "strips the agent_action tool schema the Computer Use loop forces; "
+                            + "live model-driven case skipped"
+                    ],
+                    modelId: modelId
+                )
+            }
+        }
+
+        // The driver is OURS, so we read back the world state after the host
+        // run; the gate is permissive-by-default (`autonomous` auto-runs every
+        // effect) unless the case picks a stricter preset (confirms auto-approve).
+        let driver = ScriptedCUDriver(app: app, elements: elements)
+        let preset = AutonomyPreset(rawValue: exp.preset ?? "autonomous") ?? .autonomous
+        let gate = ComputerUseGate(policy: AutonomyPolicy(globalPreset: preset))
+
+        let transcript = await SubagentJobEvaluator.runComputerUse(
+            goal: testCase.query,
+            modelId: modelId,
+            driver: driver,
+            gate: gate,
+            vision: .none,
+            scriptedActions: isLive ? nil : exp.scriptedActions,
+            maxSteps: exp.maxSteps ?? 16
+        )
+
+        // Host-parity matchers (envelope/feed/summary/resultKind).
+        var (passed, notes) = score(transcript, against: exp)
+
+        // World-state read-back — the substantive "did it work" check.
+        let finalValues = await driver.finalValues()
+        let verbTrace = await driver.verbTrace()
+        func check(_ ok: Bool, pass: String, fail: String) {
+            passed = passed && ok
+            notes.append(ok ? pass : fail)
+        }
+        for predicate in exp.successValues ?? [] {
+            let value = (finalValues[predicate.id] ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if let exact = predicate.equals {
+                check(
+                    value == exact.trimmingCharacters(in: .whitespacesAndNewlines),
+                    pass: "value[\(predicate.id)] == '\(exact)'",
+                    fail: "value[\(predicate.id)] = '\(value)' != '\(exact)'"
+                )
+            }
+            if let needle = predicate.contains {
+                check(
+                    value.localizedCaseInsensitiveContains(needle),
+                    pass: "value[\(predicate.id)] contains '\(needle)'",
+                    fail: "value[\(predicate.id)] = '\(value)' missing '\(needle)'"
+                )
+            }
+        }
+        for id in exp.successClicked ?? [] {
+            let clicked = await driver.wasClicked(id)
+            check(clicked, pass: "clicked '\(id)'", fail: "never clicked '\(id)'")
+        }
+        for id in exp.failIfClicked ?? [] {
+            let clicked = await driver.wasClicked(id)
+            check(!clicked, pass: "correctly avoided '\(id)'", fail: "clicked forbidden '\(id)'")
+        }
+        if let order = exp.expectVerbsInOrder, !order.isEmpty {
+            check(
+                containsSubsequence(verbTrace, order),
+                pass: "verb order ok: \(order) ⊑ [\(verbTrace.joined(separator: ","))]",
+                fail: "verb order \(order) not a subsequence of [\(verbTrace.joined(separator: ","))]"
+            )
+        }
+        notes.append("verbs: [\(verbTrace.joined(separator: ","))]")
+        if !passed {
+            notes.append(
+                "final values: "
+                    + finalValues.keys.sorted()
+                    .map { "\($0)='\(finalValues[$0] ?? "")'" }
+                    .joined(separator: " ")
+            )
+        }
+
+        return EvalCaseReport(
+            id: testCase.id,
+            label: label,
+            domain: testCase.domain,
+            query: testCase.query,
+            outcome: passed ? .passed : .failed,
+            notes: notes,
+            modelId: modelId,
+            latencyMs: transcript.latencyMs,
+            toolUsage: verbUsageStats(verbTrace)
+        )
+    }
+
+    // MARK: - Live sandbox_reduce lane (host + container)
+
+    /// Drive the real `sandbox_reduce` host (`SubagentSession` +
+    /// `SandboxReduceKind`) on the run `modelId`. SKIPS cleanly when the
+    /// sandbox child tools aren't registered (no container) — the facade
+    /// pre-flight returns an `unavailable` envelope, and `finishLive` treats
+    /// an unexpected availability envelope as a skip. Tiny-context models
+    /// (which can't drive a tool loop) are pre-skipped.
+    private static func scoreSandboxReduceLane(
+        _ testCase: EvalCase,
+        exp: EvalCase.SubagentExpectations,
+        modelId: String,
+        label: String
+    ) async -> EvalCaseReport {
+        guard let task = exp.task ?? optionalNonEmpty(testCase.query) else {
+            return .terminal(
+                id: testCase.id,
+                label: label,
+                domain: testCase.domain,
+                outcome: .errored,
+                notes: ["sandbox_reduce lane needs `task` (or a non-empty query)"],
+                modelId: modelId
+            )
+        }
+        let window = ContextSizeResolver.resolve(modelId: modelId)
+        if window.sizeClass.disablesTools {
+            return .terminal(
+                id: testCase.id,
+                label: label,
+                domain: testCase.domain,
+                outcome: .skipped,
+                notes: [
+                    "tools auto-disabled for '\(modelId)': context size class "
+                        + "\(window.sizeClass) (≤\(ContextSizeResolver.tinyCeiling)-token window) "
+                        + "strips the tools the reduction loop needs; live case skipped"
+                ],
+                modelId: modelId
+            )
+        }
+        let transcript = await SubagentJobEvaluator.runSandboxReduce(
+            task: task,
+            modelId: modelId,
+            paths: exp.paths ?? [],
+            maxIterations: exp.maxIterations
+        )
+        return finishLive(
+            testCase,
+            exp: exp,
+            transcript: transcript,
+            lane: "sandbox_reduce",
+            modelId: modelId,
+            label: label
+        )
+    }
+
+    private static func optionalNonEmpty(_ s: String) -> String? {
+        let trimmed = s.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     // MARK: - Shared scoring
@@ -319,6 +531,18 @@ extension EvalRunner {
             i += 1
         }
         return i == needles.count
+    }
+
+    /// Fold the executed-verb trace into per-verb counters for the suite-wide
+    /// usage table (the action mix: type vs click vs observe …). Local copy of
+    /// the computer-use runner's file-private helper.
+    private static func verbUsageStats(_ verbs: [String]) -> [ToolUsageStat]? {
+        guard !verbs.isEmpty else { return nil }
+        var counts: [String: Int] = [:]
+        for verb in verbs { counts[verb, default: 0] += 1 }
+        return counts.keys.sorted().map {
+            ToolUsageStat(tool: $0, calls: counts[$0] ?? 0, errors: 0, deduped: 0)
+        }
     }
 
     private static func scriptedSpecError(

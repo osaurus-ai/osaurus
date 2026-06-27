@@ -26,16 +26,27 @@ final class SandboxReduceKind: SubagentKind, @unchecked Sendable {
     private let task: String
     private let paths: [String]
     private let iterations: Int
+    /// Eval seam (nil in production): force the run model so the lane varies
+    /// across the local-vs-frontier matrix. Production inherits the parent
+    /// agent's model via `AgentManager.effectiveModel`.
+    private let modelOverride: String?
 
     /// Resolved in `resolveModel`, read by `run`.
     private var modelId: String = ""
     private var toolSpecs: [Tool] = []
 
-    init(agentId: String, task: String, paths: [String], iterations: Int) {
+    init(
+        agentId: String,
+        task: String,
+        paths: [String],
+        iterations: Int,
+        modelOverride: String? = nil
+    ) {
         self.agentId = agentId
         self.task = task
         self.paths = paths
         self.iterations = iterations
+        self.modelOverride = modelOverride
     }
 
     var feedTitle: String {
@@ -45,9 +56,11 @@ final class SandboxReduceKind: SubagentKind, @unchecked Sendable {
 
     func resolveModel(_ scope: SubagentScope) async throws -> ResolvedModel {
         let agentUUID = UUID(uuidString: agentId)
+        let override = modelOverride
         let (model, specs): (String?, [Tool]) = await MainActor.run {
             let model =
-                agentUUID.flatMap { AgentManager.shared.effectiveModel(for: $0) }
+                override
+                ?? agentUUID.flatMap { AgentManager.shared.effectiveModel(for: $0) }
                 ?? ChatConfigurationStore.load().defaultModel
             let specs = ToolRegistry.shared.specs(forTools: SandboxReduceTool.childToolAllowlist)
             return (model, specs)

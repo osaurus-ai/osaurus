@@ -23,6 +23,11 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
 
     private let agentName: String
     private let input: String
+    /// Eval seam (nil in production): run the spawned persona on this model
+    /// instead of its own configured model, so `spawn` becomes a real
+    /// cross-model column in the local-vs-frontier matrix. The persona must
+    /// still exist and be spawnable — only the effective model is overridden.
+    private let modelOverride: String?
 
     /// Cap on the digest handed back to the parent.
     private static let digestMaxChars = 8_000
@@ -37,9 +42,10 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
     private var ramSafetyEnabled = false
     private var handoffMaxElapsedSeconds = 120
 
-    init(agentName: String, input: String) {
+    init(agentName: String, input: String, modelOverride: String? = nil) {
         self.agentName = agentName
         self.input = input
+        self.modelOverride = modelOverride
     }
 
     var feedTitle: String { "spawn → \(agentName)" }
@@ -90,8 +96,13 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
         guard let persona else {
             throw SubagentError.unavailable("Agent '\(agentName)' not found.")
         }
-        let modelName = await MainActor.run {
-            AgentManager.shared.effectiveModel(for: persona.id)
+        let modelName: String?
+        if let modelOverride {
+            modelName = modelOverride
+        } else {
+            modelName = await MainActor.run {
+                AgentManager.shared.effectiveModel(for: persona.id)
+            }
         }
         guard let modelName, !modelName.isEmpty else {
             throw SubagentError.unavailable("Agent '\(agentName)' has no model configured.")
