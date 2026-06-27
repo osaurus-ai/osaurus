@@ -559,6 +559,17 @@ public actor ModelRuntime {
 
         modelCache[name]?.container.disableCaching()
 
+        // Drain the GPU BEFORE releasing the weight arrays. The lease/idle
+        // drains above stop new work and wait for request leases, but a chat
+        // turn's last compute command buffer (e.g. `Gemma4.prepare`) can still
+        // be queued on the shared Metal stream. Freeing the weights first and
+        // synchronizing only afterwards (below) lets that queued buffer execute
+        // against already-freed weights — observed SIGSEGV in
+        // `Gemma4.prepare → metal::Device::end_encoding` when the OCR/spawn
+        // residency handoff loads the sub-agent model on top of it. Draining
+        // here forces the buffer to complete while its weights are still valid.
+        Stream.gpu.synchronize()
+
         autoreleasepool {
             _ = modelCache.removeValue(forKey: name)
         }
