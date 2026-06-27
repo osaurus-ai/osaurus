@@ -64,7 +64,10 @@ SKIP_DET="${SKIP_DET:-0}"
 # Suites that never call an LLM (pure-data validators + the embedder-only
 # capability_search lane) — run ONCE with DET_MODEL.
 # Override with a space-separated DET_SUITES env var (e.g. a scoped run).
-DET_SUITES=(${DET_SUITES:-ArgumentCoercion CapabilitySearch ComputerUse PrefixHash RequestValidation SandboxDiagnostics Schema StreamingHint ToolEnvelope})
+# `read -ra` is the robust, SC2206-clean way to split the space-separated
+# override/default into the array (and is bash 3.2-safe). The `${VAR:-...}`
+# default is expanded before `read` reassigns the same name.
+read -ra DET_SUITES <<< "${DET_SUITES:-ArgumentCoercion CapabilitySearch ComputerUse PrefixHash RequestValidation SandboxDiagnostics Schema StreamingHint ToolEnvelope}"
 # Suites that drive a model (or the sandbox VM) — run PER model.
 # `Subagent` runs all four subagent flows through the one SubagentSession host:
 # its scripted cases are model-independent (identical per model) while the live
@@ -72,7 +75,8 @@ DET_SUITES=(${DET_SUITES:-ArgumentCoercion CapabilitySearch ComputerUse PrefixHa
 # the run model, so it lands real `subagent` rows in the cross-model matrix.
 # Override with a space-separated LLM_SUITES env var to scope a run, e.g.
 # LLM_SUITES="Subagent ComputerUseLoop SandboxFrontier" for a subagent-focused matrix.
-LLM_SUITES=(${LLM_SUITES:-AgentLoop AgentLoopFrontier CapabilityClaims ComputerUseLoop DefaultAgent SandboxFrontier Subagent})
+# `read -ra` splits the override/default into the array (SC2206-clean, bash 3.2-safe).
+read -ra LLM_SUITES <<< "${LLM_SUITES:-AgentLoop AgentLoopFrontier CapabilityClaims ComputerUseLoop DefaultAgent SandboxFrontier Subagent}"
 
 log() { printf '[opt-loop] %s\n' "$*"; }
 
