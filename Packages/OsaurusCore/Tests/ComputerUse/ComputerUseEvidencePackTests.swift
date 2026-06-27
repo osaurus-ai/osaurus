@@ -208,7 +208,8 @@ final class ComputerUseEvidencePackTests: XCTestCase {
             modelId: "scripted-browser-form",
             driver: driver,
             gate: ComputerUseGate(policy: AutonomyPolicy(globalPreset: .trusted)),
-            feed: ComputerUseFeed(toolCallId: "evidence-browser-form", goal: "Fill out the form"),
+            feed: SubagentFeed(
+                toolCallId: "evidence-browser-form", kindId: "computer_use", title: "Fill out the form"),
             interrupt: InterruptToken(),
             confirm: { preview in
                 await confirmationRecorder.record(preview)
