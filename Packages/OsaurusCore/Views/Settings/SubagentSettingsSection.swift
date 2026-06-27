@@ -3,11 +3,12 @@
 //  osaurus
 //
 //  System runtime knobs for bounded local helper jobs (spawn / image): the
-//  local-handoff / RAM-safety behavior and image load policy. There is no
-//  global master switch — each agent (including the built-in main chat) opts
-//  into spawn / image and picks its own models, permissions, and budgets from
-//  its Sub-agents tab. This card hosts only the GPU-residency / RAM knobs and
-//  lives inside the general Settings tab.
+//  local-handoff / RAM-safety behavior. There is no global master switch — each
+//  agent (including the built-in main chat) opts into spawn / image and picks
+//  its own models, permissions, and budgets from its Sub-agents tab. The global
+//  image-generation settings (default models, permission, image load policy)
+//  live in the dedicated Image Generation tab. This card hosts only the shared
+//  GPU-residency / RAM knobs and lives inside the general Settings tab.
 //
 
 import SwiftUI
@@ -42,39 +43,7 @@ struct SubagentSettingsSection: View {
                         )
                     }
                 }
-
-                SettingsDivider()
-
-                SettingsSubsection(label: "Load Policy") {
-                    enumPicker(
-                        title: "Image Jobs",
-                        selection: $configuration.imageJobLoadPolicy,
-                        values: SubagentImageLoadPolicy.allCases
-                    )
-                }
             }
         }
     }
-
-    private func enumPicker<T>(
-        title: String,
-        selection: Binding<T>,
-        values: [T]
-    ) -> some View where T: CaseIterable & Hashable, T: IdentifiableDisplay {
-        SettingsField(label: title, hint: "") {
-            Picker("", selection: selection) {
-                ForEach(values, id: \.self) { value in
-                    Text(LocalizedStringKey(value.displayName), bundle: .module).tag(value)
-                }
-            }
-            .labelsHidden()
-            .frame(maxWidth: 280, alignment: .leading)
-        }
-    }
 }
-
-protocol IdentifiableDisplay {
-    var displayName: String { get }
-}
-
-extension SubagentImageLoadPolicy: IdentifiableDisplay {}

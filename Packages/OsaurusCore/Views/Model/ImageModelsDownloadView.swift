@@ -2,12 +2,12 @@
 //  ImageModelsDownloadView.swift
 //  osaurus
 //
-//  The "Images" tab of the Models window: stage on-device image-generation
-//  bundles (vMLXFlux / mflux) so they become selectable in the chat model
-//  picker. Renders image models through the same `ModelRowView` card the
-//  On Device / Catalog tabs use, so the grid is visually identical. Curated
-//  models download on tap; arbitrary image repos are added via the global
-//  Import button, which auto-detects image bundles and routes them here.
+//  The "Models" sub-tab of the Image Generation panel. Stages on-device image
+//  bundles (mflux diffusers repos) so they become selectable in chat and the
+//  manual generate/edit panel. Presented as clean, sectioned list rows
+//  (Installed / Available) on the shared settings card chrome so the surface
+//  matches the Privacy tab and the rest of the app — instead of the heavy LLM
+//  catalog grid, whose Size/Params columns are empty for image bundles.
 //
 
 import SwiftUI
@@ -15,156 +15,237 @@ import SwiftUI
 struct ImageModelsDownloadView: View {
     @ObservedObject private var downloads = ImageModelDownloadService.shared
     @Environment(\.theme) private var theme
+    @Environment(\.openURL) private var openURL
 
-    @State private var installed: [ImageModelInfo] = []
-    @State private var detail: DetailRequest?
+    /// Routes the (rare) fully-empty state's CTA to the parent's Import sheet.
+    var onImport: (() -> Void)? = nil
 
-    /// Identifiable payload for presenting the detail modal.
-    private struct DetailRequest: Identifiable {
-        let id: String
-        let displayName: String
+    @State private var installed: [InstalledModel] = []
+    @State private var panel: PanelRequest?
+
+    /// Installed bundle paired with its resolved source repo (for re-download),
+    /// captured once per refresh so per-row rendering does no filesystem reads.
+    private struct InstalledModel: Identifiable {
+        let info: ImageModelInfo
         let repoId: String?
-        let info: ImageModelInfo?
+        var id: String { info.id }
     }
 
-    /// Non-optional download state for a bundle id (absent ⇒ not started).
+    /// Identifiable payload for the manual generate/edit panel.
+    private struct PanelRequest: Identifiable {
+        let id: String
+        let displayName: String
+        let isEdit: Bool
+    }
+
     private func state(_ id: String) -> DownloadState {
         downloads.states[id] ?? .notStarted
     }
 
-    /// One card per image model: installed bundles first, then curated
-    /// suggestions not yet on disk.
-    private struct Card: Identifiable {
-        let id: String
-        let content: ModelCardContent
-        /// Download source; `nil` for installed-only rows.
-        let repoId: String?
-        let displayName: String
+    private var installedIds: Set<String> { Set(installed.map(\.id)) }
+
+    /// Curated catalog entries not yet on disk.
+    private var availableEntries: [ImageModelDownload] {
+        ImageModelDownloadService.catalog.filter { !installedIds.contains($0.id) }
     }
 
-    private var cards: [Card] {
-        var out: [Card] = []
-        var seen = Set<String>()
-        for model in installed {
-            seen.insert(model.id)
-            out.append(
-                Card(
-                    id: model.id,
-                    content: content(forInstalled: model),
-                    repoId: nil,
-                    displayName: model.displayName
-                )
-            )
-        }
-        for entry in ImageModelDownloadService.catalog where !seen.contains(entry.id) {
-            out.append(
-                Card(
-                    id: entry.id,
-                    content: content(forCatalog: entry),
-                    repoId: entry.repoId,
-                    displayName: entry.displayName
-                )
-            )
-        }
-        return out
-    }
-
-    // Match the catalog grid: adaptive columns (≥260) with 12pt column and
-    // 20pt row spacing.
-    private let columns = [GridItem(.adaptive(minimum: 260), spacing: 12, alignment: .top)]
+    // MARK: - Body
 
     var body: some View {
         ScrollView {
-            LazyVGrid(columns: columns, spacing: 20) {
-                ForEach(cards) { card($0) }
+            VStack(alignment: .leading, spacing: 24) {
+                if installed.isEmpty && availableEntries.isEmpty {
+                    emptyState
+                } else {
+                    if !installed.isEmpty { installedSection }
+                    if !availableEntries.isEmpty { availableSection }
+                }
             }
             .padding(.horizontal, 24)
-            .padding(.top, 12)
-            .padding(.bottom, 24)
+            .padding(.vertical, 24)
+            .frame(maxWidth: .infinity, alignment: .top)
         }
         .task { await refreshInstalled() }
         .onReceive(NotificationCenter.default.publisher(for: .localModelsChanged)) { _ in
             Task { await refreshInstalled() }
         }
-        .sheet(item: $detail) { request in
-            ImageModelDetailView(
-                id: request.id,
+        .sheet(item: $panel) { request in
+            ImageGenerationPanelView(
+                modelId: request.id,
                 displayName: request.displayName,
-                repoId: request.repoId,
-                info: request.info
+                isEdit: request.isEdit
             )
             .environment(\.theme, theme)
         }
     }
 
-    private func card(_ card: Card) -> some View {
-        ModelRowView(
-            content: card.content,
-            downloadState: state(card.id),
-            metrics: downloads.metrics[card.id],
-            onViewDetails: { tap(card) },
-            onCancel: { downloads.cancel(card.id) }
-        )
+    // MARK: - Sections
+
+    private var installedSection: some View {
+        SettingsSection(title: "Installed", icon: "checkmark.seal.fill") {
+            VStack(spacing: 8) {
+                ForEach(installed) { model in
+                    ImageModelRow(
+                        title: model.info.displayName,
+                        subtitle: installedSubtitle(model.info),
+                        leading: leadingStyle(for: model.info),
+                        kindLabel: kindLabel(model.info.kind),
+                        quantLabel: quantText(bits: model.info.quantizationBits, id: model.info.id),
+                        state: state(model.id),
+                        metrics: downloads.metrics[model.id],
+                        primary: installedPrimaryAction(model),
+                        menuItems: installedMenuItems(model),
+                        onCancel: { downloads.cancel(model.id) }
+                    )
+                }
+            }
+        }
     }
 
-    /// Card tap opens the detail modal (download / delete / re-download live
-    /// there), matching the On Device / Catalog tabs.
-    private func tap(_ card: Card) {
-        detail = DetailRequest(
-            id: card.id,
-            displayName: card.displayName,
-            repoId: card.repoId,
-            info: installed.first { $0.id == card.id }
-        )
+    private var availableSection: some View {
+        SettingsSection(title: "Available", icon: "square.and.arrow.down") {
+            VStack(spacing: 8) {
+                ForEach(availableEntries) { entry in
+                    ImageModelRow(
+                        title: entry.displayName,
+                        subtitle: entry.note ?? L("Not downloaded yet"),
+                        leading: ImageModelRow.Leading(icon: "photo", tint: theme.accentColor),
+                        kindLabel: nil,
+                        quantLabel: quantText(bits: nil, id: entry.repoId),
+                        state: state(entry.id),
+                        metrics: downloads.metrics[entry.id],
+                        primary: ImageModelRow.Action(title: "Download", icon: "arrow.down.circle") {
+                            downloads.download(entry)
+                        },
+                        menuItems: [
+                            ImageModelRow.Action(
+                                title: "View on Hugging Face",
+                                icon: "arrow.up.right"
+                            ) {
+                                openHuggingFace(entry.repoId)
+                            }
+                        ],
+                        onCancel: { downloads.cancel(entry.id) }
+                    )
+                }
+            }
+        }
     }
 
-    // MARK: - Card content
-
-    private func content(forInstalled model: ImageModelInfo) -> ModelCardContent {
-        ModelCardContent(
-            name: model.displayName,
-            description: model.ready
-                ? L("On-device image model")
-                : (model.blockedReasons.first ?? L("Not ready")),
-            gradientColors: ModelCardGradient.colors(
-                family: model.canonicalName ?? model.id,
-                id: model.id
+    private var emptyState: some View {
+        SettingsEmptyState(
+            icon: "photo.on.rectangle.angled",
+            title: "No image models yet",
+            subtitle: "Import an mflux image model to generate and edit images on device.",
+            examples: [],
+            primaryAction: .init(
+                title: L("Import"),
+                icon: "square.and.arrow.down",
+                handler: { onImport?() }
             ),
-            isTopSuggestion: false,
-            isDownloaded: true,
-            useCase: nil,
-            compatibility: .unknown,
-            type: .image,
-            size: model.totalBytes > 0
-                ? ByteCountFormatter.string(fromByteCount: Int64(model.totalBytes), countStyle: .file)
-                : nil,
-            params: nil,
-            quant: quantText(bits: model.quantizationBits, id: model.id),
-            downloadsText: nil,
-            releaseText: nil
+            hasAppeared: true
         )
+        .frame(minHeight: 380)
     }
 
-    private func content(forCatalog entry: ImageModelDownload) -> ModelCardContent {
-        ModelCardContent(
-            name: entry.displayName,
-            description: entry.note ?? "",
-            gradientColors: ModelCardGradient.colors(family: entry.id, id: entry.id),
-            isTopSuggestion: false,
-            isDownloaded: false,
-            useCase: nil,
-            compatibility: .unknown,
-            type: .image,
-            size: nil,
-            params: nil,
-            quant: quantText(bits: nil, id: entry.repoId),
-            downloadsText: nil,
-            releaseText: nil
-        )
+    // MARK: - Row models
+
+    private func installedPrimaryAction(_ model: InstalledModel) -> ImageModelRow.Action? {
+        let info = model.info
+        // Ready + runnable kind → prominent Generate/Edit (opens the manual panel).
+        if info.ready, info.kind == "imageGen" || info.kind == "imageEdit" {
+            let isEdit = info.kind == "imageEdit"
+            return ImageModelRow.Action(
+                title: isEdit ? "Edit" : "Generate",
+                icon: isEdit ? "wand.and.stars" : "sparkles",
+                role: .primary
+            ) {
+                panel = PanelRequest(id: info.id, displayName: info.displayName, isEdit: isEdit)
+            }
+        }
+        // Not ready → surface Re-download as the primary fix (when the source repo
+        // is known); otherwise the only action is delete, left to the menu.
+        if !info.ready, let repo = model.repoId {
+            return ImageModelRow.Action(title: "Re-download", icon: "arrow.clockwise") {
+                downloads.download(repoId: repo, displayName: info.displayName)
+            }
+        }
+        return nil
     }
 
-    /// Best-effort quantization label: explicit bit width when known, else
-    /// parsed from the repo/dir name (fp8, NF4, 4/6/8-bit).
+    private func installedMenuItems(_ model: InstalledModel) -> [ImageModelRow.Action] {
+        let info = model.info
+        var items: [ImageModelRow.Action] = []
+        // Re-download for ready models lives in the menu (not-ready exposes it as
+        // the primary action instead, so it isn't duplicated).
+        if info.ready, let repo = model.repoId {
+            items.append(
+                ImageModelRow.Action(title: "Re-download", icon: "arrow.clockwise") {
+                    downloads.download(repoId: repo, displayName: info.displayName)
+                }
+            )
+        }
+        // The source repo is the one genuinely useful "details" affordance, so it
+        // moves into the row menu now that the standalone detail sheet is gone.
+        if let repo = model.repoId {
+            items.append(
+                ImageModelRow.Action(title: "View on Hugging Face", icon: "arrow.up.right") {
+                    openHuggingFace(repo)
+                }
+            )
+        }
+        items.append(
+            ImageModelRow.Action(title: "Delete", icon: "trash", role: .destructive) {
+                downloads.delete(info.id)
+            }
+        )
+        return items
+    }
+
+    private func installedSubtitle(_ info: ImageModelInfo) -> String {
+        guard info.ready else { return info.blockedReasons.first ?? L("Not ready") }
+        var parts: [String] = []
+        if info.totalBytes > 0 {
+            parts.append(
+                ByteCountFormatter.string(fromByteCount: Int64(info.totalBytes), countStyle: .file)
+            )
+        }
+        parts.append(L("Ready"))
+        return parts.joined(separator: " · ")
+    }
+
+    private func leadingStyle(for info: ImageModelInfo) -> ImageModelRow.Leading {
+        info.ready
+            ? ImageModelRow.Leading(icon: "checkmark.seal.fill", tint: theme.successColor)
+            : ImageModelRow.Leading(icon: "exclamationmark.triangle.fill", tint: theme.warningColor)
+    }
+
+    /// A short capability pill for non-default image kinds; plain generation
+    /// needs none (everything in this tab is an image model).
+    private func kindLabel(_ kind: String) -> String? {
+        switch kind {
+        case "imageEdit": return L("Edit")
+        case "imageUpscale": return L("Upscale")
+        default: return nil
+        }
+    }
+
+    // MARK: - Actions
+
+    private func openHuggingFace(_ repoId: String) {
+        guard let url = URL(string: "https://huggingface.co/\(repoId)") else { return }
+        openURL(url)
+    }
+
+    private func refreshInstalled() async {
+        let models = (try? await ImageGenerationService.shared.availableModels()) ?? []
+        installed = models.map {
+            InstalledModel(info: $0, repoId: downloads.sourceRepoId(for: $0.id))
+        }
+    }
+
+    /// Best-effort quantization label: explicit bit width when known, else parsed
+    /// from the repo/dir name (fp8, NF4, 4/6/8-bit).
     private func quantText(bits: Int?, id: String) -> String? {
         if let bits { return "\(bits)-bit" }
         let lower = id.lowercased()
@@ -175,8 +256,203 @@ struct ImageModelsDownloadView: View {
         if lower.contains("4bit") || lower.contains("4-bit") { return "4-bit" }
         return nil
     }
+}
 
-    private func refreshInstalled() async {
-        installed = (try? await ImageGenerationService.shared.availableModels()) ?? []
+// MARK: - Image Model Row
+
+/// One clean list row for an image bundle, on the shared 10pt input-card chrome
+/// (the same surface `SettingsToggle` and the Privacy rows use). The row is
+/// static like the Privacy rows; inline controls surface the primary action
+/// (Download / Generate / Edit / Re-download), live download progress, and an
+/// overflow menu for the rest (View on Hugging Face, Re-download, Delete).
+private struct ImageModelRow: View {
+    @Environment(\.theme) private var theme
+
+    struct Leading {
+        let icon: String
+        let tint: Color
+    }
+
+    enum ActionRole { case normal, primary, destructive }
+
+    struct Action: Identifiable {
+        let id = UUID()
+        let title: String
+        let icon: String
+        var role: ActionRole = .normal
+        let handler: () -> Void
+    }
+
+    let title: String
+    let subtitle: String
+    let leading: Leading
+    var kindLabel: String? = nil
+    var quantLabel: String? = nil
+    let state: DownloadState
+    let metrics: ModelDownloadService.DownloadMetrics?
+    var primary: Action? = nil
+    var menuItems: [Action] = []
+    let onCancel: () -> Void
+
+    private var isActive: Bool {
+        switch state {
+        case .downloading, .paused: return true
+        default: return false
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            leadingIcon
+
+            VStack(alignment: .leading, spacing: 4) {
+                titleRow
+                if isActive {
+                    progressRow
+                } else {
+                    Text(verbatim: subtitle)
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.secondaryText)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            Spacer(minLength: 12)
+
+            trailing
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(theme.inputBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(theme.inputBorder, lineWidth: 1)
+                )
+        )
+    }
+
+    // MARK: Pieces
+
+    private var leadingIcon: some View {
+        Image(systemName: leading.icon)
+            .font(.system(size: 14, weight: .semibold))
+            .foregroundColor(leading.tint)
+            .frame(width: 32, height: 32)
+            .background(RoundedRectangle(cornerRadius: 8).fill(leading.tint.opacity(0.12)))
+    }
+
+    private var titleRow: some View {
+        HStack(spacing: 6) {
+            Text(verbatim: title)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(theme.primaryText)
+                .lineLimit(1)
+                .truncationMode(.tail)
+            if let kindLabel { pill(kindLabel, tint: theme.accentColor) }
+            if let quantLabel { pill(quantLabel, tint: theme.secondaryText) }
+        }
+    }
+
+    private func pill(_ text: String, tint: Color) -> some View {
+        Text(verbatim: text)
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundColor(tint)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Capsule().fill(tint.opacity(0.12)))
+            .overlay(Capsule().stroke(tint.opacity(0.22), lineWidth: 0.5))
+    }
+
+    private var progressRow: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 2).fill(theme.tertiaryBackground)
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(theme.accentColor)
+                        .frame(width: max(0, geo.size.width * progressValue))
+                        .animation(.easeOut(duration: 0.3), value: progressValue)
+                }
+            }
+            .frame(height: 4)
+
+            HStack(spacing: 6) {
+                Text(verbatim: "\(Int(progressValue * 100))%")
+                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .foregroundColor(theme.secondaryText)
+                if let line = metrics?.formattedLine {
+                    Text(verbatim: "·").foregroundColor(theme.tertiaryText)
+                    Text(verbatim: line)
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundColor(theme.tertiaryText)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+            }
+        }
+    }
+
+    private var progressValue: Double {
+        switch state {
+        case .downloading(let p), .paused(let p): return p
+        default: return 0
+        }
+    }
+
+    @ViewBuilder
+    private var trailing: some View {
+        if isActive {
+            Button(action: onCancel) {
+                Text("Cancel", bundle: .module)
+            }
+            .buttonStyle(SettingsButtonStyle())
+        } else {
+            HStack(spacing: 8) {
+                if let primary {
+                    Button(action: primary.handler) {
+                        HStack(spacing: 4) {
+                            Image(systemName: primary.icon)
+                            Text(LocalizedStringKey(primary.title), bundle: .module)
+                        }
+                    }
+                    .buttonStyle(
+                        SettingsButtonStyle(
+                            isPrimary: primary.role == .primary,
+                            isDestructive: primary.role == .destructive
+                        )
+                    )
+                }
+                if !menuItems.isEmpty { overflowMenu }
+            }
+        }
+    }
+
+    private var overflowMenu: some View {
+        Menu {
+            ForEach(menuItems) { item in
+                Button(role: item.role == .destructive ? .destructive : nil, action: item.handler) {
+                    Label {
+                        Text(LocalizedStringKey(item.title), bundle: .module)
+                    } icon: {
+                        Image(systemName: item.icon)
+                    }
+                }
+            }
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(theme.secondaryText)
+                .frame(width: 28, height: 28)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(theme.tertiaryBackground)
+                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(theme.inputBorder, lineWidth: 1))
+                )
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
     }
 }

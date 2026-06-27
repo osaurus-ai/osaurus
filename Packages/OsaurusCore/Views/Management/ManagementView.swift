@@ -182,6 +182,8 @@ private extension ManagementView {
                 deeplinkModelId: deeplinkModelId,
                 deeplinkFile: deeplinkFile
             )
+        case .imageGeneration:
+            ImageGenerationView()
         case .providers:
             RemoteProvidersView()
         case .agents:
@@ -304,6 +306,7 @@ private extension ManagementView {
             switch entry.tab {
             case .voice: stateManager.voiceSubTabRequest = subTab
             case .server: stateManager.serverSectionRequest = subTab
+            case .imageGeneration: stateManager.imageGenerationSubTabRequest = subTab
             default: break
             }
         }

@@ -3293,9 +3293,15 @@ struct AgentDetailView: View {
     private var isDefaultAgent: Bool { agent.id == Agent.defaultId }
 
     /// Sub-agent cards visible for this agent. The Default / main chat cannot run
-    /// Computer Use, so that card is dropped for it.
+    /// Computer Use, so that card is dropped for it. Image generation IS a
+    /// per-agent capability for the main chat too — its enable toggle lives here
+    /// (the default models, permission, and load policy are global settings in
+    /// the Image Generation tab). Custom agents keep their full per-agent image
+    /// config here.
     private var visibleSubagentFeatures: [PerAgentFeature] {
-        isDefaultAgent ? perAgentFeatures.filter { $0.flag != .computerUse } : perAgentFeatures
+        isDefaultAgent
+            ? perAgentFeatures.filter { $0.flag != .computerUse }
+            : perAgentFeatures
     }
 
     /// Enable toggle for a sub-agent card. Custom agents write `AgentSettings`
@@ -3305,14 +3311,6 @@ struct AgentDetailView: View {
     private func subagentEnableBinding(_ flag: SubagentCapability.PerAgentFlag) -> Binding<Bool> {
         guard isDefaultAgent else { return subagentToggleBinding(flag) }
         switch flag {
-        case .image:
-            return Binding(
-                get: { mainChatSubagentConfig.imageDelegationEnabled },
-                set: {
-                    mainChatSubagentConfig.imageDelegationEnabled = $0
-                    saveMainChatSubagentConfig()
-                }
-            )
         case .spawn:
             return Binding(
                 get: { mainChatSpawnEnabled },
@@ -3322,6 +3320,17 @@ struct AgentDetailView: View {
                         mainChatSubagentConfig.spawnableAgentNames = []
                         saveMainChatSubagentConfig()
                     }
+                }
+            )
+        case .image:
+            // The main chat's image enable is the global `imageDelegationEnabled`
+            // switch (its models / permission / load policy are the global
+            // defaults shown in the Image Generation tab).
+            return Binding(
+                get: { mainChatSubagentConfig.imageDelegationEnabled },
+                set: {
+                    mainChatSubagentConfig.imageDelegationEnabled = $0
+                    saveMainChatSubagentConfig()
                 }
             )
         case .computerUse:
@@ -3356,15 +3365,23 @@ struct AgentDetailView: View {
                 "Local handoff and RAM-safety for spawn jobs are system settings in Settings → Sub-agents."
             )
         case .image:
-            imageModelPickerRows
-            subagentPanelDivider
-            subagentPermissionRow(
-                for: SubagentCapabilityRegistry.image.id,
-                label: "Permission"
-            )
-            subagentFootnote(
-                "Image load policy is a system setting in Settings → Sub-agents."
-            )
+            if isDefaultAgent {
+                // The main chat uses the global image defaults, so only the
+                // enable toggle is per-agent here.
+                subagentFootnote(
+                    "Default models, permission, and load policy for the main chat are in the Image Generation tab."
+                )
+            } else {
+                imageModelPickerRows
+                subagentPanelDivider
+                subagentPermissionRow(
+                    for: SubagentCapabilityRegistry.image.id,
+                    label: "Permission"
+                )
+                subagentFootnote(
+                    "Image load policy is a system setting in the Image Generation tab."
+                )
+            }
         }
     }
 
@@ -3477,17 +3494,11 @@ struct AgentDetailView: View {
 
     // MARK: - Sub-agent inline config: bindings (per-agent vs main chat)
 
+    // The Image card is only shown for custom agents (the main chat's global
+    // image settings live in the Image Generation tab), so these bind to
+    // `AgentSettings` and need no default-agent arm.
     private var imageGenerationModelSelection: Binding<String> {
-        if isDefaultAgent {
-            return Binding(
-                get: { mainChatSubagentConfig.defaultImageGenerationModelId ?? "" },
-                set: {
-                    mainChatSubagentConfig.defaultImageGenerationModelId = normalizedModelSelection($0)
-                    saveMainChatSubagentConfig()
-                }
-            )
-        }
-        return Binding(
+        Binding(
             get: { imageGenerationModelId ?? "" },
             set: {
                 imageGenerationModelId = normalizedModelSelection($0)
@@ -3497,16 +3508,7 @@ struct AgentDetailView: View {
     }
 
     private var imageEditModelSelection: Binding<String> {
-        if isDefaultAgent {
-            return Binding(
-                get: { mainChatSubagentConfig.defaultImageEditModelId ?? "" },
-                set: {
-                    mainChatSubagentConfig.defaultImageEditModelId = normalizedModelSelection($0)
-                    saveMainChatSubagentConfig()
-                }
-            )
-        }
-        return Binding(
+        Binding(
             get: { imageEditModelId ?? "" },
             set: {
                 imageEditModelId = normalizedModelSelection($0)
@@ -3515,13 +3517,9 @@ struct AgentDetailView: View {
         )
     }
 
-    private var currentImageGenerationModelId: String? {
-        isDefaultAgent ? mainChatSubagentConfig.defaultImageGenerationModelId : imageGenerationModelId
-    }
+    private var currentImageGenerationModelId: String? { imageGenerationModelId }
 
-    private var currentImageEditModelId: String? {
-        isDefaultAgent ? mainChatSubagentConfig.defaultImageEditModelId : imageEditModelId
-    }
+    private var currentImageEditModelId: String? { imageEditModelId }
 
     private func subagentPermissionBinding(for kindId: String) -> Binding<SubagentPermissionPolicy> {
         if isDefaultAgent {

@@ -401,13 +401,57 @@ public enum SettingsSearchIndex {
             keywords: ["screen control", "cursor", "automation", "accessibility", "per-app"]
         ),
 
+        // MARK: Image Generation tab (subTab values are ImageGenerationTab raw values)
+        .init(
+            id: "imageGeneration.tab",
+            tab: .imageGeneration,
+            title: "Image Generation",
+            keywords: [
+                "image", "image generation", "text to image", "ideogram",
+                "diffusion", "mflux", "generate image", "edit image",
+            ]
+        ),
+        .init(
+            id: "imageGeneration.models",
+            tab: .imageGeneration,
+            section: "Settings",
+            title: "Default Models",
+            keywords: ["generation model", "edit model", "default image model"],
+            subTab: "Settings"
+        ),
+        .init(
+            id: "imageGeneration.permission",
+            tab: .imageGeneration,
+            section: "Settings",
+            title: "Permission",
+            keywords: ["image permission", "ask", "deny", "always allow"],
+            subTab: "Settings"
+        ),
+        .init(
+            id: "imageGeneration.loadPolicy",
+            tab: .imageGeneration,
+            section: "Settings",
+            title: "Load Policy",
+            keywords: ["load policy", "image jobs", "unload", "residency", "gpu"],
+            subTab: "Settings"
+        ),
+        .init(
+            id: "imageGeneration.download",
+            tab: .imageGeneration,
+            section: "Models",
+            title: "Download image models",
+            keywords: ["download", "image model", "ideogram", "mflux", "catalog", "import"],
+            subTab: "Models"
+        ),
+
         // MARK: Sub-agents (runtime knobs in the Settings tab)
         // There is no global master switch and no dedicated Spawn tab anymore.
-        // What remains are the shared runtime knobs (local handoff, RAM-safety,
-        // image load policy), folded into the Settings tab as a "Sub-agents"
-        // card. Per-agent spawn/image config (targets, models, permissions,
-        // budgets) — including the built-in main chat — is configured in each
-        // agent's Sub-agents tab (not indexed here).
+        // What remains are the shared runtime knobs (local handoff, RAM-safety),
+        // folded into the Settings tab as a "Sub-agents" card. Per-agent
+        // spawn/image config (targets, models, permissions, budgets) — including
+        // the built-in main chat — is configured in each agent's Sub-agents tab
+        // (not indexed here). Global image-generation settings live in the
+        // Image Generation tab (indexed above).
         .init(
             id: "settings.subagents",
             tab: .settings,
@@ -424,13 +468,6 @@ public enum SettingsSearchIndex {
             section: "Sub-agents",
             title: "Local Handoff & RAM Safety",
             keywords: ["handoff", "ram safety", "residency", "unload", "preflight"]
-        ),
-        .init(
-            id: "settings.subagents.loadPolicy",
-            tab: .settings,
-            section: "Sub-agents",
-            title: "Load Policy",
-            keywords: ["load policy", "image jobs", "unload", "residency"]
         ),
         .init(
             id: "privacy.tab",
