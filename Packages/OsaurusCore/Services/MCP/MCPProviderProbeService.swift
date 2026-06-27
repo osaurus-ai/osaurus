@@ -171,8 +171,26 @@ private extension String {
 }
 
 enum MCPProviderProbeRedactor {
+    static func safeHTTPURLForDiagnostics(_ raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard var components = URLComponents(string: trimmed),
+            let scheme = components.scheme?.lowercased(),
+            ["http", "https"].contains(scheme),
+            components.host?.isEmpty == false
+        else {
+            return "<redacted-http-url>"
+        }
+
+        components.scheme = scheme
+        components.user = nil
+        components.password = nil
+        components.query = nil
+        components.fragment = nil
+        return components.string ?? "<redacted-http-url>"
+    }
+
     static func safeDiagnosticFragment(_ raw: String, maxLength: Int = 280) -> String {
-        var value = raw
+        var value = redactingHTTPURLs(in: raw)
         let replacements: [(pattern: String, template: String)] = [
             (#"(?i)authorization\s*[:=]\s*(?:bearer\s+)?[^\s,;}]+\"?"#, "credential=***"),
             (#"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]+"#, "credential=***"),
@@ -198,6 +216,22 @@ enum MCPProviderProbeRedactor {
         }
         if value.count > maxLength {
             return String(value.prefix(maxLength)) + "..."
+        }
+        return value
+    }
+
+    private static func redactingHTTPURLs(in raw: String) -> String {
+        guard let regex = try? NSRegularExpression(
+            pattern: #"(?i)\bhttps?://[^\s<>"'`]+"#
+        ) else {
+            return raw
+        }
+
+        var value = raw
+        for match in regex.matches(in: raw, range: NSRange(raw.startIndex..., in: raw)).reversed() {
+            guard let range = Range(match.range, in: value) else { continue }
+            let url = String(value[range])
+            value.replaceSubrange(range, with: safeHTTPURLForDiagnostics(url))
         }
         return value
     }
@@ -344,7 +378,8 @@ public enum MCPProviderProbeService {
     public static func transportSummary(for provider: MCPProvider) -> String {
         switch provider.transport {
         case .http:
-            return provider.streamingEnabled ? "HTTP/SSE \(provider.url)" : "HTTP \(provider.url)"
+            let endpoint = MCPProviderProbeRedactor.safeHTTPURLForDiagnostics(provider.url)
+            return provider.streamingEnabled ? "HTTP/SSE \(endpoint)" : "HTTP \(endpoint)"
         case .stdio:
             let args = ShellArgs.join(provider.args)
             let command = args.isEmpty ? provider.command : "\(provider.command) \(args)"

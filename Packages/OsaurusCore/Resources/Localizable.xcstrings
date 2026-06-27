@@ -4,6 +4,138 @@
     "" : {
       "shouldTranslate" : false
     },
+    "A local MCP provider needs an executable command before launch." : {
+      "shouldTranslate" : false
+    },
+    "A regular or secret Authorization header is configured." : {
+      "shouldTranslate" : false
+    },
+    "Add HTTP/SSE or stdio MCP providers" : {
+      "shouldTranslate" : false
+    },
+    "Arguments present (invalid JSON redacted)" : {
+      "shouldTranslate" : false
+    },
+    "Arguments present (not UTF-8)" : {
+      "shouldTranslate" : false
+    },
+    "Array with \\(array.count) item(s)" : {
+      "shouldTranslate" : false
+    },
+    "Bearer credential saved" : {
+      "shouldTranslate" : false
+    },
+    "Bearer token missing" : {
+      "shouldTranslate" : false
+    },
+    "Discovery and tool calls target \\(redactedEndpoint)." : {
+      "shouldTranslate" : false
+    },
+    "Edit the URL before testing or connecting." : {
+      "shouldTranslate" : false
+    },
+    "Empty object" : {
+      "shouldTranslate" : false
+    },
+    "Empty result" : {
+      "shouldTranslate" : false
+    },
+    "Executable path is not executable: \\(expandedCommand)." : {
+      "shouldTranslate" : false
+    },
+    "HTTP endpoint invalid" : {
+      "shouldTranslate" : false
+    },
+    "Header credential configured" : {
+      "shouldTranslate" : false
+    },
+    "Host command not found" : {
+      "shouldTranslate" : false
+    },
+    "Host stdio" : {
+      "shouldTranslate" : false
+    },
+    "JSON \\(type(of: object)) argument" : {
+      "shouldTranslate" : false
+    },
+    "Missing Keychain values for: \\(missingSecretEnvironmentKeys.joined(separator: \", \"))." : {
+      "shouldTranslate" : false
+    },
+    "No OAuth token set is saved for this provider." : {
+      "shouldTranslate" : false
+    },
+    "No arguments" : {
+      "shouldTranslate" : false
+    },
+    "No auth" : {
+      "shouldTranslate" : false
+    },
+    "No bearer token is present in Keychain." : {
+      "shouldTranslate" : false
+    },
+    "OAuth not signed in" : {
+      "shouldTranslate" : false
+    },
+    "OAuth signed in" : {
+      "shouldTranslate" : false
+    },
+    "OAuth tokens are saved and refreshed before discovery." : {
+      "shouldTranslate" : false
+    },
+    "Object keys: \\(keys.joined(separator: \", \"))" : {
+      "shouldTranslate" : false
+    },
+    "Open MCP operations hub" : {
+      "shouldTranslate" : false
+    },
+    "Osaurus will not add an Authorization header." : {
+      "shouldTranslate" : false
+    },
+    "Paste a token in the editor or inline auth prompt." : {
+      "shouldTranslate" : false
+    },
+    "Run Sign In before connecting." : {
+      "shouldTranslate" : false
+    },
+    "Sandbox stdio" : {
+      "shouldTranslate" : false
+    },
+    "Sign in again and retry discovery." : {
+      "shouldTranslate" : false
+    },
+    "Succeeded" : {
+      "shouldTranslate" : false
+    },
+    "The command runs directly on macOS and inherits the app environment plus provider env." : {
+      "shouldTranslate" : false
+    },
+    "The command runs inside the Osaurus sandbox via a short-lived stdio process." : {
+      "shouldTranslate" : false
+    },
+    "The provider URL must include a scheme, host, and MCP path." : {
+      "shouldTranslate" : false
+    },
+    "The server rejected discovery until sign-in completes." : {
+      "shouldTranslate" : false
+    },
+    "The token or secret header is stored outside the provider JSON." : {
+      "shouldTranslate" : false
+    },
+    "Working directory does not exist: \\(cwd)." : {
+      "shouldTranslate" : false
+    },
+    "\\(result.count) character(s): \\(redacted)" : {
+      "shouldTranslate" : false
+    },
+    "\\(result.count) character(s)" : {
+      "shouldTranslate" : false
+    },
+    "`\\(command)` was not found on the app PATH or common local bin directories." : {
+      "shouldTranslate" : false
+    },
+    "stdio command not set" : {
+      "shouldTranslate" : false
+    },
     " — %@" : {
       "localizations" : {
         "de" : {

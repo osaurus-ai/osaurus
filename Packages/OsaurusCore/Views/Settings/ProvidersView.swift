@@ -21,6 +21,7 @@ struct ProvidersView: View {
     @State private var reconnectingAll = false
     @State private var probingAll = false
     @State private var probingProviderIds: Set<UUID> = []
+    @State private var showOperationsHub = false
 
     var body: some View {
         ScrollView {
@@ -114,20 +115,27 @@ struct ProvidersView: View {
                 for: Foundation.Notification.Name.mcpProviderHealthSnapshotChanged
             )
         ) { _ in
-            refreshHealthSnapshots()
+            Task { @MainActor in
+                refreshHealthSnapshots()
+            }
         }
         .sheet(isPresented: $showAddSheet) {
-            ProviderEditSheet(provider: nil) { provider, token in
-                manager.addProvider(provider, token: token)
+            ProviderEditSheet(provider: nil) { provider, tokenEdit in
+                manager.addProvider(provider, token: tokenEdit.tokenForNewProvider)
                 refreshCredentialPresence()
             }
         }
         .sheet(item: $editingProvider) { provider in
-            ProviderEditSheet(provider: provider) { updatedProvider, token in
-                manager.updateProvider(updatedProvider, token: token)
+            ProviderEditSheet(provider: provider) { updatedProvider, tokenEdit in
+                manager.updateProvider(updatedProvider, tokenEdit: tokenEdit)
                 refreshCredentialPresence()
                 refreshHealthSnapshots()
             }
+        }
+        .sheet(isPresented: $showOperationsHub) {
+            MCPOperationsHubView()
+                .environment(\.theme, theme)
+                .frame(width: 980, height: 720)
         }
     }
 
@@ -292,22 +300,46 @@ struct ProvidersView: View {
             title: "Connections",
             description: "Connect services that give your agents more tools, using MCP (Model Context Protocol)"
         ) {
-            Button(action: { showAddSheet = true }) {
-                HStack(spacing: 6) {
-                    Image(systemName: "plus")
-                        .font(.system(size: 12, weight: .semibold))
-                    Text("Add Connection", bundle: .module)
-                        .font(.system(size: 13, weight: .semibold))
-                }
-                .foregroundColor(.white)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(theme.accentColor)
-                )
+            HStack(spacing: 8) {
+                Button(action: { showOperationsHub = true }, label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "slider.horizontal.3")
+                            .font(.system(size: 12, weight: .semibold))
+                        Text("Operations", bundle: .module)
+                            .font(.system(size: 13, weight: .medium))
+                    }
+                    .foregroundColor(theme.primaryText)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(theme.tertiaryBackground)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .stroke(theme.inputBorder, lineWidth: 1)
+                            )
+                    )
+                })
+                .buttonStyle(PlainButtonStyle())
+                .localizedHelp("Open MCP operations hub")
+
+                Button(action: { showAddSheet = true }, label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "plus")
+                            .font(.system(size: 12, weight: .semibold))
+                        Text("Add Connection", bundle: .module)
+                            .font(.system(size: 13, weight: .semibold))
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(theme.accentColor)
+                    )
+                })
+                .buttonStyle(PlainButtonStyle())
             }
-            .buttonStyle(PlainButtonStyle())
         }
     }
 
@@ -1209,7 +1241,7 @@ private struct ProviderEditSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     let provider: MCPProvider?
-    let onSave: (MCPProvider, String?) -> Void
+    let onSave: (MCPProvider, MCPProviderBearerTokenEdit) -> Void
 
     /// Stable identity for "draft" providers (sheet not yet saved). Reused so OAuth
     /// tokens persisted to Keychain mid-flow stay tied to the provider once saved.
@@ -1218,6 +1250,7 @@ private struct ProviderEditSheet: View {
     @State private var name: String = ""
     @State private var url: String = ""
     @State private var token: String = ""
+    @State private var clearBearerToken: Bool = false
     @State private var customHeaders: [HeaderEntry] = []
     @State private var streamingEnabled: Bool = false
     @State private var discoveryTimeout: Double = 20
@@ -1601,6 +1634,7 @@ private struct ProviderEditSheet: View {
         self.name = name
         self.url = url
         self.authType = authType
+        clearBearerToken = false
         customHeaders.removeAll()
         testResult = nil
         manualAuthEndpoint = ""
@@ -2203,6 +2237,14 @@ private struct ProviderEditSheet: View {
                                 placeholder: "Optional - stored securely in Keychain",
                                 text: $token
                             )
+                            if isEditing {
+                                MCPToggleRow(
+                                    title: "Clear saved token",
+                                    description: "Remove the Keychain token on save",
+                                    isOn: $clearBearerToken
+                                )
+                                .disabled(!token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            }
                         case .oauth:
                             oauthSection
                         }
@@ -2854,6 +2896,7 @@ private struct ProviderEditSheet: View {
         draftId = provider.id
         name = provider.name
         url = provider.url
+        clearBearerToken = false
         streamingEnabled = provider.streamingEnabled
         discoveryTimeout = provider.discoveryTimeout
         toolCallTimeout = provider.toolCallTimeout
@@ -3093,11 +3136,12 @@ private struct ProviderEditSheet: View {
             MCPProviderKeychain.saveHeaderSecret(header.value, key: header.key, for: updatedProvider.id)
         }
 
-        // Pass token (empty string means no change, nil means keep existing).
-        // For OAuth this is unused (tokens went through MCPOAuthService directly).
-        let tokenToSave: String? = (authType == .bearerToken && !token.isEmpty) ? token : nil
-
-        onSave(updatedProvider, tokenToSave)
+        let tokenEdit = MCPProviderBearerTokenEdit.fromBearerField(
+            token,
+            authType: authType,
+            clearRequested: clearBearerToken
+        )
+        onSave(updatedProvider, tokenEdit)
         dismiss()
     }
 

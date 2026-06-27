@@ -176,6 +176,31 @@ attention, connected, stdio, HTTP, or disabled providers. The hub actions can
 probe every enabled provider, reconnect every enabled provider, or copy a single
 redacted support report for the whole provider set.
 
+The reusable **MCP Operations Hub** surface builds on the same provider data and
+adds an operator-focused detail view for each local stdio or HTTP/SSE provider:
+
+- Add or edit HTTP/SSE providers and local stdio providers from one compact
+  editor.
+- Test providers with the same explicit initialize/listTools probe used by the
+  provider rows. Successful and failed tests update the persisted health
+  snapshot.
+- Resolve stdio launch details before the process starts: host commands show the
+  executable path found on the app `PATH` plus common local-bin fallbacks, while
+  sandbox commands show the quoted command that will run inside the sandbox.
+- Show working-directory and environment-key state without printing environment
+  values. Secret env keys are listed by key name only, and missing Keychain
+  values are called out before launch.
+- Show authentication status separately from transport health: no-auth, bearer
+  token present/missing, OAuth signed in/missing, or OAuth sign-in required.
+- Copy a single redacted diagnostic bundle for a provider or for the whole hub.
+  Command arguments, probe messages, auth errors, and call-history errors are
+  passed through the same redaction path used by MCP probe diagnostics.
+- Read persisted MCP call-history records when present. The history format keeps
+  provider/tool names, timestamps, durations, success state, JSON argument keys,
+  result sizes, and redacted errors; it does not store raw argument values or raw
+  tool output. Live execution still needs the MCP manager hook to populate this
+  history automatically because that manager is outside the operations-hub lane.
+
 For stdio providers, diagnostics distinguish sandbox vs host execution and point
 command-not-found failures at the executable path/PATH fix. For HTTP/SSE
 providers, diagnostics show whether the global proxy is active, disabled, or

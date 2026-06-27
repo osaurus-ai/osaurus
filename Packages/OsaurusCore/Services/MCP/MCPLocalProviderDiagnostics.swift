@@ -43,11 +43,15 @@ public enum MCPLocalProviderDiagnostics {
         }
 
         let result = snapshot.lastProbe
+        let redactedTransportSummary = MCPProviderProbeRedactor.safeDiagnosticFragment(
+            snapshot.transportSummary,
+            maxLength: 500
+        )
         var detail =
             result.succeeded
             ? (result.toolCount == 1
-                ? L("1 tool discovered via \(snapshot.transportSummary).")
-                : L("\(result.toolCount) tools discovered via \(snapshot.transportSummary)."))
+                ? L("1 tool discovered via \(redactedTransportSummary).")
+                : L("\(result.toolCount) tools discovered via \(redactedTransportSummary)."))
             : result.redactedMessage
         if let state, state.isConnected != result.succeeded {
             detail += " "
