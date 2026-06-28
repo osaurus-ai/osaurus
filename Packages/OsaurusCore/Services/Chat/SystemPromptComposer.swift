@@ -626,7 +626,7 @@ public struct SystemPromptComposer: Sendable {
             tools.contains(where: { $0.function.name == "capabilities_load" })
         else { return nil }
         // The Default agent carries `capabilities_load` only to lazy-load its
-        // deferred configure write tools (B1, small local models). Its own
+        // deferred configure write tools on small local models. Its own
         // system-prompt addendum already enumerates the configure surface, so
         // the enabled-capabilities manifest would be redundant bloat that
         // cancels the prefill saved by deferring the writes — skip it.
@@ -1333,7 +1333,7 @@ public struct SystemPromptComposer: Sendable {
 
     /// The Default agent's routing / escape-hatch write tool — used to create
     /// or activate another agent for out-of-scope asks. Kept loaded even when
-    /// B1 defers the other configure writes (small local models), because the
+    /// the other configure writes are deferred on small local models, because the
     /// out-of-scope handoff is a core, frequent path that shouldn't pay a
     /// `capabilities_load` round-trip first.
     static let defaultAgentRoutingToolName = "osaurus_agent"
@@ -2070,7 +2070,7 @@ public struct SystemPromptComposer: Sendable {
             // The first actual call prompts for permission + spawn-model choice.
             allowed.formUnion(visibleDelegation)
 
-            // B1 (small local models): the per-domain configure WRITE tools are
+            // Small local models: the per-domain configure WRITE tools are
             // the bulk of this agent's turn-1 schema (~60%+ of prefill). On a
             // model that prefers a compact prompt, defer them: keep the three
             // reads, the agent-loop tools, the `osaurus_agent` routing/escape

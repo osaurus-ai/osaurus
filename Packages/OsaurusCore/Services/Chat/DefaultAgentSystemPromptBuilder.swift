@@ -79,7 +79,7 @@ public enum DefaultAgentSystemPromptBuilder {
 
         if compact {
             // Small local models pay a long prefill for tool schemas, so the
-            // per-domain write tools are DEFERRED from the turn-1 schema (B1 in
+            // per-domain write tools are DEFERRED from the turn-1 schema (in
             // `SystemPromptComposer.resolveTools`). Name them here so the model
             // loads the one it needs by name in a single round-trip — no
             // `capabilities_discover` step. `osaurus_agent` stays loaded, so the

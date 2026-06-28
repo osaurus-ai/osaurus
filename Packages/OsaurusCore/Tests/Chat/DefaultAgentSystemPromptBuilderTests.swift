@@ -98,7 +98,7 @@ struct DefaultAgentSystemPromptBuilderTests {
 
         // Compact keeps the full tool surface + scope guardrails (read tools,
         // every write tool by name, out-of-scope handoff) but teaches the
-        // load-on-demand flow (B1): writes load via `capabilities_load`, with
+        // load-on-demand flow: writes load via `capabilities_load`, with
         // NO `capabilities_discover` step.
         #expect(compact.contains("osaurus_status"))
         #expect(compact.contains("`osaurus_provider`"))

@@ -792,7 +792,7 @@ final class ChatSession: ObservableObject {
         return ModelMediaCapabilities.from(modelId: model).supportsAudio
     }
 
-    /// B1 refinement: when the Default agent lazy-loads a configure WRITE tool
+    /// When the Default agent lazy-loads a configure WRITE tool
     /// mid-turn on a compact-prompt (small local) model, collapse its FULL spec
     /// back to the bootstrap skeleton — enums + field names + required kept,
     /// prose dropped — so the post-load schema matches the lean turn-1 baseline.
@@ -3703,7 +3703,7 @@ final class ChatSession: ObservableObject {
                             // mode keeps the user's explicit tool set fixed).
                             let newTools = await CapabilityLoadBuffer.shared.drain()
                             if !newTools.isEmpty {
-                                // B1 refinement: a Default-agent configure WRITE
+                                // A Default-agent configure WRITE
                                 // loaded mid-turn enters here as a FULL spec, which
                                 // re-prefilled ~600 tokens for `osaurus_provider`
                                 // alone. The `resolveTools` default-agent path
