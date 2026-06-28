@@ -3593,14 +3593,24 @@ struct RemoteChatRequest: Encodable {
             }
         }
 
-        // claude-fable-family models reject sampler knobs outright — HTTP 400
-        // "`temperature` is deprecated for this model." (observed live on
-        // claude-fable-5). Omit them so the model runs on its native
-        // defaults instead of failing the whole request.
+        // The newer adaptive-thinking Claude generations reject sampler knobs
+        // outright — HTTP 400 "`temperature` is deprecated for this model."
+        // (observed live on claude-fable-5 and claude-opus-4-8). Omit them so
+        // the model runs on its native defaults instead of failing the whole
+        // request. Older dated snapshots (claude-sonnet-4-5, claude-haiku-4-5,
+        // …) still accept the knobs, so match only the affected families by
+        // prefix rather than stripping for every Claude model.
         let bareModel =
             model.lowercased().split(separator: "/").last.map(String.init)
             ?? model.lowercased()
-        let deprecatesSamplerKnobs = bareModel.hasPrefix("claude-fable")
+        let knobDeprecatingClaudePrefixes = [
+            "claude-fable", "claude-mythos",
+            "claude-opus-4-6", "claude-opus-4-7", "claude-opus-4-8",
+            "claude-sonnet-4-6",
+        ]
+        let deprecatesSamplerKnobs = knobDeprecatingClaudePrefixes.contains {
+            bareModel.hasPrefix($0)
+        }
 
         return AnthropicMessagesRequest(
             model: model,

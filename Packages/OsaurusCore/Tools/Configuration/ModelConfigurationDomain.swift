@@ -45,7 +45,8 @@ public final class OsaurusModelTool: OsaurusTool, PermissionedTool, @unchecked S
     public let description =
         "Manage local MLX models. `action`: download (needs `repo_id`, e.g. "
         + "`mlx-community/Qwen2.5-7B-Instruct-4bit`; returns immediately — poll osaurus_status), "
-        + "cancel (needs `id`), delete (needs `id`; cancel an in-flight download first)."
+        + "cancel (needs the model `id` or `repo_id`), delete (needs the model `id` or "
+        + "`repo_id`; cancel an in-flight download first)."
     public let parameters: JSONValue? = .object([
         "type": .string("object"),
         "additionalProperties": .bool(false),
@@ -57,11 +58,17 @@ public final class OsaurusModelTool: OsaurusTool, PermissionedTool, @unchecked S
             ]),
             "repo_id": .object([
                 "type": .string("string"),
-                "description": .string("Hugging Face repo id. Required for download."),
+                "description": .string(
+                    "Hugging Face repo id. Required for download; also accepted to "
+                    + "identify the model for cancel / delete."
+                ),
             ]),
             "id": .object([
                 "type": .string("string"),
-                "description": .string("Model id. Required for cancel / delete."),
+                "description": .string(
+                    "Model id (the repo path used to download). Identifies the model "
+                    + "for cancel / delete; `repo_id` is accepted as an equivalent."
+                ),
             ]),
         ]),
         "required": .array([.string("action")]),
@@ -117,9 +124,33 @@ public final class OsaurusModelTool: OsaurusTool, PermissionedTool, @unchecked S
         )
     }
 
+    /// Resolve the model identifier for cancel / delete from either `id` or
+    /// `repo_id`. A download started via `repo_id` is keyed by `model.id`,
+    /// which IS that repo path, so a user (or model) naturally refers to the
+    /// same `repo_id` when cancelling or deleting. Requiring the exact `id`
+    /// field while `download` takes `repo_id` is an inconsistent contract that
+    /// traps a model into a `repo_id` cancel the tool would otherwise reject;
+    /// accepting either field removes that trap without changing what gets
+    /// cancelled/deleted. Prefers `id`, falls back to `repo_id`.
+    private func modelIdentifier(from args: [String: Any]) -> String? {
+        for key in ["id", "repo_id"] {
+            if let raw = args[key] as? String {
+                let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty { return trimmed }
+            }
+        }
+        return nil
+    }
+
     private func handleCancel(_ args: [String: Any]) async -> String {
-        let req = requireString(args, "id", expected: "Model id", tool: name)
-        guard case .value(let modelId) = req else { return req.failureEnvelope ?? "" }
+        guard let modelId = modelIdentifier(from: args) else {
+            return ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message: "Provide the model `id` (or its `repo_id`) to cancel.",
+                field: "id",
+                tool: name
+            )
+        }
 
         await MainActor.run { ModelManager.shared.cancelDownload(modelId) }
 
@@ -130,8 +161,14 @@ public final class OsaurusModelTool: OsaurusTool, PermissionedTool, @unchecked S
     }
 
     private func handleDelete(_ args: [String: Any]) async -> String {
-        let req = requireString(args, "id", expected: "Model id", tool: name)
-        guard case .value(let modelId) = req else { return req.failureEnvelope ?? "" }
+        guard let modelId = modelIdentifier(from: args) else {
+            return ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message: "Provide the model `id` (or its `repo_id`) to delete.",
+                field: "id",
+                tool: name
+            )
+        }
 
         // Resolve + validate on the main actor, then perform the (async)
         // delete outside the synchronous `MainActor.run` closure so the

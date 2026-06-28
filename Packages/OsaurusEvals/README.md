@@ -22,6 +22,7 @@ Packages/OsaurusEvals/
     CapabilitySearch/   — index-only recall measurements (no LLM)
     ComputerUse/        — single-action gate / effect classification (no LLM)
     ComputerUseLoop/    — E2E Computer Use over a scripted screen (LLM or scripted)
+    DefaultAgent/       — built-in "Configuring Osaurus" agent: read/write config tools + judge (LLM)
     PrefixHash/         — KV-cache prefix-hash stability
     RequestValidation/  — RequestValidator.unsupportedSamplerReason
     ScreenContext/      — deterministic AX-text screen-context distillation (no LLM)
@@ -386,6 +387,33 @@ The suite covers eleven scenarios under `Suites/CapabilityClaims/`: `confirm` (c
 > **Positive cases run against an isolated `auto`-mode agent.** A case that enables a capability (`enableTools` / `enableSkills` / `requirePlugins`) is scored against a fresh isolated agent whose enabled set advertises that capability in the system-prompt manifest — not the default configuration-agent persona, which honestly disclaims non-config abilities and would (correctly, for *it*) deny the browser. This keeps "do you have X?" a measure of manifest grounding, not of which persona happened to answer.
 
 The judge model defaults to the run `--model`; export `JUDGE_MODEL=...` to grade small-model output with a stronger evaluator. The runner re-ensures the ephemeral remote judge provider before each judge call, so a suite that runs a provider-mutating config tool mid-run (e.g. `default_agent`'s `osaurus_provider`, which reloads the provider registry from disk and evicts the in-memory judge) can't silently fall back to an unresolved judge.
+
+### `default_agent` domain
+
+Behaviour evals for the built-in **"Configuring Osaurus"** agent — the persona that ships on `Agent.defaultId`. The query asks the agent to inspect or change Osaurus's own configuration; it reads with `osaurus_status` / `osaurus_list` / `osaurus_describe` and mutates with the consolidated write tools (`osaurus_agent` / `osaurus_provider` / `osaurus_schedule` / `osaurus_model` / `osaurus_mcp` / `osaurus_plugin`). It reuses `CapabilityClaimsEvaluator` with the Default agent id, a frozen tool schema, and **auto-approved** tool execution (a headless run has no approval card), so the loop terminates the moment the model returns text with no tool call. Scoring mixes deterministic transcript checks (`mustCallTools` / `mustNotCallTools` / `argsMustContain`) with an optional LLM-judge `rubric`, and each case runs against an isolated config root so it never touches the user's real `~/.osaurus`.
+
+Two harness/prompt root-causes were fixed here so the column measures the model, not test artifacts:
+
+- **Confirm-first prompt ambiguity (product + eval fix).** The Default-agent addendum in [`DefaultAgentSystemPromptBuilder.swift`](../OsaurusCore/Services/Chat/DefaultAgentSystemPromptBuilder.swift) said *"The user confirms every change. Say what you'll do, then call the tool."* A careful frontier model read "the user confirms every change" as *get conversational confirmation first* → it answered `"…Confirm?"` with **no tool call**, and the loop ended at `iters=0` (`mustCallTools` FAIL). The real intent is the `.ask` approval **card** in [`ConfigurationToolBase.swift`](../OsaurusCore/Tools/Configuration/ConfigurationToolBase.swift) — a separate one-tap gate — so the rule now reads *"Act in the same turn: briefly state the change, then call the tool. A separate one-tap approval gates every change, so don't ask for confirmation in chat…"*. This also removes a real double-confirm wart in the shipping app (chat "Confirm?" **and** the approval card). Safety is unchanged — the `.ask` card still fires at runtime — and the addendum only applies to `Agent.defaultId`.
+- **Eval-only provider isolation (honesty cases).** To drive a remote model the harness connects an in-memory provider via `EvalRemoteProviderBootstrap` (`addProvider(…, isEphemeral: true)`), which lands in `configuration.providers`. Without a filter, a "which cloud providers are connected?" case reads the harness's **own** run/judge provider and scores a truthful model ("xAI connected") as fabricating. When `OSAURUS_EVALS_HIDE_EPHEMERAL_PROVIDERS=1` (set by the eval CLI, alongside `OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS`), the configure **read** tools hide ephemeral providers via `ConfigurationProviderReadVisibility` in [`ConfigurationTools.swift`](../OsaurusCore/Tools/ConfigurationTools.swift), so honesty cases see the genuine empty user state. Production never sets the flag (Bonjour-discovered providers stay visible); routing is untouched, so the model still runs.
+
+#### Local-vs-frontier results (recorded)
+
+Full 18-suite matrix, judge pinned to `xai/grok-4.3`, recorded into [`reports/SNAPSHOT.md`](../../reports/SNAPSHOT.md) + `reports/history.jsonl` (38 `default_agent` cases):
+
+| Column | before fix | after fix |
+| --- | --- | --- |
+| `foundation` (local) | 1/38 | 3/38 |
+| `Qwen3.5-4B-OptiQ-4bit` (local) | 31/38 | 33/38 |
+| `xai/grok-4.3` (frontier) | 25/38 | **36/38** |
+| `openai/gpt-5.5` (frontier) | — | quota-limited¹ |
+| `anthropic/claude-opus-4-8` (frontier) | — | **34/38** |
+
+The prompt fix recovered **exactly** the 12 cases grok previously lost to confirm-first (all mutating actions: agent/provider/schedule/model create+delete+update) **plus** the `honesty-empty-providers` case (provider isolation), with **no local regressions** (both local columns improved). Documented residuals, not coercion:
+
+- **`provider-rotate-key`** fails for both frontier models by design: its fixture seeds **no** provider, so a literal model truthfully answers "no provider with that ID exists" instead of explaining the `set_credentials` rotation mechanism the rubric wants. Pre-existing (failed before the fix too); a strict-rubric knowledge probe, not a fixture bug.
+- **`schedule-create-daily`** is a flaky `grok` case independent of the fix — an A/B against the old prompt also flapped (PASS then FAIL across two runs). grok intermittently maps "daily at 08:00" onto a cron-style frequency instead of the `daily` enum and loops to the iteration cap; the other three frequency modes (cron/interval/weekly) pass.
+- **¹`openai/gpt-5.5`** DefaultAgent errored as `HTTP 429 insufficient_quota` — the account's quota was exhausted by the earlier suites in the same run (AgentDB 12/12, AgentLoop 22/24, … ran first). The integration itself is proven (pre-quota smoke + early suites pass; `OpenAIReasoningProfile` strips `temperature`/`top_p` and uses `max_completion_tokens`), so this is a billing limit to refill, not a harness or model bug. `anthropic/claude-opus-4-8` needed `temperature`/`top_p` stripped too — the adaptive-thinking Claude generations 400 on sampler knobs — handled in `toAnthropicRequest()` ([`RemoteProviderService.swift`](../OsaurusCore/Services/Provider/RemoteProviderService.swift)).
 
 ### `agent_loop` domain
 

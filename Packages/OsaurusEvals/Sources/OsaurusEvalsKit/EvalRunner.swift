@@ -1663,12 +1663,14 @@ public enum EvalRunner {
         // Seed any fixture agents so create cases can target a real agent
         // (and not loop on a not-found id), then tear them down once the run
         // is done — the seeded agent is only needed during the model loop.
-        let seededAgentIds = await seedDefaultAgentFixtures(testCase.fixtures.seedAgents)
+        let seededAgentIds = seedDefaultAgentFixtures(testCase.fixtures.seedAgents)
+        let seededProviderIds = seedDefaultAgentProviderFixtures(testCase.fixtures.seedProviders)
         let transcript = await DefaultAgentConfigurationEvaluator.run(
             query: testCase.query,
             maxIterations: exp.maxIterations ?? 6
         )
-        await cleanupDefaultAgentFixtures(seededAgentIds)
+        cleanupDefaultAgentProviderFixtures(seededProviderIds)
+        cleanupDefaultAgentFixtures(seededAgentIds)
 
         var verdicts: [CapabilityClaimsJudgement] = []
         if transcript.error == nil, !rubric.isEmpty {
@@ -1800,6 +1802,42 @@ public enum EvalRunner {
         AgentManager.shared.refresh()
     }
 
+    /// Pre-register the case's fixture providers in the isolated config store
+    /// so a `default_agent` rotation case can target a REAL provider (and
+    /// demonstrate `set_credentials`) instead of dead-ending on a not-found id.
+    /// Providers are added non-ephemeral so the eval's ephemeral read filter
+    /// still surfaces them, and `enabled:false, autoConnect:false` so they make
+    /// no network call. The credential sheet that `set_credentials` (and
+    /// `add`) would otherwise mount is suppressed process-wide by the eval
+    /// CLI's `ProviderCredentialPromptService.bypassUI` shim, so the call
+    /// resolves headlessly. Returns the seeded ids for teardown.
+    @MainActor
+    private static func seedDefaultAgentProviderFixtures(
+        _ seeds: [EvalCase.SeedProvider]?
+    ) -> [UUID] {
+        guard let seeds, !seeds.isEmpty else { return [] }
+        var ids: [UUID] = []
+        for seed in seeds {
+            guard let id = UUID(uuidString: seed.id) else { continue }
+            let provider = RemoteProvider(
+                id: id,
+                name: seed.name,
+                host: seed.host ?? "api.openai.com",
+                enabled: false,
+                autoConnect: false
+            )
+            RemoteProviderManager.shared.addProvider(provider, apiKey: nil, isEphemeral: false)
+            ids.append(id)
+        }
+        return ids
+    }
+
+    /// Remove fixture providers seeded by `seedDefaultAgentProviderFixtures`.
+    @MainActor
+    private static func cleanupDefaultAgentProviderFixtures(_ ids: [UUID]) {
+        for id in ids { RemoteProviderManager.shared.removeProvider(id: id) }
+    }
+
     /// Score one `argsMustContain` matcher: at least one transcript call to
     /// `matcher.tool` whose parsed arguments satisfy every key→substring pair.
     /// Parsing the arguments JSON (rather than substring-matching the raw
@@ -1828,7 +1866,37 @@ public enum EvalRunner {
                 return (true, "argsMustContain ok: \(matcher.tool){\(pairs)}")
             }
         }
-        return (false, "argsMustContain FAIL: no \(matcher.tool) call matched {\(pairs)}")
+        // Self-diagnosing failure: a bare "no call matched {...}" hides WHY a
+        // model missed (wrong enum value? time in the wrong field?). Echo the
+        // arguments the model actually emitted for this tool so the report
+        // alone explains the miss — no re-run with extra logging needed.
+        let observed = calls.enumerated()
+            .map { "#\($0.offset + 1) \(compactArgsForNote($0.element.arguments))" }
+            .joined(separator: " | ")
+        return (
+            false,
+            "argsMustContain FAIL: no \(matcher.tool) call matched {\(pairs)} — observed: \(observed)"
+        )
+    }
+
+    /// Render one tool call's raw arguments JSON into a compact, log-safe
+    /// summary for a failure note: sorted `key=value` pairs with each value
+    /// trimmed to a sane length. Falls back to the truncated raw string when
+    /// the arguments don't parse as a JSON object.
+    private static func compactArgsForNote(_ rawJSON: String) -> String {
+        func clip(_ s: String, _ max: Int) -> String {
+            s.count <= max ? s : String(s.prefix(max)) + "…"
+        }
+        guard
+            let data = rawJSON.data(using: .utf8),
+            let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            return "{" + clip(rawJSON.replacingOccurrences(of: "\n", with: " "), 160) + "}"
+        }
+        let body = obj.keys.sorted()
+            .map { "\($0)=\(clip(argValueString(obj[$0]!), 48))" }
+            .joined(separator: ",")
+        return "{\(body)}"
     }
 
     /// Flatten one parsed JSON argument value to a string for substring

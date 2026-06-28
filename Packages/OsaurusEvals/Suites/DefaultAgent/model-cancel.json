@@ -3,14 +3,14 @@
   "domain": "default_agent",
   "label": "default agent • cancel an in-flight model download",
   "query": "Cancel the download for the model mlx-community/Some-Big-Model-32B-4bit.",
-  "notes": "action 'cancel' with the model id. Cancel is a no-op for an id that isn't downloading; the selection assertion matches the emitted call and proves the model distinguishes cancel from delete.",
+  "notes": "action 'cancel' for an in-flight download. Cancel is a no-op for a model that isn't downloading; the assertion pins the ACTION (cancel, not delete/download) because that is the discrimination under test. It does NOT pin the identifier field: osaurus_model identifies a model for cancel/delete by either `id` or `repo_id` (a download keyed by repo path makes `model.id == repo_id`), so a model may pass the user's repo path in `repo_id` (anthropic) or the name in `id` (grok) and both are correct. Pinning one field made a correct repo_id cancel fail spuriously.",
   "fixtures": {},
   "expect": {
     "defaultAgent": {
       "mustCallTools": ["osaurus_model"],
       "mustNotCallTools": ["capabilities_discover", "capabilities_load"],
       "argsMustContain": [
-        { "tool": "osaurus_model", "args": { "action": "cancel", "id": "Some-Big-Model-32B-4bit" } }
+        { "tool": "osaurus_model", "args": { "action": "cancel" } }
       ],
       "maxIterations": 4
     }

@@ -65,6 +65,21 @@ struct DefaultAgentSystemPromptBuilderTests {
     }
 
     @Test
+    func render_teachesActInOneTurnNotChatConfirmation() {
+        let rendered = DefaultAgentSystemPromptBuilder._renderForTests(
+            domains: [Self.probe(id: "providers", writeToolNames: ["osaurus_provider"])]
+        )
+        // The configure agent must act in a single turn (state the change, then
+        // call the tool), relying on the separate one-tap approval gate. The old
+        // "The user confirms every change" wording made careful models stall on
+        // a chat "Confirm?" and never call the tool, so it must be gone.
+        #expect(rendered.contains("same turn"))
+        #expect(rendered.contains("approval"))
+        #expect(rendered.contains("then call the tool"))
+        #expect(!rendered.contains("confirms every change"))
+    }
+
+    @Test
     func render_listsAlwaysAvailableReadTools() {
         let rendered = DefaultAgentSystemPromptBuilder._renderForTests(
             domains: [Self.probe(id: "providers", writeToolNames: ["osaurus_provider"])]

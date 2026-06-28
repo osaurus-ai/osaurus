@@ -145,6 +145,21 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// `id` must be a valid UUID; seeding the exact id the query references
         /// is the point. Other domains ignore this field.
         public let seedAgents: [SeedAgent]?
+        /// Remote providers to pre-register (non-ephemeral, so the configure
+        /// READ tools surface them) in the isolated config store before a
+        /// `default_agent` case runs, then remove afterwards. The
+        /// provider-rotate-key case names a provider id; without a real
+        /// provider at that id `osaurus_provider({action:'set_credentials'})`
+        /// returns a typed not-found and the model can only report "no such
+        /// provider" instead of demonstrating rotation. Seeding the exact id
+        /// the query references turns the case into the real rotation flow.
+        /// Seeded providers are added with `enabled:false, autoConnect:false`
+        /// so they never attempt a network connect, and the runner installs a
+        /// `ProviderCredentialPromptService.bypassUI` shim for the case so a
+        /// `set_credentials` call resolves headlessly instead of mounting the
+        /// credential NSPanel. Each `id` must be a valid UUID. Other domains
+        /// ignore this field.
+        public let seedProviders: [SeedProvider]?
         /// SQL executed against the run agent's database BEFORE the loop
         /// starts (requires `agentCapabilities.dbEnabled`). Each entry may be
         /// a multi-statement script (`CREATE TABLE …; INSERT …;`) and runs
@@ -179,6 +194,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             agentCapabilities: AgentCapabilitiesFixture? = nil,
             sandbox: SandboxFixture? = nil,
             seedAgents: [SeedAgent]? = nil,
+            seedProviders: [SeedProvider]? = nil,
             seedSql: [String]? = nil
         ) {
             self.requirePlugins = requirePlugins
@@ -190,6 +206,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.agentCapabilities = agentCapabilities
             self.sandbox = sandbox
             self.seedAgents = seedAgents
+            self.seedProviders = seedProviders
             self.seedSql = seedSql
         }
     }
@@ -378,6 +395,27 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         public init(id: String, name: String) {
             self.id = id
             self.name = name
+        }
+    }
+
+    /// A remote provider to pre-register for a `default_agent` case. `id` must
+    /// be a valid UUID (the rotate case references it as the provider id);
+    /// `name` is the display name shown by the read tools (e.g. "OpenAI").
+    /// `host` is optional (a placeholder endpoint is used when omitted) — the
+    /// case never makes a real network call because the provider is seeded
+    /// `enabled:false, autoConnect:false`. The runner seeds it via
+    /// `RemoteProviderManager.addProvider(_:apiKey:isEphemeral:false)` so it
+    /// survives the eval's ephemeral-provider read filter, and removes it
+    /// after the case.
+    public struct SeedProvider: Sendable, Codable {
+        public let id: String
+        public let name: String
+        public let host: String?
+
+        public init(id: String, name: String, host: String? = nil) {
+            self.id = id
+            self.name = name
+            self.host = host
         }
     }
 

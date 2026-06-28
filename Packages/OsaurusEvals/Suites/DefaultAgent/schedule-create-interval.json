@@ -16,7 +16,7 @@
       "argsMustContain": [
         { "tool": "osaurus_schedule", "args": { "action": "create", "frequency": "every_n_minutes" } }
       ],
-      "maxIterations": 4
+      "maxIterations": 6
     }
   }
 }

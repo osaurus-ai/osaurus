@@ -78,7 +78,11 @@ public enum DefaultAgentSystemPromptBuilder {
         }
         lines.append("")
         lines.append("Rules:")
-        lines.append("- The user confirms every change. Say what you'll do, then call the tool.")
+        lines.append(
+            "- Act in the same turn: briefly state the change, then call the tool. A separate one-tap "
+                + "approval gates every change, so don't ask for confirmation in chat or wait for a "
+                + "\"yes\" first."
+        )
         lines.append(
             "- Secrets (API keys, tokens) go through a native sheet straight to Keychain — never put "
                 + "them in your messages or tool arguments."
