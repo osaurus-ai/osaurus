@@ -1,0 +1,36 @@
+{
+  "id": "subagent.cu-scripted-multi-toggle",
+  "domain": "subagent",
+  "label": "Subagent • computer_use through host (scripted multi-toggle)",
+  "query": "In System Settings, turn on Night Shift and Bluetooth.",
+  "notes": "Model-free. Drives the REAL computer_use host (SubagentSession + ComputerUseKind) against an in-memory ScriptedCUDriver via scripted agent_action JSON, so the whole host wrapper (recursion guard, live feed, done→success envelope, compact result) runs in CI with no tokens. Extends cu-scripted-toggle to TWO toggles and asserts BOTH host parity (success envelope, computer_use result kind, CU feed kinds) AND world state (both switches on, Wi-Fi never touched).",
+  "fixtures": {},
+  "expect": {
+    "subagent": {
+      "lane": "computer_use",
+      "app": "System Settings",
+      "maxSteps": 8,
+      "elements": [
+        { "id": "wifi", "role": "switch", "label": "Wi-Fi", "value": "on" },
+        { "id": "nightshift", "role": "switch", "label": "Night Shift", "value": "off", "onClick": { "toggle": true } },
+        { "id": "bluetooth", "role": "switch", "label": "Bluetooth", "value": "off", "onClick": { "toggle": true } }
+      ],
+      "scriptedActions": [
+        "{\"verb\":\"click\",\"target\":{\"describe\":\"Night Shift\"},\"note\":\"turn on Night Shift\"}",
+        "{\"verb\":\"click\",\"target\":{\"describe\":\"Bluetooth\"},\"note\":\"turn on Bluetooth\"}",
+        "{\"verb\":\"done\",\"reason\":\"Night Shift and Bluetooth are on\"}"
+      ],
+      "expectSuccess": true,
+      "expectEnvelopeKind": "success",
+      "expectResultKind": "computer_use",
+      "expectFeedKinds": ["perceive", "act", "outcome"],
+      "successValues": [
+        { "id": "nightshift", "equals": "on" },
+        { "id": "bluetooth", "equals": "on" },
+        { "id": "wifi", "equals": "on" }
+      ],
+      "successClicked": ["nightshift", "bluetooth"],
+      "failIfClicked": ["wifi"]
+    }
+  }
+}

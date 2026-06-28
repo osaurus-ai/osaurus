@@ -1,0 +1,21 @@
+{
+  "id": "computer_use_loop.som-escalation-live",
+  "domain": "computer_use_loop",
+  "label": "CU loop • live escalate empty AX → SoM to click a custom-drawn button",
+  "query": "Click the Send button.",
+  "notes": "Live (model-driven) counterpart to som-escalation-click: every actionable control is SoM-only (minTier: som), so a plain AX capture is EMPTY and the model itself must climb ax→som (Screen Recording is granted in the scripted driver) to see and click Send. No scriptedActions, so this is a real capability discriminator — does the model drive the vision-escalation loop? Tiny-context models SKIP.",
+  "fixtures": {},
+  "expect": {
+    "computerUseLoop": {
+      "app": "Electron",
+      "maxSteps": 10,
+      "elements": [
+        { "id": "send", "role": "button", "label": "Send", "minTier": "som", "onClick": { "setValues": [{ "id": "status", "value": "sent" }] } },
+        { "id": "status", "role": "statictext", "label": "Status", "value": "", "minTier": "som" }
+      ],
+      "successValues": [{ "id": "status", "equals": "sent" }],
+      "successClicked": ["send"],
+      "maxInvalidActions": 4
+    }
+  }
+}

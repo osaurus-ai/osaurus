@@ -516,6 +516,10 @@ final class ToolRegistry: ObservableObject {
                 let approved: Bool
                 if ChatExecutionContext.autoApproveToolPrompts {
                     approved = true
+                } else if ChatExecutionContext.denyUnapprovedToolPrompts {
+                    // Headless eval with no UI: deny instead of hanging on an
+                    // approval card nobody can click (see task-local doc).
+                    approved = false
                 } else {
                     approved = await ToolPermissionPromptService.requestApproval(
                         toolName: name,
@@ -555,6 +559,10 @@ final class ToolRegistry: ObservableObject {
                 let approved: Bool
                 if ChatExecutionContext.autoApproveToolPrompts {
                     approved = true
+                } else if ChatExecutionContext.denyUnapprovedToolPrompts {
+                    // Headless eval with no UI: deny instead of hanging on an
+                    // approval card nobody can click (see task-local doc).
+                    approved = false
                 } else {
                     approved = await ToolPermissionPromptService.requestApproval(
                         toolName: name,

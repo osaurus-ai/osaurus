@@ -1,0 +1,17 @@
+{
+  "id": "sandbox.reverse-string",
+  "domain": "agent_loop",
+  "label": "sandbox • transform a string in a script, pin the output",
+  "query": "In your sandbox home, write a Python script reverse.py that prints the string 'osaurus' reversed (the single transformed word, nothing else). Run it with sandbox_exec and write the exact stdout to reversed.txt in your home directory.",
+  "notes": "Smallest deterministic transform for the sandbox lane: author, execute, capture real stdout. The output (suruaso) is pinned via the host mount so a hallucinated answer fails. SKIPS without a working sandbox VM.",
+  "fixtures": { "sandbox": {} },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 12,
+      "mustCallTools": ["sandbox_write_file", "sandbox_exec"],
+      "sandboxFiles": [
+        { "path": "reversed.txt", "contains": "suruaso" }
+      ]
+    }
+  }
+}

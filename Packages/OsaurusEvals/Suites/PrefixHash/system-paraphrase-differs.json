@@ -1,0 +1,19 @@
+{
+  "id": "prefix_hash.system-paraphrase-differs",
+  "domain": "prefix_hash",
+  "label": "prefix_hash • a paraphrased system prompt with the same tools hashes differently",
+  "query": "",
+  "notes": "Semantically-similar but textually-different system prompts must hash differently with the same tool set — the hash is over the exact bytes that prime the KV cache, not over meaning. Reinforces system-content-changes-hash with a realistic paraphrase rather than a contrived edit.",
+  "fixtures": {},
+  "expect": {
+    "prefixHash": {
+      "systemContent": "You are Osaurus, a local-first assistant. Be concise.",
+      "toolNames": ["file_read", "file_edit"],
+      "compareTo": {
+        "systemContent": "You are Osaurus, an on-device assistant. Keep answers short.",
+        "toolNames": ["file_read", "file_edit"]
+      },
+      "expectEqual": false
+    }
+  }
+}

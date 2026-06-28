@@ -1,0 +1,22 @@
+{
+  "id": "schema.enum-reject",
+  "domain": "schema",
+  "label": "schema • value outside a string enum is rejected and named",
+  "query": "",
+  "notes": "Pins the `enum` gate end-to-end through coercion: `purple` is not in {red,green,blue} and has no case-insensitive match, so coercion leaves it untouched and the validator must reject it surfacing `color`. Complements the coercion suite's case-folding cases (which prove a CASE variant is ACCEPTED) by proving a genuine non-member is REJECTED.",
+  "fixtures": {},
+  "expect": {
+    "schema": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "color": { "type": "string", "enum": ["red", "green", "blue"] }
+        },
+        "required": ["color"]
+      },
+      "arguments": { "color": "purple" },
+      "expectValid": false,
+      "expectField": "color"
+    }
+  }
+}

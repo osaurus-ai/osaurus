@@ -1,0 +1,15 @@
+{
+  "id": "argument_coercion.string-array-from-bare-string",
+  "domain": "argument_coercion",
+  "label": "coercion • a bare non-JSON string wraps into a single-element array",
+  "query": "",
+  "notes": "The lenient wrap branch: a model that emits a single value where the schema wants an array (`\"hello\"` instead of `[\"hello\"]`) should be rescued into a one-element array rather than rejected. Complements string-array-from-json-string (which parses a JSON array literal).",
+  "fixtures": {},
+  "expect": {
+    "argumentCoercion": {
+      "helper": "stringArray",
+      "value": "hello",
+      "expect": ["hello"]
+    }
+  }
+}

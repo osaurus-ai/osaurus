@@ -1,0 +1,25 @@
+{
+  "id": "frontier.fix-one-bug-keep-test",
+  "domain": "agent_loop",
+  "label": "frontier • make a failing test pass by fixing only the code",
+  "query": "Run 'python3 test_calc.py' — it fails. Fix the bug in calc.py so the test passes. Do not modify test_calc.py.",
+  "notes": "Test-driven fix lane with a tamper guard: mul() adds instead of multiplies. The test file is pinned byte-for-byte (equals) so the model can't 'fix' the test, and the command gate requires the real test to pass — proving an actual behavior fix in calc.py.",
+  "fixtures": {
+    "workspaceFiles": [
+      { "path": "calc.py", "contents": "def mul(a, b):\n    return a + b\n" },
+      { "path": "test_calc.py", "contents": "from calc import mul\n\nassert mul(3, 4) == 12, mul(3, 4)\nassert mul(0, 5) == 0\nprint('ok')\n" }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 14,
+      "mustCallTools": ["shell_run"],
+      "files": [
+        { "path": "test_calc.py", "equals": "from calc import mul\n\nassert mul(3, 4) == 12, mul(3, 4)\nassert mul(0, 5) == 0\nprint('ok')\n" }
+      ],
+      "commands": [
+        { "command": "python3 test_calc.py", "expectExitCode": 0 }
+      ]
+    }
+  }
+}

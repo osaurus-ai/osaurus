@@ -1,0 +1,27 @@
+{
+  "id": "frontier.ordered-sort-count-pipeline",
+  "domain": "agent_loop",
+  "label": "frontier • two-stage pipeline: sort, then count, both verified",
+  "query": "Sort the lines of input.txt alphabetically and write them to sorted.txt. Then write the number of lines to count.txt. Verify both outputs are correct before finishing.",
+  "notes": "Ordered multi-output pipeline: a downstream artifact (count.txt) depends on an upstream one (sorted.txt). The gate asserts sorted.txt is exactly the sorted order and count.txt holds the right count, so skipping the sort or miscounting fails.",
+  "fixtures": {
+    "workspaceFiles": [
+      { "path": "input.txt", "contents": "banana\napple\ncherry\n" }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 14,
+      "files": [
+        { "path": "sorted.txt", "equals": "apple\nbanana\ncherry\n" },
+        { "path": "count.txt", "contains": "3" }
+      ],
+      "commands": [
+        {
+          "command": "python3 -c \"l=open('sorted.txt').read().splitlines(); assert l==['apple','banana','cherry'], l; assert open('count.txt').read().strip()=='3'\"",
+          "expectExitCode": 0
+        }
+      ]
+    }
+  }
+}

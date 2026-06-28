@@ -1,0 +1,19 @@
+{
+  "id": "capability_search.method-currency-recall",
+  "domain": "capability_search",
+  "label": "capability search • method • currency conversion recall",
+  "query": "convert 100 US dollars into euros",
+  "notes": "Recall on a money-conversion intent where the query uses concrete currencies (dollars/euros) and the method description uses the general term (currency / exchange rates). The verb `convert` is the shared anchor; pins that a concrete-value query still bridges to the generalized capability.",
+  "fixtures": {
+    "seedMethods": [
+      { "id": "eval-convert-currency-recall", "name": "convert_currency", "description": "Convert an amount of money from one currency to another at current exchange rates", "triggerText": "convert_currency" },
+      { "id": "eval-translate-text-cur", "name": "translate_text", "description": "Translate text between languages", "triggerText": "translate_text" },
+      { "id": "eval-schedule-meeting-cur", "name": "schedule_meeting", "description": "Schedule a calendar meeting with attendees", "triggerText": "schedule_meeting" }
+    ]
+  },
+  "expect": {
+    "capabilitySearch": {
+      "expectedMethods": { "anyOf": ["convert_currency"], "minMatches": 1 }
+    }
+  }
+}

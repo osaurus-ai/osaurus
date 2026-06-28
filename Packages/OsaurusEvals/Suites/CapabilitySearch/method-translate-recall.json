@@ -1,0 +1,19 @@
+{
+  "id": "capability_search.method-translate-recall",
+  "domain": "capability_search",
+  "label": "capability search • method • translate recall with a target language",
+  "query": "translate this paragraph into French",
+  "notes": "Recall when the query carries a concrete parameter (target language) the method description doesn't enumerate. The verb `translate` anchors the match; the seeded distractors share no translation vocabulary, so a miss here points at the threshold, not at ambiguity.",
+  "fixtures": {
+    "seedMethods": [
+      { "id": "eval-translate-text-recall", "name": "translate_text", "description": "Translate text from one language into another language", "triggerText": "translate_text" },
+      { "id": "eval-summarize-doc-tr", "name": "summarize_document", "description": "Summarize a long document into key points", "triggerText": "summarize_document" },
+      { "id": "eval-fetch-weather-tr", "name": "fetch_weather", "description": "Look up the current weather for a city", "triggerText": "fetch_weather" }
+    ]
+  },
+  "expect": {
+    "capabilitySearch": {
+      "expectedMethods": { "anyOf": ["translate_text"], "minMatches": 1 }
+    }
+  }
+}

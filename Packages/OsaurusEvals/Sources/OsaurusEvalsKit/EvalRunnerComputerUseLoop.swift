@@ -275,7 +275,14 @@ extension EvalRunner {
             notes: notes,
             modelId: modelId,
             latencyMs: latency,
-            toolUsage: Self.verbUsageStats(verbTrace)
+            toolUsage: Self.verbUsageStats(verbTrace),
+            // Decode tok/s from the loop's model steps (nil on scripted runs).
+            // `EvalRunner.runOne` folds peak-RAM / CPU / KV deltas into this
+            // same telemetry block; this adds the generation-speed signal that
+            // tool-call turns used to drop.
+            telemetry: EvalCaseTelemetry(
+                decodeTokensPerSecond: metrics.meanDecodeTokensPerSecond
+            )
         )
     }
 

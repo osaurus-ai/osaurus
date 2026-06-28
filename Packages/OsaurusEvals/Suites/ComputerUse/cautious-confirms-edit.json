@@ -1,0 +1,20 @@
+{
+  "id": "computer_use.cautious-confirms-edit",
+  "domain": "computer_use",
+  "label": "computer use • cautious confirms a field edit",
+  "query": "Set the document title.",
+  "notes": "Cautious asks before everything except reading, so a benign field edit confirms. With balanced-confirms-edit and trusted-edit-autoruns this pins the edit row at all three of cautious/balanced/trusted.",
+  "fixtures": {},
+  "expect": {
+    "computerUse": {
+      "verb": "type",
+      "text": "Roadmap",
+      "resolvedRole": "AXTextField",
+      "resolvedLabel": "Title",
+      "appName": "Notes",
+      "preset": "cautious",
+      "expectEffect": "edit",
+      "expectDisposition": "confirm"
+    }
+  }
+}

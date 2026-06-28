@@ -618,14 +618,23 @@ extension EvalRunner {
     }
 
     /// On-disk candidates for a `contentsFromFixture` path, most specific
-    /// first. Evals run from the repo root (`make evals`), so the
-    /// package-relative `Fixtures/` locations resolve there; an absolute or
-    /// CWD-relative path is honored as-is.
+    /// first. Two launch CWDs must both resolve: `make evals` runs from the
+    /// repo root (repo-root-relative `Packages/OsaurusEvals/Fixtures/…`),
+    /// while `scripts/evals/optimization-loop.sh` `cd`s into the package dir
+    /// before invoking the CLI (package-relative `Fixtures/…`). Without the
+    /// package-relative forms the loop doubled the prefix
+    /// (`Packages/OsaurusEvals/Packages/OsaurusEvals/Fixtures/…`) and every
+    /// `contentsFromFixture` AgentDB case ERRORED on a missing fixture. An
+    /// absolute or already-correct CWD-relative path is honored as-is first.
     private static func fixtureContentCandidateURLs(_ relative: String) -> [URL] {
         [
             URL(fileURLWithPath: relative),
+            // Launched from the repo root (`make evals`).
             URL(fileURLWithPath: "Packages/OsaurusEvals/Fixtures/\(relative)"),
             URL(fileURLWithPath: "Packages/OsaurusEvals/Fixtures/AgentDB/\(relative)"),
+            // Launched from the package dir (optimization-loop.sh cd's in).
+            URL(fileURLWithPath: "Fixtures/\(relative)"),
+            URL(fileURLWithPath: "Fixtures/AgentDB/\(relative)"),
         ]
     }
 

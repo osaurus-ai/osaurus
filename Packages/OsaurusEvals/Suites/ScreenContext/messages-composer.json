@@ -1,0 +1,44 @@
+{
+  "id": "screen_context.messages-composer",
+  "domain": "screen_context",
+  "label": "Screen context • Messages app conversation + focused composer (synthetic)",
+  "query": "(ambient capture)",
+  "notes": "Synthetic inline scene for Messages (uncovered app). Pins that the two visible message bubbles surface as on-screen content and the focused composer is recognized as a text field, under a Messages gist — a second new-app generalization proof with no committed capture.",
+  "fixtures": {},
+  "expect": {
+    "screenContext": {
+      "scene": {
+        "apps": [
+          { "pid": 702, "bundleId": "com.apple.MobileSMS", "name": "Messages", "active": true, "hidden": false }
+        ],
+        "activeWindow": { "pid": 702, "app": "Messages", "title": "Sam Rivera", "x": 0, "y": 0, "w": 980, "h": 720 },
+        "windowsByPid": {
+          "702": [
+            { "windowId": 1, "title": "Sam Rivera", "focused": true, "minimized": false, "x": 0, "y": 0, "w": 980, "h": 720 }
+          ]
+        },
+        "snapshot": {
+          "app": "Messages",
+          "focusedWindow": "Sam Rivera",
+          "truncated": false,
+          "windows": [
+            { "id": 1, "title": "Sam Rivera", "focused": true, "x": 0, "y": 0, "w": 980, "h": 720 }
+          ],
+          "elements": [
+            { "id": "bubble1", "role": "statictext", "value": "Sam: are we still on for the demo at 4?", "focused": false, "enabled": true, "x": 320, "y": 200, "w": 560, "h": 22, "actions": [] },
+            { "id": "bubble2", "role": "statictext", "value": "You: yes, sending the link now", "focused": false, "enabled": true, "x": 320, "y": 232, "w": 560, "h": 22, "actions": [] },
+            { "id": "composer", "role": "textfield", "label": "iMessage", "value": "here is the demo link, joining in two minutes", "focused": true, "enabled": true, "x": 320, "y": 660, "w": 600, "h": 36, "actions": [] }
+          ]
+        },
+        "focusedContent": {
+          "role": "textfield",
+          "label": "iMessage",
+          "value": "here is the demo link, joining in two minutes"
+        }
+      },
+      "focusedRoleEquals": "text field",
+      "gistContains": ["In Messages"],
+      "mustContain": ["In Messages", "Sam: are we still on for the demo at 4?"]
+    }
+  }
+}

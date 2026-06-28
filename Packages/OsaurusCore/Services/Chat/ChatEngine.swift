@@ -505,6 +505,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         inferenceSource: InferenceSource,
         temperature: Float?,
         maxTokens: Int,
+        tokensPerSecond: Double? = nil,
         turnId: UUID? = nil,
         requestId: String? = nil,
         requestBodyJSON: String? = nil,
@@ -539,7 +540,19 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             tool_call_id: nil
         )
         let choice = ChatChoice(index: 0, message: assistant, finish_reason: "tool_calls")
-        let usage = Usage(prompt_tokens: inputTokens, completion_tokens: 0, total_tokens: inputTokens)
+        // `tokens_per_second` is the model's decode speed for the step that
+        // produced this tool call. The streaming runtime forwards it as a
+        // stats hint just before finishing-by-throw (see
+        // `ModelRuntime.streamWithTools`), so a tool-call turn no longer drops
+        // its decode telemetry. Token counts stay 0 here (the assistant
+        // emitted no user-visible completion text), matching the historical
+        // tool-call `usage` shape consumers depend on.
+        let usage = Usage(
+            prompt_tokens: inputTokens,
+            completion_tokens: 0,
+            total_tokens: inputTokens,
+            tokens_per_second: tokensPerSecond
+        )
 
         let response = ChatCompletionResponse(
             id: responseId,
@@ -1177,6 +1190,13 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                     request.tool_choice,
                     tools: tools
                 )
+                // Decode tok/s for the step, captured from the streamWithTools
+                // stats hint. Held OUTSIDE the `do` so the tool-call `catch`
+                // (which builds the response via `makeToolCallResponse`) can
+                // thread it into `usage` — the value is otherwise lost when the
+                // stream throws to surface the tool call, which is why tool-call
+                // turns historically reported no tok/s.
+                var toolStepTokensPerSecond: Double?
                 do {
                     let stream = try await toolSvc.streamWithTools(
                         messages: messages,
@@ -1189,11 +1209,10 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                     var text = ""
                     var reasoning = ""
                     var terminalStopReason = "stop"
-                    var authoritativeTokensPerSecond: Double?
                     for try await delta in stream {
                         try Task.checkCancellation()
                         if let stats = StreamingStatsHint.decode(delta) {
-                            authoritativeTokensPerSecond = stats.tokensPerSecond
+                            toolStepTokensPerSecond = stats.tokensPerSecond
                             if let stopReason = stats.stopReason, !stopReason.isEmpty {
                                 terminalStopReason = stopReason
                             }
@@ -1241,7 +1260,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                         prompt_tokens: inputTokens,
                         completion_tokens: outputTokens,
                         total_tokens: inputTokens + outputTokens,
-                        tokens_per_second: authoritativeTokensPerSecond
+                        tokens_per_second: toolStepTokensPerSecond
                     )
 
                     let response = ChatCompletionResponse(
@@ -1286,6 +1305,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                         inferenceSource: inferenceSource,
                         temperature: temperature,
                         maxTokens: maxTokens,
+                        tokensPerSecond: toolStepTokensPerSecond,
                         turnId: request.turnId,
                         requestId: requestId,
                         requestBodyJSON: requestBodyJSON,
@@ -1304,6 +1324,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                         inferenceSource: inferenceSource,
                         temperature: temperature,
                         maxTokens: maxTokens,
+                        tokensPerSecond: toolStepTokensPerSecond,
                         turnId: request.turnId,
                         requestId: requestId,
                         requestBodyJSON: requestBodyJSON,

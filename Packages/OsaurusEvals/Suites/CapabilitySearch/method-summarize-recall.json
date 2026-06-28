@@ -1,0 +1,19 @@
+{
+  "id": "capability_search.method-summarize-recall",
+  "domain": "capability_search",
+  "label": "capability search • method • imperative summarize recall",
+  "query": "summarize this long report into a few key points",
+  "notes": "A strong-overlap recall floor on the methods lane: the imperative query shares head tokens (summarize / long / key points) with the seeded `summarize_document` description, so the target must clear the acceptance threshold even with two unrelated distractors in the index.",
+  "fixtures": {
+    "seedMethods": [
+      { "id": "eval-summarize-doc-recall", "name": "summarize_document", "description": "Summarize a long document into a short list of key points", "triggerText": "summarize_document" },
+      { "id": "eval-translate-text-summ", "name": "translate_text", "description": "Translate text from one language into another", "triggerText": "translate_text" },
+      { "id": "eval-deploy-app-summ", "name": "deploy_app", "description": "Deploy a built application to a cloud environment", "triggerText": "deploy_app" }
+    ]
+  },
+  "expect": {
+    "capabilitySearch": {
+      "expectedMethods": { "anyOf": ["summarize_document"], "minMatches": 1 }
+    }
+  }
+}

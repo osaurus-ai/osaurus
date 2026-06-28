@@ -1,0 +1,46 @@
+{
+  "id": "screen_context.textedit-selection",
+  "domain": "screen_context",
+  "label": "Screen context • TextEdit document selection + viewport (synthetic)",
+  "query": "(ambient capture)",
+  "notes": "Synthetic inline scene for TextEdit (uncovered app). Pins the focused document body as a text area whose selection and cursor viewport surface verbatim under a TextEdit gist — a plain-document generalization complementing the Notes scene.",
+  "fixtures": {},
+  "expect": {
+    "screenContext": {
+      "scene": {
+        "apps": [
+          { "pid": 703, "bundleId": "com.apple.TextEdit", "name": "TextEdit", "active": true, "hidden": false }
+        ],
+        "activeWindow": { "pid": 703, "app": "TextEdit", "title": "release-notes.txt", "x": 0, "y": 0, "w": 1000, "h": 740 },
+        "windowsByPid": {
+          "703": [
+            { "windowId": 1, "title": "release-notes.txt", "focused": true, "minimized": false, "x": 0, "y": 0, "w": 1000, "h": 740 }
+          ]
+        },
+        "snapshot": {
+          "app": "TextEdit",
+          "focusedWindow": "release-notes.txt",
+          "truncated": false,
+          "windows": [
+            { "id": 1, "title": "release-notes.txt", "focused": true, "x": 0, "y": 0, "w": 1000, "h": 740 }
+          ],
+          "elements": [
+            { "id": "body", "role": "textarea", "label": "Text", "value": "Release 2.0\nHighlights: faster decode, lower memory, screen context.\nKnown issues: none blocking the release.", "selectedText": "faster decode, lower memory", "focused": true, "enabled": true, "x": 120, "y": 100, "w": 760, "h": 560, "actions": [] }
+          ]
+        },
+        "focusedContent": {
+          "role": "textarea",
+          "label": "Text",
+          "value": "Release 2.0\nHighlights: faster decode, lower memory, screen context.\nKnown issues: none blocking the release.",
+          "selectedText": "faster decode, lower memory",
+          "viewport": "Highlights: faster decode, lower memory, screen context."
+        }
+      },
+      "focusedRoleEquals": "text area",
+      "selectedTextContains": "faster decode, lower memory",
+      "viewingContains": ["screen context"],
+      "gistContains": ["In TextEdit"],
+      "mustContain": ["In TextEdit", "Selected text:", "faster decode, lower memory"]
+    }
+  }
+}

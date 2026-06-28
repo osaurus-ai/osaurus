@@ -1,0 +1,14 @@
+{
+  "id": "streaming_hint.encode-args-with-backslashes",
+  "domain": "streaming_hint",
+  "label": "streaming_hint • encodeArgs preserves backslashes (Windows path / regex)",
+  "query": "",
+  "notes": "Backslash-heavy payloads (a Windows path, a regex) are where a naive escape/unescape round-trip drops or doubles characters. Pins that the args fragment survives verbatim.",
+  "fixtures": {},
+  "expect": {
+    "streamingHint": {
+      "op": "encodeArgs",
+      "payload": "{\"path\": \"C:\\\\Users\\\\ada\\\\notes.txt\", \"pattern\": \"\\\\d+\\\\.\\\\d+\"}"
+    }
+  }
+}

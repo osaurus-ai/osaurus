@@ -1,0 +1,23 @@
+{
+  "id": "schema.required-field-missing",
+  "domain": "schema",
+  "label": "schema • a missing required property is rejected and named",
+  "query": "",
+  "notes": "Pins the `required` gate: when a declared-required property is absent the call must be rejected and the failure must name the missing field so the tool envelope can point the model at it. `name` is present, `age` is missing, so the field surfaced must be `age`.",
+  "fixtures": {},
+  "expect": {
+    "schema": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "age": { "type": "integer" }
+        },
+        "required": ["name", "age"]
+      },
+      "arguments": { "name": "Ada" },
+      "expectValid": false,
+      "expectField": "age"
+    }
+  }
+}

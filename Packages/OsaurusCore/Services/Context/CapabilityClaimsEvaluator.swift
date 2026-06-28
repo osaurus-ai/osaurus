@@ -142,7 +142,8 @@ public enum CapabilityClaimsEvaluator {
         maxIterations: Int = 6,
         model: String? = nil,
         toolExecutionTimeout: TimeInterval? = nil,
-        autoApproveToolPrompts: Bool = false
+        autoApproveToolPrompts: Bool = false,
+        denyUnapprovedToolPrompts: Bool = false
     ) async -> CapabilityClaimsTranscript {
         let resolvedAgentId = agentId ?? AgentManager.shared.activeAgent.id
         let resolvedModel =
@@ -255,20 +256,27 @@ public enum CapabilityClaimsEvaluator {
                         toolCalls.append(
                             .init(name: call.function.name, arguments: call.function.arguments)
                         )
-                        // Headless harness: there is no [Allow] button, so a
-                        // configure WRITE tool's `.ask` policy would otherwise
-                        // suspend forever on `ToolPermissionPromptService`. Bind
-                        // the same approval bypass `AgentLoopEvaluator` uses
-                        // (production surfaces keep the `false` default). Binding
-                        // here means the unstructured task `executeTool` spawns
-                        // inherits the task-local (a detached task would not).
+                        // Headless harness: there is no [Allow] button, so an
+                        // `.ask` tool would otherwise suspend forever on
+                        // `ToolPermissionPromptService`. Bind BOTH approval
+                        // task-locals so the unstructured task `executeTool`
+                        // spawns inherits them (a detached task would not):
+                        // `default_agent` passes auto-approve (it measures the
+                        // configure surface EXECUTING); `capability_claims`
+                        // passes auto-deny (it measures tool SELECTION + honest
+                        // claims, and must NOT execute state-mutating configure/
+                        // agent writes mid-eval). Production surfaces keep both
+                        // `false` and present the real prompt.
                         let toolResult = await ChatExecutionContext.$autoApproveToolPrompts
                             .withValue(autoApproveToolPrompts) {
-                                await executeTool(
-                                    name: call.function.name,
-                                    argumentsJSON: call.function.arguments,
-                                    timeout: toolExecutionTimeout
-                                )
+                                await ChatExecutionContext.$denyUnapprovedToolPrompts
+                                    .withValue(denyUnapprovedToolPrompts) {
+                                        await executeTool(
+                                            name: call.function.name,
+                                            argumentsJSON: call.function.arguments,
+                                            timeout: toolExecutionTimeout
+                                        )
+                                    }
                             }
                         history.append(
                             ChatMessage(
@@ -461,25 +469,47 @@ public enum CapabilityClaimsEvaluator {
             session_id: nil
         )
 
-        do {
-            let response = try await engine.completeChat(request: request)
-            let raw = response.choices.first?.message.content ?? ""
-            if let parsed = parseVerdicts(raw, expected: conditions.count) {
-                return parsed
+        // One bounded retry ladder on a THROWN judge call. A remote judge
+        // (xAI / Gemini) occasionally drops a request mid-flight — a matrix run
+        // surfaced a transient `CancellationError` from the provider's own
+        // timeout (NOT our task being cancelled) that zeroed an entire case's
+        // rubric even though every deterministic matcher passed. Retrying a
+        // temperature-0 judge is idempotent and safe, and a flaky judge call
+        // must never masquerade as a real model failure (it would pollute a
+        // pre/post fix diff). We only retry a THROWN error; an unparseable reply
+        // is deterministic at temperature 0, so we return it immediately rather
+        // than burning retries. We also honor genuine task cancellation
+        // (`Task.isCancelled`) so a killed run still stops promptly instead of
+        // looping on its own teardown.
+        let maxJudgeAttempts = 3
+        var lastError: Error?
+        for attempt in 1...maxJudgeAttempts {
+            do {
+                let response = try await engine.completeChat(request: request)
+                let raw = response.choices.first?.message.content ?? ""
+                if let parsed = parseVerdicts(raw, expected: conditions.count) {
+                    return parsed
+                }
+                return conditions.map {
+                    CapabilityClaimsJudgement(
+                        pass: false,
+                        reason: "judge output not parseable for condition: \($0)"
+                    )
+                }
+            } catch {
+                lastError = error
+                if Task.isCancelled { break }
+                if attempt < maxJudgeAttempts {
+                    // Linear backoff (0.5s, 1.0s) before the next attempt.
+                    try? await Task.sleep(nanoseconds: UInt64(attempt) * 500_000_000)
+                }
             }
-            return conditions.map {
-                CapabilityClaimsJudgement(
-                    pass: false,
-                    reason: "judge output not parseable for condition: \($0)"
-                )
-            }
-        } catch {
-            return conditions.map { _ in
-                CapabilityClaimsJudgement(
-                    pass: false,
-                    reason: "judge call failed: \(error.localizedDescription)"
-                )
-            }
+        }
+        return conditions.map { _ in
+            CapabilityClaimsJudgement(
+                pass: false,
+                reason: "judge call failed: \(lastError?.localizedDescription ?? "unknown error")"
+            )
         }
     }
 

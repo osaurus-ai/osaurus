@@ -1,0 +1,14 @@
+{
+  "id": "streaming_hint.encode-empty-tool-name",
+  "domain": "streaming_hint",
+  "label": "streaming_hint • encode of an empty name is still a sentinel that round-trips to empty",
+  "query": "",
+  "notes": "Edge case: an empty tool-name fragment must still produce a sentinel-prefixed delta (so the client routes it as a tool marker, not visible text) and decode back to the empty string rather than nil.",
+  "fixtures": {},
+  "expect": {
+    "streamingHint": {
+      "op": "encode",
+      "payload": ""
+    }
+  }
+}

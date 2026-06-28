@@ -14,9 +14,13 @@ set -uo pipefail
 #
 # Env overrides:
 #   MODELS         space-separated model ids run through the LLM suites.
-#                  Default: "foundation qwen3-4b". Add a remote frontier
-#                  with e.g. MODELS="foundation qwen3-4b xai/grok-4.3"
-#                  (requires XAI_API_KEY in the environment).
+#                  Default: "foundation auto" — "auto" resolves to the currently
+#                  configured local model (a bare shortcut like "qwen3-4b" does
+#                  NOT resolve to a repo tail and would error every case, so the
+#                  default stays resolvable). Pass a full repo id to pin a local
+#                  model, e.g. MODELS="foundation mlx-community/Qwen3.5-4B-OptiQ-4bit".
+#                  Add a remote frontier with e.g.
+#                  MODELS="foundation auto xai/grok-4.3" (requires XAI_API_KEY).
 #   DET_MODEL      model for the deterministic / model-independent suites
 #                  (no LLM call). Default: "auto".
 #   LLM_SUITES     space-separated per-model suites to run. Default is the full
@@ -45,12 +49,20 @@ set -uo pipefail
 #                  contributor's model, so they add nothing to a per-model
 #                  compatibility report. Default off.
 #   OSAURUS_EVALS_SKIP_PREP=1   skip the asset-prep step.
+#   SUITE_TIMEOUT_SEC   hard wall-clock cap (seconds) for ONE suite/model
+#                  subprocess. Backstop so a wedged process can't stall the
+#                  whole sequential matrix (the in-process per-case watchdog,
+#                  OSAURUS_EVALS_CASE_TIMEOUT_SEC, is the first line of
+#                  defense; this catches a hang the in-process timer can't,
+#                  e.g. a CPU-bound spin that never yields). Default 2700
+#                  (45m). 0 disables. Requires `timeout`/`gtimeout` on PATH;
+#                  if neither is present the cap is skipped with a warning.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 EVALS_PKG="${REPO_ROOT}/Packages/OsaurusEvals"
 
-MODELS="${MODELS:-foundation qwen3-4b}"
+MODELS="${MODELS:-foundation auto}"
 DET_MODEL="${DET_MODEL:-auto}"
 LOOP_OUT_ROOT="${LOOP_OUT_ROOT:-${REPO_ROOT}/build/evals/loop}"
 BASELINE="${BASELINE:-}"
@@ -60,6 +72,18 @@ RECORD="${RECORD:-0}"
 LABEL="${LABEL:-}"
 SNAPSHOT_DIR="${SNAPSHOT_DIR:-${REPO_ROOT}/reports}"
 SKIP_DET="${SKIP_DET:-0}"
+SUITE_TIMEOUT_SEC="${SUITE_TIMEOUT_SEC:-2700}"
+
+# Resolve a `timeout`-compatible command once (GNU coreutils ships `gtimeout`
+# on macOS via Homebrew; Linux/CI has `timeout`). Empty when neither exists,
+# in which case the per-suite cap is a documented no-op (the in-process
+# per-case watchdog still applies).
+TIMEOUT_BIN=""
+if command -v gtimeout >/dev/null 2>&1; then
+  TIMEOUT_BIN="gtimeout"
+elif command -v timeout >/dev/null 2>&1; then
+  TIMEOUT_BIN="timeout"
+fi
 
 # Suites that never call an LLM (pure-data validators + the embedder-only
 # capability_search lane) — run ONCE with DET_MODEL.
@@ -67,7 +91,7 @@ SKIP_DET="${SKIP_DET:-0}"
 # `read -ra` is the robust, SC2206-clean way to split the space-separated
 # override/default into the array (and is bash 3.2-safe). The `${VAR:-...}`
 # default is expanded before `read` reassigns the same name.
-read -ra DET_SUITES <<< "${DET_SUITES:-ArgumentCoercion CapabilitySearch ComputerUse PrefixHash RequestValidation SandboxDiagnostics Schema StreamingHint ToolEnvelope}"
+read -ra DET_SUITES <<< "${DET_SUITES:-ArgumentCoercion CapabilitySearch ComputerUse PrefixHash RequestValidation SandboxDiagnostics Schema ScreenContext StreamingHint ToolEnvelope}"
 # Suites that drive a model (or the sandbox VM) — run PER model.
 # `Subagent` runs all four subagent flows through the one SubagentSession host:
 # its scripted cases are model-independent (identical per model) while the live
@@ -76,7 +100,7 @@ read -ra DET_SUITES <<< "${DET_SUITES:-ArgumentCoercion CapabilitySearch Compute
 # Override with a space-separated LLM_SUITES env var to scope a run, e.g.
 # LLM_SUITES="Subagent ComputerUseLoop SandboxFrontier" for a subagent-focused matrix.
 # `read -ra` splits the override/default into the array (SC2206-clean, bash 3.2-safe).
-read -ra LLM_SUITES <<< "${LLM_SUITES:-AgentLoop AgentLoopFrontier CapabilityClaims ComputerUseLoop DefaultAgent SandboxFrontier Subagent}"
+read -ra LLM_SUITES <<< "${LLM_SUITES:-AgentLoop AgentLoopFrontier AgentDB CapabilityClaims ComputerUseLoop DefaultAgent SandboxFrontier Subagent}"
 
 log() { printf '[opt-loop] %s\n' "$*"; }
 
@@ -117,13 +141,24 @@ run_suite() {
   # binary, which silently zeroes every suite (no `--out` JSON written). The
   # `+`-guarded form expands to nothing when no FILTER is set and to the args
   # otherwise, safe on bash 3.2.
-  ( cd "${EVALS_PKG}" && "${BIN}" run \
+  # Optional hard cap on the suite/model subprocess. `gtimeout --signal=KILL`
+  # after a grace TERM so a process wedged in an uninterruptible state is still
+  # reaped; rc=124 marks the timeout in the log for triage.
+  local timeout_cmd=()
+  if [[ -n "${TIMEOUT_BIN}" && "${SUITE_TIMEOUT_SEC}" != "0" ]]; then
+    timeout_cmd=("${TIMEOUT_BIN}" --kill-after=30 "${SUITE_TIMEOUT_SEC}")
+  fi
+  ( cd "${EVALS_PKG}" && "${timeout_cmd[@]+${timeout_cmd[@]}}" "${BIN}" run \
       --suite "Suites/${suite}" \
       --model "${model}" \
       --out "${out_path}" \
       ${filter_args[@]+"${filter_args[@]}"} ) >"${log_path}" 2>&1
   local rc=$?
-  log "    rc=${rc} → ${out_path##*/}"
+  if [[ ${rc} -eq 124 || ${rc} -eq 137 ]]; then
+    log "    rc=${rc} (SUITE TIMEOUT after ${SUITE_TIMEOUT_SEC}s) → ${label}/${suite} KILLED"
+  else
+    log "    rc=${rc} → ${out_path##*/}"
+  fi
   # A missing report means the run failed BEFORE writing (bad model id, startup
   # crash, or a script-level error) — distinct from case failures, which still
   # produce a JSON. Surface it loudly so a systematic failure can't hide behind

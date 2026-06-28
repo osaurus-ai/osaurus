@@ -1,0 +1,26 @@
+{
+  "id": "computer_use_loop.scripted-precise-toggle",
+  "domain": "computer_use_loop",
+  "label": "CU loop • scripted toggle hits only the named switch",
+  "query": "Turn on Airplane Mode.",
+  "notes": "Deterministic precision pin: the scripted action toggles only Airplane Mode (mark 2); failIfClicked guards that the two lookalike switches around it are never touched, and the value predicate confirms the toggle landed. Model-free (scriptedActions), so it runs identically for every model and anchors the precision matcher.",
+  "fixtures": {},
+  "expect": {
+    "computerUseLoop": {
+      "app": "System Settings",
+      "maxSteps": 6,
+      "elements": [
+        { "id": "wifi", "role": "switch", "label": "Wi-Fi", "value": "on" },
+        { "id": "airplane", "role": "switch", "label": "Airplane Mode", "value": "off", "onClick": { "toggle": true } },
+        { "id": "bluetooth", "role": "switch", "label": "Bluetooth", "value": "off", "onClick": { "toggle": true } }
+      ],
+      "successValues": [{ "id": "airplane", "equals": "on" }],
+      "successClicked": ["airplane"],
+      "failIfClicked": ["wifi", "bluetooth"],
+      "scriptedActions": [
+        "{\"verb\":\"click\",\"target\":{\"mark\":2},\"note\":\"toggle airplane mode\"}",
+        "{\"verb\":\"done\",\"reason\":\"airplane mode is on\"}"
+      ]
+    }
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "id": "request_validation.unknown-format-rejected",
+  "domain": "request_validation",
+  "label": "request_validation • an unknown response_format type is rejected",
+  "query": "",
+  "notes": "Anything outside {json_object, text} is unsupported. Pins that a made-up type like `yaml` is rejected with a reason that steers the client to json_object, complementing json-schema-rejected (a specific known-unsupported type).",
+  "fixtures": {},
+  "expect": {
+    "requestValidation": {
+      "responseFormatType": "yaml",
+      "expectAccept": false,
+      "expectReasonContains": "not supported"
+    }
+  }
+}

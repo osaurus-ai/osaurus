@@ -1,0 +1,28 @@
+{
+  "id": "frontier.csv-aggregate-by-region",
+  "domain": "agent_loop",
+  "label": "frontier • aggregate a CSV by group and write a derived CSV",
+  "query": "Read sales.csv (columns region,amount). Compute the total amount per region and write totals.csv with header line 'region,total' and one data row per region, sorted alphabetically by region. Then tell me the total for the west region.",
+  "notes": "Data-transform lane: group-by aggregation written to a derived artifact. The command gate reparses totals.csv and asserts the header plus both per-region sums, and finalTextContains pins the reported west total — so a plausible-but-wrong sum (or a fabricated answer with no real file) fails.",
+  "fixtures": {
+    "workspaceFiles": [
+      { "path": "sales.csv", "contents": "region,amount\nwest,10\neast,20\nwest,30\neast,5\n" }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 16,
+      "finalTextContains": ["40"],
+      "files": [
+        { "path": "totals.csv", "contains": "west,40" },
+        { "path": "totals.csv", "contains": "east,25" }
+      ],
+      "commands": [
+        {
+          "command": "python3 -c \"import csv; rows=list(csv.reader(open('totals.csv'))); assert rows[0]==['region','total'], rows; d={r[0]:r[1] for r in rows[1:] if r}; assert d.get('west')=='40' and d.get('east')=='25', d\"",
+          "expectExitCode": 0
+        }
+      ]
+    }
+  }
+}

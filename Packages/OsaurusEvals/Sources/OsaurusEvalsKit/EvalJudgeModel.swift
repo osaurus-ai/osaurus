@@ -30,7 +30,12 @@ public enum EvalJudgeModel {
         ("XAI_API_KEY", "xai/grok-4.3"),
         ("ANTHROPIC_API_KEY", "anthropic/claude-sonnet-4-5"),
         ("OPENAI_API_KEY", "openai/gpt-5.1"),
-        ("GEMINI_API_KEY", "gemini/gemini-2.5-pro"),
+        // Routing prefix MUST match an `EvalRemoteProviderBootstrap.presets`
+        // key so the ephemeral provider connects. Gemini's preset is keyed
+        // `google` (the app's Google provider), so the model id is
+        // `google/<model>`, NOT `gemini/<model>` — the latter has no preset,
+        // so the bootstrap skips it and the judge silently never resolves.
+        ("GEMINI_API_KEY", "google/gemini-2.5-pro"),
     ]
 
     /// Outcome of judge resolution.

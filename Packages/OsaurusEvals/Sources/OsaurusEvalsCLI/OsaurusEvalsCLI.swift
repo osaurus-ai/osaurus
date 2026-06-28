@@ -27,6 +27,21 @@ import OsaurusEvalsKit
 struct OsaurusEvalsCLI {
 
     static func main() async {
+        // Hermetic harness: the eval binary must never touch the user's login
+        // Keychain. It is code-signed differently than the host app, so
+        // DECRYPTING the app-created Master Key item routes through the legacy
+        // file-based login Keychain and raises a "osaurus-evals wants to use
+        // your confidential information" ACL authorization prompt that hangs a
+        // headless run indefinitely (observed driving DefaultAgent: agent-create
+        // → AgentManager.assignAddress → MasterKey.getPrivateKey, blocked in
+        // SecItemCopyMatching → securityd with 0% CPU). `LAContext`/UI-skip flags
+        // are ignored on legacy items, so the only correct fix is to run
+        // Keychain-free: every wrapper (incl. MasterKey) then no-ops. This
+        // mirrors the existing isolated config/search storage for default-agent
+        // cases. Forced before any OsaurusCore access; the harness never needs
+        // real Keychain (remote providers are ephemeral and env-keyed).
+        setenv("OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS", "1", 1)
+
         let args = Array(CommandLine.arguments.dropFirst())
         guard let command = args.first else {
             printUsage()
@@ -145,7 +160,11 @@ struct OsaurusEvalsCLI {
             filter: opts.filter,
             thresholdOverride: opts.threshold,
             embedCosineFloorOverride: opts.embedCosineFloor,
-            bootstrapMode: .alreadyLoaded
+            bootstrapMode: .alreadyLoaded,
+            // Passed so the per-case watchdog can write a complete report and
+            // force-exit if a case wedges the concurrency runtime (the normal
+            // return path below never executes in that case).
+            outPath: opts.out
         )
 
         EvalRemoteProviderBootstrap.teardown(ephemeralProviderIds)

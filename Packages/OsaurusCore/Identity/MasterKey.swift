@@ -48,6 +48,13 @@ public struct MasterKey: Sendable {
     /// - Parameter allowReplace: Mirrors `generate(allowReplace:)`. Defaults to false.
     @discardableResult
     public static func install(seed keyData: Data, allowReplace: Bool = false) throws -> OsaurusID {
+        // Hermetic test/proof launches (OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1)
+        // must not persist identity material into the user's login Keychain.
+        // This is the same no-op-write contract every other Keychain wrapper
+        // honors via `KeychainQueryHelpers.disablesKeychainForProcess`.
+        if KeychainQueryHelpers.disablesKeychainForProcess {
+            throw OsaurusIdentityError.keychainWriteFailed
+        }
         if !allowReplace, exists() {
             throw OsaurusIdentityError.masterAlreadyExists
         }
@@ -98,6 +105,12 @@ public struct MasterKey: Sendable {
 
     /// Check if a Master Key exists in Keychain (no biometric prompt).
     public static func exists() -> Bool {
+        // Keychain-disabled processes report "no identity" so identity-gated
+        // paths (e.g. `AgentManager.assignAddress`) short-circuit before any
+        // legacy login-Keychain read can raise a "wants to use your
+        // confidential information" ACL prompt in a headless/differently-signed
+        // process (the eval CLI).
+        if KeychainQueryHelpers.disablesKeychainForProcess { return false }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -189,6 +202,14 @@ public struct MasterKey: Sendable {
 
     /// Retrieve the raw Master Key bytes from Keychain (triggers biometric auth).
     static func getPrivateKey(context: LAContext) throws -> Data {
+        // No-op read under the keychain-disable gate (hermetic test/proof runs).
+        // The Master Key item lives in the legacy file-based login Keychain,
+        // where `kSecUseAuthenticationUISkip` / `LAContext.interactionNotAllowed`
+        // do NOT suppress the trusted-app ACL prompt — so the only safe headless
+        // behavior is to not read at all.
+        if KeychainQueryHelpers.disablesKeychainForProcess {
+            throw OsaurusIdentityError.keychainReadFailed
+        }
         var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -223,6 +244,12 @@ public struct MasterKey: Sendable {
     /// Remove the Master Key from Keychain (irreversible).
     @discardableResult
     public static func delete() -> Bool {
+        // No-op delete under the keychain-disable gate, mirroring the read/write
+        // no-ops above and the documented wrapper contract.
+        if KeychainQueryHelpers.disablesKeychainForProcess {
+            setCachedExists(false)
+            return true
+        }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,

@@ -38,7 +38,8 @@ public enum EvalRunner {
         filter: String? = nil,
         thresholdOverride: Float? = nil,
         embedCosineFloorOverride: Float? = nil,
-        bootstrapMode: BootstrapMode = .loadInstalledPlugins
+        bootstrapMode: BootstrapMode = .loadInstalledPlugins,
+        outPath: String? = nil
     ) async -> EvalReport {
         if bootstrapMode == .loadInstalledPlugins {
             // The CLI is its own process — it has to scan + dlopen every
@@ -95,16 +96,49 @@ public enum EvalRunner {
                     Data("[evals] warm-up DISABLED (OSAURUS_EVALS_DISABLE_WARMUP=1)\n".utf8)
                 )
             }
-            for testCase in suite.cases {
-                if let filter, !testCase.id.contains(filter) { continue }
-                let row = await runOne(
+            let scoredCases = suite.cases.filter { filter == nil || $0.id.contains(filter!) }
+            // Ordered descriptors + a thread-safe sink of completed rows. The
+            // per-case watchdog (which runs on an OS thread, off the wedged
+            // cooperative runtime) uses these to assemble a COMPLETE report —
+            // completed cases + the hung case + the cases blocked behind it —
+            // and write it before force-exiting, so a process hang still yields
+            // an honest suite/model cell instead of a blank one.
+            let allDescriptors = scoredCases.map {
+                EvalCaseDescriptor(id: $0.id, label: $0.label ?? $0.id, domain: $0.domain)
+            }
+            let rowSink = EvalRowSink()
+            rows.forEach { rowSink.append($0) }  // seed with any decode-failure rows
+            var caseIndex = 0
+            for testCase in scoredCases {
+                caseIndex += 1
+                // Per-case progress to STDERR (never the JSON `--out`). A long
+                // suite on a slow local model otherwise looks frozen, and when a
+                // case genuinely wedges, this is the only signal of WHICH case
+                // the process was on — the end-of-run report never prints. Cheap,
+                // and it keeps the scored output stream clean for `--out` parsing.
+                FileHandle.standardError.write(
+                    Data(
+                        "[evals] (\(caseIndex)/\(scoredCases.count)) \(testCase.id) [\(modelLabel)]\n"
+                            .utf8
+                    )
+                )
+                let row = await runOneWatchdogged(
                     testCase,
                     modelId: modelLabel,
                     thresholdOverride: thresholdOverride,
                     embedCosineFloorOverride: embedCosineFloorOverride,
-                    suiteDirectory: suite.directory
+                    suiteDirectory: suite.directory,
+                    watchdogContext: EvalWatchdogContext(
+                        sink: rowSink,
+                        outPath: outPath,
+                        startedAt: startedAt,
+                        allDescriptors: allDescriptors,
+                        currentIndex: caseIndex - 1
+                    )
                 )
-                rows.append(annotatedWithCaseNotes(row, from: testCase))
+                let annotated = annotatedWithCaseNotes(row, from: testCase)
+                rows.append(annotated)
+                rowSink.append(annotated)
             }
         }
 
@@ -157,6 +191,194 @@ public enum EvalRunner {
         "agent_loop", "capability_claims", "computer_use_loop", "capability_search",
         "default_agent", "subagent",
     ]
+
+    /// Wall-clock budget for any single tool execution in a
+    /// `capability_claims` case before the harness abandons it and feeds the
+    /// model a typed timeout error. Matches the `default_agent` lane's bound
+    /// (both drive `CapabilityClaimsEvaluator`): 25s is far longer than any
+    /// healthy local op yet bounds a hung live-service call (e.g. a plugin
+    /// browser/network tool with no/slow network) so one stuck tool can't wedge
+    /// the whole multi-model suite.
+    private static let capabilityClaimsToolExecutionTimeout: TimeInterval = 25
+
+    /// Per-case wall-clock budget. A single case that wedges the process
+    /// (e.g. a lost-continuation hang in a model/agent path) must NOT stall
+    /// the whole suite — and, through the sequential per-suite driver, the
+    /// entire cross-model matrix. This is a harness-robustness backstop, not
+    /// a model fix: a case that blows the budget is recorded honestly as
+    /// `errored` ("watchdog timeout") with the wall-clock note, and the loop
+    /// moves on. The default is generous so a legitimately slow local case on
+    /// a small Mac is never falsely failed; tune with
+    /// `OSAURUS_EVALS_CASE_TIMEOUT_SEC` (0 disables the watchdog entirely).
+    static var caseTimeoutSeconds: Double {
+        let env = ProcessInfo.processInfo.environment["OSAURUS_EVALS_CASE_TIMEOUT_SEC"]
+        if let env, let v = Double(env) { return max(0, v) }
+        // 10 minutes: comfortably above the slowest legitimate case (a long
+        // multi-iteration agentic loop on a slow local model can run several
+        // minutes), so only a true hang trips it. A trip writes a complete
+        // report and force-exits the suite process, so it must never fire on a
+        // merely-slow case.
+        return 600
+    }
+
+    /// `runOne` guarded by a wall-clock watchdog on a dedicated **OS thread**
+    /// (`Thread` + `Thread.sleep`), NOT a `Task` — deliberately.
+    ///
+    /// A real process hang in a model/agent path parks the ENTIRE Swift
+    /// concurrency runtime: every cooperative thread idle, the main executor
+    /// sitting in its CFRunLoop (observed live against a wedged
+    /// `capability_claims` + Qwen case — full stack sample showed only the main
+    /// run loop, no running task, CPU 0%). In that state nothing async can
+    /// recover the suite: a `Task.sleep` timer never wakes (its resumption
+    /// rides the starved cooperative pool), and even resuming a latch +
+    /// `CFRunLoopWakeUp` does not advance it, because the non-isolated latch
+    /// getter resumes on the (starved) cooperative pool before hopping back to
+    /// the main actor. Both were tried and failed live.
+    ///
+    /// So the only reliable in-process action is to NOT try to resume the
+    /// wedged runtime: the watchdog thread assembles a COMPLETE, honest report
+    /// (cases already finished + the hung case as `errored` + the cases blocked
+    /// behind it as `skipped` with a root-cause note), writes it to `--out`
+    /// with synchronous file I/O, and force-exits with `_exit` (bypassing
+    /// atexit handlers that could themselves hang on the wedged MLX/Metal
+    /// teardown). The sequential matrix driver then advances to the next
+    /// suite/model with a real cell instead of a blank one. When `runOne`
+    /// finishes first (the overwhelmingly common path) the watchdog is
+    /// cancelled and this is a thin pass-through.
+    private static func runOneWatchdogged(
+        _ testCase: EvalCase,
+        modelId: String,
+        thresholdOverride: Float? = nil,
+        embedCosineFloorOverride: Float? = nil,
+        suiteDirectory: URL,
+        watchdogContext: EvalWatchdogContext
+    ) async -> EvalCaseReport {
+        let timeout = Self.caseTimeoutSeconds
+        guard timeout > 0 else {
+            return await runOne(
+                testCase,
+                modelId: modelId,
+                thresholdOverride: thresholdOverride,
+                embedCosineFloorOverride: embedCosineFloorOverride,
+                suiteDirectory: suiteDirectory
+            )
+        }
+        // Snapshot only Sendable scalars for the watchdog thread (never the
+        // non-Sendable EvalCase).
+        let caseId = testCase.id
+        let caseLabel = testCase.label ?? testCase.id
+        let caseDomain = testCase.domain
+        let latch = EvalWatchdogLatch<EvalCaseReport>()
+        let canceled = EvalAtomicFlag()
+
+        let watchdog = Thread {
+            let deadline = Date().addingTimeInterval(timeout)
+            while Date() < deadline {
+                if canceled.isSet { return }
+                Thread.sleep(forTimeInterval: 0.25)
+            }
+            if canceled.isSet { return }
+            let timedOutRow = EvalCaseReport.terminal(
+                id: caseId,
+                label: caseLabel,
+                domain: caseDomain,
+                outcome: .errored,
+                notes: [
+                    "watchdog timeout: case exceeded \(Int(timeout))s wall-clock and was "
+                        + "abandoned (process hang — the Swift concurrency runtime is wedged; "
+                        + "the work task is left parked). Tune OSAURUS_EVALS_CASE_TIMEOUT_SEC.",
+                ],
+                modelId: modelId
+            )
+            // Latch is informational here (the work task is wedged and will
+            // never win), but resolving it keeps the contract clean and ensures
+            // only one writer.
+            guard latch.resume(timedOutRow) else { return }
+            FileHandle.standardError.write(
+                Data(
+                    ("[evals] WATCHDOG \(caseId) [\(modelId)] exceeded \(Int(timeout))s — "
+                        + "writing partial report + terminating (process hang)\n").utf8
+                )
+            )
+            Self.writeWatchdogReportAndExit(
+                context: watchdogContext,
+                modelId: modelId,
+                timedOutRow: timedOutRow
+            )
+        }
+        watchdog.stackSize = 1 << 16
+        watchdog.start()
+
+        let work = Task { @MainActor in
+            let r = await runOne(
+                testCase,
+                modelId: modelId,
+                thresholdOverride: thresholdOverride,
+                embedCosineFloorOverride: embedCosineFloorOverride,
+                suiteDirectory: suiteDirectory
+            )
+            _ = latch.resume(r)
+        }
+
+        let report = await latch.value
+        canceled.set()  // lets the watchdog thread exit early if work won
+        work.cancel()
+        return report
+    }
+
+    /// Build the complete suite report from the watchdog thread and force-exit.
+    /// Runs OFF the cooperative runtime (a plain OS thread), so it uses only
+    /// synchronous, allocation-light work: snapshot the finished rows, append
+    /// the hung row + `skipped` rows for everything queued behind it, encode,
+    /// write, and `_exit`.
+    nonisolated private static func writeWatchdogReportAndExit(
+        context: EvalWatchdogContext,
+        modelId: String,
+        timedOutRow: EvalCaseReport
+    ) -> Never {
+        var cases = context.sink.snapshot
+        cases.append(timedOutRow)
+        let blockedStart = context.currentIndex + 1
+        if blockedStart < context.allDescriptors.count {
+            for descriptor in context.allDescriptors[blockedStart...] {
+                cases.append(
+                    EvalCaseReport.terminal(
+                        id: descriptor.id,
+                        label: descriptor.label,
+                        domain: descriptor.domain,
+                        outcome: .skipped,
+                        notes: [
+                            "blocked: not run — process hung on prior case "
+                                + "'\(timedOutRow.id)' (watchdog timeout); suite terminated to "
+                                + "free the matrix driver.",
+                        ],
+                        modelId: modelId
+                    )
+                )
+            }
+        }
+        let report = EvalReport(modelId: modelId, startedAt: context.startedAt, cases: cases)
+        if let outPath = context.outPath {
+            do {
+                let data = try report.toJSON(prettyPrinted: true)
+                try data.write(to: URL(fileURLWithPath: outPath))
+                FileHandle.standardError.write(
+                    Data(
+                        "[evals] wrote \(cases.count) cases (watchdog-terminated) to \(outPath)\n"
+                            .utf8
+                    )
+                )
+            } catch {
+                FileHandle.standardError.write(
+                    Data("[evals] FAILED to write watchdog report: \(error)\n".utf8)
+                )
+            }
+        }
+        // `_exit` (not `exit`): skip atexit handlers — the wedged MLX/Metal
+        // runtime could hang during normal teardown, which would defeat the
+        // whole point. The report is already durably written above.
+        _exit(0)
+    }
 
     private static func runOne(
         _ testCase: EvalCase,
@@ -1169,15 +1391,51 @@ public enum EvalRunner {
         // like send_fax / place_trade) so the case actually runs. The agent
         // is torn down on every exit path via `defer`. Cases with no
         // `ensureToolsDisabled` keep using the active agent unchanged.
+        // Fine-grained phase trace for diagnosing a wedged capability_claims
+        // case (install/enable/run/judge/restore). Off by default to keep the
+        // stderr stream clean; set OSAURUS_EVALS_CC_PHASE_LOG=1 to surface it.
+        let ccPhaseLog = ProcessInfo.processInfo.environment["OSAURUS_EVALS_CC_PHASE_LOG"] == "1"
+        func ccPhase(_ p: String) {
+            guard ccPhaseLog else { return }
+            FileHandle.standardError.write(Data("[cc-phase] \(testCase.id) \(p)\n".utf8))
+        }
         let claimsAbsenceNames = testCase.fixtures.ensureToolsDisabled ?? []
-        let isolatedClaimsAgentId: UUID? =
-            claimsAbsenceNames.isEmpty
-            ? nil
-            : installCapabilityClaimsAgent(excluding: claimsAbsenceNames)
+        ccPhase("install-agent-begin")
+        // Stand up an isolated, general, auto-mode eval agent so the
+        // enabled-capabilities manifest is authoritative for BOTH sides of the
+        // suite:
+        //  - Absence cases (`ensureToolsDisabled`) get an allowlist that
+        //    EXCLUDES the forbidden names, so "you have no X" is provable.
+        //  - Positive cases (`enableTools` / `enableSkills` for a real
+        //    capability — e.g. the browser plugin) need the manifest to NAME
+        //    the enabled capability. The active Default agent is the
+        //    config-only persona: it is not in `.auto` mode, so it renders NO
+        //    capability manifest, and it is designed to disclaim non-config
+        //    work ("I only help configure Osaurus") — so it wrongly DENIES an
+        //    enabled browser capability that the model should confirm. A
+        //    fully-enabled auto-mode agent advertises the capability in the
+        //    manifest (the lean hot set still forces `capabilities_load` for
+        //    the act-on-it cases), so the model can honestly confirm/act.
+        // Fall back to the active agent only when the case sets up neither side
+        // (no fixtures to make authoritative).
+        let claimsPositiveCapability =
+            !(testCase.fixtures.enableTools?.isEmpty ?? true)
+            || !(testCase.fixtures.enableSkills?.isEmpty ?? true)
+        let isolatedClaimsAgentId: UUID?
+        if !claimsAbsenceNames.isEmpty {
+            isolatedClaimsAgentId = installCapabilityClaimsAgent(excluding: claimsAbsenceNames)
+        } else if claimsPositiveCapability {
+            isolatedClaimsAgentId = installCapabilityClaimsAgent(excluding: [])
+        } else {
+            isolatedClaimsAgentId = nil
+        }
+        ccPhase("install-agent-done")
         defer {
+            ccPhase("remove-agent-begin")
             if let isolatedClaimsAgentId {
                 removeEvalAgent(isolatedClaimsAgentId)
             }
+            ccPhase("remove-agent-done")
         }
         let resolvedAgentId = isolatedClaimsAgentId ?? AgentManager.shared.activeAgent.id
 
@@ -1211,22 +1469,49 @@ public enum EvalRunner {
             }
         }
 
+        ccPhase("enable-skills-begin")
         let priorSkillState = await applyEnableSkills(testCase.fixtures.enableSkills)
         let priorToolGrant = await applyEnableTools(
             testCase.fixtures.enableTools,
             agentId: resolvedAgentId
         )
+        ccPhase("enable-skills-done")
 
         let judgeModel = EvalJudgeModel.resolveAndWarnOnce(runModelId: modelId)
         let started = Date()
+        ccPhase("run-begin")
+        // Resolve `.ask` tool prompts WITHOUT a UI and WITHOUT executing the
+        // tool. capability_claims cases score the model's tool SELECTION and the
+        // honesty of its final answer — never the side effects of running a
+        // configure/agent WRITE tool. A tool-eager local model (Qwen) calls
+        // `.ask` tools (`osaurus_agent`, the `Osaurus Browser` plugin tools);
+        // the headless harness has no [Allow] button. Auto-APPROVING them (as
+        // `default_agent` intentionally does — it measures the configure surface
+        // executing) is wrong here: it let `osaurus_agent` really mutate global
+        // agent + scheduler state mid-eval, which deadlocked a later case's
+        // isolated-agent teardown (the suite hung partway through the FIRST
+        // multi-model matrix run; Apple Foundation skips these cases — tiny
+        // context strips tools — so prior single-model runs never exercised the
+        // `.ask` path). Auto-DENY instead: the call is still recorded BEFORE the
+        // gate runs, so `mustCallTools`/`mustNotCallTools`/`loadSkillFirst` still
+        // score selection and the judge still grades the final text; the model
+        // just gets a typed "denied by policy" envelope (the honest headless
+        // representation of "no human approved") and the loop continues — no
+        // hang, no 25s stall, no state mutation. The wall-clock bound stays as
+        // defense-in-depth for any non-`.ask` tool that blocks on a live service.
         let transcript = await CapabilityClaimsEvaluator.run(
             query: testCase.query,
             agentId: resolvedAgentId,
-            maxIterations: exp.maxIterations ?? 6
+            maxIterations: exp.maxIterations ?? 6,
+            toolExecutionTimeout: Self.capabilityClaimsToolExecutionTimeout,
+            autoApproveToolPrompts: false,
+            denyUnapprovedToolPrompts: true
         )
+        ccPhase("run-done judge-begin")
 
         var verdicts: [CapabilityClaimsJudgement] = []
         if transcript.error == nil, !exp.rubric.isEmpty {
+            await ensureJudgeProviderRoutable(judgeModel)
             verdicts = await CapabilityClaimsEvaluator.judge(
                 finalText: transcript.finalText,
                 conditions: exp.rubric,
@@ -1234,9 +1519,11 @@ public enum EvalRunner {
             )
         }
         let elapsed = Date().timeIntervalSince(started) * 1000
+        ccPhase("judge-done restore-begin")
 
         await restoreToolGrant(priorToolGrant, agentId: resolvedAgentId)
         await restoreSkillEnabledState(priorSkillState)
+        ccPhase("restore-done")
 
         // Score.
         var notes: [String] = []
@@ -1385,6 +1672,7 @@ public enum EvalRunner {
 
         var verdicts: [CapabilityClaimsJudgement] = []
         if transcript.error == nil, !rubric.isEmpty {
+            await ensureJudgeProviderRoutable(judgeModel)
             verdicts = await DefaultAgentConfigurationEvaluator.judge(
                 finalText: transcript.finalText,
                 conditions: rubric,
@@ -1621,6 +1909,26 @@ public enum EvalRunner {
         AgentManager.shared.updateEnabledToolNames(prior, for: agentId)
     }
 
+    /// Re-establish the ephemeral remote judge provider if a configuration
+    /// WRITE tool evicted it from the in-process registry mid-suite. Only the
+    /// `default_agent` surface executes provider/registry mutations
+    /// (`osaurus_provider` add/remove/update reload the provider registry),
+    /// which drops the memory-only ephemeral judge provider that
+    /// `EvalRemoteProviderBootstrap` connected at CLI start. The judge then
+    /// fails every subsequent grade with "model not registered", silently
+    /// FAILING correct cases (observed: 8 Qwen `default_agent` rubric cases
+    /// scored as FAIL purely because the judge provider was gone after the
+    /// first `osaurus_provider` call). `connectIfNeeded` is idempotent — it
+    /// no-ops while the judge model is still routable (the common path) and
+    /// only reconnects after an eviction — so calling it before each judge
+    /// batch self-heals the registry without touching the production
+    /// config-tool path. Self-judge (nil id / no provider prefix) needs
+    /// nothing and returns immediately.
+    private static func ensureJudgeProviderRoutable(_ judgeModel: String?) async {
+        guard let judgeModel, judgeModel.contains("/") else { return }
+        await EvalRemoteProviderBootstrap.connectIfNeeded(modelIds: [judgeModel])
+    }
+
     // MARK: - Capability search fixture seeding
 
     /// Insert each `SeedMethod` into the live `MethodDatabase` and
@@ -1717,4 +2025,111 @@ public enum EvalRunner {
         formatter.formatOptions = [.withInternetDateTime]
         return formatter.string(from: Date())
     }
+}
+
+/// First-resume-wins latch used by the per-case watchdog to race the case's
+/// work task against a wall-clock timer without the structured-concurrency
+/// "await all children" trap (a task group would block on the abandoned —
+/// possibly hung — work child). The first `resume(_:)` stores/forwards the
+/// value; later calls are no-ops, so the loser is simply dropped. Mirrors
+/// `SingleResume` in OsaurusCore (which is module-internal and not visible
+/// here).
+final class EvalWatchdogLatch<T: Sendable>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var resumed = false
+    private var stored: T?
+    private var continuation: CheckedContinuation<T, Never>?
+
+    var value: T {
+        get async {
+            await withCheckedContinuation { (cont: CheckedContinuation<T, Never>) in
+                lock.lock()
+                if let stored {
+                    lock.unlock()
+                    cont.resume(returning: stored)
+                } else {
+                    continuation = cont
+                    lock.unlock()
+                }
+            }
+        }
+    }
+
+    /// Returns `true` iff this call is the one that resolved the latch (the
+    /// "winner"); later calls are no-ops returning `false`. Lets the watchdog
+    /// log only when it actually won the race.
+    @discardableResult
+    func resume(_ value: T) -> Bool {
+        lock.lock()
+        if resumed {
+            lock.unlock()
+            return false
+        }
+        resumed = true
+        if let cont = continuation {
+            continuation = nil
+            lock.unlock()
+            cont.resume(returning: value)
+        } else {
+            stored = value
+            lock.unlock()
+        }
+        return true
+    }
+}
+
+/// Minimal thread-safe one-shot flag for cancelling the watchdog thread when
+/// the work task wins the race (so it exits its sleep loop promptly instead of
+/// running out the full timeout).
+final class EvalAtomicFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var flag = false
+    func set() {
+        lock.lock()
+        flag = true
+        lock.unlock()
+    }
+    var isSet: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return flag
+    }
+}
+
+/// Sendable scalar snapshot of a case, used by the watchdog thread to label the
+/// hung case + the cases blocked behind it without touching the non-Sendable
+/// `EvalCase`.
+struct EvalCaseDescriptor: Sendable {
+    let id: String
+    let label: String
+    let domain: String
+}
+
+/// Thread-safe, append-only collector of completed case rows. The case loop
+/// (main actor) appends each finished row; the watchdog thread snapshots it to
+/// build a complete report when it has to force-terminate a hung suite.
+final class EvalRowSink: @unchecked Sendable {
+    private let lock = NSLock()
+    private var rows: [EvalCaseReport] = []
+    func append(_ row: EvalCaseReport) {
+        lock.lock()
+        rows.append(row)
+        lock.unlock()
+    }
+    var snapshot: [EvalCaseReport] {
+        lock.lock()
+        defer { lock.unlock() }
+        return rows
+    }
+}
+
+/// Everything the watchdog thread needs to write a complete, honest report and
+/// exit when a case wedges the process. Sendable so it can cross into the OS
+/// thread closure.
+struct EvalWatchdogContext: Sendable {
+    let sink: EvalRowSink
+    let outPath: String?
+    let startedAt: String
+    let allDescriptors: [EvalCaseDescriptor]
+    let currentIndex: Int
 }

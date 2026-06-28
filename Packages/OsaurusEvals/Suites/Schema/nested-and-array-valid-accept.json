@@ -1,0 +1,34 @@
+{
+  "id": "schema.nested-and-array-valid-accept",
+  "domain": "schema",
+  "label": "schema • a fully-valid nested+array+enum+range object is accepted",
+  "query": "",
+  "notes": "The positive complement to the negative pins: a single well-formed call that exercises a nested object (`user` with its own required+enum), an array with an items schema (`tags`), and an inclusive numeric range (`count` in 0..10) all at once. Guards against an over-eager validator change that starts rejecting legitimate structured arguments.",
+  "fixtures": {},
+  "expect": {
+    "schema": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "user": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" },
+              "role": { "type": "string", "enum": ["admin", "user"] }
+            },
+            "required": ["name", "role"]
+          },
+          "tags": { "type": "array", "items": { "type": "string" } },
+          "count": { "type": "integer", "minimum": 0, "maximum": 10 }
+        },
+        "required": ["user"]
+      },
+      "arguments": {
+        "user": { "name": "Ada", "role": "admin" },
+        "tags": ["alpha", "beta"],
+        "count": 3
+      },
+      "expectValid": true
+    }
+  }
+}

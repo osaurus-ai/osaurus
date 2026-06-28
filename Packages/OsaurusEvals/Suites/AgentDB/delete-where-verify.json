@@ -1,0 +1,25 @@
+{
+  "id": "agentdb.delete-where-verify",
+  "domain": "agent_loop",
+  "label": "agentdb • conditional DELETE then report remaining rows",
+  "query": "Your agent database has a table logs(level TEXT). In a single statement, delete every row whose level is 'info'. Then tell me how many rows remain.",
+  "notes": "Destructive WHERE-scoped write: only the 'info' rows should go. dbState pins the post-run table (2 rows remain, 0 info, 2 error) so an unscoped DELETE (wiping the whole table) or a no-op fails; finalTextContains pins the remaining count.",
+  "fixtures": {
+    "agentCapabilities": { "dbEnabled": true },
+    "seedSql": [
+      "CREATE TABLE logs (level TEXT); INSERT INTO logs (level) VALUES ('info'),('info'),('info'),('info'),('error'),('error');"
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 10,
+      "mustCallTools": ["db_execute"],
+      "finalTextContains": ["2"],
+      "dbState": [
+        { "sql": "SELECT COUNT(*) FROM logs", "expectFirstValue": "2" },
+        { "sql": "SELECT COUNT(*) FROM logs WHERE level='info'", "expectFirstValue": "0" },
+        { "sql": "SELECT COUNT(*) FROM logs WHERE level='error'", "expectFirstValue": "2" }
+      ]
+    }
+  }
+}

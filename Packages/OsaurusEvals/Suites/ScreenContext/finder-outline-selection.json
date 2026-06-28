@@ -1,0 +1,20 @@
+{
+  "id": "screen_context.finder-outline-selection",
+  "domain": "screen_context",
+  "label": "Screen context • Finder file selection surfaces the selected filename",
+  "query": "(ambient capture)",
+  "notes": "Reuses the finder-selected-file scene to pin that a selection in a file outline surfaces the exact selected filename (the actionable signal: which file the user is looking at), with the Finder app gist, while the rest of the scene stays low-noise.",
+  "fixtures": {},
+  "expect": {
+    "screenContext": {
+      "fixture": "finder-selected-file.json",
+      "selectedTextContains": "Synthetic Strategy Brief.pdf",
+      "gistContains": ["In Finder"],
+      "mustContain": [
+        "In Finder",
+        "Selected text:",
+        "Synthetic Strategy Brief.pdf"
+      ]
+    }
+  }
+}

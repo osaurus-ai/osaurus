@@ -1,0 +1,14 @@
+{
+  "id": "request_validation.text-format-accepted",
+  "domain": "request_validation",
+  "label": "request_validation • response_format=text is accepted (no-op)",
+  "query": "",
+  "notes": "Pins the second supported response_format value: `text` is a no-op and must be accepted, just like `json_object`. Complements json-object-accepted so both supported types are locked against a future tightening that only special-cased json_object.",
+  "fixtures": {},
+  "expect": {
+    "requestValidation": {
+      "responseFormatType": "text",
+      "expectAccept": true
+    }
+  }
+}

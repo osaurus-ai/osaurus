@@ -278,12 +278,13 @@ Exit codes:
 
 ## Case schema
 
-Every case file shares a top-level shape: `id`, `domain`, optional `label` and `notes`, `query`, `fixtures`, `expect`. The `domain` field selects which runner branch handles the case and which `expect.<sub>` block is required. Thirteen domains exist today:
+Every case file shares a top-level shape: `id`, `domain`, optional `label` and `notes`, `query`, `fixtures`, `expect`. The `domain` field selects which runner branch handles the case and which `expect.<sub>` block is required. Fifteen domains exist today:
 
 | Domain | Hits LLM? | Runner branch | Required expectation block |
 |---|---|---|---|
 | `agent_loop` | yes | `runAgentLoopCase` | `expect.agentLoop` |
 | `capability_claims` | yes | `runCapabilityClaimsCase` | `expect.capabilityClaims` |
+| `default_agent` | yes | `runDefaultAgentCase` | `expect.defaultAgent` |
 | `capability_search` | no | `runCapabilitySearchCase` | `expect.capabilitySearch` |
 | `computer_use` | no | `runComputerUseCase` | `expect.computerUse` |
 | `computer_use_loop` | yes¹ | `runComputerUseLoopCase` | `expect.computerUseLoop` |
@@ -295,6 +296,7 @@ Every case file shares a top-level shape: `id`, `domain`, optional `label` and `
 | `prefix_hash` | no | `runPrefixHashCase` | `expect.prefixHash` |
 | `argument_coercion` | no | `runArgumentCoercionCase` | `expect.argumentCoercion` |
 | `request_validation` | no | `runRequestValidationCase` | `expect.requestValidation` |
+| `sandbox_diagnostics` | no | `runSandboxDiagnosticsCase` | `expect.sandboxDiagnostics` |
 
 ¹ `computer_use_loop` drives a live model by default, but a case that supplies `scriptedActions` runs **model-free** (deterministic, CI-safe) via the loop's `AgentStepProvider` seam.
 
@@ -377,9 +379,13 @@ Field notes:
 - `expect.capabilityClaims.loadSkillFirst` — `{ skill, beforeTools }` ordering check: a `capabilities_load` carrying `skill/<skill>` must precede the first call to any tool in `beforeTools`.
 - `expect.capabilityClaims.maxIterations` — cap on model round-trips (default 6). A run that hits the cap is flagged in the notes as a possible loop.
 
-The suite covers six scenarios under `Suites/CapabilityClaims/`: `confirm` (confirm an enabled-but-unloaded tool with zero tool calls), `discover` (reach for `capabilities_discover` instead of denying), `honest-absence` (attempt discovery, then honestly report the gap when it comes back empty), `impossible-but-distinct` (surface the real obstacle, not just capability absence), `skill-first` (load the governing skill before the tool group), `by-intent` (recognize a capability asked by intent rather than by name), and `no-spurious-discover` (the launder-the-id regression — confirm a manifest-listed capability without re-running `capabilities_discover`).
+The suite covers eleven scenarios under `Suites/CapabilityClaims/`: `confirm` (confirm an enabled-but-unloaded tool with zero tool calls), `discover` (acknowledge a manifest-listed capability instead of denying), `no-spurious-discover` (the launder-the-id regression — confirm a manifest-listed capability without re-running `capabilities_discover`), `impossible-but-distinct` (surface the real obstacle, not just capability absence), `no-overclaim-live-weather` (don't fabricate a live-data capability the manifest doesn't list), and the honest-absence family — `honest-absence`, `honest-absence-call`, `honest-absence-sms`, `honest-absence-payment`, `honest-absence-print`, `honest-absence-smart-home` — each of which pins that the model reports a genuinely missing capability honestly instead of pretending or reaching for an unrelated tool (the SMS case also guards the per-connection `send_message` / `read_messages` agent-channel tools so a model can't "fulfil" an SMS ask through a chat integration).
 
-The judge model defaults to the run `--model`; export `JUDGE_MODEL=...` to grade small-model output with a stronger evaluator.
+> **Why this suite measures claims, not actions.** `capability_claims` runs the real loop but **auto-denies tool execution** (a headless run has no approval surface; auto-allowing state-mutating tools risks a deadlock or real side effects). So the honest signal here is what the model *claims and loads*, not what it *does*. Cases that drove execution (open a page, fill a form) were removed: under auto-deny a model either loops on `capabilities_load` (REMOTE function-calling models, see the deferred-schema note below) or stalls, which is a harness artifact, not a capability signal. The execution behaviour those cases targeted — `capabilities_load` a tool mid-run and then *call* it — is covered where execution is actually allowed, by `agent_loop`'s `capabilities-load-midrun` case.
+>
+> **Positive cases run against an isolated `auto`-mode agent.** A case that enables a capability (`enableTools` / `enableSkills` / `requirePlugins`) is scored against a fresh isolated agent whose enabled set advertises that capability in the system-prompt manifest — not the default configuration-agent persona, which honestly disclaims non-config abilities and would (correctly, for *it*) deny the browser. This keeps "do you have X?" a measure of manifest grounding, not of which persona happened to answer.
+
+The judge model defaults to the run `--model`; export `JUDGE_MODEL=...` to grade small-model output with a stronger evaluator. The runner re-ensures the ephemeral remote judge provider before each judge call, so a suite that runs a provider-mutating config tool mid-run (e.g. `default_agent`'s `osaurus_provider`, which reloads the provider registry from disk and evicts the in-memory judge) can't silently fall back to an unresolved judge.
 
 ### `agent_loop` domain
 

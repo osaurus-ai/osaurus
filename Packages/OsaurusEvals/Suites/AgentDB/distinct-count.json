@@ -1,0 +1,24 @@
+{
+  "id": "agentdb.distinct-count",
+  "domain": "agent_loop",
+  "label": "agentdb • count distinct values, not rows",
+  "query": "Your agent database has a table events(tag TEXT) with duplicate tags. How many DISTINCT tags are there?",
+  "notes": "Precision read: the trap is reporting the row count (6) instead of the distinct count (3). finalTextContains pins 3; dbState confirms the seed has 6 rows but 3 distinct tags, so a COUNT(*) instead of COUNT(DISTINCT ...) fails.",
+  "fixtures": {
+    "agentCapabilities": { "dbEnabled": true },
+    "seedSql": [
+      "CREATE TABLE events (tag TEXT); INSERT INTO events (tag) VALUES ('a'),('a'),('b'),('c'),('c'),('c');"
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 8,
+      "mustCallTools": ["db_query"],
+      "finalTextContains": ["3"],
+      "dbState": [
+        { "sql": "SELECT COUNT(*) FROM events", "expectFirstValue": "6" },
+        { "sql": "SELECT COUNT(DISTINCT tag) FROM events", "expectFirstValue": "3" }
+      ]
+    }
+  }
+}

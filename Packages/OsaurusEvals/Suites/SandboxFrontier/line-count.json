@@ -1,0 +1,17 @@
+{
+  "id": "sandbox.line-count",
+  "domain": "agent_loop",
+  "label": "sandbox • create a file, count its lines, record the count",
+  "query": "In your sandbox home, write notes.txt with exactly four lines: apple, banana, cherry, date (one per line). Then use sandbox_exec to count the number of lines and write just the count to count.txt in your home directory. Verify by reading count.txt before finishing.",
+  "notes": "Two-step authoring + measurement in the sandbox: build a file, then derive a fact about it via real execution. The count (4) is pinned via the host mount so a miscount or a skipped run fails. SKIPS without a working sandbox VM.",
+  "fixtures": { "sandbox": {} },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 14,
+      "mustCallTools": ["sandbox_write_file", "sandbox_exec"],
+      "sandboxFiles": [
+        { "path": "count.txt", "contains": "4" }
+      ]
+    }
+  }
+}

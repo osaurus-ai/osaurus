@@ -1,0 +1,20 @@
+{
+  "id": "subagent.scripted-handoff-and-recursion",
+  "domain": "subagent",
+  "label": "Subagent • residency handoff composes with the recursion guard",
+  "query": "A scripted model-swapping sub-agent that also tries to nest another sub-agent.",
+  "notes": "Model-free. The scripted kind sets needsHandoff=true (so the run must wrap through the residency handoff middleware) AND attempts a nested sub-agent mid-run (so the unified recursion guard must refuse it). Pins that the two middlewares COMPOSE: the outer run still succeeds, the handoff wrapped it, and the nested attempt was refused — the combination scripted-handoff-wraps and scripted-recursion-guard each prove in isolation.",
+  "fixtures": {},
+  "expect": {
+    "subagent": {
+      "lane": "scripted",
+      "decision": "allow",
+      "needsHandoff": true,
+      "recurse": true,
+      "expectSuccess": true,
+      "expectEnvelopeKind": "success",
+      "expectHandoffWrapped": true,
+      "expectNestedRefused": true
+    }
+  }
+}

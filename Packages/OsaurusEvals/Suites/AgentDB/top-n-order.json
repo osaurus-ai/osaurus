@@ -1,0 +1,26 @@
+{
+  "id": "agentdb.top-n-order",
+  "domain": "agent_loop",
+  "label": "agentdb • ORDER BY + LIMIT to find the runner-up",
+  "query": "Your agent database has a table scores(player TEXT, points INTEGER). List the top 2 players by points in descending order, then tell me the name of the runner-up (the second-highest).",
+  "notes": "Ranking read: requires ORDER BY points DESC + LIMIT, then picking the SECOND row. 'dan' (40) leads, 'ben' (30) is the runner-up. toolUsageAudit pins that the model actually used a limit rather than slurping the table; finalTextContains pins the runner-up name.",
+  "fixtures": {
+    "agentCapabilities": { "dbEnabled": true },
+    "seedSql": [
+      "CREATE TABLE scores (player TEXT, points INTEGER); INSERT INTO scores (player, points) VALUES ('amy',10),('ben',30),('cat',20),('dan',40);"
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 8,
+      "mustCallTools": ["db_query"],
+      "finalTextContains": ["ben"],
+      "toolUsageAudit": [
+        { "tool": "db_query", "argsMustContain": "limit" }
+      ],
+      "dbState": [
+        { "sql": "SELECT player FROM scores ORDER BY points DESC LIMIT 1", "expectFirstValue": "dan" }
+      ]
+    }
+  }
+}

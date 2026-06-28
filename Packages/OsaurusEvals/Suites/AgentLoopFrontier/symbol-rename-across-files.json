@@ -1,0 +1,27 @@
+{
+  "id": "frontier.symbol-rename-across-files",
+  "domain": "agent_loop",
+  "label": "frontier • rename a function across its definition and call sites",
+  "query": "Rename the function 'add' to 'sum_two' everywhere it appears across mathutil.py and main.py — the definition and every call site — keeping behavior identical. Then make sure 'python3 main.py' still runs.",
+  "notes": "Cross-file refactor lane: a rename is only correct if BOTH the definition and the importing call site change together. The gates assert main.py still runs, the renamed function computes correctly, and the old 'def add(' is gone — so a half rename (definition only) breaks the import and fails.",
+  "fixtures": {
+    "workspaceFiles": [
+      { "path": "mathutil.py", "contents": "def add(a, b):\n    return a + b\n" },
+      { "path": "main.py", "contents": "from mathutil import add\n\nprint(add(2, 3))\n" }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 14,
+      "files": [
+        { "path": "mathutil.py", "contains": "def sum_two" },
+        { "path": "main.py", "contains": "sum_two" }
+      ],
+      "commands": [
+        { "command": "python3 main.py", "expectExitCode": 0 },
+        { "command": "python3 -c \"from mathutil import sum_two; assert sum_two(2, 3) == 5\"", "expectExitCode": 0 },
+        { "command": "! grep -q 'def add(' mathutil.py", "expectExitCode": 0 }
+      ]
+    }
+  }
+}

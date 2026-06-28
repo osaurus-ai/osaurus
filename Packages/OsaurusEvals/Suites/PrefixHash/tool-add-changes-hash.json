@@ -1,0 +1,19 @@
+{
+  "id": "prefix_hash.tool-add-changes-hash",
+  "domain": "prefix_hash",
+  "label": "prefix_hash • adding a tool changes the prefix hash",
+  "query": "",
+  "notes": "Inequality pin on the tool axis (complements tool-order-invariant, which proves REORDER is stable). The prefix hash keys the KV-cache prefix, so adding a tool to the set MUST change the hash — otherwise a cached prefix built without the new tool could be reused after the tool schema grew.",
+  "fixtures": {},
+  "expect": {
+    "prefixHash": {
+      "systemContent": "You are a helpful assistant.",
+      "toolNames": ["search", "browse"],
+      "compareTo": {
+        "systemContent": "You are a helpful assistant.",
+        "toolNames": ["search", "browse", "calc"]
+      },
+      "expectEqual": false
+    }
+  }
+}

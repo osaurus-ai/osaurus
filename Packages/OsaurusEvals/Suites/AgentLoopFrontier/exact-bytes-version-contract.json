@@ -1,0 +1,17 @@
+{
+  "id": "frontier.exact-bytes-version-contract",
+  "domain": "agent_loop",
+  "label": "frontier • produce a file with exact bytes (no extra prose)",
+  "query": "Create a file named VERSION whose entire contents are the three characters 1.0 followed by a single trailing newline — nothing else, no comments, no extra lines.",
+  "notes": "Byte-contract lane: scores exact output discipline. equals pins the file to '1.0\\n' so any extra prose, a missing newline, or a double newline fails. Small/chatty models that decorate file output are caught here.",
+  "fixtures": {},
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 6,
+      "mustCallTools": ["file_write"],
+      "files": [
+        { "path": "VERSION", "equals": "1.0\n" }
+      ]
+    }
+  }
+}

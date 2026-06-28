@@ -1,0 +1,15 @@
+{
+  "id": "argument_coercion.bool-one-string-true",
+  "domain": "argument_coercion",
+  "label": "coercion • the string \"1\" coerces to true",
+  "query": "",
+  "notes": "Pins the numeric-string positive vocabulary: \"1\" shares the true branch with \"true\"/\"yes\". Complements bool-no (\"no\" -> false) and bool-rejects-arbitrary-string (\"maybe\" -> nil) so the whole string switch is locked.",
+  "fixtures": {},
+  "expect": {
+    "argumentCoercion": {
+      "helper": "bool",
+      "value": "1",
+      "expect": true
+    }
+  }
+}

@@ -144,6 +144,11 @@ struct MasterKeyExistsGuardTests {
 /// The probe runs once per process. Result is cached in this `let`.
 private let keychainAvailable: Bool = {
     if isContinuousIntegrationEnvironment() { return false }
+    // Under OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1, `MasterKey` deliberately
+    // no-ops every read/write/delete (the documented hermetic contract), so the
+    // overwrite-guard semantics this suite asserts don't apply — skip it rather
+    // than fail on the intentional no-ops.
+    if KeychainQueryHelpers.disablesKeychainForProcess { return false }
     return canProbeMasterKeyWritePath()
 }()
 

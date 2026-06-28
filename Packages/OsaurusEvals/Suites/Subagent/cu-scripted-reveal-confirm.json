@@ -1,0 +1,31 @@
+{
+  "id": "subagent.cu-scripted-reveal-confirm",
+  "domain": "subagent",
+  "label": "Subagent • computer_use through host (scripted reveal then confirm)",
+  "query": "Open the options and confirm.",
+  "notes": "Model-free. Multi-step reveal through the real computer_use host: the first scripted click reveals a hidden Confirm button, the second clicks it. Targets are by describe (label substring) so mark renumbering across the reveal can't break the script. Asserts host parity (success envelope / computer_use result kind / CU feed kinds) AND the revealed control was actually clicked and flipped status.",
+  "fixtures": {},
+  "expect": {
+    "subagent": {
+      "lane": "computer_use",
+      "app": "Dialog",
+      "maxSteps": 8,
+      "elements": [
+        { "id": "showopts", "role": "button", "label": "Show Options", "onClick": { "reveal": ["confirmbtn"] } },
+        { "id": "confirmbtn", "role": "button", "label": "Confirm", "hidden": true, "onClick": { "setValues": [{ "id": "status", "value": "confirmed" }] } },
+        { "id": "status", "role": "statictext", "label": "Status", "value": "pending" }
+      ],
+      "scriptedActions": [
+        "{\"verb\":\"click\",\"target\":{\"describe\":\"Show Options\"},\"note\":\"reveal the confirm control\"}",
+        "{\"verb\":\"click\",\"target\":{\"describe\":\"Confirm\"},\"note\":\"confirm\"}",
+        "{\"verb\":\"done\",\"reason\":\"confirmed\"}"
+      ],
+      "expectSuccess": true,
+      "expectEnvelopeKind": "success",
+      "expectResultKind": "computer_use",
+      "expectFeedKinds": ["perceive", "act", "outcome"],
+      "successValues": [{ "id": "status", "equals": "confirmed" }],
+      "successClicked": ["showopts", "confirmbtn"]
+    }
+  }
+}

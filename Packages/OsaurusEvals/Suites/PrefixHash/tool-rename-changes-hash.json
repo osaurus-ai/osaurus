@@ -1,0 +1,19 @@
+{
+  "id": "prefix_hash.tool-rename-changes-hash",
+  "domain": "prefix_hash",
+  "label": "prefix_hash • renaming a tool changes the prefix hash",
+  "query": "",
+  "notes": "Same cardinality, different identity: `search` vs `web_search` is a different tool surface to the tokenizer, so the prefix hash must differ. Guards a rename from silently reusing a stale cached prefix keyed on the old name.",
+  "fixtures": {},
+  "expect": {
+    "prefixHash": {
+      "systemContent": "You are a helpful assistant.",
+      "toolNames": ["search"],
+      "compareTo": {
+        "systemContent": "You are a helpful assistant.",
+        "toolNames": ["web_search"]
+      },
+      "expectEqual": false
+    }
+  }
+}

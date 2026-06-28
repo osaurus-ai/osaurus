@@ -1,0 +1,21 @@
+{
+  "id": "computer_use.perapp-override-stricter",
+  "domain": "computer_use",
+  "label": "computer use • a per-app override tightens an otherwise-autonomous policy",
+  "query": "Open the Docs tab in Safari under an autonomous global policy with a cautious Safari override.",
+  "notes": "Per-app policy resolution: a global autonomous policy would auto-run a navigation, but a per-app cautious override for Safari forces that same navigation to confirm. Pins that per-app overrides are honored (and can be stricter than the global stance).",
+  "fixtures": {},
+  "expect": {
+    "computerUse": {
+      "verb": "click",
+      "describe": "the Docs tab",
+      "resolvedRole": "AXLink",
+      "resolvedLabel": "Docs",
+      "appName": "Safari",
+      "preset": "autonomous",
+      "perApp": { "Safari": "cautious" },
+      "expectEffect": "navigate",
+      "expectDisposition": "confirm"
+    }
+  }
+}
