@@ -942,6 +942,14 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// pin isolation (the Default agent must never reach
         /// `capabilities_discover` / `capabilities_load`, or folder / sandbox /
         /// db / memory tools) and out-of-scope honesty.
+        ///
+        /// One documented exception, applied in the runner (not here): on a
+        /// model that prefers a compact prompt, the Default agent defers its
+        /// per-domain configure write tools and lazy-loads the needed one via
+        /// `capabilities_load tool/<write>`. The scorer exempts a
+        /// `capabilities_load` offender there IFF the run model is compact and
+        /// every mid-session load was a configure write — `capabilities_discover`
+        /// and loads on large models stay flagged.
         public let mustNotCallTools: [String]?
         /// Per-call argument assertions. Each matcher requires AT LEAST ONE
         /// call to its `tool` whose parsed arguments satisfy every

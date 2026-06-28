@@ -1422,7 +1422,30 @@ public enum EvalRunner {
             }
         }
         if let mustNot = exp.mustNotCallTools {
-            let offenders = mustNot.filter { calledSet.contains($0) }
+            var offenders = mustNot.filter { calledSet.contains($0) }
+            // Compact-model exemption for `capabilities_load`: on a model that
+            // prefers a compact prompt (≤20B / small-window), the Default agent
+            // DEFERS its per-domain configure write tools from the turn-1 schema
+            // and lazy-loads the one it needs via `capabilities_load tool/<write>`
+            // — the intended prefill-reduction path, not an isolation breach. So
+            // drop `capabilities_load` from the offenders, but ONLY when the run
+            // model is actually compact AND every mid-session load was a configure
+            // WRITE. A load on a large model (writes load directly there), a load
+            // of any non-configure tool, or any `capabilities_discover` stays
+            // flagged.
+            if offenders.contains("capabilities_load"),
+                ContextSizeResolver.resolve(modelId: modelId).prefersCompactPrompt,
+                !transcript.loadedToolNames.isEmpty,
+                transcript.loadedToolNames.allSatisfy(
+                    ToolRegistry.configureWriteToolNames.contains
+                )
+            {
+                offenders.removeAll { $0 == "capabilities_load" }
+                notes.append(
+                    "capabilities_load exempted (compact model loaded configure writes: "
+                        + "[\(transcript.loadedToolNames.joined(separator: ","))])"
+                )
+            }
             if offenders.isEmpty {
                 notes.append("mustNotCallTools ok")
             } else {
