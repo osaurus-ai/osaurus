@@ -427,40 +427,39 @@ public enum SubagentJobEvaluator {
         name: String,
         _ body: @Sendable () async -> T
     ) async -> T {
-        let state:
-            (createdAgentId: UUID?, priorConfig: SubagentConfiguration, configChanged: Bool) =
-                await MainActor.run {
-                    let priorConfig = SubagentConfigurationStore.snapshot()
-                    var createdAgentId: UUID? = nil
-                    let exists = AgentManager.shared.agents.contains {
-                        $0.name.caseInsensitiveCompare(name) == .orderedSame
-                    }
-                    if !exists {
-                        let agent = Agent(
-                            id: UUID(),
-                            name: name,
-                            description: "Seeded by OsaurusEvals for the spawn lane; safe to delete.",
-                            systemPrompt:
-                                "You are a concise sub-agent. Answer the task directly and follow any "
-                                + "formatting instructions exactly. Do not add preamble or commentary."
-                        )
-                        AgentStore.save(agent)
-                        createdAgentId = agent.id
-                    }
-                    var updated = priorConfig
-                    if !priorConfig.isAgentSpawnable(name) {
-                        updated.spawnableAgentNames = priorConfig.spawnableAgentNames + [name]
-                    }
-                    // Enable the local handoff switch so a LOCAL run model can
-                    // spawn the local persona (the chat model unloads to make
-                    // room). Default is on; this only flips a host that disabled
-                    // it, and is restored afterward.
-                    updated.localTextDelegationEnabled = true
-                    let configChanged = updated != priorConfig
-                    if configChanged { SubagentConfigurationStore.save(updated) }
-                    if createdAgentId != nil { AgentManager.shared.refresh() }
-                    return (createdAgentId, priorConfig, configChanged)
+        let state: (createdAgentId: UUID?, priorConfig: SubagentConfiguration, configChanged: Bool) =
+            await MainActor.run {
+                let priorConfig = SubagentConfigurationStore.snapshot()
+                var createdAgentId: UUID? = nil
+                let exists = AgentManager.shared.agents.contains {
+                    $0.name.caseInsensitiveCompare(name) == .orderedSame
                 }
+                if !exists {
+                    let agent = Agent(
+                        id: UUID(),
+                        name: name,
+                        description: "Seeded by OsaurusEvals for the spawn lane; safe to delete.",
+                        systemPrompt:
+                            "You are a concise sub-agent. Answer the task directly and follow any "
+                            + "formatting instructions exactly. Do not add preamble or commentary."
+                    )
+                    AgentStore.save(agent)
+                    createdAgentId = agent.id
+                }
+                var updated = priorConfig
+                if !priorConfig.isAgentSpawnable(name) {
+                    updated.spawnableAgentNames = priorConfig.spawnableAgentNames + [name]
+                }
+                // Enable the local handoff switch so a LOCAL run model can
+                // spawn the local persona (the chat model unloads to make
+                // room). Default is on; this only flips a host that disabled
+                // it, and is restored afterward.
+                updated.localTextDelegationEnabled = true
+                let configChanged = updated != priorConfig
+                if configChanged { SubagentConfigurationStore.save(updated) }
+                if createdAgentId != nil { AgentManager.shared.refresh() }
+                return (createdAgentId, priorConfig, configChanged)
+            }
         let result = await body()
         await MainActor.run {
             if let id = state.createdAgentId {

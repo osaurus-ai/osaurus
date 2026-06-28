@@ -18,6 +18,17 @@
 //  coordinator stays the residency authority for images and the host only owns
 //  the guard, feed, result, and telemetry.
 //
+//  Model divergence (deliberate): `image` is the ONE kind that does NOT use the
+//  standard per-agent model picker. Its capability sets
+//  `supportsModelOverride = false`, so it is NOT a `SubagentModelResolution`
+//  client and AgentsView does not render the shared override row for it. Instead
+//  it owns a dedicated model system — separate gen vs edit ids
+//  (`imageGenerationModelId` / `imageEditModelId`), resolved via
+//  `SubagentToolVisibility.effectiveImageModel`, with their own readiness +
+//  "first ready" fallback and the coordinator-owned residency above. The
+//  chat-driven kinds (computer_use, spawn, sandbox_reduce) instead share
+//  `subagentModelOverrides` → `effectiveSubagentModel` → `SubagentModelResolution`.
+//
 
 import Combine
 import Foundation

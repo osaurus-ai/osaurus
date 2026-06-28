@@ -575,6 +575,23 @@ extension Array where Element == ModelPickerItem {
         filter(\.isImageEditDelegateCandidate)
     }
 
+    /// Chat-capable candidates for the per-agent subagent model picker
+    /// (`computer_use` / `sandbox_reduce` / `spawn` override). Filters via
+    /// `isLikelyChatCapable` so embedding / image-only items are excluded.
+    var chatModelCandidates: [ModelPickerItem] {
+        filter(\.isLikelyChatCapable)
+    }
+
+    /// The chat candidate matching a stored subagent override id, or `nil` when
+    /// the id is unset/blank or no longer present (drives the picker's stale
+    /// "(unavailable)" tag).
+    func subagentChatModelCandidate(id: String?) -> ModelPickerItem? {
+        guard let id else { return nil }
+        let trimmed = id.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        return chatModelCandidates.first { $0.id == trimmed }
+    }
+
     func subagentModelCandidate(
         id: String?,
         kind: SubagentModelKind

@@ -23,6 +23,46 @@ This file is the spec + wiring contract for the current build.
 > default→global / custom→`AgentSettings`). The in-prompt first-use image-model picker is
 > gone (model lives in the tab). §2/§4/§6 below reflect this.
 
+> **Standard sub-agent model picker (2026-06-27).** Picking the model a sub-agent
+> runs on is now a **standard axis** of the framework, not a per-kind special case.
+> A per-capability override — `subagentModelOverrides[capabilityId]` on
+> `AgentSettings` (custom agents) / `SubagentConfiguration` (main chat), a
+> `[capabilityId: modelId]` map mirroring `subagentPermissions` — supersedes the
+> kind's default model source. One resolver reads it:
+> `SubagentToolVisibility.effectiveSubagentModel(capabilityId:isDefault:config:settings:)`
+> (blank/absent → inherit). Scope: `computer_use` + `sandbox_reduce` get new
+> pickers; `spawn` gets an optional override that supersedes the persona's model;
+> `image` keeps its own gen/edit pickers.
+>
+> **Hardening (2026-06-27).** The three chat-driven kinds now share ONE
+> resolution path, `Subagent/SubagentModelResolution.swift`, instead of repeating
+> the lookup/fallback/residency block inline:
+> - **Precedence** (`pickModel`, pure): eval seam > an *available* per-agent
+>   override > the kind default; blank/whitespace entries are treated as absent.
+> - **Availability fallback** (`availableOverride`, `@MainActor`): a stored
+>   override that is no longer installed locally / not in the
+>   `ModelPickerItemCache` resolves to `nil` so the kind inherits its default
+>   instead of hard-failing on a deleted model (a cold cache trusts the id).
+> - **Eval-bypasses-residency invariant**: when the eval seam forces a model the
+>   decision is always `(isLocal: false, plan: .none)`, so a deterministic lane
+>   never depends on live GPU residency.
+> - **Residency**: it then calls the shared residency layer
+>   (`Subagent/SubagentResidency.swift`) — when the resolved model is a DIFFERENT
+>   local bundle than the resident chat model it unloads/reloads exactly like
+>   `spawn` (reject-before-evict if Local Orchestrator Handoff is off).
+>
+> The picker is **registry-driven**: `SubagentCapability.supportsModelOverride`
+> (true for `computer_use` / `spawn` / `sandbox_reduce`; false for `image`) makes
+> AgentsView render the standard override row automatically, with the empty-tag
+> label derived from `modelSource` ("Use persona's model" for `spawn`, else
+> "Inherit parent model"). A new chat-driven kind gets a picker by only flipping
+> the flag. `image` sets it false because it owns its own model system (separate
+> gen/edit ids via `effectiveImageModel`, readiness + "first ready" fallback,
+> coordinator-owned residency) and is NOT a `SubagentModelResolution` client.
+> Pickers live in each agent's **Sub-agents** tab (`sandbox_reduce` via a
+> non-toggle "Investigation" panel shown when the sandbox is on). §1's table + the
+> `modelSource` note below reflect this.
+
 > **No master switch + no Spawn tab (2026-06-26, supersedes every "master switch /
 > `agentDelegationEnabled` / global enable / Settings → Spawn tab" reference below,
 > including §2's gate #1 and §4's `agentDelegationExcludedToolNames`).** The global
@@ -52,19 +92,23 @@ result → defer-cleanup):
 
 | Kind | Tool | Runner | Returns | `modelSource` → handoff |
 |------|------|--------|---------|--------------------------|
-| `TextSubagentKind` | `spawn` | `AgentSubagentRunner` → `AgentToolLoop` on a persona's model | text digest | `.persona` — a local persona model unloads/reloads the local orchestrator (the kind's `makeHandoff()` vends a `ResidencyHandoff`) |
+| `TextSubagentKind` | `spawn` | `AgentSubagentRunner` → `AgentToolLoop` on a persona's model | text digest | `.persona` default (+ optional `spawn` override); a DIFFERENT local model unloads/reloads the local orchestrator via the shared `SubagentResidency` layer |
 | `ImageSubagentKind` | `image` | `NativeImageJobCoordinator` → `ImageGenerationService` (vMLXFlux); `source_paths` ⇒ edit | artifact | `.dedicatedConfigured` — the coordinator owns image-model residency (kind keeps the passthrough default) |
-| `ComputerUseKind` | `computer_use` | `ComputerUseLoop` (+ per-action confirm gate) | summary | `.inheritsParent` — no swap (passthrough) |
-| `SandboxReduceKind` | `sandbox_reduce` | `AgentToolLoop` with a read/search/exec allowlist | digest | `.inheritsParent` — no swap (passthrough) |
+| `ComputerUseKind` | `computer_use` | `ComputerUseLoop` (+ per-action confirm gate) | summary | `.inheritsParent` default (+ optional `computer_use` override); a DIFFERENT local model unloads/reloads via the shared `SubagentResidency` layer |
+| `SandboxReduceKind` | `sandbox_reduce` | `AgentToolLoop` with a read/search/exec allowlist | digest | `.inheritsParent` default (+ optional `sandbox_reduce` override); a DIFFERENT local model unloads/reloads via the shared `SubagentResidency` layer |
 | privacy loop · code exec · browser · … | — | their own kind | their result | future |
 
-> **`modelSource` axis.** A kind declares how it resolves the model it runs:
-> `.dedicatedConfigured` (own configured default + coordinator-owned residency),
-> `.persona` (a chosen persona's local/remote model; the kind runs the residency
-> handoff), or `.inheritsParent` (reuses the parent agent's model, no residency
-> change). It documents the local-vs-remote axis a future dedicated model-backed
-> kind (e.g. an AppleScript generator) slots into, and matches whether the kind
-> overrides `makeHandoff()`.
+> **`modelSource` axis (the DEFAULT source, not the final model).** A kind declares
+> how it DEFAULTS to sourcing its model: `.dedicatedConfigured` (own configured
+> default + coordinator-owned residency), `.persona` (a chosen persona's
+> local/remote model), or `.inheritsParent` (reuses the parent agent's model). It
+> documents the local-vs-remote axis a future dedicated model-backed kind (e.g. an
+> AppleScript generator) slots into. The **resolved** model is now override-aware
+> (`effectiveSubagentModel` > the `modelSource` default), and the handoff is driven
+> by that resolved model through the shared `SubagentResidency` layer — NOT by the
+> static `modelSource`. So `computer_use` / `sandbox_reduce` keep `.inheritsParent`
+> (their default, preserving the registry assertions) yet now vend a
+> `ResidencyHandoff` when an override picks a different local model.
 
 Reuse, don't reinvent: `AgentToolLoop` (`Services/Chat/AgentToolLoop.swift`),
 `sandbox_reduce` (`docs/REDUCTION_SUBAGENT.md`), Computer Use Subagent (PR #1578).
@@ -143,21 +187,47 @@ restore-on-failure (orchestrator never left unloaded).
   descriptor are one value. (`needsHandoff` is gone — intent is the descriptor's
   `modelSource`, and the actual swap is whether the kind overrides `makeHandoff()`.)
 - **`Subagent/ResidencyHandoff.swift`** — the optional handoff middleware
-  (`SubagentHandoff`); only model-swapping kinds override `makeHandoff()` to vend a
-  real `ResidencyHandoff` (today `spawn`, via its `.persona` model source). It builds
-  on `Services/AgentDelegation/ChatResidencyHandoff.swift` (wait-idle → unload
-  resident chat models → memoryPreflight → reload). Kinds that keep the
-  `PassthroughHandoff` default (`computer_use`, `sandbox_reduce`, and `image` —
-  whose coordinator owns its own residency) skip it.
+  (`SubagentHandoff`); model-swapping kinds override `makeHandoff()` to vend a real
+  `ResidencyHandoff`. Today every chat-driven kind (`spawn`, `computer_use`,
+  `sandbox_reduce`) can, because the model is override-aware. It builds on
+  `Services/AgentDelegation/ChatResidencyHandoff.swift` (wait-idle → unload resident
+  chat models → memoryPreflight → reload). A kind vends `PassthroughHandoff` when no
+  swap is needed (parent/persona model, a remote override, or the same local model
+  already resident); `image` keeps the passthrough default (its coordinator owns
+  image-model residency).
+- **`Subagent/SubagentResidency.swift`** — the **shared residency decision** every
+  chat-driven kind uses (extracted from `TextSubagentKind`'s old inline block). A
+  pure `decidePlan(...)` (no `ModelRuntime`/`ModelManager`, so unit-testable with no
+  GPU) encodes the control flow — remote ⇒ none, same-as-resident ⇒ none,
+  different-local + handoff-off ⇒ `throw .denied` (reject-before-evict), different-
+  local + handoff-on ⇒ unload plan — and a live `resolve(...)` wrapper reads the
+  installed bundle + resident chat models and feeds it. `handoff(for:)` maps the
+  resolved plan onto the middleware (a real `ResidencyHandoff` or `PassthroughHandoff`).
+- **`Subagent/SubagentModelResolution.swift`** — the **shared model-resolution
+  path** for the chat-driven kinds (`spawn`, `computer_use`, `sandbox_reduce`), so
+  they no longer repeat the override-lookup → default → residency block inline. A
+  pure `pickModel(eval, availableOverride, default)` (eval > available override >
+  default, blanks-as-absent; unit-testable), a `@MainActor availableOverride(_:)`
+  that drops a stored override that's no longer installed / not in
+  `ModelPickerItemCache` (cold cache ⇒ trust the id) so a deleted model gracefully
+  inherits the default, and a live `resolve(...)` that folds in the per-agent
+  override + the **eval-bypasses-residency** invariant (eval seam ⇒
+  `(isLocal:false, plan:.none)`) then calls `SubagentResidency.resolve`. Returns
+  `(model, decision)`; the kind stores `decision.plan` for `makeHandoff()`. `image`
+  is NOT a client (own model system).
 - **`Subagent/SubagentFeed.swift`** — `SubagentFeed` / `SubagentActivityEvent` /
   `SubagentFeedRegistry` / `SubagentInterruptCenter`: one live progress + interrupt
   surface for all kinds (text spawn included). `NativeToolCallGroupView` binds it.
 - **`Subagent/SubagentCapabilityRegistry.swift`** — the per-kind `SubagentCapability`
   descriptor (SSOT): `id` + `toolNames` + `gate` (+ `perAgentFlag`) + `modelSource` +
-  `displayLabel`/`iconName` + `guidance*`. Drives `resolveTools`/`ToolRegistry`
-  gating, the AgentsView per-agent toggle, the feed header + tool chip, and the
-  prompt guidance loop, plus the `SubagentToolVisibility` resolver shared by the
-  composer and the HTTP surface.
+  `supportsModelOverride` + `displayLabel`/`iconName` + `guidance*`. Drives
+  `resolveTools`/`ToolRegistry` gating, the AgentsView per-agent toggle + the
+  registry-driven model-override row (`supportsModelOverride`; `capability(forPerAgentFlag:)`
+  maps a toggle to its descriptor), the feed header + tool chip, and the prompt
+  guidance loop, plus the `SubagentToolVisibility` resolver shared by the composer
+  and the HTTP surface. `supportsModelOverride` is true for `computer_use` / `spawn`
+  / `sandbox_reduce` and false for `image` (which owns its own gen/edit model
+  system, so it is not a `SubagentModelResolution` client).
 
 ### Dispatch / runners
 - **`Tools/SpawnTool.swift`** — the `spawn(agent, input)` tool → `TextSubagentKind`.
@@ -167,8 +237,9 @@ restore-on-failure (orchestrator never left unloaded).
   prompt/model/tools → compact envelope. Used by `TextSubagentKind` (`local_delegate`
   is gone — its body lived here and is now spawn's only path).
 - **`Tools/SandboxReduceTool.swift`** — the `sandbox_reduce` tool → `SandboxReduceKind`
-  (read/search/exec allowlist on `AgentToolLoop`, `modelSource = .inheritsParent` →
-  passthrough handoff).
+  (read/search/exec allowlist on `AgentToolLoop`, `modelSource = .inheritsParent`
+  default + optional `sandbox_reduce` override → shared `SubagentResidency` handoff;
+  the eval `modelOverride` seam keeps the prior passthrough).
 - `Services/Chat/AgentToolLoop.swift` — the bounded loop driver (reused).
 
 ### Image kind (engine-specific, same handoff/progress)
@@ -182,9 +253,11 @@ restore-on-failure (orchestrator never left unloaded).
 
 ### Computer-use kind
 - `ComputerUse/Tool/ComputerUseTool.swift` + `ComputerUse/Loop/ComputerUseLoop.swift`
-  → `ComputerUseKind` (`modelSource = .inheritsParent` → passthrough handoff, host
-  permission `.auto`; keeps its own per-action confirm gate). Adopts the shared
-  feed/registry + compact-result contract.
+  → `ComputerUseKind` (`modelSource = .inheritsParent` default + optional
+  `computer_use` override → shared `SubagentResidency` handoff; the `VisionContext`
+  is recomputed from the RESOLVED model so screenshot escalation tracks the chosen
+  model; host permission `.auto`; keeps its own per-action confirm gate). Adopts the
+  shared feed/registry + compact-result contract.
 
 ### Personas / config / runtime (reused, existing)
 - `Models/Agent/Agent.swift` + `Managers/AgentManager.swift` — persona name/model
@@ -194,7 +267,9 @@ restore-on-failure (orchestrator never left unloaded).
   `imageEnabled` (image is its own per-agent toggle, no longer riding the spawn flag),
   and — added 2026-06-26 — `imageGenerationModelId` / `imageEditModelId` (`String?`),
   `subagentPermissions` (`SubagentPermissionDefaults`), and `subagentBudgets`
-  (`SubagentBudgets`). `effectiveCapabilities(for:)` carries `imageEnabled` +
+  (`SubagentBudgets`); added 2026-06-27 — `subagentModelOverrides`
+  (`[capabilityId: modelId]`, the per-capability model picker, mirroring
+  `subagentPermissions`). `effectiveCapabilities(for:)` carries `imageEnabled` +
   `spawnableAgentNames` through to the snapshot the visibility resolvers read; the model /
   permission / budget fields are read live at the kind via the effective-settings
   resolvers (below).
@@ -204,16 +279,19 @@ restore-on-failure (orchestrator never left unloaded).
   main-chat** values: default image gen/edit models, per-kind permission
   (`SubagentPermissionDefaults` is a `[kindId: policy]` map keyed by `capability.id`,
   ask/deny/always — a kind absent from the map defaults to `.ask`, so a new permissioned
-  kind needs no new struct field), budgets, `imageDelegationEnabled`, and
-  `spawnableAgentNames` (the main chat's pool). These also back the REST `/v1/images`
+  kind needs no new struct field), budgets, `imageDelegationEnabled`,
+  `spawnableAgentNames` (the main chat's pool), and — added 2026-06-27 —
+  `subagentModelOverrides` (the main chat's `[capabilityId: modelId]` map, used by
+  `spawn`; normalized to drop blanks). These also back the REST `/v1/images`
   default. Custom agents override the model / permission / budget values from their own
   `AgentSettings`. Persists to `agent-delegation.json`; broadcasts
   `.subagentConfigurationChanged`.
 - `Subagent/SubagentCapabilityRegistry.swift` — `SubagentToolVisibility` also hosts the
   pure **effective-settings resolvers** (`effectiveImageModel` / `effectivePermission` /
-  `effectiveBudgets`): **Default → global `SubagentConfiguration`; custom →
-  `AgentSettings`** (nil image model → first-ready fallback; missing permission → `.ask`).
-  Each kind reads these so the Default-vs-custom branch lives in one tested place.
+  `effectiveBudgets` / `effectiveSubagentModel`): **Default → global
+  `SubagentConfiguration`; custom → `AgentSettings`** (nil image model → first-ready
+  fallback; missing permission → `.ask`; blank/absent model override → inherit). Each
+  kind reads these so the Default-vs-custom branch lives in one tested place.
 - `Services/ModelRuntime.swift` — load/unload/`preload`/`cachedModelSummaries`, the
   model-fit refusal; `Services/ModelRuntime/MetalGate.swift` — GPU owner-keyed gate.
 
@@ -224,10 +302,19 @@ restore-on-failure (orchestrator never left unloaded).
   tool-name sets are DERIVED from `SubagentCapabilityRegistry` (no hand-maintained list).
 - `Views/Agent/AgentsView.swift` — per-agent sub-agent controls live in the dedicated
   **`DetailTab.subagents`** ("Sub-agents") tab, rendered registry-driven (one card per
-  `SubagentCapabilityRegistry.perAgentToggleFlags` entry: `computer_use` →
-  autonomy-ceiling, `spawn` → per-agent spawnable checklist + permission picker + budget
-  steppers, `image` → gen/edit model pickers + permission picker) with each card's config
-  in an inline DisclosureGroup. The tab is **shown for the Default agent too** (2026-06-26):
+  `SubagentCapabilityRegistry.perAgentToggleFlags` entry: `computer_use` → autonomy
+  ceiling, `spawn` → per-agent spawnable checklist + permission picker + budget steppers,
+  `image` → gen/edit model pickers + permission picker) with each card's config in an
+  inline panel. The standard model-override row is rendered **generically** above each
+  card's kind-specific config whenever its descriptor sets `supportsModelOverride`
+  (resolved via `capability(forPerAgentFlag:)`), so the per-kind arms no longer hand-wire
+  it — a new chat-driven kind gets the picker for free. One
+  `subagentModelOverrideRow(_ capability:)` draws it (chat candidates from
+  `pickerItems.chatModelCandidates`; the empty-tag label is derived from `modelSource` —
+  "Use persona's model" for `spawn`, else "Inherit parent model"). `sandbox_reduce` has
+  no per-agent toggle, so it gets a non-toggle "Investigation" panel reusing the same row,
+  shown when the agent's sandbox (`effectiveAutonomousExec`) is on AND
+  `sandboxReduce.supportsModelOverride`. The tab is **shown for the Default agent too** (2026-06-26):
   it renders only the Spawn + Image cards (no `computer_use`), bound to the global
   `SubagentConfiguration` via `SubagentConfigurationStore` (the main chat's settings still
   live there). Custom-agent cards write `AgentSettings` via `debouncedSave()`; the main
@@ -267,8 +354,11 @@ denoise step counter (k/N). Re-entrancy: a subprocess cannot `spawn`.
   `resolveModel` / `permission` / `run` (override `makeHandoff()` only if it swaps
   models) + one thin tool that builds the kind and calls `SubagentSession.run`. The
   host gives you scope ids, recursion guard, feed/interrupt, the (optional) handoff,
-  and the compact-result envelope for free. A dedicated model-backed kind (e.g. an
-  AppleScript generator on a local or remote model) is exactly this recipe with
-  `modelSource = .dedicatedConfigured` or `.persona`. Do NOT add recursive agents,
-  helper LLMs, or shell workers inside a kind — it is normal Swift service code
-  driving one bounded job.
+  and the compact-result envelope for free. A chat-driven kind also gets the standard
+  per-agent model picker for free by setting `supportsModelOverride = true` and
+  resolving through `SubagentModelResolution.resolve(...)` (precedence + availability
+  fallback + the eval-bypasses-residency invariant + the shared residency handoff); a
+  dedicated model-backed kind (e.g. an AppleScript generator on a local or remote model)
+  is exactly this recipe with `modelSource = .dedicatedConfigured` or `.persona`. Do NOT
+  add recursive agents, helper LLMs, or shell workers inside a kind — it is normal Swift
+  service code driving one bounded job.

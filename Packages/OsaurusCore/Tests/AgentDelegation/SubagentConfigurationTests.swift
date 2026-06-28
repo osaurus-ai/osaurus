@@ -148,4 +148,33 @@ struct SubagentConfigurationTests {
         #expect(config.normalized.anyAgentSpawnable)
         #expect(config.normalized.isAgentSpawnable("researcher"))  // case-insensitive
     }
+
+    @Test("subagent model overrides round-trip and drop blank entries")
+    func modelOverridesRoundTripAndNormalize() throws {
+        // `init` normalizes: it trims values and drops blank entries so a cleared
+        // picker (empty string) round-trips as "no override", not an empty id.
+        let config = SubagentConfiguration(
+            subagentModelOverrides: [
+                "spawn": "spawn-model",
+                "sandbox_reduce": "  reducer-model  ",
+                "computer_use": "   ",
+            ]
+        )
+        #expect(config.subagentModelOverrides["spawn"] == "spawn-model")
+        #expect(config.subagentModelOverrides["sandbox_reduce"] == "reducer-model")
+        #expect(config.subagentModelOverrides["computer_use"] == nil)
+
+        let data = try JSONEncoder().encode(config)
+        let decoded = try JSONDecoder().decode(SubagentConfiguration.self, from: data)
+        #expect(decoded.subagentModelOverrides["spawn"] == "spawn-model")
+        #expect(decoded.subagentModelOverrides["sandbox_reduce"] == "reducer-model")
+        #expect(decoded.subagentModelOverrides["computer_use"] == nil)
+    }
+
+    @Test("legacy config without subagentModelOverrides decodes to an empty map")
+    func backCompatModelOverridesEmpty() throws {
+        let data = Data(#"{"localTextDelegationEnabled":true}"#.utf8)
+        let decoded = try JSONDecoder().decode(SubagentConfiguration.self, from: data)
+        #expect(decoded.subagentModelOverrides.isEmpty)
+    }
 }

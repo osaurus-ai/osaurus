@@ -12,8 +12,15 @@
 //    - The per-action `ComputerUseGate` + the `ComputerUsePromptQueue` confirm
 //      / cloud-vision consent overlay. The host permission is `.allow` — the
 //      real consent surface is the gate inside `run`, exactly as before.
-//    - `modelSource = .inheritsParent`: the loop drives the SAME model as the
-//      parent chat (no residency eviction; `makeHandoff()` stays passthrough).
+//
+//  `modelSource = .inheritsParent` is the DEFAULT source: the loop drives the
+//  parent chat model unless the agent set a per-agent `computer_use` model
+//  override (the standard model-pick axis). When the resolved model is a
+//  DIFFERENT local bundle than the resident chat model, `makeHandoff()` vends a
+//  `ResidencyHandoff` via the shared `SubagentResidency` layer (unload the chat
+//  model for the run, reload after); otherwise it stays passthrough. The vision
+//  posture is computed from the RESOLVED model so screenshot escalation tracks
+//  the chosen model.
 //
 
 import Foundation
@@ -77,6 +84,15 @@ final class ComputerUseKind: SubagentKind, @unchecked Sendable {
         let policySummary: String
     }
     private var config: RunConfig?
+    /// Residency plan resolved in `resolveModel` (reject-before-evict), run by
+    /// `makeHandoff()`. `.none` when no swap is needed (parent model, a remote
+    /// override, or the same local model already resident).
+    private var residencyPlan: ResidencyPlan = .none
+
+    /// Idle-wait budget (seconds) for the residency unload to wait for chat to
+    /// go idle before giving up. The loop itself is step-capped (`RunLimits`),
+    /// so this bounds only the pre-unload wait, not the run.
+    private static let residencyIdleWaitSeconds = 120
 
     init(goal: String, limits: RunLimits, evalHarness: ComputerUseEvalHarness? = nil) {
         self.goal = goal
@@ -94,32 +110,42 @@ final class ComputerUseKind: SubagentKind, @unchecked Sendable {
             return ResolvedModel(name: evalHarness.modelId, id: nil, isLocal: false)
         }
         let agentId = scope.agentId
-        // Resolve everything that lives on the main actor in one hop: the model,
-        // the agent's autonomy ceiling, a snapshot of the user policy, and the
-        // vision context (image support + local-vs-cloud posture + cloud-vision
-        // consent).
+        // One shared path for precedence (per-agent `computer_use` override →
+        // the parent agent's model), the availability fallback, and the live
+        // residency decision (reject-before-evict; a remote override / the
+        // inherited model needs no swap). The chat model is already idle here —
+        // the parent turn is awaiting this tool result. `evalModel` is nil: the
+        // eval harness is handled by the early-return above (it carries a
+        // driver/gate/vision, not just a model).
+        let resolved = try await SubagentModelResolution.resolve(
+            capabilityId: capability.id,
+            agentId: agentId,
+            evalModel: nil,
+            idleWaitSeconds: Self.residencyIdleWaitSeconds,
+            deniedMessage:
+                "Running Computer Use on a different local model requires \"Local Orchestrator "
+                + "Handoff\" enabled in Settings → Sub-agents (so the chat model can unload to "
+                + "make room).",
+            unavailableMessage:
+                "No model is selected for this agent, so Computer Use can't run. Pick a model first.",
+            defaultModel: { AgentManager.shared.effectiveModel(for: agentId) }
+        )
+        let modelId = resolved.model
+        // Snapshot the run rules from the RESOLVED model in a second main-actor
+        // hop: the agent's autonomy ceiling, a snapshot of the user policy, and
+        // the vision context (image support + local-vs-cloud posture +
+        // cloud-vision consent) so screenshot escalation tracks the chosen model.
         let snapshot = await MainActor.run {
-            () -> (model: String?, ceiling: AutonomyCeiling?, policy: AutonomyPolicy, vision: VisionContext) in
-            let model = AgentManager.shared.effectiveModel(for: agentId)
+            () -> (ceiling: AutonomyCeiling?, policy: AutonomyPolicy, vision: VisionContext) in
             let ceiling = AgentManager.shared.agent(for: agentId)?.settings.computerUseCeiling
             let policy = ComputerUsePolicyStore.load()
-            let vision: VisionContext
-            if let model, !model.isEmpty {
-                vision = VisionContext(
-                    modelAcceptsImages: ComputerUseTool.modelAcceptsImages(model),
-                    modelIsLocal: ModelManager.findInstalledModel(named: model) != nil,
-                    cloudConsent: CloudVisionConsent.shared.isGranted,
-                    cloudScrubMode: CloudVisionConsent.shared.scrubMode
-                )
-            } else {
-                vision = .none
-            }
-            return (model, ceiling, policy, vision)
-        }
-        guard let modelId = snapshot.model, !modelId.isEmpty else {
-            throw SubagentError.unavailable(
-                "No model is selected for this agent, so Computer Use can't run. Pick a model first."
+            let vision = VisionContext(
+                modelAcceptsImages: ComputerUseTool.modelAcceptsImages(modelId),
+                modelIsLocal: ModelManager.findInstalledModel(named: modelId) != nil,
+                cloudConsent: CloudVisionConsent.shared.isGranted,
+                cloudScrubMode: CloudVisionConsent.shared.scrubMode
             )
+            return (ceiling, policy, vision)
         }
         self.config = RunConfig(
             ceiling: snapshot.ceiling,
@@ -130,9 +156,12 @@ final class ComputerUseKind: SubagentKind, @unchecked Sendable {
                 ceiling: snapshot.ceiling
             )
         )
-        // Same-model kind: residency is irrelevant (no handoff), so `isLocal`
-        // is not consulted.
-        return ResolvedModel(name: modelId, id: nil, isLocal: false)
+        self.residencyPlan = resolved.decision.plan
+        return ResolvedModel(name: modelId, id: nil, isLocal: resolved.decision.isLocal)
+    }
+
+    func makeHandoff() -> SubagentHandoff {
+        SubagentResidency.handoff(for: residencyPlan)
     }
 
     /// `.allow` at the host level: the consent surface is the per-action gate

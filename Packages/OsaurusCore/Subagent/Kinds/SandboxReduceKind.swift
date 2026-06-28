@@ -7,8 +7,12 @@
 //  hands back ONLY a short digest (raw tool output never crosses into the
 //  parent context). Runs on the SAME shared runner (`AgentSubagentRunner`) and
 //  host (`SubagentSession`) as `spawn`, so the recursion guard, live feed, and
-//  compact-result contract are shared. `modelSource = .inheritsParent` (same
-//  model as the parent) so no residency eviction (`makeHandoff()` passthrough).
+//  compact-result contract are shared. `modelSource = .inheritsParent` is the
+//  DEFAULT source (the parent agent's model); a per-agent `sandbox_reduce` model
+//  override (the standard model-pick axis) supersedes it. When the resolved
+//  model is a DIFFERENT local bundle than the resident chat model, `makeHandoff()`
+//  vends a `ResidencyHandoff` via the shared `SubagentResidency` layer; otherwise
+//  it stays passthrough.
 //
 //  Guardrails preserved from the standalone tool: the read/search/exec
 //  allowlist (enforced in the executor as defense in depth), the child loop's
@@ -31,9 +35,11 @@ final class SandboxReduceKind: SubagentKind, @unchecked Sendable {
     /// agent's model via `AgentManager.effectiveModel`.
     private let modelOverride: String?
 
-    /// Resolved in `resolveModel`, read by `run`.
-    private var modelId: String = ""
+    /// The child tool allow-list resolved in `resolveModel`, read by `run`.
     private var toolSpecs: [Tool] = []
+    /// Residency plan resolved in `resolveModel` (reject-before-evict), run by
+    /// `makeHandoff()`. `.none` when no swap is needed.
+    private var residencyPlan: ResidencyPlan = .none
 
     init(
         agentId: String,
@@ -56,19 +62,11 @@ final class SandboxReduceKind: SubagentKind, @unchecked Sendable {
 
     func resolveModel(_ scope: SubagentScope) async throws -> ResolvedModel {
         let agentUUID = UUID(uuidString: agentId)
-        let override = modelOverride
-        let (model, specs): (String?, [Tool]) = await MainActor.run {
-            let model =
-                override
-                ?? agentUUID.flatMap { AgentManager.shared.effectiveModel(for: $0) }
-                ?? ChatConfigurationStore.load().defaultModel
-            let specs = ToolRegistry.shared.specs(forTools: SandboxReduceTool.childToolAllowlist)
-            return (model, specs)
-        }
-        guard let model, !model.isEmpty else {
-            throw SubagentError.unavailable(
-                "No model is configured for this agent, so the reduction subagent cannot run."
-            )
+        // Resolve the child tool allow-list before touching the model so an
+        // infra gap (container still starting) fails fast, before any residency
+        // planning.
+        let specs: [Tool] = await MainActor.run {
+            ToolRegistry.shared.specs(forTools: SandboxReduceTool.childToolAllowlist)
         }
         guard !specs.isEmpty else {
             throw SubagentError.executionFailed(
@@ -78,15 +76,39 @@ final class SandboxReduceKind: SubagentKind, @unchecked Sendable {
                 retryable: true
             )
         }
-        self.modelId = model
         self.toolSpecs = specs
-        // Same-model kind: residency is irrelevant (no handoff), so `isLocal`
-        // is not consulted.
-        return ResolvedModel(name: model, id: nil, isLocal: false)
+
+        // One shared path for precedence (eval seam → per-agent `sandbox_reduce`
+        // override → the parent agent's model → the global chat default), the
+        // availability fallback, and the live residency decision
+        // (reject-before-evict; a remote override / the inherited model needs no
+        // swap, the eval seam stays passthrough).
+        let resolved = try await SubagentModelResolution.resolve(
+            capabilityId: capability.id,
+            agentId: agentUUID,
+            evalModel: modelOverride,
+            idleWaitSeconds: Int(SandboxReduceTool.wallClockSeconds),
+            deniedMessage:
+                "Running the reduction subagent on a different local model requires \"Local "
+                + "Orchestrator Handoff\" enabled in Settings → Sub-agents (so the chat model "
+                + "can unload to make room).",
+            unavailableMessage:
+                "No model is configured for this agent, so the reduction subagent cannot run.",
+            defaultModel: {
+                agentUUID.flatMap { AgentManager.shared.effectiveModel(for: $0) }
+                    ?? ChatConfigurationStore.load().defaultModel
+            }
+        )
+        self.residencyPlan = resolved.decision.plan
+        return ResolvedModel(name: resolved.model, id: nil, isLocal: resolved.decision.isLocal)
     }
 
     func permission(_ scope: SubagentScope, _ resolved: ResolvedModel) async -> SubagentDecision {
         .allow
+    }
+
+    func makeHandoff() -> SubagentHandoff {
+        SubagentResidency.handoff(for: residencyPlan)
     }
 
     func run(
@@ -173,6 +195,7 @@ final class SandboxReduceKind: SubagentKind, @unchecked Sendable {
             return SubagentResult(
                 payload: [
                     "kind": "digest",
+                    "model": resolved.name,
                     "digest": capped,
                     "iterations": result.iterations,
                 ] as [String: Any],

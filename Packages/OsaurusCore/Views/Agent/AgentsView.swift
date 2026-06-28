@@ -1015,6 +1015,11 @@ struct AgentDetailView: View {
     /// from / into `AgentSettings`. The Default agent uses `mainChatSubagentConfig`.
     @State private var subagentPermissions: SubagentPermissionDefaults = SubagentPermissionDefaults()
     @State private var subagentBudgets: SubagentBudgets = SubagentBudgets()
+    /// Per-agent subagent model overrides keyed by capability id (computer_use /
+    /// sandbox_reduce / spawn). Empty/absent = inherit the kind's default model.
+    /// Mirrored from / into `AgentSettings.subagentModelOverrides`; the Default
+    /// agent uses `mainChatSubagentConfig.subagentModelOverrides`.
+    @State private var subagentModelOverrides: [String: String] = [:]
     /// The Default / main-chat agent's sub-agent config, loaded from / saved to
     /// the global store. The built-in agent is in-memory (`AgentManager.update`
     /// refuses it), so its spawn/image config lives in `SubagentConfiguration`;
@@ -3173,11 +3178,62 @@ struct AgentDetailView: View {
                         )
                         if isOn.wrappedValue {
                             subagentConfigPanel {
+                                // The standard model-override row is rendered from
+                                // the registry flag (`supportsModelOverride`), so a
+                                // new chat-driven kind gets the picker for free —
+                                // the kind-specific config follows it.
+                                if let capability = SubagentCapabilityRegistry.capability(
+                                    forPerAgentFlag: feature.flag
+                                ), capability.supportsModelOverride {
+                                    subagentModelOverrideRow(capability)
+                                    subagentPanelDivider
+                                }
                                 subagentInlineConfig(for: feature.flag)
                             }
                         }
                     }
                 }
+                if sandboxReduceModelPickerVisible {
+                    sandboxReduceCard
+                }
+            }
+        }
+    }
+
+    /// The reduction subagent (`sandbox_reduce`) has no per-agent enable toggle —
+    /// it is gated by the agent's sandbox (autonomous exec). Surface its model
+    /// picker whenever the sandbox is on, so it shares the standard model-pick
+    /// axis with the toggle-backed kinds.
+    private var sandboxReduceModelPickerVisible: Bool {
+        SubagentCapabilityRegistry.sandboxReduce.supportsModelOverride
+            && agentManager.effectiveAutonomousExec(for: agent.id)?.enabled == true
+    }
+
+    /// A non-toggle "Investigation" card for `sandbox_reduce`: an info header
+    /// (it's always available while the sandbox is on) plus the standard model
+    /// override picker. Binds to `AgentSettings` (custom) or the global store
+    /// (main chat) via `subagentModelOverrideRow`.
+    private var sandboxReduceCard: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Investigation", bundle: .module)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(theme.primaryText)
+                    Text(
+                        "The reduction subagent reads, searches, and runs commands in this agent's sandbox, then returns only a digest. Available whenever the sandbox is on.",
+                        bundle: .module
+                    )
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.tertiaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 12)
+            }
+            .padding(10)
+            .background(roundedSurface(fill: theme.inputBackground, stroke: theme.inputBorder))
+            subagentConfigPanel {
+                subagentModelOverrideRow(SubagentCapabilityRegistry.sandboxReduce)
             }
         }
     }
@@ -3348,11 +3404,16 @@ struct AgentDetailView: View {
     private func subagentInlineConfig(for flag: SubagentCapability.PerAgentFlag) -> some View {
         switch flag {
         case .computerUse:
+            // The model-override row is rendered generically above (registry
+            // `supportsModelOverride`); this arm holds only computer-use-specific
+            // config.
             computerUseCeilingRow
             subagentFootnote(
                 "Requires Accessibility permission. Grant it and review status in Settings > Computer Use."
             )
         case .spawn:
+            // The model-override row is rendered generically above (registry
+            // `supportsModelOverride`).
             spawnableAgentsPicker
             subagentPanelDivider
             subagentPermissionRow(
@@ -3414,11 +3475,12 @@ struct AgentDetailView: View {
         title: LocalizedStringKey,
         selection: Binding<String>,
         candidates: [ModelPickerItem],
-        currentId: String?
+        currentId: String?,
+        emptyLabel: LocalizedStringKey = "Choose automatically"
     ) -> some View {
         subagentControlRow(title) {
             Picker("", selection: selection) {
-                Text("Choose automatically", bundle: .module).tag("")
+                Text(emptyLabel, bundle: .module).tag("")
                 if let currentId,
                     !currentId.isEmpty,
                     !candidates.contains(where: { $0.id == currentId })
@@ -3432,6 +3494,57 @@ struct AgentDetailView: View {
             .labelsHidden()
             .frame(maxWidth: 220, alignment: .trailing)
         }
+    }
+
+    /// The standard per-capability model-override picker for any chat-driven
+    /// kind that sets `supportsModelOverride` (computer_use / sandbox_reduce /
+    /// spawn). Empty selection = inherit the kind's default model source; the
+    /// empty-tag label is derived from the kind's `modelSource` ("Use persona's
+    /// model" for spawn, else "Inherit parent model") so the row needs no
+    /// per-kind copy. Lists chat-capable candidates; a stale stored id shows an
+    /// "(unavailable)" tag. Binds per-agent (custom) or to the global store
+    /// (main chat) via `subagentModelOverrideBinding`.
+    private func subagentModelOverrideRow(_ capability: SubagentCapability) -> some View {
+        let inheritLabel: LocalizedStringKey =
+            capability.modelSource == .persona ? "Use persona's model" : "Inherit parent model"
+        let selection = subagentModelOverrideBinding(for: capability.id)
+        return subagentModelPicker(
+            title: "Model",
+            selection: selection,
+            candidates: pickerItems.chatModelCandidates,
+            currentId: normalizedModelSelection(selection.wrappedValue),
+            emptyLabel: inheritLabel
+        )
+    }
+
+    /// Two-way binding into a capability's model override. Empty string clears
+    /// the override (inherit). Custom agents write `subagentModelOverrides`
+    /// (debounced agent save); the main chat writes the global store.
+    private func subagentModelOverrideBinding(for kindId: String) -> Binding<String> {
+        if isDefaultAgent {
+            return Binding(
+                get: { mainChatSubagentConfig.subagentModelOverrides[kindId] ?? "" },
+                set: { newValue in
+                    if let trimmed = normalizedModelSelection(newValue) {
+                        mainChatSubagentConfig.subagentModelOverrides[kindId] = trimmed
+                    } else {
+                        mainChatSubagentConfig.subagentModelOverrides.removeValue(forKey: kindId)
+                    }
+                    saveMainChatSubagentConfig()
+                }
+            )
+        }
+        return Binding(
+            get: { subagentModelOverrides[kindId] ?? "" },
+            set: { newValue in
+                if let trimmed = normalizedModelSelection(newValue) {
+                    subagentModelOverrides[kindId] = trimmed
+                } else {
+                    subagentModelOverrides.removeValue(forKey: kindId)
+                }
+                debouncedSave()
+            }
+        )
     }
 
     /// Segmented Ask / Deny / Always permission picker for a delegation kind,
@@ -5507,6 +5620,7 @@ struct AgentDetailView: View {
         imageEditModelId = agent.settings.imageEditModelId
         subagentPermissions = agent.settings.subagentPermissions
         subagentBudgets = agent.settings.subagentBudgets
+        subagentModelOverrides = agent.settings.subagentModelOverrides
         // The main chat (Default agent) binds its Sub-agents tab to the global
         // store; load it and derive the UI-only spawn-enable from a non-empty pool.
         mainChatSubagentConfig = SubagentConfigurationStore.snapshot()
@@ -5733,7 +5847,8 @@ struct AgentDetailView: View {
                 imageGenerationModelId: imageGenerationModelId,
                 imageEditModelId: imageEditModelId,
                 subagentPermissions: subagentPermissions,
-                subagentBudgets: subagentBudgets
+                subagentBudgets: subagentBudgets,
+                subagentModelOverrides: subagentModelOverrides
             ),
             order: current.order
         )

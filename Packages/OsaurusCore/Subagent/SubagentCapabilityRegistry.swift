@@ -111,6 +111,15 @@ public struct SubagentCapability: Sendable {
     public let perAgentFlag: PerAgentFlag?
     /// How this kind gets its model (drives docs + the future model-pick axis).
     public let modelSource: ModelSource
+    /// Whether this kind exposes the standard per-agent model-override picker
+    /// (`subagentModelOverrides` → `effectiveSubagentModel` → the shared
+    /// `SubagentModelResolution` layer). True for the chat-driven kinds
+    /// (computer_use, spawn, sandbox_reduce). False for `image`, which owns its
+    /// own dedicated gen/edit model system (`effectiveImageModel`) and renders
+    /// its own pickers — see the `image` registration below. AgentsView renders
+    /// the override row for any capability with this set, so a new chat-driven
+    /// kind gets a picker by only flipping this flag.
+    public let supportsModelOverride: Bool
     /// Human label for the live-feed header + collapsed tool chip.
     public let displayLabel: String
     /// SF Symbol for the live feed + tool chip.
@@ -130,6 +139,7 @@ public struct SubagentCapability: Sendable {
         gate: Gate,
         perAgentFlag: PerAgentFlag? = nil,
         modelSource: ModelSource = .inheritsParent,
+        supportsModelOverride: Bool = false,
         displayLabel: String? = nil,
         iconName: String = "sparkles",
         guidance: String? = nil,
@@ -141,6 +151,7 @@ public struct SubagentCapability: Sendable {
         self.gate = gate
         self.perAgentFlag = perAgentFlag
         self.modelSource = modelSource
+        self.supportsModelOverride = supportsModelOverride
         self.displayLabel = displayLabel ?? id
         self.iconName = iconName
         self.guidance = guidance
@@ -160,6 +171,7 @@ public enum SubagentCapabilityRegistry {
         gate: .perAgent,
         perAgentFlag: .computerUse,
         modelSource: .inheritsParent,
+        supportsModelOverride: true,
         displayLabel: "Computer Use",
         iconName: "cursorarrow.rays",
         guidance: SystemPromptTemplates.computerUseGuidance,
@@ -177,18 +189,25 @@ public enum SubagentCapabilityRegistry {
         gate: .delegation,
         perAgentFlag: .spawn,
         modelSource: .persona,
+        supportsModelOverride: true,
         displayLabel: "Subagent",
         iconName: "person.2.fill"
     )
 
     /// The image family — one `image` tool that both generates and edits
     /// (`source_paths` → edit). The guidance renders when `image` resolves.
+    /// `supportsModelOverride = false` is deliberate: `image` owns its own model
+    /// system (separate gen/edit defaults via `effectiveImageModel`, its own
+    /// readiness + "first ready" fallback, and coordinator-owned residency), so
+    /// it is NOT a `SubagentModelResolution` client and keeps its dedicated
+    /// gen/edit pickers instead of the shared per-agent override row.
     public static let image = SubagentCapability(
         id: "image",
         toolNames: ["image"],
         gate: .delegation,
         perAgentFlag: .image,
         modelSource: .dedicatedConfigured,
+        supportsModelOverride: false,
         displayLabel: "Image",
         iconName: "photo",
         guidance: SystemPromptTemplates.imageGenerationGuidance,
@@ -205,6 +224,7 @@ public enum SubagentCapabilityRegistry {
         toolNames: ["sandbox_reduce"],
         gate: .sandboxExec,
         modelSource: .inheritsParent,
+        supportsModelOverride: true,
         displayLabel: "Investigation",
         iconName: "doc.text.magnifyingglass"
     )
@@ -233,6 +253,15 @@ public enum SubagentCapabilityRegistry {
     /// The descriptor for a kind id (`SubagentFeed.kindId` / `capability.id`).
     public static func capability(forKindId id: String) -> SubagentCapability? {
         all.first { $0.id == id }
+    }
+
+    /// The descriptor bound to a per-agent toggle flag — lets the AgentsView
+    /// Sub-agents tab render the standard model-override row generically
+    /// (`supportsModelOverride`) instead of hand-wiring it per kind.
+    public static func capability(forPerAgentFlag flag: SubagentCapability.PerAgentFlag)
+        -> SubagentCapability?
+    {
+        all.first { $0.perAgentFlag == flag }
     }
 
     /// The descriptor that gates a given tool name.
@@ -362,6 +391,26 @@ public enum SubagentToolVisibility {
             return isEdit ? config.defaultImageEditModelId : config.defaultImageGenerationModelId
         }
         return isEdit ? settings?.imageEditModelId : settings?.imageGenerationModelId
+    }
+
+    /// The effective per-run model override for a subagent capability, or `nil`
+    /// to inherit the kind's default model source (the parent agent's model for
+    /// computer_use / sandbox_reduce; the chosen persona's model for spawn). The
+    /// Default / main chat reads the global override map; a custom agent its own.
+    /// A blank stored value resolves to `nil` (inherit). This is the standard
+    /// model-pick axis every chat-driven kind reads the same way.
+    static func effectiveSubagentModel(
+        capabilityId: String,
+        isDefault: Bool,
+        config: SubagentConfiguration,
+        settings: AgentSettings?
+    ) -> String? {
+        let raw =
+            isDefault
+            ? config.subagentModelOverrides[capabilityId]
+            : settings?.subagentModelOverrides[capabilityId]
+        let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return (trimmed?.isEmpty ?? true) ? nil : trimmed
     }
 
     /// The effective permission policy for a delegation capability. Default / main
