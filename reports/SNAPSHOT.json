@@ -1,14 +1,27 @@
 {
   "domains" : [
+    "agent_loop",
+    "argument_coercion",
+    "capability_claims",
+    "capability_search",
+    "computer_use",
     "computer_use_loop",
-    "subagent"
+    "default_agent",
+    "prefix_hash",
+    "request_validation",
+    "sandbox_diagnostics",
+    "schema",
+    "screen_context",
+    "streaming_hint",
+    "subagent",
+    "tool_envelope"
   ],
-  "generatedAt" : "2026-06-27T22:17:38.296Z",
+  "generatedAt" : "2026-06-28T13:44:20.390Z",
   "models" : [
     {
       "environment" : {
-        "caseCount" : 16,
-        "catalogHash" : "27b38f6092df0fe3",
+        "caseCount" : 18,
+        "catalogHash" : "41cd9ca379a603a2",
         "chip" : "Apple M4 Pro",
         "cpuCores" : 14,
         "judge" : "xai/grok-4.3",
@@ -16,32 +29,56 @@
         "runModel" : "foundation",
         "totalRamMb" : 49152
       },
-      "meanCpuPercent" : 106.27456427281555,
+      "meanCpuPercent" : 128.06038736953047,
       "modelId" : "foundation",
-      "peakCpuPercent" : 12.700028446324174,
-      "peakPhysFootprintMb" : 16.28209686279297,
+      "peakCpuPercent" : 16.883781089392446,
+      "peakPhysFootprintMb" : 140.42285919189453,
       "perDomain" : {
+        "agent_loop" : {
+          "errored" : 0,
+          "passed" : 0,
+          "scored" : 0,
+          "skipped" : 88
+        },
+        "capability_claims" : {
+          "errored" : 0,
+          "passed" : 2,
+          "scored" : 11,
+          "skipped" : 0
+        },
+        "capability_search" : {
+          "errored" : 0,
+          "passed" : 15,
+          "scored" : 16,
+          "skipped" : 2
+        },
         "computer_use_loop" : {
           "errored" : 0,
-          "passed" : 5,
-          "scored" : 5,
-          "skipped" : 11
+          "passed" : 7,
+          "scored" : 7,
+          "skipped" : 15
+        },
+        "default_agent" : {
+          "errored" : 1,
+          "passed" : 1,
+          "scored" : 10,
+          "skipped" : 27
         },
         "subagent" : {
           "errored" : 0,
-          "passed" : 15,
-          "scored" : 15,
-          "skipped" : 5
+          "passed" : 20,
+          "scored" : 20,
+          "skipped" : 6
         }
       },
-      "startedAt" : "2026-06-27T22:13:46Z",
-      "totalPassed" : 20,
-      "totalScored" : 20
+      "startedAt" : "2026-06-28T12:40:11Z",
+      "totalPassed" : 45,
+      "totalScored" : 64
     },
     {
       "environment" : {
-        "caseCount" : 16,
-        "catalogHash" : "27b38f6092df0fe3",
+        "caseCount" : 11,
+        "catalogHash" : "2598627c7daaaba7",
         "chip" : "Apple M4 Pro",
         "cpuCores" : 14,
         "judge" : "xai/grok-4.3",
@@ -49,32 +86,108 @@
         "runModel" : "mlx-community/Qwen3.5-4B-OptiQ-4bit",
         "totalRamMb" : 49152
       },
-      "meanCpuPercent" : 99.62152175331909,
+      "meanCpuPercent" : 70.39949350081159,
+      "meanDecodeTokensPerSecond" : 45.55950436252179,
+      "meanPromptTokensPerTask" : 28106.159420289856,
+      "meanTotalTokensPerTask" : 28577.08695652174,
+      "meanTtftMs" : 128.43779550082442,
       "modelId" : "mlx-community/Qwen3.5-4B-OptiQ-4bit",
-      "peakCpuPercent" : 273.8446942311642,
-      "peakPhysFootprintMb" : 3305.4085845947266,
+      "peakCpuPercent" : 425.6809421316051,
+      "peakPhysFootprintMb" : 7868.833480834961,
       "perDomain" : {
+        "agent_loop" : {
+          "errored" : 0,
+          "passed" : 58,
+          "scored" : 70,
+          "skipped" : 18
+        },
+        "argument_coercion" : {
+          "errored" : 0,
+          "passed" : 11,
+          "scored" : 11,
+          "skipped" : 0
+        },
+        "capability_claims" : {
+          "errored" : 0,
+          "passed" : 9,
+          "scored" : 11,
+          "skipped" : 0
+        },
+        "computer_use" : {
+          "errored" : 0,
+          "passed" : 21,
+          "scored" : 21,
+          "skipped" : 0
+        },
         "computer_use_loop" : {
           "errored" : 0,
-          "passed" : 10,
-          "scored" : 16,
+          "passed" : 14,
+          "scored" : 22,
+          "skipped" : 0
+        },
+        "default_agent" : {
+          "errored" : 0,
+          "passed" : 31,
+          "scored" : 38,
+          "skipped" : 0
+        },
+        "prefix_hash" : {
+          "errored" : 0,
+          "passed" : 9,
+          "scored" : 9,
+          "skipped" : 0
+        },
+        "request_validation" : {
+          "errored" : 0,
+          "passed" : 9,
+          "scored" : 9,
+          "skipped" : 0
+        },
+        "sandbox_diagnostics" : {
+          "errored" : 0,
+          "passed" : 12,
+          "scored" : 12,
+          "skipped" : 0
+        },
+        "schema" : {
+          "errored" : 0,
+          "passed" : 11,
+          "scored" : 11,
+          "skipped" : 0
+        },
+        "screen_context" : {
+          "errored" : 0,
+          "passed" : 21,
+          "scored" : 22,
+          "skipped" : 0
+        },
+        "streaming_hint" : {
+          "errored" : 0,
+          "passed" : 9,
+          "scored" : 9,
           "skipped" : 0
         },
         "subagent" : {
           "errored" : 0,
-          "passed" : 17,
-          "scored" : 17,
-          "skipped" : 3
+          "passed" : 21,
+          "scored" : 22,
+          "skipped" : 4
+        },
+        "tool_envelope" : {
+          "errored" : 0,
+          "passed" : 10,
+          "scored" : 10,
+          "skipped" : 0
         }
       },
-      "startedAt" : "2026-06-27T22:13:50Z",
-      "totalPassed" : 27,
-      "totalScored" : 33
+      "startedAt" : "2026-06-28T12:40:06Z",
+      "totalPassed" : 246,
+      "totalScored" : 277
     },
     {
       "environment" : {
-        "caseCount" : 16,
-        "catalogHash" : "27b38f6092df0fe3",
+        "caseCount" : 12,
+        "catalogHash" : "137408f3cdba4838",
         "chip" : "Apple M4 Pro",
         "cpuCores" : 14,
         "judge" : "self-judge",
@@ -82,27 +195,48 @@
         "runModel" : "xai/grok-4.3",
         "totalRamMb" : 49152
       },
-      "meanCpuPercent" : 76.79121302424399,
+      "meanCpuPercent" : 36.63962193413848,
+      "meanPromptTokensPerTask" : 24196.72463768116,
+      "meanTotalTokensPerTask" : 24383.376811594204,
+      "meanTtftMs" : 929.3632314485662,
       "modelId" : "xai/grok-4.3",
-      "peakCpuPercent" : 374.5875136650637,
-      "peakPhysFootprintMb" : 3395.253273010254,
+      "peakCpuPercent" : 404.403450983333,
+      "peakPhysFootprintMb" : 25969.112968444824,
       "perDomain" : {
+        "agent_loop" : {
+          "errored" : 3,
+          "passed" : 64,
+          "scored" : 67,
+          "skipped" : 18
+        },
+        "capability_claims" : {
+          "errored" : 0,
+          "passed" : 11,
+          "scored" : 11,
+          "skipped" : 0
+        },
         "computer_use_loop" : {
           "errored" : 0,
-          "passed" : 16,
-          "scored" : 16,
+          "passed" : 22,
+          "scored" : 22,
+          "skipped" : 0
+        },
+        "default_agent" : {
+          "errored" : 0,
+          "passed" : 25,
+          "scored" : 38,
           "skipped" : 0
         },
         "subagent" : {
           "errored" : 0,
-          "passed" : 17,
-          "scored" : 17,
-          "skipped" : 3
+          "passed" : 22,
+          "scored" : 22,
+          "skipped" : 4
         }
       },
-      "startedAt" : "2026-06-27T22:16:20Z",
-      "totalPassed" : 33,
-      "totalScored" : 33
+      "startedAt" : "2026-06-28T13:25:52Z",
+      "totalPassed" : 144,
+      "totalScored" : 160
     }
   ]
 }
