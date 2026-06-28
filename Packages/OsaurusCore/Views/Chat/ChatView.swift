@@ -792,6 +792,28 @@ final class ChatSession: ObservableObject {
         return ModelMediaCapabilities.from(modelId: model).supportsAudio
     }
 
+    /// B1 refinement: when the Default agent lazy-loads a configure WRITE tool
+    /// mid-turn on a compact-prompt (small local) model, collapse its FULL spec
+    /// back to the bootstrap skeleton — enums + field names + required kept,
+    /// prose dropped — so the post-load schema matches the lean turn-1 baseline.
+    /// Mirrors the `resolveTools` default-agent path, which this same-turn
+    /// activation bypasses. A no-op for other agents, larger models, or
+    /// non-configure tools.
+    static func compactLoadedDefaultAgentWrites(
+        _ tools: [Tool],
+        agentId: UUID,
+        modelId: String?
+    ) -> [Tool] {
+        guard agentId == Agent.defaultId,
+            ContextSizeResolver.resolve(modelId: modelId).prefersCompactPrompt
+        else { return tools }
+        let writes = ToolRegistry.configureWriteToolNames
+        return tools.map {
+            writes.contains($0.function.name)
+                ? SystemPromptComposer.compactBootstrapSpec($0) : $0
+        }
+    }
+
     var selectedModelSupportsVideo: Bool {
         guard let model = selectedModel else { return false }
         return ModelMediaCapabilities.from(modelId: model).supportsVideo
@@ -3681,8 +3703,21 @@ final class ChatSession: ObservableObject {
                             // mode keeps the user's explicit tool set fixed).
                             let newTools = await CapabilityLoadBuffer.shared.drain()
                             if !newTools.isEmpty {
+                                // B1 refinement: a Default-agent configure WRITE
+                                // loaded mid-turn enters here as a FULL spec, which
+                                // re-prefilled ~600 tokens for `osaurus_provider`
+                                // alone. The `resolveTools` default-agent path
+                                // re-compacts these on a compact-prompt model, but
+                                // this same-turn activation bypasses it — so apply
+                                // the same bootstrap skeleton here to keep the
+                                // post-load schema as lean as the turn-1 baseline.
+                                let activatedTools = Self.compactLoadedDefaultAgentWrites(
+                                    newTools,
+                                    agentId: self.agentId ?? Agent.defaultId,
+                                    modelId: self.selectedModel
+                                )
                                 let activation = AgentToolLoop.activateCapabilitySchemas(
-                                    loadedTools: newTools,
+                                    loadedTools: activatedTools,
                                     currentTools: toolSpecs,
                                     mode: .sameTurnNextRequest
                                 )

@@ -684,6 +684,17 @@ public enum SystemPromptTemplates {
         - The job runs locally in the background and may briefly swap models; that is expected. Make the call and report the result when it returns.
         """
 
+    /// Compact image-generation directive for small local models. Keeps the
+    /// authoritative "you CAN, never refuse" rule and the edit-mode hint, drops
+    /// the longer prose. Mirrors the full variant's intent at a fraction of the
+    /// tokens so a ≤20B model still won't refuse image requests on turn 1.
+    public static let imageGenerationGuidanceCompact = """
+        ## Image generation
+        - You CAN create/edit images with the `image` tool: call it with a `prompt`. Add `source_paths` (existing image path[s]) to edit instead of create.
+        - NEVER say you can't generate images or are "text-only" — you have the tool, so use it. Don't redirect to another app or settings.
+        - The image renders inline automatically; don't call `share_artifact`. Then confirm briefly in one sentence.
+        """
+
     // MARK: - Soul
 
     /// Renders the SOUL section — agent-authored, sandbox-only identity

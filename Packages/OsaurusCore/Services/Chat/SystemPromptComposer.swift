@@ -625,6 +625,12 @@ public struct SystemPromptComposer: Sendable {
         guard snapshot.toolMode == .auto, !effectiveToolsOff,
             tools.contains(where: { $0.function.name == "capabilities_load" })
         else { return nil }
+        // The Default agent carries `capabilities_load` only to lazy-load its
+        // deferred configure write tools (B1, small local models). Its own
+        // system-prompt addendum already enumerates the configure surface, so
+        // the enabled-capabilities manifest would be redundant bloat that
+        // cancels the prefill saved by deferring the writes — skip it.
+        guard agentId != Agent.defaultId else { return nil }
         if let frozenManifest {
             trace?.set("enabledManifestSource", "frozen")
             return frozenManifest
@@ -899,11 +905,15 @@ public struct SystemPromptComposer: Sendable {
         // fixed (computerUse before imageGeneration, as before).
         if !effectiveToolsOff {
             for capability in SubagentCapabilityRegistry.all {
-                guard let guidance = capability.guidance,
+                guard let fullGuidance = capability.guidance,
                     let sectionId = capability.guidanceSectionId,
                     let labelKey = capability.guidanceLabelKey,
                     resolvedNames.contains(capability.primaryToolName)
                 else { continue }
+                let guidance =
+                    toolset.prefersCompactPrompt
+                    ? (capability.guidanceCompact ?? fullGuidance)
+                    : fullGuidance
                 composer.append(
                     .static(
                         id: sectionId,
@@ -1321,6 +1331,13 @@ public struct SystemPromptComposer: Sendable {
         "todo", "complete", "clarify", "share_artifact",
     ]
 
+    /// The Default agent's routing / escape-hatch write tool — used to create
+    /// or activate another agent for out-of-scope asks. Kept loaded even when
+    /// B1 defers the other configure writes (small local models), because the
+    /// out-of-scope handoff is a core, frequent path that shouldn't pay a
+    /// `capabilities_load` round-trip first.
+    static let defaultAgentRoutingToolName = "osaurus_agent"
+
     /// Tools that keep their full schema in the first-turn bootstrap. They
     /// are the path for discovering and upgrading every other capability, so
     /// their argument contracts must stay explicit even while the rest of the
@@ -1350,8 +1367,19 @@ public struct SystemPromptComposer: Sendable {
     /// Internal (not private) so the bootstrap-compaction invariants can be
     /// unit-tested directly without standing up the full tool registry.
     static func compactBootstrapSpec(_ tool: Tool) -> Tool {
+        guard !fullBootstrapToolNames.contains(tool.function.name) else { return tool }
+        return forcedCompactBootstrapSpec(tool)
+    }
+
+    /// Apply the bootstrap skeleton unconditionally — even to a tool normally
+    /// kept at full spec by `fullBootstrapToolNames`. The Default agent uses
+    /// `capabilities_load` in exactly one shape (`tool/<write>`, spelled out in
+    /// its addendum), so it does not need the full multi-id-format schema the
+    /// general bootstrap preserves; compacting it there saves ~165 tokens every
+    /// turn. `constraintPreservingBootstrapToolNames` still keep their full
+    /// parameter schema (only the prose description is trimmed).
+    static func forcedCompactBootstrapSpec(_ tool: Tool) -> Tool {
         let name = tool.function.name
-        guard !fullBootstrapToolNames.contains(name) else { return tool }
         if constraintPreservingBootstrapToolNames.contains(name) {
             return Tool(
                 type: tool.type,
@@ -2041,7 +2069,50 @@ public struct SystemPromptComposer: Sendable {
             // when its pool is non-empty, image when the global switch is on).
             // The first actual call prompts for permission + spawn-model choice.
             allowed.formUnion(visibleDelegation)
+
+            // B1 (small local models): the per-domain configure WRITE tools are
+            // the bulk of this agent's turn-1 schema (~60%+ of prefill). On a
+            // model that prefers a compact prompt, defer them: keep the three
+            // reads, the agent-loop tools, the `osaurus_agent` routing/escape
+            // tool, and the delegation tools; load a write tool on demand via
+            // `capabilities_load` the first time the user actually changes a
+            // setting. The compact addendum names the deferred tools so the
+            // model loads by name in one round-trip (no `capabilities_discover`,
+            // which would also drag in the discovery nudge). Mid-session loads
+            // survive because `additionalToolNames` was unioned in above.
+            let prefersCompact = ContextSizeResolver.resolve(modelId: snapshot.model)
+                .prefersCompactPrompt
+            if prefersCompact {
+                let deferred = ToolRegistry.configureWriteToolNames
+                    .subtracting(additionalToolNames)
+                    .subtracting([Self.defaultAgentRoutingToolName])
+                allowed.subtract(deferred)
+                allowed.insert("capabilities_load")
+            }
             byName = byName.filter { allowed.contains($0.key) }
+
+            // Keep a lazy-loaded configure write lean. A tool the model pulled
+            // in via `capabilities_load` enters through `additionalToolNames`
+            // as a FULL spec (the generic `replacingExisting` add above), which
+            // re-prefilled ~600 tokens for `osaurus_provider` alone. On a model
+            // that prefers a compact prompt, re-apply the bootstrap skeleton so
+            // the post-load schema matches the lean turn-1 baseline (enums +
+            // field names kept, prose dropped). Idempotent on the reads /
+            // routing tool, which are already compacted in the baseline.
+            if prefersCompact {
+                for name in ToolRegistry.configureWriteToolNames {
+                    guard let full = byName[name] else { continue }
+                    byName[name] = compactBootstrapSpec(full)
+                }
+                // `capabilities_load` is kept at full spec by the general
+                // bootstrap (it documents the plugin/method/skill/tool id
+                // formats). The Default agent only ever loads a configure
+                // write by `tool/<name>` — a usage its addendum spells out —
+                // so the skeleton is enough here and drops ~165 tokens.
+                if let load = byName["capabilities_load"] {
+                    byName["capabilities_load"] = forcedCompactBootstrapSpec(load)
+                }
+            }
         } else {
             for name in ToolRegistry.configureToolNames {
                 byName.removeValue(forKey: name)
@@ -2154,7 +2225,9 @@ public struct SystemPromptComposer: Sendable {
         // a single pointer read per compose.
         let basePrompt: String
         if snapshot.agentId == Agent.defaultId {
-            let addendum = DefaultAgentSystemPromptBuilder.render()
+            let prefersCompact = ContextSizeResolver.resolve(modelId: snapshot.model)
+                .prefersCompactPrompt
+            let addendum = DefaultAgentSystemPromptBuilder.render(compact: prefersCompact)
             let userPersona = snapshot.systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
             basePrompt = userPersona.isEmpty ? addendum : addendum + "\n\n" + snapshot.systemPrompt
         } else {

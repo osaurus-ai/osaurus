@@ -805,11 +805,12 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
     }
 
     private func loadTool(_ toolId: String) async -> LoadOutcome {
+        let isDefaultAgent = ChatExecutionContext.currentAgentId == Agent.defaultId
         // Phase C default-agent gate: limit `capabilities_load` to the
         // configure write tools. Everything else (sandbox, MCP, plugin
         // tools) is hard-stopped with a routing hint so the model
         // self-corrects without burning a turn.
-        if ChatExecutionContext.currentAgentId == Agent.defaultId {
+        if isDefaultAgent {
             let configureWrites = await MainActor.run {
                 ToolRegistry.configureWriteToolNames
             }

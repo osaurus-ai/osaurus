@@ -21,15 +21,29 @@ import Foundation
 public enum DefaultAgentSystemPromptBuilder {
     private static var cachedGeneration: Int = -1
     private static var cachedAddendum: String = ""
+    private static var cachedCompactGeneration: Int = -1
+    private static var cachedCompactAddendum: String = ""
 
     /// Render (or return the cached) addendum. Memoized against
     /// `ConfigurationDomainRegistry.shared.generation` so the prompt
     /// is byte-stable across turns when nothing has changed and
     /// regenerated exactly once when a new domain registers.
-    public static func render() -> String {
+    ///
+    /// `compact` renders the leaner variant for small local models
+    /// (`prefersCompactPrompt`) — same tool surface, trimmed prose —
+    /// memoized on its own cache slot so toggling model size mid-app
+    /// doesn't thrash the full-variant cache.
+    public static func render(compact: Bool = false) -> String {
         let generation = ConfigurationDomainRegistry.shared.generation
+        if compact {
+            if generation == cachedCompactGeneration { return cachedCompactAddendum }
+            let rendered = build(from: ConfigurationDomainRegistry.shared.domains, compact: true)
+            cachedCompactGeneration = generation
+            cachedCompactAddendum = rendered
+            return rendered
+        }
         if generation == cachedGeneration { return cachedAddendum }
-        let rendered = build(from: ConfigurationDomainRegistry.shared.domains)
+        let rendered = build(from: ConfigurationDomainRegistry.shared.domains, compact: false)
         cachedGeneration = generation
         cachedAddendum = rendered
         return rendered
@@ -39,8 +53,8 @@ public enum DefaultAgentSystemPromptBuilder {
     /// list of domains without touching the shared registry / cache.
     /// Internal because `ConfigurationDomain` itself is internal —
     /// tests reach this through `@testable import OsaurusCore`.
-    static func _renderForTests(domains: [ConfigurationDomain]) -> String {
-        build(from: domains)
+    static func _renderForTests(domains: [ConfigurationDomain], compact: Bool = false) -> String {
+        build(from: domains, compact: compact)
     }
 
     /// Test-only: forget the memoized value so the next `render()`
@@ -48,9 +62,11 @@ public enum DefaultAgentSystemPromptBuilder {
     public static func _resetForTests() {
         cachedGeneration = -1
         cachedAddendum = ""
+        cachedCompactGeneration = -1
+        cachedCompactAddendum = ""
     }
 
-    private static func build(from domains: [ConfigurationDomain]) -> String {
+    private static func build(from domains: [ConfigurationDomain], compact: Bool) -> String {
         // Write tools are listed straight from the registry (sorted for a
         // byte-stable, KV-cacheable prefix). Each tool's own schema carries its
         // `action` enum and per-action required fields, so the prompt only needs
@@ -60,6 +76,47 @@ public enum DefaultAgentSystemPromptBuilder {
             .sorted()
             .map { "`\($0)`" }
             .joined(separator: ", ")
+
+        if compact {
+            // Small local models pay a long prefill for tool schemas, so the
+            // per-domain write tools are DEFERRED from the turn-1 schema (B1 in
+            // `SystemPromptComposer.resolveTools`). Name them here so the model
+            // loads the one it needs by name in a single round-trip — no
+            // `capabilities_discover` step. `osaurus_agent` stays loaded, so the
+            // "if it isn't already available" clause lets the model call it
+            // directly for the out-of-scope handoff.
+            var lines: [String] = []
+            lines.append("# Configuring Osaurus")
+            lines.append("")
+            lines.append(
+                "You configure Osaurus only. Read state any time with `osaurus_status`, "
+                    + "`osaurus_list`, `osaurus_describe`."
+            )
+            lines.append("")
+            if writeTools.isEmpty {
+                lines.append("Change tools: (none registered yet)")
+            } else {
+                lines.append(
+                    "Change tools: \(writeTools). To keep startup fast these load on "
+                        + "demand: if the one you need isn't already available, call "
+                        + "`capabilities_load` with `tool/<name>` (e.g. `tool/osaurus_provider`), "
+                        + "then call it with an `action` (its schema lists actions + fields)."
+                )
+            }
+            lines.append("")
+            lines.append(
+                "Rules: confirm each change before calling. Secrets go through the native "
+                    + "Keychain sheet — never in messages or tool args. Your own persona/model/"
+                    + "temperature live in Settings → Chat, not these tools."
+            )
+            lines.append("")
+            lines.append(
+                "Out of scope: anything non-config (coding, web, files). Offer `osaurus_agent` "
+                    + "(`create` or `activate`), or point to the agent menu."
+            )
+            lines.append("")
+            return lines.joined(separator: "\n")
+        }
 
         var lines: [String] = []
         lines.append("# Configuring Osaurus")

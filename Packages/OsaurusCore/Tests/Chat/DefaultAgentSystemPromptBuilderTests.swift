@@ -88,6 +88,52 @@ struct DefaultAgentSystemPromptBuilderTests {
     }
 
     @Test
+    func render_compactIsShorterButKeepsToolSurface() {
+        let domains = [
+            Self.probe(id: "providers", writeToolNames: ["osaurus_provider"]),
+            Self.probe(id: "models", writeToolNames: ["osaurus_model"]),
+        ]
+        let full = DefaultAgentSystemPromptBuilder._renderForTests(domains: domains, compact: false)
+        let compact = DefaultAgentSystemPromptBuilder._renderForTests(domains: domains, compact: true)
+
+        // Compact keeps the full tool surface + scope guardrails (read tools,
+        // every write tool by name, out-of-scope handoff) but teaches the
+        // load-on-demand flow (B1): writes load via `capabilities_load`, with
+        // NO `capabilities_discover` step.
+        #expect(compact.contains("osaurus_status"))
+        #expect(compact.contains("`osaurus_provider`"))
+        #expect(compact.contains("`osaurus_model`"))
+        #expect(compact.contains("action"))
+        #expect(compact.contains("Out of scope"))
+        #expect(compact.contains("osaurus_agent"))
+        #expect(compact.contains("capabilities_load"))
+        #expect(!compact.contains("capabilities_discover"))
+        // The full variant loads writes directly — it must NOT teach lazy load.
+        #expect(!full.contains("capabilities_load"))
+    }
+
+    @Test
+    func render_compactIsMemoizedSeparatelyFromFull() {
+        let registry = ConfigurationDomainRegistry.shared
+        registry._resetForTests()
+        ConfigurationDomainBootstrap._resetForTests()
+        DefaultAgentSystemPromptBuilder._resetForTests()
+        defer {
+            registry._resetForTests()
+            ConfigurationDomainBootstrap._resetForTests()
+            DefaultAgentSystemPromptBuilder._resetForTests()
+        }
+
+        ConfigurationDomainBootstrap.registerBuiltIns()
+
+        let compactFirst = DefaultAgentSystemPromptBuilder.render(compact: true)
+        let compactSecond = DefaultAgentSystemPromptBuilder.render(compact: true)
+        let full = DefaultAgentSystemPromptBuilder.render(compact: false)
+        #expect(compactFirst == compactSecond)
+        #expect(compactFirst != full)
+    }
+
+    @Test
     func render_handlesEmptyRegistry() {
         let rendered = DefaultAgentSystemPromptBuilder._renderForTests(domains: [])
         #expect(rendered.contains("none registered yet"))
