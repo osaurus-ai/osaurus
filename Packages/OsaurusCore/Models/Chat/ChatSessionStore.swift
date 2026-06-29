@@ -29,10 +29,44 @@ enum ChatSessionStore {
     /// Save a session (creates or updates)
     static func save(_ session: ChatSessionData) {
         ensureOpen()
+        // When the chat-history DB is deferred (storage key not yet resident or
+        // a key rotation is in flight), `ensureOpen()` leaves `didOpen` false.
+        // Writing now throws `.notOpen` and silently drops the turns — the
+        // #1737 regression where finished conversations couldn't be continued or
+        // exported. Queue instead and re-flush once storage becomes ready.
+        guard didOpen else {
+            pendingSaves[session.id] = session
+            return
+        }
         do {
             try ChatHistoryDatabase.shared.saveSession(session)
         } catch {
             print("[ChatSessionStore] Failed to save session \(session.id): \(error)")
+        }
+    }
+
+    /// Sessions whose writes were deferred because the chat-history DB wasn't
+    /// open yet. Keyed by id so repeated saves of the same session collapse to
+    /// the latest snapshot. Drained by `flushPendingSaves()`.
+    private static var pendingSaves: [UUID: ChatSessionData] = [:]
+
+    /// Re-attempt any saves that were deferred while the chat-history DB was
+    /// closed. Call when storage becomes ready (e.g. on the rotation-complete
+    /// notification). No-op when nothing is pending or the DB is still deferred.
+    static func flushPendingSaves() {
+        guard !pendingSaves.isEmpty else { return }
+        ensureOpen()
+        guard didOpen else { return }
+        let drained = pendingSaves
+        pendingSaves.removeAll()
+        for (id, session) in drained {
+            do {
+                try ChatHistoryDatabase.shared.saveSession(session)
+            } catch {
+                print("[ChatSessionStore] Failed to flush deferred save \(id): \(error)")
+                // Keep it queued for the next readiness signal.
+                pendingSaves[id] = session
+            }
         }
     }
 
@@ -165,6 +199,7 @@ enum ChatSessionStore {
     #if DEBUG
         static func _resetForTesting() {
             didOpen = false
+            pendingSaves.removeAll()
             ChatHistoryDatabase.shared.close()
         }
     #endif
