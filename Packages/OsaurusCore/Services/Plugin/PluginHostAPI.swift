@@ -1262,11 +1262,10 @@ final class PluginHostContext: @unchecked Sendable {
                     names: newTools.map { $0.function.name }
                 )
             }
-            var noted = result
-            if !ToolEnvelope.isError(result) {
-                noted += AgentToolLoop.deferredSchemaNotice
-            }
-            return (noted, nil)
+            // The loaded tools' schemas already ride in the tool result
+            // (`CapabilitiesLoadTool.loadedSchemaBlock`) so the model can call
+            // them by name this same turn — no extra notice to append.
+            return (result, nil)
 
         default:
             return (result, nil)

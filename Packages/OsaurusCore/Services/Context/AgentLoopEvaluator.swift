@@ -523,20 +523,17 @@ public enum AgentLoopEvaluator {
         func postProcess(
             _ inv: ServiceToolInvocation,
             callId: String,
-            result rawResult: String
+            result: String
         ) async -> AgentLoopToolExecution {
-            var result = rawResult
             let isError = ToolEnvelope.isError(result)
-            // Deferred-schema policy (production parity): drain the load
-            // buffer — tools loaded via `capabilities_load` are callable
-            // immediately through the registry — but the request schema
-            // stays FROZEN for the whole run; the model is told via the
-            // result note instead of a mid-run `<tools>` rewrite.
+            // Deferred-schema policy (production parity): drain the load buffer
+            // — tools loaded via `capabilities_load` are callable immediately
+            // through the registry, and their schemas already ride in the tool
+            // result (`CapabilitiesLoadTool.loadedSchemaBlock`) — but the request
+            // schema stays FROZEN for the whole run (no mid-run `<tools>`
+            // rewrite), so the paged-KV prefix stays byte-stable.
             if inv.toolName == "capabilities_load" {
-                let drained = await CapabilityLoadBuffer.shared.drain()
-                if !drained.isEmpty, !isError {
-                    result += AgentToolLoop.deferredSchemaNotice
-                }
+                _ = await CapabilityLoadBuffer.shared.drain()
             }
             history.append(
                 ChatMessage(role: "tool", content: result, tool_calls: nil, tool_call_id: callId)

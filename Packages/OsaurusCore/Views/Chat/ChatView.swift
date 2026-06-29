@@ -808,28 +808,6 @@ final class ChatSession: ObservableObject {
         return ModelMediaCapabilities.from(modelId: model).supportsAudio
     }
 
-    /// When the Default agent lazy-loads a configure WRITE tool
-    /// mid-turn on a compact-prompt (small local) model, collapse its FULL spec
-    /// back to the bootstrap skeleton — enums + field names + required kept,
-    /// prose dropped — so the post-load schema matches the lean turn-1 baseline.
-    /// Mirrors the `resolveTools` default-agent path, which this same-turn
-    /// activation bypasses. A no-op for other agents, larger models, or
-    /// non-configure tools.
-    static func compactLoadedDefaultAgentWrites(
-        _ tools: [Tool],
-        agentId: UUID,
-        modelId: String?
-    ) -> [Tool] {
-        guard agentId == Agent.defaultId,
-            ContextSizeResolver.resolve(modelId: modelId).prefersCompactPrompt
-        else { return tools }
-        let writes = ToolRegistry.configureWriteToolNames
-        return tools.map {
-            writes.contains($0.function.name)
-                ? SystemPromptComposer.compactBootstrapSpec($0) : $0
-        }
-    }
-
     var selectedModelSupportsVideo: Bool {
         guard let model = selectedModel else { return false }
         return ModelMediaCapabilities.from(modelId: model).supportsVideo
@@ -3476,12 +3454,15 @@ final class ChatSession: ObservableObject {
                         }
                     }
 
-                    // Each agent-loop iteration is a fresh provider request.
-                    // `capabilities_load` may refresh this array for the next
-                    // same-turn request after validating the loaded schemas. In
-                    // Mode 2 we still send no tools: the remote agent advertises
-                    // and executes its own tools server-side and streams text.
-                    var toolSpecs = isRemoteAgentTarget ? [] : context.tools
+                    // FROZEN for the whole run (deferred-schema / KV-prefix
+                    // stability): the rendered `<tools>` block never changes
+                    // mid-run, even after `capabilities_load`. Loaded tools are
+                    // callable immediately by name and their schemas ride in the
+                    // tool result (see `CapabilitiesLoadTool.loadedSchemaBlock`);
+                    // they fold into `<tools>` on the next user turn. In Mode 2
+                    // we send no tools: the remote agent advertises and executes
+                    // its own tools server-side and only streams text back.
+                    let toolSpecs = isRemoteAgentTarget ? [] : context.tools
                     let isManualTools = liveToolMode == .manual
                     cachedContext = context
 
@@ -3740,10 +3721,15 @@ final class ChatSession: ObservableObject {
                         }
 
                         // Tools loaded via capabilities_load / sandbox_plugin_register.
-                        // Each loop iteration is a fresh model request, so it
-                        // is safe to expose validated schemas on the NEXT
-                        // iteration in this same user turn. We still never
-                        // mutate an in-flight stream.
+                        // Deferred-schema policy (KV-prefix stability): the loaded
+                        // tools are callable IMMEDIATELY — the registry dispatches
+                        // by name and their schemas ride in the tool result (see
+                        // `CapabilitiesLoadTool.loadedSchemaBlock`) — but
+                        // `toolSpecs` stays FROZEN for the rest of this run.
+                        // Rewriting the rendered `<tools>` block mid-run busts the
+                        // paged-KV prefix for the whole conversation. The loaded
+                        // names persist into the session's tool union so the NEXT
+                        // user turn composes their full schemas into `<tools>`.
                         if inv.toolName == "capabilities_load"
                             || inv.toolName == "sandbox_plugin_register"
                         {
@@ -3751,40 +3737,14 @@ final class ChatSession: ObservableObject {
                             // unrelated run; persist only in auto mode (manual
                             // mode keeps the user's explicit tool set fixed).
                             let newTools = await CapabilityLoadBuffer.shared.drain()
-                            if !newTools.isEmpty {
-                                // A Default-agent configure WRITE
-                                // loaded mid-turn enters here as a FULL spec, which
-                                // re-prefilled ~600 tokens for `osaurus_provider`
-                                // alone. The `resolveTools` default-agent path
-                                // re-compacts these on a compact-prompt model, but
-                                // this same-turn activation bypasses it — so apply
-                                // the same bootstrap skeleton here to keep the
-                                // post-load schema as lean as the turn-1 baseline.
-                                let activatedTools = Self.compactLoadedDefaultAgentWrites(
-                                    newTools,
-                                    agentId: self.agentId ?? Agent.defaultId,
-                                    modelId: self.selectedModel
+                            if !newTools.isEmpty, !isManualTools, let sid = self.sessionId {
+                                let names = newTools.map { $0.function.name }
+                                let snapshot = context.alwaysLoadedNames
+                                await SessionToolStateStore.shared.appendLoadedTools(
+                                    self.sessionStateKey(sid),
+                                    names: names,
+                                    fallbackAlwaysLoadedNames: snapshot
                                 )
-                                let activation = AgentToolLoop.activateCapabilitySchemas(
-                                    loadedTools: activatedTools,
-                                    currentTools: toolSpecs,
-                                    mode: .sameTurnNextRequest
-                                )
-                                toolSpecs = activation.tools
-                                resultText = AgentToolLoop.annotateCapabilityLoadResult(
-                                    resultText,
-                                    activation: activation.report
-                                )
-                                if let sid = self.sessionId {
-                                    if !isManualTools {
-                                        let snapshot = context.alwaysLoadedNames
-                                        await SessionToolStateStore.shared.appendLoadedTools(
-                                            self.sessionStateKey(sid),
-                                            names: activation.report.allToolNames,
-                                            fallbackAlwaysLoadedNames: snapshot
-                                        )
-                                    }
-                                }
                             }
                         }
 

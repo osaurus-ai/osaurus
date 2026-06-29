@@ -375,6 +375,52 @@ struct CapabilitiesLoadToolTests {
         #expect(result.contains("ids"))
     }
 
+    /// Synthetic spec with a uniquely-marked parameter description so the
+    /// full-vs-compact schema rendering is observable.
+    private func schemaProbeTool() -> Tool {
+        Tool(
+            type: "function",
+            function: ToolFunction(
+                name: "schema_probe_tool",
+                description: "Probe tool. Extra prose that compact mode trims.",
+                parameters: .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "city": .object([
+                            "type": .string("string"),
+                            "description": .string("UNIQUE_PARAM_PROSE_MARKER"),
+                        ])
+                    ]),
+                    "required": .array([.string("city")]),
+                ])
+            )
+        )
+    }
+
+    @Test func loadedSchemaBlockRendersFullSchemaForNonDefaultAgent() {
+        // No agent context → not the Default agent → full schema (with the
+        // parameter prose) rides in the load result so dynamically loaded
+        // tools call correctly on the first attempt.
+        let block = CapabilitiesLoadTool.loadedSchemaBlock(for: schemaProbeTool())
+        #expect(block.contains("\"name\":\"schema_probe_tool\""))
+        #expect(block.contains("city"))
+        #expect(block.contains("UNIQUE_PARAM_PROSE_MARKER"))
+        #expect(block.contains("\"required\":[\"city\"]"))
+    }
+
+    @Test func loadedSchemaBlockCompactsForDefaultAgent() {
+        // The Default (configuration) agent gets the compact bootstrap
+        // skeleton — field names + required kept, prose dropped — so the
+        // suffix stays as lean as its turn-1 baseline.
+        let block = ChatExecutionContext.$currentAgentId.withValue(Agent.defaultId) {
+            CapabilitiesLoadTool.loadedSchemaBlock(for: schemaProbeTool())
+        }
+        #expect(block.contains("\"name\":\"schema_probe_tool\""))
+        #expect(block.contains("city"))
+        #expect(block.contains("\"required\":[\"city\"]"))
+        #expect(!block.contains("UNIQUE_PARAM_PROSE_MARKER"))
+    }
+
     @Test func handlesInvalidIdFormat() async throws {
         // All-failed contract: a load where NOTHING succeeded returns a
         // real failure envelope (kind: invalid_args, field: ids), not

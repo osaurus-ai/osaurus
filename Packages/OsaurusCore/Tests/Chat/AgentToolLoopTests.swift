@@ -91,11 +91,6 @@ private func loopTestTool(_ name: String) -> Tool {
     )
 }
 
-private func parsedJSONObject(_ json: String) throws -> [String: Any] {
-    let data = try #require(json.data(using: .utf8))
-    return try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
-}
-
 private func chatPolicy(maxIterations: Int = 15) -> AgentLoopPolicy {
     AgentLoopPolicy(
         maxIterations: maxIterations,
@@ -151,11 +146,14 @@ struct AgentToolLoopTests {
         #expect(surface.batchOutcomes[0].allSatisfy { !$0.wasDeduped && !$0.wasError })
     }
 
-    @Test func capabilitiesLoadActivatesSchemaForSameTurnNextIteration() async throws {
-        let loadedTool = loopTestTool("miyo_search")
-        var activeTools = [loopTestTool("capabilities_load")]
+    @Test func capabilitiesLoadKeepsToolSchemaFrozenAndCallableSameTurn() async throws {
+        // KV-prefix stability: the surface advertises the SAME <tools> set on
+        // every iteration, even after `capabilities_load`. The loaded tool is
+        // callable by name the same turn (registry dispatch is name-based) and
+        // its schema rides in the tool result — the rendered prefix never
+        // changes mid-run, so the paged-KV cache survives.
+        let frozenTools = [loopTestTool("capabilities_load")]
         var schemaNamesSeen: [[String]] = []
-        var loadResult = ""
 
         let surface = ScriptedLoopSurface(steps: [
             .toolCalls([inv("capabilities_load", #"{"ids":["tool/miyo_search"]}"#)]),
@@ -165,24 +163,11 @@ struct AgentToolLoopTests {
         var hooks = surface.makeHooks()
         hooks.buildMessages = { notices in
             surface.builtNotices.append(notices)
-            schemaNamesSeen.append(activeTools.map { $0.function.name })
+            schemaNamesSeen.append(frozenTools.map { $0.function.name })
             return AgentLoopIterationInput(messages: [ChatMessage(role: "user", content: "task")])
         }
         hooks.executeTool = { inv, callId in
             surface.executedCalls.append((inv.toolName, inv.jsonArguments, callId))
-            if inv.toolName == "capabilities_load" {
-                let activation = AgentToolLoop.activateCapabilitySchemas(
-                    loadedTools: [loadedTool],
-                    currentTools: activeTools,
-                    mode: .sameTurnNextRequest
-                )
-                activeTools = activation.tools
-                loadResult = AgentToolLoop.annotateCapabilityLoadResult(
-                    ToolEnvelope.success(tool: inv.toolName, text: "Tool 'miyo_search' loaded."),
-                    activation: activation.report
-                )
-                return AgentLoopToolExecution(result: loadResult)
-            }
             return AgentLoopToolExecution(result: ToolEnvelope.success(tool: inv.toolName, text: "ran"))
         }
 
@@ -193,71 +178,10 @@ struct AgentToolLoopTests {
         )
 
         #expect(result.exit == .finalResponse)
+        // Loaded, then called the SAME turn without the prefix changing.
         #expect(surface.executedCalls.map(\.name) == ["capabilities_load", "miyo_search"])
-        #expect(schemaNamesSeen.first == ["capabilities_load"])
-        #expect(schemaNamesSeen.dropFirst().first?.contains("miyo_search") == true)
-
-        let envelope = try parsedJSONObject(loadResult)
-        let payload = try #require(envelope["result"] as? [String: Any])
-        let activation = try #require(payload["activation"] as? [String: Any])
-        #expect(activation["status"] as? String == "activated_for_same_turn_next_request")
-        #expect(activation["schema_visible_on_next_agent_loop_request"] as? Bool == true)
-        #expect((activation["activated_tool_names"] as? [String]) == ["miyo_search"])
-        #expect(!loadResult.contains(AgentToolLoop.deferredSchemaNotice))
-    }
-
-    @Test func continuationActivationEnvelopeIsStructuredAndBounded() throws {
-        let report = AgentToolLoop.CapabilitySchemaActivationReport(
-            mode: .continuationRequired,
-            activatedToolNames: ["miyo_search"],
-            duplicateToolNames: [],
-            diagnostics: [],
-            maxContinuationRetries: AgentToolLoop.maxCapabilityActivationContinuations
-        )
-        let annotated = AgentToolLoop.annotateCapabilityLoadResult(
-            ToolEnvelope.success(tool: "capabilities_load", text: "Tool loaded."),
-            activation: report
-        )
-
-        let envelope = try parsedJSONObject(annotated)
-        let payload = try #require(envelope["result"] as? [String: Any])
-        let activation = try #require(payload["activation"] as? [String: Any])
-        let continuation = try #require(activation["continuation"] as? [String: Any])
-
-        #expect(envelope["ok"] as? Bool == true)
-        #expect(activation["status"] as? String == "continuation_required")
-        #expect(continuation["required"] as? Bool == true)
-        #expect(continuation["bounded"] as? Bool == true)
-        #expect(continuation["max_retries"] as? Int == AgentToolLoop.maxCapabilityActivationContinuations)
-        #expect(!annotated.contains(AgentToolLoop.deferredSchemaNotice))
-    }
-
-    @Test func duplicateCapabilityActivationIsIdempotent() throws {
-        let loadedTool = loopTestTool("miyo_search")
-        let first = AgentToolLoop.activateCapabilitySchemas(
-            loadedTools: [loadedTool],
-            currentTools: [loopTestTool("capabilities_load")],
-            mode: .sameTurnNextRequest
-        )
-        let second = AgentToolLoop.activateCapabilitySchemas(
-            loadedTools: [loadedTool],
-            currentTools: first.tools,
-            mode: .sameTurnNextRequest
-        )
-        let annotated = AgentToolLoop.annotateCapabilityLoadResult(
-            ToolEnvelope.success(tool: "capabilities_load", text: "Tool loaded again."),
-            activation: second.report
-        )
-
-        #expect(first.report.activatedToolNames == ["miyo_search"])
-        #expect(second.tools.filter { $0.function.name == "miyo_search" }.count == 1)
-        #expect(second.report.activatedToolNames.isEmpty)
-        #expect(second.report.duplicateToolNames == ["miyo_search"])
-
-        let envelope = try parsedJSONObject(annotated)
-        let payload = try #require(envelope["result"] as? [String: Any])
-        let activation = try #require(payload["activation"] as? [String: Any])
-        #expect((activation["duplicate_tool_names"] as? [String]) == ["miyo_search"])
+        #expect(schemaNamesSeen.count >= 2)
+        #expect(schemaNamesSeen.allSatisfy { $0 == ["capabilities_load"] })
     }
 
     @Test func preservesModelSuppliedCallIds() async throws {

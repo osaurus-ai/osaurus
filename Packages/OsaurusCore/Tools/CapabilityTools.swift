@@ -910,7 +910,37 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
                 )
             )
         }
-        return .success("Tool '\(toolId)' loaded and available.\n")
+        return .success(
+            "Tool '\(toolId)' loaded — callable NOW by name; do not call "
+                + "capabilities_discover or capabilities_load for it again.\n"
+                + Self.loadedSchemaBlock(for: spec)
+        )
+    }
+
+    /// Render a freshly loaded tool's callable schema for inclusion in the
+    /// `capabilities_load` result — i.e. the conversation *suffix*. Delivering
+    /// the schema here (append-only) instead of rewriting the frozen `<tools>`
+    /// prefix mid-run is what keeps the paged-KV prefix byte-stable while still
+    /// giving the model same-turn visibility: it reads the schema from this
+    /// result and calls the tool by name (registry dispatch is name-based, so
+    /// the tool is callable even though it is not yet in the rendered `<tools>`
+    /// block). The loaded tool folds into `<tools>` on the next user turn via
+    /// `frozenAlwaysLoadedNames`.
+    ///
+    /// The default (configuration) agent only ever loads configure-write tools;
+    /// it gets the compact bootstrap skeleton (enums + field names + required
+    /// kept, prose dropped) so the suffix stays as lean as its turn-1 baseline.
+    /// Every other agent gets the full schema so dynamically loaded
+    /// plugin/MCP/sandbox tools call correctly on the first attempt.
+    static func loadedSchemaBlock(for spec: Tool) -> String {
+        let compact = ChatExecutionContext.currentAgentId == Agent.defaultId
+        let rendered = compact ? SystemPromptComposer.compactBootstrapSpec(spec) : spec
+        let dict = rendered.toTokenizerToolSpec()
+        guard JSONSerialization.isValidJSONObject(dict),
+            let data = try? JSONSerialization.data(withJSONObject: dict, options: .osaurusCanonical),
+            let json = String(data: data, encoding: .utf8)
+        else { return "" }
+        return "Schema for `\(spec.function.name)`:\n\(json)\n"
     }
 
     /// True when the current session's tool state already carries this
@@ -950,17 +980,24 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
         guard !names.isEmpty else { return "" }
         let specs = await MainActor.run { ToolRegistry.shared.specs(forTools: names) }
         var loadedNames: [String] = []
+        var loadedSpecs: [Tool] = []
         var skippedLines: [String] = []
         for spec in specs {
             if let diagnostic = await CapabilityLoadBuffer.shared.add(spec) {
                 skippedLines.append("Skipped tool '\(diagnostic.toolName)': \(diagnostic.message)")
             } else {
                 loadedNames.append(spec.function.name)
+                loadedSpecs.append(spec)
             }
         }
         var output = ""
         if !loadedNames.isEmpty {
-            output += "Auto-loaded tools: \(loadedNames.joined(separator: ", "))\n"
+            output += "Auto-loaded tools (callable NOW by name): \(loadedNames.joined(separator: ", "))\n"
+            // Append each tool's schema so the model can call them this same
+            // turn without a mid-run `<tools>` rewrite (KV-prefix stability).
+            for spec in loadedSpecs {
+                output += Self.loadedSchemaBlock(for: spec)
+            }
         }
         if !skippedLines.isEmpty {
             output += skippedLines.joined(separator: "\n") + "\n"
