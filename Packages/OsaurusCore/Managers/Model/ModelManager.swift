@@ -24,11 +24,17 @@ enum ModelListTab: String, CaseIterable, AnimatedTabItem {
     /// Full catalog rendered as a Recommended carousel + a newest-first grid.
     case all = "Catalog"
 
+    /// Not a content tab — selecting it hands off to the dedicated Image
+    /// Generation pane in Settings and the picker snaps back to the previous
+    /// tab. Kept in the enum so it renders in the shared tab selector.
+    case imageGeneration = "Image Gen"
+
     /// Display name for the tab (required by AnimatedTabItem)
     var title: String {
         switch self {
         case .downloaded: return L("On Device")
         case .all: return L("Catalog")
+        case .imageGeneration: return L("Image Gen")
         }
     }
 }

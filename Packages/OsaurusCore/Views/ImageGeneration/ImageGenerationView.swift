@@ -92,7 +92,7 @@ struct ImageGenerationView: View {
 
     private var headerView: some View {
         ManagerHeaderWithTabs(
-            title: L("Image Generation"),
+            title: L("Image Gen"),
             subtitle: headerSubtitle
         ) {
             if selectedTab == .models {
@@ -113,7 +113,7 @@ struct ImageGenerationView: View {
 
     private var headerSubtitle: String {
         installedCount > 0
-            ? L("\(installedCount) image models on device")
+            ? L("Generate and edit images with on-device models • \(installedCount) on device")
             : L("Generate and edit images with on-device models")
     }
 
