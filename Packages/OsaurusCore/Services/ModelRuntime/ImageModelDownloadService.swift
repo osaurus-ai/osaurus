@@ -107,6 +107,30 @@ final class ImageModelDownloadService: ObservableObject {
         return fetchedCatalog.first { $0.id == id }?.repoId
     }
 
+    /// Best-effort total download size for a catalog repo, mirroring
+    /// `ModelDownloadService.estimateSize`: read-through `ModelSizeCache` first
+    /// (honoring its TTL for revision-less entries) so re-opening the tab
+    /// doesn't re-hit the network, then sum the staged files' sizes via the HF
+    /// tree API and persist the result. Uses the same `patterns`/`excluded`
+    /// set the downloader stages, so the figure matches what actually lands on
+    /// disk. Returns `nil` on any listing failure.
+    func estimateDownloadSize(repoId: String) async -> Int64? {
+        let trimmed = repoId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        if let cached = ModelSizeCache.bytes(forId: trimmed) {
+            return cached
+        }
+        let fetched = await HuggingFaceService.shared.estimateTotalSize(
+            repoId: trimmed,
+            patterns: Self.patterns,
+            excludedFiles: Self.excluded
+        )
+        if let fetched {
+            ModelSizeCache.record(id: trimmed, bytes: fetched, revision: nil)
+        }
+        return fetched
+    }
+
     /// Delete a staged bundle from disk, cancel any in-flight download, and
     /// refresh listeners + the picker cache so it disappears everywhere.
     func delete(_ id: String) {

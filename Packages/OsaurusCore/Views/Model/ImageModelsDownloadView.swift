@@ -23,6 +23,11 @@ struct ImageModelsDownloadView: View {
     @State private var installed: [InstalledModel] = []
     @State private var panel: PanelRequest?
 
+    /// Resolved download sizes (bytes) for Available catalog rows, keyed by
+    /// repo id. Filled lazily off the HF tree API (cache-backed) so the list
+    /// renders instantly and each row's size fills in as it lands.
+    @State private var sizes: [String: Int64] = [:]
+
     /// Installed bundle paired with its resolved source repo (for re-download),
     /// captured once per refresh so per-row rendering does no filesystem reads.
     private struct InstalledModel: Identifiable {
@@ -72,6 +77,12 @@ struct ImageModelsDownloadView: View {
             async let catalogRefresh: Void = downloads.refreshCatalog()
             _ = await (installedRefresh, catalogRefresh)
         }
+        // Resolve Available-row sizes whenever the catalog (minus installed)
+        // changes. Re-keys on the entry ids so newly fetched rows get a size
+        // and rows that disappear (e.g. just installed) stop being queried.
+        .task(id: availableEntries.map(\.id)) {
+            await refreshAvailableSizes()
+        }
         .onReceive(NotificationCenter.default.publisher(for: .localModelsChanged)) { _ in
             Task { await refreshInstalled() }
         }
@@ -101,6 +112,7 @@ struct ImageModelsDownloadView: View {
                         metrics: downloads.metrics[model.id],
                         primary: installedPrimaryAction(model),
                         menuItems: installedMenuItems(model),
+                        onViewHuggingFace: huggingFaceAction(model.repoId),
                         onCancel: { downloads.cancel(model.id) }
                     )
                 }
@@ -114,7 +126,7 @@ struct ImageModelsDownloadView: View {
                 ForEach(availableEntries) { entry in
                     ImageModelRow(
                         title: entry.displayName,
-                        subtitle: entry.note ?? L("Not downloaded yet"),
+                        subtitle: availableSubtitle(entry),
                         leading: ImageModelRow.Leading(icon: "photo", tint: theme.accentColor),
                         kindLabel: nil,
                         quantLabel: quantText(bits: nil, id: entry.repoId),
@@ -123,14 +135,7 @@ struct ImageModelsDownloadView: View {
                         primary: ImageModelRow.Action(title: "Download", icon: "arrow.down.circle") {
                             downloads.download(entry)
                         },
-                        menuItems: [
-                            ImageModelRow.Action(
-                                title: "View on Hugging Face",
-                                icon: "arrow.up.right"
-                            ) {
-                                openHuggingFace(entry.repoId)
-                            }
-                        ],
+                        onViewHuggingFace: huggingFaceAction(entry.repoId),
                         onCancel: { downloads.cancel(entry.id) }
                     )
                 }
@@ -203,15 +208,9 @@ struct ImageModelsDownloadView: View {
                 }
             )
         }
-        // The source repo is the one genuinely useful "details" affordance, so it
-        // moves into the row menu now that the standalone detail sheet is gone.
-        if let repo = model.repoId {
-            items.append(
-                ImageModelRow.Action(title: "View on Hugging Face", icon: "arrow.up.right") {
-                    openHuggingFace(repo)
-                }
-            )
-        }
+        // "View on Hugging Face" now lives inline as an always-visible link
+        // button (see ImageModelRow), so the overflow menu keeps only the
+        // heavier actions: Re-download (for ready bundles) and Delete.
         items.append(
             ImageModelRow.Action(title: "Delete", icon: "trash", role: .destructive) {
                 downloads.delete(info.id)
@@ -230,6 +229,19 @@ struct ImageModelsDownloadView: View {
         }
         parts.append(L("Ready"))
         return parts.joined(separator: " · ")
+    }
+
+    /// Subtitle for an Available row: the catalog note plus the resolved
+    /// download size once it's known (e.g. "Text-to-image · mflux · 6.2 GB").
+    /// Falls back to the note alone while the size is still resolving, and to
+    /// the generic hint when there's nothing else to show.
+    private func availableSubtitle(_ entry: ImageModelDownload) -> String {
+        var parts: [String] = []
+        if let note = entry.note { parts.append(note) }
+        if let bytes = sizes[entry.repoId], bytes > 0 {
+            parts.append(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file))
+        }
+        return parts.isEmpty ? L("Not downloaded yet") : parts.joined(separator: " · ")
     }
 
     private func leadingStyle(for info: ImageModelInfo) -> ImageModelRow.Leading {
@@ -255,10 +267,31 @@ struct ImageModelsDownloadView: View {
         openURL(url)
     }
 
+    /// Wrap a (possibly unknown) source repo into a row's "View on Hugging
+    /// Face" action, returning `nil` when there's no repo to link to so the
+    /// row simply hides the link.
+    private func huggingFaceAction(_ repoId: String?) -> (() -> Void)? {
+        guard let repoId else { return nil }
+        return { openHuggingFace(repoId) }
+    }
+
     private func refreshInstalled() async {
         let models = (try? await ImageGenerationService.shared.availableModels()) ?? []
         installed = models.map {
             InstalledModel(info: $0, repoId: downloads.sourceRepoId(for: $0.id))
+        }
+    }
+
+    /// Fill in download sizes for Available rows that don't have one yet.
+    /// Sequential and cache-backed: the OsaurusAI image catalog is small and
+    /// `ModelSizeCache` makes repeats free, so this stays gentle on the HF API
+    /// while letting each size appear as soon as it resolves.
+    private func refreshAvailableSizes() async {
+        for entry in availableEntries where sizes[entry.repoId] == nil {
+            if Task.isCancelled { return }
+            if let bytes = await downloads.estimateDownloadSize(repoId: entry.repoId), bytes > 0 {
+                sizes[entry.repoId] = bytes
+            }
         }
     }
 
@@ -281,8 +314,9 @@ struct ImageModelsDownloadView: View {
 /// One clean list row for an image bundle, on the shared 10pt input-card chrome
 /// (the same surface `SettingsToggle` and the Privacy rows use). The row is
 /// static like the Privacy rows; inline controls surface the primary action
-/// (Download / Generate / Edit / Re-download), live download progress, and an
-/// overflow menu for the rest (View on Hugging Face, Re-download, Delete).
+/// (Download / Generate / Edit / Re-download / Cancel), live download progress,
+/// an always-visible "View on Hugging Face" link, and an overflow menu for the
+/// remaining heavier actions (Re-download / Delete) when present.
 private struct ImageModelRow: View {
     @Environment(\.theme) private var theme
 
@@ -310,6 +344,10 @@ private struct ImageModelRow: View {
     let metrics: ModelDownloadService.DownloadMetrics?
     var primary: Action? = nil
     var menuItems: [Action] = []
+    /// Always-visible inline "View on Hugging Face" link (when the source repo
+    /// is known). Pulled out of the overflow menu so it stays reachable while a
+    /// download is in flight and isn't the lone item behind a 3-dot affordance.
+    var onViewHuggingFace: (() -> Void)? = nil
     let onCancel: () -> Void
 
     private var isActive: Bool {
@@ -419,15 +457,22 @@ private struct ImageModelRow: View {
         }
     }
 
-    @ViewBuilder
     private var trailing: some View {
-        if isActive {
-            Button(action: onCancel) {
-                Text("Cancel", bundle: .module)
+        // The Hugging Face link is rendered first in both states so it never
+        // disappears mid-download. Active downloads then show Cancel; idle rows
+        // show the primary action plus an overflow menu only when real items
+        // remain (Installed: Re-download / Delete).
+        HStack(spacing: 8) {
+            if let onViewHuggingFace {
+                huggingFaceButton(onViewHuggingFace)
             }
-            .buttonStyle(SettingsButtonStyle())
-        } else {
-            HStack(spacing: 8) {
+
+            if isActive {
+                Button(action: onCancel) {
+                    Text("Cancel", bundle: .module)
+                }
+                .buttonStyle(SettingsButtonStyle())
+            } else {
                 if let primary {
                     Button(action: primary.handler) {
                         HStack(spacing: 4) {
@@ -447,6 +492,20 @@ private struct ImageModelRow: View {
         }
     }
 
+    /// Compact link button (Hugging Face mark) sharing the overflow menu's
+    /// chrome so the two trailing controls read as one family.
+    private func huggingFaceButton(_ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            controlChrome {
+                Text(verbatim: "🤗")
+                    .font(.system(size: 13))
+            }
+            .contentShape(RoundedRectangle(cornerRadius: 8))
+        }
+        .buttonStyle(.plain)
+        .localizedHelp("View on Hugging Face")
+    }
+
     private var overflowMenu: some View {
         Menu {
             ForEach(menuItems) { item in
@@ -459,18 +518,26 @@ private struct ImageModelRow: View {
                 }
             }
         } label: {
-            Image(systemName: "ellipsis")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(theme.secondaryText)
-                .frame(width: 28, height: 28)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(theme.tertiaryBackground)
-                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(theme.inputBorder, lineWidth: 1))
-                )
+            controlChrome {
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(theme.secondaryText)
+            }
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
+    }
+
+    /// Shared 28x28 rounded-square chrome for the trailing icon controls
+    /// (Hugging Face link + overflow menu) so they read as one family.
+    private func controlChrome<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        content()
+            .frame(width: 28, height: 28)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(theme.tertiaryBackground)
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(theme.inputBorder, lineWidth: 1))
+            )
     }
 }
