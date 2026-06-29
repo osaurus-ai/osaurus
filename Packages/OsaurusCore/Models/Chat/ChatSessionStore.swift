@@ -23,7 +23,20 @@ enum ChatSessionStore {
     static func load(id: UUID) -> ChatSessionData? {
         ensureOpen()
         guard let session = ChatHistoryDatabase.shared.loadSession(id: id) else { return nil }
-        return recoverTranscriptTurnsIfNeeded(session)
+        let recovered = recoverTranscriptTurnsIfNeeded(session)
+        // When turns were re-derived from the Memory transcript (the #1737
+        // orphaned-conversation case), persist them back once so later
+        // loads/exports read full rows instead of re-deriving every time.
+        // Best-effort and only when the DB is already open — never force a
+        // Keychain touch on the load path.
+        if session.turns.isEmpty, !recovered.turns.isEmpty, didOpen {
+            do {
+                try ChatHistoryDatabase.shared.saveSession(recovered)
+            } catch {
+                print("[ChatSessionStore] Failed to heal recovered turns for \(id): \(error)")
+            }
+        }
+        return recovered
     }
 
     /// Save a session (creates or updates)
@@ -155,8 +168,9 @@ enum ChatSessionStore {
             guard !recoveredTurns.isEmpty else { return session }
 
             var recovered = session
-            // Read-only compatibility fallback. Do not write these turns back to
-            // chat-history here; recovery should not mutate storage during load.
+            // Pure transform — write-back is the caller's job (`load` heals the
+            // chat-history row once when the DB is open) so this stays usable
+            // from read-only/non-open contexts without mutating storage.
             recovered.turns = recoveredTurns
             return recovered
         } catch {
