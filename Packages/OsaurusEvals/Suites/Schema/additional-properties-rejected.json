@@ -1,0 +1,22 @@
+{
+  "id": "schema.additional-properties-rejected",
+  "domain": "schema",
+  "label": "schema • additionalProperties:false rejects an undeclared key",
+  "query": "",
+  "notes": "Pins the strict `additionalProperties: false` gate: `a` is declared, `b` is not, and coercion (which only drops EMPTY optional strings) keeps the non-empty `b`, so the validator must reject the call and name `b`. Guards against a model hallucinating an extra parameter onto a consolidated tool.",
+  "fixtures": {},
+  "expect": {
+    "schema": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "a": { "type": "string" }
+        },
+        "additionalProperties": false
+      },
+      "arguments": { "a": "x", "b": "y" },
+      "expectValid": false,
+      "expectField": "b"
+    }
+  }
+}

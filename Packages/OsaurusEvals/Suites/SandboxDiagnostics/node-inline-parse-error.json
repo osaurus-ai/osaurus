@@ -1,0 +1,17 @@
+{
+  "id": "sandbox_diagnostics.node-inline-parse-error",
+  "domain": "sandbox_diagnostics",
+  "label": "sandbox_diagnostics • node -e parse error surfaces the write-file escape hint",
+  "query": "",
+  "notes": "The Node sibling of inline-code-multiline-c: a multi-line script wedged into `node -e \"…\"` whose escaping broke produces a JS SyntaxError. The self-heal hint must recognize the interpreter `-e` inline-code flag and steer the model to sandbox_write_file instead of re-escaping.",
+  "fixtures": {},
+  "expect": {
+    "sandboxDiagnostics": {
+      "command": "node -e \"\nconst x = (\n\"",
+      "exitCode": 1,
+      "stderr": "SyntaxError: Unexpected end of file",
+      "expectHint": true,
+      "hintContains": "sandbox_write_file"
+    }
+  }
+}

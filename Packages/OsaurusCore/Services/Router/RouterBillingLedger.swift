@@ -124,34 +124,41 @@ public final class RouterBillingLedger: @unchecked Sendable {
 
     /// Current export schema. Bump when the diagnostics shape changes so support
     /// tooling can branch on it.
-    public static let diagnosticsSchemaVersion = 1
+    public static let diagnosticsSchemaVersion = 2
 
     /// Metadata-only diagnostics bundle for support. Composed solely of
     /// `RouterBillingEntry` rows (no prompt/response text by construction) plus
-    /// environment tags and the public wallet address for server correlation.
+    /// environment tags and optional public wallet-address correlation status.
     public struct Diagnostics: Codable, Sendable {
         public let schemaVersion: Int
         public let generatedAt: Date
         public let appVersion: String?
         public let osVersion: String
         /// Public Osaurus ID (wallet address) the router bills, for server-side
-        /// correlation. Best-effort: nil when the identity couldn't be read.
+        /// correlation. Nil when no non-prompting source is available.
         public let walletAddress: String?
+        /// Explains why `walletAddress` is present or absent. Support exports
+        /// should not trigger biometric auth only to fill the address.
+        public let walletAddressStatus: RouterSupportWalletAddressStatus
         public let entries: [RouterBillingEntry]
     }
 
-    /// Build a metadata-only diagnostics bundle. `walletAddress` is supplied by
-    /// the caller (read from identity) so this layer never touches the Keychain.
+    /// Build a metadata-only diagnostics bundle. `walletAddress`, when present,
+    /// is supplied by the caller from a non-prompting source so this layer never
+    /// touches the Keychain.
     public func buildDiagnostics(
         walletAddress: String?,
+        walletAddressStatus: RouterSupportWalletAddressStatus? = nil,
         limit: Int = RouterBillingDatabase.maxRows
     ) -> Diagnostics {
-        Diagnostics(
+        let hasWalletAddress = walletAddress?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        return Diagnostics(
             schemaVersion: Self.diagnosticsSchemaVersion,
             generatedAt: Date(),
             appVersion: Self.appVersion,
             osVersion: ProcessInfo.processInfo.operatingSystemVersionString,
             walletAddress: walletAddress,
+            walletAddressStatus: walletAddressStatus ?? (hasWalletAddress ? .available : .unavailableWithoutPrompt),
             entries: recent(limit: limit)
         )
     }

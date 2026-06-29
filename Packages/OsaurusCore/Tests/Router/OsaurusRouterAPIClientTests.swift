@@ -93,6 +93,26 @@ struct OsaurusRouterAPIClientTests {
         #expect(response.nextCursor == nil)
     }
 
+    @Test func transactions_includesCursorAndDecodesLedgerItems() async throws {
+        let client = try makeClient { request in
+            #expect(request.url?.path == "/credits/transactions")
+            #expect(request.url?.query?.contains("limit=3") == true)
+            #expect(request.url?.query?.contains("cursor=cursor-2") == true)
+            return json(
+                """
+                {"data":[{"id":"tx_1","amount_micro":"5000000","entry_type":"topup","ref_type":"stripe_checkout","ref_id":"cs_test","created_at":"2026-06-13T18:00:00Z"}],"next_cursor":"cursor-3"}
+                """
+            )
+        }
+
+        let response = try await client.transactions(limit: 3, cursor: "cursor-2")
+        #expect(response.data.count == 1)
+        #expect(response.data[0].amountMicro == "5000000")
+        #expect(response.data[0].entryType == "topup")
+        #expect(response.data[0].refType == "stripe_checkout")
+        #expect(response.nextCursor == "cursor-3")
+    }
+
     @Test func errorEnvelope_mapsInsufficientFunds() async throws {
         let client = try makeClient { _ in
             json(#"{"error":{"code":"INSUFFICIENT_FUNDS","message":"top up required"}}"#, status: 402)

@@ -8,11 +8,12 @@
 import Foundation
 import OsaurusSQLCipher
 
-public enum AgentChannelMessageStoreError: Error, LocalizedError {
+public enum AgentChannelMessageStoreError: Error, LocalizedError, Equatable {
     case failedToOpen(String)
     case failedToExecute(String)
     case failedToPrepare(String)
     case migrationFailed(String)
+    case invalidReceiveEvent(String)
     case notOpen
 
     public var errorDescription: String? {
@@ -25,6 +26,8 @@ public enum AgentChannelMessageStoreError: Error, LocalizedError {
             return "Failed to prepare Agent Channel message query: \(message)"
         case .migrationFailed(let message):
             return "Agent Channel message migration failed: \(message)"
+        case .invalidReceiveEvent(let message):
+            return "Invalid Agent Channel receive event: \(message)"
         case .notOpen:
             return "Agent Channel message database is not open"
         }
@@ -75,6 +78,43 @@ public struct AgentChannelStoredMessage: Codable, Sendable, Equatable, Identifia
         self.payloadJSON = payloadJSON
         self.providerTimestamp = providerTimestamp
         self.receivedAt = receivedAt
+    }
+}
+
+public enum AgentChannelReceiveDisposition: String, Codable, Sendable, Equatable {
+    case accepted
+    case duplicate
+    case denied
+}
+
+public struct AgentChannelReceiveResult: Codable, Sendable, Equatable {
+    public let connectionId: String
+    public let providerEventId: String?
+    public let disposition: AgentChannelReceiveDisposition
+    public let shouldDispatch: Bool
+    public let messageInserted: Bool
+    public let cursorUpdated: Bool
+    public let authorizationDecision: String?
+    public let authorizationReason: String?
+
+    public init(
+        connectionId: String,
+        providerEventId: String?,
+        disposition: AgentChannelReceiveDisposition,
+        shouldDispatch: Bool,
+        messageInserted: Bool,
+        cursorUpdated: Bool,
+        authorizationDecision: String? = nil,
+        authorizationReason: String? = nil
+    ) {
+        self.connectionId = connectionId
+        self.providerEventId = providerEventId
+        self.disposition = disposition
+        self.shouldDispatch = shouldDispatch
+        self.messageInserted = messageInserted
+        self.cursorUpdated = cursorUpdated
+        self.authorizationDecision = authorizationDecision
+        self.authorizationReason = authorizationReason
     }
 }
 
@@ -287,6 +327,112 @@ public final class AgentChannelMessageStore: @unchecked Sendable {
         }
     }
 
+    @discardableResult
+    public func recordReceiveEvent(
+        connectionId: String,
+        providerEventId: String? = nil,
+        authorization: AgentChannelInboundAuthorizationDecision,
+        message: AgentChannelStoredMessage,
+        cursor: String? = nil,
+        seenAt: Date = Date()
+    ) throws -> AgentChannelReceiveResult {
+        let normalizedConnectionId = Self.normalizedId(connectionId)
+        let explicitProviderEventId = Self.normalizedOptionalId(providerEventId)
+        let authorizationProviderEventId = Self.normalizedOptionalId(authorization.providerEventId)
+        guard Self.isUsableId(normalizedConnectionId) else {
+            throw AgentChannelMessageStoreError.invalidReceiveEvent("connection_id is required")
+        }
+        let normalizedProviderEventId = explicitProviderEventId ?? authorizationProviderEventId
+
+        let snapshot = try Self.normalizedReceiveSnapshot(
+            connectionId: normalizedConnectionId,
+            message: message
+        )
+        let normalizedCursor = Self.normalizedOptionalId(cursor)
+        if let denied = Self.authorizationDenial(
+            authorization,
+            connectionId: normalizedConnectionId,
+            providerEventId: normalizedProviderEventId,
+            roomId: snapshot.roomId,
+            providerMessageId: snapshot.providerMessageId,
+            senderId: snapshot.authorId
+        ) {
+            return denied
+        }
+
+        return try queue.sync {
+            guard db != nil else { throw AgentChannelMessageStoreError.notOpen }
+            try executeRaw("BEGIN IMMEDIATE")
+            do {
+                if let normalizedProviderEventId {
+                    let eventInserted = try insertSeenEventOnQueue(
+                        connectionId: normalizedConnectionId,
+                        providerEventId: normalizedProviderEventId,
+                        seenAt: seenAt
+                    ) > 0
+                    guard eventInserted else {
+                        try executeRaw("COMMIT")
+                        return AgentChannelReceiveResult(
+                            connectionId: normalizedConnectionId,
+                            providerEventId: normalizedProviderEventId,
+                            disposition: .duplicate,
+                            shouldDispatch: false,
+                            messageInserted: false,
+                            cursorUpdated: false,
+                            authorizationDecision: authorization.decision.rawValue,
+                            authorizationReason: authorization.reason
+                        )
+                    }
+                }
+
+                let messageInserted = try insertMessage(snapshot) > 0
+                if normalizedProviderEventId == nil, !messageInserted {
+                    try executeRaw("COMMIT")
+                    return AgentChannelReceiveResult(
+                        connectionId: normalizedConnectionId,
+                        providerEventId: nil,
+                        disposition: .duplicate,
+                        shouldDispatch: false,
+                        messageInserted: false,
+                        cursorUpdated: false,
+                        authorizationDecision: authorization.decision.rawValue,
+                        authorizationReason: authorization.reason
+                    )
+                }
+                let cursorUpdated: Bool
+                if let normalizedCursor {
+                    cursorUpdated = try upsertCursorOnQueue(
+                        connectionId: normalizedConnectionId,
+                        roomId: snapshot.roomId,
+                        cursor: normalizedCursor,
+                        updatedAt: seenAt
+                    ) > 0
+                } else {
+                    cursorUpdated = false
+                }
+                _ = try pruneMessagesOnQueue(
+                    connectionId: normalizedConnectionId,
+                    roomId: snapshot.roomId,
+                    maxRows: Self.maxMessagesPerRoom
+                )
+                try executeRaw("COMMIT")
+                return AgentChannelReceiveResult(
+                    connectionId: normalizedConnectionId,
+                    providerEventId: normalizedProviderEventId,
+                    disposition: .accepted,
+                    shouldDispatch: messageInserted,
+                    messageInserted: messageInserted,
+                    cursorUpdated: cursorUpdated,
+                    authorizationDecision: authorization.decision.rawValue,
+                    authorizationReason: authorization.reason
+                )
+            } catch {
+                try? executeRaw("ROLLBACK")
+                throw error
+            }
+        }
+    }
+
     public func recentMessages(connectionId: String, roomId: String, limit: Int) throws -> [AgentChannelStoredMessage] {
         let safeLimit = max(1, min(limit, 200))
         var rows: [AgentChannelStoredMessage] = []
@@ -360,16 +506,12 @@ public final class AgentChannelMessageStore: @unchecked Sendable {
     @discardableResult
     public func markEventSeen(connectionId: String, providerEventId: String, seenAt: Date = Date()) throws -> Bool {
         guard Self.isUsableId(connectionId), Self.isUsableId(providerEventId) else { return false }
-        let changes = try executeUpdate(
-            """
-            INSERT OR IGNORE INTO channel_seen_events (
-                connection_id, provider_event_id, seen_at
-            ) VALUES (?1, ?2, ?3)
-            """
-        ) { stmt in
-            Self.bindText(stmt, index: 1, value: Self.normalizedId(connectionId))
-            Self.bindText(stmt, index: 2, value: Self.normalizedId(providerEventId))
-            sqlite3_bind_double(stmt, 3, seenAt.timeIntervalSince1970)
+        let changes = try queue.sync {
+            try insertSeenEventOnQueue(
+                connectionId: Self.normalizedId(connectionId),
+                providerEventId: Self.normalizedId(providerEventId),
+                seenAt: seenAt
+            )
         }
         return changes > 0
     }
@@ -427,7 +569,42 @@ public final class AgentChannelMessageStore: @unchecked Sendable {
         cursor: String,
         updatedAt: Date = Date()
     ) throws {
-        try executeUpdate(
+        try queue.sync {
+            _ = try upsertCursorOnQueue(
+                connectionId: Self.normalizedId(connectionId),
+                roomId: Self.normalizedId(roomId),
+                cursor: cursor,
+                updatedAt: updatedAt
+            )
+        }
+    }
+
+    private func insertSeenEventOnQueue(
+        connectionId: String,
+        providerEventId: String,
+        seenAt: Date
+    ) throws -> Int {
+        try executeUpdateOnQueue(
+            """
+            INSERT OR IGNORE INTO channel_seen_events (
+                connection_id, provider_event_id, seen_at
+            ) VALUES (?1, ?2, ?3)
+            """
+        ) { stmt in
+            Self.bindText(stmt, index: 1, value: connectionId)
+            Self.bindText(stmt, index: 2, value: providerEventId)
+            sqlite3_bind_double(stmt, 3, seenAt.timeIntervalSince1970)
+        }
+    }
+
+    @discardableResult
+    private func upsertCursorOnQueue(
+        connectionId: String,
+        roomId: String,
+        cursor: String,
+        updatedAt: Date
+    ) throws -> Int {
+        try executeUpdateOnQueue(
             """
             INSERT INTO channel_receive_cursors (
                 connection_id, room_id, cursor, updated_at
@@ -437,8 +614,8 @@ public final class AgentChannelMessageStore: @unchecked Sendable {
                 updated_at = excluded.updated_at
             """
         ) { stmt in
-            Self.bindText(stmt, index: 1, value: Self.normalizedId(connectionId))
-            Self.bindText(stmt, index: 2, value: Self.normalizedId(roomId))
+            Self.bindText(stmt, index: 1, value: connectionId)
+            Self.bindText(stmt, index: 2, value: roomId)
             Self.bindText(stmt, index: 3, value: cursor)
             sqlite3_bind_double(stmt, 4, updatedAt.timeIntervalSince1970)
         }
@@ -572,6 +749,139 @@ public final class AgentChannelMessageStore: @unchecked Sendable {
             payloadJSON: columnText(stmt, 8) ?? "{}",
             providerTimestamp: columnText(stmt, 9),
             receivedAt: Date(timeIntervalSince1970: sqlite3_column_double(stmt, 10))
+        )
+    }
+
+    private static func normalizedReceiveSnapshot(
+        connectionId: String,
+        message: AgentChannelStoredMessage
+    ) throws -> AgentChannelStoredMessage {
+        let roomId = normalizedId(message.roomId)
+        let providerMessageId = normalizedId(message.providerMessageId)
+        guard isUsableId(roomId) else {
+            throw AgentChannelMessageStoreError.invalidReceiveEvent("message.room_id is required")
+        }
+        guard isUsableId(providerMessageId) else {
+            throw AgentChannelMessageStoreError.invalidReceiveEvent("message.provider_message_id is required")
+        }
+        return AgentChannelStoredMessage(
+            connectionId: connectionId,
+            roomId: roomId,
+            providerMessageId: providerMessageId,
+            direction: .inbound,
+            threadId: normalizedOptionalId(message.threadId),
+            authorId: normalizedOptionalId(message.authorId),
+            authorName: normalizedOptionalId(message.authorName),
+            content: message.content,
+            payloadJSON: message.payloadJSON,
+            providerTimestamp: normalizedOptionalId(message.providerTimestamp),
+            receivedAt: message.receivedAt
+        )
+    }
+
+    private static func authorizationDenial(
+        _ authorization: AgentChannelInboundAuthorizationDecision,
+        connectionId: String,
+        providerEventId: String?,
+        roomId: String,
+        providerMessageId: String,
+        senderId: String?
+    ) -> AgentChannelReceiveResult? {
+        if authorization.decision == .duplicate {
+            return deniedReceiveResult(
+                connectionId: connectionId,
+                providerEventId: providerEventId,
+                authorization: authorization,
+                reason: authorization.reason,
+                disposition: .duplicate,
+                authorizationDecision: .duplicate
+            )
+        }
+        guard authorization.decision == .allow, authorization.shouldDispatch else {
+            return deniedReceiveResult(
+                connectionId: connectionId,
+                providerEventId: providerEventId,
+                authorization: authorization,
+                reason: authorization.reason,
+                authorizationDecision: .deny
+            )
+        }
+        guard normalizedId(authorization.connectionId) == connectionId else {
+            return deniedReceiveResult(
+                connectionId: connectionId,
+                providerEventId: providerEventId,
+                authorization: authorization,
+                reason: "connection_id_authorization_mismatch",
+                authorizationDecision: .deny
+            )
+        }
+        if providerEventId != normalizedOptionalId(authorization.providerEventId) {
+            return deniedReceiveResult(
+                connectionId: connectionId,
+                providerEventId: providerEventId,
+                authorization: authorization,
+                reason: "provider_event_id_authorization_mismatch",
+                authorizationDecision: .deny
+            )
+        }
+        let authorizedProviderMessageId = normalizedOptionalId(authorization.providerMessageId)
+        if providerEventId == nil {
+            guard authorizedProviderMessageId == providerMessageId else {
+                return deniedReceiveResult(
+                    connectionId: connectionId,
+                    providerEventId: providerEventId,
+                    authorization: authorization,
+                    reason: "provider_message_id_authorization_mismatch",
+                    authorizationDecision: .deny
+                )
+            }
+        } else if let authorizedProviderMessageId, authorizedProviderMessageId != providerMessageId {
+            return deniedReceiveResult(
+                connectionId: connectionId,
+                providerEventId: providerEventId,
+                authorization: authorization,
+                reason: "provider_message_id_authorization_mismatch",
+                authorizationDecision: .deny
+            )
+        }
+        guard normalizedId(authorization.roomId) == roomId else {
+            return deniedReceiveResult(
+                connectionId: connectionId,
+                providerEventId: providerEventId,
+                authorization: authorization,
+                reason: "room_id_authorization_mismatch",
+                authorizationDecision: .deny
+            )
+        }
+        if normalizedOptionalId(senderId) != normalizedOptionalId(authorization.senderId) {
+            return deniedReceiveResult(
+                connectionId: connectionId,
+                providerEventId: providerEventId,
+                authorization: authorization,
+                reason: "sender_id_authorization_mismatch",
+                authorizationDecision: .deny
+            )
+        }
+        return nil
+    }
+
+    private static func deniedReceiveResult(
+        connectionId: String,
+        providerEventId: String?,
+        authorization: AgentChannelInboundAuthorizationDecision,
+        reason: String,
+        disposition: AgentChannelReceiveDisposition = .denied,
+        authorizationDecision: AgentChannelInboundAuthorizationDecisionValue? = nil
+    ) -> AgentChannelReceiveResult {
+        AgentChannelReceiveResult(
+            connectionId: connectionId,
+            providerEventId: providerEventId,
+            disposition: disposition,
+            shouldDispatch: false,
+            messageInserted: false,
+            cursorUpdated: false,
+            authorizationDecision: (authorizationDecision ?? authorization.decision).rawValue,
+            authorizationReason: reason
         )
     }
 

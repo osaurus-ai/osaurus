@@ -83,6 +83,26 @@ public enum ChatExecutionContext {
     /// plugins, eval kit) cannot bind it.
     @TaskLocal static var autoApproveToolPrompts: Bool = false
 
+    /// Headless auto-DENIAL for `.ask`-gated tools — the counterpart to
+    /// `autoApproveToolPrompts`. Bound `true` by eval lanes that must NOT
+    /// execute state-mutating `.ask` tools yet also cannot present the
+    /// approval `NSPanel` (no UI run loop). The `capability_claims` lane
+    /// uses it: those cases score the model's tool SELECTION and honest
+    /// claims, NOT the side effects of running configure/agent WRITE tools.
+    /// Auto-approving them instead (as `default_agent` intentionally does)
+    /// would let the model really execute `osaurus_agent`/configure writes
+    /// mid-eval, mutating global agent + scheduler state and deadlocking a
+    /// later case's isolated-agent teardown. Denying records the call and
+    /// feeds the model a typed "denied by policy" envelope — the honest
+    /// representation of "no human approved" in a headless run — so the
+    /// loop continues without a hang, a 25s timeout, or a mutation.
+    ///
+    /// Only consulted when `autoApproveToolPrompts` is false (approve wins).
+    /// Same narrow scope as approve: it resolves ONLY the `.ask` user prompt
+    /// in `runPermissionGate`; `.deny` and missing system permissions are
+    /// unaffected. Module-internal so out-of-module callers cannot bind it.
+    @TaskLocal static var denyUnapprovedToolPrompts: Bool = false
+
     /// Per-session override that relaxes the combined-mode secret-file
     /// refusal in `file_read`. Defaults to `false` (refuse secret files
     /// inside the read-only host workspace). A future per-session

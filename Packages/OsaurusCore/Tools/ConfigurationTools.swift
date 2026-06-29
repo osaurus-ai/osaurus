@@ -19,6 +19,61 @@
 
 import Foundation
 
+// MARK: - Provider read visibility (eval isolation)
+
+/// Decides which remote providers the configure READ tools surface.
+///
+/// Eval-only isolation: to drive a remote model (`xai/grok-4.3`,
+/// `openai/gpt-5.5`, …) the eval harness connects an in-memory provider via
+/// `EvalRemoteProviderBootstrap` (`addProvider(…, isEphemeral: true)`). That
+/// provider lands in `configuration.providers`, so without a filter a
+/// `default_agent` honesty case ("which cloud providers are connected?")
+/// would read the harness's own run/judge provider and a model that
+/// truthfully reports it gets scored as fabricating — the scenario's
+/// "no providers connected" premise is false only because of test
+/// infrastructure. When `OSAURUS_EVALS_HIDE_EPHEMERAL_PROVIDERS=1` (set by
+/// the eval CLI), the reads drop ephemeral providers so the scenario sees the
+/// genuine user-configured state. The eval binary runs no Bonjour discovery,
+/// so in-process the only ephemeral providers are the harness's; PRODUCTION
+/// never sets the flag, so Bonjour-discovered providers stay visible there.
+/// Routing (`findService(forModel:)`) is untouched, so the model still runs.
+enum ConfigurationProviderReadVisibility {
+    static var hidesEphemeralProviders: Bool {
+        ProcessInfo.processInfo.environment["OSAURUS_EVALS_HIDE_EPHEMERAL_PROVIDERS"] == "1"
+    }
+
+    /// Pure visibility filter, factored out so it is unit-testable without
+    /// the `RemoteProviderManager` singleton or process env: when
+    /// `hidesEphemeral` is true, drop providers for which `isEphemeral`
+    /// returns true; otherwise pass everything through.
+    static func filtered(
+        _ providers: [RemoteProvider],
+        hidesEphemeral: Bool,
+        isEphemeral: (UUID) -> Bool
+    ) -> [RemoteProvider] {
+        guard hidesEphemeral else { return providers }
+        return providers.filter { !isEphemeral($0.id) }
+    }
+
+    /// Remote providers the read tools should expose, applying the eval-only
+    /// ephemeral filter.
+    @MainActor
+    static func visibleProviders() -> [RemoteProvider] {
+        filtered(
+            RemoteProviderManager.shared.configuration.providers,
+            hidesEphemeral: hidesEphemeralProviders,
+            isEphemeral: { RemoteProviderManager.shared.isEphemeral(id: $0) }
+        )
+    }
+
+    /// Count of visible providers whose runtime state is connected.
+    @MainActor
+    static func connectedCount(_ providers: [RemoteProvider]) -> Int {
+        providers.filter { RemoteProviderManager.shared.providerStates[$0.id]?.isConnected == true }
+            .count
+    }
+}
+
 // MARK: - osaurus_status
 
 public final class OsaurusStatusTool: OsaurusTool, @unchecked Sendable {
@@ -47,9 +102,9 @@ public final class OsaurusStatusTool: OsaurusTool, @unchecked Sendable {
             let activeAgent = AgentManager.shared.agent(for: activeAgentId)
             let defaultConfig = DefaultAgentConfigurationStore.load()
 
-            let providerCount = RemoteProviderManager.shared.configuration.providers.count
-            let providerConnected = RemoteProviderManager.shared.providerStates.values
-                .filter { $0.isConnected }.count
+            let visibleProviders = ConfigurationProviderReadVisibility.visibleProviders()
+            let providerCount = visibleProviders.count
+            let providerConnected = ConfigurationProviderReadVisibility.connectedCount(visibleProviders)
 
             let mcpProviders = MCPProviderManager.shared.configuration.providers
             let mcpConnected = MCPProviderManager.shared.providerStates.values
@@ -235,7 +290,7 @@ public final class OsaurusListTool: OsaurusTool, @unchecked Sendable {
                 }
                 payload = ["scope": "models", "filter": filter.isEmpty ? "installed" : filter, "items": items]
             case "providers":
-                let providers = RemoteProviderManager.shared.configuration.providers
+                let providers = ConfigurationProviderReadVisibility.visibleProviders()
                 let items = providers.map { p -> [String: Any] in
                     let state = RemoteProviderManager.shared.providerStates[p.id]
                     return [
@@ -398,7 +453,7 @@ public final class OsaurusDescribeTool: OsaurusTool, @unchecked Sendable {
                 }
             case "providers":
                 if let uuid = UUID(uuidString: idStr),
-                    let p = RemoteProviderManager.shared.configuration.providers
+                    let p = ConfigurationProviderReadVisibility.visibleProviders()
                         .first(where: { $0.id == uuid })
                 {
                     let state = RemoteProviderManager.shared.providerStates[uuid]

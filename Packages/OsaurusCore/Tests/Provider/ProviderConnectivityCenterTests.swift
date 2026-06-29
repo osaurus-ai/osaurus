@@ -102,7 +102,10 @@ struct RemoteProviderManagerConnectivityCenterTests {
     @Test func testConnectionUsesManualModelsWhenModelsEndpointIsMissing() async throws {
         try await RemoteProviderTestLock.shared.run {
             let manager = RemoteProviderManager.shared
-            defer { manager._testRemoveProviders(ids: []) }
+            defer {
+                manager.testConnectionTransportOverride = nil
+                manager._testRemoveProviders(ids: [])
+            }
 
             manager.testConnectionTransportOverride = { request in
                 #expect(request.url?.absoluteString == "https://api.example.test/v1/models")
@@ -132,9 +135,12 @@ struct RemoteProviderManagerConnectivityCenterTests {
     }
 
     @Test func testConnectionStillFailsWithoutManualModelsOnServerError() async throws {
-        try await RemoteProviderTestLock.shared.run {
+        await RemoteProviderTestLock.shared.run {
             let manager = RemoteProviderManager.shared
-            defer { manager._testRemoveProviders(ids: []) }
+            defer {
+                manager.testConnectionTransportOverride = nil
+                manager._testRemoveProviders(ids: [])
+            }
 
             manager.testConnectionTransportOverride = { request in
                 let response = HTTPURLResponse(
@@ -146,8 +152,8 @@ struct RemoteProviderManagerConnectivityCenterTests {
                 return (Data(#"{"error":{"message":"boom"}}"#.utf8), response)
             }
 
-            await #expect(throws: RemoteProviderError.self) {
-                try await manager.testConnection(
+            do {
+                _ = try await manager.testConnection(
                     host: "api.example.test",
                     providerProtocol: .https,
                     port: nil,
@@ -158,6 +164,17 @@ struct RemoteProviderManagerConnectivityCenterTests {
                     headers: [:],
                     manualModelIds: ["local-chat"]
                 )
+                Issue.record("Expected server error to fail instead of falling back to manual models.")
+            } catch let error as RemoteProviderServiceError {
+                guard case .requestFailedWithDiagnostics(let message, let diagnostics) = error else {
+                    Issue.record("Expected replay diagnostics, got \(error).")
+                    return
+                }
+                #expect(message.contains("boom"))
+                #expect(diagnostics.phase == "test_model_discovery")
+                #expect(diagnostics.response?.statusCode == 500)
+            } catch {
+                Issue.record("Expected RemoteProviderServiceError, got \(error).")
             }
         }
     }

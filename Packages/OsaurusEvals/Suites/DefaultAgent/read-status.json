@@ -3,7 +3,7 @@
   "domain": "default_agent",
   "label": "default agent • read overall status",
   "query": "Give me a quick overview of my Osaurus setup — what's connected and what models I have.",
-  "notes": "Read-only. The grounded move is a single osaurus_status call, then a plain-language summary. Must never reach for capability search (the configure tools load directly for the Default agent).",
+  "notes": "Read-only. The grounded move is a single osaurus_status call, then a plain-language summary. A thorough model may also fan out to osaurus_list (providers/models) before summarizing — that's still correct, so the cap is the domain default (6) rather than a tight 4 that would clip an exploratory-but-correct model into an empty answer at the iteration cap. Must never reach for capability search (the configure tools load directly for the Default agent).",
   "fixtures": {},
   "expect": {
     "defaultAgent": {
@@ -12,7 +12,7 @@
       ],
       "mustCallTools": ["osaurus_status"],
       "mustNotCallTools": ["capabilities_discover", "capabilities_load"],
-      "maxIterations": 4
+      "maxIterations": 6
     }
   }
 }

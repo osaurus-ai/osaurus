@@ -1,0 +1,17 @@
+{
+  "id": "sandbox_diagnostics.double-quote-unbalanced",
+  "domain": "sandbox_diagnostics",
+  "label": "sandbox_diagnostics • an unbalanced double quote names the double quote",
+  "query": "",
+  "notes": "Double-quote sibling of unbalanced-quote: a stray opening double quote makes bash read to EOF looking for the closing `\\\"`. The hint must specifically say it's the double quote that is unbalanced so the model fixes the right character.",
+  "fixtures": {},
+  "expect": {
+    "sandboxDiagnostics": {
+      "command": "echo \"hello",
+      "exitCode": 2,
+      "stderr": "bash: -c: line 1: unexpected EOF while looking for matching `\"'",
+      "expectHint": true,
+      "hintContains": "unbalanced \" quote"
+    }
+  }
+}

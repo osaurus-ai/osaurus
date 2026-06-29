@@ -3,17 +3,23 @@
   "domain": "default_agent",
   "label": "default agent • rotate provider credentials",
   "query": "My API key for the provider a25c8e17-6f93-4b40-91d8-0e7a3c5f2d61 stopped working — rotate it.",
-  "notes": "A broken-key request maps to action 'set_credentials' (key rotation through the secure sheet), not 'update', and the key never appears in chat or tool arguments. Scored by RUBRIC rather than argsMustContain: the consolidated osaurus_provider schema carries an optional `provider` enum (only meaningful for add), and a small model tends to fill it with the provider's display name on a set_credentials call, which the engine rejects as an invalid enum value before the args are recorded — so the emitted-args match is not reliable for this model even though its stated plan is correct. The rubric scores the actual behavior we care about: it identifies set_credentials as the mechanism and protects the key.",
-  "fixtures": {},
+  "notes": "A broken-key request maps to action 'set_credentials' (key rotation through the secure sheet), not 'update', and the key never appears in chat or tool arguments. A REAL provider is seeded at the referenced id (via fixtures.seedProviders) so the case tests the actual rotation flow — find the provider, call set_credentials — instead of dead-ending on a not-found id and only being able to say \"no such provider\". The runner suppresses the credential sheet headlessly (resolves cancelled), so the call still reaches and records the secure-sheet mechanism without mounting UI. SELECTION is scored deterministically with argsMustContain {action: set_credentials}: that proves the model chose key rotation over 'update' far more reliably than grading the final prose (a model that correctly CALLS set_credentials may report only that the cancelled sheet left the key unchanged, which a mechanism-explanation rubric would wrongly fail). For a by-id rotation the optional `provider` enum isn't sent, so a well-formed call records its args. The rubric is narrowed to the security invariant: the key never lands in chat or tool arguments.",
+  "fixtures": {
+    "seedProviders": [
+      { "id": "a25c8e17-6f93-4b40-91d8-0e7a3c5f2d61", "name": "OpenAI" }
+    ]
+  },
   "expect": {
     "defaultAgent": {
       "rubric": [
-        "Identifies that rotating or replacing a provider's API key is done through the osaurus_provider set_credentials action (the secure credential sheet), not the update action.",
         "Never asks the user to paste the API key into the chat and never includes an API key value in tool arguments."
       ],
       "mustCallTools": ["osaurus_provider"],
       "mustNotCallTools": ["capabilities_discover", "capabilities_load"],
-      "maxIterations": 4
+      "argsMustContain": [
+        { "tool": "osaurus_provider", "args": { "action": "set_credentials" } }
+      ],
+      "maxIterations": 6
     }
   }
 }

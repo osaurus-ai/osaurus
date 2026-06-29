@@ -31,7 +31,11 @@ struct ClaudeMarketplaceDetailView: View {
     /// upstream), in which case we show a neutral "details unavailable" state
     /// rather than fetching live.
     private var componentSummary: ClaudeMarketplaceImportabilityCatalog.ComponentSummary? {
-        ClaudeMarketplaceImportabilityCatalog.bundled.components(for: entry.name)
+        trustPreview.componentSummary
+    }
+
+    private var trustPreview: ClaudeMarketplaceTrustPreview {
+        ClaudeMarketplaceImportabilityCatalog.bundled.trustPreview(for: entry)
     }
 
     private var categoryKey: String { ClaudeMarketplaceService.categoryKey(for: entry) }
@@ -64,6 +68,7 @@ struct ClaudeMarketplaceDetailView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     heroHeader.padding(.bottom, 8)
+                    trustSection
                     componentsSection
                     externalLinksSection
                 }
@@ -169,6 +174,11 @@ struct ClaudeMarketplaceDetailView: View {
                             color: theme.accentColor
                         )
                     }
+                    heroStatBadge(
+                        icon: trustStatusIcon,
+                        text: trustPreview.statusTitle,
+                        color: trustStatusColor
+                    )
                 }
             }
 
@@ -185,7 +195,7 @@ struct ClaudeMarketplaceDetailView: View {
 
     @ViewBuilder
     private var installControl: some View {
-        if let summary = componentSummary, summary.isEmpty {
+        if trustPreview.importabilityStatus == .blocked {
             HStack(spacing: 5) {
                 Image(systemName: "minus.circle").font(.system(size: 12))
                 Text("Not importable", bundle: .module).font(.system(size: 13, weight: .semibold))
@@ -206,10 +216,17 @@ struct ClaudeMarketplaceDetailView: View {
                     Image(systemName: "arrow.down.circle.fill").font(.system(size: 12))
                     Text("Install", bundle: .module).font(.system(size: 13, weight: .semibold))
                 }
-                .foregroundColor(.white)
+                .foregroundColor(trustPreview.importabilityStatus == .requiresReview ? theme.warningColor : .white)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 8)
-                .background(RoundedRectangle(cornerRadius: 8).fill(accent))
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(
+                            trustPreview.importabilityStatus == .requiresReview
+                                ? theme.warningColor.opacity(0.12)
+                                : accent
+                        )
+                )
             }
             .buttonStyle(PlainButtonStyle())
         }
@@ -224,6 +241,143 @@ struct ClaudeMarketplaceDetailView: View {
                 .truncationMode(.middle)
         }
         .foregroundColor(color)
+    }
+
+    // MARK: - Trust preview
+
+    private var trustStatusIcon: String {
+        switch trustPreview.importabilityStatus {
+        case .importable:
+            return "checkmark.seal"
+        case .requiresReview:
+            return "exclamationmark.triangle"
+        case .blocked:
+            return "minus.circle"
+        }
+    }
+
+    private var trustStatusColor: Color {
+        switch trustPreview.importabilityStatus {
+        case .importable:
+            return theme.successColor
+        case .requiresReview:
+            return theme.warningColor
+        case .blocked:
+            return theme.tertiaryText
+        }
+    }
+
+    private var trustSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            sectionHeader(title: "Trust preview", icon: "shield.lefthalf.filled")
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: trustStatusIcon)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(trustStatusColor)
+                    .frame(width: 18)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(trustPreview.statusTitle)
+                        .font(.system(size: 12.5, weight: .semibold))
+                        .foregroundColor(theme.primaryText)
+                    Text(trustPreview.reason)
+                        .font(.system(size: 12))
+                        .foregroundColor(theme.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(10)
+            .background(
+                RoundedRectangle(cornerRadius: 8).fill(trustStatusColor.opacity(0.10))
+            )
+
+            VStack(spacing: 8) {
+                trustRow(
+                    icon: "checkmark.seal",
+                    title: "Listing",
+                    value: trustPreview.source.isOfficialMarketplace
+                        ? "Official Claude marketplace"
+                        : "Marketplace catalog"
+                )
+                trustRow(
+                    icon: "building.2",
+                    title: "Owner",
+                    value: trustPreview.source.owner
+                )
+                trustRow(
+                    icon: "chevron.left.forwardslash.chevron.right",
+                    title: "Repo",
+                    value: trustPreview.source.repositoryURLLabel
+                )
+                if let path = trustPreview.source.path {
+                    trustRow(icon: "folder", title: "Path", value: path)
+                }
+            }
+
+            let indicators = trustPreview.capabilityIndicators
+            if !indicators.isEmpty {
+                FlowLayout(spacing: 6) {
+                    ForEach(indicators) { indicator in
+                        trustCapabilityBadge(indicator)
+                    }
+                }
+                .padding(.top, 2)
+            }
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(theme.cardBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(theme.cardBorder, lineWidth: 1)
+                )
+        )
+    }
+
+    private func trustRow(icon: String, title: LocalizedStringKey, value: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(theme.tertiaryText)
+                .frame(width: 16)
+            Text(title, bundle: .module)
+                .font(.system(size: 12))
+                .foregroundColor(theme.secondaryText)
+                .frame(width: 54, alignment: .leading)
+            Text(value)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(theme.primaryText)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func trustCapabilityBadge(
+        _ indicator: ClaudeMarketplaceTrustPreview.CapabilityIndicator
+    ) -> some View {
+        let color: Color =
+            switch indicator.severity {
+            case .normal:
+                theme.infoColor
+            case .sensitive:
+                theme.warningColor
+            case .unsupported:
+                theme.tertiaryText
+            }
+        let text =
+            if let count = indicator.count {
+                "\(indicator.label) \(count)"
+            } else {
+                indicator.label
+            }
+        return Text(text)
+            .font(.system(size: 11, weight: .medium))
+            .foregroundColor(color)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(Capsule().fill(color.opacity(0.12)))
     }
 
     // MARK: - Components
@@ -392,7 +546,9 @@ struct ClaudeMarketplaceDetailView: View {
     }
 
     private func linkRow(icon: String, title: LocalizedStringKey, url: URL) -> some View {
-        Button(action: { NSWorkspace.shared.open(url) }) {
+        Button(
+            action: { NSWorkspace.shared.open(url) },
+            label: {
             HStack(spacing: 8) {
                 Image(systemName: icon)
                     .font(.system(size: 12))
@@ -411,7 +567,8 @@ struct ClaudeMarketplaceDetailView: View {
                 RoundedRectangle(cornerRadius: 8)
                     .fill(theme.primaryBackground.opacity(0.45))
             )
-        }
+            }
+        )
         .buttonStyle(PlainButtonStyle())
     }
 

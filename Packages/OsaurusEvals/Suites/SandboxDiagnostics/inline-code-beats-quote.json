@@ -1,0 +1,17 @@
+{
+  "id": "sandbox_diagnostics.inline-code-beats-quote",
+  "domain": "sandbox_diagnostics",
+  "label": "sandbox_diagnostics • inline-code hint wins when both inline-code and quote signatures fire",
+  "query": "",
+  "notes": "A `python3 -c` script whose quote broke surfaces BOTH an interpreter inline-code flag and an unexpected-EOF quote signature. The more actionable fix (write the script to a file) must win, so the hint names sandbox_write_file and must NOT be the generic unbalanced-quote message.",
+  "fixtures": {},
+  "expect": {
+    "sandboxDiagnostics": {
+      "command": "python3 -c \"\nprint('hi)",
+      "exitCode": 2,
+      "stderr": "bash: -c: line 2: unexpected EOF while looking for matching `\"'",
+      "expectHint": true,
+      "hintContains": "sandbox_write_file"
+    }
+  }
+}

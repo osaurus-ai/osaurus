@@ -169,13 +169,8 @@ struct ModelDownloadView: View {
             )
             .opacity(hasAppeared ? 1 : 0)
 
-            if selectedTab == .images {
-                ImageModelsDownloadView()
-                    .opacity(hasAppeared ? 1 : 0)
-            } else {
-                modelListView(lists: lists)
-                    .opacity(hasAppeared ? 1 : 0)
-            }
+            modelListView(lists: lists)
+                .opacity(hasAppeared ? 1 : 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(theme.primaryBackground)
@@ -252,8 +247,12 @@ struct ModelDownloadView: View {
                     searchText = repoId
                 },
                 onImportedImage: { _ in
+                    // Image bundles now live in the dedicated Image Generation
+                    // tab — hand off to its Models sub-tab.
                     showImportSheet = false
-                    selectedTab = .images
+                    ManagementStateManager.shared.selectedTab = .imageGeneration
+                    ManagementStateManager.shared.imageGenerationSubTabRequest =
+                        ImageGenerationTab.models.rawValue
                 }
             )
             .environment(\.theme, themeManager.currentTheme)
@@ -859,9 +858,6 @@ struct ModelDownloadView: View {
                                     catalogContent(lists: lists)
                                 case .downloaded:
                                     modelGrid(models: lists.downloaded)
-                                case .images:
-                                    // Rendered by the body's `.images` branch.
-                                    EmptyView()
                                 }
                             }
                         }
@@ -1212,8 +1208,6 @@ struct ModelDownloadView: View {
             return "cube.box"
         case .downloaded:
             return "internaldrive"
-        case .images:
-            return "photo"
         }
     }
 
@@ -1226,8 +1220,6 @@ struct ModelDownloadView: View {
             return L("No models available")
         case .downloaded:
             return L("No models on device yet")
-        case .images:
-            return L("No image models")
         }
     }
 
@@ -1492,7 +1484,6 @@ struct ModelDownloadView: View {
         switch input.selectedTab {
         case .all: displayed = topPicks + others
         case .downloaded: displayed = downloaded
-        case .images: displayed = []  // image tab renders its own view
         }
 
         // Warm disk-backed verdicts while still off the main actor. The catalog
@@ -1754,105 +1745,13 @@ private struct DownloadStatusIndicator: View {
     }
 }
 
-// MARK: - System Status Bar
-
-/// Compact bar showing available memory and storage with mini gauges.
-private struct SystemStatusBar: View {
-    @Environment(\.theme) private var theme
-
-    let totalMemoryGB: Double
-    let usedMemoryGB: Double
-    let availableStorageGB: Double
-    let totalStorageGB: Double
-
-    var body: some View {
-        HStack(spacing: 20) {
-            ResourceGauge(
-                label: L("RAM"),
-                icon: "memorychip",
-                usedFraction: totalMemoryGB > 0 ? usedMemoryGB / totalMemoryGB : 0,
-                detail: String(
-                    format: L("%.0f GB free / %.0f GB"),
-                    max(0, totalMemoryGB - usedMemoryGB),
-                    totalMemoryGB
-                )
-            )
-
-            ResourceGauge(
-                label: L("Storage"),
-                icon: DirectoryPickerService.shared.hasValidDirectory ? "externaldrive" : "internaldrive",
-                usedFraction: totalStorageGB > 0
-                    ? (totalStorageGB - availableStorageGB) / totalStorageGB : 0,
-                detail: String(
-                    format: L("%.0f GB free / %.0f GB"),
-                    availableStorageGB,
-                    totalStorageGB
-                )
-            )
-        }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 10)
-        .background(theme.secondaryBackground)
-    }
-}
-
-/// Reusable mini gauge showing a label, icon, detail text, and color-coded progress bar.
-private struct ResourceGauge: View {
-    @Environment(\.theme) private var theme
-
-    let label: String
-    let icon: String
-    let usedFraction: Double
-    let detail: String
-
-    private var clampedFraction: Double { min(1.0, max(0, usedFraction)) }
-
-    private var barColor: Color {
-        if clampedFraction < 0.7 { return theme.successColor }
-        if clampedFraction < 0.9 { return theme.warningColor }
-        return theme.errorColor
-    }
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: icon)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(theme.secondaryText)
-
-            VStack(alignment: .leading, spacing: 7) {
-                HStack(spacing: 4) {
-                    Text(label)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
-                    Spacer()
-                    Text(detail)
-                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                        .foregroundColor(barColor)
-                }
-
-                GeometryReader { geometry in
-                    ZStack(alignment: .leading) {
-                        RoundedRectangle(cornerRadius: 2)
-                            .fill(theme.tertiaryBackground)
-                        RoundedRectangle(cornerRadius: 2)
-                            .fill(barColor)
-                            .frame(width: geometry.size.width * clampedFraction)
-                    }
-                }
-                .frame(height: 4)
-            }
-        }
-        .frame(maxWidth: .infinity)
-    }
-}
-
 // MARK: - Hugging Face Import Sheet
 
 /// Modal that lets users paste a Hugging Face URL or repo id and surface
 /// a friendly error when the repo isn't MLX-compatible. On success, the
 /// caller routes the resolved repo id back into the search field, which
 /// triggers the existing `fetchRemoteMLXModels` resolution path
-private struct HuggingFaceImportSheet: View {
+struct HuggingFaceImportSheet: View {
     @Environment(\.theme) private var theme
     @Environment(\.dismiss) private var dismiss
 

@@ -1,0 +1,23 @@
+{
+  "id": "frontier.json-config-migration",
+  "domain": "agent_loop",
+  "label": "frontier • migrate a JSON config to a new schema, verified",
+  "query": "Migrate config.json to a new schema: rename key 'timeoutMs' to 'timeout_ms' (same value), replace boolean 'retry' with an integer key 'retries' set to 0, add a key 'version' set to 2, and keep 'name' unchanged. Write the result back to config.json as valid JSON.",
+  "notes": "Schema-migration lane: several coordinated key transforms in one file. The command gate loads the JSON and asserts the EXACT resulting object, so a partial migration (forgot a rename, left the boolean, wrong version) fails deterministically regardless of formatting.",
+  "fixtures": {
+    "workspaceFiles": [
+      { "path": "config.json", "contents": "{\"name\":\"app\",\"timeoutMs\":1000,\"retry\":false}\n" }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 14,
+      "commands": [
+        {
+          "command": "python3 -c \"import json; d=json.load(open('config.json')); assert d=={'name':'app','timeout_ms':1000,'retries':0,'version':2}, d\"",
+          "expectExitCode": 0
+        }
+      ]
+    }
+  }
+}

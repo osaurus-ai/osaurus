@@ -43,6 +43,7 @@ public final class ClaudeMarketplaceService: ObservableObject {
 
     /// Official, Anthropic-managed marketplace.
     public static let officialURL = "https://github.com/anthropics/claude-plugins-official"
+    public static let officialRepo = GitHubRepo(owner: "anthropics", name: "claude-plugins-official")
 
     @Published public private(set) var entries: [MarketplacePlugin] = []
     @Published public private(set) var repo: GitHubRepo?
@@ -88,7 +89,7 @@ public final class ClaudeMarketplaceService: ObservableObject {
 
     /// Normalized category key for an entry, falling back to the
     /// uncategorized sentinel.
-    public nonisolated static func categoryKey(for entry: MarketplacePlugin) -> String {
+    nonisolated public static func categoryKey(for entry: MarketplacePlugin) -> String {
         let raw = entry.category?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard let raw, !raw.isEmpty else { return ClaudeMarketplaceCategory.otherKey }
         return raw
@@ -142,20 +143,35 @@ public final class ClaudeMarketplaceService: ObservableObject {
         return ClaudePluginInstaller.pluginId(repo: repo, pluginName: entry.name)
     }
 
+    public func trustPreview(for entry: MarketplacePlugin) -> ClaudeMarketplaceTrustPreview {
+        importabilityCatalog.trustPreview(for: entry, marketplaceRepo: repo ?? Self.officialRepo)
+    }
+
     // MARK: - Install
 
     /// Resolve a single entry's full manifest and install it. Returns the
     /// install report, or `nil` if the catalog repo isn't loaded yet.
-    /// Throws `GitHubSkillError.noImportableComponents` when the plugin ships
-    /// nothing Osaurus can install (hooks / output-styles / etc.), so callers
-    /// surface a clear message instead of creating an empty bundle. This is
-    /// defense-in-depth for entries the bundled catalog hasn't classified yet.
+    /// Throws `ClaudeMarketplaceInstallPreviewError` before manifest resolution
+    /// when the bundled preview says the entry is blocked.
+    /// Unclassified entries still resolve the live manifest so new upstream
+    /// plugins are not blocked until the bundled catalog refreshes.
+    /// Still validates the resolved manifest as defense-in-depth for catalog
+    /// drift, so callers surface a clear message instead of creating an empty
+    /// bundle.
     @discardableResult
     public func install(entry: MarketplacePlugin) async throws -> ClaudePluginInstallReport? {
         guard let repo else { return nil }
+        let preview = trustPreview(for: entry)
+        if let guardError = preview.installGuardError {
+            throw guardError
+        }
         let manifest = try await github.resolveManifest(rootRepo: repo, entry: entry)
         guard manifest.hasImportableComponents else {
-            throw GitHubSkillError.noImportableComponents(pluginName: entry.name)
+            throw ClaudeMarketplaceInstallPreviewError.blocked(
+                pluginName: entry.name,
+                reason:
+                    "The resolved plugin manifest has no importable skills, agents, commands, or MCP servers."
+            )
         }
         let selection = ClaudePluginSelection(manifest: manifest)
         let report = await SkillManager.shared.batchUpdates {

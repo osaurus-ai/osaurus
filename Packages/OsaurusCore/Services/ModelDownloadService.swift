@@ -1047,7 +1047,15 @@ final class ModelDownloadService: ObservableObject {
     func topUpCompletedModels(_ models: [MLXModel]) async {
         guard !hasRunTopUp else { return }
         hasRunTopUp = true
-        let candidates = models.filter { $0.isDownloaded && !isActiveDownload($0.id) }
+        // `isDownloaded` walks each model's directory on a cache miss — a
+        // synchronous scan that, run inline on this @MainActor type, tripped
+        // the main-thread hang watchdog at launch with many models. Resolve
+        // the disk check off the main actor, then apply the main-actor
+        // `isActiveDownload` filter back here.
+        let downloaded = await Task.detached(priority: .utility) {
+            models.filter { $0.isDownloaded }
+        }.value
+        let candidates = downloaded.filter { !isActiveDownload($0.id) }
         guard !candidates.isEmpty else { return }
 
         for model in candidates {

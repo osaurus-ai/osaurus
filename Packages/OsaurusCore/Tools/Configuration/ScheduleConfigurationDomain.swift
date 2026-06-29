@@ -288,6 +288,34 @@ public final class OsaurusScheduleTool: OsaurusTool, PermissionedTool, @unchecke
     }
 
     private func handleCreate(_ args: [String: Any]) async -> String {
+        // Surface ALL missing required fields in one error. Validating them one
+        // at a time (name, THEN instructions, THEN agent_id, THEN frequency)
+        // makes a model that sends a partial create discover the schema field
+        // by field across separate tool iterations, which can exhaust its tool
+        // budget and loop. Listing everything missing up front lets it resend a
+        // complete call in a single retry.
+        let requiredForCreate: [(key: String, hint: String)] = [
+            ("name", "display name"),
+            ("instructions", "what the scheduled run should do"),
+            ("agent_id", "UUID of a custom agent (not the Default agent)"),
+            ("frequency", "once | hourly | daily | weekly | monthly | interval | cron"),
+        ]
+        let missing = requiredForCreate.filter { field in
+            guard let value = args[field.key] as? String else { return true }
+            return value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        if missing.count > 1 {
+            let list = missing.map { "`\($0.key)` (\($0.hint))" }.joined(separator: ", ")
+            return ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message:
+                    "Schedule create is missing required fields: \(list). "
+                    + "Send them all together in one "
+                    + "osaurus_schedule({action:'create', ...}) call.",
+                field: missing.first?.key,
+                tool: name
+            )
+        }
         let nameReq = requireString(args, "name", expected: "non-empty display name", tool: name)
         guard case .value(let scheduleName) = nameReq else { return nameReq.failureEnvelope ?? "" }
         let instrReq = requireString(args, "instructions", expected: "non-empty instructions", tool: name)

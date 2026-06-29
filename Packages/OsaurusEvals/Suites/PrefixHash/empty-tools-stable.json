@@ -1,0 +1,19 @@
+{
+  "id": "prefix_hash.empty-tools-stable",
+  "domain": "prefix_hash",
+  "label": "prefix_hash • identical no-tool prompts hash equal (determinism floor)",
+  "query": "",
+  "notes": "The determinism floor for the no-tools case: two identical (systemContent, []) inputs must hash equal. Pins that an empty tool set is handled deterministically rather than folding in nondeterministic state (timestamps, set iteration order).",
+  "fixtures": {},
+  "expect": {
+    "prefixHash": {
+      "systemContent": "You are a terse assistant. Answer in one sentence.",
+      "toolNames": [],
+      "compareTo": {
+        "systemContent": "You are a terse assistant. Answer in one sentence.",
+        "toolNames": []
+      },
+      "expectEqual": true
+    }
+  }
+}

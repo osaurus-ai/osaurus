@@ -182,6 +182,7 @@ struct RouterBillingLedgerTests {
 
         let diagnostics = ledger.buildDiagnostics(walletAddress: "0xABCDEF")
         #expect(diagnostics.walletAddress == "0xABCDEF")
+        #expect(diagnostics.walletAddressStatus == .available)
         #expect(diagnostics.schemaVersion == RouterBillingLedger.diagnosticsSchemaVersion)
         #expect(diagnostics.entries.count == 1)
 
@@ -204,5 +205,14 @@ struct RouterBillingLedgerTests {
         for forbidden in Self.forbiddenContentKeys {
             #expect(!raw.contains("\"\(forbidden)\""), "export payload contains forbidden key \(forbidden)")
         }
+    }
+
+    @Test func buildDiagnostics_recordsWalletStatusWhenAddressUnavailableWithoutPrompt() throws {
+        let (ledger, _) = try makeLedger()
+
+        let diagnostics = ledger.buildDiagnostics(walletAddress: nil)
+
+        #expect(diagnostics.walletAddress == nil)
+        #expect(diagnostics.walletAddressStatus == .unavailableWithoutPrompt)
     }
 }

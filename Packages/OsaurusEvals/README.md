@@ -22,12 +22,13 @@ Packages/OsaurusEvals/
     CapabilitySearch/   — index-only recall measurements (no LLM)
     ComputerUse/        — single-action gate / effect classification (no LLM)
     ComputerUseLoop/    — E2E Computer Use over a scripted screen (LLM or scripted)
+    DefaultAgent/       — built-in "Configuring Osaurus" agent: read/write config tools + judge (LLM)
     PrefixHash/         — KV-cache prefix-hash stability
     RequestValidation/  — RequestValidator.unsupportedSamplerReason
     ScreenContext/      — deterministic AX-text screen-context distillation (no LLM)
     Schema/             — SchemaValidator.validate pinning
     StreamingHint/      — StreamingToolHint encode/decode round-trips
-    Subagent/           — SubagentSession host lifecycle (scripted model-free + live spawn/image)
+    Subagent/           — SubagentSession host: scripted model-free + live spawn/image/computer_use/sandbox_reduce
     ToolEnvelope/       — ToolEnvelope.{success,failure} JSON shape
 ```
 
@@ -278,12 +279,13 @@ Exit codes:
 
 ## Case schema
 
-Every case file shares a top-level shape: `id`, `domain`, optional `label` and `notes`, `query`, `fixtures`, `expect`. The `domain` field selects which runner branch handles the case and which `expect.<sub>` block is required. Thirteen domains exist today:
+Every case file shares a top-level shape: `id`, `domain`, optional `label` and `notes`, `query`, `fixtures`, `expect`. The `domain` field selects which runner branch handles the case and which `expect.<sub>` block is required. Fifteen domains exist today:
 
 | Domain | Hits LLM? | Runner branch | Required expectation block |
 |---|---|---|---|
 | `agent_loop` | yes | `runAgentLoopCase` | `expect.agentLoop` |
 | `capability_claims` | yes | `runCapabilityClaimsCase` | `expect.capabilityClaims` |
+| `default_agent` | yes | `runDefaultAgentCase` | `expect.defaultAgent` |
 | `capability_search` | no | `runCapabilitySearchCase` | `expect.capabilitySearch` |
 | `computer_use` | no | `runComputerUseCase` | `expect.computerUse` |
 | `computer_use_loop` | yes¹ | `runComputerUseLoopCase` | `expect.computerUseLoop` |
@@ -295,12 +297,13 @@ Every case file shares a top-level shape: `id`, `domain`, optional `label` and `
 | `prefix_hash` | no | `runPrefixHashCase` | `expect.prefixHash` |
 | `argument_coercion` | no | `runArgumentCoercionCase` | `expect.argumentCoercion` |
 | `request_validation` | no | `runRequestValidationCase` | `expect.requestValidation` |
+| `sandbox_diagnostics` | no | `runSandboxDiagnosticsCase` | `expect.sandboxDiagnostics` |
 
 ¹ `computer_use_loop` drives a live model by default, but a case that supplies `scriptedActions` runs **model-free** (deterministic, CI-safe) via the loop's `AgentStepProvider` seam.
 
 ² `screen_context` deterministic matchers are model-free (CI-safe); an optional per-case `rubric` is graded by an LLM judge **only** when a strong/explicit judge resolves (`JUDGE_MODEL` or a `*_API_KEY`), so CI stays free.
 
-³ `subagent` has both lanes: a `scripted` lane drives the `SubagentSession` host through a deterministic `ScriptedSubagentKind` seam with **no model call** (CI-safe), while the `spawn` / `image` lanes exercise the live tools and **skip** when no model / delegation host is configured.
+³ `subagent` is mixed: the `scripted` lane (and the deterministic `computer_use` scripted-driver cases) drive the `SubagentSession` host with **no model call** (CI-safe), while the live lanes — `spawn`, `image`, model-driven `computer_use`, and `sandbox_reduce` — exercise the real kinds on the run model and **skip** when their host (model / delegation / image model / sandbox container) isn't configured.
 
 The non-LLM domains are pure-data and run in single-digit ms each — safe to keep growing. `capability_claims` is the LLM-burning domain; keep it off CI.
 
@@ -377,9 +380,40 @@ Field notes:
 - `expect.capabilityClaims.loadSkillFirst` — `{ skill, beforeTools }` ordering check: a `capabilities_load` carrying `skill/<skill>` must precede the first call to any tool in `beforeTools`.
 - `expect.capabilityClaims.maxIterations` — cap on model round-trips (default 6). A run that hits the cap is flagged in the notes as a possible loop.
 
-The suite covers six scenarios under `Suites/CapabilityClaims/`: `confirm` (confirm an enabled-but-unloaded tool with zero tool calls), `discover` (reach for `capabilities_discover` instead of denying), `honest-absence` (attempt discovery, then honestly report the gap when it comes back empty), `impossible-but-distinct` (surface the real obstacle, not just capability absence), `skill-first` (load the governing skill before the tool group), `by-intent` (recognize a capability asked by intent rather than by name), and `no-spurious-discover` (the launder-the-id regression — confirm a manifest-listed capability without re-running `capabilities_discover`).
+The suite covers eleven scenarios under `Suites/CapabilityClaims/`: `confirm` (confirm an enabled-but-unloaded tool with zero tool calls), `discover` (acknowledge a manifest-listed capability instead of denying), `no-spurious-discover` (the launder-the-id regression — confirm a manifest-listed capability without re-running `capabilities_discover`), `impossible-but-distinct` (surface the real obstacle, not just capability absence), `no-overclaim-live-weather` (don't fabricate a live-data capability the manifest doesn't list), and the honest-absence family — `honest-absence`, `honest-absence-call`, `honest-absence-sms`, `honest-absence-payment`, `honest-absence-print`, `honest-absence-smart-home` — each of which pins that the model reports a genuinely missing capability honestly instead of pretending or reaching for an unrelated tool (the SMS case also guards the per-connection `send_message` / `read_messages` agent-channel tools so a model can't "fulfil" an SMS ask through a chat integration).
 
-The judge model defaults to the run `--model`; export `JUDGE_MODEL=...` to grade small-model output with a stronger evaluator.
+> **Why this suite measures claims, not actions.** `capability_claims` runs the real loop but **auto-denies tool execution** (a headless run has no approval surface; auto-allowing state-mutating tools risks a deadlock or real side effects). So the honest signal here is what the model *claims and loads*, not what it *does*. Cases that drove execution (open a page, fill a form) were removed: under auto-deny a model either loops on `capabilities_load` (REMOTE function-calling models, see the deferred-schema note below) or stalls, which is a harness artifact, not a capability signal. The execution behaviour those cases targeted — `capabilities_load` a tool mid-run and then *call* it — is covered where execution is actually allowed, by `agent_loop`'s `capabilities-load-midrun` case.
+>
+> **Positive cases run against an isolated `auto`-mode agent.** A case that enables a capability (`enableTools` / `enableSkills` / `requirePlugins`) is scored against a fresh isolated agent whose enabled set advertises that capability in the system-prompt manifest — not the default configuration-agent persona, which honestly disclaims non-config abilities and would (correctly, for *it*) deny the browser. This keeps "do you have X?" a measure of manifest grounding, not of which persona happened to answer.
+
+The judge model defaults to the run `--model`; export `JUDGE_MODEL=...` to grade small-model output with a stronger evaluator. The runner re-ensures the ephemeral remote judge provider before each judge call, so a suite that runs a provider-mutating config tool mid-run (e.g. `default_agent`'s `osaurus_provider`, which reloads the provider registry from disk and evicts the in-memory judge) can't silently fall back to an unresolved judge.
+
+### `default_agent` domain
+
+Behaviour evals for the built-in **"Configuring Osaurus"** agent — the persona that ships on `Agent.defaultId`. The query asks the agent to inspect or change Osaurus's own configuration; it reads with `osaurus_status` / `osaurus_list` / `osaurus_describe` and mutates with the consolidated write tools (`osaurus_agent` / `osaurus_provider` / `osaurus_schedule` / `osaurus_model` / `osaurus_mcp` / `osaurus_plugin`). It reuses `CapabilityClaimsEvaluator` with the Default agent id, a frozen tool schema, and **auto-approved** tool execution (a headless run has no approval card), so the loop terminates the moment the model returns text with no tool call. Scoring mixes deterministic transcript checks (`mustCallTools` / `mustNotCallTools` / `argsMustContain`) with an optional LLM-judge `rubric`, and each case runs against an isolated config root so it never touches the user's real `~/.osaurus`.
+
+Two harness/prompt root-causes were fixed here so the column measures the model, not test artifacts:
+
+- **Confirm-first prompt ambiguity (product + eval fix).** The Default-agent addendum in [`DefaultAgentSystemPromptBuilder.swift`](../OsaurusCore/Services/Chat/DefaultAgentSystemPromptBuilder.swift) said *"The user confirms every change. Say what you'll do, then call the tool."* A careful frontier model read "the user confirms every change" as *get conversational confirmation first* → it answered `"…Confirm?"` with **no tool call**, and the loop ended at `iters=0` (`mustCallTools` FAIL). The real intent is the `.ask` approval **card** in [`ConfigurationToolBase.swift`](../OsaurusCore/Tools/Configuration/ConfigurationToolBase.swift) — a separate one-tap gate — so the rule now reads *"Act in the same turn: briefly state the change, then call the tool. A separate one-tap approval gates every change, so don't ask for confirmation in chat…"*. This also removes a real double-confirm wart in the shipping app (chat "Confirm?" **and** the approval card). Safety is unchanged — the `.ask` card still fires at runtime — and the addendum only applies to `Agent.defaultId`.
+- **Eval-only provider isolation (honesty cases).** To drive a remote model the harness connects an in-memory provider via `EvalRemoteProviderBootstrap` (`addProvider(…, isEphemeral: true)`), which lands in `configuration.providers`. Without a filter, a "which cloud providers are connected?" case reads the harness's **own** run/judge provider and scores a truthful model ("xAI connected") as fabricating. When `OSAURUS_EVALS_HIDE_EPHEMERAL_PROVIDERS=1` (set by the eval CLI, alongside `OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS`), the configure **read** tools hide ephemeral providers via `ConfigurationProviderReadVisibility` in [`ConfigurationTools.swift`](../OsaurusCore/Tools/ConfigurationTools.swift), so honesty cases see the genuine empty user state. Production never sets the flag (Bonjour-discovered providers stay visible); routing is untouched, so the model still runs.
+
+#### Local-vs-frontier results (recorded)
+
+Full 18-suite matrix, judge pinned to `xai/grok-4.3`, recorded into [`reports/SNAPSHOT.md`](../../reports/SNAPSHOT.md) + `reports/history.jsonl` (38 `default_agent` cases):
+
+| Column | before fix | after fix |
+| --- | --- | --- |
+| `foundation` (local) | 1/38 | 3/38 |
+| `Qwen3.5-4B-OptiQ-4bit` (local) | 31/38 | 33/38 |
+| `xai/grok-4.3` (frontier) | 25/38 | **36/38** |
+| `openai/gpt-5.5` (frontier) | — | quota-limited¹ |
+| `anthropic/claude-opus-4-8` (frontier) | — | **34/38** |
+
+The prompt fix recovered **exactly** the 12 cases grok previously lost to confirm-first (all mutating actions: agent/provider/schedule/model create+delete+update) **plus** the `honesty-empty-providers` case (provider isolation), with **no local regressions** (both local columns improved). Documented residuals, not coercion:
+
+- **`provider-rotate-key`** fails for both frontier models by design: its fixture seeds **no** provider, so a literal model truthfully answers "no provider with that ID exists" instead of explaining the `set_credentials` rotation mechanism the rubric wants. Pre-existing (failed before the fix too); a strict-rubric knowledge probe, not a fixture bug.
+- **`schedule-create-daily`** is a flaky `grok` case independent of the fix — an A/B against the old prompt also flapped (PASS then FAIL across two runs). grok intermittently maps "daily at 08:00" onto a cron-style frequency instead of the `daily` enum and loops to the iteration cap; the other three frequency modes (cron/interval/weekly) pass.
+- **¹`openai/gpt-5.5`** DefaultAgent errored as `HTTP 429 insufficient_quota` — the account's quota was exhausted by the earlier suites in the same run (AgentDB 12/12, AgentLoop 22/24, … ran first). The integration itself is proven (pre-quota smoke + early suites pass; `OpenAIReasoningProfile` strips `temperature`/`top_p` and uses `max_completion_tokens`), so this is a billing limit to refill, not a harness or model bug. `anthropic/claude-opus-4-8` needed `temperature`/`top_p` stripped too — the adaptive-thinking Claude generations 400 on sampler knobs — handled in `toAnthropicRequest()` ([`RemoteProviderService.swift`](../OsaurusCore/Services/Provider/RemoteProviderService.swift)).
 
 ### `agent_loop` domain
 
@@ -508,13 +542,15 @@ make evals EVALS_SUITE=Packages/OsaurusEvals/Suites/ComputerUseLoop MODEL=founda
 
 ### `subagent` domain
 
-End-to-end evals over the **unified sub-agent framework** — the shared `SubagentSession` host + `SubagentKind` protocol that `spawn`, `image`, `computer_use`, and `sandbox_reduce` all now run through (one recursion guard, one activity feed, one optional residency handoff, one compact-result envelope). Drives the public `SubagentJobEvaluator` facade in OsaurusCore (mirrors `AgentLoopEvaluator` / `CapabilityClaimsEvaluator`). Three lanes, selected by `expect.subagent.lane`:
+End-to-end evals over the **unified sub-agent framework** — the shared `SubagentSession` host + `SubagentKind` protocol that `spawn`, `image`, `computer_use`, and `sandbox_reduce` all now run through (one recursion guard, one activity feed, one optional residency handoff, one compact-result envelope). Drives the public `SubagentJobEvaluator` facade in OsaurusCore (mirrors `AgentLoopEvaluator` / `CapabilityClaimsEvaluator`). **All four real flows now run through the one host**, so recursion guard, feed kinds/phases, envelope mapping, and telemetry are asserted uniformly and every live lane lands as a `subagent` row in the cross-model matrix. Five lanes, selected by `expect.subagent.lane`:
 
 - **`scripted`** (model-free, **CI-safe**): a deterministic `ScriptedSubagentKind` is driven through the real `SubagentSession` host with **no model call** — the host-lifecycle analogue of `computer_use_loop`'s `scriptedActions` seam. Pins the whole contract: scope-id resolution, the single recursion guard (`activeKindId`), reject-before-evict model resolution, the permission verdict → envelope mapping, the optional residency-handoff wrap, feed registration, compact-result normalization, and `defer` cleanup. These cases also run as eval-kit unit tests in `Packages/OsaurusEvals/Tests/OsaurusEvalsKitTests/SubagentEvalTests.swift`.
-- **`spawn`** (live): runs the real `SpawnTool` against a spawnable persona and scores the compact `spawn_result`. LLM-burning; **skips** when no spawnable agent / model is configured.
-- **`image`** (live): runs the real unified `image` tool — `sourcePaths` non-empty routes to **edit**, otherwise **generate** — and scores the `native_image_generation_job` result. **Skips** when image delegation / a local image model isn't configured.
+- **`spawn`** (live, **cross-model**): runs the real text sub-agent (`TextSubagentKind`) against a spawnable persona and scores the compact `spawn_result`. The persona's model is overridden to the **run model** (`--model`), so `spawn` is a true cross-model column rather than being pinned to the persona's own model. Set `seedSpawnablePersona: true` and the runner auto-creates + allow-lists the persona (and tears it down after), so the case RUNS on any host; otherwise it **skips** when no spawnable agent is configured. Negative guards (e.g. not-spawnable → `rejected`) leave the flag off so they score everywhere.
+- **`image`** (live, local-only): runs the real unified `image` tool — `sourcePaths` non-empty routes to **edit**, otherwise **generate** — and scores the `native_image_generation_job` result. **Skips** when image delegation / a local image model isn't configured. Frontier image generation is **not** wired through this tool, so `image` stays a local-diffusion column.
+- **`computer_use`** (deterministic + live-on-scripted-world, **CI-safe**): runs the real `ComputerUseKind` through the host against an injected in-memory `ScriptedCUDriver` and a permissive eval gate (a `ComputerUseEvalHarness` DI seam — production callers still get `NativeMacDriver()` + the real gate). The **scripted** variant supplies `scriptedActions` for a fully deterministic, desktop-free run; the **live** variant lets the run model plan against the scripted world (local-vs-frontier action-JSON discipline + planning). Scores both the host envelope (`done→success`, `interrupted→user_denied`, `gaveUp`/`failed→execution_error`) and the resulting world state (`successValues`, `successClicked`, `failIfClicked`, `expectVerbsInOrder`). Live planning **skips** on tiny-context models that strip tools.
+- **`sandbox_reduce`** (live, container-gated): runs the real `SandboxReduceKind` through the host on the **run model** and scores the `digest` result. A pre-flight check **skips** cleanly when the sandbox child tools aren't registered (no container) — production error classification in `SandboxReduceKind` is untouched. Live planning **skips** on tiny-context models.
 
-The live lanes skip (never fail) on an unconfigured host: a case that expects success but gets a `rejected` / `unavailable` / `user_denied` availability envelope it didn't explicitly ask for is reported `skipped`, the same `requirePlugins`-style semantics the other live domains use. So the whole suite is green on a bare checkout (10 scripted pass, 3 live skip).
+The live lanes skip (never fail) on an unconfigured host: a case that expects success but gets a `rejected` / `unavailable` / `user_denied` availability envelope it didn't explicitly ask for is reported `skipped`, the same `requirePlugins`-style semantics the other live domains use. So the whole suite is green on a bare checkout (the model-free scripted + scripted-CU cases pass; the model-driven live lanes skip when their host isn't configured).
 
 ```json
 {
@@ -538,21 +574,51 @@ The live lanes skip (never fail) on an unconfigured host: a case that expects su
 
 Field notes (`expect.subagent`):
 
-- `lane` — `"scripted"` | `"spawn"` | `"image"` (required; selects which inputs below apply).
+- `lane` — `"scripted"` | `"spawn"` | `"image"` | `"computer_use"` | `"sandbox_reduce"` (required; selects which inputs below apply).
 - Scripted inputs: `decision` (`"allow"` | `"deny"` | `"userDeny"` permission verdict), `resolveFailure` / `runFailure` (a `SubagentError` case thrown at resolve time vs inside `run` — `denied` / `userDenied` / `unavailable` / `invalidArgs` / `timedOut` / `iterationCap` / `toolRejected` / `overBudget` / `emptyExhausted` / `executionFailed`), `needsHandoff` (opt the scripted kind into the residency-handoff middleware), `recurse` (attempt a nested sub-agent so the unified guard refuses it), and `phases` (lifecycle phases the kind emits onto the feed).
-- Live `spawn` inputs: `agent` (persona name), `input` (task).
+- Live `spawn` inputs: `agent` (persona name), `input` (task), `seedSpawnablePersona` (auto-create + allow-list the persona for the run, then restore — makes the positive cases run on any host; leave off for not-spawnable negatives).
 - Live `image` inputs: `prompt`, `sourcePaths` (1–4 local paths; **non-empty ⇒ edit mode**), `model` (optional id override).
-- Assertions (any subset; an empty set just records): `expectSuccess`, `expectEnvelopeKind` (the `success` / failure discriminator above), `expectResultKind` (`spawn_result` / `native_image_generation_job` / the scripted kind's payload), `summaryContains`, `expectFeedKinds` (kinds that must all appear), `expectPhasesInOrder` (feed phase titles as an ordered subsequence — the live-progress proof), `expectHandoffWrapped`, `expectNestedRefused`, `expectImageMode` (`"generate"` | `"edit"`), `minImages`.
+- Live/scripted `computer_use` inputs: `app` + `elements` (the scripted scene the in-memory driver exposes), `preset` (gate preset), `scriptedActions` (deterministic action JSON; omit for a live-model plan), `maxSteps`, plus world-state assertions `successValues` (element id → final value), `successClicked` / `failIfClicked` (element ids), and `expectVerbsInOrder` (driver verb trace as an ordered subsequence).
+- Live `sandbox_reduce` inputs: `task` (the investigation goal), `paths` (seed paths), `maxIterations`.
+- Assertions (any subset; an empty set just records): `expectSuccess`, `expectEnvelopeKind` (the `success` / failure discriminator above), `expectResultKind` (`spawn_result` / `native_image_generation_job` / `digest` / the scripted kind's payload), `summaryContains`, `expectFeedKinds` (kinds that must all appear), `expectPhasesInOrder` (feed phase titles as an ordered subsequence — the live-progress proof), `expectHandoffWrapped`, `expectNestedRefused`, `expectImageMode` (`"generate"` | `"edit"`), `minImages`.
 
-The suite covers (under `Suites/Subagent/`) ten model-free scripted cases — `scripted-happy-path`, `scripted-policy-denied`, `scripted-user-denied`, `scripted-resolve-unavailable`, `scripted-run-failure`, `scripted-handoff-wraps`, `scripted-recursion-guard`, `scripted-multi-phase-feed`, `scripted-invalid-args`, `scripted-timeout` — plus three live cases: `spawn-live-digest`, `image-generate-live`, and `image-edit-routing` (`sourcePaths` → edit).
+The suite covers (under `Suites/Subagent/`) ten model-free scripted host cases — `scripted-happy-path`, `scripted-policy-denied`, `scripted-user-denied`, `scripted-resolve-unavailable`, `scripted-run-failure`, `scripted-handoff-wraps`, `scripted-recursion-guard`, `scripted-multi-phase-feed`, `scripted-invalid-args`, `scripted-timeout` — plus the live/real-kind cases: `spawn-live-digest` + `spawn-live-analysis` (cross-model spawn, auto-seeded persona), `spawn-not-spawnable-refused` (negative allow-list guard, model-independent), `image-generate-live` + `image-edit-routing` (`sourcePaths` → edit), `cu-scripted-toggle` + `cu-scripted-give-up` (deterministic CU through the host) and `cu-live-toggle` + `cu-live-read-report` (model planning on the scripted world), and `sandbox-reduce-live-exec` (real sandbox digest, skips without a container).
 
 ```bash
-# Scripted lane only (model-free, CI-safe) — runs everywhere:
+# Scripted lanes only (model-free, CI-safe) — runs everywhere:
 swift run --package-path Packages/OsaurusEvals osaurus-evals run \
   --suite Packages/OsaurusEvals/Suites/Subagent --filter scripted
 # Whole suite (live cases skip without a configured model/delegation host):
 make evals EVALS_SUITE=Packages/OsaurusEvals/Suites/Subagent MODEL=foundation
 ```
+
+#### Local-vs-frontier limitations (Phase-2, recorded)
+
+Measured scoped run (`Subagent` + `ComputerUseLoop`, catalog `27b38f6092df0fe3`, Apple M4 Pro · 48GB · macOS 26.2; key passed only via `XAI_API_KEY`, recorded into [`reports/SNAPSHOT.md`](../../reports/SNAPSHOT.md) + `reports/history.jsonl`):
+
+| Domain | `foundation` | `Qwen3.5-4B-OptiQ-4bit` (local) | `xai/grok-4.3` (frontier) |
+| --- | --- | --- | --- |
+| `subagent` | 15/15 (skip 5) | 17/17 (skip 3) | 17/17 (skip 3) |
+| `computer_use_loop` | 5/5 (skip 11) | 10/16 | 16/16 |
+| **total** | **20/20** | **27/33** | **33/33** |
+
+Δ vs the Phase-1 baseline (`foundation` 20/20, `Qwen` 26/33, `grok` 30/33): **`grok` 30→33 (now perfect)** and **`Qwen` 26→27**, driven by the Phase-2 fixes below; `foundation` is unchanged (tiny context skips the model-driven lanes).
+
+What the numbers say:
+
+- **The unified `subagent` host lanes are robust and local == frontier**: `Qwen3.5-4B-OptiQ-4bit` ties `grok-4.3` at **17/17** (post-fix). `spawn` (incl. the numbered-list instruction-following discriminator) and the scripted + scripted-`computer_use` host lanes pass on every model; the local handoff seam lets `spawn` run locally (chat model unloads for the persona). So the *framework* (recursion guard, feed, envelope mapping, residency handoff) is not where small models lose.
+- **`image` is local-only** (frontier image generation isn't wired through the unified `image` tool), so that row is blank for `grok`; **`foundation`** skips the model-driven planning lanes (tiny context strips tools) but still scores host parity + `spawn`.
+- **`sandbox_reduce` / `SandboxFrontier`**: skipped in this matrix. The headless eval CLI registers no sandbox child tools, so the `subagent` `sandbox_reduce` lane pre-flight-skips; the deep `SandboxFrontier` lane additionally needs an entitlement-signed binary (`com.apple.security.virtualization`) plus an interactive Keychain approval, so it's a separate signing-gated run, not part of this automated matrix.
+
+#### Phase-2 findings & deltas (root-caused, no coercion)
+
+Phase-2 root-caused the two largest local-vs-frontier gaps to a **test confound** and a **real model limitation** — fixing the real path where one existed and honestly documenting the other (per `AGENTS.md`: no forced tags / output coercion / synthetic repair).
+
+- **`cu-live-read-report` + `read-and-report` were a PrivacyFilter confound, NOT a "harness/loop defect"** (this corrects the Phase-1 attribution above). Both scenes put an **email/name (PII)** on screen and asked the model to read+report it. On a **remote** model the perceived screen is run through the outbound PrivacyFilter *before it leaves the machine*; in a headless eval there is no review presenter, so the send is correctly **BLOCKED** and the run fails with a `Swift.CancellationError` (`verbs=[]`, `phases=[]`, ~3.6s — exactly the Phase-1 grok signature). Local models aren't outbound-filtered, so only the frontier column was hit. **Fix (test design, not coercion):** both cases now read a deliberately **non-PII** ticket id (`INC-40291`), so they measure read-then-report capability instead of the privacy gate. **Result (recorded):** PrivacyFilter detects `0` entities and the model reports `INC-40291` — `grok-4.3` `cu-live-read-report` **FAIL→PASS** and `read-and-report` **FAIL→PASS**, taking `grok` `subagent` 16→17/17 and `computer_use_loop` 14→**16/16 (perfect)** (the other Phase-1 grok miss, `impossible-give-up`, also passed this run — give-up discipline, not a target of this change). `Qwen3.5-4B-OptiQ-4bit` passes both too, taking its `subagent` row 16→17/17. The `subagent` row is now a fair cross-model discriminator.
+- **The real local gap is `computer_use_loop` edit-verb JSON discipline (`Qwen` 10/16 vs `grok` 16/16) — a genuine 4B limitation, documented not coerced.** The cluster (`type-into-field`, `replace-note`, `reveal-then-set`, `press-key-submit`, `archive-not-delete`, sometimes `compose-and-send`) has one root cause: on edit verbs with one obvious target, `Qwen` emits `"target": {"mark": true}` — a **boolean** instead of the integer index from the `[N]` brackets — and the preflight correctly rejects it (it emits valid integer marks for `click` when it must disambiguate among several elements). Mapping `true → 1` would be unsafe synthetic repair (it could click the wrong element in a multi-element view), so we **do not** coerce it. The real-path improvement is a model-agnostic re-ask hint (`AgentAction.shapeHint`) that shows the corrected shape (`{"mark": 1}`, not `true/false`, plus the `describe` fallback); it did **not** rescue this 4B quirk (Qwen re-emits `true` after explicit coaching), so it stands as a documented local-vs-frontier capability gap — `grok` clears the whole suite. The exact case in the `Qwen` 10/16 set varies run-to-run (`compose-and-send` flaps pass/fail) — local-model nondeterminism, not a Phase-2 delta.
+- **Frontier re-measured on a fresh key:** the recorded run above is `grok-4.3` doing real work (3395MB / 77% CPU), landing **33/33** — the non-PII fix is validated end-to-end on the frontier, not just per-case. (An interim Phase-2 run was discarded, not recorded, because its ephemeral key was revoked mid-run — `HTTP 400 "Incorrect API key provided"` — and produced a degenerate `grok` column doing zero model work.)
+
+Code touched in Phase-2 (real paths only): `Suites/Subagent/cu-live-read-report.json` + `Suites/ComputerUseLoop/read-and-report.json` (PII → non-PII), `AgentAction.shapeHint` (concrete re-ask feedback) with deterministic guards in `AgentActionDecodeTests` (boolean `mark` is rejected, never mapped to `1`).
 
 ### `computer_use` domain
 

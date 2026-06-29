@@ -8,8 +8,11 @@ final class OsaurusRouterAccountService: ObservableObject {
     @Published private(set) var balance: OsaurusRouterBalanceResponse?
     @Published private(set) var usage: [OsaurusRouterUsageItem] = []
     @Published private(set) var nextUsageCursor: String?
+    @Published private(set) var transactions: [OsaurusRouterTransactionItem] = []
+    @Published private(set) var nextTransactionsCursor: String?
     @Published private(set) var isLoadingBalance = false
     @Published private(set) var isLoadingUsage = false
+    @Published private(set) var isLoadingTransactions = false
     @Published private(set) var isCreatingCheckout = false
     @Published var lastError: String?
 
@@ -62,6 +65,8 @@ final class OsaurusRouterAccountService: ObservableObject {
         balance = nil
         usage = []
         nextUsageCursor = nil
+        transactions = []
+        nextTransactionsCursor = nil
         lastError = nil
     }
 
@@ -128,6 +133,35 @@ final class OsaurusRouterAccountService: ObservableObject {
     func loadMoreUsage() async {
         guard nextUsageCursor != nil, !isLoadingUsage else { return }
         await refreshUsage(reset: false)
+    }
+
+    func refreshTransactions(reset: Bool = true) async {
+        guard OsaurusRouter.isEnabled else { return }
+        guard OsaurusIdentity.exists() else {
+            transactions = []
+            nextTransactionsCursor = nil
+            lastError = OsaurusRouterAPIError.noIdentity.localizedDescription
+            return
+        }
+
+        if reset {
+            nextTransactionsCursor = nil
+        }
+        isLoadingTransactions = true
+        defer { isLoadingTransactions = false }
+        do {
+            let response = try await client.transactions(limit: 50, cursor: reset ? nil : nextTransactionsCursor)
+            transactions = reset ? response.data : transactions + response.data
+            nextTransactionsCursor = response.nextCursor
+            lastError = nil
+        } catch {
+            lastError = error.localizedDescription
+        }
+    }
+
+    func loadMoreTransactions() async {
+        guard nextTransactionsCursor != nil, !isLoadingTransactions else { return }
+        await refreshTransactions(reset: false)
     }
 
     func createCheckout(amountMicro: Int = OsaurusRouter.minimumTopUpMicro) async -> URL? {

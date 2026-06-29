@@ -3,14 +3,14 @@
   "domain": "default_agent",
   "label": "default agent • delete a local model by id",
   "query": "Delete the local model mlx-community/Old-Unused-Model-7B-4bit to free up disk space.",
-  "notes": "action 'delete' with the model id. The id is not installed in the isolated store, so the tool returns a typed not-found error (no deletion); the selection assertion matches the emitted call.",
+  "notes": "action 'delete' for a local model. The model is not installed in the isolated store, so the tool returns a typed not-found error (no deletion); the assertion pins the ACTION (delete, not cancel/download) because that is the discrimination under test. It does NOT pin the identifier field: osaurus_model accepts either `id` or `repo_id` for delete (they identify the same model), and a model may use either — pinning one field would flip this case on the model's nondeterministic field choice.",
   "fixtures": {},
   "expect": {
     "defaultAgent": {
       "mustCallTools": ["osaurus_model"],
       "mustNotCallTools": ["capabilities_discover", "capabilities_load"],
       "argsMustContain": [
-        { "tool": "osaurus_model", "args": { "action": "delete", "id": "Old-Unused-Model-7B-4bit" } }
+        { "tool": "osaurus_model", "args": { "action": "delete" } }
       ],
       "maxIterations": 4
     }

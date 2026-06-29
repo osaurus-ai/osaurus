@@ -67,7 +67,11 @@ struct ClaudeMarketplaceCard: View {
     /// MCP) for this plugin, from the bundled catalog. Drives the at-a-glance
     /// "what does this ship" hint without any network access.
     private var componentSummary: ClaudeMarketplaceImportabilityCatalog.ComponentSummary? {
-        ClaudeMarketplaceImportabilityCatalog.bundled.components(for: entry.name)
+        trustPreview.componentSummary
+    }
+
+    private var trustPreview: ClaudeMarketplaceTrustPreview {
+        ClaudeMarketplaceImportabilityCatalog.bundled.trustPreview(for: entry)
     }
 
     /// Compact "6 skills · 1 MCP" hint, or nil when there's nothing to import
@@ -210,6 +214,7 @@ struct ClaudeMarketplaceCard: View {
                 }
                 .foregroundColor(theme.tertiaryText)
             }
+            trustStatusBadge
             if entry.homepage != nil {
                 Image(systemName: "link")
                     .font(.system(size: 9, weight: .medium))
@@ -224,16 +229,79 @@ struct ClaudeMarketplaceCard: View {
             ProgressView()
                 .scaleEffect(0.6)
                 .frame(width: 28, height: 28)
+        } else if trustPreview.importabilityStatus == .blocked {
+            Image(systemName: "minus.circle")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(theme.tertiaryText)
+                .frame(width: 28, height: 28)
+                .background(
+                    Circle().fill(theme.tertiaryText.opacity(0.12))
+                )
         } else {
             Button(action: install) {
                 Image(systemName: "arrow.down.circle.fill")
                     .font(.system(size: 16, weight: .medium))
-                    .foregroundColor(accent)
+                    .foregroundColor(
+                        trustPreview.importabilityStatus == .requiresReview
+                            ? theme.warningColor : accent
+                    )
                     .frame(width: 28, height: 28)
-                    .background(Circle().fill(accent.opacity(0.12)))
+                    .background(
+                        Circle().fill(
+                            (trustPreview.importabilityStatus == .requiresReview
+                                ? theme.warningColor : accent).opacity(0.12)
+                        )
+                    )
             }
             .buttonStyle(PlainButtonStyle())
-            .localizedHelp("Install")
+            .localizedHelp(
+                trustPreview.importabilityStatus == .requiresReview
+                    ? "Review manifest and install" : "Install"
+            )
+        }
+    }
+
+    private var trustStatusBadge: some View {
+        HStack(spacing: 3) {
+            Image(systemName: trustBadgeIcon)
+                .font(.system(size: 9, weight: .medium))
+            Text(trustBadgeText)
+                .font(.system(size: 10, weight: .medium))
+                .lineLimit(1)
+        }
+        .foregroundColor(trustBadgeColor)
+    }
+
+    private var trustBadgeIcon: String {
+        switch trustPreview.importabilityStatus {
+        case .importable:
+            return trustPreview.source.isMarketplaceRepo ? "checkmark.seal" : "arrow.up.right.square"
+        case .requiresReview:
+            return "exclamationmark.triangle"
+        case .blocked:
+            return "minus.circle"
+        }
+    }
+
+    private var trustBadgeText: String {
+        switch trustPreview.importabilityStatus {
+        case .importable:
+            return trustPreview.source.isMarketplaceRepo ? "Official" : "External source"
+        case .requiresReview:
+            return "Review"
+        case .blocked:
+            return "Blocked"
+        }
+    }
+
+    private var trustBadgeColor: Color {
+        switch trustPreview.importabilityStatus {
+        case .importable:
+            return theme.tertiaryText
+        case .requiresReview:
+            return theme.warningColor
+        case .blocked:
+            return theme.tertiaryText
         }
     }
 

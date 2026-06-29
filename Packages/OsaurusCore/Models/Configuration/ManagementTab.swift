@@ -29,6 +29,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
     case server
     case permissions
     case computerUse
+    case imageGeneration
     case privacy
     case identity
     case storage
@@ -70,6 +71,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
         case .server: "server.rack"
         case .permissions: "lock.shield.fill"
         case .computerUse: "cursorarrow.rays"
+        case .imageGeneration: "photo.artframe"
         case .privacy: "hand.raised.fill"
         case .identity: "person.badge.key.fill"
         case .storage: "externaldrive.fill.badge.checkmark"
@@ -99,6 +101,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
         case .server: L("Server")
         case .permissions: L("Permissions")
         case .computerUse: L("Computer Use")
+        case .imageGeneration: L("Image Generation")
         case .privacy: L("Privacy")
         case .identity: L("Identity")
         case .storage: L("Storage")

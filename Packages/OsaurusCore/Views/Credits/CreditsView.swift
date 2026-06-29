@@ -22,6 +22,7 @@ struct CreditsView: View {
     @State private var diagnosticsMessage: String?
     @State private var showTopUpSheet = false
     @State private var showDisableRouterConfirm = false
+    @State private var showRouterUsageCenter = false
 
     /// User master switch state. When off, the Credits screen hides the
     /// balance/activity cards (the router is no longer polled) and shows the
@@ -82,6 +83,11 @@ struct CreditsView: View {
             CreditsTopUpSheet()
                 .environment(\.theme, themeManager.currentTheme)
         }
+        .sheet(isPresented: $showRouterUsageCenter) {
+            RouterAccountUsageCenterView()
+                .environment(\.theme, themeManager.currentTheme)
+                .frame(width: 980, height: 760)
+        }
         .confirmationDialog(
             Text("Turn off Osaurus Router?", bundle: .module),
             isPresented: $showDisableRouterConfirm,
@@ -115,6 +121,14 @@ struct CreditsView: View {
                 help: "Refresh"
             ) {
                 Task { await refreshCredits(resetPages: true) }
+            }
+            .disabled(!routerEnabled)
+            .opacity(routerEnabled ? 1 : 0.55)
+            HeaderIconButton(
+                "chart.bar.xaxis",
+                help: "Account details"
+            ) {
+                showRouterUsageCenter = true
             }
             .disabled(!routerEnabled)
             .opacity(routerEnabled ? 1 : 0.55)
@@ -713,9 +727,8 @@ struct CreditsView: View {
         ledgerTotalCount = result.total
     }
 
-    /// Write a metadata-only diagnostics file via a save panel. Reads the public
-    /// wallet address best-effort (may trigger one biometric prompt); a failed
-    /// or declined read just omits the address, and the export still succeeds.
+    /// Write a metadata-only diagnostics file via a save panel. It does not
+    /// trigger biometric authentication only to derive wallet-address metadata.
     private func exportDiagnostics() {
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.json]
@@ -733,10 +746,10 @@ struct CreditsView: View {
         isExportingDiagnostics = true
         defer { isExportingDiagnostics = false }
 
-        let address = await Task.detached(priority: .userInitiated) {
-            Self.bestEffortWalletAddress()
-        }.value
-        let diagnostics = RouterBillingLedger.shared.buildDiagnostics(walletAddress: address)
+        let diagnostics = RouterBillingLedger.shared.buildDiagnostics(
+            walletAddress: nil,
+            walletAddressStatus: OsaurusIdentity.existsCached() ? .unavailableWithoutPrompt : .identityMissing
+        )
 
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -751,20 +764,6 @@ struct CreditsView: View {
         } catch {
             diagnosticsMessage = error.localizedDescription
         }
-    }
-
-    /// Read the public Osaurus ID without forcing the flow to fail when it
-    /// isn't available (declined biometric, keychain-disabled test mode). The
-    /// address is the server's billing account id, so support can line up the
-    /// local ledger with server-side usage. Best-effort by design.
-    nonisolated private static func bestEffortWalletAddress() -> String? {
-        guard OsaurusIdentity.exists() else { return nil }
-        let context = OsaurusIdentityContext.biometric()
-        guard var masterKeyData = try? MasterKey.getPrivateKey(context: context) else {
-            return nil
-        }
-        defer { masterKeyData.zeroOut() }
-        return try? deriveOsaurusId(from: masterKeyData)
     }
 
 }

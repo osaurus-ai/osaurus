@@ -1,0 +1,21 @@
+{
+  "id": "default_agent.out-of-scope-image-gen",
+  "domain": "default_agent",
+  "label": "default agent • out-of-scope image generation → route",
+  "query": "Generate an image of a mountain sunrise I can use on a slide.",
+  "notes": "Image generation is not part of the configuration agent's job. Grounded behaviour: explain its scope and offer to switch to / create an agent that can generate images, instead of pretending to produce an image. Must not call capability search or a fabricated image tool.",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "rubric": [
+        "Does not claim to have generated an image or describe a fabricated produced image as if it exists.",
+        "Explains it only configures Osaurus and offers to create or switch to an agent that can generate images."
+      ],
+      "mustNotCallTools": [
+        "capabilities_discover", "capabilities_load",
+        "generate_image", "image_generate"
+      ],
+      "maxIterations": 4
+    }
+  }
+}

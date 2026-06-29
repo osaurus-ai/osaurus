@@ -1,0 +1,48 @@
+{
+  "id": "screen_context.notes-note-body",
+  "domain": "screen_context",
+  "label": "Screen context • Notes app focused note body + selection (synthetic)",
+  "query": "(ambient capture)",
+  "notes": "Synthetic inline scene for an app the suite didn't cover (Notes). Pins the focused note body as a text area whose selection and cursor viewport surface verbatim, plus the note's on-screen heading line — proving the distiller generalizes to a new app without a committed capture.",
+  "fixtures": {},
+  "expect": {
+    "screenContext": {
+      "scene": {
+        "apps": [
+          { "pid": 701, "bundleId": "com.apple.Notes", "name": "Notes", "active": true, "hidden": false }
+        ],
+        "activeWindow": { "pid": 701, "app": "Notes", "title": "Project Roadmap — Notes", "x": 0, "y": 0, "w": 1100, "h": 760 },
+        "windowsByPid": {
+          "701": [
+            { "windowId": 1, "title": "Project Roadmap — Notes", "focused": true, "minimized": false, "x": 0, "y": 0, "w": 1100, "h": 760 }
+          ]
+        },
+        "snapshot": {
+          "app": "Notes",
+          "focusedWindow": "Project Roadmap — Notes",
+          "truncated": false,
+          "windows": [
+            { "id": 1, "title": "Project Roadmap — Notes", "focused": true, "x": 0, "y": 0, "w": 1100, "h": 760 }
+          ],
+          "elements": [
+            { "id": "heading", "role": "statictext", "value": "Project Roadmap", "focused": false, "enabled": true, "x": 300, "y": 80, "w": 320, "h": 24, "actions": [] },
+            { "id": "summary", "role": "statictext", "value": "Q3 goals: ship screen context and computer use", "focused": false, "enabled": true, "x": 300, "y": 120, "w": 620, "h": 20, "actions": [] },
+            { "id": "body", "role": "textarea", "label": "Note Body", "value": "Q3 goals: ship screen context and computer use\nNext: write the migration guide and record a demo", "selectedText": "write the migration guide", "focused": true, "enabled": true, "x": 300, "y": 110, "w": 760, "h": 560, "actions": [] }
+          ]
+        },
+        "focusedContent": {
+          "role": "textarea",
+          "label": "Note Body",
+          "value": "Q3 goals: ship screen context and computer use\nNext: write the migration guide and record a demo",
+          "selectedText": "write the migration guide",
+          "viewport": "Next: write the migration guide and record a demo"
+        }
+      },
+      "focusedRoleEquals": "text area",
+      "selectedTextContains": "write the migration guide",
+      "viewingContains": ["migration guide"],
+      "gistContains": ["In Notes"],
+      "mustContain": ["In Notes", "Selected text:", "write the migration guide"]
+    }
+  }
+}

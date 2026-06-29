@@ -46,8 +46,9 @@ public struct ShowCommand: Command {
         }
     }
 
-    /// Type-erased decodable for heterogeneous JSON values
-    private enum AnyCodableValue: Decodable {
+    /// Type-erased decodable for heterogeneous JSON values.
+    /// Internal (not private) so the numeric coercion can be unit-tested.
+    enum AnyCodableValue: Decodable {
         case string(String)
         case int(Int)
         case double(Double)
@@ -84,7 +85,7 @@ public struct ShowCommand: Command {
         var intValue: Int? {
             switch self {
             case .int(let i): return i
-            case .double(let d): return Int(d)
+            case .double(let d): return Int(exactly: d)
             case .string(let s): return Int(s)
             default: return nil
             }

@@ -1,0 +1,22 @@
+{
+  "id": "schema.maximum-bound-rejected",
+  "domain": "schema",
+  "label": "schema • numeric maximum constraint enforcement",
+  "query": "",
+  "notes": "Upper-bound mirror of minimum-bound-rejected: a value above an inclusive `maximum` must be rejected AND surface the offending field. Pins the maximum branch so a future range-check refactor can't silently drop the ceiling.",
+  "fixtures": {},
+  "expect": {
+    "schema": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "score": { "type": "integer", "maximum": 100 }
+        },
+        "required": ["score"]
+      },
+      "arguments": { "score": 150 },
+      "expectValid": false,
+      "expectField": "score"
+    }
+  }
+}

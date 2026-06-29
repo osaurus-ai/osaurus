@@ -20,6 +20,11 @@ public final class ManagementStateManager: ObservableObject {
     /// VoiceView observes this and resets it to nil after applying.
     @Published public var voiceSubTabRequest: String?
 
+    /// One-shot request to focus a specific sub-tab inside `ImageGenerationView`
+    /// (raw value of `ImageGenerationTab`, e.g. "Models"). `ImageGenerationView`
+    /// observes this and resets it to nil after applying.
+    @Published public var imageGenerationSubTabRequest: String?
+
     /// One-shot request to open a specific section inside the Server → Settings
     /// pane (raw value of `ServerSettingsSection`). `ServerView` switches to its
     /// Settings tab and `ServerSettingsTabContent` scrolls to + glows it, then

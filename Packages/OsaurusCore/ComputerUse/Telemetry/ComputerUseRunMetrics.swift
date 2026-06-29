@@ -41,6 +41,14 @@ public struct ComputerUseRunMetrics: Sendable, Equatable {
     /// steps, summed from each response's usage. `0` when the loop is driven by
     /// a scripted provider (no model call).
     public var modelTokens = 0
+    /// Running sum + count of per-step decode speeds (tok/s) reported by the
+    /// model responses, used to derive `meanDecodeTokensPerSecond`. Each CU
+    /// step is one forced single-tool-call decode, so a per-step arithmetic
+    /// mean is a faithful "how fast did this model drive the loop" signal.
+    /// Both stay `0` for the scripted seam (no model call) and for providers
+    /// that don't report a rate, so the mean reads as "no measurement".
+    public var decodeTpsSum: Double = 0
+    public var decodeTpsSamples = 0
     /// Whether the cloud-vision route was ever taken (consented + scrubbed).
     public var cloudVisionUsed = false
     /// Effect-class distribution of gated actions.
@@ -60,11 +68,28 @@ public struct ComputerUseRunMetrics: Sendable, Equatable {
         return Double(verifyChanged) / Double(actsAttempted)
     }
 
+    /// Mean decode speed (tok/s) across the model steps that reported one, or
+    /// `nil` when no step did (scripted run / non-reporting provider). The
+    /// eval harness surfaces this as the CU row's `decodeTokensPerSecond`.
+    public var meanDecodeTokensPerSecond: Double? {
+        guard decodeTpsSamples > 0 else { return nil }
+        return decodeTpsSum / Double(decodeTpsSamples)
+    }
+
     // MARK: - Mutators (keep call sites in the loop terse)
 
     public mutating func recordResolveAttempt(success: Bool) {
         targetResolveAttempts += 1
         if success { targetResolveSuccesses += 1 }
+    }
+
+    /// Fold one model step's decode speed into the running mean. A `nil` or
+    /// non-positive rate (scripted seam, provider that doesn't report one) is
+    /// ignored so it never drags the mean toward zero.
+    public mutating func recordDecodeTokensPerSecond(_ tps: Double?) {
+        guard let tps, tps > 0 else { return }
+        decodeTpsSum += tps
+        decodeTpsSamples += 1
     }
 
     public mutating func recordEffect(_ effect: EffectClass) {

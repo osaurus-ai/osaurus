@@ -1,0 +1,31 @@
+{
+  "id": "subagent.cu-scripted-precision-submit",
+  "domain": "subagent",
+  "label": "Subagent • computer_use through host (scripted precise submit)",
+  "query": "Submit the form. Do not cancel.",
+  "notes": "Model-free. Host-parity + precision: the scripted action clicks Submit through the real computer_use host; failIfClicked guards that Cancel is never touched. Asserts the success envelope / computer_use result kind / CU feed kinds AND the world state (status flips to submitted, cancel untouched).",
+  "fixtures": {},
+  "expect": {
+    "subagent": {
+      "lane": "computer_use",
+      "app": "Form",
+      "maxSteps": 8,
+      "elements": [
+        { "id": "cancel", "role": "button", "label": "Cancel" },
+        { "id": "submit", "role": "button", "label": "Submit", "onClick": { "setValues": [{ "id": "status", "value": "submitted" }] } },
+        { "id": "status", "role": "statictext", "label": "Status", "value": "draft" }
+      ],
+      "scriptedActions": [
+        "{\"verb\":\"click\",\"target\":{\"describe\":\"Submit\"},\"note\":\"submit the form\"}",
+        "{\"verb\":\"done\",\"reason\":\"submitted the form\"}"
+      ],
+      "expectSuccess": true,
+      "expectEnvelopeKind": "success",
+      "expectResultKind": "computer_use",
+      "expectFeedKinds": ["perceive", "act", "outcome"],
+      "successValues": [{ "id": "status", "equals": "submitted" }],
+      "successClicked": ["submit"],
+      "failIfClicked": ["cancel"]
+    }
+  }
+}

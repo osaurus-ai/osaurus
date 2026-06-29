@@ -22,11 +22,26 @@ public final class SlashCommandRegistry {
     public var isPopupVisible: Bool = false
 
     private init() {
-        refresh()
+        // `SlashCommandStore.loadAll()` reads and JSON-decodes every custom
+        // command file from disk. This type is `@MainActor`, so loading
+        // synchronously in `init` runs that scan on the main thread — and the
+        // first accessor is often `ManagementBadgeStore`'s periodic recompute
+        // (counting commands) rather than a user opening the slash menu, which
+        // tripped the app-hang watchdog. Load off the main actor and publish
+        // back; `customCommands` stays empty for the few ms until it lands.
+        Task { [weak self] in
+            let loaded = await Task.detached(priority: .utility) {
+                SlashCommandStore.loadAll()
+            }.value
+            self?.customCommands = loaded
+        }
     }
 
     // MARK: - Refresh
 
+    /// Reload from disk. Synchronous — callers are user-initiated CRUD on a
+    /// small list, so the main-thread cost is negligible (unlike the cold
+    /// first load, which `init` performs off the main actor).
     public func refresh() {
         customCommands = SlashCommandStore.loadAll()
     }

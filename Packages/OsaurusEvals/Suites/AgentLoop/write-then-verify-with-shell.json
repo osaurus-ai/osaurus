@@ -1,0 +1,20 @@
+{
+  "id": "agent_loop.write-then-verify-with-shell",
+  "domain": "agent_loop",
+  "label": "agent loop • write a file then verify it with a shell command",
+  "query": "Create a file named status.txt containing exactly the word READY (no newline differences that change the word). Then run a shell command to confirm the file contains READY before you finish.",
+  "notes": "Pins the write→verify discipline across two tool families: author with file_write, then prove it with shell_run rather than asserting success blind. The post-run command gate independently confirms the file content, so a 'I wrote it' without a real write fails.",
+  "fixtures": {},
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 10,
+      "mustCallTools": ["file_write", "shell_run"],
+      "files": [
+        { "path": "status.txt", "contains": "READY" }
+      ],
+      "commands": [
+        { "command": "grep -q READY status.txt", "expectExitCode": 0 }
+      ]
+    }
+  }
+}

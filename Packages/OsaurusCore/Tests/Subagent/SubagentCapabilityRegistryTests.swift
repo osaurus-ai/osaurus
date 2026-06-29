@@ -184,6 +184,28 @@ struct SubagentCapabilityRegistryTests {
         #expect(SubagentCapabilityRegistry.sandboxReduce.modelSource == .inheritsParent)
     }
 
+    @Test("supportsModelOverride is true for the chat-driven kinds and false for image")
+    func supportsModelOverrideFlag() {
+        // The chat-driven kinds share the standard per-agent model picker
+        // (`subagentModelOverrides` → `effectiveSubagentModel` →
+        // `SubagentModelResolution`).
+        #expect(SubagentCapabilityRegistry.computerUse.supportsModelOverride)
+        #expect(SubagentCapabilityRegistry.spawn.supportsModelOverride)
+        #expect(SubagentCapabilityRegistry.sandboxReduce.supportsModelOverride)
+        // image owns its own dedicated gen/edit model system → no shared row.
+        #expect(!SubagentCapabilityRegistry.image.supportsModelOverride)
+    }
+
+    @Test("capability(forPerAgentFlag:) maps each toggle flag to its descriptor")
+    func capabilityForPerAgentFlag() {
+        #expect(
+            SubagentCapabilityRegistry.capability(forPerAgentFlag: .computerUse)?.id
+                == "computer_use"
+        )
+        #expect(SubagentCapabilityRegistry.capability(forPerAgentFlag: .spawn)?.id == "spawn")
+        #expect(SubagentCapabilityRegistry.capability(forPerAgentFlag: .image)?.id == "image")
+    }
+
     @Test("every descriptor carries a display label + icon for the feed and chip")
     func displayAndIconArePopulated() {
         for capability in SubagentCapabilityRegistry.all {

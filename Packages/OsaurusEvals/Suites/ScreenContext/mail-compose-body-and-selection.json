@@ -1,0 +1,22 @@
+{
+  "id": "screen_context.mail-compose-body-and-selection",
+  "domain": "screen_context",
+  "label": "Screen context • Mail reply body, selection, and viewport",
+  "query": "(ambient capture)",
+  "notes": "Reuses the mail-compose-reply scene to pin the focused multi-line body: the friendly role is a text area, the selection surfaces verbatim, the cursor-centered viewport carries the body line, and the inbox message above the compose surfaces as on-screen content.",
+  "fixtures": {},
+  "expect": {
+    "screenContext": {
+      "fixture": "mail-compose-reply.json",
+      "focusedRoleEquals": "text area",
+      "selectedTextContains": "draft checklist",
+      "viewingContains": ["release notes", "rollback plan"],
+      "gistContains": ["In Mail"],
+      "mustContain": [
+        "In Mail",
+        "Selected text:",
+        "Maya Example: Please send the launch checklist"
+      ]
+    }
+  }
+}

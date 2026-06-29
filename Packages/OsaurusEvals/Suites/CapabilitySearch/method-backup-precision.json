@@ -1,0 +1,20 @@
+{
+  "id": "capability_search.method-backup-precision",
+  "domain": "capability_search",
+  "label": "capability search • method • recall the right method among four distractors",
+  "query": "back up the production database",
+  "notes": "Precision-under-competition: four distinct methods are seeded and only `backup_database` matches the database-backup intent. Pins that a larger distractor set doesn't push the single correct method below the floor (the failure mode where added competition silently drops recall).",
+  "fixtures": {
+    "seedMethods": [
+      { "id": "eval-backup-db-recall", "name": "backup_database", "description": "Create a backup snapshot of a database", "triggerText": "backup_database" },
+      { "id": "eval-summarize-doc-bk", "name": "summarize_document", "description": "Summarize a long document into key points", "triggerText": "summarize_document" },
+      { "id": "eval-translate-text-bk", "name": "translate_text", "description": "Translate text between languages", "triggerText": "translate_text" },
+      { "id": "eval-deploy-app-bk", "name": "deploy_app", "description": "Deploy a built application to a cloud environment", "triggerText": "deploy_app" }
+    ]
+  },
+  "expect": {
+    "capabilitySearch": {
+      "expectedMethods": { "anyOf": ["backup_database"], "minMatches": 1 }
+    }
+  }
+}

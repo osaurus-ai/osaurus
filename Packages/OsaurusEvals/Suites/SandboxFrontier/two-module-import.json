@@ -1,0 +1,17 @@
+{
+  "id": "sandbox.two-module-import",
+  "domain": "agent_loop",
+  "label": "sandbox • author two modules, import across them, run",
+  "query": "In your sandbox home, create util.py defining a function double(n) that returns n*2, and main.py that imports double from util and prints double(21). Run main.py with sandbox_exec and write its exact stdout to result.txt in your home directory.",
+  "notes": "Multi-file coding in the sandbox: a correct run requires both modules and a working import, executed for real. The stdout (42) is pinned via the host mount, so a half-authored solution that wouldn't import fails. SKIPS without a working sandbox VM.",
+  "fixtures": { "sandbox": {} },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 14,
+      "mustCallTools": ["sandbox_write_file", "sandbox_exec"],
+      "sandboxFiles": [
+        { "path": "result.txt", "contains": "42" }
+      ]
+    }
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "id": "agent_loop.edit-one-key-preserve-others",
+  "domain": "agent_loop",
+  "label": "agent loop • change one config value, leave the rest intact",
+  "query": "In settings.ini, change the port value to 9090. Do not change any other setting.",
+  "notes": "Surgical edit discipline: only the port line should change. The command assertion verifies port==9090 AND the other three keys keep their exact original values, so an over-eager rewrite that reformats or drops a key fails. Uses a post-run grep gate because file `contains` alone can't prove the old value is gone.",
+  "fixtures": {
+    "workspaceFiles": [
+      { "path": "settings.ini", "contents": "host=localhost\nport=8080\ndebug=true\nretries=3\n" }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 8,
+      "files": [
+        { "path": "settings.ini", "contains": "port=9090" },
+        { "path": "settings.ini", "contains": "host=localhost" },
+        { "path": "settings.ini", "contains": "debug=true" },
+        { "path": "settings.ini", "contains": "retries=3" }
+      ],
+      "commands": [
+        {
+          "command": "grep -qx 'port=9090' settings.ini && ! grep -qx 'port=8080' settings.ini && grep -qx 'host=localhost' settings.ini && grep -qx 'debug=true' settings.ini && grep -qx 'retries=3' settings.ini",
+          "expectExitCode": 0
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "id": "subagent.cu-live-toggle",
+  "domain": "subagent",
+  "label": "Subagent • computer_use live (model toggles a switch)",
+  "query": "Open System Settings and turn on Night Shift.",
+  "notes": "LIVE. The run model drives the REAL computer_use host against the in-memory ScriptedCUDriver — perception and actuation are deterministic, so a failure attributes to the model's planning/targeting/JSON-shape, not flaky AX. The cross-model planning signal: a capable model clicks Night Shift exactly once and declares done; a weaker one mistargets, types, or thrashes. Tiny-context models (Foundation, <=4K window) SKIP because the loop forces an agent_action tool call.",
+  "fixtures": {},
+  "expect": {
+    "subagent": {
+      "lane": "computer_use",
+      "app": "System Settings",
+      "maxSteps": 10,
+      "elements": [
+        { "id": "wifi", "role": "switch", "label": "Wi-Fi", "value": "on" },
+        { "id": "nightshift", "role": "switch", "label": "Night Shift", "value": "off", "onClick": { "toggle": true } },
+        { "id": "bluetooth", "role": "switch", "label": "Bluetooth", "value": "off", "onClick": { "toggle": true } }
+      ],
+      "expectSuccess": true,
+      "expectEnvelopeKind": "success",
+      "expectResultKind": "computer_use",
+      "successValues": [
+        { "id": "nightshift", "equals": "on" },
+        { "id": "bluetooth", "equals": "off" }
+      ],
+      "successClicked": ["nightshift"],
+      "failIfClicked": ["wifi"]
+    }
+  }
+}

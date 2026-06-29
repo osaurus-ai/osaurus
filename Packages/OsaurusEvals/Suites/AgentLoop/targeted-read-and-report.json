@@ -1,0 +1,22 @@
+{
+  "id": "agent_loop.targeted-read-and-report",
+  "domain": "agent_loop",
+  "label": "agent loop • read the right file among distractors and report a value",
+  "query": "Three files in this folder each set a color. Read beta.txt and tell me the color value it sets.",
+  "notes": "Targeted retrieval + grounded reporting: the model must read the NAMED file (not guess from the others) and surface its value in the final answer. finalTextContains pins the answer came from beta.txt ('green'), not alpha/gamma. noToolErrors keeps it a clean read.",
+  "fixtures": {
+    "workspaceFiles": [
+      { "path": "alpha.txt", "contents": "color=red\n" },
+      { "path": "beta.txt", "contents": "color=green\n" },
+      { "path": "gamma.txt", "contents": "color=blue\n" }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 6,
+      "mustCallTools": ["file_read"],
+      "noToolErrors": true,
+      "finalTextContains": ["green"]
+    }
+  }
+}

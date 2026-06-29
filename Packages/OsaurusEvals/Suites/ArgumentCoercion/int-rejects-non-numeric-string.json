@@ -1,0 +1,15 @@
+{
+  "id": "argument_coercion.int-rejects-non-numeric-string",
+  "domain": "argument_coercion",
+  "label": "coercion • int rejects a non-numeric string (returns nil)",
+  "query": "",
+  "notes": "Complements int-from-string ('30' -> 30): a genuinely non-numeric string has no Int parse, so coercion must return nil rather than 0. Pins the rejection branch so a tool can tell 'absent/invalid' from a real 0.",
+  "fixtures": {},
+  "expect": {
+    "argumentCoercion": {
+      "helper": "int",
+      "value": "abc",
+      "expect": null
+    }
+  }
+}

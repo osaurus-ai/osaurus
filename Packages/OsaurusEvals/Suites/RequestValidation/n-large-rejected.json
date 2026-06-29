@@ -1,0 +1,15 @@
+{
+  "id": "request_validation.n-large-rejected",
+  "domain": "request_validation",
+  "label": "request_validation • a large n (8) is rejected like n=2",
+  "query": "",
+  "notes": "Confirms the n>1 rejection is not off-by-one: a clearly-batched n=8 is rejected with the same single-request guidance as n=2. Complements n-greater-than-one-rejected at a larger value.",
+  "fixtures": {},
+  "expect": {
+    "requestValidation": {
+      "n": 8,
+      "expectAccept": false,
+      "expectReasonContains": "n"
+    }
+  }
+}

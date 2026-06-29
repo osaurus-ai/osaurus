@@ -1,0 +1,22 @@
+{
+  "id": "schema.items-element-type-rejected",
+  "domain": "schema",
+  "label": "schema • array items schema rejects a wrongly-typed element",
+  "query": "",
+  "notes": "Pins single-schema `items` validation: every element of `tags` must be integer-like. `\"two\"` cannot coerce to an integer, so the validator must reject the array and surface the indexed field `tags[1]`. The leniency layer accepts string-encoded integers (`\"3\"`) but not genuinely non-numeric strings.",
+  "fixtures": {},
+  "expect": {
+    "schema": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "tags": { "type": "array", "items": { "type": "integer" } }
+        },
+        "required": ["tags"]
+      },
+      "arguments": { "tags": [1, "two", 3] },
+      "expectValid": false,
+      "expectField": "tags[1]"
+    }
+  }
+}

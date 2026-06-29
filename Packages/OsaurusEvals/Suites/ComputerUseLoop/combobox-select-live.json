@@ -1,0 +1,24 @@
+{
+  "id": "computer_use_loop.combobox-select-live",
+  "domain": "computer_use_loop",
+  "label": "CU loop • open a dropdown and pick the correct option",
+  "query": "Set the Priority to High.",
+  "notes": "Dropdown / combobox pattern built from reveal primitives: the High and Low options are hidden until the Priority control is clicked. The model must open the control, then choose High — failIfClicked on Low pins that it didn't grab the wrong option. Live discriminator (no scriptedActions); tiny-context models SKIP.",
+  "fixtures": {},
+  "expect": {
+    "computerUseLoop": {
+      "app": "Settings",
+      "maxSteps": 12,
+      "elements": [
+        { "id": "priorityctl", "role": "button", "label": "Priority", "onClick": { "reveal": ["opthigh", "optlow"] } },
+        { "id": "opthigh", "role": "button", "label": "High", "hidden": true, "onClick": { "setValues": [{ "id": "prioval", "value": "High" }] } },
+        { "id": "optlow", "role": "button", "label": "Low", "hidden": true, "onClick": { "setValues": [{ "id": "prioval", "value": "Low" }] } },
+        { "id": "prioval", "role": "statictext", "label": "Selected Priority", "value": "none" }
+      ],
+      "successValues": [{ "id": "prioval", "equals": "High" }],
+      "successClicked": ["priorityctl", "opthigh"],
+      "failIfClicked": ["optlow"],
+      "maxInvalidActions": 4
+    }
+  }
+}

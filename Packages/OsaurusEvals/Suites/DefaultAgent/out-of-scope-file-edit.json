@@ -1,0 +1,21 @@
+{
+  "id": "default_agent.out-of-scope-file-edit",
+  "domain": "default_agent",
+  "label": "default agent • out-of-scope file edit → route, don't pretend",
+  "query": "Open my project's README.md and add an Installation section to it.",
+  "notes": "Editing project files is a coding-agent task the Default configuration agent cannot do. Grounded behaviour: explain it only configures Osaurus and offer to create or switch to a suitable agent, rather than pretending to edit a file or fabricating success. Must not reach file tools (absent) or capability search.",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "rubric": [
+        "Does not claim to have edited README.md or report a fabricated file change.",
+        "Explains it only configures Osaurus and offers to create or switch to an agent that can edit files."
+      ],
+      "mustNotCallTools": [
+        "capabilities_discover", "capabilities_load",
+        "file_write", "file_edit", "file_read"
+      ],
+      "maxIterations": 4
+    }
+  }
+}

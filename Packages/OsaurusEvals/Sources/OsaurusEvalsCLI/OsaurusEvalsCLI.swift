@@ -27,6 +27,33 @@ import OsaurusEvalsKit
 struct OsaurusEvalsCLI {
 
     static func main() async {
+        // Hermetic harness: the eval binary must never touch the user's login
+        // Keychain. It is code-signed differently than the host app, so
+        // DECRYPTING the app-created Master Key item routes through the legacy
+        // file-based login Keychain and raises a "osaurus-evals wants to use
+        // your confidential information" ACL authorization prompt that hangs a
+        // headless run indefinitely (observed driving DefaultAgent: agent-create
+        // → AgentManager.assignAddress → MasterKey.getPrivateKey, blocked in
+        // SecItemCopyMatching → securityd with 0% CPU). `LAContext`/UI-skip flags
+        // are ignored on legacy items, so the only correct fix is to run
+        // Keychain-free: every wrapper (incl. MasterKey) then no-ops. This
+        // mirrors the existing isolated config/search storage for default-agent
+        // cases. Forced before any OsaurusCore access; the harness never needs
+        // real Keychain (remote providers are ephemeral and env-keyed).
+        setenv("OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS", "1", 1)
+
+        // Eval isolation: to drive a remote model the harness connects an
+        // in-memory provider (`EvalRemoteProviderBootstrap`), which lands in
+        // `configuration.providers`. Without this, a `default_agent` honesty
+        // case ("which providers are connected?") would read the harness's own
+        // run/judge provider and score a truthful model as fabricating. This
+        // flag tells the configure READ tools (`osaurus_status`/`osaurus_list`/
+        // `osaurus_describe`) to hide ephemeral providers so the scenario sees
+        // the genuine user state. Safe: the eval binary runs no Bonjour
+        // discovery, so in-process the only ephemeral providers are the
+        // harness's; routing is untouched, so the model still runs.
+        setenv("OSAURUS_EVALS_HIDE_EPHEMERAL_PROVIDERS", "1", 1)
+
         let args = Array(CommandLine.arguments.dropFirst())
         guard let command = args.first else {
             printUsage()
@@ -89,6 +116,18 @@ struct OsaurusEvalsCLI {
 
     @MainActor
     static func runCommand(_ args: [String]) async {
+        // Headless harness: provider tools (`osaurus_provider` add / connect /
+        // set_credentials) open a modal credential NSPanel and suspend until
+        // the user pastes a key. In a headless eval there is no user, so the
+        // panel pops on the developer's screen and the case hangs until a
+        // watchdog cancels it. Resolve every credential prompt as `.cancelled`
+        // for the whole eval process: the model's tool ARGS are already
+        // recorded (so `argsMustContain` still scores selection), and a
+        // rotation case seeds a real provider so `set_credentials` still
+        // reaches — and identifies — the secure-sheet mechanism, just without
+        // mounting UI. Production leaves this hook nil.
+        ProviderCredentialPromptService.bypassUI = { _ in .cancelled }
+
         let opts: Options
         do {
             opts = try Options.parse(args)
@@ -145,7 +184,11 @@ struct OsaurusEvalsCLI {
             filter: opts.filter,
             thresholdOverride: opts.threshold,
             embedCosineFloorOverride: opts.embedCosineFloor,
-            bootstrapMode: .alreadyLoaded
+            bootstrapMode: .alreadyLoaded,
+            // Passed so the per-case watchdog can write a complete report and
+            // force-exit if a case wedges the concurrency runtime (the normal
+            // return path below never executes in that case).
+            outPath: opts.out
         )
 
         EvalRemoteProviderBootstrap.teardown(ephemeralProviderIds)

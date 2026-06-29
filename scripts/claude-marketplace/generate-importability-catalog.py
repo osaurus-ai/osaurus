@@ -176,6 +176,9 @@ def classify_components(base: str, entries: dict[str, str]) -> dict:
       - agents: `agents/<file>.md` files,
       - commands: `commands/<file>.md` files,
       - mcp: a `.mcp.json` file at the plugin root.
+      - hooks / unsupportedComponents: directory-level signals when visible in
+        the tree. `plugin.json`-only declarations are still detected live at
+        manifest resolution time, not by this no-content tree pass.
 
     Display names match the Swift `displayName` derivations: skills + agents
     title-case the dash-separated leaf; commands keep the bare file stem.
@@ -216,13 +219,32 @@ def classify_components(base: str, entries: dict[str, str]) -> dict:
             commands.append(path.rsplit("/", 1)[-1][:-3])  # bare stem
 
     mcp = entries.get(f"{prefix}.mcp.json") is not None
+    hooks = any(
+        path == f"{prefix}hooks" or path.startswith(f"{prefix}hooks/")
+        for path in entries
+    )
+
+    unsupported_components: list[str] = []
+    for component in ("lspServers", "outputStyles", "themes", "monitors", "bin"):
+        if any(
+            path == f"{prefix}{component}" or path.startswith(f"{prefix}{component}/")
+            for path in entries
+        ):
+            unsupported_components.append(component)
 
     # Match the Swift sort order (displayName ascending) for stable output.
     skills.sort()
     agents.sort()
     commands.sort()
 
-    return {"skills": skills, "agents": agents, "commands": commands, "mcp": mcp}
+    return {
+        "skills": skills,
+        "agents": agents,
+        "commands": commands,
+        "mcp": mcp,
+        "hooks": hooks,
+        "unsupportedComponents": unsupported_components,
+    }
 
 
 def main() -> int:
@@ -253,6 +275,8 @@ def main() -> int:
                 "agents": [],
                 "commands": [],
                 "mcp": False,
+                "hooks": False,
+                "unsupportedComponents": [],
             }
             continue
 
@@ -282,7 +306,7 @@ def main() -> int:
     components = dict(sorted(components.items()))
 
     catalog = {
-        "version": 2,
+        "version": 3,
         "generatedAt": datetime.datetime.now(datetime.timezone.utc)
         .replace(microsecond=0)
         .isoformat(),

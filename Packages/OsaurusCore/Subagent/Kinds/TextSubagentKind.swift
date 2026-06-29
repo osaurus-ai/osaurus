@@ -23,6 +23,11 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
 
     private let agentName: String
     private let input: String
+    /// Eval seam (nil in production): run the spawned persona on this model
+    /// instead of its own configured model, so `spawn` becomes a real
+    /// cross-model column in the local-vs-frontier matrix. The persona must
+    /// still exist and be spawnable — only the effective model is overridden.
+    private let modelOverride: String?
 
     /// Cap on the digest handed back to the parent.
     private static let digestMaxChars = 8_000
@@ -32,14 +37,14 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
     private var personaId: UUID?
     private var systemPrompt: String = ""
     private var budgets = SubagentBudgets()
-    private var residencyShouldUnload = false
-    private var residencyRequiredBytes: Int64 = 0
-    private var ramSafetyEnabled = false
-    private var handoffMaxElapsedSeconds = 120
+    /// The residency plan resolved at `resolveModel` time (reject-before-evict),
+    /// consumed by `makeHandoff()`. `.none` when no swap is needed.
+    private var residencyPlan: ResidencyPlan = .none
 
-    init(agentName: String, input: String) {
+    init(agentName: String, input: String, modelOverride: String? = nil) {
         self.agentName = agentName
         self.input = input
+        self.modelOverride = modelOverride
     }
 
     var feedTitle: String { "spawn → \(agentName)" }
@@ -90,12 +95,6 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
         guard let persona else {
             throw SubagentError.unavailable("Agent '\(agentName)' not found.")
         }
-        let modelName = await MainActor.run {
-            AgentManager.shared.effectiveModel(for: persona.id)
-        }
-        guard let modelName, !modelName.isEmpty else {
-            throw SubagentError.unavailable("Agent '\(agentName)' has no model configured.")
-        }
 
         self.personaName = persona.name
         self.personaId = persona.id
@@ -106,31 +105,26 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
             settings: settings
         )
 
-        // Decide the residency handoff from ACTUAL GPU residency (not a
-        // best-effort orchestrator name lookup): if the spawn model is local
-        // and ANY other chat model is resident, unload it first so only one
-        // model touches the GPU at a time (avoids the MLX shared-command-stream
-        // SIGABRT). Reject-before-evict: require the handoff to be enabled here,
-        // before anything is unloaded.
-        let isLocalModel = ModelManager.findInstalledModel(named: modelName) != nil
-        let residentChatModels = await ModelRuntime.shared.cachedModelSummaries().map(\.name)
-        let otherResidentModels = residentChatModels.filter {
-            $0.caseInsensitiveCompare(modelName) != .orderedSame
-        }
-        if isLocalModel && !otherResidentModels.isEmpty {
-            guard config.localOrchestratorTextHandoffActive else {
-                throw SubagentError.denied(
-                    "Spawning a different local agent requires \"Local Orchestrator Handoff\" enabled "
-                        + "in Settings → Sub-agents (so the chat model can unload to make room)."
-                )
-            }
-            self.residencyShouldUnload = true
-            self.residencyRequiredBytes = ChatResidencyHandoff.estimatedChatModelBytes(named: modelName)
-            self.ramSafetyEnabled = config.ramSafetyPreflightEnabled
-            self.handoffMaxElapsedSeconds = self.budgets.maxElapsedSeconds
-        }
+        // One shared path for precedence (eval seam → per-agent `spawn` override
+        // → the persona's own model), the availability fallback, and the live
+        // residency decision (reject-before-evict). The override is read from
+        // the LAUNCHING agent (`scope.agentId`); the default is the persona's
+        // configured model.
+        let personaId = persona.id
+        let resolved = try await SubagentModelResolution.resolve(
+            capabilityId: capability.id,
+            agentId: scope.agentId,
+            evalModel: modelOverride,
+            idleWaitSeconds: self.budgets.maxElapsedSeconds,
+            deniedMessage:
+                "Spawning a different local agent requires \"Local Orchestrator Handoff\" enabled "
+                + "in Settings → Sub-agents (so the chat model can unload to make room).",
+            unavailableMessage: "Agent '\(agentName)' has no model configured.",
+            defaultModel: { AgentManager.shared.effectiveModel(for: personaId) }
+        )
+        self.residencyPlan = resolved.decision.plan
 
-        return ResolvedModel(name: modelName, id: nil, isLocal: isLocalModel)
+        return ResolvedModel(name: resolved.model, id: nil, isLocal: resolved.decision.isLocal)
     }
 
     func permission(_ scope: SubagentScope, _ resolved: ResolvedModel) async -> SubagentDecision {
@@ -140,14 +134,7 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
     }
 
     func makeHandoff() -> SubagentHandoff {
-        guard residencyShouldUnload else { return PassthroughHandoff() }
-        let plan = ResidencyPlan(
-            shouldUnload: true,
-            requiredBytes: residencyRequiredBytes,
-            ramSafetyEnabled: ramSafetyEnabled,
-            maxElapsedSeconds: handoffMaxElapsedSeconds
-        )
-        return ResidencyHandoff.production { _ in plan }
+        SubagentResidency.handoff(for: residencyPlan)
     }
 
     func run(
@@ -195,7 +182,7 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
                     "summary": capped,
                     "iterations": result.iterations,
                     "elapsed_seconds": elapsed,
-                    "handoff": residencyShouldUnload,
+                    "handoff": residencyPlan.shouldUnload,
                 ] as [String: Any],
                 summary: capped
             )

@@ -38,7 +38,9 @@ enum RemoteProviderHeaderRedactor {
     private static let exactSensitiveHeaderNames: Set<String> = [
         "authorization",
         "api-key",
+        "cookie",
         "proxy-authorization",
+        "set-cookie",
         "x-api-key",
         "x-goog-api-key",
     ]
@@ -452,6 +454,7 @@ public struct RemoteProviderState: Sendable {
     public var isConnected: Bool
     public var isConnecting: Bool
     public var lastError: String?
+    public var lastReplayDiagnostics: ProviderReplayDiagnosticBundle?
     public var discoveredModels: [String]
     public var lastConnectedAt: Date?
 
@@ -460,6 +463,7 @@ public struct RemoteProviderState: Sendable {
         self.isConnected = false
         self.isConnecting = false
         self.lastError = nil
+        self.lastReplayDiagnostics = nil
         self.discoveredModels = []
         self.lastConnectedAt = nil
     }

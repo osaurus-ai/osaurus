@@ -28,6 +28,7 @@ public struct GlobalProxyConfiguration: Equatable, Sendable {
         case missingHost
         case unsafeHost(String)
         case missingPort
+        case invalidPort(Int)
         case unsupportedURLComponents
         case credentialsInURL
 
@@ -49,6 +50,8 @@ public struct GlobalProxyConfiguration: Equatable, Sendable {
                 "Proxy host '\(host)' is reserved for local networking."
             case .missingPort:
                 "Proxy URL must include an explicit port."
+            case .invalidPort(let port):
+                "Proxy port \(port) is out of range (must be 1–65535)."
             case .unsupportedURLComponents:
                 "Proxy URL must only contain scheme, host, and port."
             case .credentialsInURL:
@@ -98,6 +101,9 @@ public struct GlobalProxyConfiguration: Equatable, Sendable {
         guard !host.isEmpty else { throw ValidationError.missingHost }
         guard !Self.isLocalOnlyHost(host) else { throw ValidationError.unsafeHost(host) }
         guard let port = components.port else { throw ValidationError.missingPort }
+        // `URLComponents` parses port 0 and values above 65535 verbatim; reject
+        // them so an invalid port can't reach the CFNetwork proxy dictionary.
+        guard (1 ... 65535).contains(port) else { throw ValidationError.invalidPort(port) }
 
         self.scheme = scheme
         self.host = host

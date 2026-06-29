@@ -1,0 +1,20 @@
+{
+  "id": "agent_loop.multi-file-create-trio",
+  "domain": "agent_loop",
+  "label": "agent loop • create three distinct files in one run",
+  "query": "Create three files in this folder: 'one.txt' containing the single line ALPHA, 'two.txt' containing the single line BRAVO, and 'three.txt' containing the single line CHARLIE. Nothing else in each file.",
+  "notes": "Multi-target creation in an empty workspace: pins that the model can author several files with distinct, specific contents in one run without an anchor file to read. Clean-path: no tool call may return an error envelope. Distinct from write-new-file (single file).",
+  "fixtures": {},
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 8,
+      "mustCallTools": ["file_write"],
+      "noToolErrors": true,
+      "files": [
+        { "path": "one.txt", "contains": "ALPHA" },
+        { "path": "two.txt", "contains": "BRAVO" },
+        { "path": "three.txt", "contains": "CHARLIE" }
+      ]
+    }
+  }
+}

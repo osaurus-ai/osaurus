@@ -1,0 +1,24 @@
+{
+  "id": "agentdb.aggregate-join",
+  "domain": "agent_loop",
+  "label": "agentdb • join two tables and report the top aggregate",
+  "query": "Your agent database has a table customers(id INTEGER, name TEXT) and a table orders(cust_id INTEGER, total INTEGER). Join them, sum each customer's order totals, and tell me the name of the customer with the highest total spend.",
+  "notes": "Cross-table reasoning: the answer requires a JOIN + GROUP BY + ORDER BY, not a single-table scan. The seed makes 'Zara' (200) outrank 'Ada' (150); finalTextContains pins the reported name and dbState independently confirms the seed supports that answer. mustCallTools[db_query] keeps it a read.",
+  "fixtures": {
+    "agentCapabilities": { "dbEnabled": true },
+    "seedSql": [
+      "CREATE TABLE customers (id INTEGER, name TEXT); INSERT INTO customers (id, name) VALUES (1,'Ada'),(2,'Zara'); CREATE TABLE orders (cust_id INTEGER, total INTEGER); INSERT INTO orders (cust_id, total) VALUES (1,100),(1,50),(2,200);"
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 10,
+      "mustCallTools": ["db_query"],
+      "finalTextContains": ["Zara"],
+      "dbState": [
+        { "sql": "SELECT COUNT(*) FROM orders", "expectFirstValue": "3" },
+        { "sql": "SELECT name FROM customers c JOIN orders o ON c.id = o.cust_id GROUP BY name ORDER BY SUM(o.total) DESC LIMIT 1", "expectFirstValue": "Zara" }
+      ]
+    }
+  }
+}

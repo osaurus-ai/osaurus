@@ -1,0 +1,19 @@
+{
+  "id": "prefix_hash.tool-subset-differs",
+  "domain": "prefix_hash",
+  "label": "prefix_hash • a proper subset of tools hashes differently",
+  "query": "",
+  "notes": "Dropping a tool (read,write,exec -> read,write) must change the hash, just as adding one does. Together with tool-add-changes-hash this pins the hash as sensitive to the exact membership of the set in both directions.",
+  "fixtures": {},
+  "expect": {
+    "prefixHash": {
+      "systemContent": "You are a coding agent.",
+      "toolNames": ["read", "write", "exec"],
+      "compareTo": {
+        "systemContent": "You are a coding agent.",
+        "toolNames": ["read", "write"]
+      },
+      "expectEqual": false
+    }
+  }
+}

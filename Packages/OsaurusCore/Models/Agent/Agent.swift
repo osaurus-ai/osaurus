@@ -772,6 +772,14 @@ public struct AgentSettings: Codable, Sendable, Equatable {
     /// Per-agent budgets for `spawn` jobs (token / turn / wall-clock caps). The
     /// Default agent uses the global `SubagentConfiguration.budgets` instead.
     public var subagentBudgets: SubagentBudgets
+    /// Per-agent model override for subagent kinds, keyed by capability id
+    /// (`"computer_use"`, `"sandbox_reduce"`, `"spawn"`). An entry supersedes the
+    /// kind's default model source (the parent agent's model for computer_use /
+    /// sandbox_reduce; the chosen persona's model for spawn); an absent entry
+    /// means "inherit". Stored as a generic `[capabilityId: modelId]` map — like
+    /// `subagentPermissions` — so a new kind needs no new field. The Default
+    /// agent uses the global `SubagentConfiguration.subagentModelOverrides`.
+    public var subagentModelOverrides: [String: String]
 
     public init(
         dbEnabled: Bool,
@@ -791,7 +799,8 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         imageGenerationModelId: String? = nil,
         imageEditModelId: String? = nil,
         subagentPermissions: SubagentPermissionDefaults = SubagentPermissionDefaults(),
-        subagentBudgets: SubagentBudgets = SubagentBudgets()
+        subagentBudgets: SubagentBudgets = SubagentBudgets(),
+        subagentModelOverrides: [String: String] = [:]
     ) {
         self.dbEnabled = dbEnabled
         self.schedule = schedule
@@ -811,6 +820,7 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         self.imageEditModelId = imageEditModelId
         self.subagentPermissions = subagentPermissions
         self.subagentBudgets = subagentBudgets
+        self.subagentModelOverrides = subagentModelOverrides
     }
 
     public init(from decoder: Decoder) throws {
@@ -872,6 +882,27 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         subagentBudgets =
             (try? c.decodeIfPresent(SubagentBudgets.self, forKey: .subagentBudgets))
             ?? SubagentBudgets()
+        // Normalize on decode (trim values, drop blanks) so the per-agent stored
+        // shape matches the global `SubagentConfiguration.subagentModelOverrides`
+        // — a cleared picker round-trips as "no override", never an empty-string
+        // model id. The lenient `try?` keeps a malformed map from discarding the
+        // rest of the settings.
+        subagentModelOverrides = Self.normalizedModelOverrides(
+            (try? c.decodeIfPresent([String: String].self, forKey: .subagentModelOverrides)) ?? [:]
+        )
+    }
+
+    /// Trim values and drop blank entries so a cleared override (empty string)
+    /// round-trips as "no override" instead of an empty-string model id. Mirrors
+    /// `SubagentConfiguration.normalizedModelOverrides` so the per-agent and
+    /// global stored shapes agree.
+    private static func normalizedModelOverrides(_ value: [String: String]) -> [String: String] {
+        var result: [String: String] = [:]
+        for (key, raw) in value {
+            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { result[key] = trimmed }
+        }
+        return result
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -893,6 +924,7 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         case imageEditModelId
         case subagentPermissions
         case subagentBudgets
+        case subagentModelOverrides
         // Read-only legacy key — never encoded after migration.
         case generativeGreetings
     }
@@ -917,6 +949,7 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         try c.encodeIfPresent(imageEditModelId, forKey: .imageEditModelId)
         try c.encode(subagentPermissions, forKey: .subagentPermissions)
         try c.encode(subagentBudgets, forKey: .subagentBudgets)
+        try c.encode(subagentModelOverrides, forKey: .subagentModelOverrides)
     }
 
     /// Default settings for newly created agents (and for back-compat decoding of

@@ -211,6 +211,14 @@ public actor SkillSearchService {
         return (accepted, diagnostic)
     }
 
+    func indexSnapshot() -> SkillSearchIndexSnapshot {
+        SkillSearchIndexSnapshot(
+            vectorIndexInitialized: isInitialized,
+            vectorIndexAvailable: vectorDB != nil,
+            knownSkillIds: Set(reverseIdMap.values)
+        )
+    }
+
     // MARK: - Rebuild
 
     public func rebuildIndex() async {

@@ -51,6 +51,42 @@ struct SubagentModelPickerTests {
         #expect(items.subagentModelCandidate(id: nil, kind: .imageEdit) == nil)
     }
 
+    @Test("chat candidates include local/remote chat and exclude image/embedding")
+    func chatCandidatesFilterByCapability() {
+        let items: [ModelPickerItem] = [
+            ModelPickerItem(id: "local-chat", displayName: "Local Chat", source: .local),
+            ModelPickerItem(
+                id: "embedder",
+                displayName: "Embedder",
+                source: .local,
+                isEmbedding: true
+            ),
+            imageModel(id: "flux", textToImage: true),
+            ModelPickerItem(
+                id: "remote-chat",
+                displayName: "Remote Chat",
+                source: .remote(providerName: "P", providerId: UUID())
+            ),
+        ]
+
+        #expect(Set(items.chatModelCandidates.map(\.id)) == ["local-chat", "remote-chat"])
+    }
+
+    @Test("subagentChatModelCandidate matches a stored chat id, else nil")
+    func chatCandidateLookup() {
+        let items: [ModelPickerItem] = [
+            ModelPickerItem(id: "local-chat", displayName: "Local Chat", source: .local),
+            imageModel(id: "flux", textToImage: true),
+        ]
+
+        #expect(items.subagentChatModelCandidate(id: "local-chat")?.id == "local-chat")
+        // An image model is not a chat candidate, so the lookup misses.
+        #expect(items.subagentChatModelCandidate(id: "flux") == nil)
+        #expect(items.subagentChatModelCandidate(id: "   ") == nil)
+        #expect(items.subagentChatModelCandidate(id: nil) == nil)
+        #expect(items.subagentChatModelCandidate(id: "missing") == nil)
+    }
+
     private func imageModel(
         id: String,
         ready: Bool = true,

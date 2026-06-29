@@ -1,0 +1,15 @@
+{
+  "id": "argument_coercion.string-array-empty-string-nil",
+  "domain": "argument_coercion",
+  "label": "coercion • an empty string coerces to nil, not [\"\"]",
+  "query": "",
+  "notes": "Edge of the bare-string-wrap branch: a string that is empty after trimming must return nil rather than a single-element array containing an empty string, so an omitted-but-present field doesn't masquerade as a one-item list.",
+  "fixtures": {},
+  "expect": {
+    "argumentCoercion": {
+      "helper": "stringArray",
+      "value": "",
+      "expect": null
+    }
+  }
+}

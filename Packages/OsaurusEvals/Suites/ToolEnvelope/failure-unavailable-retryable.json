@@ -1,0 +1,22 @@
+{
+  "id": "tool_envelope.failure-unavailable-retryable",
+  "domain": "tool_envelope",
+  "label": "tool_envelope • unavailable defaults to retryable (transient resource)",
+  "query": "",
+  "notes": "Pins `unavailable` — the tool exists but can't run right now (sandbox still provisioning) — as retryable=true so the model retries next turn instead of pivoting away from a capability it actually has.",
+  "fixtures": {},
+  "expect": {
+    "toolEnvelope": {
+      "builder": "failure",
+      "kind": "unavailable",
+      "message": "The sandbox is still provisioning. Wait a moment and retry.",
+      "tool": "sandbox_exec",
+      "expectKeys": {
+        "ok": false,
+        "kind": "unavailable",
+        "tool": "sandbox_exec",
+        "retryable": true
+      }
+    }
+  }
+}

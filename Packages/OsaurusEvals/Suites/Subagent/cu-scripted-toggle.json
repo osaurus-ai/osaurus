@@ -1,0 +1,35 @@
+{
+  "id": "subagent.cu-scripted-toggle",
+  "domain": "subagent",
+  "label": "Subagent • computer_use through host (scripted toggle)",
+  "query": "In System Settings, turn on Night Shift.",
+  "notes": "Model-free. Drives the REAL computer_use host (SubagentSession + ComputerUseKind) against an in-memory ScriptedCUDriver via scripted agent_action JSON, so the whole host wrapper (recursion guard, live feed, done->success envelope mapping, compact result) runs in CI with no tokens. Asserts BOTH host parity (success envelope, computer_use result kind, CU feed kinds) AND the world state read back from the driver (Night Shift flipped on, Wi-Fi never touched).",
+  "fixtures": {},
+  "expect": {
+    "subagent": {
+      "lane": "computer_use",
+      "app": "System Settings",
+      "maxSteps": 8,
+      "elements": [
+        { "id": "wifi", "role": "switch", "label": "Wi-Fi", "value": "on" },
+        { "id": "nightshift", "role": "switch", "label": "Night Shift", "value": "off", "onClick": { "toggle": true } },
+        { "id": "bluetooth", "role": "switch", "label": "Bluetooth", "value": "off", "onClick": { "toggle": true } }
+      ],
+      "scriptedActions": [
+        "{\"verb\":\"click\",\"target\":{\"mark\":2},\"note\":\"turn on Night Shift\"}",
+        "{\"verb\":\"done\",\"reason\":\"Night Shift is now on\"}"
+      ],
+      "expectSuccess": true,
+      "expectEnvelopeKind": "success",
+      "expectResultKind": "computer_use",
+      "expectFeedKinds": ["perceive", "act", "outcome"],
+      "summaryContains": ["Night Shift"],
+      "successValues": [
+        { "id": "nightshift", "equals": "on" },
+        { "id": "bluetooth", "equals": "off" }
+      ],
+      "successClicked": ["nightshift"],
+      "failIfClicked": ["wifi"]
+    }
+  }
+}

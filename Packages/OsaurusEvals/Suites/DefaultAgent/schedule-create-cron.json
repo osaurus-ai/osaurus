@@ -3,7 +3,7 @@
   "domain": "default_agent",
   "label": "default agent • create a cron schedule",
   "query": "Set up a schedule for agent e3a7c1d4-5b29-4f80-9a6e-1c8d2f5b3079 using the cron expression \"0 9 * * 1-5\", call it \"Weekday Report\" and have it run my status report.",
-  "notes": "Second schedule frequency mode (cron) to prove the frequency enum carries more than 'daily'. action 'create', frequency 'cron'. A custom agent is seeded at the referenced id so create SUCCEEDS (correct cron mapping + a real schedule) instead of looping on a not-found agent — the agent is torn down after the case. The selection assertion pins action + cron.",
+  "notes": "Second schedule frequency mode (cron) to prove the frequency enum carries more than 'daily'. action 'create', frequency 'cron'. A custom agent is seeded at the referenced id so create SUCCEEDS (correct cron mapping + a real schedule) instead of looping on a not-found agent — the agent is torn down after the case. The selection assertion pins action + cron. maxIterations is the domain default (6), not a tight 4: schedule create takes several required fields, and a model that sends a partial first call gets a consolidated missing-fields error and needs a couple of iterations to resend a complete call before its summary.",
   "fixtures": {
     "seedAgents": [
       { "id": "e3a7c1d4-5b29-4f80-9a6e-1c8d2f5b3079", "name": "Eval Reporter Agent" }
@@ -16,7 +16,7 @@
       "argsMustContain": [
         { "tool": "osaurus_schedule", "args": { "action": "create", "frequency": "cron" } }
       ],
-      "maxIterations": 4
+      "maxIterations": 6
     }
   }
 }

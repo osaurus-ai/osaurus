@@ -1,0 +1,15 @@
+{
+  "id": "argument_coercion.int-truncates-float",
+  "domain": "argument_coercion",
+  "label": "coercion • a float number coerces to a truncated int (documents real behavior)",
+  "query": "",
+  "notes": "Documents (not aspirationally pins) the actual behavior: a JSON number 3.14 is an NSNumber, and int() takes its intValue, which TRUNCATES to 3. This is the observed contract today; if a future change rounds or rejects instead, this case should change with it deliberately rather than silently.",
+  "fixtures": {},
+  "expect": {
+    "argumentCoercion": {
+      "helper": "int",
+      "value": 3.14,
+      "expect": 3
+    }
+  }
+}

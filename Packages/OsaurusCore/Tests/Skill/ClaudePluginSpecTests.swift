@@ -304,6 +304,126 @@ struct ClaudePluginSpecTests {
         #expect(!Summary(skills: [], agents: [], commands: [], mcp: true).isEmpty)
     }
 
+    @Test func trustPreviewClassifiesOfficialMarketplaceProvenanceAndCapabilities() {
+        let catalog = ClaudeMarketplaceImportabilityCatalog(
+            nonImportable: [],
+            componentsByName: [
+                "agent-sdk-dev": .init(
+                    skills: [],
+                    agents: ["Agent Sdk Verifier Py"],
+                    commands: ["new-sdk-app"],
+                    mcp: true
+                )
+            ]
+        )
+        let entry = MarketplacePlugin(
+            name: "agent-sdk-dev",
+            source: .localDirectory("./plugins/agent-sdk-dev")
+        )
+
+        let preview = catalog.trustPreview(for: entry)
+
+        #expect(preview.importabilityStatus == .importable)
+        #expect(preview.canInstallWithoutReview)
+        #expect(preview.source.isOfficialMarketplace)
+        #expect(preview.source.isMarketplaceRepo)
+        #expect(preview.source.repositoryLabel == "anthropics/claude-plugins-official")
+        #expect(preview.source.repositoryURLLabel == "github.com/anthropics/claude-plugins-official")
+        #expect(preview.source.path == "plugins/agent-sdk-dev")
+        #expect(preview.componentSummary?.importableCount == 3)
+
+        let sensitive = Set(
+            preview.capabilityIndicators
+                .filter { $0.severity == .sensitive }
+                .map(\.id)
+        )
+        #expect(sensitive == ["agents", "commands", "mcp"])
+    }
+
+    @Test func trustPreviewShowsExternalRepoProvenanceFromOfficialListing() {
+        let catalog = ClaudeMarketplaceImportabilityCatalog(
+            nonImportable: [],
+            componentsByName: [
+                "external-plugin": .init(
+                    skills: ["External Skill"],
+                    agents: [],
+                    commands: [],
+                    mcp: false
+                )
+            ]
+        )
+        let entry = MarketplacePlugin(
+            name: "external-plugin",
+            source: .externalSubdir(
+                GitHubRepo(owner: "vendor", name: "plugin-pack", branch: "abc123"),
+                path: "plugins/external-plugin",
+                ref: "abc123"
+            )
+        )
+
+        let preview = catalog.trustPreview(for: entry)
+
+        #expect(preview.importabilityStatus == .importable)
+        #expect(preview.source.isOfficialMarketplace)
+        #expect(!preview.source.isMarketplaceRepo)
+        #expect(preview.source.owner == "vendor")
+        #expect(preview.source.repositoryLabel == "vendor/plugin-pack")
+        #expect(preview.source.repositoryURLLabel == "github.com/vendor/plugin-pack")
+        #expect(preview.source.path == "plugins/external-plugin")
+    }
+
+    @Test func trustPreviewBlocksNonImportableEntriesBeforeInstall() {
+        let catalog = ClaudeMarketplaceImportabilityCatalog(
+            nonImportable: ["only-hooks-plugin"],
+            componentsByName: [
+                "only-hooks-plugin": .init(
+                    skills: [],
+                    agents: [],
+                    commands: [],
+                    mcp: false,
+                    hooks: true,
+                    unsupportedComponents: ["outputStyles"]
+                )
+            ]
+        )
+        let entry = MarketplacePlugin(name: "only-hooks-plugin")
+
+        let preview = catalog.trustPreview(for: entry)
+
+        #expect(preview.importabilityStatus == .blocked)
+        #expect(!preview.canInstallWithoutReview)
+        #expect(preview.installGuardError != nil)
+        #expect(preview.capabilityIndicators.map(\.id).contains("hooks"))
+        #expect(preview.capabilityIndicators.map(\.label).contains("Output styles"))
+    }
+
+    @Test func trustPreviewRequiresReviewForUnclassifiedEntries() {
+        let catalog = ClaudeMarketplaceImportabilityCatalog(nonImportable: [])
+        let entry = MarketplacePlugin(name: "brand-new-plugin")
+
+        let preview = catalog.trustPreview(for: entry)
+
+        #expect(preview.importabilityStatus == .requiresReview)
+        #expect(!preview.canInstallWithoutReview)
+        #expect(preview.installGuardError == nil)
+        #expect(preview.reason.contains("bundled importability catalog"))
+    }
+
+    @Test func marketplaceInstallPreviewErrorsDoNotExposeRawSecretsOrURLs() {
+        let error = ClaudeMarketplaceInstallPreviewError.reviewRequired(
+            pluginName: "https://example.com/plugin?token=secret-token",
+            reason:
+                "This entry is not in the bundled importability catalog yet, so Osaurus cannot preview what would be installed."
+        )
+
+        let message = error.errorDescription ?? ""
+        #expect(!message.contains("https://"))
+        #expect(!message.contains("example.com"))
+        #expect(!message.localizedCaseInsensitiveContains("token=secret-token"))
+        #expect(!message.localizedCaseInsensitiveContains("secret-token"))
+        #expect(message.contains("This plugin requires review before install"))
+    }
+
     // MARK: - hasImportableComponents
 
     /// A manifest that only carries auxiliary markdown / hooks (no skills,

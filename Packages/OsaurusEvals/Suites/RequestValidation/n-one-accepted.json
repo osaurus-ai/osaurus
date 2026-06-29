@@ -1,0 +1,14 @@
+{
+  "id": "request_validation.n-one-accepted",
+  "domain": "request_validation",
+  "label": "request_validation • n=1 is accepted (only n>1 is rejected)",
+  "query": "",
+  "notes": "The boundary on the n axis: n=1 is the normal single-completion case and must be accepted. Pins that the rejection is strictly n>1, not n!=null, so existing clients that explicitly send n=1 are never broken.",
+  "fixtures": {},
+  "expect": {
+    "requestValidation": {
+      "n": 1,
+      "expectAccept": true
+    }
+  }
+}

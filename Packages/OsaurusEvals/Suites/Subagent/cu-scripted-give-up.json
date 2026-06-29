@@ -1,0 +1,27 @@
+{
+  "id": "subagent.cu-scripted-give-up",
+  "domain": "subagent",
+  "label": "Subagent • computer_use give_up maps to execution_error",
+  "query": "Export the entire conversation history to a PDF file.",
+  "notes": "Model-free. Pins the host's non-completion envelope mapping: a scripted give_up (no control can do this) must surface as a non-retryable execution_error envelope, NOT a success, and must never click Send. The complement to cu-scripted-toggle's done->success path. CI-safe (no tokens).",
+  "fixtures": {},
+  "expect": {
+    "subagent": {
+      "lane": "computer_use",
+      "app": "Messages",
+      "maxSteps": 6,
+      "elements": [
+        { "id": "message", "role": "textfield", "label": "Message", "value": "", "placeholder": "Type a message", "editable": true },
+        { "id": "send", "role": "button", "label": "Send" }
+      ],
+      "scriptedActions": [
+        "{\"verb\":\"give_up\",\"reason\":\"no control can export the conversation to a PDF\"}"
+      ],
+      "expectSuccess": false,
+      "expectEnvelopeKind": "execution_error",
+      "expectFeedKinds": ["propose", "outcome"],
+      "summaryContains": ["export"],
+      "failIfClicked": ["send"]
+    }
+  }
+}

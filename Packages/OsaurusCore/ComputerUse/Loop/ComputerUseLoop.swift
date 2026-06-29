@@ -378,6 +378,7 @@ public enum ComputerUseLoop {
                     step: step
                 )
                 metrics.modelTokens += stepResult.tokens
+                metrics.recordDecodeTokensPerSecond(stepResult.tokensPerSecond)
                 parsed = stepResult.call
             } catch {
                 return terminate(.failed(reason: error.localizedDescription))
@@ -1236,6 +1237,12 @@ public enum ComputerUseLoop {
     struct ModelStepResult: Sendable {
         var call: ModelActionCall?
         var tokens: Int = 0
+        /// Decode speed (tok/s) for this model step, read from the response
+        /// `usage.tokens_per_second`. `nil` for the scripted seam (no model
+        /// call) and for providers that don't report a rate. The loop folds
+        /// these into `metrics` so a model-driven CU run records real decode
+        /// telemetry (eval harness + diagnostics), not just a token count.
+        var tokensPerSecond: Double?
     }
 
     /// One forced agent_action call. Returns the first matching tool call (or
@@ -1266,18 +1273,20 @@ public enum ComputerUseLoop {
         req.isAgentRequest = true
         let response = try await engine.completeChat(request: req)
         let tokens = response.usage.total_tokens
+        let tps = response.usage.tokens_per_second
         guard let message = response.choices.first?.message else {
-            return ModelStepResult(call: nil, tokens: tokens)
+            return ModelStepResult(call: nil, tokens: tokens, tokensPerSecond: tps)
         }
         if let calls = message.tool_calls,
             let call = calls.first(where: { $0.function.name == AgentAction.toolName }) ?? calls.first
         {
             return ModelStepResult(
                 call: ModelActionCall(id: call.id, arguments: call.function.arguments),
-                tokens: tokens
+                tokens: tokens,
+                tokensPerSecond: tps
             )
         }
-        return ModelStepResult(call: nil, tokens: tokens)
+        return ModelStepResult(call: nil, tokens: tokens, tokensPerSecond: tps)
     }
 
     /// Project the internal conversation into the public, redacted turns an

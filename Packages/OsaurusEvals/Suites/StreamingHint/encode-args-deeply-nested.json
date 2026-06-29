@@ -1,0 +1,14 @@
+{
+  "id": "streaming_hint.encode-args-deeply-nested",
+  "domain": "streaming_hint",
+  "label": "streaming_hint • encodeArgs round-trips a deeply nested JSON fragment",
+  "query": "",
+  "notes": "A streamed args fragment can carry nested objects/arrays with embedded quotes. The hint layer must treat the fragment as opaque text and reproduce it byte-for-byte on decode — no re-serialization, no key reordering.",
+  "fixtures": {},
+  "expect": {
+    "streamingHint": {
+      "op": "encodeArgs",
+      "payload": "{\"filter\": {\"tags\": [\"a\", \"b\"], \"range\": {\"min\": 1, \"max\": 9}}, \"note\": \"q=\\\"x\\\"\"}"
+    }
+  }
+}

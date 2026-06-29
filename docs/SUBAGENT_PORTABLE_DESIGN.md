@@ -34,13 +34,47 @@ configurable primitive. Almost everything needed already exists.
 > **`modelSource`** axis — `.dedicatedConfigured` (image: own configured default +
 > coordinator-owned residency), `.persona` (spawn: a chosen persona's local/remote
 > model; the kind runs the residency handoff), `.inheritsParent` (computer_use /
-> sandbox_reduce: reuse the parent model, no swap) — that documents the local-vs-remote
+> sandbox_reduce: the parent model is the DEFAULT) — that documents the local-vs-remote
 > model axis a future dedicated model-backed kind (e.g. an AppleScript generator)
 > drops into. The vestigial `needsHandoff` protocol field is gone: intent is expressed
 > by `modelSource`, and the actual swap is whether the kind overrides `makeHandoff()`
-> (default `PassthroughHandoff`). **Add-a-kind recipe:** (1) add a `SubagentCapability`
-> to the registry's `all`, (2) write the `SubagentKind` conformer that returns it, (3)
-> add a thin tool that builds the kind and calls `SubagentSession.run`. Per-kind
+> (default `PassthroughHandoff`).
+>
+> **Standard model picker + shared residency (2026-06-27).** `modelSource` is the
+> kind's **default** source only; picking the model a sub-agent runs on is now a
+> standard, override-aware axis. A per-capability override map —
+> `subagentModelOverrides[capabilityId]` on `AgentSettings` (custom) /
+> `SubagentConfiguration` (main chat), read by the single resolver
+> `SubagentToolVisibility.effectiveSubagentModel(...)` — supersedes the default for
+> `computer_use`, `sandbox_reduce`, and `spawn`. The three chat-driven kinds share
+> ONE resolution path, **`Subagent/SubagentModelResolution.swift`**, instead of
+> repeating the lookup/fallback/residency block: a pure
+> `pickModel(eval, availableOverride, default)` (precedence eval seam > available
+> override > kind default, blanks-as-absent, unit-testable), a
+> `@MainActor availableOverride(_:)` that **falls back to the default** when the
+> stored override is no longer installed / not in `ModelPickerItemCache` (cold cache
+> ⇒ trust the id) so a deleted model never hard-fails, and a live `resolve(...)`
+> that enforces the **eval-bypasses-residency invariant** (eval seam ⇒
+> `(isLocal:false, plan:.none)`, so deterministic lanes never depend on live GPU
+> residency) then delegates the swap to `Subagent/SubagentResidency.swift`. That
+> residency layer — a pure `decidePlan(...)` (no GPU, unit-testable) + a live
+> `resolve(...)` wrapper — implements "different local model than the resident chat
+> model ⇒ unload/reload, reject-before-evict when the handoff is off." So the
+> **resolved** model (not the static `modelSource`) drives the handoff:
+> `computer_use` / `sandbox_reduce` keep `.inheritsParent` (preserving the registry
+> assertions) yet vend a real `ResidencyHandoff` when an override selects a different
+> local model. The picker is **registry-driven** via
+> `SubagentCapability.supportsModelOverride` (true for `computer_use` / `spawn` /
+> `sandbox_reduce`): AgentsView renders the standard override row for any capability
+> with the flag set, with the empty-tag label derived from `modelSource`. `image`
+> sets `supportsModelOverride = false` and is **deliberately divergent** — it owns
+> its own model system (separate gen/edit ids via `effectiveImageModel`, readiness +
+> "first ready" fallback, coordinator-owned residency) and is NOT a
+> `SubagentModelResolution` client. **Add-a-kind recipe:** (1) add a
+> `SubagentCapability` to the registry's `all` (set `supportsModelOverride = true`
+> for a chat-driven kind to get the picker for free), (2) write the `SubagentKind`
+> conformer that returns it and resolves through `SubagentModelResolution.resolve`,
+> (3) add a thin tool that builds the kind and calls `SubagentSession.run`. Per-kind
 > permission lives in `SubagentPermissionDefaults`, now a `[kindId: policy]` map keyed
 > by `capability.id` (legacy top-level `spawn`/`image` keys migrate on decode), so a
 > new permissioned kind needs no new config field — it reads/writes its own id.

@@ -1,0 +1,22 @@
+{
+  "id": "tool_envelope.failure-not-found-nonretryable",
+  "domain": "tool_envelope",
+  "label": "tool_envelope • not_found is its own kind and is non-retryable",
+  "query": "",
+  "notes": "Pins the `not_found` discriminator distinct from execution_error: a referenced path that does not exist defaults to retryable=false (the path must CHANGE before retrying, a bare retry is pointless). Lets the harness steer the next step instead of re-deriving the same path.",
+  "fixtures": {},
+  "expect": {
+    "toolEnvelope": {
+      "builder": "failure",
+      "kind": "not_found",
+      "message": "File not found: notes/missing.txt.",
+      "tool": "file_read",
+      "expectKeys": {
+        "ok": false,
+        "kind": "not_found",
+        "tool": "file_read",
+        "retryable": false
+      }
+    }
+  }
+}

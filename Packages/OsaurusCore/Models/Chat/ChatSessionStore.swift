@@ -22,7 +22,8 @@ enum ChatSessionStore {
     /// Load a specific session by ID
     static func load(id: UUID) -> ChatSessionData? {
         ensureOpen()
-        return ChatHistoryDatabase.shared.loadSession(id: id)
+        guard let session = ChatHistoryDatabase.shared.loadSession(id: id) else { return nil }
+        return recoverTranscriptTurnsIfNeeded(session)
     }
 
     /// Save a session (creates or updates)
@@ -101,6 +102,64 @@ enum ChatSessionStore {
             print("[ChatSessionStore] Failed to open chat-history database: \(error)")
             return
         }
+    }
+
+    static func recoverTranscriptTurnsIfNeeded(
+        _ session: ChatSessionData,
+        memoryDatabase: MemoryDatabase = .shared
+    ) -> ChatSessionData {
+        guard session.turns.isEmpty else { return session }
+        // Keep launch/load paths non-invasive: transcript fallback never opens
+        // Memory on behalf of chat history, because that may touch Keychain.
+        guard memoryDatabase.isOpen else { return session }
+
+        do {
+            let transcript = try memoryDatabase.loadTranscriptForConversation(
+                conversationId: session.id.uuidString
+            )
+            let recoveredTurns = transcript.compactMap(chatTurnData(from:))
+            guard !recoveredTurns.isEmpty else { return session }
+
+            var recovered = session
+            // Read-only compatibility fallback. Do not write these turns back to
+            // chat-history here; recovery should not mutate storage during load.
+            recovered.turns = recoveredTurns
+            return recovered
+        } catch {
+            print("[ChatSessionStore] Transcript recovery failed for session \(session.id): \(error)")
+            return session
+        }
+    }
+
+    private static func chatTurnData(from transcriptTurn: TranscriptTurn) -> ChatTurnData? {
+        let trimmedContent = transcriptTurn.content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedContent.isEmpty else { return nil }
+        guard let role = MessageRole(rawValue: transcriptTurn.role) else { return nil }
+
+        return ChatTurnData(
+            role: role,
+            content: transcriptTurn.content,
+            createdAt: transcriptDate(from: transcriptTurn.createdAt)
+        )
+    }
+
+    private static func transcriptDate(from raw: String) -> Date? {
+        guard !raw.isEmpty else { return nil }
+
+        let iso8601Formatter = ISO8601DateFormatter()
+        if let date = iso8601Formatter.date(from: raw) {
+            return date
+        }
+        iso8601Formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = iso8601Formatter.date(from: raw) {
+            return date
+        }
+
+        let sqliteFormatter = DateFormatter()
+        sqliteFormatter.locale = Locale(identifier: "en_US_POSIX")
+        sqliteFormatter.timeZone = TimeZone(secondsFromGMT: 0)
+        sqliteFormatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        return sqliteFormatter.date(from: raw)
     }
 
     #if DEBUG

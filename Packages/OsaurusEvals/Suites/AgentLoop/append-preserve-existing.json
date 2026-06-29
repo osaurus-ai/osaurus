@@ -1,0 +1,24 @@
+{
+  "id": "agent_loop.append-preserve-existing",
+  "domain": "agent_loop",
+  "label": "agent loop • append a section without dropping existing content",
+  "query": "Append a new section to CHANGELOG.md: a line '## v1.1' followed by a line '- bug fixes'. Keep everything already in the file exactly as-is — do not delete or rewrite the v1.0 section.",
+  "notes": "Pins additive editing: the model must extend a file while preserving prior content. The file assertions check BOTH the preserved v1.0 lines and the newly appended v1.1 lines survive, so a destructive overwrite (a common small-model failure) fails the case.",
+  "fixtures": {
+    "workspaceFiles": [
+      { "path": "CHANGELOG.md", "contents": "# Changelog\n\n## v1.0\n- initial release\n" }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 8,
+      "noToolErrors": true,
+      "files": [
+        { "path": "CHANGELOG.md", "contains": "## v1.0" },
+        { "path": "CHANGELOG.md", "contains": "initial release" },
+        { "path": "CHANGELOG.md", "contains": "## v1.1" },
+        { "path": "CHANGELOG.md", "contains": "bug fixes" }
+      ]
+    }
+  }
+}

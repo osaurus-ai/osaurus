@@ -1,0 +1,26 @@
+{
+  "id": "computer_use_loop.invalid-mark-recovery",
+  "domain": "computer_use_loop",
+  "label": "CU loop • recover after addressing a non-existent mark",
+  "query": "Submit the form.",
+  "notes": "Deterministic (scripted-model) recovery case for a bad TARGET (distinct from recover-after-invalid's malformed JSON): the first action addresses mark 9, which doesn't exist, so the loop must feed the unresolved-target back and continue; the scripted recovery then clicks the real Submit and finishes. Runs in CI with no model (scriptedActions set).",
+  "fixtures": {},
+  "expect": {
+    "computerUseLoop": {
+      "app": "Form",
+      "maxSteps": 8,
+      "elements": [
+        { "id": "submit", "role": "button", "label": "Submit", "onClick": { "setValues": [{ "id": "status", "value": "submitted" }] } },
+        { "id": "status", "role": "statictext", "label": "Status", "value": "draft" }
+      ],
+      "successValues": [{ "id": "status", "equals": "submitted" }],
+      "successClicked": ["submit"],
+      "maxInvalidActions": 4,
+      "scriptedActions": [
+        "{\"verb\":\"click\",\"target\":{\"mark\":9},\"note\":\"address a mark that does not exist\"}",
+        "{\"verb\":\"click\",\"target\":{\"mark\":1},\"note\":\"click the real submit\"}",
+        "{\"verb\":\"done\",\"reason\":\"submitted the form\"}"
+      ]
+    }
+  }
+}

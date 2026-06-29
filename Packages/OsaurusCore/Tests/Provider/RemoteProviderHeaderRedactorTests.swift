@@ -12,7 +12,10 @@ import Testing
 @Suite("RemoteProviderHeaderRedactor")
 struct RemoteProviderHeaderRedactorTests {
     @Test func redactsBuiltInProviderCredentialHeaders() {
-        for header in ["Authorization", "x-api-key", "x-goog-api-key", "api-key", "Proxy-Authorization"] {
+        for header in [
+            "Authorization", "x-api-key", "x-goog-api-key", "api-key",
+            "Proxy-Authorization", "Cookie", "Set-Cookie",
+        ] {
             #expect(
                 RemoteProviderHeaderRedactor.valueForLogging(headerName: header, value: "super-secret")
                     == RemoteProviderHeaderRedactor.redactedValue

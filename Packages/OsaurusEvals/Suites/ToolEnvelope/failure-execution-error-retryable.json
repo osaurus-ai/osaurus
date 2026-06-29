@@ -1,0 +1,22 @@
+{
+  "id": "tool_envelope.failure-execution-error-retryable",
+  "domain": "tool_envelope",
+  "label": "tool_envelope • execution_error is the catch-all and defaults retryable",
+  "query": "",
+  "notes": "Pins `execution_error` — the catch-all for thrown runtime failures (process exit, transient IO) — defaulting to retryable=true. Complements the terminal kinds (rejected/tool_not_found/user_denied/not_found) so the retryable default table is locked on BOTH sides.",
+  "fixtures": {},
+  "expect": {
+    "toolEnvelope": {
+      "builder": "failure",
+      "kind": "execution_error",
+      "message": "The command exited with a non-zero status.",
+      "tool": "shell_run",
+      "expectKeys": {
+        "ok": false,
+        "kind": "execution_error",
+        "tool": "shell_run",
+        "retryable": true
+      }
+    }
+  }
+}

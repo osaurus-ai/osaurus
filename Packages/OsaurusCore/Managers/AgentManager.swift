@@ -386,13 +386,33 @@ public final class AgentManager: ObservableObject {
     }
 
     /// Derive and assign a cryptographic address for an agent.
-    /// No-ops for built-in agents, agents that already have an address, or when no master key exists.
+    /// No-ops for built-in agents, agents that already have an address, when no
+    /// master key exists, or when the master key can't be read non-interactively.
+    ///
+    /// Agent creation runs from headless / differently-signed processes too (the
+    /// eval CLI driving the configuration agent's `agent` create tool, the in-app
+    /// HTTP server, CI). The Master Key item lives in the legacy file-based login
+    /// Keychain, where reading it from a process whose code signature differs
+    /// from the app that created it raises a "wants to use your confidential
+    /// information" ACL prompt — and `LAContext.interactionNotAllowed` /
+    /// `kSecUseAuthenticationUISkip` do NOT suppress that legacy prompt (it once
+    /// hung a headless DefaultAgent run for minutes at 0% CPU). The real headless
+    /// protection is the keychain-disable gate: those processes run with
+    /// `OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1`, so `MasterKey.exists()` returns
+    /// false and we short-circuit before any read. The non-interactive context
+    /// below is still correct defense for the data-protection-Keychain path, and
+    /// `try?` keeps a read failure best-effort (create the agent without a crypto
+    /// address) rather than throwing. The same-signed app reads its own
+    /// `kSecAttrAccessibleWhenUnlocked` key without UI, so assignment is unchanged
+    /// there.
     public func assignAddress(to agent: Agent) throws {
         guard !agent.isBuiltIn, agent.agentAddress == nil else { return }
         guard MasterKey.exists() else { return }
 
-        let context = OsaurusIdentityContext.biometric()
-        var masterKeyData = try MasterKey.getPrivateKey(context: context)
+        let context = LAContext()
+        context.touchIDAuthenticationAllowableReuseDuration = 300
+        context.interactionNotAllowed = true
+        guard var masterKeyData = try? MasterKey.getPrivateKey(context: context) else { return }
         defer { masterKeyData.zeroOut() }
 
         let nextIndex = nextUnusedAgentIndex()

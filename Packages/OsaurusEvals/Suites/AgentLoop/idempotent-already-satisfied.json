@@ -1,0 +1,28 @@
+{
+  "id": "agent_loop.idempotent-already-satisfied",
+  "domain": "agent_loop",
+  "label": "agent loop • don't corrupt a file that already meets the goal",
+  "query": "Make sure feature_x is enabled in config.yaml. If it is already enabled, do not make a destructive change.",
+  "notes": "Idempotency pin: the target state already holds (feature_x: enabled). A correct run leaves config.yaml satisfying the goal AND keeps the unrelated feature_y line intact — it must not blow away or reformat the file chasing a no-op. The command gate proves both keys survive with correct values.",
+  "fixtures": {
+    "workspaceFiles": [
+      { "path": "config.yaml", "contents": "feature_x: enabled\nfeature_y: disabled\n" }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 6,
+      "noToolErrors": true,
+      "files": [
+        { "path": "config.yaml", "contains": "feature_x: enabled" },
+        { "path": "config.yaml", "contains": "feature_y: disabled" }
+      ],
+      "commands": [
+        {
+          "command": "grep -qx 'feature_x: enabled' config.yaml && grep -qx 'feature_y: disabled' config.yaml",
+          "expectExitCode": 0
+        }
+      ]
+    }
+  }
+}

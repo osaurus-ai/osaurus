@@ -1,0 +1,22 @@
+{
+  "id": "tool_envelope.failure-user-denied-nonretryable",
+  "domain": "tool_envelope",
+  "label": "tool_envelope • user_denied (interactive) is distinct from rejected and non-retryable",
+  "query": "",
+  "notes": "Pins `user_denied` — the interactive 'Deny' verdict — as a terminal, non-retryable kind distinct from `rejected` (configured policy refusal). A model that sees user_denied must pivot/stop, not retry the same prompt.",
+  "fixtures": {},
+  "expect": {
+    "toolEnvelope": {
+      "builder": "failure",
+      "kind": "user_denied",
+      "message": "The user denied the approval prompt for this action.",
+      "tool": "shell_run",
+      "expectKeys": {
+        "ok": false,
+        "kind": "user_denied",
+        "tool": "shell_run",
+        "retryable": false
+      }
+    }
+  }
+}

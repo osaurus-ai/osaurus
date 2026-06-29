@@ -104,6 +104,9 @@ public enum ProviderNetworkDiagnostics {
         ) {
             rows.append(oauthContext)
         }
+        if let replay = remoteReplayDiagnosticsRow(state: state) {
+            rows.append(replay)
+        }
         rows.append(
             contentsOf: [
                 remoteModelDiscoveryRow(provider: provider),
@@ -398,6 +401,18 @@ public enum ProviderNetworkDiagnostics {
         )
     }
 
+    private static func remoteReplayDiagnosticsRow(state: RemoteProviderState?) -> ProviderDiagnosticRow? {
+        guard let diagnostics = state?.lastReplayDiagnostics else { return nil }
+        return ProviderDiagnosticRow(
+            id: "request-evidence",
+            title: L("Request evidence"),
+            value: diagnostics.summary,
+            severity: .warning,
+            detail: diagnostics.pasteboardText,
+            action: L("Copy diagnostics and include this redacted request/response evidence with the report.")
+        )
+    }
+
     private static func remoteRequestFormatRow(provider: RemoteProvider) -> ProviderDiagnosticRow {
         ProviderDiagnosticRow(
             id: "format",
@@ -677,6 +692,6 @@ public enum ProviderNetworkDiagnostics {
     }
 
     private static func safeDiagnostic(_ raw: String) -> String {
-        OpenAICodexOAuthService.safeDiagnosticFragment(raw, maxLength: 280)
+        ProviderDiagnosticRedactor.safe(raw, maxLength: 280)
     }
 }

@@ -1,0 +1,20 @@
+{
+  "id": "computer_use_loop.read-two-values-report-live",
+  "domain": "computer_use_loop",
+  "label": "CU loop • read two on-screen values and report both",
+  "query": "What is the order number and the order total shown on screen? Report both.",
+  "notes": "Grounded multi-read: the answer never lands in the tree, so the model must surface BOTH values in its closing reason. finalSummaryContains pins the exact order number and total — a partial read (one value) or a fabricated number fails. Live; tiny-context models SKIP.",
+  "fixtures": {},
+  "expect": {
+    "computerUseLoop": {
+      "app": "Store",
+      "maxSteps": 6,
+      "elements": [
+        { "id": "ordernum", "role": "statictext", "label": "Order Number", "value": "ORD-7781" },
+        { "id": "ordertotal", "role": "statictext", "label": "Order Total", "value": "$42.50" }
+      ],
+      "finalSummaryContains": ["ORD-7781", "42.50"],
+      "maxInvalidActions": 4
+    }
+  }
+}

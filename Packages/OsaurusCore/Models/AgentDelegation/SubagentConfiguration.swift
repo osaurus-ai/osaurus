@@ -183,6 +183,11 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
     /// is freed, the job is rejected instead of unloading the orchestrator and
     /// failing to load the spawn model. See `ChatResidencyHandoff.memoryPreflight`.
     var ramSafetyPreflightEnabled: Bool
+    /// Per-capability model override for the DEFAULT / main-chat agent's subagent
+    /// kinds, keyed by capability id (`"spawn"`, `"sandbox_reduce"`). An entry
+    /// supersedes the kind's default model source; absent means "inherit". Custom
+    /// agents carry their own `AgentSettings.subagentModelOverrides`.
+    var subagentModelOverrides: [String: String]
 
     init(
         localTextDelegationEnabled: Bool = true,
@@ -193,7 +198,8 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
         imageJobLoadPolicy: SubagentImageLoadPolicy = .agentSingleResidency,
         permissionDefaults: SubagentPermissionDefaults = SubagentPermissionDefaults(),
         budgets: SubagentBudgets = SubagentBudgets(),
-        ramSafetyPreflightEnabled: Bool = true
+        ramSafetyPreflightEnabled: Bool = true,
+        subagentModelOverrides: [String: String] = [:]
     ) {
         self.localTextDelegationEnabled = localTextDelegationEnabled
         self.spawnableAgentNames = spawnableAgentNames
@@ -204,6 +210,7 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
         self.permissionDefaults = permissionDefaults
         self.budgets = budgets.normalized
         self.ramSafetyPreflightEnabled = ramSafetyPreflightEnabled
+        self.subagentModelOverrides = Self.normalizedModelOverrides(subagentModelOverrides)
     }
 
     static let `default` = SubagentConfiguration()
@@ -252,7 +259,8 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
             // Preserve the user's RAM-safety choice across the save/load round-trip.
             // Omitting this dropped it back to the init default (`true`), making the
             // toggle un-disableable (the store runs `.normalized` on every save+load).
-            ramSafetyPreflightEnabled: ramSafetyPreflightEnabled
+            ramSafetyPreflightEnabled: ramSafetyPreflightEnabled,
+            subagentModelOverrides: subagentModelOverrides
         )
     }
 
@@ -266,6 +274,7 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
         case permissionDefaults
         case budgets
         case ramSafetyPreflightEnabled
+        case subagentModelOverrides
     }
 
     init(from decoder: Decoder) throws {
@@ -298,7 +307,13 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
             ramSafetyPreflightEnabled: try container.decodeIfPresent(
                 Bool.self,
                 forKey: .ramSafetyPreflightEnabled
-            ) ?? true
+            ) ?? true,
+            // Lenient: a malformed map must never discard the whole delegation
+            // config (same approach as `permissionDefaults`).
+            subagentModelOverrides: (try? container.decodeIfPresent(
+                [String: String].self,
+                forKey: .subagentModelOverrides
+            )) ?? [:]
         )
     }
 
@@ -306,5 +321,16 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
         guard let value else { return nil }
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
+    }
+
+    /// Trim values and drop blank entries so a cleared picker (empty string)
+    /// round-trips as "no override" instead of an empty-string model id.
+    private static func normalizedModelOverrides(_ value: [String: String]) -> [String: String] {
+        var result: [String: String] = [:]
+        for (key, raw) in value {
+            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { result[key] = trimmed }
+        }
+        return result
     }
 }

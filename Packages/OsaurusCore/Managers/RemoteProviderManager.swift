@@ -293,6 +293,7 @@ public final class RemoteProviderManager: ObservableObject {
         var state = providerStates[providerId] ?? RemoteProviderState(providerId: providerId)
         state.isConnecting = true
         state.lastError = nil
+        state.lastReplayDiagnostics = nil
         providerStates[providerId] = state
 
         do {
@@ -354,6 +355,7 @@ public final class RemoteProviderManager: ObservableObject {
             state.discoveredModels = models
             state.lastConnectedAt = Date()
             state.lastError = nil
+            state.lastReplayDiagnostics = nil
             providerStates[providerId] = state
 
             print("[Osaurus] Remote Provider '\(provider.name)': Connected with \(models.count) models")
@@ -367,6 +369,7 @@ public final class RemoteProviderManager: ObservableObject {
             state.isConnecting = false
             state.isConnected = false
             state.lastError = errorMessage
+            state.lastReplayDiagnostics = (error as? RemoteProviderServiceError)?.replayDiagnostics
             state.discoveredModels = []
             providerStates[providerId] = state
 
@@ -558,7 +561,8 @@ public final class RemoteProviderManager: ObservableObject {
             switch serviceError {
             case .invalidResponse:
                 return true
-            case .invalidURL, .notConnected, .requestFailed, .streamingError, .noModelsAvailable:
+            case .invalidURL, .notConnected, .requestFailed, .requestFailedWithDiagnostics,
+                .streamingError, .noModelsAvailable:
                 return false
             }
         }
@@ -908,25 +912,53 @@ public final class RemoteProviderManager: ObservableObject {
 
         do {
             let (data, response): (Data, URLResponse)
-            if let override = testConnectionTransportOverride {
-                (data, response) = try await override(request)
-            } else {
-                (data, response) = try await GlobalProxySettings.sharedSession().data(for: request)
+            do {
+                if let override = testConnectionTransportOverride {
+                    (data, response) = try await override(request)
+                } else {
+                    (data, response) = try await GlobalProxySettings.sharedSession().data(for: request)
+                }
+            } catch {
+                let diagnostics = ProviderReplayDiagnosticBundle(
+                    phase: "test_model_discovery",
+                    request: request,
+                    transportError: error,
+                    configuredSecretHeaderKeys: tempProvider.secretHeaderKeys
+                )
+                throw RemoteProviderServiceError.requestFailedWithDiagnostics(
+                    "Network error: \(ProviderDiagnosticRedactor.safe(error.localizedDescription, maxLength: 240))",
+                    diagnostics
+                )
             }
 
             guard let httpResponse = response as? HTTPURLResponse else {
                 print("[Osaurus] Test Connection: Invalid response type")
-                throw RemoteProviderError.connectionFailed("Invalid response")
+                let diagnostics = ProviderReplayDiagnosticBundle(
+                    phase: "test_model_discovery",
+                    request: request,
+                    configuredSecretHeaderKeys: tempProvider.secretHeaderKeys
+                )
+                throw RemoteProviderServiceError.invalidResponse.attachingReplayDiagnostics(diagnostics)
             }
 
             print("[Osaurus] Test Connection: HTTP \(httpResponse.statusCode)")
+            let diagnostics = ProviderReplayDiagnosticBundle(
+                phase: "test_model_discovery",
+                request: request,
+                response: httpResponse,
+                responseData: data,
+                configuredSecretHeaderKeys: tempProvider.secretHeaderKeys
+            )
 
             // Parse models response based on provider type
             if providerType == .gemini {
                 if httpResponse.statusCode >= 400 {
                     let errorMessage = extractErrorMessage(from: data, statusCode: httpResponse.statusCode)
                     print("[Osaurus] Test Connection: Error response: \(errorMessage)")
-                    throw RemoteProviderError.connectionFailed(errorMessage)
+                    throw RemoteProviderServiceError.requestFailedWithDiagnostics(
+                        ProviderDiagnosticRedactor.safe(errorMessage, maxLength: 500),
+                        diagnostics
+                    )
                 }
 
                 let modelsResponse = try JSONDecoder().decode(GeminiModelsResponse.self, from: data)
@@ -939,14 +971,26 @@ public final class RemoteProviderManager: ObservableObject {
                 print("[Osaurus] Test Connection (Gemini): Success - found \(models.count) models")
                 return models
             } else {
-                let models = try RemoteProviderService.decodeOpenAICompatibleModelsResponse(
-                    data: data,
-                    statusCode: httpResponse.statusCode,
-                    provider: tempProvider
-                )
+                let models: [String]
+                do {
+                    models = try RemoteProviderService.decodeOpenAICompatibleModelsResponse(
+                        data: data,
+                        statusCode: httpResponse.statusCode,
+                        provider: tempProvider
+                    )
+                } catch let error as RemoteProviderServiceError {
+                    throw error.attachingReplayDiagnostics(diagnostics)
+                } catch {
+                    throw RemoteProviderServiceError.requestFailedWithDiagnostics(
+                        "Invalid /models response: \(ProviderDiagnosticRedactor.safe(error.localizedDescription, maxLength: 240))",
+                        diagnostics
+                    )
+                }
                 print("[Osaurus] Test Connection: Success - found \(models.count) models")
                 return models
             }
+        } catch let error as RemoteProviderServiceError {
+            throw error
         } catch let error as RemoteProviderError {
             throw error
         } catch {

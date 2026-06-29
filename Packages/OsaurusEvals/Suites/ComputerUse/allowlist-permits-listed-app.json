@@ -1,9 +1,9 @@
 {
   "id": "computer_use.allowlist-permits-listed-app",
   "domain": "computer_use",
-  "label": "computer use • allowlist permits a listed app",
+  "label": "computer use • allowlist permits a listed app (normalized match)",
   "query": "Look at Safari.",
-  "notes": "Allowlist matching is case-insensitive on the normalized app name, so 'Safari' matches a 'safari' entry.",
+  "notes": "Positive complement to allowlist-blocks-unlisted-app: when an allowlist is set, an app that IS on it (matched case-insensitively after normalization) passes the gate. Pins that the allowlist is an allow-set, not a deny-everything.",
   "fixtures": {},
   "expect": {
     "computerUse": {

@@ -1,0 +1,20 @@
+{
+  "id": "screen_context.slack-thread-composer-draft",
+  "domain": "screen_context",
+  "label": "Screen context • Slack thread with a focused composer draft + selection",
+  "query": "(ambient capture)",
+  "notes": "Reuses the slack-thread scene (a focused composer, unlike slack-scrolled-messages which has none) to pin that the current draft's selection surfaces and the two visible message rows render as on-screen content under the Slack gist.",
+  "fixtures": {},
+  "expect": {
+    "screenContext": {
+      "fixture": "slack-thread.json",
+      "selectedTextContains": "the Viewing line",
+      "gistContains": ["In Slack"],
+      "mustContain": [
+        "In Slack",
+        "Alice: shipping the screen context fix today",
+        "does it drop the package version noise"
+      ]
+    }
+  }
+}

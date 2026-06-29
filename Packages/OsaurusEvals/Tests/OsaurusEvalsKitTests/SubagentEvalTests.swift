@@ -195,6 +195,76 @@ struct SubagentEvalTests {
         #expect(t.handoffWrapped == true)
     }
 
+    // MARK: - computer_use lane (scripted driver, model-free)
+
+    private typealias CULElement = EvalCase.ComputerUseLoopExpectations.SceneElement
+    private typealias CULClick = EvalCase.ComputerUseLoopExpectations.ClickEffect
+
+    /// A scripted `click` + `done` driven through the REAL computer_use host
+    /// (`SubagentSession` → `ComputerUseKind` eval seam → `ComputerUseLoop`)
+    /// maps `done` → a `success` / `computer_use` envelope AND mutates the
+    /// injected world (the switch flips on, the control is clicked). This is the
+    /// host-lane analogue of the `computer_use_loop` scripted-driver tests: no
+    /// model, no desktop — a failure attributes to the seam/host/loop.
+    @Test func computerUseScriptedToggleSucceedsAndMutatesWorld() async {
+        let driver = ScriptedCUDriver(
+            app: "Settings",
+            elements: [
+                CULElement(
+                    id: "nightshift",
+                    role: "switch",
+                    label: "Night Shift",
+                    value: "off",
+                    onClick: CULClick(toggle: true)
+                )
+            ]
+        )
+        let transcript = await SubagentJobEvaluator.runComputerUse(
+            goal: "turn on Night Shift",
+            modelId: "scripted",
+            driver: driver,
+            gate: ComputerUseGate(policy: AutonomyPolicy(globalPreset: .autonomous)),
+            scriptedActions: [
+                AgentAction(verb: .click, target: AgentTarget(mark: 1), note: "toggle").argumentsJSON(),
+                AgentAction(verb: .done, reason: "Night Shift on").argumentsJSON(),
+            ],
+            maxSteps: 6
+        )
+        #expect(transcript.tool == "computer_use")
+        #expect(
+            transcript.succeeded,
+            "expected success; got \(transcript.envelopeKind) err=\(transcript.error ?? "-")"
+        )
+        #expect(transcript.envelopeKind == "success")
+        #expect(transcript.resultKind == "computer_use")
+        let values = await driver.finalValues()
+        #expect(values["nightshift"] == "on")
+        #expect(await driver.wasClicked("nightshift"))
+    }
+
+    /// A scripted `give_up` must surface as a non-retryable `execution_error`
+    /// envelope (NOT success) and must never click the control — the host's
+    /// non-completion mapping (`gaveUp → executionFailed`), model-free.
+    @Test func computerUseScriptedGiveUpMapsToExecutionError() async {
+        let driver = ScriptedCUDriver(
+            app: "Messages",
+            elements: [CULElement(id: "send", role: "button", label: "Send")]
+        )
+        let transcript = await SubagentJobEvaluator.runComputerUse(
+            goal: "export the conversation to PDF",
+            modelId: "scripted",
+            driver: driver,
+            gate: ComputerUseGate(policy: AutonomyPolicy(globalPreset: .autonomous)),
+            scriptedActions: [
+                AgentAction(verb: .giveUp, reason: "no control can export to PDF").argumentsJSON()
+            ],
+            maxSteps: 4
+        )
+        #expect(!transcript.succeeded)
+        #expect(transcript.envelopeKind == "execution_error")
+        #expect(!(await driver.wasClicked("send")))
+    }
+
     // MARK: - Suite files: decode guard + scripted scenarios pass
 
     @Test func suiteScenariosDecodeAndScriptedOnesPass() async throws {
@@ -216,19 +286,34 @@ struct SubagentEvalTests {
             "Expected the full Subagent suite; got \(suite.cases.count)"
         )
 
-        // Every scripted (model-free) scenario must pass deterministically.
-        // Live lanes (spawn/image) are decode-guarded only — they SKIP without
-        // a configured host, which is not a pass/fail signal here.
+        // Every model-free scenario must pass deterministically: the `scripted`
+        // host lane AND the `computer_use` cases that ship `scriptedActions`
+        // (driven by the in-memory `ScriptedCUDriver`, no model). Live lanes
+        // (spawn/image, model-driven computer_use, sandbox_reduce) are
+        // decode-guarded only — they SKIP without a configured host, which is
+        // not a pass/fail signal here.
+        func isModelFree(_ exp: EvalCase.SubagentExpectations) -> Bool {
+            switch exp.lane {
+            case "scripted": return true
+            case "computer_use": return !(exp.scriptedActions?.isEmpty ?? true)
+            default: return false
+            }
+        }
         var scriptedRan = 0
+        var cuScriptedRan = 0
         for testCase in suite.cases {
-            guard testCase.expect.subagent?.lane == "scripted" else { continue }
+            guard let exp = testCase.expect.subagent, isModelFree(exp) else { continue }
             let report = await EvalRunner.runSubagentCase(testCase, modelId: "scripted")
             #expect(
                 report.outcome == .passed,
-                "scripted scenario \(testCase.id) expected to pass; notes: \(report.notes)"
+                "model-free scenario \(testCase.id) expected to pass; notes: \(report.notes)"
             )
-            scriptedRan += 1
+            if exp.lane == "computer_use" { cuScriptedRan += 1 } else { scriptedRan += 1 }
         }
         #expect(scriptedRan >= 8, "Expected >=8 deterministic scripted scenarios; ran \(scriptedRan)")
+        #expect(
+            cuScriptedRan >= 2,
+            "Expected >=2 deterministic scripted computer_use scenarios; ran \(cuScriptedRan)"
+        )
     }
 }

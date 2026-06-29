@@ -1,0 +1,17 @@
+{
+  "id": "sandbox.json-sum-values",
+  "domain": "agent_loop",
+  "label": "sandbox • parse JSON, compute, write the result",
+  "query": "In your sandbox home, write data.json with the contents {\"a\": 1, \"b\": 2, \"c\": 4}. Then write a Python script that loads it and prints the sum of its values. Run the script with sandbox_exec and write the exact stdout to total.txt in your home directory.",
+  "notes": "Data-processing floor for the sandbox lane: author a data file plus a script, execute, act on real output. The sum (7) is pinned via the host mount so a fabricated result fails. SKIPS without a working sandbox VM.",
+  "fixtures": { "sandbox": {} },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 14,
+      "mustCallTools": ["sandbox_write_file", "sandbox_exec"],
+      "sandboxFiles": [
+        { "path": "total.txt", "contains": "7" }
+      ]
+    }
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "id": "tool_envelope.success-text-carries-tool",
+  "domain": "tool_envelope",
+  "label": "tool_envelope • success(text:) sets ok:true and carries the tool name",
+  "query": "",
+  "notes": "Pins the success builder's discriminator: ok must serialize true (the leading-key invariant that keeps isSuccess O(1)) and the `tool` field must round-trip. The prose payload lands under result.text (a nested object the top-level key matcher intentionally does not assert).",
+  "fixtures": {},
+  "expect": {
+    "toolEnvelope": {
+      "builder": "successText",
+      "text": "Wrote 12 lines to greeting.txt.",
+      "tool": "file_edit",
+      "expectKeys": {
+        "ok": true,
+        "tool": "file_edit"
+      }
+    }
+  }
+}

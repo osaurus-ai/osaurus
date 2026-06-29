@@ -1,0 +1,16 @@
+{
+  "id": "sandbox_diagnostics.python-runtime-error-no-hint",
+  "domain": "sandbox_diagnostics",
+  "label": "sandbox_diagnostics • a genuine in-script runtime error fires no escape hint",
+  "query": "",
+  "notes": "Negative gate: `python3 -c 'import nope'` is correctly escaped — it just fails at runtime (ModuleNotFoundError). That is NOT a shell-parse failure, so the inline-code escape hint must stay silent rather than nag the model to rewrite working escaping.",
+  "fixtures": {},
+  "expect": {
+    "sandboxDiagnostics": {
+      "command": "python3 -c 'import nope'",
+      "exitCode": 1,
+      "stderr": "Traceback (most recent call last):\n  File \"<string>\", line 1\nModuleNotFoundError: No module named 'nope'",
+      "expectHint": false
+    }
+  }
+}

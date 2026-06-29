@@ -1,0 +1,17 @@
+{
+  "id": "streaming_hint.encode-done-error-result",
+  "domain": "streaming_hint",
+  "label": "streaming_hint • encodeDone round-trips a tool call whose result is an error envelope",
+  "query": "",
+  "notes": "The done marker carries the completed call so the chat log can render it. When the tool FAILED, the `result` field is itself a JSON error-envelope string; encodeDone/decodeDone must round-trip all four fields (id/name/arguments/result) without the embedded JSON corrupting the outer JSON.",
+  "fixtures": {},
+  "expect": {
+    "streamingHint": {
+      "op": "encodeDone",
+      "callId": "call_42",
+      "name": "file_read",
+      "arguments": "{\"path\": \"notes/missing.txt\"}",
+      "result": "{\"ok\":false,\"kind\":\"not_found\",\"message\":\"File not found: notes/missing.txt.\",\"retryable\":false}"
+    }
+  }
+}

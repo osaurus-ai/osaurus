@@ -1,0 +1,19 @@
+{
+  "id": "capability_search.method-schedule-recall",
+  "domain": "capability_search",
+  "label": "capability search • method • calendar scheduling recall",
+  "query": "schedule a meeting with the design team tomorrow at 3pm",
+  "notes": "Recall on a calendar intent with attendees + a relative time. `schedule` + `meeting` are the shared anchors with the seeded method; the distractors (summarize, currency) are unrelated, so the target should sit alone above the floor.",
+  "fixtures": {
+    "seedMethods": [
+      { "id": "eval-schedule-meeting-recall", "name": "schedule_meeting", "description": "Schedule a calendar meeting with attendees at a specific date and time", "triggerText": "schedule_meeting" },
+      { "id": "eval-summarize-doc-sch", "name": "summarize_document", "description": "Summarize a long document into key points", "triggerText": "summarize_document" },
+      { "id": "eval-convert-currency-sch", "name": "convert_currency", "description": "Convert money between currencies", "triggerText": "convert_currency" }
+    ]
+  },
+  "expect": {
+    "capabilitySearch": {
+      "expectedMethods": { "anyOf": ["schedule_meeting"], "minMatches": 1 }
+    }
+  }
+}

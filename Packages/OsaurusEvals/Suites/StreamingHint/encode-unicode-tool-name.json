@@ -1,0 +1,14 @@
+{
+  "id": "streaming_hint.encode-unicode-tool-name",
+  "domain": "streaming_hint",
+  "label": "streaming_hint • encode round-trips a non-ASCII tool name + emoji",
+  "query": "",
+  "notes": "The sentinel is U+FFFE; the payload here mixes CJK and an emoji to prove encode/decode operate on full Unicode scalars (no byte-offset truncation) and that isSentinel keys off the leading sentinel scalar, not ASCII.",
+  "fixtures": {},
+  "expect": {
+    "streamingHint": {
+      "op": "encode",
+      "payload": "工具_search_🔧"
+    }
+  }
+}

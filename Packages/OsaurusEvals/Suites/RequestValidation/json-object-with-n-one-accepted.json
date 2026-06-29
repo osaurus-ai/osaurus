@@ -1,0 +1,15 @@
+{
+  "id": "request_validation.json-object-with-n-one-accepted",
+  "domain": "request_validation",
+  "label": "request_validation • supported format + n=1 together are accepted",
+  "query": "",
+  "notes": "Composition pin: a request that sets BOTH a supported response_format (json_object) AND n=1 must pass — neither dimension trips the other. Guards against a future change that accidentally rejects when both fields are present.",
+  "fixtures": {},
+  "expect": {
+    "requestValidation": {
+      "n": 1,
+      "responseFormatType": "json_object",
+      "expectAccept": true
+    }
+  }
+}
