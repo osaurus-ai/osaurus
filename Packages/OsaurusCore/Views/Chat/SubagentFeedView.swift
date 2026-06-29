@@ -23,10 +23,15 @@ import SwiftUI
 final class SubagentFeedObserver: ObservableObject {
     @Published private(set) var events: [SubagentActivityEvent] = []
     @Published private(set) var status: SubagentRunStatus = .running
+    /// Wall-clock the run finished at, captured the moment status flips to
+    /// `.finished`, so the header timer freezes on a stable final duration.
+    @Published private(set) var finishedAt: Date?
 
     let toolCallId: String
     let kindId: String
     let title: String
+    /// When the run started — the anchor for the live elapsed timer.
+    let startedAt: Date
 
     private var cancellables: Set<AnyCancellable> = []
 
@@ -34,15 +39,30 @@ final class SubagentFeedObserver: ObservableObject {
         self.toolCallId = feed.toolCallId
         self.kindId = feed.kindId
         self.title = feed.title
-        self.events = feed.currentEvents()
-        self.status = feed.currentStatus()
+        self.startedAt = feed.startedAt
+        let initialEvents = feed.currentEvents()
+        let initialStatus = feed.currentStatus()
+        self.events = initialEvents
+        self.status = initialStatus
+        if case .finished = initialStatus {
+            // Mounted after the run already finished (grace-tail replay):
+            // approximate the finish time from the last emitted event so the
+            // frozen timer is sane rather than "now − startedAt".
+            self.finishedAt = initialEvents.last?.timestamp ?? feed.startedAt
+        }
         feed.eventsPublisher
             .receive(on: RunLoop.main)
             .sink { [weak self] in self?.events = $0 }
             .store(in: &cancellables)
         feed.statusPublisher
             .receive(on: RunLoop.main)
-            .sink { [weak self] in self?.status = $0 }
+            .sink { [weak self] status in
+                guard let self else { return }
+                self.status = status
+                if case .finished = status, self.finishedAt == nil {
+                    self.finishedAt = Date()
+                }
+            }
             .store(in: &cancellables)
     }
 
@@ -123,6 +143,7 @@ struct SubagentFeedView: View {
                     .lineLimit(1)
             }
             Spacer()
+            elapsedLabel
             if observer.isRunning {
                 Button(action: { observer.stop() }) {
                     HStack(spacing: 4) {
@@ -141,6 +162,32 @@ struct SubagentFeedView: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
+    }
+
+    /// Wall-clock readout for the run. While running it ticks ~10x/sec via a
+    /// `TimelineView` scoped to just this label (so only it re-renders, not the
+    /// whole feed); once finished it freezes at the observed finish time.
+    @ViewBuilder
+    private var elapsedLabel: some View {
+        if observer.isRunning {
+            TimelineView(.periodic(from: observer.startedAt, by: 0.1)) { context in
+                elapsedText(context.date.timeIntervalSince(observer.startedAt))
+            }
+        } else if let finishedAt = observer.finishedAt {
+            elapsedText(finishedAt.timeIntervalSince(observer.startedAt))
+        }
+    }
+
+    private func elapsedText(_ elapsed: TimeInterval) -> some View {
+        Text(Self.formatElapsed(elapsed))
+            .font(.system(size: 10, weight: .medium, design: .monospaced))
+            .foregroundColor(theme.tertiaryText)
+    }
+
+    private static func formatElapsed(_ t: TimeInterval) -> String {
+        let clamped = max(0, t)
+        if clamped < 60 { return String(format: "%.1fs", clamped) }
+        return String(format: "%dm %02ds", Int(clamped) / 60, Int(clamped) % 60)
     }
 
     @ViewBuilder

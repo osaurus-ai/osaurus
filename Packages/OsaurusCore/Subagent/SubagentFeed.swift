@@ -159,13 +159,20 @@ public final class SubagentFeed: @unchecked Sendable {
 
     public func currentStatus() -> SubagentRunStatus { statusSubject.value }
 
-    /// Append an event and notify observers.
-    public func emit(_ event: SubagentActivityEvent) {
+    /// Mutate the event buffer under the lock and publish the resulting
+    /// snapshot — the single funnel every event change flows through, so the
+    /// lock and the `send` can never drift apart.
+    private func mutateEvents(_ body: (inout [SubagentActivityEvent]) -> Void) {
         lock.lock()
-        _events.append(event)
+        body(&_events)
         let snapshot = _events
         lock.unlock()
         eventsSubject.send(snapshot)
+    }
+
+    /// Append an event and notify observers.
+    public func emit(_ event: SubagentActivityEvent) {
+        mutateEvents { $0.append(event) }
     }
 
     /// Convenience: emit a lifecycle phase row.
@@ -174,10 +181,36 @@ public final class SubagentFeed: @unchecked Sendable {
     }
 
     /// Convenience: emit a progress row (fraction in `0...1` when known).
-    public func emitProgress(_ title: String, fraction: Double? = nil, step: Int = 0) {
-        emit(
-            SubagentActivityEvent(step: step, kind: .progress, title: title, fraction: fraction)
-        )
+    ///
+    /// Consecutive progress emissions with the SAME `title` update the existing
+    /// row in place — reusing its `id` + `timestamp` so SwiftUI animates the
+    /// bar/detail instead of inserting a new row per tick. This keeps an image
+    /// job showing ONE "generating" row whose progress advances, rather than a
+    /// row per step. A different title, or any non-progress event emitted in
+    /// between, starts a fresh row.
+    public func emitProgress(
+        _ title: String,
+        fraction: Double? = nil,
+        step: Int = 0,
+        detail: String? = nil
+    ) {
+        mutateEvents { events in
+            let coalesce = events.last.map { $0.kind == .progress && $0.title == title } ?? false
+            let event = SubagentActivityEvent(
+                id: coalesce ? events[events.count - 1].id : UUID(),
+                timestamp: coalesce ? events[events.count - 1].timestamp : Date(),
+                step: step,
+                kind: .progress,
+                title: title,
+                detail: detail,
+                fraction: fraction
+            )
+            if coalesce {
+                events[events.count - 1] = event
+            } else {
+                events.append(event)
+            }
+        }
     }
 
     /// Mark the run finished. Idempotent.

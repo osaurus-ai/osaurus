@@ -36,6 +36,38 @@ struct SubagentFeedTests {
         #expect(feed.currentStatus() == .finished(success: true, summary: "done"))
     }
 
+    @Test("consecutive same-title progress ticks update one row in place")
+    func progressCoalescesInPlace() {
+        let feed = SubagentFeed(toolCallId: "call-coalesce", kindId: "image", title: "a cat")
+
+        feed.emitProgress("generating", fraction: 0.1, step: 1, detail: "step 1/30")
+        let firstID = feed.currentEvents().first?.id
+        #expect(feed.currentEvents().count == 1)
+
+        feed.emitProgress("generating", fraction: 0.5, step: 15, detail: "step 15/30")
+        feed.emitProgress("generating", fraction: 0.9, step: 27, detail: "step 27/30")
+
+        // All three ticks collapse into ONE row that reflects the latest values
+        // and keeps its original id so SwiftUI updates in place (no churn).
+        #expect(feed.currentEvents().count == 1)
+        let row = feed.currentEvents().first
+        #expect(row?.id == firstID)
+        #expect(row?.kind == .progress)
+        #expect(row?.fraction == 0.9)
+        #expect(row?.step == 27)
+        #expect(row?.detail == "step 27/30")
+
+        // A different progress title starts a fresh row.
+        feed.emitProgress("finalizing", fraction: nil)
+        #expect(feed.currentEvents().count == 2)
+
+        // A non-progress phase emitted between progress ticks prevents
+        // coalescing, so the next "generating" tick is its own row.
+        feed.emitPhase("loading model")
+        feed.emitProgress("generating", fraction: 0.2)
+        #expect(feed.currentEvents().count == 4)
+    }
+
     @Test("the registry resolves a registered feed by tool-call id")
     func registryLookup() {
         // Unique ids + targeted removal so this never races the shared
