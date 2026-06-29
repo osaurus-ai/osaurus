@@ -44,8 +44,6 @@ public enum ChatHistoryDatabaseError: Error, LocalizedError {
 public final class ChatHistoryDatabase: @unchecked Sendable {
     public static let shared = ChatHistoryDatabase()
 
-    private static let schemaVersion = 4
-
     private var db: OpaquePointer?
     private let queue = DispatchQueue(label: "ai.osaurus.chatHistory.database")
     private let stmtCache = PreparedStatementCache(capacity: 64)
@@ -65,7 +63,27 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             guard db == nil else { return }
             OsaurusPaths.ensureExistsSilent(OsaurusPaths.chatHistory())
             try openConnection()
-            try runMigrations()
+            do {
+                try runMigrations()
+            } catch {
+                // Don't leave a live, half-migrated connection: `db` is set by
+                // `openConnection()`, and a non-nil `db` makes every later
+                // `open()` no-op-succeed (`guard db == nil`), running the app
+                // against a schema missing columns its SQL expects. Close it,
+                // record the failure so it surfaces in `/health` + the recovery
+                // UI, and rethrow so `StorageRecoveryService` can retry/reset.
+                stmtCache.clear()
+                if let connection = db {
+                    sqlite3_close(connection)
+                    db = nil
+                }
+                PersistenceHealth.shared.recordDatabaseOpenFailure(
+                    subsystem: StorageRecoveryService.Store.chatHistory.rawValue,
+                    error: error,
+                    path: OsaurusPaths.chatHistoryDatabaseFile().path
+                )
+                throw error
+            }
         }
         OsaurusDatabaseHandle.register(maintenanceHandle)
     }
@@ -177,6 +195,34 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
         try executeRaw("PRAGMA user_version = \(v)")
     }
 
+    /// Whether `table` currently has `column`. Cheap `PRAGMA table_info`
+    /// scan, mirroring `MemoryDatabase`'s idempotent-migration helper.
+    private func tableHasColumn(_ table: String, _ column: String) -> Bool {
+        var found = false
+        try? executeRaw("PRAGMA table_info(\(table))") { stmt in
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                if String(cString: sqlite3_column_text(stmt, 1)) == column {
+                    found = true
+                    break
+                }
+            }
+        }
+        return found
+    }
+
+    /// Idempotent `ALTER TABLE <table> ADD COLUMN <column> <type>`, run only
+    /// when `column` is absent (`type` carries the SQL type + any
+    /// constraints, e.g. `TEXT NOT NULL DEFAULT ''`). Re-running a migration
+    /// step on a DB that already has the column — e.g. a store whose
+    /// `user_version` is stuck behind columns a prior build (or the
+    /// encryption-convergence rebuild) already added — is then a no-op
+    /// instead of a fatal `duplicate column name` error that aborts `open()`
+    /// and renders the whole chat history unreadable and unwritable.
+    private func addColumnIfMissing(_ table: String, _ column: String, _ type: String) throws {
+        guard !tableHasColumn(table, column) else { return }
+        try executeRaw("ALTER TABLE \(table) ADD COLUMN \(column) \(type)")
+    }
+
     private func migrateToV1() throws {
         try executeRaw(
             """
@@ -228,7 +274,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
     /// win for the post-stream `save()` path that previously ran
     /// `DELETE all + INSERT all`).
     private func migrateToV2() throws {
-        try executeRaw("ALTER TABLE turns ADD COLUMN content_hash TEXT NOT NULL DEFAULT ''")
+        try addColumnIfMissing("turns", "content_hash", "TEXT NOT NULL DEFAULT ''")
         try setSchemaVersion(2)
     }
 
@@ -236,7 +282,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
     /// conversations under an opt-in "Archived" filter without deleting
     /// them.
     private func migrateToV3() throws {
-        try executeRaw("ALTER TABLE sessions ADD COLUMN archived INTEGER NOT NULL DEFAULT 0")
+        try addColumnIfMissing("sessions", "archived", "INTEGER NOT NULL DEFAULT 0")
         try setSchemaVersion(3)
     }
 
@@ -247,7 +293,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
     /// would require parsing every turn's attachments + toolCalls JSON
     /// in Swift, which we avoid here to keep the migration cheap.
     private func migrateToV4() throws {
-        try executeRaw("ALTER TABLE sessions ADD COLUMN capabilities TEXT NOT NULL DEFAULT ''")
+        try addColumnIfMissing("sessions", "capabilities", "TEXT NOT NULL DEFAULT ''")
         try setSchemaVersion(4)
     }
 
@@ -257,10 +303,10 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
     /// behavior. `created_at` and `completed_at` are stored as REAL
     /// (timeIntervalSince1970), consistent with the session timestamps.
     private func migrateToV5() throws {
-        try executeRaw("ALTER TABLE turns ADD COLUMN created_at REAL")
-        try executeRaw("ALTER TABLE turns ADD COLUMN completed_at REAL")
-        try executeRaw("ALTER TABLE turns ADD COLUMN generation_token_count INTEGER")
-        try executeRaw("ALTER TABLE turns ADD COLUMN time_to_first_token REAL")
+        try addColumnIfMissing("turns", "created_at", "REAL")
+        try addColumnIfMissing("turns", "completed_at", "REAL")
+        try addColumnIfMissing("turns", "generation_token_count", "INTEGER")
+        try addColumnIfMissing("turns", "time_to_first_token", "REAL")
         try setSchemaVersion(5)
     }
 
@@ -268,14 +314,14 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
     /// chat UI can show "· 1.2s" next to each completed tool call after reload.
     /// Nullable; legacy turns just surface no durations.
     private func migrateToV6() throws {
-        try executeRaw("ALTER TABLE turns ADD COLUMN tool_call_durations TEXT")
+        try addColumnIfMissing("turns", "tool_call_durations", "TEXT")
         try setSchemaVersion(6)
     }
 
     /// v7: add `thinking_duration` (REAL seconds) so the thinking block can show
     /// "Thought for 30s" after reload. Nullable; legacy turns surface nothing.
     private func migrateToV7() throws {
-        try executeRaw("ALTER TABLE turns ADD COLUMN thinking_duration REAL")
+        try addColumnIfMissing("turns", "thinking_duration", "REAL")
         try setSchemaVersion(7)
     }
 
@@ -284,7 +330,7 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
     /// shows a billed-but-empty turn and its "you were charged" notice rather
     /// than a silent gap. Nullable; metadata only (no prompt/response text).
     private func migrateToV8() throws {
-        try executeRaw("ALTER TABLE turns ADD COLUMN router_billing TEXT")
+        try addColumnIfMissing("turns", "router_billing", "TEXT")
         try setSchemaVersion(8)
     }
 
@@ -1062,7 +1108,12 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
 
     static func bindText(_ stmt: OpaquePointer, index: Int, value: String?) {
         if let value {
-            sqlite3_bind_text(stmt, Int32(index), value, -1, SQLITE_TRANSIENT)
+            // Bind with an explicit UTF-8 byte length instead of -1
+            // (NUL-terminated). Document-extracted text (e.g. from a PDF) can
+            // contain embedded NUL bytes; with -1 SQLite truncates the value
+            // at the first NUL, silently dropping the rest of the content.
+            // SQLITE_TRANSIENT makes SQLite copy the bytes during the call.
+            sqlite3_bind_text(stmt, Int32(index), value, Int32(value.utf8.count), SQLITE_TRANSIENT)
         } else {
             sqlite3_bind_null(stmt, Int32(index))
         }
