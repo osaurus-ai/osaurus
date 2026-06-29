@@ -29,7 +29,15 @@ final class StreamingDeltaProcessor {
     private var turn: ChatTurn
     private let onSync: (() -> Void)?
 
-    private var deltaBuffer = ""
+    /// Pending (unrevealed) deltas held as a character array with a head
+    /// cursor. Draining advances `bufferHead` instead of rebuilding the
+    /// string, so paced reveal of a large burst is O(total) — the previous
+    /// `String(deltaBuffer.dropFirst(take))` rebuilt the whole remainder on
+    /// every 16ms tick (O(n²)), and `deltaBuffer.count` walked the grapheme
+    /// boundaries on every delta and tick. Both showed up as main-thread
+    /// hangs while streaming long responses.
+    private var deltaBuffer: [Character] = []
+    private var bufferHead = 0
 
     /// Fallback timer — safety net for push-based consumers where no more
     /// deltas may arrive to trigger an inline flush.
@@ -107,7 +115,7 @@ final class StreamingDeltaProcessor {
         guard !delta.isEmpty else { return }
         ChatPerfTrace.shared.count("stream.delta")
         ChatPerfTrace.shared.count("stream.deltaBytes", delta.utf8.count)
-        deltaBuffer += delta
+        deltaBuffer.append(contentsOf: delta)
 
         if smoothStreamingEnabled {
             startPacingTimerIfNeeded()
@@ -117,13 +125,13 @@ final class StreamingDeltaProcessor {
         let now = Date()
         let timeSinceFlush = now.timeIntervalSince(lastFlushTime) * 1000
 
-        if deltaBuffer.count >= maxBufferSize || timeSinceFlush >= flushIntervalMs {
+        if pendingCount >= maxBufferSize || timeSinceFlush >= flushIntervalMs {
             flush()
             syncIfNeeded(now: now)
         }
 
         // Fallback timer in case no more deltas arrive
-        if flushTimer == nil, !deltaBuffer.isEmpty {
+        if flushTimer == nil, pendingCount > 0 {
             flushTimer = Timer.scheduledTimer(
                 withTimeInterval: Self.fallbackFlushInterval,
                 repeats: false
@@ -151,11 +159,10 @@ final class StreamingDeltaProcessor {
     /// Force-flush all buffered deltas to the turn's content channel.
     func flush() {
         invalidateTimer()
-        guard !deltaBuffer.isEmpty else { return }
+        guard pendingCount > 0 else { return }
 
         let flushStart = Date()
-        let textToProcess = deltaBuffer
-        deltaBuffer = ""
+        let textToProcess = consume(pendingCount)
 
         appendContent(textToProcess)
 
@@ -176,7 +183,7 @@ final class StreamingDeltaProcessor {
     func finalize() async {
         invalidateTimer()
 
-        if smoothStreamingEnabled && !deltaBuffer.isEmpty {
+        if smoothStreamingEnabled && pendingCount > 0 {
             startPacingTimerIfNeeded()
             // Block here until `pacingTick` empties the buffer and
             // resumes us. The processor stays alive for the duration
@@ -184,12 +191,10 @@ final class StreamingDeltaProcessor {
             await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
                 self.pacingDoneContinuation = continuation
             }
-        } else if !deltaBuffer.isEmpty {
+        } else if pendingCount > 0 {
             // Non-smooth path: drain immediately.
             stopPacingTimer()
-            let remaining = deltaBuffer
-            deltaBuffer = ""
-            appendContent(remaining)
+            appendContent(consume(pendingCount))
         }
         syncToTurn()
     }
@@ -199,7 +204,7 @@ final class StreamingDeltaProcessor {
         invalidateTimer()
         stopPacingTimer()
         self.turn = turn
-        deltaBuffer = ""
+        clearBuffer()
         contentLength = 0
         thinkingLength = 0
         flushIntervalMs = 16
@@ -242,7 +247,7 @@ final class StreamingDeltaProcessor {
     /// Stops the timer once the buffer is drained so it doesn't idle-tick
     /// between bursts.
     private func pacingTick() {
-        let pending = deltaBuffer.count
+        let pending = pendingCount
         if pending == 0 {
             stopPacingTimer()
             // Wake up `finalize()` if it's waiting for the tail to drain.
@@ -254,11 +259,30 @@ final class StreamingDeltaProcessor {
         }
         let scaled = pending / Self.pacingDrainTicks
         let take = min(pending, max(Self.pacingCharsPerTick, scaled))
-        let chunk = String(deltaBuffer.prefix(take))
-        deltaBuffer = String(deltaBuffer.dropFirst(take))
-        appendContent(chunk)
+        appendContent(consume(take))
         lastFlushTime = Date()
         syncToTurn()
+    }
+
+    /// Pending (unrevealed) character count. O(1) — replaces the O(n)
+    /// `String.count` that ran on every delta and pacing tick.
+    private var pendingCount: Int { deltaBuffer.count - bufferHead }
+
+    /// Take up to `n` characters from the head of the pending region,
+    /// advancing the cursor rather than rebuilding the buffer. Once fully
+    /// drained the backing storage is released so a long stream doesn't
+    /// retain every consumed character.
+    private func consume(_ n: Int) -> String {
+        let end = min(bufferHead + n, deltaBuffer.count)
+        let chunk = String(deltaBuffer[bufferHead..<end])
+        bufferHead = end
+        if bufferHead == deltaBuffer.count { clearBuffer() }
+        return chunk
+    }
+
+    private func clearBuffer() {
+        deltaBuffer.removeAll(keepingCapacity: true)
+        bufferHead = 0
     }
 
     private func appendContent(_ s: String) {
