@@ -3607,6 +3607,12 @@ final class ChatSession: ObservableObject {
 
                     ttftTrace?.mark("pre_ttft_done")
 
+                    // Per-call card override for native image results: the model
+                    // keeps the compact `toolPayload` (a small quantized model
+                    // parrots the enriched metadata JSON as its answer), while the
+                    // artifact card needs the enriched SHARED_ARTIFACT block.
+                    var nativeImageCardOverrides: [String: String] = [:]
+
                     // Build the matching tool-result turn for a call. Every
                     // assistant `tool_use` MUST be paired with a tool turn
                     // before the loop yields control — Anthropic's Messages
@@ -3630,7 +3636,9 @@ final class ChatSession: ObservableObject {
                                 turn.role == .assistant
                                     && (turn.toolCalls?.contains { $0.id == callId } ?? false)
                             }) ?? assistantTurn
-                        owner.setToolResult(result, for: callId)
+                        // Card uses the override when present (native image);
+                        // every other tool falls back to the model-facing result.
+                        owner.setToolResult(nativeImageCardOverrides[callId] ?? result, for: callId)
                         let toolTurn = ChatTurn(role: .tool, content: result)
                         toolTurn.toolCallId = callId
                         return toolTurn
@@ -3789,12 +3797,19 @@ final class ChatSession: ObservableObject {
                                 await PluginManager.shared.notifyArtifactHandlers(artifact: artifact)
                             }
                         } else if NativeImageToolArtifactBridge.isNativeImageTool(inv.toolName) {
-                            resultText = await self.processNativeImageToolResult(
+                            // Enrich for the artifact card only; the model keeps
+                            // the compact `toolPayload` in `resultText`. The bridge
+                            // returns its input unchanged on failure, so a changed
+                            // string means success — route it to the card.
+                            let enriched = await self.processNativeImageToolResult(
                                 toolName: inv.toolName,
                                 toolResult: resultText
                             )
-                            if let artifact = SharedArtifact.fromEnrichedToolResult(resultText) {
-                                await PluginManager.shared.notifyArtifactHandlers(artifact: artifact)
+                            if enriched != resultText {
+                                nativeImageCardOverrides[callId] = enriched
+                                if let artifact = SharedArtifact.fromEnrichedToolResult(enriched) {
+                                    await PluginManager.shared.notifyArtifactHandlers(artifact: artifact)
+                                }
                             }
                         }
 
