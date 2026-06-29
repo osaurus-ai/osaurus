@@ -203,11 +203,13 @@ struct ModelDownloadView: View {
             gridListsRefreshTask = nil
         }
         .onChange(of: selectedTab) { oldTab, newTab in
-            // The Image Gen tab is a shortcut, not real content: hand off to the
-            // dedicated Image Generation pane in Settings and snap the picker
-            // back to the tab the user was actually viewing.
+            // The Images tab is a shortcut, not real content: hand off to the
+            // dedicated Image Generation pane's Models sub-tab and snap the
+            // picker back to the tab the user was actually viewing.
             if newTab == .imageGeneration {
                 ManagementStateManager.shared.selectedTab = .imageGeneration
+                ManagementStateManager.shared.imageGenerationSubTabRequest =
+                    ImageGenerationTab.models.rawValue
                 selectedTab = oldTab == .imageGeneration ? .all : oldTab
                 return
             }
@@ -1237,7 +1239,7 @@ struct ModelDownloadView: View {
         case .downloaded:
             return L("No models on device yet")
         case .imageGeneration:
-            return L("Image Generation")
+            return L("Images")
         }
     }
 

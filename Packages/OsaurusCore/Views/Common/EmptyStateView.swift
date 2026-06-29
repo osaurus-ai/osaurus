@@ -74,7 +74,7 @@ struct EmptyStateView: View {
         case .downloaded:
             return L("No downloaded models")
         case .imageGeneration:
-            return L("Image Generation")
+            return L("Images")
         }
     }
 
@@ -90,7 +90,7 @@ struct EmptyStateView: View {
         case .downloaded:
             return L("Downloaded models will appear here")
         case .imageGeneration:
-            return L("Open the Image Generation pane in Settings")
+            return L("Open the Images pane in Settings")
         }
     }
 }

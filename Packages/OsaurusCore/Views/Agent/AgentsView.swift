@@ -3470,7 +3470,7 @@ struct AgentDetailView: View {
                 // The main chat uses the global image defaults, so only the
                 // enable toggle is per-agent here.
                 subagentFootnote(
-                    "Default models, permission, and load policy for the main chat are in the Image Generation tab."
+                    "Default models, permission, and load policy for the main chat are in the Images tab."
                 )
             } else {
                 imageModelPickerRows
@@ -3480,7 +3480,7 @@ struct AgentDetailView: View {
                     label: "Permission"
                 )
                 subagentFootnote(
-                    "Image load policy is a system setting in the Image Generation tab."
+                    "Image load policy is a system setting in the Images tab."
                 )
             }
         }

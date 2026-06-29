@@ -101,7 +101,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
         case .server: L("Server")
         case .permissions: L("Permissions")
         case .computerUse: L("Computer Use")
-        case .imageGeneration: L("Image Gen")
+        case .imageGeneration: L("Images")
         case .privacy: L("Privacy")
         case .identity: L("Identity")
         case .storage: L("Storage")

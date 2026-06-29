@@ -405,7 +405,7 @@ public enum SettingsSearchIndex {
         .init(
             id: "imageGeneration.tab",
             tab: .imageGeneration,
-            title: "Image Generation",
+            title: "Images",
             keywords: [
                 "image", "image generation", "text to image", "ideogram",
                 "diffusion", "mflux", "generate image", "edit image",

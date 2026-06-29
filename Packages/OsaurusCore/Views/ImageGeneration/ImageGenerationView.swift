@@ -92,7 +92,7 @@ struct ImageGenerationView: View {
 
     private var headerView: some View {
         ManagerHeaderWithTabs(
-            title: L("Image Gen"),
+            title: L("Images"),
             subtitle: headerSubtitle
         ) {
             if selectedTab == .models {
