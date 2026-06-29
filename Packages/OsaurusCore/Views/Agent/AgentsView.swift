@@ -69,6 +69,16 @@ struct AgentsView: View {
         agentManager.agents.filter { !$0.isBuiltIn }
     }
 
+    /// The agent to show in the detail view. The built-in Default ("Osaurus")
+    /// agent has no configuration surface — its core settings live in
+    /// Settings > Chat — so selecting it falls back to the grid (the all-agents
+    /// list) instead of opening `AgentDetailView`. This is the single catch-all:
+    /// every selection path routes through here, so no deep-link, switch, or
+    /// future code can force the detail open for the Default agent.
+    private var detailAgent: Agent? {
+        selectedAgent.flatMap { $0.isBuiltIn ? nil : $0 }
+    }
+
     private var remoteAgents: [RemoteAgent] {
         remoteAgentManager.remoteAgents
     }
@@ -83,12 +93,12 @@ struct AgentsView: View {
 
     var body: some View {
         ZStack {
-            if selectedAgent == nil && selectedRemoteAgentId == nil {
+            if detailAgent == nil && selectedRemoteAgentId == nil {
                 gridContent
                     .transition(.opacity)
             }
 
-            if let agent = selectedAgent {
+            if let agent = detailAgent {
                 // `.id(agent.id)` below makes SwiftUI tear down + recreate the
                 // detail view when the user switches agents, so all editable
                 // state reloads via onAppear without manual onChange wiring.
@@ -815,9 +825,8 @@ private enum DetailTab: String, CaseIterable {
     case configure
     case capabilities
     /// Per-agent sub-agent helpers (Computer Use, spawn, image) and their
-    /// inline config. Shown for every agent; the Default / main chat binds these
-    /// to the global store and only hides the Computer Use card (handled in
-    /// `visibleSubagentFeatures`).
+    /// inline config, bound to `AgentSettings`. Custom agents only — the built-in
+    /// Default agent has no detail view, so it never configures sub-agents here.
     case subagents
     case customization
     case network
@@ -851,10 +860,6 @@ private enum DetailTab: String, CaseIterable {
         var hidden: Set<DetailTab> = []
         // Agent DB tabs only appear once the feature is on.
         if !agent.settings.dbEnabled { hidden.formUnion(dbTabs) }
-        // The Sub-agents tab is shown for every agent — including the Default /
-        // main chat, which configures its spawn + image cards there (bound to the
-        // global store). Only Computer Use is filtered out for the main chat, and
-        // that happens inside the tab (`visibleSubagentFeatures`).
         return DetailTab.allCases.filter { !hidden.contains($0) }
     }
 
@@ -1027,11 +1032,11 @@ struct AgentDetailView: View {
     private var imageEnabled: Bool { subagentToggles[.image] ?? false }
     /// Per-agent `spawn_agent` allow-list (which agents this agent may spawn).
     /// Mirrored from / into `AgentSettings.spawnableAgentNames`; empty hides the
-    /// `spawn_agent` tool. The Default agent uses the global pool instead.
+    /// `spawn_agent` tool.
     @State private var spawnableAgentNames: [String] = []
     /// Per-agent `spawn_model` allow-list (raw model ids this agent may spawn).
     /// Mirrored from / into `AgentSettings.spawnableModelNames`; empty hides the
-    /// `spawn_model` tool. The Default agent uses the global pool instead.
+    /// `spawn_model` tool.
     @State private var spawnableModelNames: [String] = []
     /// Per-agent "when/how to use" notes keyed by spawnable model id. Mirrored
     /// from / into `AgentSettings.spawnableModelNotes`; pruned to the pool on save.
@@ -1051,28 +1056,22 @@ struct AgentDetailView: View {
     @State private var computerUseCeiling: AutonomyCeiling? = nil
     /// Per-agent image model bundle ids (generation / edit). `nil` resolves to
     /// the first ready model at run time. Mirrored from / into
-    /// `AgentSettings.imageGenerationModelId` / `imageEditModelId`. The Default
-    /// agent uses `mainChatSubagentConfig` instead.
+    /// `AgentSettings.imageGenerationModelId` / `imageEditModelId`.
     @State private var imageGenerationModelId: String? = nil
     @State private var imageEditModelId: String? = nil
     /// Per-agent delegation permissions (spawn / image) + spawn budgets. Mirrored
-    /// from / into `AgentSettings`. The Default agent uses `mainChatSubagentConfig`.
+    /// from / into `AgentSettings`.
     @State private var subagentPermissions: SubagentPermissionDefaults = SubagentPermissionDefaults()
     @State private var subagentBudgets: SubagentBudgets = SubagentBudgets()
     /// Per-agent subagent model overrides keyed by capability id (computer_use /
     /// spawn). Empty/absent = inherit the kind's default model.
-    /// Mirrored from / into `AgentSettings.subagentModelOverrides`; the Default
-    /// agent uses `mainChatSubagentConfig.subagentModelOverrides`.
+    /// Mirrored from / into `AgentSettings.subagentModelOverrides`.
     @State private var subagentModelOverrides: [String: String] = [:]
-    /// The Default / main-chat agent's sub-agent config, loaded from / saved to
-    /// the global store. The built-in agent is in-memory (`AgentManager.update`
-    /// refuses it), so its spawn/image config lives in `SubagentConfiguration`;
-    /// its Sub-agents tab binds here instead of `AgentSettings`.
-    @State private var mainChatSubagentConfig: SubagentConfiguration = .default
-    /// UI-only "spawn enabled" intent for the main chat. The global config has no
-    /// separate spawn-enable bool (spawn is live when the pool is non-empty), so
-    /// this drives the card's toggle/expansion; turning it off clears the pool.
-    @State private var mainChatSpawnEnabled: Bool = false
+    /// Read-only snapshot of the global `SubagentConfiguration`, loaded in
+    /// `loadAgentData`. Used only by `spawnHandoffDisabledWarning` to surface the
+    /// Local Orchestrator Handoff state while configuring an agent's spawn pool;
+    /// the handoff toggle itself lives in Settings → Sub-agents.
+    @State private var globalSubagentConfig: SubagentConfiguration = .default
     /// Display mirror of `Agent.hostWorkspacePath`. Drives the Host Files row
     /// so the selected folder updates immediately after the user picks/clears
     /// it (the persisted bookmark on `Agent.hostWorkspaceBookmark` is the real
@@ -3186,10 +3185,18 @@ struct AgentDetailView: View {
 
     /// Two-way binding into `subagentToggles` for a per-agent flag, so the
     /// shared `featureToggleRow` can drive the registry-keyed edit-state.
+    /// The setter persists via `debouncedSave()` (guarded by
+    /// `isInitialLoadComplete`) so flipping a capability on/off is written to
+    /// `AgentSettings` — matching every other control in this tab. Without it
+    /// the toggle only mutated in-memory `@State` and reverted on reload (the
+    /// capability never actually enabled).
     private func subagentToggleBinding(_ flag: SubagentCapability.PerAgentFlag) -> Binding<Bool> {
         Binding(
             get: { subagentToggles[flag] ?? false },
-            set: { subagentToggles[flag] = $0 }
+            set: {
+                subagentToggles[flag] = $0
+                debouncedSave()
+            }
         )
     }
 
@@ -3197,10 +3204,9 @@ struct AgentDetailView: View {
 
     /// The Sub-agents tab: one card per per-agent capability (Computer Use,
     /// spawn, image), each with its full config (model / targets / permission /
-    /// budgets) revealed inline when the toggle is on. Rendered for both custom
-    /// agents (bound to `AgentSettings`) and the Default / main chat (bound to the
-    /// global `SubagentConfiguration` via `mainChatSubagentConfig`). The main chat
-    /// has no Computer Use, so that card is filtered out for it.
+    /// budgets) revealed inline when the toggle is on. Every card binds to this
+    /// agent's `AgentSettings` (custom agents only — the built-in Default agent
+    /// has no detail view).
     @ViewBuilder
     private var subagentsTabContent: some View {
         tabHelperText(DetailTab.subagents.helperText)
@@ -3212,8 +3218,8 @@ struct AgentDetailView: View {
             )
         ) {
             VStack(alignment: .leading, spacing: 18) {
-                ForEach(visibleSubagentFeatures, id: \.flag) { feature in
-                    let isOn = subagentEnableBinding(feature.flag)
+                ForEach(perAgentFeatures, id: \.flag) { feature in
+                    let isOn = subagentToggleBinding(feature.flag)
                     VStack(alignment: .leading, spacing: 6) {
                         subagentCapabilityCard(
                             title: feature.title,
@@ -3310,11 +3316,11 @@ struct AgentDetailView: View {
     /// LOCAL target whose model differs from the resident chat model is refused
     /// (only remote targets and the already-loaded model run). Showing it here
     /// means the limit is visible while configuring targets, not just as a
-    /// runtime error. Reads the global store snapshot (`mainChatSubagentConfig`)
+    /// runtime error. Reads the global store snapshot (`globalSubagentConfig`)
     /// loaded for every agent; the toggle itself lives in Settings → Sub-agents.
     @ViewBuilder
     private var spawnHandoffDisabledWarning: some View {
-        if !mainChatSubagentConfig.localTextDelegationEnabled {
+        if !globalSubagentConfig.localTextDelegationEnabled {
             HStack(alignment: .top, spacing: 8) {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .font(.system(size: 11))
@@ -3377,65 +3383,11 @@ struct AgentDetailView: View {
             )
     }
 
-    /// Whether this editor is the built-in Default / main chat agent. Its
-    /// sub-agent config lives in the global store (`mainChatSubagentConfig`)
-    /// rather than `AgentSettings`.
-    private var isDefaultAgent: Bool { agent.id == Agent.defaultId }
-
-    /// Sub-agent cards visible for this agent. The Default / main chat cannot run
-    /// Computer Use, so that card is dropped for it. Image generation IS a
-    /// per-agent capability for the main chat too — its enable toggle lives here
-    /// (the default models, permission, and load policy are global settings in
-    /// the Image Generation tab). Custom agents keep their full per-agent image
-    /// config here.
-    private var visibleSubagentFeatures: [PerAgentFeature] {
-        isDefaultAgent
-            ? perAgentFeatures.filter { $0.flag != .computerUse }
-            : perAgentFeatures
-    }
-
-    /// Enable toggle for a sub-agent card. Custom agents write `AgentSettings`
-    /// (via `subagentToggles` + the debounced agent save); the main chat writes
-    /// the global store. The main chat's `spawn` has no stored enable bool, so it
-    /// uses the UI-only `mainChatSpawnEnabled` (turning it off clears the pool).
-    private func subagentEnableBinding(_ flag: SubagentCapability.PerAgentFlag) -> Binding<Bool> {
-        guard isDefaultAgent else { return subagentToggleBinding(flag) }
-        switch flag {
-        case .spawn:
-            return Binding(
-                get: { mainChatSpawnEnabled },
-                set: { newValue in
-                    mainChatSpawnEnabled = newValue
-                    if !newValue {
-                        mainChatSubagentConfig.spawnableAgentNames = []
-                        mainChatSubagentConfig.spawnableModelNames = []
-                        mainChatSubagentConfig.spawnableModelNotes = [:]
-                        saveMainChatSubagentConfig()
-                    }
-                }
-            )
-        case .image:
-            // The main chat's image enable is the global `imageDelegationEnabled`
-            // switch (its models / permission / load policy are the global
-            // defaults shown in the Image Generation tab).
-            return Binding(
-                get: { mainChatSubagentConfig.imageDelegationEnabled },
-                set: {
-                    mainChatSubagentConfig.imageDelegationEnabled = $0
-                    saveMainChatSubagentConfig()
-                }
-            )
-        case .computerUse:
-            // Not rendered for the main chat (filtered out above).
-            return .constant(false)
-        }
-    }
-
     /// The inline config panel revealed under a sub-agent toggle when it is on.
     /// One arm per per-agent flag: computer_use → autonomy ceiling + permission
     /// note; spawn → spawnable allow-list + permission + budgets; image → gen /
     /// edit model pickers + permission. Each control binds to `AgentSettings`
-    /// (custom agents) or the global store (main chat) via the binding helpers.
+    /// via the binding helpers.
     @ViewBuilder
     private func subagentInlineConfig(for flag: SubagentCapability.PerAgentFlag) -> some View {
         switch flag {
@@ -3466,23 +3418,15 @@ struct AgentDetailView: View {
                 "Local handoff and RAM-safety for spawn jobs are system settings in Settings → Sub-agents."
             )
         case .image:
-            if isDefaultAgent {
-                // The main chat uses the global image defaults, so only the
-                // enable toggle is per-agent here.
-                subagentFootnote(
-                    "Default models, permission, and load policy for the main chat are in the Image Generation tab."
-                )
-            } else {
-                imageModelPickerRows
-                subagentPanelDivider
-                subagentPermissionRow(
-                    for: SubagentCapabilityRegistry.image.id,
-                    label: "Permission"
-                )
-                subagentFootnote(
-                    "Image load policy is a system setting in the Image Generation tab."
-                )
-            }
+            imageModelPickerRows
+            subagentPanelDivider
+            subagentPermissionRow(
+                for: SubagentCapabilityRegistry.image.id,
+                label: "Permission"
+            )
+            subagentFootnote(
+                "Image load policy is a system setting in the Image Generation tab."
+            )
         }
     }
 
@@ -3542,8 +3486,7 @@ struct AgentDetailView: View {
     /// empty-tag label is derived from the kind's `modelSource` ("Use the agent's
     /// model" for spawn, else "Inherit parent model") so the row needs no
     /// per-kind copy. Lists chat-capable candidates; a stale stored id shows an
-    /// "(unavailable)" tag. Binds per-agent (custom) or to the global store
-    /// (main chat) via `subagentModelOverrideBinding`.
+    /// "(unavailable)" tag. Binds per-agent via `subagentModelOverrideBinding`.
     private func subagentModelOverrideRow(_ capability: SubagentCapability) -> some View {
         let inheritLabel: LocalizedStringKey =
             capability.modelSource == .agent ? "Use the agent's model" : "Inherit parent model"
@@ -3558,23 +3501,10 @@ struct AgentDetailView: View {
     }
 
     /// Two-way binding into a capability's model override. Empty string clears
-    /// the override (inherit). Custom agents write `subagentModelOverrides`
-    /// (debounced agent save); the main chat writes the global store.
+    /// the override (inherit). Writes `subagentModelOverrides` (debounced agent
+    /// save).
     private func subagentModelOverrideBinding(for kindId: String) -> Binding<String> {
-        if isDefaultAgent {
-            return Binding(
-                get: { mainChatSubagentConfig.subagentModelOverrides[kindId] ?? "" },
-                set: { newValue in
-                    if let trimmed = normalizedModelSelection(newValue) {
-                        mainChatSubagentConfig.subagentModelOverrides[kindId] = trimmed
-                    } else {
-                        mainChatSubagentConfig.subagentModelOverrides.removeValue(forKey: kindId)
-                    }
-                    saveMainChatSubagentConfig()
-                }
-            )
-        }
-        return Binding(
+        Binding(
             get: { subagentModelOverrides[kindId] ?? "" },
             set: { newValue in
                 if let trimmed = normalizedModelSelection(newValue) {
@@ -3588,8 +3518,7 @@ struct AgentDetailView: View {
     }
 
     /// Segmented Ask / Deny / Always permission picker for a delegation kind,
-    /// bound per-agent (custom) or to the global store (main chat). Borderless —
-    /// it lives inside `subagentConfigPanel`.
+    /// bound per-agent. Borderless — it lives inside `subagentConfigPanel`.
     private func subagentPermissionRow(for kindId: String, label: LocalizedStringKey) -> some View {
         subagentControlRow(label) {
             Picker("", selection: subagentPermissionBinding(for: kindId)) {
@@ -3684,11 +3613,10 @@ struct AgentDetailView: View {
         }
     }
 
-    // MARK: - Sub-agent inline config: bindings (per-agent vs main chat)
+    // MARK: - Sub-agent inline config: bindings
 
-    // The Image card is only shown for custom agents (the main chat's global
-    // image settings live in the Image Generation tab), so these bind to
-    // `AgentSettings` and need no default-agent arm.
+    // These bind to `AgentSettings`; the global image settings (defaults,
+    // permission, load policy) live in the Image Generation tab.
     private var imageGenerationModelSelection: Binding<String> {
         Binding(
             get: { imageGenerationModelId ?? "" },
@@ -3714,16 +3642,7 @@ struct AgentDetailView: View {
     private var currentImageEditModelId: String? { imageEditModelId }
 
     private func subagentPermissionBinding(for kindId: String) -> Binding<SubagentPermissionPolicy> {
-        if isDefaultAgent {
-            return Binding(
-                get: { mainChatSubagentConfig.permissionDefaults.policy(for: kindId) },
-                set: {
-                    mainChatSubagentConfig.permissionDefaults.setPolicy($0, for: kindId)
-                    saveMainChatSubagentConfig()
-                }
-            )
-        }
-        return Binding(
+        Binding(
             get: { subagentPermissions.policy(for: kindId) },
             set: {
                 subagentPermissions.setPolicy($0, for: kindId)
@@ -3733,16 +3652,7 @@ struct AgentDetailView: View {
     }
 
     private func subagentBudgetBinding(_ keyPath: WritableKeyPath<SubagentBudgets, Int>) -> Binding<Int> {
-        if isDefaultAgent {
-            return Binding(
-                get: { mainChatSubagentConfig.budgets[keyPath: keyPath] },
-                set: {
-                    mainChatSubagentConfig.budgets[keyPath: keyPath] = $0
-                    saveMainChatSubagentConfig()
-                }
-            )
-        }
-        return Binding(
+        Binding(
             get: { subagentBudgets[keyPath: keyPath] },
             set: {
                 subagentBudgets[keyPath: keyPath] = $0
@@ -3756,32 +3666,17 @@ struct AgentDetailView: View {
         return trimmed.isEmpty ? nil : trimmed
     }
 
-    /// Persist the main chat's sub-agent config to the global store. The built-in
-    /// agent's debounced `saveAgent` early-returns (it writes
-    /// `DefaultAgentConfiguration`, not spawn/image), so the Sub-agents tab saves
-    /// the global config directly here.
-    private func saveMainChatSubagentConfig() {
-        guard isInitialLoadComplete else { return }
-        SubagentConfigurationStore.save(mainChatSubagentConfig)
-    }
-
     // MARK: - Spawn allow-lists (agents + models)
 
-    /// The agents currently in this editor's `spawn_agent` pool (main chat →
-    /// global store; custom agent → its own `@State` mirror).
-    private var selectedSpawnableAgentNames: [String] {
-        isDefaultAgent ? mainChatSubagentConfig.spawnableAgentNames : spawnableAgentNames
-    }
+    /// The agents currently in this editor's `spawn_agent` pool.
+    private var selectedSpawnableAgentNames: [String] { spawnableAgentNames }
 
     /// The model ids currently in this editor's `spawn_model` pool.
-    private var selectedSpawnableModelNames: [String] {
-        isDefaultAgent ? mainChatSubagentConfig.spawnableModelNames : spawnableModelNames
-    }
+    private var selectedSpawnableModelNames: [String] { spawnableModelNames }
 
     /// Per-agent `spawn_agent` allow-list: the OTHER agents this agent may
     /// launch (it can't spawn itself), shown selected-first as removable chips
-    /// with a searchable "Add" popover. Writes the pool + debounce/store-saves,
-    /// mirroring the global Main Chat editor.
+    /// with a searchable "Add" popover. Writes the pool + debounced agent save.
     private var spawnableAgentsPicker: some View {
         let candidates = agentManager.agents.filter { $0.id != agent.id }
         let selected = selectedSpawnableAgentNames
@@ -4102,28 +3997,10 @@ struct AgentDetailView: View {
 
     /// Case-insensitive membership binding into the spawnable pool, de-duping on
     /// insert so a duplicate agent name can't stack entries. Matches
-    /// `SubagentToolVisibility.spawnTargetAllowed`'s comparison. Custom agents
-    /// write `AgentSettings.spawnableAgentNames`; the main chat writes the global
-    /// store's pool.
+    /// `SubagentToolVisibility.spawnTargetAllowed`'s comparison. Writes
+    /// `AgentSettings.spawnableAgentNames` (debounced agent save).
     private func spawnableMembership(_ name: String) -> Binding<Bool> {
-        if isDefaultAgent {
-            return Binding(
-                get: {
-                    mainChatSubagentConfig.spawnableAgentNames.contains {
-                        $0.caseInsensitiveCompare(name) == .orderedSame
-                    }
-                },
-                set: { isOn in
-                    var names = mainChatSubagentConfig.spawnableAgentNames.filter {
-                        $0.caseInsensitiveCompare(name) != .orderedSame
-                    }
-                    if isOn { names.append(name) }
-                    mainChatSubagentConfig.spawnableAgentNames = names
-                    saveMainChatSubagentConfig()
-                }
-            )
-        }
-        return Binding(
+        Binding(
             get: {
                 spawnableAgentNames.contains { $0.caseInsensitiveCompare(name) == .orderedSame }
             },
@@ -4141,25 +4018,9 @@ struct AgentDetailView: View {
     /// Exact-match membership binding into the spawnable MODEL pool, de-duping on
     /// insert. Matches `SubagentToolVisibility.spawnModelAllowed` (model ids are
     /// canonical, so exact, not case-insensitive). Removing a model also drops
-    /// its note. Custom agents write `AgentSettings.spawnableModelNames`; the main
-    /// chat writes the global store's pool.
+    /// its note. Writes `AgentSettings.spawnableModelNames` (debounced agent save).
     private func spawnableModelMembership(_ id: String) -> Binding<Bool> {
         let trimmed = id.trimmingCharacters(in: .whitespacesAndNewlines)
-        if isDefaultAgent {
-            return Binding(
-                get: { mainChatSubagentConfig.spawnableModelNames.contains(trimmed) },
-                set: { isOn in
-                    var names = mainChatSubagentConfig.spawnableModelNames.filter { $0 != trimmed }
-                    if isOn {
-                        names.append(trimmed)
-                    } else {
-                        mainChatSubagentConfig.spawnableModelNotes.removeValue(forKey: trimmed)
-                    }
-                    mainChatSubagentConfig.spawnableModelNames = names
-                    saveMainChatSubagentConfig()
-                }
-            )
-        }
         return Binding(
             get: { spawnableModelNames.contains(trimmed) },
             set: { isOn in
@@ -4176,23 +4037,9 @@ struct AgentDetailView: View {
     }
 
     /// Two-way binding into a spawnable model's note. A blank value clears the
-    /// note. Custom agents write `AgentSettings.spawnableModelNotes` (debounced);
-    /// the main chat writes the global store.
+    /// note. Writes `AgentSettings.spawnableModelNotes` (debounced agent save).
     private func spawnableModelNoteBinding(_ id: String) -> Binding<String> {
         let trimmed = id.trimmingCharacters(in: .whitespacesAndNewlines)
-        if isDefaultAgent {
-            return Binding(
-                get: { mainChatSubagentConfig.spawnableModelNotes[trimmed] ?? "" },
-                set: { newValue in
-                    if newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        mainChatSubagentConfig.spawnableModelNotes.removeValue(forKey: trimmed)
-                    } else {
-                        mainChatSubagentConfig.spawnableModelNotes[trimmed] = newValue
-                    }
-                    saveMainChatSubagentConfig()
-                }
-            )
-        }
         return Binding(
             get: { spawnableModelNotes[trimmed] ?? "" },
             set: { newValue in
@@ -6058,14 +5905,8 @@ struct AgentDetailView: View {
         subagentPermissions = agent.settings.subagentPermissions
         subagentBudgets = agent.settings.subagentBudgets
         subagentModelOverrides = agent.settings.subagentModelOverrides
-        // The main chat (Default agent) binds its Sub-agents tab to the global
-        // store; load it and derive the UI-only spawn-enable from a non-empty pool.
-        mainChatSubagentConfig = SubagentConfigurationStore.snapshot()
-        // Spawn is "on" for the main chat when EITHER pool (agents or models) has
-        // an entry, since both feed the spawn tools.
-        mainChatSpawnEnabled =
-            !mainChatSubagentConfig.spawnableAgentNames.isEmpty
-            || !mainChatSubagentConfig.spawnableModelNames.isEmpty
+        // Snapshot the global sub-agent config for the spawn-handoff warning.
+        globalSubagentConfig = SubagentConfigurationStore.snapshot()
         hostWorkspacePath = agent.hostWorkspacePath
         generativeGreetingsEnabled = agent.settings.generativeGreetingsEnabled
         // Hydrate the Personality editor with the resolved default
@@ -6178,26 +6019,6 @@ struct AgentDetailView: View {
     private func saveAgent() {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedName.isEmpty else { return }
-
-        // The built-in Osaurus agent is in-memory only — `AgentManager.update`
-        // refuses it, so the generic `Agent`-shaped save below would be a
-        // silent no-op. Its user-editable fields live in
-        // `DefaultAgentConfiguration` (Settings → Chat); route them there so
-        // edits made from this detail view actually persist. Identity fields
-        // (name / description / avatar) are fixed for the built-in and are
-        // intentionally not persisted here.
-        if agent.id == Agent.defaultId {
-            var cfg = DefaultAgentConfigurationStore.load()
-            cfg.systemPrompt = systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
-            cfg.defaultModel = selectedModel
-            cfg.temperature = Float(temperature)
-            cfg.maxTokens = Int(maxTokens)
-            cfg.disableTools = !toolsEnabled
-            DefaultAgentConfigurationStore.save(cfg)
-            NotificationCenter.default.post(name: .agentUpdated, object: agent.id)
-            showSaveIndicator()
-            return
-        }
 
         let effectivePluginInstructions: [String: String]? = {
             let overrides = pluginInstructionsMap.filter { pid, text in

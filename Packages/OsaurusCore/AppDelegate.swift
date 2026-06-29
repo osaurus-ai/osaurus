@@ -2165,6 +2165,13 @@ extension AppDelegate {
         tab: String? = nil,
         viewRef: String? = nil
     ) {
+        // The built-in Default agent has no configuration detail — land on the
+        // all-agents list instead of posting a deep-link the Agents view would
+        // just swallow (`detailAgent` drops built-ins).
+        guard agentId != Agent.defaultId else {
+            showManagementWindow(initialTab: .agents)
+            return
+        }
         showManagementWindow(initialTab: .agents)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
             var payload: [String: Any] = ["agentId": agentId]
