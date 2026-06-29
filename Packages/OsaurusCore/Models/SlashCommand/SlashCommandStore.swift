@@ -12,7 +12,10 @@ import Foundation
 public enum SlashCommandStore {
     // MARK: - Public API
 
-    public static func loadAll() -> [SlashCommand] {
+    /// `nonisolated` so the cold first load can run off the main actor (see
+    /// `SlashCommandRegistry.init`). The body is pure disk I/O + JSON decode
+    /// with no main-actor state.
+    public nonisolated static func loadAll() -> [SlashCommand] {
         let directory = commandsDirectory()
         OsaurusPaths.ensureExistsSilent(directory)
 
@@ -59,11 +62,11 @@ public enum SlashCommandStore {
 
     // MARK: - Private
 
-    private static func commandsDirectory() -> URL {
+    private nonisolated static func commandsDirectory() -> URL {
         OsaurusPaths.root().appendingPathComponent("slash-commands", isDirectory: true)
     }
 
-    private static func commandFileURL(for id: UUID) -> URL {
+    private nonisolated static func commandFileURL(for id: UUID) -> URL {
         commandsDirectory().appendingPathComponent("\(id.uuidString).json")
     }
 }
