@@ -216,5 +216,17 @@ enum ChatSessionStore {
             pendingSaves.removeAll()
             ChatHistoryDatabase.shared.close()
         }
+
+        /// Mark the store as already open so save/load skip `ensureOpen()`'s
+        /// Keychain-gated path. Pair with `ChatHistoryDatabase.shared.openInMemory()`.
+        static func _markStorageOpenForTesting() { didOpen = true }
+
+        /// Seed the deferred-save queue as if a save had been dropped while the
+        /// DB was closed, so `flushPendingSaves()` can be exercised directly.
+        static func _enqueuePendingSaveForTesting(_ session: ChatSessionData) {
+            pendingSaves[session.id] = session
+        }
+
+        static var _pendingSaveCountForTesting: Int { pendingSaves.count }
     #endif
 }
