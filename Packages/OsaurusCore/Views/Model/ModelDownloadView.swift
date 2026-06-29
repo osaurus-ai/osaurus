@@ -202,7 +202,17 @@ struct ModelDownloadView: View {
             gridListsRefreshTask?.cancel()
             gridListsRefreshTask = nil
         }
-        .onChange(of: selectedTab) { _, _ in refreshGridLists() }
+        .onChange(of: selectedTab) { oldTab, newTab in
+            // The Image Gen tab is a shortcut, not real content: hand off to the
+            // dedicated Image Generation pane in Settings and snap the picker
+            // back to the tab the user was actually viewing.
+            if newTab == .imageGeneration {
+                ManagementStateManager.shared.selectedTab = .imageGeneration
+                selectedTab = oldTab == .imageGeneration ? .all : oldTab
+                return
+            }
+            refreshGridLists()
+        }
         .onChange(of: sortOption) { _, _ in refreshGridLists() }
         .onChange(of: filterState) { _, _ in refreshGridLists() }
         .onChange(of: debouncedSearchText) { _, _ in refreshGridLists() }
@@ -858,6 +868,10 @@ struct ModelDownloadView: View {
                                     catalogContent(lists: lists)
                                 case .downloaded:
                                     modelGrid(models: lists.downloaded)
+                                case .imageGeneration:
+                                    // Transient — the picker snaps back off this
+                                    // tab as soon as it hands off to Settings.
+                                    EmptyView()
                                 }
                             }
                         }
@@ -1208,6 +1222,8 @@ struct ModelDownloadView: View {
             return "cube.box"
         case .downloaded:
             return "internaldrive"
+        case .imageGeneration:
+            return "photo.on.rectangle.angled"
         }
     }
 
@@ -1220,6 +1236,8 @@ struct ModelDownloadView: View {
             return L("No models available")
         case .downloaded:
             return L("No models on device yet")
+        case .imageGeneration:
+            return L("Image Generation")
         }
     }
 
@@ -1484,6 +1502,7 @@ struct ModelDownloadView: View {
         switch input.selectedTab {
         case .all: displayed = topPicks + others
         case .downloaded: displayed = downloaded
+        case .imageGeneration: displayed = []
         }
 
         // Warm disk-backed verdicts while still off the main actor. The catalog
