@@ -412,10 +412,17 @@ public enum SubagentToolVisibility {
     /// gate + the per-capability Default-vs-custom predicate. The single source
     /// both the native `resolveTools` strip and the HTTP agent-run path read, so
     /// the two surfaces can never drift (BUG E parity guard).
+    ///
+    /// `hasReadyImageModel` is the installed-capability gate for `image`: the
+    /// per-agent image switch can be ON, but if no ready on-device image model
+    /// exists the tool is still withheld so the model is never offered an image
+    /// capability the runtime can't satisfy. Passed in (not read from the cache
+    /// here) so this stays a pure, MainActor-free SSOT both surfaces can call.
     static func visibleDelegationToolNames(
         agentId: UUID,
         snapshot: AgentConfigSnapshot,
-        config: SubagentConfiguration
+        config: SubagentConfiguration,
+        hasReadyImageModel: Bool
     ) -> Set<String> {
         let isDefault = (agentId == Agent.defaultId)
         var names = Set<String>()
@@ -438,11 +445,13 @@ public enum SubagentToolVisibility {
         ) {
             names.insert(SubagentCapabilityRegistry.spawnModelToolName)
         }
-        if imageAvailable(
-            isDefault: isDefault,
-            config: config,
-            perAgentEnabled: snapshot.imageEnabled
-        ) {
+        if hasReadyImageModel,
+            imageAvailable(
+                isDefault: isDefault,
+                config: config,
+                perAgentEnabled: snapshot.imageEnabled
+            )
+        {
             names.formUnion(SubagentCapabilityRegistry.image.toolNames)
         }
         return names

@@ -2874,19 +2874,33 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         // this parity the `/agents/{id}/run` surface drifts from the chat UI
         // (BUG E guard). The tool-name set comes from the capability registry,
         // not a hardcoded list.
-        let visibleDelegation = await MainActor.run { () -> Set<String> in
+        // Installed-capability gate for `image`, mirroring the native
+        // `resolveTools` strip: the per-agent switch can be on, but the tool is
+        // withheld when no ready image model exists, and narrowed to a
+        // generation-only schema when a gen model is present but no edit model
+        // is (so the agent-run surface never advertises an edit it can't run).
+        let (visibleDelegation, swapImageToGenerationOnly) = await MainActor.run {
+            () -> (Set<String>, Bool) in
             let snapshot = AgentConfigSnapshot.capture(agentId: agentUUID)
-            return SubagentToolVisibility.visibleDelegationToolNames(
+            let cache = ModelPickerItemCache.shared
+            let names = SubagentToolVisibility.visibleDelegationToolNames(
                 agentId: agentUUID,
                 snapshot: snapshot,
-                config: SubagentConfigurationStore.snapshot()
+                config: SubagentConfigurationStore.snapshot(),
+                hasReadyImageModel: cache.hasReadyImageModel
             )
+            let swap = names.contains("image") && !cache.hasReadyImageEditModel
+            return (names, swap)
         }
         let delegationSpecs =
             visibleDelegation.isEmpty
             ? []
-            : await MainActor.run {
-                ToolRegistry.shared.specs(forTools: Array(visibleDelegation))
+            : await MainActor.run { () -> [Tool] in
+                let raw = ToolRegistry.shared.specs(forTools: Array(visibleDelegation))
+                guard swapImageToGenerationOnly else { return raw }
+                return raw.map {
+                    $0.function.name == "image" ? ImageTool.generationOnlySpec() : $0
+                }
             }
         let composedToolNames = Set(composed.tools.map(\.function.name))
         let contextToolsWithDelegation =

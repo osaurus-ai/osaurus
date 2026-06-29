@@ -672,27 +672,50 @@ public enum SystemPromptTemplates {
         - Use it for desktop UI automation (filling a form, navigating an app, extracting on-screen content), NOT for shell, files, or web requests — those have dedicated tools.
         """
 
-    /// Authoritative image-generation directive. Schema-gated on `image`
-    /// in the composer, so it only renders when the tool is actually callable.
-    /// Counters the persona-led refusal ("I'm text-only / I can't make images").
+    /// Authoritative image directive (generate + edit). Schema-gated on `image`
+    /// in the composer, so it only renders when the tool is actually callable;
+    /// the composer swaps in the generation-only variant below when no ready
+    /// edit model is installed. Counters the persona-led refusal ("I'm
+    /// text-only / I can't make images") and keeps the edit-continuation
+    /// CONDITIONAL (never a forced "now edit it").
     public static let imageGenerationGuidance = """
         ## Image generation
 
-        - You CAN create and edit images directly with the `image` tool. When the user asks you to generate, create, make, draw, render, or produce an image, call `image` with a `prompt`. To modify an existing image, call `image` with the same `prompt` PLUS `source_paths` set to the image path(s) — `source_paths` is what switches it into edit mode.
-        - NEVER reply that you cannot generate images, that you are "text-only", or that you lack an image tool — you have this tool, so use it. Do not redirect the user to another app or a settings page for image creation.
-        - The resulting image is shown to the user automatically (it renders inline in the chat). Do not call `share_artifact` for it. If the user asked for a follow-up edit or transformation of that image, continue by calling `image` again with `source_paths` set to the saved path from the previous result; otherwise just briefly confirm in one sentence.
-        - The job runs locally in the background and may briefly swap models; that is expected. Make the call and report the result when it returns.
+        - You CAN create and edit images with the `image` tool. To create, call `image` with a `prompt`. To edit an existing image, call `image` with a `prompt` PLUS `source_paths` set to the image path(s) — `source_paths` is what switches it into edit mode.
+        - NEVER claim you can't make images or are "text-only", and don't redirect the user to another app or settings — you have this tool, so use it.
+        - The result renders inline in the chat automatically; do not call `share_artifact` for it. If the user asked for a follow-up edit of that image, call `image` again with `source_paths` set to the saved result path; otherwise confirm briefly in one sentence.
+        - The job runs locally and may briefly swap models; that is expected.
         """
 
-    /// Compact image-generation directive for small local models. Keeps the
-    /// authoritative "you CAN, never refuse" rule and the edit-mode hint, drops
-    /// the longer prose. Mirrors the full variant's intent at a fraction of the
-    /// tokens so a ≤20B model still won't refuse image requests on turn 1.
+    /// Compact generate + edit directive for small local models: same behavior
+    /// at a fraction of the tokens (anti-refusal, edit-mode switch, inline
+    /// render / no `share_artifact`, conditional edit-continuation).
     public static let imageGenerationGuidanceCompact = """
         ## Image generation
-        - You CAN create/edit images with the `image` tool: call it with a `prompt`. Add `source_paths` (existing image path[s]) to edit instead of create.
-        - NEVER say you can't generate images or are "text-only" — you have the tool, so use it. Don't redirect to another app or settings.
-        - The image renders inline automatically; don't call `share_artifact`. Then confirm briefly in one sentence.
+        - You CAN create/edit images with the `image` tool: call it with a `prompt`; add `source_paths` (existing image path[s]) to edit instead of create.
+        - NEVER say you can't make images or are "text-only", and don't redirect to another app or settings — use the tool.
+        - The result renders inline automatically; don't call `share_artifact`. For a requested follow-up edit, call `image` again with `source_paths` set to the saved path; otherwise confirm briefly.
+        """
+
+    /// Generation-only image directive, selected by the composer when NO ready
+    /// edit model is installed (the `image` schema is the edit-free variant
+    /// there too). Omits every edit affordance so the prompt never claims an
+    /// edit the runtime can't perform, while keeping the anti-refusal rule.
+    public static let imageGenerationOnlyGuidance = """
+        ## Image generation
+
+        - You CAN create images with the `image` tool: call `image` with a `prompt`. Editing existing images is not available, so do not offer or attempt it.
+        - NEVER claim you can't make images or are "text-only", and don't redirect the user to another app or settings — you have this tool, so use it.
+        - The result renders inline in the chat automatically; do not call `share_artifact` for it. Confirm briefly in one sentence.
+        - The job runs locally and may briefly swap models; that is expected.
+        """
+
+    /// Compact generation-only directive for small local models.
+    public static let imageGenerationOnlyGuidanceCompact = """
+        ## Image generation
+        - You CAN create images with the `image` tool: call it with a `prompt`. Editing existing images is not available — don't offer or attempt it.
+        - NEVER say you can't make images or are "text-only", and don't redirect to another app or settings — use the tool.
+        - The result renders inline automatically; don't call `share_artifact`. Confirm briefly.
         """
 
     // MARK: - Spawn (delegation)

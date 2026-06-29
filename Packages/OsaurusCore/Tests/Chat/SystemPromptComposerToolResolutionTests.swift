@@ -107,6 +107,46 @@ struct SystemPromptComposerToolResolutionTests {
         )
     }
 
+    /// A ready on-device image picker item for the availability-gate tests.
+    /// `edit` toggles whether it advertises image editing (`imageEdit`); both
+    /// kinds advertise text-to-image so they count as a generation candidate.
+    private func readyImageItem(edit: Bool) -> ModelPickerItem {
+        ModelPickerItem(
+            id: edit ? "test-image-edit" : "test-image-gen",
+            displayName: edit ? "Test Edit Model" : "Test Gen Model",
+            source: .imageGeneration,
+            imageKind: edit ? "image_edit" : "image_generation",
+            imageCapabilities: ImageModelCapabilities(textToImage: true, imageEdit: edit),
+            imageReady: true
+        )
+    }
+
+    /// Seed the shared picker cache with `items` for the duration of `body`,
+    /// restoring the prior items afterward so seeded image models don't leak
+    /// into other suites that read the same singleton. The image-availability
+    /// gate in `resolveTools` reads this cache, so the tests must seed it
+    /// rather than depend on whatever bundles happen to be on the test machine.
+    private func withSeededPickerItems(
+        _ items: [ModelPickerItem],
+        _ body: @MainActor () -> Void
+    ) {
+        let previous = ModelPickerItemCache.shared._setItemsForTesting(items)
+        defer { ModelPickerItemCache.shared._setItemsForTesting(previous) }
+        body()
+    }
+
+    /// The property names declared by the resolved `image` tool's schema, used
+    /// to assert the generation-only variant drops `source_paths` / `strength`.
+    private func imageParameterNames(_ tools: [Tool]) -> Set<String> {
+        guard let image = tools.first(where: { $0.function.name == "image" }),
+            let params = image.function.parameters,
+            case let .object(root) = params,
+            let propsValue = root["properties"],
+            case let .object(props) = propsValue
+        else { return [] }
+        return Set(props.keys)
+    }
+
     // MARK: - Auto mode
 
     @Test
@@ -643,16 +683,74 @@ struct SystemPromptComposerToolResolutionTests {
     @Test
     func autoMode_customAgentSurfacesImageIndependentlyOfSpawn() async {
         await withSubagentSandbox {
-            let names = Set(
-                SystemPromptComposer.resolveTools(
+            // A ready edit-capable model is installed, so `image` surfaces.
+            withSeededPickerItems([readyImageItem(edit: true)]) {
+                let names = Set(
+                    SystemPromptComposer.resolveTools(
+                        snapshot: makeSnapshot(imageEnabled: true),
+                        executionMode: .none
+                    ).map { $0.function.name }
+                )
+                #expect(names.contains("image"))
+                // No spawn toggle / list → spawn stays hidden even though image is on.
+                #expect(!names.contains("spawn_agent"))
+                #expect(!names.contains("spawn_model"))
+            }
+        }
+    }
+
+    /// Installed-capability gate: with the image toggle on but NO ready image
+    /// model on device, `image` must stay out of the schema entirely — the
+    /// model is never offered an image capability the runtime can't satisfy.
+    @Test
+    func autoMode_imageWithheldWhenNoImageModelInstalled() async {
+        await withSubagentSandbox {
+            withSeededPickerItems([]) {
+                let names = Set(
+                    SystemPromptComposer.resolveTools(
+                        snapshot: makeSnapshot(imageEnabled: true),
+                        executionMode: .none
+                    ).map { $0.function.name }
+                )
+                #expect(!names.contains("image"))
+            }
+        }
+    }
+
+    /// With a generation model but NO ready edit model, `image` surfaces but as
+    /// the generation-only variant: the edit-only `source_paths` / `strength`
+    /// fields are absent so the model can't request an edit it can't run.
+    @Test
+    func autoMode_imageSchemaIsGenerationOnlyWhenNoEditModel() async {
+        await withSubagentSandbox {
+            withSeededPickerItems([readyImageItem(edit: false)]) {
+                let tools = SystemPromptComposer.resolveTools(
                     snapshot: makeSnapshot(imageEnabled: true),
                     executionMode: .none
-                ).map { $0.function.name }
-            )
-            #expect(names.contains("image"))
-            // No spawn toggle / list → spawn stays hidden even though image is on.
-            #expect(!names.contains("spawn_agent"))
-            #expect(!names.contains("spawn_model"))
+                )
+                #expect(tools.contains { $0.function.name == "image" })
+                let props = imageParameterNames(tools)
+                #expect(props.contains("prompt"))
+                #expect(!props.contains("source_paths"))
+                #expect(!props.contains("strength"))
+            }
+        }
+    }
+
+    /// With a ready edit model installed, `image` keeps its full schema: the
+    /// edit affordance (`source_paths`) is present.
+    @Test
+    func autoMode_imageSchemaIsFullWhenEditModelReady() async {
+        await withSubagentSandbox {
+            withSeededPickerItems([readyImageItem(edit: true)]) {
+                let tools = SystemPromptComposer.resolveTools(
+                    snapshot: makeSnapshot(imageEnabled: true),
+                    executionMode: .none
+                )
+                let props = imageParameterNames(tools)
+                #expect(props.contains("prompt"))
+                #expect(props.contains("source_paths"))
+            }
         }
     }
 

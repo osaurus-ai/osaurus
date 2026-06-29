@@ -185,24 +185,43 @@ struct NativeImageJobResult: Sendable, Equatable {
     /// distinguish the two now that one `image` tool serves both.
     var isEdit: Bool = false
 
+    /// Whether a ready edit model is installed. When false, the result steers
+    /// the model to confirm only (the edit-continuation clause is dropped) and
+    /// `edit_available` is surfaced so `AgentTaskState` suppresses its
+    /// post-generation "now edit it" nudge — both would otherwise point at an
+    /// edit the runtime can't perform. Defaults true (edit available).
+    var editModelAvailable: Bool = true
+
     var toolPayload: [String: Any] {
-        [
+        // Always: the result auto-renders as an image card, so the model must
+        // not re-share it (`share_artifact` on the path fails the sandbox path
+        // restriction and produces a misleading error note). The edit-
+        // continuation clause is CONDITIONAL — kept only when an edit model is
+        // installed so a requested follow-up edit still fires, dropped otherwise
+        // so the model doesn't attempt an unavailable edit.
+        let displayNote: String = {
+            let base =
+                "The image is already shown to the user in the chat; "
+                + "do NOT call share_artifact for it."
+            guard editModelAvailable else {
+                return base + " Confirm briefly."
+            }
+            return base
+                + " If the user asked for a follow-up edit of this image, call the `image` tool "
+                + "again with source_paths set to this result's images[].path; otherwise confirm "
+                + "briefly."
+        }()
+        return [
             "kind": "native_image_generation_job",
             "mode": isEdit ? "edit" : "generate",
             "job_id": jobID,
             "model": model,
             "status": NativeImageJobPhase.completed.rawValue,
-            // The result auto-renders as an image card in the chat, so the
-            // model must not re-share it. Without this, models call
-            // `share_artifact` on the generated path, which fails on the
-            // sandbox path restriction and produces a misleading error note.
             "already_displayed": true,
-            "display_note":
-                "The image is already shown to the user in the chat. "
-                + "Do NOT call share_artifact for it. If the user asked for a follow-up edit "
-                + "or transformation of this image, continue now by calling the `image` tool with "
-                + "source_paths set to this result's images[].path; otherwise just briefly "
-                + "confirm the image was created.",
+            "display_note": displayNote,
+            // Read by `AgentTaskState.classify` to gate the post-generation edit
+            // nudge on installed edit capability.
+            "edit_available": editModelAvailable,
             "unloaded_after_job": unloadedAfterJob,
             "unloaded_chat_models": unloadedChatModels,
             "restored_chat_models": restoredChatModels,

@@ -62,13 +62,21 @@ final class ImageGenerationPanelModel: ObservableObject {
 
     func generate(_ params: ImageGenerationParameters) {
         durationKey = ImageGenerationDurationStore.key(
-            model: params.model, width: params.width, height: params.height, isEdit: false)
+            model: params.model,
+            width: params.width,
+            height: params.height,
+            isEdit: false
+        )
         start { await ImageGenerationService.shared.generate(params, jobID: self.jobID) }
     }
 
     func edit(_ params: ImageEditParameters) {
         durationKey = ImageGenerationDurationStore.key(
-            model: params.model, width: params.width, height: params.height, isEdit: true)
+            model: params.model,
+            width: params.width,
+            height: params.height,
+            isEdit: true
+        )
         start { await ImageGenerationService.shared.edit(params, jobID: self.jobID) }
     }
 
@@ -390,9 +398,10 @@ struct ImageGenerationPanelView: View {
                             .tint(theme.accentColor)
                     }
                 case .done:
-                    let text = model.lastDuration.map {
-                        L("Done") + " · " + Self.formatDuration($0)
-                    } ?? L("Done")
+                    let text =
+                        model.lastDuration.map {
+                            L("Done") + " · " + Self.formatDuration($0)
+                        } ?? L("Done")
                     statusRow(spinner: false, text: text, color: theme.successColor)
                 case .failed(let message):
                     statusRow(spinner: false, text: message, color: theme.errorColor)

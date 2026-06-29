@@ -271,10 +271,20 @@ final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
             )
         }
 
-        let count = finalResult.images.count
+        // Stamp installed edit capability onto the result so its payload's
+        // edit-continuation steer + the loop's post-generation edit nudge are
+        // suppressed when no ready edit model exists (they'd otherwise point the
+        // model at an edit the runtime can't perform). Read off the same warmed
+        // picker cache the schema/guidance gates use.
+        var result = finalResult
+        result.editModelAvailable = await MainActor.run {
+            ModelPickerItemCache.shared.hasReadyImageEditModel
+        }
+
+        let count = result.images.count
         let verb = params.isEdit ? "Edited" : "Generated"
         let summary = "\(verb) \(count) image\(count == 1 ? "" : "s") with \(resolved.name)."
-        return SubagentResult(payload: finalResult.toolPayload, summary: summary)
+        return SubagentResult(payload: result.toolPayload, summary: summary)
     }
 
     // MARK: - Stream consumption (detached)

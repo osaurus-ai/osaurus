@@ -21,6 +21,29 @@ final class ModelPickerItemCache: ObservableObject {
     @Published private(set) var items: [ModelPickerItem] = []
     @Published private(set) var isLoaded = false
 
+    /// Whether at least one ready text-to-image model is installed. A synchronous
+    /// read off the already-warmed picker cache, used by the sub-agent gate to
+    /// decide whether the `image` tool is injected at all (no image model ->
+    /// no tool, so the model is never told it can make images it can't).
+    var hasReadyImageGenerationModel: Bool {
+        items.contains(where: \.isImageGenerationDelegateCandidate)
+    }
+
+    /// Whether at least one ready image-EDIT model is installed. Gates the edit
+    /// affordance specifically (the tool's `source_paths`/`strength` schema, the
+    /// edit guidance, and the post-generation edit nudge); generation stays
+    /// available via `hasReadyImageGenerationModel` even when this is false.
+    var hasReadyImageEditModel: Bool {
+        items.contains(where: \.isImageEditDelegateCandidate)
+    }
+
+    /// Whether any ready image model (generation or edit) is installed — the
+    /// coarse gate for whether the `image` tool is injected at all. Both
+    /// `image`-surfacing paths read this instead of re-OR'ing the two flags.
+    var hasReadyImageModel: Bool {
+        hasReadyImageGenerationModel || hasReadyImageEditModel
+    }
+
     private var observersRegistered = false
 
     /// The currently running rebuild Task, if any. All callers join this task
@@ -111,6 +134,21 @@ final class ModelPickerItemCache: ObservableObject {
         isLoaded = false
         items = []
     }
+
+    #if DEBUG
+        /// Test seam: inject picker items directly so unit tests can exercise the
+        /// image-availability gates (and other readers) without staging real
+        /// on-device bundles. Returns the previous items so the caller can
+        /// restore them and avoid leaking seeded state across the shared
+        /// singleton into other suites.
+        @discardableResult
+        func _setItemsForTesting(_ newItems: [ModelPickerItem]) -> [ModelPickerItem] {
+            let previous = items
+            items = newItems
+            isLoaded = true
+            return previous
+        }
+    #endif
 
     // MARK: - Private
 

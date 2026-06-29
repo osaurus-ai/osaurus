@@ -77,7 +77,8 @@ struct SubagentCapabilityRegistryTests {
             SubagentToolVisibility.visibleDelegationToolNames(
                 agentId: Agent.defaultId,
                 snapshot: snapshot(agentId: Agent.defaultId),
-                config: config
+                config: config,
+                hasReadyImageModel: true
             ) == ["spawn_agent", "spawn_model", "image"]
         )
 
@@ -88,7 +89,8 @@ struct SubagentCapabilityRegistryTests {
             SubagentToolVisibility.visibleDelegationToolNames(
                 agentId: custom,
                 snapshot: snapshot(agentId: custom, spawn: true, image: false, targets: ["X"]),
-                config: config
+                config: config,
+                hasReadyImageModel: true
             ) == ["spawn_agent"]
         )
 
@@ -97,7 +99,8 @@ struct SubagentCapabilityRegistryTests {
             SubagentToolVisibility.visibleDelegationToolNames(
                 agentId: custom,
                 snapshot: snapshot(agentId: custom, spawn: true, models: ["m"]),
-                config: config
+                config: config,
+                hasReadyImageModel: true
             ) == ["spawn_model"]
         )
 
@@ -106,7 +109,8 @@ struct SubagentCapabilityRegistryTests {
             SubagentToolVisibility.visibleDelegationToolNames(
                 agentId: custom,
                 snapshot: snapshot(agentId: custom, spawn: true, targets: ["X"], models: ["m"]),
-                config: config
+                config: config,
+                hasReadyImageModel: true
             ) == ["spawn_agent", "spawn_model"]
         )
 
@@ -115,7 +119,8 @@ struct SubagentCapabilityRegistryTests {
             SubagentToolVisibility.visibleDelegationToolNames(
                 agentId: custom,
                 snapshot: snapshot(agentId: custom, spawn: true, targets: []),
-                config: config
+                config: config,
+                hasReadyImageModel: true
             ).isEmpty
         )
 
@@ -125,8 +130,41 @@ struct SubagentCapabilityRegistryTests {
             SubagentToolVisibility.visibleDelegationToolNames(
                 agentId: custom,
                 snapshot: snapshot(agentId: custom, spawn: false, image: false, targets: []),
-                config: config
+                config: config,
+                hasReadyImageModel: true
             ).isEmpty
+        )
+    }
+
+    @Test("image is withheld when no ready image model is installed, even with the switch on")
+    func imageGatedOnInstalledModel() {
+        // The Default / main chat has its image switch on and a spawn pool, but
+        // NO ready on-device image model exists. The installed-capability gate
+        // must withhold `image` so the model is never offered an image
+        // capability the runtime can't satisfy; spawn is unaffected.
+        let config = SubagentConfiguration(
+            spawnableAgentNames: ["Helper"],
+            imageDelegationEnabled: true,
+            spawnableModelNames: ["pool-model"]
+        )
+        #expect(
+            SubagentToolVisibility.visibleDelegationToolNames(
+                agentId: Agent.defaultId,
+                snapshot: snapshot(agentId: Agent.defaultId),
+                config: config,
+                hasReadyImageModel: false
+            ) == ["spawn_agent", "spawn_model"]
+        )
+        // A custom agent with its image toggle on but no installed model → no
+        // `image` either.
+        let custom = UUID()
+        #expect(
+            !SubagentToolVisibility.visibleDelegationToolNames(
+                agentId: custom,
+                snapshot: snapshot(agentId: custom, image: true),
+                config: config,
+                hasReadyImageModel: false
+            ).contains("image")
         )
     }
 

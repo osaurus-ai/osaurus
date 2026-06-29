@@ -40,7 +40,10 @@ public enum ToolResultClass: Equatable, Sendable {
     /// Native image job completed and returned saved image paths. `isEdit`
     /// distinguishes a fresh generation from an edit of an existing image, so
     /// the follow-up nudge only suggests editing AFTER a generation.
-    case nativeImageGeneration(paths: [String], isEdit: Bool)
+    /// `editAvailable` is whether a ready edit model is installed; when false
+    /// the post-generation edit nudge is suppressed (it would steer toward an
+    /// edit the runtime can't perform).
+    case nativeImageGeneration(paths: [String], isEdit: Bool, editAvailable: Bool)
     /// Any success that isn't a listing or file read.
     case other
 }
@@ -418,10 +421,12 @@ public final class AgentTaskState {
             }
             return
                 "Path not found. Pick a `path` from the most recent listing's entries, or list the parent directory."
-        case .nativeImageGeneration(let paths, let isEdit):
+        case .nativeImageGeneration(let paths, let isEdit, let editAvailable):
             // Only nudge toward an edit AFTER a fresh generation, never after an
-            // edit (which would loop).
-            guard lastToolName == "image", !isEdit, !paths.isEmpty else { return nil }
+            // edit (which would loop), and never when no ready edit model is
+            // installed (the nudge would steer toward a guaranteed failure).
+            guard editAvailable, lastToolName == "image", !isEdit, !paths.isEmpty
+            else { return nil }
             let joinedPaths = paths.map { "`\($0)`" }.joined(separator: ", ")
             return
                 "The previous `image` result saved image path(s): \(joinedPaths). "
@@ -465,7 +470,14 @@ public final class AgentTaskState {
             let paths = nativeImagePaths(from: payload)
             if !paths.isEmpty {
                 let isEdit = (payload["mode"] as? String) == "edit"
-                return .nativeImageGeneration(paths: paths, isEdit: isEdit)
+                // Absent `edit_available` (older payloads / external callers)
+                // defaults to true so the existing gen→edit nudge still fires.
+                let editAvailable = (payload["edit_available"] as? Bool) ?? true
+                return .nativeImageGeneration(
+                    paths: paths,
+                    isEdit: isEdit,
+                    editAvailable: editAvailable
+                )
             }
             return .other
         default:

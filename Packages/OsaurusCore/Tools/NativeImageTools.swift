@@ -15,15 +15,20 @@ import Foundation
 public final class ImageTool: OsaurusTool, @unchecked Sendable {
     public let name = "image"
 
-    /// Shared description, also shown in the permission prompt by the kind.
+    /// Shared description (gen + edit), also shown in the permission prompt by
+    /// the kind. Used when a ready edit model is installed.
     public static let toolDescription =
-        "Create or edit an image with the user's local native image model. To CREATE a new image, "
-        + "call with just a `prompt` (use when the user asks to create, render, draw, make, or "
-        + "generate an image). To EDIT an existing image, ALSO pass `source_paths` with one to four "
-        + "local image paths from prior results or attachments (use when the user asks to transform, "
-        + "recolor, modify, or add to an existing image) — `source_paths` is what switches the tool "
-        + "into edit mode. The resulting image is automatically shown to the user in the chat; do "
-        + "NOT call share_artifact on it."
+        "Create or edit an image with the user's local image model. To create, call with a "
+        + "`prompt`. To edit an existing image, also pass `source_paths` (one to four local image "
+        + "paths from prior results or attachments) — that switches the tool into edit mode. The "
+        + "result is shown to the user automatically; do NOT call share_artifact on it."
+
+    /// Generation-only description, used when NO ready edit model is installed.
+    /// Drops every edit affordance so the schema never offers an edit the
+    /// runtime can't perform. Paired with `generationOnlyParameters`.
+    public static let generationOnlyToolDescription =
+        "Create an image with the user's local image model: call with a `prompt`. The result is "
+        + "shown to the user automatically; do NOT call share_artifact on it."
 
     public var description: String { Self.toolDescription }
 
@@ -69,6 +74,57 @@ public final class ImageTool: OsaurusTool, @unchecked Sendable {
         ]),
         "required": .array([.string("prompt")]),
     ])
+
+    /// Generation-only parameter schema: the full schema minus the edit-only
+    /// fields (`source_paths`, `strength`), with the `prompt` description
+    /// narrowed to creation. Selected by `resolveTools` / the agent-run path
+    /// when no ready edit model is installed, so the model literally cannot
+    /// request an edit (no `source_paths` to set). Kept as a stored literal so
+    /// the rendered schema is byte-stable per availability state for KV reuse.
+    public static let generationOnlyParameters: JSONValue = .object([
+        "type": .string("object"),
+        "additionalProperties": .bool(false),
+        "properties": .object([
+            "prompt": .object([
+                "type": .string("string"),
+                "description": .string("What to create."),
+            ]),
+            "model": .object([
+                "type": .string("string"),
+                "description": .string("Optional local image model id. Omit to use the configured default."),
+            ]),
+            "negative_prompt": .object([
+                "type": .string("string"),
+                "description": .string("Optional negative prompt."),
+            ]),
+            "width": .object(["type": .string("integer"), "description": .string("Optional width in pixels.")]),
+            "height": .object(["type": .string("integer"), "description": .string("Optional height in pixels.")]),
+            "steps": .object(["type": .string("integer"), "description": .string("Optional denoise step count.")]),
+            "guidance": .object(["type": .string("number"), "description": .string("Optional guidance scale.")]),
+            "seed": .object(["type": .string("integer"), "description": .string("Optional deterministic seed.")]),
+            "num_images": .object([
+                "type": .string("integer"),
+                "description": .string("Optional number of images, clamped to 1...4."),
+            ]),
+        ]),
+        "required": .array([.string("prompt")]),
+    ])
+
+    /// The generation-only `image` spec (no edit fields, generation-only
+    /// description). The single builder both surfacing paths use to swap the
+    /// tool when no ready edit model exists, so the native chat and agent-run
+    /// schemas stay in parity. Internal (not `public`) because `Tool` is an
+    /// internal type and both call sites live in this module.
+    static func generationOnlySpec() -> Tool {
+        Tool(
+            type: "function",
+            function: ToolFunction(
+                name: "image",
+                description: generationOnlyToolDescription,
+                parameters: generationOnlyParameters
+            )
+        )
+    }
 
     public init() {}
 

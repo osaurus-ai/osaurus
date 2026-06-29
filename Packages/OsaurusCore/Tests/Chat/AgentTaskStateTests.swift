@@ -707,4 +707,32 @@ struct AgentTaskStateTests {
 
         #expect(state.nextStepBias() == nil)
     }
+
+    @Test func nativeImageResultWithoutEditModelDoesNotBiasEdit() {
+        // A fresh generation, but the payload reports no ready edit model
+        // (`edit_available: false`). The post-generation edit nudge must stay
+        // silent — steering toward `source_paths` would point the model at an
+        // edit the runtime can't perform.
+        let state = AgentTaskState()
+        let envelope = ToolEnvelope.success(
+            tool: "image",
+            result: [
+                "kind": "native_image_generation_job",
+                "mode": "generate",
+                "status": "completed",
+                "edit_available": false,
+                "images": [
+                    [
+                        "path": "/tmp/osaurus-images/generated-cube.png",
+                        "url": "file:///tmp/osaurus-images/generated-cube.png",
+                        "seed": 123,
+                    ]
+                ],
+            ] as [String: Any]
+        )
+
+        state.record(name: "image", argsJSON: #"{"prompt":"make a red cube"}"#, result: envelope)
+
+        #expect(state.nextStepBias() == nil)
+    }
 }

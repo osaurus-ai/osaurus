@@ -904,15 +904,32 @@ public struct SystemPromptComposer: Sendable {
         // and the registry's stable order keeps the rendered byte sequence
         // fixed (computerUse before imageGeneration, as before).
         if !effectiveToolsOff {
+            // When `image` resolved but no ready edit model is installed, the
+            // schema is the generation-only variant (see `resolveTools`), so
+            // pick the matching generation-only guidance — the prompt must never
+            // claim an edit the runtime can't perform. Read off the same warmed
+            // cache the schema gate used (this is @MainActor).
+            let hasReadyImageEditModel = ModelPickerItemCache.shared.hasReadyImageEditModel
             for capability in SubagentCapabilityRegistry.all {
-                guard let fullGuidance = capability.guidance,
-                    let sectionId = capability.guidanceSectionId,
+                guard let sectionId = capability.guidanceSectionId,
                     let labelKey = capability.guidanceLabelKey,
                     resolvedNames.contains(capability.primaryToolName)
                 else { continue }
+                let imageGenerationOnly =
+                    capability.id == SubagentCapabilityRegistry.image.id
+                    && !hasReadyImageEditModel
+                let fullGuidance =
+                    imageGenerationOnly
+                    ? SystemPromptTemplates.imageGenerationOnlyGuidance
+                    : capability.guidance
+                guard let fullGuidance else { continue }
+                let compactGuidance =
+                    imageGenerationOnly
+                    ? SystemPromptTemplates.imageGenerationOnlyGuidanceCompact
+                    : capability.guidanceCompact
                 let guidance =
                     toolset.prefersCompactPrompt
-                    ? (capability.guidanceCompact ?? fullGuidance)
+                    ? (compactGuidance ?? fullGuidance)
                     : fullGuidance
                 composer.append(
                     .static(
@@ -2087,10 +2104,18 @@ public struct SystemPromptComposer: Sendable {
         //     path reads the same resolver (BUG E parity guard).
         //   * .sandboxExec: never stripped here (gated by sandbox registration,
         //     not the schema strip).
+        // Installed-capability gate for `image`: the per-agent switch can be on,
+        // but with no ready on-device image model the tool is still withheld
+        // (and, with a gen model but no edit model, narrowed to a generation-only
+        // schema below). Read off the warmed picker cache; `resolveTools` is
+        // @MainActor, so this synchronous read is safe.
+        let imageCache = ModelPickerItemCache.shared
+        let hasReadyImageEditModel = imageCache.hasReadyImageEditModel
         let visibleDelegation = SubagentToolVisibility.visibleDelegationToolNames(
             agentId: snapshot.agentId,
             snapshot: snapshot,
-            config: SubagentConfigurationStore.snapshot()
+            config: SubagentConfigurationStore.snapshot(),
+            hasReadyImageModel: imageCache.hasReadyImageModel
         )
         for capability in SubagentCapabilityRegistry.all {
             switch capability.gate {
@@ -2194,6 +2219,22 @@ public struct SystemPromptComposer: Sendable {
             let allowed = ToolRegistry.shared.builtInSandboxToolNamesSnapshot
                 .union(Self.agentLoopToolNames)
             byName = byName.filter { allowed.contains($0.key) }
+        }
+
+        // Generation-only image schema: when `image` survived the gates but no
+        // ready edit model is installed, swap it to the edit-free variant (no
+        // `source_paths` / `strength`, generation-only description) so the model
+        // is never offered an edit it can't run. Generation still works because a
+        // gen model is present. Mirror the baseline's first-turn compaction
+        // unless the tool was loaded explicitly (manual pick / capabilities_load),
+        // so the swapped spec sits at the same compaction level the edit-capable
+        // spec would have — byte-stable per availability state for KV reuse.
+        if byName["image"] != nil, !hasReadyImageEditModel {
+            let imageLoadedExplicitly =
+                additionalToolNames.contains("image")
+                || (isManual && (snapshot.manualToolNames?.contains("image") ?? false))
+            let genOnly = ImageTool.generationOnlySpec()
+            byName["image"] = imageLoadedExplicitly ? genOnly : compactBootstrapSpec(genOnly)
         }
 
         let resolved = canonicalToolOrder(Array(byName.values))

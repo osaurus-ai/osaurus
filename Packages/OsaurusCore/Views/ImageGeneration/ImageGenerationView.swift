@@ -154,6 +154,12 @@ private struct ImageGenerationSettingsTab: View {
     @State private var configuration = SubagentConfigurationStore.snapshot()
     @State private var pickerItems: [ModelPickerItem] = []
 
+    /// Gates the persist-on-change save until the initial snapshot/re-snapshot
+    /// has landed, so loading the tab (which assigns `configuration`) never
+    /// round-trips a transient/default value back through `save()` and clobbers
+    /// the stored config. Mirrors `AgentsView`'s `isInitialLoadComplete`.
+    @State private var hasLoaded = false
+
     private var imageKindId: String { SubagentCapabilityRegistry.image.id }
 
     var body: some View {
@@ -176,6 +182,9 @@ private struct ImageGenerationSettingsTab: View {
                                 \.defaultImageEditModelId,
                                 candidates: pickerItems.imageEditDelegateCandidates
                             )
+                        }
+                        if pickerItems.imageEditDelegateCandidates.isEmpty {
+                            editModelEmptyStateHint
                         }
                     }
                 }
@@ -229,8 +238,20 @@ private struct ImageGenerationSettingsTab: View {
         .onReceive(ModelPickerItemCache.shared.$items) { options in
             pickerItems = options
         }
+        // Re-snapshot the store on appear so the UI always reflects the latest
+        // persisted config even if the `@State` default was captured against a
+        // cold/stale cache (the "all settings reset on open" report). The save
+        // guard below is flipped on the next runloop tick so this assignment —
+        // and the change-notification re-snapshot — never round-trip back
+        // through `save()`.
+        .onAppear {
+            configuration = SubagentConfigurationStore.snapshot()
+            DispatchQueue.main.async { hasLoaded = true }
+        }
         // Persist immediately on edit, mirroring the Settings → Sub-agents card.
+        // Gated on `hasLoaded` so only real user edits write back.
         .onChange(of: configuration) { _, newValue in
+            guard hasLoaded else { return }
             SubagentConfigurationStore.save(newValue)
         }
         // Re-snapshot if another surface mutates the shared store.
@@ -277,6 +298,38 @@ private struct ImageGenerationSettingsTab: View {
             .foregroundColor(theme.secondaryText)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// Shown under the Edit model row when no image-edit model is installed.
+    /// The dropdown can only offer "Choose automatically" in that state, so
+    /// without this the empty control looks broken. Explains why editing is
+    /// unavailable and offers a one-tap jump to the Models browser to download
+    /// an edit-capable bundle (e.g. Qwen-Image-Edit), which makes the dropdown
+    /// populate and chat image-editing work.
+    private var editModelEmptyStateHint: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "info.circle")
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
+            Text(
+                "No image-edit models installed, so editing is unavailable. Download an edit-capable model (e.g. Qwen-Image-Edit) to enable it.",
+                bundle: .module
+            )
+            .font(.system(size: 11))
+            .foregroundColor(theme.tertiaryText)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            Button {
+                ManagementStateManager.shared.imageGenerationSubTabRequest =
+                    ImageGenerationTab.models.rawValue
+            } label: {
+                Text("Browse models", bundle: .module)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(theme.accentColor)
+            }
+            .buttonStyle(.plain)
+            .fixedSize()
+        }
     }
 
     /// The trailing image-model dropdown for one default-model field.
