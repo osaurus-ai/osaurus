@@ -39242,6 +39242,9 @@
         }
       }
     },
+    "Image Gen" : {
+
+    },
     "Image Generation" : {
       "localizations" : {
         "de" : {
@@ -56742,6 +56745,9 @@
           }
         }
       }
+    },
+    "Open the Image Generation pane in Settings" : {
+
     },
     "Open the Sandbox tab to retry the relay connection." : {
       "localizations" : {
