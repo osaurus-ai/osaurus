@@ -371,6 +371,11 @@ final class ChatSession: ObservableObject {
     /// this session's `sessionId.uuidString` to avoid cross-window
     /// leakage when multiple chats are open.
     nonisolated(unsafe) private var privacyRedactionsObserver: NSObjectProtocol?
+    /// Observer for `StorageMutationGate.didFinishMutating`. The preview
+    /// composition reads the agent DB, which is deferred while a storage-key
+    /// rotation is in flight (so the main thread never parks on the gate's
+    /// run-loop spin). This retries the estimate once storage settles.
+    nonisolated(unsafe) private var storageMutationObserver: NSObjectProtocol?
 
     /// Accumulated original -> placeholder map for THIS window's
     /// session, populated by the privacy filter notification. Drives
@@ -443,6 +448,14 @@ final class ChatSession: ObservableObject {
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor in await self?.refreshPickerItems() }
+        }
+
+        storageMutationObserver = NotificationCenter.default.addObserver(
+            forName: StorageMutationGate.didFinishMutatingNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in await self?.refreshContextEstimates() }
         }
 
         // Follow the shared cache reactively. `ModelPickerItemCache`
@@ -654,6 +667,9 @@ final class ChatSession: ObservableObject {
             NotificationCenter.default.removeObserver(observer)
         }
         if let observer = privacyRedactionsObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        if let observer = storageMutationObserver {
             NotificationCenter.default.removeObserver(observer)
         }
         modelSelectionCancellable = nil
@@ -1053,7 +1069,20 @@ final class ChatSession: ObservableObject {
         // re-derives the cheap conversation/input/output overlay below.
         // First render before any refresh has run lazily composes + fills
         // the cache so the popover is never empty.
-        let preview = previewContext()
+        guard let preview = previewContext() else {
+            // Preview not composed yet (first render, or a storage-key rotation
+            // is in flight and we won't park the main thread to open the DB).
+            // Surface the cheap conversation/input/output overlay now; the
+            // system-prefix rows fill in once `refreshContextEstimates` runs.
+            return .from(
+                manifest: .empty,
+                memoryTokens: cachedMemoryTokens,
+                screenContextTokens: cachedScreenContextTokens,
+                conversationTokens: conversationTokens,
+                inputTokens: inputTokens,
+                outputTokens: outputTokens
+            )
+        }
         return .from(
             manifest: preview.manifest,
             toolTokens: preview.toolTokens,
@@ -1069,8 +1098,15 @@ final class ChatSession: ObservableObject {
     /// and caching it on the first read. Pure read otherwise — does not emit
     /// `objectWillChange`, so it's safe to call from within a view-body
     /// evaluation.
-    private func previewContext() -> ComposedContext {
+    private func previewContext() -> ComposedContext? {
         if let cached = cachedPreviewContext { return cached }
+        // Composing reads the agent DB. `*Database.open()` parks on
+        // `StorageMutationGate.blockingAwaitNotMutating()`, which spins the
+        // main run loop while a storage-key rotation is in flight — that
+        // surfaced as a multi-second app hang when this lazily composed inside
+        // the view-body evaluation. Defer instead of parking the UI; the
+        // rotation-finished observer retries via `refreshContextEstimates`.
+        if StorageMutationGate.isRotationInFlight { return nil }
         let preview = composePreview()
         cachedPreviewContext = preview
         return preview
@@ -1932,6 +1968,11 @@ final class ChatSession: ObservableObject {
     @discardableResult
     private func recomputePreviewContext() -> Bool {
         guard !isStreaming else { return false }
+
+        // Don't park the main thread opening the agent DB while a storage-key
+        // rotation is running; the rotation-finished observer reruns this once
+        // storage settles. See `previewContext()`.
+        guard !StorageMutationGate.isRotationInFlight else { return false }
 
         let previous = cachedPreviewContext
         let preview = composePreview()

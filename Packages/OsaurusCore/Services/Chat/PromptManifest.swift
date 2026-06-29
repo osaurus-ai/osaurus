@@ -61,6 +61,12 @@ public struct PromptManifest: Sendable {
 
     public let sections: [PromptSection]
 
+    /// A manifest with no sections, used as a cheap placeholder before the
+    /// preview composition has run (or while it is deferred behind a storage
+    /// rotation) so the budget popover can render the message overlay without
+    /// blocking on the agent DB.
+    public static let empty = PromptManifest(sections: [])
+
     public var totalEstimatedTokens: Int {
         sections.reduce(0) { $0 + $1.estimatedTokens }
     }
