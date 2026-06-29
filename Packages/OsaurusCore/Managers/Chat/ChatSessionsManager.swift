@@ -33,14 +33,23 @@ final class ChatSessionsManager: ObservableObject {
         // key rotation, `ChatSessionStore` deferred the DB open rather than
         // parking the launch main thread, leaving `sessions` empty. Reload
         // once the rotation settles. Armed only when the initial load came
-        // back empty (the sole case a deferral matters), and never under
-        // tests — a rotation in an unrelated suite must not trigger a stray
-        // cross-suite DB reload on the main actor (see RuntimeEnvironment
-        // .isUnderTests for the prior contactsd main-actor-stall incident).
-        if sessions.isEmpty, !RuntimeEnvironment.isUnderTests {
+        // back empty, and never under tests — a rotation in an unrelated suite
+        // must not trigger a stray cross-suite DB reload on the main actor (see
+        // RuntimeEnvironment.isUnderTests for the prior contactsd
+        // main-actor-stall incident).
+        //
+        // The same rotation-complete signal also drains any turn writes that
+        // `ChatSessionStore` had to defer while the DB was closed (#1737), so
+        // arm the observer whenever the initial open could have been deferred —
+        // not only when the list came back empty. Still never under tests, to
+        // avoid a stray cross-suite DB reload on the main actor.
+        if !RuntimeEnvironment.isUnderTests {
             NotificationCenter.default.publisher(for: StorageMutationGate.didFinishMutatingNotification)
                 .receive(on: DispatchQueue.main)
-                .sink { [weak self] _ in self?.refresh() }
+                .sink { [weak self] _ in
+                    ChatSessionStore.flushPendingSaves()
+                    self?.refresh()
+                }
                 .store(in: &cancellables)
         }
     }
