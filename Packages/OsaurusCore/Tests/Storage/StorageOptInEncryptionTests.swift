@@ -547,13 +547,19 @@ struct StorageOptInEncryptionTests {
 
     // MARK: - Invisible migration (no What's New notice)
 
-    /// The migration is fully invisible: the 0.21.0 storage opt-in notice was
-    /// removed, so no release announces it and no page id references it.
+    /// The storage opt-in migration is fully invisible. 0.21.0 still ships its
+    /// own What's New release (image generation + spawn), but nothing in any
+    /// release announces the storage encryption opt-in: no page id references it
+    /// and no page links to the storage settings or the plaintext export.
     @Test
     func whatsNewNoLongerListsStorageNotice() {
-        #expect(WhatsNewContent.release(for: "0.21.0") == nil)
-        let pageIDs = WhatsNewContent.releases.flatMap { $0.pages.map(\.id) }
-        #expect(pageIDs.contains { $0.contains("storage-optin") } == false)
+        let pages = WhatsNewContent.releases.flatMap(\.pages)
+        #expect(pages.contains { $0.id.contains("storage-optin") } == false)
+        #expect(
+            pages.contains {
+                $0.action == .openStorageSettings || $0.action == .exportPlaintextBackup
+            } == false
+        )
     }
 
     // MARK: - Issue classification (recovery categories)
