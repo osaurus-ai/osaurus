@@ -81,6 +81,83 @@ struct NativeImageToolArtifactBridgeTests {
         }
     }
 
+    /// Pins the decoupling the chat loop relies on: the model-facing tool
+    /// result stays the compact `toolPayload` (marker-free, no host paths) so a
+    /// small quantized model confirms briefly instead of echoing the artifact
+    /// metadata JSON, while the card-facing string is the enriched
+    /// SHARED_ARTIFACT block. If these two ever collapse back into one string,
+    /// the `enriched != resultText` guard in `postProcessToolResult` would stop
+    /// firing and the model would again see the metadata block.
+    @Test
+    func modelFacingResultStaysCompact_whileCardResultIsEnriched() async throws {
+        try await Self.runLocked { tmp in
+            let generatedDir = tmp.appendingPathComponent("generated", isDirectory: true)
+            try FileManager.default.createDirectory(at: generatedDir, withIntermediateDirectories: true)
+            let generated = generatedDir.appendingPathComponent("cow.png")
+            let bytes = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A])
+            try bytes.write(to: generated)
+
+            // The compact payload is exactly what the model keeps as the `.tool`
+            // message after the fix — only the card override is enriched.
+            let modelFacingResult = ToolEnvelope.success(
+                tool: "image",
+                result: [
+                    "kind": "native_image_generation_job",
+                    "mode": "generate",
+                    "job_id": "job-cow",
+                    "model": "Z-Image-Turbo-mflux-4bit",
+                    "status": "completed",
+                    "already_displayed": true,
+                    "display_note":
+                        "The image is already shown to the user in the chat; do NOT call share_artifact for it.",
+                    "images": [
+                        [
+                            "path": generated.path,
+                            "url": generated.absoluteString,
+                            "seed": 11,
+                        ]
+                    ],
+                ] as [String: Any]
+            )
+
+            let outcome = NativeImageToolArtifactBridge.processFirstImageArtifact(
+                toolName: "image",
+                toolResult: modelFacingResult,
+                contextId: "chat-cow"
+            )
+
+            switch try #require(outcome) {
+            case .success(let processed):
+                let cardFacingResult = ToolEnvelope.success(
+                    tool: "image",
+                    text: processed.enrichedToolResult
+                )
+
+                // The marker token without the trailing newline survives JSON
+                // string-encoding (the `\n` does not), so match on it directly.
+                let markerToken = "---SHARED_ARTIFACT_START---"
+
+                // Divergence is the whole fix: the chat loop must not overwrite
+                // the model result with the card block.
+                #expect(modelFacingResult != cardFacingResult)
+
+                // Model-facing result is marker-free, host-path-free, and is NOT
+                // parseable as an artifact — so it can't be echoed as one.
+                #expect(modelFacingResult.contains(markerToken) == false)
+                #expect(modelFacingResult.contains("host_path") == false)
+                #expect(SharedArtifact.fromEnrichedToolResult(modelFacingResult) == nil)
+
+                // Card-facing result is the enriched artifact block and still
+                // rebuilds into a renderable artifact.
+                #expect(cardFacingResult.contains(markerToken))
+                #expect(cardFacingResult.contains("host_path"))
+                #expect(SharedArtifact.fromEnrichedToolResult(cardFacingResult)?.filename == "cow.png")
+            case .failure(let reason):
+                Issue.record("expected success, got failure: \(reason)")
+            }
+        }
+    }
+
     @Test
     func nonImageToolResult_isIgnored() {
         let outcome = NativeImageToolArtifactBridge.processFirstImageArtifact(
