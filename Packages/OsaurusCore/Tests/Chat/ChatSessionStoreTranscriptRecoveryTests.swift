@@ -54,10 +54,12 @@ struct ChatSessionStoreTranscriptRecoveryTests {
         )
 
         #expect(recovered.turns.map(\.role) == [.user, .assistant])
-        #expect(recovered.turns.map(\.content) == [
-            "Can you recover this?",
-            "Yes, from the transcript fallback.",
-        ])
+        #expect(
+            recovered.turns.map(\.content) == [
+                "Can you recover this?",
+                "Yes, from the transcript fallback.",
+            ]
+        )
         #expect(recovered.turns[0].createdAt != nil)
         #expect(recovered.turns[1].createdAt != nil)
     }

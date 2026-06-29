@@ -184,7 +184,8 @@ public enum AgentCollaborationNegotiator {
     ) -> AgentCollaborationNegotiationResult {
         let common = initiatorCapabilities.commonCapabilities(with: responderCapabilities)
         let commonNames = Set(common.map(\.name))
-        let missing = requiredCapabilities
+        let missing =
+            requiredCapabilities
             .filter { !commonNames.contains($0) }
             .sorted()
         let version = min(initiatorCapabilities.protocolVersion, responderCapabilities.protocolVersion)

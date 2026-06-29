@@ -117,13 +117,17 @@ public struct WhatsNewModal: View {
 
     private func textBlock(for page: WhatsNewPage) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(page.title)
+            // Page copy is authored as English `String`s in `WhatsNewContent`.
+            // Resolve them through the module catalog so translated releases
+            // (e.g. 0.21.0) localize; keys missing from the catalog fall back
+            // to the literal English string, so older notes are unaffected.
+            Text(LocalizedStringKey(page.title), bundle: .module)
                 .font(.system(size: 22, weight: .bold))
                 .foregroundStyle(theme.primaryText)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-            Text(page.description)
+            Text(LocalizedStringKey(page.description), bundle: .module)
                 .font(.system(size: 14))
                 .foregroundStyle(theme.secondaryText)
                 .lineSpacing(2)
@@ -177,7 +181,7 @@ public struct WhatsNewModal: View {
 
         if let label = page.actionLabel, let action = page.action {
             capsuleButton(
-                label: Text(label),
+                label: Text(LocalizedStringKey(label), bundle: .module),
                 systemImage: nil,
                 prominent: true,
                 action: {

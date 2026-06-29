@@ -6,7 +6,7 @@
 //   1. `SystemPromptTemplates.spawnGuidance(agents:models:)` — the pure
 //      renderer: each tool's block appears ONLY when its pool is non-empty,
 //      and every descriptor field (locality, provider, size/quant, vision,
-//      persona description, and the user's per-model NOTE) reaches the prose.
+//      agent description, and the user's per-model NOTE) reaches the prose.
 //   2. `SpawnDescriptors.resolve(...)` — the `@MainActor` resolver: an
 //      unknown model id falls back to its short name yet still carries the
 //      user's note through to the descriptor (so the note survives even when
@@ -160,7 +160,7 @@ struct SpawnGuidanceTests {
             modelNotes: [bogusModel: "Pinned note for an unknown id"]
         )
 
-        // Unknown agent → name preserved, no persona detail.
+        // Unknown agent → name preserved, no agent detail.
         #expect(resolved.agents.count == 1)
         #expect(resolved.agents.first?.name == bogusAgent)
         #expect(resolved.agents.first?.description == nil)

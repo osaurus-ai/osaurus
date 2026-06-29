@@ -81,10 +81,10 @@ This file is the spec + wiring contract for the current build.
 > single-`spawn`-tool and every `sandbox_reduce` reference below).** The one
 > `spawn(agent, input)` tool is replaced by **two sibling tools** sharing the one
 > `spawn` capability + `TextSubagentKind`: **`spawn_agent(input, agent)`** (run a
-> spawnable persona on ITS prompt + model) and **`spawn_model(input, model)`** (run a
-> bare spawnable model id with NO persona/system prompt). Each tool gates
+> spawnable agent on ITS prompt + model) and **`spawn_model(input, model)`** (run a
+> bare spawnable model id with NO agent/system prompt). Each tool gates
 > **independently** on its own non-empty pool, so an agent with only models sees just
-> `spawn_model`. Alongside the persona pool, agents now have a user-configurable
+> `spawn_model`. Alongside the agent pool, agents now have a user-configurable
 > **spawnable-MODEL pool** — `spawnableModelNames` + a per-model `spawnableModelNotes`
 > sidecar (a `[modelId: note]` map of "when/how to use it" hints) — on both
 > `SubagentConfiguration` (main chat) and `AgentSettings` (custom agents), with the
@@ -170,7 +170,7 @@ Computer Use Subagent (PR #1578).
      stripped in both auto + manual mode; the Default agent never enables it.
 
 Spawn *targets* are validated again at execution time (`TextSubagentKind.resolveModel`):
-`spawn_agent` checks `SubagentToolVisibility.spawnTargetAllowed` (persona names,
+`spawn_agent` checks `SubagentToolVisibility.spawnTargetAllowed` (agent names,
 case-insensitive) and `spawn_model` checks `spawnModelAllowed` (model ids, exact/trimmed),
 each before any residency handoff (reject-before-evict). The Default agent checks the
 global pool, a custom agent its OWN allow-list. A model can never reach an arbitrary
@@ -220,7 +220,7 @@ restore-on-failure (orchestrator never left unloaded).
   because the model is override-aware. It builds on
   `Services/AgentDelegation/ChatResidencyHandoff.swift` (wait-idle → unload resident
   chat models → memoryPreflight → reload). A kind vends `PassthroughHandoff` when no
-  swap is needed (parent/persona model, a remote override, or the same local model
+  swap is needed (parent/agent model, a remote override, or the same local model
   already resident); `image` keeps the passthrough default (its coordinator owns
   image-model residency).
 - **`Subagent/SubagentResidency.swift`** — the **shared residency decision** every
@@ -263,19 +263,19 @@ restore-on-failure (orchestrator never left unloaded).
   `SpawnModelDescriptor` value types + a `@MainActor SpawnDescriptors.resolve` that
   turns the launching agent's spawnable AGENT names + MODEL ids (+ the user's
   per-model notes) into render-ready descriptors (locality, provider, size/quant,
-  vision, persona description, note) for the dynamic guidance block. Pure values
+  vision, agent description, note) for the dynamic guidance block. Pure values
   except the resolver, which reads `AgentManager` + `ModelPickerItemCache`.
 
 ### Dispatch / runners
 - **`Tools/SpawnAgentTool.swift`** — the `spawn_agent(input, agent)` tool →
-  `TextSubagentKind` in `.agent` mode. Resolves the named spawnable Agent persona
+  `TextSubagentKind` in `.agent` mode. Resolves the named spawnable Agent
   (its prompt + model), checks the gates, resolves the model, runs it.
 - **`Tools/SpawnModelTool.swift`** — the `spawn_model(input, model)` tool →
   `TextSubagentKind` in `.model` mode. Runs a bare spawnable model id with NO
-  persona/system prompt, gated by the model pool (`spawnModelAllowed`). Both tools
+  agent/system prompt, gated by the model pool (`spawnModelAllowed`). Both tools
   set `bypassRegistryTimeout` (the nested loop owns its deadline).
 - **`Services/AgentDelegation/AgentSubagentRunner.swift`** — shared bounded text
-  runner: resolve model → handoff (if local) → `AgentToolLoop.run` with the persona's
+  runner: resolve model → handoff (if local) → `AgentToolLoop.run` with the agent's
   prompt/model/tools → compact envelope. Used by `TextSubagentKind` (`local_delegate`
   is gone — its body lived here and is now spawn's only path).
 - `Services/Chat/AgentToolLoop.swift` — the bounded loop driver (reused).
@@ -297,8 +297,8 @@ restore-on-failure (orchestrator never left unloaded).
   model; host permission `.auto`; keeps its own per-action confirm gate). Adopts the
   shared feed/registry + compact-result contract.
 
-### Personas / config / runtime (reused, existing)
-- `Models/Agent/Agent.swift` + `Managers/AgentManager.swift` — persona name/model
+### Agents / config / runtime (reused, existing)
+- `Models/Agent/Agent.swift` + `Managers/AgentManager.swift` — agent name/model
   (local or remote)/prompt/tool-policy; `effectiveModel(for:)`. Per-agent sub-agent
   fields on `AgentSettings` (custom agents): `computerUseEnabled` + `computerUseCeiling`,
   `spawnDelegationEnabled` + `spawnableAgentNames` (its `spawn_agent` allow-list) +
@@ -385,7 +385,7 @@ denoise step counter (k/N). Re-entrancy: a subprocess cannot `spawn`.
 ## 6. Usage
 
 - **User:** open an agent's **Sub-agents** tab to configure its sub-agents end-to-end —
-  toggle `computer_use` / `spawn` / `image`, pick which personas `spawn_agent` may call
+  toggle `computer_use` / `spawn` / `image`, pick which agents `spawn_agent` may call
   AND which models `spawn_model` may run (two selected-first pickers; each spawnable
   model can carry a "when/how to use it" note), set the `spawn` permission + budgets, and
   pick the `image` gen/edit models + permission. The **main chat (Default agent)** has the
@@ -394,9 +394,9 @@ denoise step counter (k/N). Re-entrancy: a subprocess cannot `spawn`.
 - **Model:** sees `spawn_agent` (when an agent pool exists) and/or `spawn_model` (when a
   model pool exists) only when enabled, plus a dynamic **spawn guidance** block listing
   the reachable agents + models (locality/provider/size + the user's note). Call
-  `spawn_agent({"agent": "sparky", "input": "do x y z"})` to delegate to a persona, or
+  `spawn_agent({"agent": "sparky", "input": "do x y z"})` to delegate to an agent, or
   `spawn_model({"model": "qwen3-4b-4bit", "input": "do x y z"})` to run a bare model with
-  no persona. Image: one `image` tool — `image({"prompt": …})` to generate, add
+  no agent. Image: one `image` tool — `image({"prompt": …})` to generate, add
   `source_paths` to edit.
 - **Contributor:** a new KIND = one `SubagentCapability` descriptor in
   `SubagentCapabilityRegistry` (the SSOT that drives gating + the per-agent toggle +

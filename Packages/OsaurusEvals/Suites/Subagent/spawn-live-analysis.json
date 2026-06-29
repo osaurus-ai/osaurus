@@ -2,15 +2,15 @@
   "id": "subagent.spawn-live-analysis",
   "domain": "subagent",
   "label": "Subagent • live spawn analysis digest",
-  "query": "Spawn a persona to produce a short structured analysis.",
-  "notes": "LIVE. Runs the host + TextSubagentKind against an auto-seeded spawnable persona 'sparky', on the RUN model (the evaluator passes modelId as the spawn model override), so spawn is a real cross-model column instead of being pinned to the persona's own model. `seedSpawnablePersona` makes the runner create + allow-list 'sparky' for the run (and tear it down after), so the case runs on any host. Asserts a success spawn_result whose digest is a numbered three-item list — an instruction-following discriminator. SKIPS only when the run model itself isn't ready (e.g. a remote provider with no key).",
+  "query": "Spawn an agent to produce a short structured analysis.",
+  "notes": "LIVE. Runs the host + TextSubagentKind against an auto-seeded spawnable agent 'sparky', on the RUN model (the evaluator passes modelId as the spawn model override), so spawn is a real cross-model column instead of being pinned to the agent's own model. `seedSpawnableAgent` makes the runner create + allow-list 'sparky' for the run (and tear it down after), so the case runs on any host. Asserts a success spawn_result whose digest is a numbered three-item list — an instruction-following discriminator. SKIPS only when the run model itself isn't ready (e.g. a remote provider with no key).",
   "fixtures": {},
   "expect": {
     "subagent": {
       "lane": "spawn",
       "agent": "sparky",
       "input": "List exactly three distinct, concrete use cases for a bounded sub-agent. Output one numbered line per use case and nothing else.",
-      "seedSpawnablePersona": true,
+      "seedSpawnableAgent": true,
       "expectSuccess": true,
       "expectEnvelopeKind": "success",
       "expectResultKind": "spawn_result",

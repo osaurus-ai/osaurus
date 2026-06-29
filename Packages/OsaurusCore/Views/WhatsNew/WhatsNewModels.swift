@@ -28,6 +28,10 @@ public enum WhatsNewAction: Hashable, Sendable {
     case openComputerUseSettings
     /// Open Management → Credits.
     case openCredits
+    /// Open Management → Image Generation.
+    case openImageGeneration
+    /// Open Settings (where the Sub-agents / Spawn card lives).
+    case openSubagentSettings
 }
 
 public struct WhatsNewPage: Identifiable, Hashable, Sendable {
@@ -85,6 +89,7 @@ public enum WhatsNewContent {
         privacyFilter_0_19_0,
         osaurusCloud_0_20_1,
         computerUse_0_20_7,
+        imageAndSpawn_0_21_0,
     ]
 
     /// First-launch announcement for the Privacy Filter feature.
@@ -182,6 +187,49 @@ public enum WhatsNewContent {
                 systemImage: "lock.fill",
                 actionLabel: "Open Computer Use settings",
                 action: .openComputerUseSettings
+            ),
+        ]
+    )
+
+    /// First-launch announcement for 0.21.0's two headline features.
+    /// Two pages each: on-device Image Generation (lineup + the in-chat
+    /// `image` tool, CTA → Image Generation) and Spawn sub-agents (delegate
+    /// to a local/remote model or a saved agent + the RAM-safe handoff,
+    /// CTA → Settings where the Sub-agents card lives).
+    private static let imageAndSpawn_0_21_0 = WhatsNewRelease(
+        version: "0.21.0",
+        pages: [
+            WhatsNewPage(
+                id: "image-generation-0.21.0:summary",
+                title: "Generate images, locally",
+                description:
+                    "Osaurus can now create images entirely on your Mac. Install a local image model — z-image-turbo, FLUX, Qwen-Image, or Ideogram — and generate from a text prompt with control over size, seed, and negative prompts. Nothing leaves your machine.",
+                systemImage: "photo.artframe"
+            ),
+            WhatsNewPage(
+                id: "image-generation-0.21.0:chat",
+                title: "Right inside your chat",
+                description:
+                    "Just ask, and your chat model generates or edits a picture and renders it inline, without leaving the conversation. Hand it a source image to edit instead of starting from scratch.",
+                systemImage: "wand.and.stars",
+                actionLabel: "Open Image Generation",
+                action: .openImageGeneration
+            ),
+            WhatsNewPage(
+                id: "spawn-0.21.0:summary",
+                title: "Spawn a sub-agent",
+                description:
+                    "Your chat can hand a bounded task to another model — local or remote — or to one of your saved agents, and get a compact result back. Perfect for offloading research, coding, or analysis to a specialist without derailing the conversation.",
+                systemImage: "person.2.fill"
+            ),
+            WhatsNewPage(
+                id: "spawn-0.21.0:safety",
+                title: "Memory-safe and in your control",
+                description:
+                    "When a sub-agent runs on a local model, Osaurus unloads your chat model, runs the job, then reloads and continues — so two large models never fight for memory. Off by default: you approve the first spawn, and pick models and permissions per agent.",
+                systemImage: "memorychip",
+                actionLabel: "Open Sub-agent settings",
+                action: .openSubagentSettings
             ),
         ]
     )

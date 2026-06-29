@@ -480,12 +480,12 @@ public struct AgentCapabilities: Sendable, Equatable {
     /// `spawnDelegationEnabled` so an agent can spawn without image (or vice
     /// versa).
     public var imageEnabled: Bool
-    /// Personas this agent may launch via `spawn_agent`. Empty → the
+    /// Agents this agent may launch via `spawn_agent`. Empty → the
     /// `spawn_agent` tool stays hidden (nothing to spawn). The Default agent
     /// ignores this and uses the global
     /// `SubagentConfiguration.spawnableAgentNames` pool instead.
     public var spawnableAgentNames: [String]
-    /// Raw model ids this agent may hand a task to via `spawn_model` (no persona).
+    /// Raw model ids this agent may hand a task to via `spawn_model` (no agent).
     /// Empty → the `spawn_model` tool stays hidden. The Default agent ignores
     /// this and uses the global `SubagentConfiguration.spawnableModelNames` pool.
     public var spawnableModelNames: [String]
@@ -524,7 +524,7 @@ public struct AgentCapabilities: Sendable, Equatable {
     }
 }
 
-// Persona-as-JSON export/import was removed: the share-deeplink flow
+// Agent-as-JSON export/import was removed: the share-deeplink flow
 // (`AgentInvite`) covers cross-device sharing and the in-grid Duplicate
 // action covers local copies. The JSON export couldn't carry memories,
 // schedules, watchers, paired remote keys, or the sandbox container, so
@@ -755,7 +755,7 @@ public struct AgentSettings: Codable, Sendable, Equatable {
     public var computerUseCeiling: AutonomyCeiling?
     /// Per-agent opt-in for the `spawn` tool. Default off; gated
     /// authoritatively in `resolveTools` (stripped unless enabled AND the agent
-    /// has at least one spawnable persona). The global `SubagentConfiguration`
+    /// has at least one spawnable agent). The global `SubagentConfiguration`
     /// still supplies the system defaults (budgets, RAM safety, permissions);
     /// this is the per-agent enable.
     public var spawnDelegationEnabled: Bool
@@ -764,12 +764,12 @@ public struct AgentSettings: Codable, Sendable, Equatable {
     /// The Default agent ignores this and uses the global image enable in
     /// `SubagentConfiguration`.
     public var imageEnabled: Bool
-    /// Personas this agent may launch via `spawn_agent` (per-agent allow-list).
+    /// Agents this agent may launch via `spawn_agent` (per-agent allow-list).
     /// Empty → the `spawn_agent` tool stays hidden (nothing to spawn). The
     /// Default agent ignores this and uses the global pool in
     /// `SubagentConfiguration`.
     public var spawnableAgentNames: [String]
-    /// Raw model ids this agent may hand a task to via `spawn_model` (no persona;
+    /// Raw model ids this agent may hand a task to via `spawn_model` (no agent;
     /// per-agent allow-list). Empty → the `spawn_model` tool stays hidden. The
     /// Default agent ignores this and uses the global
     /// `SubagentConfiguration.spawnableModelNames` pool.
@@ -796,7 +796,7 @@ public struct AgentSettings: Codable, Sendable, Equatable {
     /// Per-agent model override for subagent kinds, keyed by capability id
     /// (`"computer_use"`, `"spawn"`). An entry supersedes the
     /// kind's default model source (the parent agent's model for computer_use;
-    /// the chosen persona's model for spawn); an absent entry
+    /// the chosen agent's model for spawn); an absent entry
     /// means "inherit". Stored as a generic `[capabilityId: modelId]` map — like
     /// `subagentPermissions` — so a new kind needs no new field. The Default
     /// agent uses the global `SubagentConfiguration.subagentModelOverrides`.

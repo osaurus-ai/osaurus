@@ -1352,7 +1352,7 @@ struct DiscordConnectionTests {
                                 allowUnscopedSpaces: true,
                                 requireProviderEventId: false
                             )
-                        ),
+                        )
                     ]
                 )
             )
@@ -1417,7 +1417,7 @@ struct DiscordConnectionTests {
                                 senderAllowlist: ["user-1"],
                                 roomAllowlist: ["alerts"]
                             )
-                        ),
+                        )
                     ]
                 )
             )
@@ -1463,7 +1463,7 @@ struct DiscordConnectionTests {
                                 allowBotMessages: true,
                                 allowSelfMessages: true
                             )
-                        ),
+                        )
                     ]
                 )
             )

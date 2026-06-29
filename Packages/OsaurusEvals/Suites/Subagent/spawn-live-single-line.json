@@ -2,15 +2,15 @@
   "id": "subagent.spawn-live-single-line",
   "domain": "subagent",
   "label": "Subagent • live spawn exact one-line output",
-  "query": "Spawn a persona and have it follow a strict output format.",
-  "notes": "LIVE. Runs the host + TextSubagentKind against an auto-seeded spawnable persona 'sparky' on the RUN model (the evaluator passes modelId as the spawn override), so spawn is a real cross-model column. seedSpawnablePersona makes the runner create + allow-list 'sparky' for the run and tear it down after. The input demands a strict single-token reply — an instruction-following discriminator. SKIPS only when the run model isn't ready.",
+  "query": "Spawn an agent and have it follow a strict output format.",
+  "notes": "LIVE. Runs the host + TextSubagentKind against an auto-seeded spawnable agent 'sparky' on the RUN model (the evaluator passes modelId as the spawn override), so spawn is a real cross-model column. seedSpawnableAgent makes the runner create + allow-list 'sparky' for the run and tear it down after. The input demands a strict single-token reply — an instruction-following discriminator. SKIPS only when the run model isn't ready.",
   "fixtures": {},
   "expect": {
     "subagent": {
       "lane": "spawn",
       "agent": "sparky",
       "input": "Reply with exactly one line containing only the single word READY in uppercase. Output nothing else — no punctuation, no explanation.",
-      "seedSpawnablePersona": true,
+      "seedSpawnableAgent": true,
       "expectSuccess": true,
       "expectEnvelopeKind": "success",
       "expectResultKind": "spawn_result",

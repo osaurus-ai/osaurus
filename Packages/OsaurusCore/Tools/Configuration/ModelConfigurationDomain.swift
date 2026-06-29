@@ -60,14 +60,14 @@ public final class OsaurusModelTool: OsaurusTool, PermissionedTool, @unchecked S
                 "type": .string("string"),
                 "description": .string(
                     "Hugging Face repo id. Required for download; also accepted to "
-                    + "identify the model for cancel / delete."
+                        + "identify the model for cancel / delete."
                 ),
             ]),
             "id": .object([
                 "type": .string("string"),
                 "description": .string(
                     "Model id (the repo path used to download). Identifies the model "
-                    + "for cancel / delete; `repo_id` is accepted as an equivalent."
+                        + "for cancel / delete; `repo_id` is accepted as an equivalent."
                 ),
             ]),
         ]),

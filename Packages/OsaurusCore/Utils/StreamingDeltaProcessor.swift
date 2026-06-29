@@ -274,7 +274,7 @@ final class StreamingDeltaProcessor {
     /// retain every consumed character.
     private func consume(_ n: Int) -> String {
         let end = min(bufferHead + n, deltaBuffer.count)
-        let chunk = String(deltaBuffer[bufferHead..<end])
+        let chunk = String(deltaBuffer[bufferHead ..< end])
         bufferHead = end
         if bufferHead == deltaBuffer.count { clearBuffer() }
         return chunk

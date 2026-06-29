@@ -13,9 +13,9 @@
 //      seam the whole sub-agent family rides on. This lane also runs as
 //      eval-kit unit tests (mirror `ComputerUseLoopEvalTests`).
 //    - spawn: live. The real `spawn_agent` path (host + `TextSubagentKind`)
-//      against a user-configured spawnable persona — the text-subagent path.
+//      against a user-configured spawnable agent — the text-subagent path.
 //    - spawn_model: live. The real `spawn_model` path (host + `TextSubagentKind`)
-//      against a bare spawnable model id with NO persona/system prompt.
+//      against a bare spawnable model id with NO agent/system prompt.
 //    - spawn_model_residency: live. The PRODUCTION residency path (no eval
 //      passthrough seam) with an independent orchestrator + target, proving the
 //      real unload/reload across all four directions (local↔local, local↔remote,
@@ -24,7 +24,7 @@
 //      `sourcePaths` non-empty selects the edit path, empty selects generate.
 //
 //  Live lanes SKIP (not fail) when the host can't satisfy a happy-path case
-//  (no spawnable persona, image delegation off, model not ready) — same
+//  (no spawnable agent, image delegation off, model not ready) — same
 //  `requirePlugins`-style semantics the other domains use so a report shared
 //  across machines reads "didn't apply" rather than "regressed".
 //
@@ -138,13 +138,13 @@ extension EvalRunner {
                 modelId: modelId
             )
         }
-        // Pass the run `modelId` so the spawned persona runs on it (instead of
+        // Pass the run `modelId` so the spawned agent runs on it (instead of
         // its own pinned model), making `spawn` a real cross-model column.
-        // Positive cases opt into persona seeding (so they RUN anywhere across
+        // Positive cases opt into agent seeding (so they RUN anywhere across
         // models); negative guards (not-spawnable) must NOT be seeded.
         let transcript: SubagentJobTranscript
-        if exp.seedSpawnablePersona == true {
-            transcript = await SubagentJobEvaluator.withSpawnablePersona(name: agent) {
+        if exp.seedSpawnableAgent == true {
+            transcript = await SubagentJobEvaluator.withSpawnableAgent(name: agent) {
                 await SubagentJobEvaluator.runSpawn(agent: agent, input: input, modelId: modelId)
             }
         } else {
@@ -190,7 +190,12 @@ extension EvalRunner {
             transcript = await SubagentJobEvaluator.runSpawnModel(model: target, input: input)
         }
         return finishLive(
-            testCase, exp: exp, transcript: transcript, lane: "spawn_model", modelId: modelId, label: label
+            testCase,
+            exp: exp,
+            transcript: transcript,
+            lane: "spawn_model",
+            modelId: modelId,
+            label: label
         )
     }
 
@@ -238,8 +243,12 @@ extension EvalRunner {
             input: input
         )
         return finishLive(
-            testCase, exp: exp, transcript: transcript, lane: "spawn_model_residency",
-            modelId: modelId, label: label
+            testCase,
+            exp: exp,
+            transcript: transcript,
+            lane: "spawn_model_residency",
+            modelId: modelId,
+            label: label
         )
     }
 
@@ -404,7 +413,7 @@ extension EvalRunner {
     /// Convert a live-lane transcript into a report, applying the
     /// availability-skip rule: when the run failed with a host-availability
     /// envelope (`rejected`/`unavailable`/`user_denied`) that the case did NOT
-    /// ask for, SKIP rather than fail — a machine without a spawnable persona,
+    /// ask for, SKIP rather than fail — a machine without a spawnable agent,
     /// image delegation, or a ready model reads as "didn't apply" instead of
     /// "regressed" (same semantics as `requirePlugins`). A negative case that
     /// EXPECTS exactly that envelope (e.g. "delegation off → rejected") still

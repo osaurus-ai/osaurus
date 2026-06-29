@@ -127,7 +127,8 @@ public struct ClaudeMarketplaceImportabilityCatalog: Sendable {
             reason = "No importable skills, agents, commands, or MCP servers were found in the bundled catalog."
         } else if summary == nil {
             status = .requiresReview
-            reason = "This entry is not in the bundled importability catalog yet, so Osaurus cannot preview what would be installed."
+            reason =
+                "This entry is not in the bundled importability catalog yet, so Osaurus cannot preview what would be installed."
         } else {
             status = .importable
             reason = "The bundled catalog found importable plugin components."
@@ -370,7 +371,8 @@ public struct ClaudeMarketplaceTrustPreview: Sendable, Hashable {
         case "lspServers":
             return "LSP servers"
         default:
-            return component
+            return
+                component
                 .replacingOccurrences(of: "-", with: " ")
                 .split(separator: " ")
                 .map { $0.prefix(1).uppercased() + $0.dropFirst() }

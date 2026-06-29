@@ -54,6 +54,12 @@ struct AgentsView: View {
     @State private var hasAppeared = false
     @State private var successMessage: String?
     @State private var consumedDeeplinkAgentId: UUID?
+    /// One-shot inner-tab target paired with an agent id, set by the
+    /// `.agentDetailDeeplink` handler so the detail view opens on a specific
+    /// tab (e.g. Sub-agents). Applied at `AgentDetailView` construction so it
+    /// survives a cold window open; matched on id so it only affects the
+    /// deep-linked agent, and cleared on back.
+    @State private var deeplinkTab: (agentId: UUID, tab: DetailTab)?
 
     init(deeplinkAgentId: UUID? = nil) {
         self.deeplinkAgentId = deeplinkAgentId
@@ -88,7 +94,9 @@ struct AgentsView: View {
                 // state reloads via onAppear without manual onChange wiring.
                 AgentDetailView(
                     agent: agent,
+                    initialTab: deeplinkTab?.agentId == agent.id ? deeplinkTab?.tab.rawValue : nil,
                     onBack: {
+                        deeplinkTab = nil
                         withAnimation(Self.navTransition) { selectedAgent = nil }
                     },
                     onDelete: { p in
@@ -197,6 +205,15 @@ struct AgentsView: View {
                 let agentId = info["agentId"] as? UUID,
                 let target = agentManager.agents.first(where: { $0.id == agentId })
             else { return }
+            // Carry an optional inner-tab target so the detail opens on the
+            // requested tab. Applied at construction below (cold open) and by
+            // `AgentDetailView`'s own deeplink handler (warm, already mounted).
+            if let tabRaw = info["tab"] as? String,
+                let tab = DetailTab(rawValue: tabRaw),
+                DetailTab.allTabsForAgent(target).contains(tab)
+            {
+                deeplinkTab = (agentId, tab)
+            }
             withAnimation(Self.navTransition) {
                 selectedRemoteAgentId = nil
                 selectedAgent = target
@@ -945,6 +962,11 @@ struct AgentDetailView: View {
 
     init(
         agent: Agent,
+        // Raw value of a `DetailTab` (file-private), kept stringly-typed so this
+        // internal init — constructed cross-file (e.g. `MemoryView`) — doesn't
+        // expose a private type. Deep-links already carry the tab as a raw
+        // string; unknown values fall back to `.configure`.
+        initialTab: String? = nil,
         onBack: @escaping () -> Void,
         onDelete: @escaping (Agent) -> Void,
         onSwitchAgent: @escaping (Agent) -> Void,
@@ -957,6 +979,11 @@ struct AgentDetailView: View {
         self.onSwitchAgent = onSwitchAgent
         self.onSwitchRemoteAgent = onSwitchRemoteAgent
         self.showSuccess = showSuccess
+        // Seed the inner tab at construction so a deep-link (e.g. the What's New
+        // "Open Sub-agent settings" CTA) lands on the right tab even on a cold
+        // window open, where a post-mount notification would race the view.
+        let resolvedInitialTab = initialTab.flatMap(DetailTab.init(rawValue:)) ?? .configure
+        _selectedTab = State(initialValue: .builtIn(resolvedInitialTab))
     }
 
     // MARK: - Editable State
@@ -3791,7 +3818,7 @@ struct AgentDetailView: View {
     }
 
     /// Per-agent `spawn_model` allow-list: bare model ids this agent may hand a
-    /// task to directly (no persona), shown selected-first as rows with a
+    /// task to directly (no agent), shown selected-first as rows with a
     /// local/remote badge and an inline "when to use" note, plus a searchable,
     /// source-grouped "Add" popover. Notes are pruned to the pool on save.
     private var spawnableModelsPicker: some View {

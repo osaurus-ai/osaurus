@@ -114,7 +114,8 @@ public struct ProviderReplayDiagnosticBundle: Sendable, Equatable {
 
     private func formatHeaders(_ headers: [ProviderReplayDiagnosticHeader]) -> String {
         guard !headers.isEmpty else { return "none" }
-        return headers
+        return
+            headers
             .map { "\($0.name)=\($0.value)" }
             .joined(separator: "; ")
     }
@@ -206,7 +207,10 @@ enum ProviderDiagnosticRedactor {
                 #"(?i)\b(access_token|refresh_token|id_token|code_verifier|code|verifier|client_secret|api_key|apikey|password|secret|token|key)\s*=\s*([^&\s,;}]+)"#,
                 "$1=***"
             ),
-            (#"(?i)\b(api[-_]?key|x[-_]?api[-_]?key|x[-_]?goog[-_]?api[-_]?key|password|secret|token|client_secret)\s*:\s*([^\s,;}]+)"#, "$1=***"),
+            (
+                #"(?i)\b(api[-_]?key|x[-_]?api[-_]?key|x[-_]?goog[-_]?api[-_]?key|password|secret|token|client_secret)\s*:\s*([^\s,;}]+)"#,
+                "$1=***"
+            ),
             (#"\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b"#, "jwt=***"),
             (#"\bsk-[A-Za-z0-9._-]{8,}\b"#, "sk-***"),
             (#"\bosk-[A-Za-z0-9._-]{8,}\b"#, "osk-***"),
@@ -220,7 +224,8 @@ enum ProviderDiagnosticRedactor {
             )
         }
 
-        value = value
+        value =
+            value
             .replacingOccurrences(of: "\r", with: " ")
             .replacingOccurrences(of: "\n", with: " ")
             .replacingOccurrences(of: "\t", with: " ")

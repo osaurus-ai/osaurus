@@ -5,10 +5,10 @@
 //  The text/coding/analysis sub-agent kind behind the spawn family. It serves
 //  BOTH spawn tools through one bounded text loop:
 //
-//   • `spawn_agent` → `.agent(name:)`: resolve a user-configured spawnable Agent
-//     persona and run on ITS system prompt + model.
+//   • `spawn_agent` → `.agent(name:)`: resolve a user-configured spawnable
+//     Agent and run on ITS system prompt + model.
 //   • `spawn_model` → `.model(id:)`: run on a bare spawnable model id with NO
-//     persona/system prompt attached.
+//     agent/system prompt attached.
 //
 //  Either way it runs through the shared host (`SubagentSession`), so the
 //  recursion guard, live feed, and the optional residency handoff are shared,
@@ -33,9 +33,9 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
     /// each — there is no agent+model combination, so the contract stays a single
     /// required target per tool.
     enum Target: Sendable {
-        /// `spawn_agent`: a spawnable persona by name (its prompt + model).
+        /// `spawn_agent`: a spawnable agent by name (its prompt + model).
         case agent(name: String)
-        /// `spawn_model`: a bare spawnable model id (no persona).
+        /// `spawn_model`: a bare spawnable model id (no agent).
         case model(id: String)
     }
 
@@ -44,7 +44,7 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
     /// Eval seam (nil in production): force the run model and keep residency
     /// passthrough, so a live spawn lane is a real cross-model column in the
     /// local-vs-frontier matrix without depending on GPU residency. In `.agent`
-    /// mode the persona still resolves (only its effective model is overridden);
+    /// mode the agent still resolves (only its effective model is overridden);
     /// in `.model` mode it forces the run model after the pool gate. The target
     /// must still exist and be spawnable — the allow-list gate runs first.
     private let modelOverride: String?
@@ -53,15 +53,15 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
     private static let digestMaxChars = 8_000
 
     // Resolved up front in `resolveModel`, read by permission/handoff/run.
-    private var personaName: String = ""
-    private var personaId: UUID?
+    private var resolvedAgentName: String = ""
+    private var resolvedAgentId: UUID?
     private var systemPrompt: String = ""
     private var budgets = SubagentBudgets()
     /// The residency plan resolved at `resolveModel` time (reject-before-evict),
     /// consumed by `makeHandoff()`. `.none` when no swap is needed.
     private var residencyPlan: ResidencyPlan = .none
 
-    /// `spawn_agent` entry point (persona context). The optional `modelOverride`
+    /// `spawn_agent` entry point (agent context). The optional `modelOverride`
     /// is the eval seam.
     init(agentName: String, input: String, modelOverride: String? = nil) {
         self.target = .agent(name: agentName)
@@ -69,7 +69,7 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
         self.modelOverride = modelOverride
     }
 
-    /// `spawn_model` entry point (bare model, no persona). The optional
+    /// `spawn_model` entry point (bare model, no agent). The optional
     /// `modelOverride` is the eval seam (forces the run model + residency
     /// passthrough); production passes nil so the real residency decision runs.
     init(model: String, input: String, modelOverride: String? = nil) {
@@ -79,11 +79,11 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
     }
 
     /// Human label of the spawn target for error/result copy: the resolved
-    /// persona name (or the requested name pre-resolve) in agent mode, the model
+    /// agent name (or the requested name pre-resolve) in agent mode, the model
     /// id in model mode.
     private var targetLabel: String {
         switch target {
-        case .agent(let name): return personaName.isEmpty ? name : personaName
+        case .agent(let name): return resolvedAgentName.isEmpty ? name : resolvedAgentName
         case .model(let id): return id
         }
     }
@@ -146,10 +146,10 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
         }
     }
 
-    /// `spawn_agent`: gate the persona allow-list, resolve the persona (its
+    /// `spawn_agent`: gate the agent allow-list, resolve the agent (its
     /// system prompt becomes the seed system message), and resolve its model
     /// through the shared precedence (eval seam → per-agent override → the
-    /// persona's own model) + live residency decision.
+    /// target agent's own model) + live residency decision.
     private func resolveAgentTarget(
         _ agentName: String,
         scope: SubagentScope,
@@ -171,24 +171,24 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
             )
         }
 
-        let persona = await MainActor.run {
+        let agent = await MainActor.run {
             AgentManager.shared.agents.first {
                 $0.name.caseInsensitiveCompare(agentName) == .orderedSame
             }
         }
-        guard let persona else {
+        guard let agent else {
             throw SubagentError.unavailable("Agent '\(agentName)' not found.")
         }
 
-        self.personaName = persona.name
-        self.personaId = persona.id
-        self.systemPrompt = persona.systemPrompt
+        self.resolvedAgentName = agent.name
+        self.resolvedAgentId = agent.id
+        self.systemPrompt = agent.systemPrompt
 
         // One shared path for precedence (eval seam → per-agent `spawn` override
-        // → the persona's own model), the availability fallback, and the live
+        // → the target agent's own model), the availability fallback, and the live
         // residency decision (reject-before-evict). The override is read from the
-        // LAUNCHING agent (`scope.agentId`); the default is the persona's model.
-        let personaId = persona.id
+        // LAUNCHING agent (`scope.agentId`); the default is the target agent's model.
+        let targetAgentId = agent.id
         let resolved = try await SubagentModelResolution.resolve(
             capabilityId: capability.id,
             agentId: scope.agentId,
@@ -198,13 +198,13 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
                 "Spawning a different local agent requires \"Local Orchestrator Handoff\" enabled "
                 + "in Settings → Sub-agents (so the chat model can unload to make room).",
             unavailableMessage: "Agent '\(agentName)' has no model configured.",
-            defaultModel: { AgentManager.shared.effectiveModel(for: personaId) }
+            defaultModel: { AgentManager.shared.effectiveModel(for: targetAgentId) }
         )
         self.residencyPlan = resolved.decision.plan
         return ResolvedModel(name: resolved.model, id: nil, isLocal: resolved.decision.isLocal)
     }
 
-    /// `spawn_model`: gate the model allow-list, then run with NO persona (empty
+    /// `spawn_model`: gate the model allow-list, then run with NO agent (empty
     /// system prompt). The requested id is the explicit run model — it ranks
     /// above any per-agent override and still flows through the live residency
     /// decision (local target evicts, remote does not).
@@ -229,7 +229,7 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
             )
         }
 
-        // No persona: the bare model runs the task with just the user input.
+        // No agent: the bare model runs the task with just the user input.
         self.systemPrompt = ""
 
         // Production: `modelOverride` is nil, so `requestedModel` is the explicit
@@ -273,7 +273,7 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
         let deadline = Date().addingTimeInterval(TimeInterval(budgets.maxElapsedSeconds))
         let started = Date()
         let seed = seedMessages(systemPrompt: systemPrompt, input: input)
-        let sessionId = "spawn-\((personaId ?? UUID()).uuidString)-\(UUID().uuidString)"
+        let sessionId = "spawn-\((resolvedAgentId ?? UUID()).uuidString)-\(UUID().uuidString)"
 
         let result = try await AgentSubagentRunner.run(
             modelName: resolved.name,
@@ -299,7 +299,7 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
                 digest.count > Self.digestMaxChars
                 ? String(digest.prefix(Self.digestMaxChars)) + "\n[digest truncated]"
                 : digest
-            // `agent` is only meaningful in persona mode; model-only spawns omit
+            // `agent` is only meaningful in agent mode; model-only spawns omit
             // it so the parent's envelope isn't littered with an empty field.
             var payload: [String: Any] = [
                 "kind": "spawn_result",
@@ -309,7 +309,7 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
                 "elapsed_seconds": elapsed,
                 "handoff": residencyPlan.shouldUnload,
             ]
-            if case .agent = target { payload["agent"] = personaName }
+            if case .agent = target { payload["agent"] = resolvedAgentName }
             return SubagentResult(payload: payload, summary: capped)
         case .cancelled:
             throw SubagentError.timedOut(

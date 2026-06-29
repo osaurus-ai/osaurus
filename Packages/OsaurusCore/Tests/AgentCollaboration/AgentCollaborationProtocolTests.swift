@@ -95,11 +95,13 @@ struct AgentCollaborationProtocolTests {
         )
 
         #expect(!result.isCompatible)
-        #expect(result.missingRequiredCapabilities == [
-            "collaboration.handoff",
-            "collaboration.reply",
-            "collaboration.request",
-        ])
+        #expect(
+            result.missingRequiredCapabilities == [
+                "collaboration.handoff",
+                "collaboration.reply",
+                "collaboration.request",
+            ]
+        )
     }
 
     @Test("handoff lifecycle preserves correlation and reply provenance")

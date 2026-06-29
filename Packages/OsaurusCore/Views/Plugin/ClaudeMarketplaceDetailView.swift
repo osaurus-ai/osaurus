@@ -549,24 +549,24 @@ struct ClaudeMarketplaceDetailView: View {
         Button(
             action: { NSWorkspace.shared.open(url) },
             label: {
-            HStack(spacing: 8) {
-                Image(systemName: icon)
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.accentColor)
-                Text(title, bundle: .module)
-                    .font(.system(size: 12.5))
-                    .foregroundColor(theme.primaryText)
-                Spacer()
-                Image(systemName: "arrow.up.right.square")
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(theme.primaryBackground.opacity(0.45))
-            )
+                HStack(spacing: 8) {
+                    Image(systemName: icon)
+                        .font(.system(size: 12))
+                        .foregroundColor(theme.accentColor)
+                    Text(title, bundle: .module)
+                        .font(.system(size: 12.5))
+                        .foregroundColor(theme.primaryText)
+                    Spacer()
+                    Image(systemName: "arrow.up.right.square")
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.tertiaryText)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(theme.primaryBackground.opacity(0.45))
+                )
             }
         )
         .buttonStyle(PlainButtonStyle())

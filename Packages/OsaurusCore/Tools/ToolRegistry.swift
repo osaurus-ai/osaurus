@@ -203,7 +203,7 @@ public final class ToolRegistry: ObservableObject {
             // Inline data visualization rendered as a chart card.
             RenderChartTool(),
             // Text-delegation family: `spawn_agent` hands a task to a configured
-            // persona (its prompt + model); `spawn_model` hands a task to a bare
+            // agent (its prompt + model); `spawn_model` hands a task to a bare
             // spawnable model id. Both gate per-agent (their pools) in
             // `SystemPromptComposer.resolveTools` via `SubagentToolVisibility`.
             SpawnAgentTool(),

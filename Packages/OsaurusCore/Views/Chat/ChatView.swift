@@ -5379,6 +5379,23 @@ struct ChatView: View {
                         AppDelegate.shared?.showManagementWindow(initialTab: .computerUse)
                     case .openCredits:
                         AppDelegate.shared?.showManagementWindow(initialTab: .credits)
+                    case .openImageGeneration:
+                        AppDelegate.shared?.showManagementWindow(initialTab: .imageGeneration)
+                    case .openSubagentSettings:
+                        // Land on the first custom (non-built-in) agent's
+                        // Sub-agents tab (per-agent spawn / image config). With
+                        // no custom agent yet, just open the Agents grid so the
+                        // user can create one.
+                        if let subagentAgentId = AgentManager.shared.agents
+                            .first(where: { !$0.isBuiltIn })?.id
+                        {
+                            AppDelegate.shared?.showAgentDetail(
+                                agentId: subagentAgentId,
+                                tab: "subagents"
+                            )
+                        } else {
+                            AppDelegate.shared?.showManagementWindow(initialTab: .agents)
+                        }
                     }
                 }
             )

@@ -702,7 +702,7 @@ public enum SystemPromptTemplates {
     /// guidance, this enumerates the launching agent's ACTUAL spawnable targets
     /// (resolved into `SpawnAgentDescriptor` / `SpawnModelDescriptor`) so the
     /// model sees what `spawn_agent` / `spawn_model` can reach — names, locality,
-    /// provider, size/quant, vision, the persona description, and the user's
+    /// provider, size/quant, vision, the agent description, and the user's
     /// per-model note. Each tool's block is included only when that tool is
     /// available (its pool is non-empty), so the prompt never advertises a spawn
     /// path the model can't invoke. Editing a pool re-renders this block (a
@@ -719,14 +719,14 @@ public enum SystemPromptTemplates {
         )
         if !agents.isEmpty {
             lines.append(
-                "- `spawn_agent(input, agent)` runs the task on a configured persona (its own system "
+                "- `spawn_agent(input, agent)` runs the task on a configured agent (its own system "
                     + "prompt + model). Available agents:"
             )
             for agent in agents { lines.append("  - " + agentLine(agent)) }
         }
         if !models.isEmpty {
             lines.append(
-                "- `spawn_model(input, model)` runs the task on a bare model id, no persona attached. "
+                "- `spawn_model(input, model)` runs the task on a bare model id, no agent attached. "
                     + "Available models:"
             )
             for model in models { lines.append("  - " + modelLine(model)) }

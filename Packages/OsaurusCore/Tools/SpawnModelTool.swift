@@ -3,11 +3,11 @@
 //  osaurus
 //
 //  `spawn_model(input, model)` — delegate a task directly to a model the user
-//  has marked spawnable (local or remote), with NO persona/system prompt
+//  has marked spawnable (local or remote), with NO agent/system prompt
 //  attached. Runs a bounded text subagent on that model (with the
 //  local-orchestrator residency handoff when the target is local and clashes
 //  with the resident chat model) and returns only a compact digest. Sibling of
-//  `spawn_agent`, which delegates to a configured persona. Default OFF; each
+//  `spawn_agent`, which delegates to a configured agent. Default OFF; each
 //  agent opts in from its Sub-agents tab (`spawnableModelNames`). See
 //  docs/SUBAGENT_PORTABLE_DESIGN.md.
 //
@@ -18,9 +18,9 @@ public final class SpawnModelTool: OsaurusTool, @unchecked Sendable {
     public let name = SubagentCapabilityRegistry.spawnModelToolName
     public let description =
         "Delegate a bounded subtask directly to a model the user has marked spawnable (local or remote), "
-        + "with no persona or system prompt attached, and get back only a compact result digest — the "
+        + "with no agent or system prompt attached, and get back only a compact result digest — the "
         + "subagent transcript is not returned. The model id must be in this agent's spawnable model list. "
-        + "Use `spawn_agent` instead to hand a task to a configured persona (its own prompt + model)."
+        + "Use `spawn_agent` instead to hand a task to a configured agent (its own prompt + model)."
 
     public let parameters: JSONValue? = .object([
         "type": .string("object"),

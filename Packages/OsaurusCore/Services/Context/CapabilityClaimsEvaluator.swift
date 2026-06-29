@@ -483,7 +483,7 @@ public enum CapabilityClaimsEvaluator {
         // looping on its own teardown.
         let maxJudgeAttempts = 3
         var lastError: Error?
-        for attempt in 1...maxJudgeAttempts {
+        for attempt in 1 ... maxJudgeAttempts {
             do {
                 let response = try await engine.completeChat(request: request)
                 let raw = response.choices.first?.message.content ?? ""

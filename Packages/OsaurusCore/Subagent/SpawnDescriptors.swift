@@ -14,12 +14,12 @@
 
 import Foundation
 
-/// One spawnable persona (`spawn_agent` target), resolved for the prompt.
+/// One spawnable agent (`spawn_agent` target), resolved for the prompt.
 public struct SpawnAgentDescriptor: Sendable, Equatable {
     public let name: String
-    /// The persona's own description (trimmed; nil when blank).
+    /// The agent's own description (trimmed; nil when blank).
     public let description: String?
-    /// The persona's effective model id (nil when none resolved).
+    /// The agent's effective model id (nil when none resolved).
     public let modelId: String?
     /// Locality of `modelId`: `true` local, `false` remote, nil when unknown
     /// (cold picker cache / model not currently present).
@@ -81,8 +81,8 @@ public struct SpawnModelDescriptor: Sendable, Equatable {
 /// `AgentManager` / `ModelPickerItemCache` / `ModelManager`.
 public enum SpawnDescriptors {
     /// Resolve the launching agent's spawnable pools into descriptors, preserving
-    /// pool order. Agent names that no longer match a persona are still listed by
-    /// name (so the prompt reflects the user's configured pool) but carry no
+    /// pool order. Agent names that no longer match a known agent are still listed
+    /// by name (so the prompt reflects the user's configured pool) but carry no
     /// description/model. Model ids absent from the picker cache fall back to a
     /// minimal descriptor (id + best-effort locality + note).
     @MainActor
@@ -98,10 +98,10 @@ public enum SpawnDescriptors {
 
     @MainActor
     private static func resolveAgent(_ name: String) -> SpawnAgentDescriptor {
-        let persona = AgentManager.shared.agents.first {
+        let agent = AgentManager.shared.agents.first {
             $0.name.caseInsensitiveCompare(name) == .orderedSame
         }
-        guard let persona else {
+        guard let agent else {
             return SpawnAgentDescriptor(
                 name: name,
                 description: nil,
@@ -110,11 +110,11 @@ public enum SpawnDescriptors {
                 providerName: nil
             )
         }
-        let modelId = AgentManager.shared.effectiveModel(for: persona.id)
+        let modelId = AgentManager.shared.effectiveModel(for: agent.id)
         let locality = classify(modelId: modelId)
-        let description = persona.description.trimmingCharacters(in: .whitespacesAndNewlines)
+        let description = agent.description.trimmingCharacters(in: .whitespacesAndNewlines)
         return SpawnAgentDescriptor(
-            name: persona.name,
+            name: agent.name,
             description: description.isEmpty ? nil : description,
             modelId: locality.normalizedId,
             isLocal: locality.isLocal,

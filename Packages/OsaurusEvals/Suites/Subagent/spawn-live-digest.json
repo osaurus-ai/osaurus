@@ -1,16 +1,16 @@
 {
   "id": "subagent.spawn-live-digest",
   "domain": "subagent",
-  "label": "Subagent • live spawn persona digest",
-  "query": "Spawn a persona and get back a compact digest.",
-  "notes": "LIVE. Runs the host + TextSubagentKind against an auto-seeded spawnable persona named 'sparky', on the RUN model (model override), so the spawn text path is a real cross-model column. `seedSpawnablePersona` creates + allow-lists 'sparky' for the run and tears it down after, so it runs on any host. SKIPS only when the run model itself isn't ready (e.g. a remote provider with no key).",
+  "label": "Subagent • live spawn agent digest",
+  "query": "Spawn an agent and get back a compact digest.",
+  "notes": "LIVE. Runs the host + TextSubagentKind against an auto-seeded spawnable agent named 'sparky', on the RUN model (model override), so the spawn text path is a real cross-model column. `seedSpawnableAgent` creates + allow-lists 'sparky' for the run and tears it down after, so it runs on any host. SKIPS only when the run model itself isn't ready (e.g. a remote provider with no key).",
   "fixtures": {},
   "expect": {
     "subagent": {
       "lane": "spawn",
       "agent": "sparky",
       "input": "In one sentence, summarize what a bounded sub-agent is.",
-      "seedSpawnablePersona": true,
+      "seedSpawnableAgent": true,
       "expectSuccess": true,
       "expectEnvelopeKind": "success",
       "expectResultKind": "spawn_result",

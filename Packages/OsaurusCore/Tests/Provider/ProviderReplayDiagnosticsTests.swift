@@ -41,7 +41,8 @@ struct ProviderReplayDiagnosticsTests {
             )
         )
         let body = Data(
-            #"{"error":{"message":"bad key sk-response-secret-12345","refresh_token":"response-refresh","token":"response-token"}}"#.utf8
+            #"{"error":{"message":"bad key sk-response-secret-12345","refresh_token":"response-refresh","token":"response-token"}}"#
+                .utf8
         )
 
         let bundle = ProviderReplayDiagnosticBundle(

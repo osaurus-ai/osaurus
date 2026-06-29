@@ -138,9 +138,9 @@ configurable primitive. Almost everything needed already exists.
 > `sandbox_reduce` reference above + below).** The `spawn` capability now vends **two
 > sibling tools** off one `TextSubagentKind` (a `Target` enum), each with a single
 > required target so the JSON Schema is enforceable (no unrepresentable "one of agent
-> OR model"): **`spawn_agent(input, agent)`** runs a spawnable persona on ITS prompt +
+> OR model"): **`spawn_agent(input, agent)`** runs a spawnable agent on ITS prompt +
 > model (the original behavior), and **`spawn_model(input, model)`** runs a bare
-> spawnable model id with NO persona/system prompt — the "delegate to a model, local
+> spawnable model id with NO agent/system prompt — the "delegate to a model, local
 > or remote, in any direction" half of the original direction. Each tool is gated
 > **independently** on its own non-empty pool (`SubagentToolVisibility.spawnAgentAvailable`
 > / `spawnModelAvailable`; execution-time `spawnTargetAllowed` / `spawnModelAllowed`,

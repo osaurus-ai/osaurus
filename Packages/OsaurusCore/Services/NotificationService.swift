@@ -187,22 +187,15 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
         {
             let viewRef = info["viewRef"] as? String
             Task { @MainActor in
-                AppDelegate.shared?.showManagementWindow(initialTab: .agents)
-                // The Notification.Name is consumed by AgentsView /
-                // AgentDetailView once the management window is in
-                // place. A tiny dispatch_after gives the management
-                // hierarchy time to mount before the notification
-                // fires — without it, the listening views haven't
-                // attached their .onReceive yet on cold-launch.
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                    var payload: [String: Any] = ["agentId": agentId, "tab": "views"]
-                    if let viewRef, !viewRef.isEmpty { payload["viewRef"] = viewRef }
-                    NotificationCenter.default.post(
-                        name: .agentDetailDeeplink,
-                        object: nil,
-                        userInfo: payload
-                    )
-                }
+                // Routes through `showAgentDetail`, which opens the Agents tab
+                // and defers the `.agentDetailDeeplink` post until the
+                // management hierarchy has mounted (so the listening views have
+                // attached their `.onReceive`, even on cold-launch).
+                AppDelegate.shared?.showAgentDetail(
+                    agentId: agentId,
+                    tab: "views",
+                    viewRef: viewRef
+                )
             }
             return
         }

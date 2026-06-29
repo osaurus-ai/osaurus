@@ -312,7 +312,8 @@ enum RouterAccountUsageCenter {
             inputTokens: usageItems.reduce(0) { $0 + $1.inputTokens },
             outputTokens: usageItems.reduce(0) { $0 + $1.outputTokens },
             costMicro: String(sumMicro(usageItems.map(\.costMicro))),
-            latestUsageAt: usageItems.compactMap { CreditsActivityProjector.date(fromRouterTimestamp: $0.createdAt) }.max(),
+            latestUsageAt: usageItems.compactMap { CreditsActivityProjector.date(fromRouterTimestamp: $0.createdAt) }
+                .max(),
             providerBreakdown: usageBreakdown(usageItems, key: \.provider),
             statusBreakdown: usageBreakdown(usageItems, key: \.status),
             modelBreakdown: usageBreakdown(usageItems, key: \.model)
@@ -370,7 +371,9 @@ enum RouterAccountUsageCenter {
             creditMicro: String(credits),
             debitMicro: String(abs(debits)),
             netMicro: String(credits + debits),
-            latestTransactionAt: transactions.compactMap { CreditsActivityProjector.date(fromRouterTimestamp: $0.createdAt) }.max(),
+            latestTransactionAt: transactions.compactMap {
+                CreditsActivityProjector.date(fromRouterTimestamp: $0.createdAt)
+            }.max(),
             entryTypeBreakdown: entryTypeBreakdown
         )
     }

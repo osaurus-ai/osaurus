@@ -2148,6 +2148,36 @@ extension AppDelegate {
         }
     }
 
+    /// Opens the management window on the Agents tab and deep-links into a
+    /// specific agent's detail view, optionally focusing an inner tab and/or a
+    /// saved view. The `.agentDetailDeeplink` post is deferred a beat because
+    /// `AgentsView` / `AgentDetailView` only attach their `.onReceive` once the
+    /// management hierarchy mounts — on a cold-launch open the observers aren't
+    /// listening yet when this is called.
+    ///
+    /// - Parameters:
+    ///   - agentId: The target agent.
+    ///   - tab: A `DetailTab.rawValue` (e.g. `"subagents"`, `"views"`) to
+    ///     focus, or `nil` to leave the detail view on its default tab.
+    ///   - viewRef: An optional saved-view name to highlight within the tab.
+    @MainActor public func showAgentDetail(
+        agentId: UUID,
+        tab: String? = nil,
+        viewRef: String? = nil
+    ) {
+        showManagementWindow(initialTab: .agents)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            var payload: [String: Any] = ["agentId": agentId]
+            if let tab { payload["tab"] = tab }
+            if let viewRef, !viewRef.isEmpty { payload["viewRef"] = viewRef }
+            NotificationCenter.default.post(
+                name: .agentDetailDeeplink,
+                object: nil,
+                userInfo: payload
+            )
+        }
+    }
+
     /// Builds the management window's SwiftUI graph + `NSHostingController`
     /// once, while idle, WITHOUT showing it. The construction + initial layout
     /// of `ManagementView` (sidebar, badge stores, tab shell) is the dominant

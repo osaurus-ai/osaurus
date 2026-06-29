@@ -2,11 +2,11 @@
 //  SpawnAgentTool.swift
 //  osaurus
 //
-//  `spawn_agent(input, agent)` — delegate a task to a user-configured Agent
-//  persona (its system prompt + model). Runs a bounded text subagent on the
-//  persona's model (with the local-orchestrator residency handoff when needed)
+//  `spawn_agent(input, agent)` — delegate a task to a user-configured agent
+//  (its system prompt + model). Runs a bounded text subagent on the agent's
+//  model (with the local-orchestrator residency handoff when needed)
 //  and returns only a compact digest. Sibling of `spawn_model`, which delegates
-//  to a bare model with no persona. Default OFF; each agent opts in from its
+//  to a bare model with no agent. Default OFF; each agent opts in from its
 //  Sub-agents tab (`spawnableAgentNames`). See docs/SUBAGENT_PORTABLE_DESIGN.md.
 //
 
@@ -15,10 +15,10 @@ import Foundation
 public final class SpawnAgentTool: OsaurusTool, @unchecked Sendable {
     public let name = SubagentCapabilityRegistry.spawnAgentToolName
     public let description =
-        "Delegate a bounded subtask to a user-configured agent persona (runs on the persona's own "
+        "Delegate a bounded subtask to a user-configured agent (runs on the target agent's own "
         + "system prompt + model, local or remote) and get back only a compact result digest — the "
-        + "subagent transcript is not returned. The persona must be in this agent's spawnable list. "
-        + "Use `spawn_model` instead to hand a task to a bare model with no persona attached."
+        + "subagent transcript is not returned. The target agent must be in this agent's spawnable list. "
+        + "Use `spawn_model` instead to hand a task to a bare model with no agent attached."
 
     public let parameters: JSONValue? = .object([
         "type": .string("object"),
@@ -30,7 +30,7 @@ public final class SpawnAgentTool: OsaurusTool, @unchecked Sendable {
             ]),
             "agent": .object([
                 "type": .string("string"),
-                "description": .string("Name of a spawnable agent persona (e.g. \"sparky\")."),
+                "description": .string("Name of a spawnable agent (e.g. \"sparky\")."),
             ]),
         ]),
         "required": .array([.string("input"), .string("agent")]),

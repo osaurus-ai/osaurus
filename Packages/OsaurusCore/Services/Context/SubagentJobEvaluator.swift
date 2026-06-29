@@ -13,8 +13,8 @@
 //      no tokens. This is the CI-safe lane the eval-kit unit tests run.
 //    - spawn / spawn_model: drive the real `TextSubagentKind` through the host
 //      (the same path `spawn_agent` / `spawn_model` drive) — `spawn` against a
-//      user-configured spawnable persona, `spawn_model` against a bare
-//      spawnable model id with no persona.
+//      user-configured spawnable agent, `spawn_model` against a bare
+//      spawnable model id with no agent.
 //    - image: invokes the real `ImageTool` through the host (live native
 //      image generation or, with `sourcePaths`, edit).
 //
@@ -33,7 +33,7 @@ import Foundation
 /// Decode-friendly record of one `subagent` eval run, across all three
 /// lanes. Every field is lane-tolerant: scripted runs carry
 /// `handoffWrapped` / `nestedRefused`, the image lane carries `mode` /
-/// `imageCount`, and the spawn lane carries the persona digest in `summary`.
+/// `imageCount`, and the spawn lane carries the agent digest in `summary`.
 public struct SubagentJobTranscript: Sendable, Codable {
     /// Tool name the host ran under (`scripted` kind id, `spawn`, or `image`).
     public let tool: String
@@ -239,15 +239,15 @@ public enum SubagentJobEvaluator {
 
     /// Run the live spawn-agent lane through the host + `TextSubagentKind` (the
     /// same path `spawn_agent` drives). The caller is responsible for skipping
-    /// when the persona/model is unavailable — the transcript's `envelopeKind`
+    /// when the agent/model is unavailable — the transcript's `envelopeKind`
     /// surfaces a `rejected`/`unavailable` envelope so the runner can decide
     /// skip vs. fail.
     ///
-    /// When `modelId` is provided, the spawned persona runs on THAT model
+    /// When `modelId` is provided, the spawned agent runs on THAT model
     /// instead of its own configured one, so `spawn` becomes a real
     /// cross-model column in the matrix (the production kind otherwise pins to
-    /// the persona's model, which wouldn't vary with the eval `--model`). The
-    /// persona must still exist and be spawnable; only the effective model is
+    /// the agent's model, which wouldn't vary with the eval `--model`). The
+    /// agent must still exist and be spawnable; only the effective model is
     /// overridden.
     public static func runSpawn(
         agent: String,
@@ -271,7 +271,7 @@ public enum SubagentJobEvaluator {
     }
 
     /// Run the live spawn-model lane through the host + `TextSubagentKind` (the
-    /// same path `spawn_model` drives) — a bare model id with NO persona/system
+    /// same path `spawn_model` drives) — a bare model id with NO agent/system
     /// prompt. `model` is both the pool-gated target AND the run model (the eval
     /// seam forces it with residency passthrough, so the lane is a real
     /// cross-model column without depending on GPU residency). The caller seeds
@@ -536,14 +536,14 @@ public enum SubagentJobEvaluator {
         )
     }
 
-    // MARK: - Eval persona seeding
+    // MARK: - Eval agent seeding
 
-    /// Seed a spawnable persona named `name` for the duration of `body`, then
+    /// Seed a spawnable agent named `name` for the duration of `body`, then
     /// restore. Creates an `Agent` with that name (when absent, with a concise
-    /// persona prompt) and adds it to the Default agent's GLOBAL spawnable pool
+    /// agent prompt) and adds it to the Default agent's GLOBAL spawnable pool
     /// (`SubagentConfiguration.spawnableAgentNames`, which the Default/main-chat
     /// agent the eval scope uses consults), so the `spawn` lane RUNS across
-    /// models on any host instead of skipping for lack of a configured persona.
+    /// models on any host instead of skipping for lack of a configured agent.
     /// Also forces `localTextDelegationEnabled` (the "Local Orchestrator
     /// Handoff" switch) ON for the run so a LOCAL run model can actually hand
     /// off to the local text subagent (unload/reload) instead of skipping —
@@ -552,11 +552,11 @@ public enum SubagentJobEvaluator {
     /// local MLX, not just `foundation`/remote. The whole prior
     /// `SubagentConfiguration` is snapshotted and restored, and the seeded
     /// agent removed, leaving a developer's real config untouched. The
-    /// persona's own model is irrelevant — the eval passes the run model as a
-    /// `TextSubagentKind` override. Seed/restore run on the main actor
+    /// seeded agent's own model is irrelevant — the eval passes the run model as
+    /// a `TextSubagentKind` override. Seed/restore run on the main actor
     /// (`AgentStore`/`AgentManager` are main-actor state);
     /// `SubagentConfigurationStore` is nonisolated.
-    public static func withSpawnablePersona<T: Sendable>(
+    public static func withSpawnableAgent<T: Sendable>(
         name: String,
         _ body: @Sendable () async -> T
     ) async -> T {
@@ -584,7 +584,7 @@ public enum SubagentJobEvaluator {
                     updated.spawnableAgentNames = priorConfig.spawnableAgentNames + [name]
                 }
                 // Enable the local handoff switch so a LOCAL run model can
-                // spawn the local persona (the chat model unloads to make
+                // spawn the local agent (the chat model unloads to make
                 // room). Default is on; this only flips a host that disabled
                 // it, and is restored afterward.
                 updated.localTextDelegationEnabled = true
@@ -607,15 +607,15 @@ public enum SubagentJobEvaluator {
     }
 
     /// Seed a spawnable MODEL `id` for the duration of `body`, then restore — the
-    /// `spawn_model` analogue of `withSpawnablePersona`. Adds `id` to the Default
+    /// `spawn_model` analogue of `withSpawnableAgent`. Adds `id` to the Default
     /// agent's GLOBAL spawnable model pool (`SubagentConfiguration
     /// .spawnableModelNames`, which the Default/main-chat scope the eval uses
     /// consults) and forces `localTextDelegationEnabled` ON so a LOCAL target can
     /// hand off (unload/reload) instead of being denied. No `Agent` is created —
-    /// model spawns carry no persona. The whole `SubagentConfiguration` is
+    /// model spawns carry no agent. The whole `SubagentConfiguration` is
     /// snapshotted and restored, leaving a developer's real config untouched.
     /// `SubagentConfigurationStore` is nonisolated, but this hops to the main
-    /// actor to match `withSpawnablePersona`'s ordering against `AgentManager`.
+    /// actor to match `withSpawnableAgent`'s ordering against `AgentManager`.
     public static func withSpawnableModel<T: Sendable>(
         id: String,
         _ body: @Sendable () async -> T

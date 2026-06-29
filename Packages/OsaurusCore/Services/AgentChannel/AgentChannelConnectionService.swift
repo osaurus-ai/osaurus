@@ -344,8 +344,8 @@ final class AgentChannelConnectionService: @unchecked Sendable {
             return deny("bot_message_denied")
         }
         guard let senderId,
-              !policy.senderAllowlist.isEmpty,
-              policy.senderAllowlist.contains(senderId)
+            !policy.senderAllowlist.isEmpty,
+            policy.senderAllowlist.contains(senderId)
         else {
             return deny("sender_not_allowlisted")
         }
@@ -355,7 +355,8 @@ final class AgentChannelConnectionService: @unchecked Sendable {
             }
             do {
                 if let providerEventId,
-                   try messageStore.isEventSeen(connectionId: connection.id, providerEventId: providerEventId) {
+                    try messageStore.isEventSeen(connectionId: connection.id, providerEventId: providerEventId)
+                {
                     return deny("duplicate_event_\(policy.duplicateBehavior)", decision: .duplicate)
                 }
             } catch {

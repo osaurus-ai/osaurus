@@ -198,7 +198,7 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
     var subagentModelOverrides: [String: String]
     /// The DEFAULT / main-chat agent's spawnable MODELS (its `spawn_model` pool):
     /// raw model ids (local or remote) the main chat may hand a task to directly,
-    /// no persona attached. Empty by default. Custom agents carry their OWN list
+    /// no agent attached. Empty by default. Custom agents carry their OWN list
     /// in `AgentSettings`; this governs the main chat only.
     var spawnableModelNames: [String]
     /// Optional user-authored "when/how to use" note per spawnable model, keyed by
@@ -246,14 +246,14 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
         localTextDelegationEnabled
     }
 
-    /// Whether the named persona is reachable via `spawn` from the DEFAULT /
+    /// Whether the named agent is reachable via `spawn` from the DEFAULT /
     /// main chat (the main-chat pool). Custom agents use their own per-agent list
     /// via `SubagentToolVisibility.spawnTargetAllowed`.
     func isAgentSpawnable(_ name: String) -> Bool {
         spawnableAgentNames.contains { $0.caseInsensitiveCompare(name) == .orderedSame }
     }
 
-    /// Whether the DEFAULT / main chat has at least one spawnable persona.
+    /// Whether the DEFAULT / main chat has at least one spawnable agent.
     var anyAgentSpawnable: Bool {
         !spawnableAgentNames.isEmpty
     }
@@ -277,8 +277,9 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
     /// none is set (after trimming). Surfaced in the spawn guidance descriptor.
     func modelNote(_ id: String) -> String? {
         let trimmed = id.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let note = spawnableModelNotes[trimmed]?
-            .trimmingCharacters(in: .whitespacesAndNewlines),
+        guard
+            let note = spawnableModelNotes[trimmed]?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
             !note.isEmpty
         else { return nil }
         return note

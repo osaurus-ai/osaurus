@@ -365,11 +365,12 @@ public final class AgentChannelMessageStore: @unchecked Sendable {
             try executeRaw("BEGIN IMMEDIATE")
             do {
                 if let normalizedProviderEventId {
-                    let eventInserted = try insertSeenEventOnQueue(
-                        connectionId: normalizedConnectionId,
-                        providerEventId: normalizedProviderEventId,
-                        seenAt: seenAt
-                    ) > 0
+                    let eventInserted =
+                        try insertSeenEventOnQueue(
+                            connectionId: normalizedConnectionId,
+                            providerEventId: normalizedProviderEventId,
+                            seenAt: seenAt
+                        ) > 0
                     guard eventInserted else {
                         try executeRaw("COMMIT")
                         return AgentChannelReceiveResult(
@@ -401,12 +402,13 @@ public final class AgentChannelMessageStore: @unchecked Sendable {
                 }
                 let cursorUpdated: Bool
                 if let normalizedCursor {
-                    cursorUpdated = try upsertCursorOnQueue(
-                        connectionId: normalizedConnectionId,
-                        roomId: snapshot.roomId,
-                        cursor: normalizedCursor,
-                        updatedAt: seenAt
-                    ) > 0
+                    cursorUpdated =
+                        try upsertCursorOnQueue(
+                            connectionId: normalizedConnectionId,
+                            roomId: snapshot.roomId,
+                            cursor: normalizedCursor,
+                            updatedAt: seenAt
+                        ) > 0
                 } else {
                     cursorUpdated = false
                 }

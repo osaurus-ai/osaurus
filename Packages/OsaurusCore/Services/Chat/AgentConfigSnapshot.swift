@@ -104,14 +104,14 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
     public let computerUseEnabled: Bool
     /// Per-agent opt-in for `spawn`. Enforced authoritatively in `resolveTools`
     /// — stripped unless the agent has opted in AND has at least one spawnable
-    /// persona (`spawnableAgentNames`), ANDed with the global master gate. The
+    /// agent (`spawnableAgentNames`), ANDed with the global master gate. The
     /// Default agent is governed by the global pool instead.
     public let spawnDelegationEnabled: Bool
     /// Per-agent opt-in for `image`. Enforced in `resolveTools` — stripped
     /// unless the agent opted in (custom agents) / the global image switch is on
     /// (Default agent).
     public let imageEnabled: Bool
-    /// Personas this agent may launch via `spawn_agent`. Drives the "is there
+    /// Agents this agent may launch via `spawn_agent`. Drives the "is there
     /// anything to spawn?" half of the `spawn_agent` visibility gate for custom
     /// agents.
     public let spawnableAgentNames: [String]

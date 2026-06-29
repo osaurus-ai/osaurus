@@ -2,7 +2,7 @@
 //  SpawnToolTests.swift
 //  OsaurusCoreTests — Subagent framework
 //
-//  Model-free guardrail tests for the spawn family — `spawn_agent` (persona
+//  Model-free guardrail tests for the spawn family — `spawn_agent` (agent
 //  context) and `spawn_model` (bare model). The full nested loop needs a live
 //  model (covered by the AgentLoop eval suite); these pin everything that must
 //  hold without one: the unified recursion guard, argument validation, the
@@ -84,7 +84,7 @@ struct SpawnToolTests {
         let kind = TextSubagentKind(agentName: "helper", input: "x")
         #expect(kind.capability.id == "spawn")
         #expect(kind.capability.toolNames == ["spawn_agent", "spawn_model"])
-        // spawn runs the chosen persona's model → it may resolve a DIFFERENT
+        // spawn runs the chosen agent's model → it may resolve a DIFFERENT
         // local model and run the residency handoff (unlike the same-model
         // image / computer_use / sandbox kinds).
         #expect(kind.capability.modelSource == .agent)
@@ -93,14 +93,14 @@ struct SpawnToolTests {
 
     @Test func modelKindShape() {
         // The model-mode kind shares the same capability but titles itself with
-        // the bare model id (no persona).
+        // the bare model id (no agent).
         let kind = TextSubagentKind(model: "qwen3-4b-4bit", input: "x")
         #expect(kind.capability.id == "spawn")
         #expect(kind.feedTitle.contains("qwen3-4b-4bit"))
     }
 
     /// Per-agent spawnable enforcement (agents): a CUSTOM launching agent may
-    /// only spawn personas in its OWN `spawnableAgentNames` list — the global
+    /// only spawn agents in its OWN `spawnableAgentNames` list — the global
     /// pool does NOT apply to it. Here the main chat's pool lists "Helper", but
     /// the launching agent is a custom agent with an empty list, so `resolveModel`
     /// must reject BEFORE any model/residency work (reject-before-evict). Binding
@@ -158,7 +158,7 @@ struct SpawnToolTests {
     /// reads its spawn permission from the GLOBAL config (not `AgentSettings`).
     /// With the target in the global pool but the spawn permission set to
     /// `.deny`, `resolveModel` must reject with the per-agent permission message
-    /// before any model / persona work (reject-before-evict).
+    /// before any model / agent work (reject-before-evict).
     @Test func mainChatSpawnRespectsGlobalPermissionDeny() async throws {
         let lease = await acquireSubagentStoreSandbox("spawn-main-chat-permission-deny")
         defer { lease.release() }

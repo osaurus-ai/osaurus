@@ -114,6 +114,14 @@ Expose agents to the internet via secure WebSocket tunnels through `agent.osauru
 
 When two Osaurus agents talk -- across your LAN or across the world through the relay -- the conversation is **end-to-end encrypted**: a forward-secret X25519 handshake authenticated by each agent's crypto identity, with every request, streamed token, and access key sealed in ChaCha20-Poly1305. The relay becomes a blind pipe that forwards ciphertext it cannot open; a man-in-the-middle cannot complete a handshake; replayed or truncated traffic is detected and refused; and there is no plaintext fallback an attacker can force. Zero configuration -- pairing is all it takes. See the [Secure Channel docs](docs/SECURE_CHANNEL.md).
 
+### Sub-agents (Spawn)
+
+Let a chat delegate a bounded task to another model -- **local or remote** -- or to one of your saved agents, and get a compact result back without cluttering the conversation. Perfect for offloading research, coding, or analysis to a specialist mid-turn. When the sub-agent runs on a local model, Osaurus does a **single-residency handoff**: it unloads your chat model, runs the job, then reloads and continues, so two large models never fight for memory. Off by default, approved on first use, and configured per agent.
+
+### Image Generation
+
+Create images on your Mac, fully offline. Install a local image model -- z-image-turbo, FLUX, Qwen-Image, or Ideogram -- and generate from a text prompt with control over size, seed, and negative prompts; hand it a source image to edit instead of starting from scratch. Your chat model can also call the built-in `image` tool to generate or edit a picture and render it **inline in the conversation**. Nothing is sent to a server.
+
 ## Models
 
 The harness is model-agnostic. Swap freely -- your agents, memory, and tools stay intact.

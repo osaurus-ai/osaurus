@@ -63,7 +63,7 @@ struct SubagentCapabilityRegistryTests {
     func delegationVisibilitySemantics() {
         let custom = UUID()
         // There is no master switch: the Default / main chat's own AGENT pool has
-        // one persona, its MODEL pool has one model, and its image switch is on.
+        // one agent, its MODEL pool has one model, and its image switch is on.
         let config = SubagentConfiguration(
             spawnableAgentNames: ["Helper"],
             imageDelegationEnabled: true,

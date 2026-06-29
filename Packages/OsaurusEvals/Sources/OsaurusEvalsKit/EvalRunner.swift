@@ -286,7 +286,7 @@ public enum EvalRunner {
                 notes: [
                     "watchdog timeout: case exceeded \(Int(timeout))s wall-clock and was "
                         + "abandoned (process hang — the Swift concurrency runtime is wedged; "
-                        + "the work task is left parked). Tune OSAURUS_EVALS_CASE_TIMEOUT_SEC.",
+                        + "the work task is left parked). Tune OSAURUS_EVALS_CASE_TIMEOUT_SEC."
                 ],
                 modelId: modelId
             )
@@ -350,7 +350,7 @@ public enum EvalRunner {
                         notes: [
                             "blocked: not run — process hung on prior case "
                                 + "'\(timedOutRow.id)' (watchdog timeout); suite terminated to "
-                                + "free the matrix driver.",
+                                + "free the matrix driver."
                         ],
                         modelId: modelId
                     )
@@ -1409,7 +1409,7 @@ public enum EvalRunner {
         //  - Positive cases (`enableTools` / `enableSkills` for a real
         //    capability — e.g. the browser plugin) need the manifest to NAME
         //    the enabled capability. The active Default agent is the
-        //    config-only persona: it is not in `.auto` mode, so it renders NO
+        //    config-only agent: it is not in `.auto` mode, so it renders NO
         //    capability manifest, and it is designed to disclaim non-config
         //    work ("I only help configure Osaurus") — so it wrongly DENIES an
         //    enabled browser capability that the model should confirm. A
