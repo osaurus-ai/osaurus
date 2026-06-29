@@ -207,14 +207,26 @@ public final class TTSService: ObservableObject {
         if case .ready = modelState { return }
         if initTask != nil { return }
 
-        if Self.pocketTtsModelsExistOnDisk() {
-            ensureModelLoaded()
-        } else {
-            modelState = .notReady
+        // The on-disk probe stats several files (`getattrlist` over XPC), which
+        // can block for seconds under filesystem pressure. This runs during
+        // `applicationDidFinishLaunching`, so do the probe off the main thread
+        // and hop back to update state, keeping launch off the critical path.
+        Task.detached(priority: .utility) {
+            let exists = Self.pocketTtsModelsExistOnDisk()
+            await MainActor.run {
+                let service = TTSService.shared
+                if case .ready = service.modelState { return }
+                if service.initTask != nil { return }
+                if exists {
+                    service.ensureModelLoaded()
+                } else {
+                    service.modelState = .notReady
+                }
+            }
         }
     }
 
-    private static func pocketTtsModelsExistOnDisk() -> Bool {
+    nonisolated private static func pocketTtsModelsExistOnDisk() -> Bool {
         let home = FileManager.default.homeDirectoryForCurrentUser
         let repoDir =
             home
