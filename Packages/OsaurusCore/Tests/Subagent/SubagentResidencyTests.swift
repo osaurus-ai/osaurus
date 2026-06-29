@@ -3,7 +3,7 @@
 //  OsaurusCoreTests — Subagent framework
 //
 //  Model-free coverage of the shared residency DECISION (`SubagentResidency`)
-//  that every chat-driven kind (spawn / computer_use / sandbox_reduce) uses to
+//  that every chat-driven kind (spawn / computer_use) uses to
 //  decide whether running its resolved model must unload the resident chat
 //  model. The middleware itself is covered by `ResidencyHandoffTests`; here we
 //  pin the pure `decidePlan` control flow and the `handoff(for:)` mapping.
@@ -125,5 +125,115 @@ struct SubagentResidencyTests {
     func handoffMapping() {
         #expect(SubagentResidency.handoff(for: ResidencyPlan(shouldUnload: true)) is ResidencyHandoff)
         #expect(SubagentResidency.handoff(for: .none) is PassthroughHandoff)
+    }
+
+    // MARK: - Named four-direction proof
+    //
+    // The same `decidePlan` outcomes above, restated as the FOUR
+    // orchestrator→target residency directions the live `spawn_model_residency`
+    // lane exercises end-to-end, so "all four directions" is legible and
+    // asserted by name. `isLocal` is the TARGET's residency; `residentChatModels`
+    // models the ORCHESTRATOR (a remote orchestrator has no resident local chat
+    // model, so it is `[]`). Only local→local with a different model does real
+    // work — every other direction runs in place.
+
+    @Test("direction local→local (same model): run in place, no swap")
+    func directionLocalToLocalSame() throws {
+        let plan = try SubagentResidency.decidePlan(
+            isLocal: true,
+            modelName: "local-a",
+            residentChatModels: ["local-a"],
+            handoffEnabled: true,
+            ramSafetyEnabled: true,
+            requiredBytes: 4096,
+            idleWaitSeconds: 90,
+            deniedMessage: denied
+        )
+        #expect(plan.shouldUnload == false)
+    }
+
+    @Test("direction local→local (different, handoff ON): unload then reload")
+    func directionLocalToLocalDifferentOn() throws {
+        let plan = try SubagentResidency.decidePlan(
+            isLocal: true,
+            modelName: "local-b",
+            residentChatModels: ["local-a"],
+            handoffEnabled: true,
+            ramSafetyEnabled: true,
+            requiredBytes: 4096,
+            idleWaitSeconds: 90,
+            deniedMessage: denied
+        )
+        #expect(plan.shouldUnload == true)
+    }
+
+    @Test("direction local→local (different, handoff OFF): rejected before evict")
+    func directionLocalToLocalDifferentOff() {
+        do {
+            _ = try SubagentResidency.decidePlan(
+                isLocal: true,
+                modelName: "local-b",
+                residentChatModels: ["local-a"],
+                handoffEnabled: false,
+                ramSafetyEnabled: true,
+                requiredBytes: 4096,
+                idleWaitSeconds: 90,
+                deniedMessage: denied
+            )
+            Issue.record("expected a denied error for the handoff-OFF gate")
+        } catch let error as SubagentError {
+            guard case .denied(let message) = error else {
+                Issue.record("expected .denied, got \(error)")
+                return
+            }
+            #expect(message == denied)
+        } catch {
+            Issue.record("unexpected error: \(error)")
+        }
+    }
+
+    @Test("direction local→remote: remote target never touches local GPU")
+    func directionLocalToRemote() throws {
+        let plan = try SubagentResidency.decidePlan(
+            isLocal: false,
+            modelName: "xai/grok-4.3",
+            residentChatModels: ["local-a"],
+            handoffEnabled: true,
+            ramSafetyEnabled: true,
+            requiredBytes: 4096,
+            idleWaitSeconds: 90,
+            deniedMessage: denied
+        )
+        #expect(plan.shouldUnload == false)
+    }
+
+    @Test("direction remote→local: remote orchestrator has no resident local to evict")
+    func directionRemoteToLocal() throws {
+        let plan = try SubagentResidency.decidePlan(
+            isLocal: true,
+            modelName: "local-b",
+            residentChatModels: [],
+            handoffEnabled: true,
+            ramSafetyEnabled: true,
+            requiredBytes: 4096,
+            idleWaitSeconds: 90,
+            deniedMessage: denied
+        )
+        #expect(plan.shouldUnload == false)
+    }
+
+    @Test("direction remote→remote: nothing local in play")
+    func directionRemoteToRemote() throws {
+        let plan = try SubagentResidency.decidePlan(
+            isLocal: false,
+            modelName: "xai/grok-4.3",
+            residentChatModels: [],
+            handoffEnabled: true,
+            ramSafetyEnabled: true,
+            requiredBytes: 4096,
+            idleWaitSeconds: 90,
+            deniedMessage: denied
+        )
+        #expect(plan.shouldUnload == false)
     }
 }

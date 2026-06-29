@@ -480,10 +480,18 @@ public struct AgentCapabilities: Sendable, Equatable {
     /// `spawnDelegationEnabled` so an agent can spawn without image (or vice
     /// versa).
     public var imageEnabled: Bool
-    /// Personas this agent may launch via `spawn`. Empty → the `spawn` tool
-    /// stays hidden (nothing to spawn). The Default agent ignores this and uses
-    /// the global `SubagentConfiguration.spawnableAgentNames` pool instead.
+    /// Personas this agent may launch via `spawn_agent`. Empty → the
+    /// `spawn_agent` tool stays hidden (nothing to spawn). The Default agent
+    /// ignores this and uses the global
+    /// `SubagentConfiguration.spawnableAgentNames` pool instead.
     public var spawnableAgentNames: [String]
+    /// Raw model ids this agent may hand a task to via `spawn_model` (no persona).
+    /// Empty → the `spawn_model` tool stays hidden. The Default agent ignores
+    /// this and uses the global `SubagentConfiguration.spawnableModelNames` pool.
+    public var spawnableModelNames: [String]
+    /// Optional "when/how to use" note per spawnable model id, surfaced in the
+    /// spawn guidance descriptor. Pure metadata — the gate is `spawnableModelNames`.
+    public var spawnableModelNotes: [String: String]
 
     public init(
         toolsEnabled: Bool,
@@ -496,7 +504,9 @@ public struct AgentCapabilities: Sendable, Equatable {
         computerUseEnabled: Bool = false,
         spawnDelegationEnabled: Bool = false,
         imageEnabled: Bool = false,
-        spawnableAgentNames: [String] = []
+        spawnableAgentNames: [String] = [],
+        spawnableModelNames: [String] = [],
+        spawnableModelNotes: [String: String] = [:]
     ) {
         self.toolsEnabled = toolsEnabled
         self.memoryEnabled = memoryEnabled
@@ -509,6 +519,8 @@ public struct AgentCapabilities: Sendable, Equatable {
         self.spawnDelegationEnabled = spawnDelegationEnabled
         self.imageEnabled = imageEnabled
         self.spawnableAgentNames = spawnableAgentNames
+        self.spawnableModelNames = spawnableModelNames
+        self.spawnableModelNotes = spawnableModelNotes
     }
 }
 
@@ -752,10 +764,19 @@ public struct AgentSettings: Codable, Sendable, Equatable {
     /// The Default agent ignores this and uses the global image enable in
     /// `SubagentConfiguration`.
     public var imageEnabled: Bool
-    /// Personas this agent may launch via `spawn` (per-agent allow-list). Empty
-    /// → the `spawn` tool stays hidden (nothing to spawn). The Default agent
-    /// ignores this and uses the global pool in `SubagentConfiguration`.
+    /// Personas this agent may launch via `spawn_agent` (per-agent allow-list).
+    /// Empty → the `spawn_agent` tool stays hidden (nothing to spawn). The
+    /// Default agent ignores this and uses the global pool in
+    /// `SubagentConfiguration`.
     public var spawnableAgentNames: [String]
+    /// Raw model ids this agent may hand a task to via `spawn_model` (no persona;
+    /// per-agent allow-list). Empty → the `spawn_model` tool stays hidden. The
+    /// Default agent ignores this and uses the global
+    /// `SubagentConfiguration.spawnableModelNames` pool.
+    public var spawnableModelNames: [String]
+    /// Optional "when/how to use" note per spawnable model id, surfaced in the
+    /// spawn guidance descriptor. Pure metadata — the gate is `spawnableModelNames`.
+    public var spawnableModelNotes: [String: String]
     /// Per-agent image-generation model bundle id (`nil` → resolve to the first
     /// ready text-to-image model at run time). The Default agent uses the global
     /// `SubagentConfiguration.defaultImageGenerationModelId` instead.
@@ -773,9 +794,9 @@ public struct AgentSettings: Codable, Sendable, Equatable {
     /// Default agent uses the global `SubagentConfiguration.budgets` instead.
     public var subagentBudgets: SubagentBudgets
     /// Per-agent model override for subagent kinds, keyed by capability id
-    /// (`"computer_use"`, `"sandbox_reduce"`, `"spawn"`). An entry supersedes the
-    /// kind's default model source (the parent agent's model for computer_use /
-    /// sandbox_reduce; the chosen persona's model for spawn); an absent entry
+    /// (`"computer_use"`, `"spawn"`). An entry supersedes the
+    /// kind's default model source (the parent agent's model for computer_use;
+    /// the chosen persona's model for spawn); an absent entry
     /// means "inherit". Stored as a generic `[capabilityId: modelId]` map — like
     /// `subagentPermissions` — so a new kind needs no new field. The Default
     /// agent uses the global `SubagentConfiguration.subagentModelOverrides`.
@@ -796,6 +817,8 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         spawnDelegationEnabled: Bool = false,
         imageEnabled: Bool = false,
         spawnableAgentNames: [String] = [],
+        spawnableModelNames: [String] = [],
+        spawnableModelNotes: [String: String] = [:],
         imageGenerationModelId: String? = nil,
         imageEditModelId: String? = nil,
         subagentPermissions: SubagentPermissionDefaults = SubagentPermissionDefaults(),
@@ -816,6 +839,8 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         self.spawnDelegationEnabled = spawnDelegationEnabled
         self.imageEnabled = imageEnabled
         self.spawnableAgentNames = spawnableAgentNames
+        self.spawnableModelNames = spawnableModelNames
+        self.spawnableModelNotes = spawnableModelNotes
         self.imageGenerationModelId = imageGenerationModelId
         self.imageEditModelId = imageEditModelId
         self.subagentPermissions = subagentPermissions
@@ -865,6 +890,12 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         imageEnabled = try c.decodeIfPresent(Bool.self, forKey: .imageEnabled) ?? false
         spawnableAgentNames =
             try c.decodeIfPresent([String].self, forKey: .spawnableAgentNames) ?? []
+        // Raw model ids for `spawn_model` + their notes. Lenient (`try?`) so a
+        // malformed pool/notes map never discards the rest of the settings.
+        spawnableModelNames =
+            (try? c.decodeIfPresent([String].self, forKey: .spawnableModelNames)) ?? []
+        spawnableModelNotes =
+            (try? c.decodeIfPresent([String: String].self, forKey: .spawnableModelNotes)) ?? [:]
         // Optional; absent means no ceiling (user policy applies as-is).
         computerUseCeiling = try c.decodeIfPresent(
             AutonomyCeiling.self,
@@ -920,6 +951,8 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         case spawnDelegationEnabled
         case imageEnabled
         case spawnableAgentNames
+        case spawnableModelNames
+        case spawnableModelNotes
         case imageGenerationModelId
         case imageEditModelId
         case subagentPermissions
@@ -945,6 +978,8 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         try c.encode(spawnDelegationEnabled, forKey: .spawnDelegationEnabled)
         try c.encode(imageEnabled, forKey: .imageEnabled)
         try c.encode(spawnableAgentNames, forKey: .spawnableAgentNames)
+        try c.encode(spawnableModelNames, forKey: .spawnableModelNames)
+        try c.encode(spawnableModelNotes, forKey: .spawnableModelNotes)
         try c.encodeIfPresent(imageGenerationModelId, forKey: .imageGenerationModelId)
         try c.encodeIfPresent(imageEditModelId, forKey: .imageEditModelId)
         try c.encode(subagentPermissions, forKey: .subagentPermissions)

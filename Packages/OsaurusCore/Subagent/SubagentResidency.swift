@@ -3,7 +3,7 @@
 //  OsaurusCore — Subagent framework
 //
 //  The shared model-residency layer for the chat-driven sub-agent kinds
-//  (spawn, computer_use, sandbox_reduce). When a kind resolves a model that is
+//  (spawn, computer_use). When a kind resolves a model that is
 //  a DIFFERENT local bundle than the resident orchestrator, single-GPU
 //  residency requires unloading the chat model for the run and reloading it
 //  after — exactly the flow `spawn` (`TextSubagentKind`) pioneered. This
@@ -76,12 +76,26 @@ enum SubagentResidency {
         idleWaitSeconds: Int,
         deniedMessage: String
     ) async throws -> SubagentResidencyDecision {
-        let isLocal = ModelManager.findInstalledModel(named: modelName) != nil
-        let residentChatModels =
-            isLocal ? await ModelRuntime.shared.cachedModelSummaries().map(\.name) : []
+        let installed = ModelManager.findInstalledModel(named: modelName)
+        let isLocal = installed != nil
+        // Compare on the canonical installed-bundle identity, not the raw
+        // request string. `ModelRuntime` records resident chat models under
+        // their canonical name (e.g. `qwen3.5-4b-optiq-4bit`), while a spawn
+        // target is frequently a full repo id (`mlx-community/Qwen3.5-4B-OptiQ-4bit`).
+        // Resolving BOTH sides through `findInstalledModel` lets the
+        // "same model already resident" check match across those forms — so
+        // spawning the SAME model the user is chatting with runs in place
+        // instead of needlessly unloading + reloading the identical bundle.
+        let canonicalName = installed?.name ?? modelName
+        let residentChatModels: [String] =
+            isLocal
+            ? await ModelRuntime.shared.cachedModelSummaries().map {
+                ModelManager.findInstalledModel(named: $0.name)?.name ?? $0.name
+            }
+            : []
         let plan = try decidePlan(
             isLocal: isLocal,
-            modelName: modelName,
+            modelName: canonicalName,
             residentChatModels: residentChatModels,
             handoffEnabled: config.localOrchestratorTextHandoffActive,
             ramSafetyEnabled: config.ramSafetyPreflightEnabled,

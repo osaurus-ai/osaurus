@@ -93,9 +93,9 @@ fi
 # default is expanded before `read` reassigns the same name.
 read -ra DET_SUITES <<< "${DET_SUITES:-ArgumentCoercion CapabilitySearch ComputerUse PrefixHash RequestValidation SandboxDiagnostics Schema ScreenContext StreamingHint ToolEnvelope}"
 # Suites that drive a model (or the sandbox VM) — run PER model.
-# `Subagent` runs all four subagent flows through the one SubagentSession host:
+# `Subagent` runs all subagent flows through the one SubagentSession host:
 # its scripted cases are model-independent (identical per model) while the live
-# lanes (spawn, computer_use-on-scripted-world, sandbox_reduce, image) vary with
+# lanes (spawn, computer_use-on-scripted-world, image) vary with
 # the run model, so it lands real `subagent` rows in the cross-model matrix.
 # Override with a space-separated LLM_SUITES env var to scope a run, e.g.
 # LLM_SUITES="Subagent ComputerUseLoop SandboxFrontier" for a subagent-focused matrix.

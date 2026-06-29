@@ -98,7 +98,7 @@ tool entry (spawn | image | computer_use | sandbox_reduce)
    exercises the full lifecycle **model-free** in tests/evals.
 2. **Optional handoff — `ResidencyHandoff`** (`Subagent/ResidencyHandoff.swift`):
    generalized from the old `ChatResidencyHandoff`; the single residency authority for
-   the host middleware. Only `spawn` (`modelSource = .persona`) overrides
+   the host middleware. Only `spawn` (`modelSource = .agent`) overrides
    `makeHandoff()` to vend a real handoff; `image` (`modelSource = .dedicatedConfigured`)
    keeps the passthrough default because its `NativeImageJobCoordinator` owns image-model
    residency directly. Same-model kinds (`sandbox_reduce`, `computer_use`,

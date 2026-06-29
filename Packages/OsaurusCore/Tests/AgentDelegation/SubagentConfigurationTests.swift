@@ -156,19 +156,19 @@ struct SubagentConfigurationTests {
         let config = SubagentConfiguration(
             subagentModelOverrides: [
                 "spawn": "spawn-model",
-                "sandbox_reduce": "  reducer-model  ",
-                "computer_use": "   ",
+                "computer_use": "  reducer-model  ",
+                "image": "   ",
             ]
         )
         #expect(config.subagentModelOverrides["spawn"] == "spawn-model")
-        #expect(config.subagentModelOverrides["sandbox_reduce"] == "reducer-model")
-        #expect(config.subagentModelOverrides["computer_use"] == nil)
+        #expect(config.subagentModelOverrides["computer_use"] == "reducer-model")
+        #expect(config.subagentModelOverrides["image"] == nil)
 
         let data = try JSONEncoder().encode(config)
         let decoded = try JSONDecoder().decode(SubagentConfiguration.self, from: data)
         #expect(decoded.subagentModelOverrides["spawn"] == "spawn-model")
-        #expect(decoded.subagentModelOverrides["sandbox_reduce"] == "reducer-model")
-        #expect(decoded.subagentModelOverrides["computer_use"] == nil)
+        #expect(decoded.subagentModelOverrides["computer_use"] == "reducer-model")
+        #expect(decoded.subagentModelOverrides["image"] == nil)
     }
 
     @Test("legacy config without subagentModelOverrides decodes to an empty map")
@@ -176,5 +176,61 @@ struct SubagentConfigurationTests {
         let data = Data(#"{"localTextDelegationEnabled":true}"#.utf8)
         let decoded = try JSONDecoder().decode(SubagentConfiguration.self, from: data)
         #expect(decoded.subagentModelOverrides.isEmpty)
+    }
+
+    @Test("spawnable model names + notes round-trip, trim/dedupe, and prune orphan notes")
+    func spawnableModelPoolRoundTripAndNormalize() throws {
+        // init normalizes: trim ids, drop blanks, de-dupe (exact, order-kept);
+        // notes are trimmed, blank notes dropped, and any note whose id is no
+        // longer in the pool is pruned (so removing a model drops its note).
+        let config = SubagentConfiguration(
+            spawnableModelNames: [
+                "qwen3-4b-4bit",
+                "  qwen3-4b-4bit  ",  // dup after trim → dropped
+                "openai/gpt-4o-mini",
+                "   ",  // blank → dropped
+            ],
+            spawnableModelNotes: [
+                "qwen3-4b-4bit": "  Quick local edits  ",  // trimmed
+                "openai/gpt-4o-mini": "   ",  // blank value → dropped
+                "deleted-model": "orphan note",  // id not in pool → pruned
+            ]
+        )
+
+        #expect(config.spawnableModelNames == ["qwen3-4b-4bit", "openai/gpt-4o-mini"])
+        #expect(config.spawnableModelNotes == ["qwen3-4b-4bit": "Quick local edits"])
+
+        let data = try JSONEncoder().encode(config)
+        let decoded = try JSONDecoder().decode(SubagentConfiguration.self, from: data)
+        #expect(decoded == config)
+        #expect(decoded.spawnableModelNames == ["qwen3-4b-4bit", "openai/gpt-4o-mini"])
+        #expect(decoded.spawnableModelNotes == ["qwen3-4b-4bit": "Quick local edits"])
+    }
+
+    @Test("legacy config without the spawnable model pool decodes to empty")
+    func backCompatModelPoolEmpty() throws {
+        let data = Data(#"{"localTextDelegationEnabled":true}"#.utf8)
+        let decoded = try JSONDecoder().decode(SubagentConfiguration.self, from: data)
+        #expect(decoded.spawnableModelNames.isEmpty)
+        #expect(decoded.spawnableModelNotes.isEmpty)
+        #expect(!decoded.anyModelSpawnable)
+    }
+
+    @Test("model-pool helpers: exact/trimmed membership, anySpawnable, and note lookup")
+    func modelPoolHelpers() {
+        let config = SubagentConfiguration(
+            spawnableModelNames: ["qwen3-4b-4bit"],
+            spawnableModelNotes: ["qwen3-4b-4bit": "Quick local edits"]
+        )
+        #expect(config.anyModelSpawnable)
+        // Exact match, trimmed (model ids are canonical — NOT case-insensitive
+        // like agent names).
+        #expect(config.isModelSpawnable("qwen3-4b-4bit"))
+        #expect(config.isModelSpawnable("  qwen3-4b-4bit  "))
+        #expect(!config.isModelSpawnable("Qwen3-4B-4bit"))
+        #expect(!config.isModelSpawnable("other-model"))
+        // Note lookup is trimmed; absent ids return nil.
+        #expect(config.modelNote("qwen3-4b-4bit") == "Quick local edits")
+        #expect(config.modelNote("other-model") == nil)
     }
 }

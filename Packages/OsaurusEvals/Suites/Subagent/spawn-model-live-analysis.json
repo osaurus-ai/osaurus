@@ -1,0 +1,20 @@
+{
+  "id": "subagent.spawn-model-live-analysis",
+  "domain": "subagent",
+  "label": "Subagent • live spawn_model structured analysis digest",
+  "query": "Spawn a bare model to produce a short structured analysis.",
+  "notes": "LIVE. Runs the host + TextSubagentKind in MODEL mode (the spawn_model path) — a bare spawnable model id with NO persona/system prompt — on the RUN model, so spawn_model is a real cross-model column. seedSpawnableModel adds the run model to the Default agent's global spawnable model pool (and enables the local handoff) for the run and tears it down after. Asserts a success spawn_result whose digest is a numbered three-item list — an instruction-following discriminator with NO persona steering (unlike spawn-live-analysis). SKIPS only when the run model isn't ready.",
+  "fixtures": {},
+  "expect": {
+    "subagent": {
+      "lane": "spawn_model",
+      "input": "List exactly three distinct, concrete use cases for a bounded sub-agent. Output one numbered line per use case and nothing else.",
+      "seedSpawnableModel": true,
+      "expectSuccess": true,
+      "expectEnvelopeKind": "success",
+      "expectResultKind": "spawn_result",
+      "expectFeedKinds": ["phase"],
+      "summaryContains": ["1", "2", "3"]
+    }
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "id": "subagent.spawn-model-not-spawnable-refused",
+  "domain": "subagent",
+  "label": "Subagent • spawn_model refuses a non-spawnable model",
+  "query": "Spawn a model id that is not in the spawnable model pool.",
+  "notes": "Negative guard, model-independent. spawn_model against an id that isn't in the spawnable model pool must be refused at resolve time (reject-before-evict) with a `rejected` envelope — never a silent run, and before any residency handoff. The case targets an explicit unseeded `model` id and does NOT seed it, so the pool gate fails. Because the case EXPECTS `rejected`, the availability-skip rule does NOT fire, so this scores normally on every host and every model. Pins the spawn_model pool gate that runs before the residency decision.",
+  "fixtures": {},
+  "expect": {
+    "subagent": {
+      "lane": "spawn_model",
+      "model": "ghost-model-not-spawnable-eval",
+      "input": "You should never run.",
+      "expectSuccess": false,
+      "expectEnvelopeKind": "rejected",
+      "summaryContains": ["not spawnable"]
+    }
+  }
+}

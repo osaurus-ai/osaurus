@@ -26,7 +26,7 @@
 //  (`imageGenerationModelId` / `imageEditModelId`), resolved via
 //  `SubagentToolVisibility.effectiveImageModel`, with their own readiness +
 //  "first ready" fallback and the coordinator-owned residency above. The
-//  chat-driven kinds (computer_use, spawn, sandbox_reduce) instead share
+//  chat-driven kinds (computer_use, spawn) instead share
 //  `subagentModelOverrides` → `effectiveSubagentModel` → `SubagentModelResolution`.
 //
 

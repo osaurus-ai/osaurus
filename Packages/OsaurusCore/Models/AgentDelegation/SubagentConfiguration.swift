@@ -131,6 +131,14 @@ public struct SubagentBudgets: Codable, Equatable, Sendable {
     public var maxToolCalls: Int
     public var maxElapsedSeconds: Int
 
+    /// Accepted bounds for each budget — the single source of truth shared by
+    /// `normalized` (the save-time clamp) and the Sub-agents UI steppers, so the
+    /// editor can never offer a value the store would silently clamp away.
+    public static let tokenBounds: ClosedRange<Int> = 256 ... 32_768
+    public static let turnBounds: ClosedRange<Int> = 1 ... 8
+    public static let toolCallBounds: ClosedRange<Int> = 0 ... 32
+    public static let elapsedBounds: ClosedRange<Int> = 15 ... 1_800
+
     public init(
         maxDelegateTokens: Int = 2048,
         maxDelegateTurns: Int = 1,
@@ -145,10 +153,10 @@ public struct SubagentBudgets: Codable, Equatable, Sendable {
 
     public var normalized: SubagentBudgets {
         SubagentBudgets(
-            maxDelegateTokens: Self.clamp(maxDelegateTokens, to: 256 ... 32_768),
-            maxDelegateTurns: Self.clamp(maxDelegateTurns, to: 1 ... 8),
-            maxToolCalls: Self.clamp(maxToolCalls, to: 0 ... 32),
-            maxElapsedSeconds: Self.clamp(maxElapsedSeconds, to: 15 ... 1_800)
+            maxDelegateTokens: Self.clamp(maxDelegateTokens, to: Self.tokenBounds),
+            maxDelegateTurns: Self.clamp(maxDelegateTurns, to: Self.turnBounds),
+            maxToolCalls: Self.clamp(maxToolCalls, to: Self.toolCallBounds),
+            maxElapsedSeconds: Self.clamp(maxElapsedSeconds, to: Self.elapsedBounds)
         )
     }
 
@@ -184,10 +192,20 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
     /// failing to load the spawn model. See `ChatResidencyHandoff.memoryPreflight`.
     var ramSafetyPreflightEnabled: Bool
     /// Per-capability model override for the DEFAULT / main-chat agent's subagent
-    /// kinds, keyed by capability id (`"spawn"`, `"sandbox_reduce"`). An entry
+    /// kinds, keyed by capability id (`"spawn"`, `"computer_use"`). An entry
     /// supersedes the kind's default model source; absent means "inherit". Custom
     /// agents carry their own `AgentSettings.subagentModelOverrides`.
     var subagentModelOverrides: [String: String]
+    /// The DEFAULT / main-chat agent's spawnable MODELS (its `spawn_model` pool):
+    /// raw model ids (local or remote) the main chat may hand a task to directly,
+    /// no persona attached. Empty by default. Custom agents carry their OWN list
+    /// in `AgentSettings`; this governs the main chat only.
+    var spawnableModelNames: [String]
+    /// Optional user-authored "when/how to use" note per spawnable model, keyed by
+    /// model id. Pure descriptor metadata surfaced in the spawn guidance — the
+    /// security gate stays on `spawnableModelNames`. Trimmed, blanks dropped, and
+    /// pruned to current pool members on normalize.
+    var spawnableModelNotes: [String: String]
 
     init(
         localTextDelegationEnabled: Bool = true,
@@ -199,7 +217,9 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
         permissionDefaults: SubagentPermissionDefaults = SubagentPermissionDefaults(),
         budgets: SubagentBudgets = SubagentBudgets(),
         ramSafetyPreflightEnabled: Bool = true,
-        subagentModelOverrides: [String: String] = [:]
+        subagentModelOverrides: [String: String] = [:],
+        spawnableModelNames: [String] = [],
+        spawnableModelNotes: [String: String] = [:]
     ) {
         self.localTextDelegationEnabled = localTextDelegationEnabled
         self.spawnableAgentNames = spawnableAgentNames
@@ -211,6 +231,12 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
         self.budgets = budgets.normalized
         self.ramSafetyPreflightEnabled = ramSafetyPreflightEnabled
         self.subagentModelOverrides = Self.normalizedModelOverrides(subagentModelOverrides)
+        let normalizedModelNames = Self.normalizedSpawnableModelNames(spawnableModelNames)
+        self.spawnableModelNames = normalizedModelNames
+        self.spawnableModelNotes = Self.normalizedSpawnableModelNotes(
+            spawnableModelNotes,
+            names: normalizedModelNames
+        )
     }
 
     static let `default` = SubagentConfiguration()
@@ -230,6 +256,32 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
     /// Whether the DEFAULT / main chat has at least one spawnable persona.
     var anyAgentSpawnable: Bool {
         !spawnableAgentNames.isEmpty
+    }
+
+    /// Whether the raw model id is in the DEFAULT / main chat's `spawn_model`
+    /// pool. Model ids are canonical, so this matches exactly (trimmed) rather
+    /// than case-insensitively like agent names. Custom agents use their own list
+    /// via `SubagentToolVisibility.spawnModelAllowed`.
+    func isModelSpawnable(_ id: String) -> Bool {
+        let trimmed = id.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        return spawnableModelNames.contains(trimmed)
+    }
+
+    /// Whether the DEFAULT / main chat has at least one spawnable model.
+    var anyModelSpawnable: Bool {
+        !spawnableModelNames.isEmpty
+    }
+
+    /// The user's "when/how to use" note for a spawnable model id, or nil when
+    /// none is set (after trimming). Surfaced in the spawn guidance descriptor.
+    func modelNote(_ id: String) -> String? {
+        let trimmed = id.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let note = spawnableModelNotes[trimmed]?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+            !note.isEmpty
+        else { return nil }
+        return note
     }
 
     /// Whether `image` is active for the DEFAULT / main chat (its image switch).
@@ -260,7 +312,11 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
             // Omitting this dropped it back to the init default (`true`), making the
             // toggle un-disableable (the store runs `.normalized` on every save+load).
             ramSafetyPreflightEnabled: ramSafetyPreflightEnabled,
-            subagentModelOverrides: subagentModelOverrides
+            subagentModelOverrides: subagentModelOverrides,
+            // The init trims model names, drops blanks, and prunes notes to the
+            // surviving pool members, so passing the raw values here is enough.
+            spawnableModelNames: spawnableModelNames,
+            spawnableModelNotes: spawnableModelNotes
         )
     }
 
@@ -275,6 +331,8 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
         case budgets
         case ramSafetyPreflightEnabled
         case subagentModelOverrides
+        case spawnableModelNames
+        case spawnableModelNotes
     }
 
     init(from decoder: Decoder) throws {
@@ -313,6 +371,14 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
             subagentModelOverrides: (try? container.decodeIfPresent(
                 [String: String].self,
                 forKey: .subagentModelOverrides
+            )) ?? [:],
+            spawnableModelNames: (try? container.decodeIfPresent(
+                [String].self,
+                forKey: .spawnableModelNames
+            )) ?? [],
+            spawnableModelNotes: (try? container.decodeIfPresent(
+                [String: String].self,
+                forKey: .spawnableModelNotes
             )) ?? [:]
         )
     }
@@ -330,6 +396,36 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
         for (key, raw) in value {
             let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty { result[key] = trimmed }
+        }
+        return result
+    }
+
+    /// Trim spawnable model ids, drop blanks, and de-dupe (exact match, keeping
+    /// first occurrence + order) so a model can't stack pool entries.
+    static func normalizedSpawnableModelNames(_ value: [String]) -> [String] {
+        var seen = Set<String>()
+        var result: [String] = []
+        for raw in value {
+            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty, seen.insert(trimmed).inserted else { continue }
+            result.append(trimmed)
+        }
+        return result
+    }
+
+    /// Trim note keys/values, drop blank notes, and prune any note whose model id
+    /// is not in the (already-normalized) pool so removing a model drops its note.
+    static func normalizedSpawnableModelNotes(
+        _ value: [String: String],
+        names: [String]
+    ) -> [String: String] {
+        let allowed = Set(names)
+        var result: [String: String] = [:]
+        for (key, raw) in value {
+            let trimmedKey = key.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard allowed.contains(trimmedKey) else { continue }
+            let trimmedNote = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmedNote.isEmpty { result[trimmedKey] = trimmedNote }
         }
         return result
     }

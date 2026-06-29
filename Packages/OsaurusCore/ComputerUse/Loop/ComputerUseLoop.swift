@@ -8,7 +8,7 @@
 //  to, whether the gate allows it, and whether the action actually landed.
 //
 //  Runs as a nested subagent inside `ComputerUseKind` on the shared
-//  `SubagentSession` host (the `sandbox_reduce` pattern), so the inner steps
+//  `SubagentSession` host (the nested-subagent pattern), so the inner steps
 //  never leak into the parent chat transcript — they surface only through the
 //  shared `SubagentFeed`.
 //

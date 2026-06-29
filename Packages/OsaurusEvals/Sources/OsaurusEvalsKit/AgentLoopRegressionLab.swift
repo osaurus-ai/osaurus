@@ -63,8 +63,9 @@ public struct AgentLoopRegressionReportSet: Sendable {
             throw AgentLoopRegressionLabError.pathNotFound(url.path)
         }
 
+        let isDir = isDirectory.boolValue
         let reportURLs: [URL]
-        if isDirectory.boolValue {
+        if isDir {
             reportURLs = try fm.contentsOfDirectory(at: url, includingPropertiesForKeys: nil)
                 .filter { $0.pathExtension.lowercased() == "json" }
                 .sorted { $0.lastPathComponent < $1.lastPathComponent }
@@ -76,14 +77,41 @@ public struct AgentLoopRegressionReportSet: Sendable {
         }
 
         let decoder = JSONDecoder()
-        let reports = try reportURLs.map { reportURL -> NamedReport in
-            let data = try Data(contentsOf: reportURL)
-            let report = try decoder.decode(EvalReport.self, from: data)
-            return NamedReport(
-                name: reportURL.deletingPathExtension().lastPathComponent,
-                url: reportURL,
-                report: report
-            )
+        let reports: [NamedReport]
+        if isDir {
+            // A loop run dir holds per-suite reports AND derived artifacts
+            // (matrix.json, diff.json, notes). Skip anything that isn't a
+            // non-empty EvalReport so `diff <prev-run-dir> <this-run-dir>`
+            // works against the loop's own output dirs — mirrors the lenient
+            // EvalMatrixBuilder.loadReports the `matrix` subcommand already
+            // uses. Without this, every loop diff throws because the baseline
+            // dir always contains its own matrix.json.
+            reports = reportURLs.compactMap { reportURL -> NamedReport? in
+                guard let data = try? Data(contentsOf: reportURL),
+                    let report = try? decoder.decode(EvalReport.self, from: data),
+                    !report.cases.isEmpty
+                else { return nil }
+                return NamedReport(
+                    name: reportURL.deletingPathExtension().lastPathComponent,
+                    url: reportURL,
+                    report: report
+                )
+            }
+            if reports.isEmpty {
+                throw AgentLoopRegressionLabError.noReports(url.path)
+            }
+        } else {
+            // An explicitly named single file must decode — surface a loud
+            // error on a typo or a caller pointing at a non-report file.
+            reports = try reportURLs.map { reportURL -> NamedReport in
+                let data = try Data(contentsOf: reportURL)
+                let report = try decoder.decode(EvalReport.self, from: data)
+                return NamedReport(
+                    name: reportURL.deletingPathExtension().lastPathComponent,
+                    url: reportURL,
+                    report: report
+                )
+            }
         }
 
         return AgentLoopRegressionReportSet(

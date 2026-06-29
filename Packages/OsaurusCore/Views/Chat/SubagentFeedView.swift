@@ -3,7 +3,7 @@
 //  OsaurusCore — Subagent framework
 //
 //  The unified inline legibility surface for ANY nested sub-agent run
-//  (spawn, image, computer_use, sandbox_reduce). Mounted in the expanded
+//  (spawn, image, computer_use). Mounted in the expanded
 //  sub-agent tool-call row (via NSHostingView) and bound to the run's
 //  `SubagentFeed`, it streams each lifecycle / progress / activity event as
 //  the sub-agent works, with a Stop control that trips the run's interrupt

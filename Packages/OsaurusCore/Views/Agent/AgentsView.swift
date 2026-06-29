@@ -998,10 +998,27 @@ struct AgentDetailView: View {
     private var computerUseEnabled: Bool { subagentToggles[.computerUse] ?? false }
     private var spawnDelegationEnabled: Bool { subagentToggles[.spawn] ?? false }
     private var imageEnabled: Bool { subagentToggles[.image] ?? false }
-    /// Per-agent `spawn` allow-list (which agents this agent may spawn).
+    /// Per-agent `spawn_agent` allow-list (which agents this agent may spawn).
     /// Mirrored from / into `AgentSettings.spawnableAgentNames`; empty hides the
-    /// `spawn` tool. The Default agent uses the global pool instead.
+    /// `spawn_agent` tool. The Default agent uses the global pool instead.
     @State private var spawnableAgentNames: [String] = []
+    /// Per-agent `spawn_model` allow-list (raw model ids this agent may spawn).
+    /// Mirrored from / into `AgentSettings.spawnableModelNames`; empty hides the
+    /// `spawn_model` tool. The Default agent uses the global pool instead.
+    @State private var spawnableModelNames: [String] = []
+    /// Per-agent "when/how to use" notes keyed by spawnable model id. Mirrored
+    /// from / into `AgentSettings.spawnableModelNotes`; pruned to the pool on save.
+    @State private var spawnableModelNotes: [String: String] = [:]
+    /// Drives the "Add agent" / "Add model" multi-select popovers in the spawn
+    /// config panel (UI-only; the selections persist immediately on toggle).
+    @State private var spawnAgentPickerPresented = false
+    @State private var spawnModelPickerPresented = false
+    @State private var spawnAgentSearch = ""
+    @State private var spawnModelSearch = ""
+    /// Whether the Spawn card's "Limits" budget steppers are expanded. Collapsed
+    /// by default — the normalized defaults are sensible, so these are power-user
+    /// knobs tucked behind a disclosure (a one-line summary shows when closed).
+    @State private var spawnLimitsExpanded = false
     /// Per-agent autonomy ceiling for Computer Use (PR2). `nil` means no
     /// ceiling. Mirrored from / into `AgentSettings.computerUseCeiling`.
     @State private var computerUseCeiling: AutonomyCeiling? = nil
@@ -1016,7 +1033,7 @@ struct AgentDetailView: View {
     @State private var subagentPermissions: SubagentPermissionDefaults = SubagentPermissionDefaults()
     @State private var subagentBudgets: SubagentBudgets = SubagentBudgets()
     /// Per-agent subagent model overrides keyed by capability id (computer_use /
-    /// sandbox_reduce / spawn). Empty/absent = inherit the kind's default model.
+    /// spawn). Empty/absent = inherit the kind's default model.
     /// Mirrored from / into `AgentSettings.subagentModelOverrides`; the Default
     /// agent uses `mainChatSubagentConfig.subagentModelOverrides`.
     @State private var subagentModelOverrides: [String: String] = [:]
@@ -3127,7 +3144,7 @@ struct AgentDetailView: View {
                     flag: .spawn,
                     title: "Spawn",
                     subtitle:
-                        "Let this agent hand a bounded task to another agent you allow below — the sub-agent runs it and returns just the result. Uses the `spawn` tool."
+                        "Let this agent hand a bounded task to another agent or model you allow below — the sub-agent runs it and returns just the result."
                 )
             case .image:
                 return PerAgentFeature(
@@ -3193,47 +3210,6 @@ struct AgentDetailView: View {
                         }
                     }
                 }
-                if sandboxReduceModelPickerVisible {
-                    sandboxReduceCard
-                }
-            }
-        }
-    }
-
-    /// The reduction subagent (`sandbox_reduce`) has no per-agent enable toggle —
-    /// it is gated by the agent's sandbox (autonomous exec). Surface its model
-    /// picker whenever the sandbox is on, so it shares the standard model-pick
-    /// axis with the toggle-backed kinds.
-    private var sandboxReduceModelPickerVisible: Bool {
-        SubagentCapabilityRegistry.sandboxReduce.supportsModelOverride
-            && agentManager.effectiveAutonomousExec(for: agent.id)?.enabled == true
-    }
-
-    /// A non-toggle "Investigation" card for `sandbox_reduce`: an info header
-    /// (it's always available while the sandbox is on) plus the standard model
-    /// override picker. Binds to `AgentSettings` (custom) or the global store
-    /// (main chat) via `subagentModelOverrideRow`.
-    private var sandboxReduceCard: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Investigation", bundle: .module)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(theme.primaryText)
-                    Text(
-                        "The reduction subagent reads, searches, and runs commands in this agent's sandbox, then returns only a digest. Available whenever the sandbox is on.",
-                        bundle: .module
-                    )
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-                }
-                Spacer(minLength: 12)
-            }
-            .padding(10)
-            .background(roundedSurface(fill: theme.inputBackground, stroke: theme.inputBorder))
-            subagentConfigPanel {
-                subagentModelOverrideRow(SubagentCapabilityRegistry.sandboxReduce)
             }
         }
     }
@@ -3300,6 +3276,37 @@ struct AgentDetailView: View {
             .font(.system(size: 11))
             .foregroundColor(theme.tertiaryText)
             .fixedSize(horizontal: false, vertical: true)
+    }
+
+    /// Surfaced inside the Spawn config when the global Local Orchestrator
+    /// Handoff is OFF. That handoff is a reject-before-evict gate: spawning a
+    /// LOCAL target whose model differs from the resident chat model is refused
+    /// (only remote targets and the already-loaded model run). Showing it here
+    /// means the limit is visible while configuring targets, not just as a
+    /// runtime error. Reads the global store snapshot (`mainChatSubagentConfig`)
+    /// loaded for every agent; the toggle itself lives in Settings → Sub-agents.
+    @ViewBuilder
+    private var spawnHandoffDisabledWarning: some View {
+        if !mainChatSubagentConfig.localTextDelegationEnabled {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.warningColor)
+                Text(
+                    "Local Orchestrator Handoff is off (Settings → Sub-agents). Spawning a local agent or model whose model differs from the current chat model will be refused — only remote targets and the loaded model run.",
+                    bundle: .module
+                )
+                .font(.system(size: 11))
+                .foregroundColor(theme.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(theme.warningColor.opacity(0.12))
+            )
+        }
     }
 
     /// Leading label (plus an optional one-line description) and a trailing
@@ -3374,6 +3381,8 @@ struct AgentDetailView: View {
                     mainChatSpawnEnabled = newValue
                     if !newValue {
                         mainChatSubagentConfig.spawnableAgentNames = []
+                        mainChatSubagentConfig.spawnableModelNames = []
+                        mainChatSubagentConfig.spawnableModelNotes = [:]
                         saveMainChatSubagentConfig()
                     }
                 }
@@ -3413,8 +3422,12 @@ struct AgentDetailView: View {
             )
         case .spawn:
             // The model-override row is rendered generically above (registry
-            // `supportsModelOverride`).
+            // `supportsModelOverride`). Two allow-lists drive the two spawn tools:
+            // agents (`spawn_agent`) and bare models (`spawn_model`).
+            spawnHandoffDisabledWarning
             spawnableAgentsPicker
+            subagentPanelDivider
+            spawnableModelsPicker
             subagentPanelDivider
             subagentPermissionRow(
                 for: SubagentCapabilityRegistry.spawn.id,
@@ -3497,16 +3510,16 @@ struct AgentDetailView: View {
     }
 
     /// The standard per-capability model-override picker for any chat-driven
-    /// kind that sets `supportsModelOverride` (computer_use / sandbox_reduce /
+    /// kind that sets `supportsModelOverride` (computer_use /
     /// spawn). Empty selection = inherit the kind's default model source; the
-    /// empty-tag label is derived from the kind's `modelSource` ("Use persona's
+    /// empty-tag label is derived from the kind's `modelSource` ("Use the agent's
     /// model" for spawn, else "Inherit parent model") so the row needs no
     /// per-kind copy. Lists chat-capable candidates; a stale stored id shows an
     /// "(unavailable)" tag. Binds per-agent (custom) or to the global store
     /// (main chat) via `subagentModelOverrideBinding`.
     private func subagentModelOverrideRow(_ capability: SubagentCapability) -> some View {
         let inheritLabel: LocalizedStringKey =
-            capability.modelSource == .persona ? "Use persona's model" : "Inherit parent model"
+            capability.modelSource == .agent ? "Use the agent's model" : "Inherit parent model"
         let selection = subagentModelOverrideBinding(for: capability.id)
         return subagentModelPicker(
             title: "Model",
@@ -3563,29 +3576,68 @@ struct AgentDetailView: View {
         }
     }
 
-    /// Token / turn / wall-clock budget steppers for the Spawn card.
+    /// Token / turn / wall-clock budget steppers for the Spawn card, tucked
+    /// behind a collapsed-by-default "Limits" disclosure (the normalized defaults
+    /// are sensible, so these are power-user knobs). A one-line summary of the
+    /// current budgets shows on the header when collapsed.
     private var subagentBudgetRows: some View {
         VStack(alignment: .leading, spacing: 8) {
-            AgentSheetSectionLabel("Limits")
-            subagentBudgetStepper(
-                title: "Max tokens",
-                value: subagentBudgetBinding(\.maxDelegateTokens),
-                range: 256 ... 32_768,
-                step: 256
-            )
-            subagentBudgetStepper(
-                title: "Max turns",
-                value: subagentBudgetBinding(\.maxDelegateTurns),
-                range: 1 ... 8,
-                step: 1
-            )
-            subagentBudgetStepper(
-                title: "Max seconds",
-                value: subagentBudgetBinding(\.maxElapsedSeconds),
-                range: 15 ... 1_800,
-                step: 15
-            )
+            Button {
+                withAnimation(.easeInOut(duration: 0.18)) {
+                    spawnLimitsExpanded.toggle()
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundColor(theme.tertiaryText)
+                        .rotationEffect(.degrees(spawnLimitsExpanded ? 90 : 0))
+                    AgentSheetSectionLabel("Limits")
+                    Spacer(minLength: 8)
+                    if !spawnLimitsExpanded {
+                        Text(spawnLimitsSummary)
+                            .font(.system(size: 11))
+                            .foregroundColor(theme.tertiaryText)
+                            .lineLimit(1)
+                    }
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if spawnLimitsExpanded {
+                VStack(alignment: .leading, spacing: 8) {
+                    subagentBudgetStepper(
+                        title: "Max tokens",
+                        value: subagentBudgetBinding(\.maxDelegateTokens),
+                        range: SubagentBudgets.tokenBounds,
+                        step: 256
+                    )
+                    subagentBudgetStepper(
+                        title: "Max turns",
+                        value: subagentBudgetBinding(\.maxDelegateTurns),
+                        range: SubagentBudgets.turnBounds,
+                        step: 1
+                    )
+                    subagentBudgetStepper(
+                        title: "Max seconds",
+                        value: subagentBudgetBinding(\.maxElapsedSeconds),
+                        range: SubagentBudgets.elapsedBounds,
+                        step: 15
+                    )
+                }
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
         }
+    }
+
+    /// Compact "tokens · turns · seconds" summary shown on the collapsed Limits
+    /// header so the current budgets are visible at a glance without expanding.
+    private var spawnLimitsSummary: String {
+        let tokens = subagentBudgetBinding(\.maxDelegateTokens).wrappedValue
+        let turns = subagentBudgetBinding(\.maxDelegateTurns).wrappedValue
+        let seconds = subagentBudgetBinding(\.maxElapsedSeconds).wrappedValue
+        return "\(tokens.formatted()) tok · \(turns) turn\(turns == 1 ? "" : "s") · \(seconds)s"
     }
 
     private func subagentBudgetStepper(
@@ -3686,51 +3738,339 @@ struct AgentDetailView: View {
         SubagentConfigurationStore.save(mainChatSubagentConfig)
     }
 
-    /// Per-agent `spawn` allow-list: a checklist of the OTHER agents this
-    /// agent may launch (an agent can't spawn itself). Writes
-    /// `spawnableAgentNames` and debounce-saves, mirroring the global Main Chat
-    /// pool editor in the Sub-agents tab.
+    // MARK: - Spawn allow-lists (agents + models)
+
+    /// The agents currently in this editor's `spawn_agent` pool (main chat →
+    /// global store; custom agent → its own `@State` mirror).
+    private var selectedSpawnableAgentNames: [String] {
+        isDefaultAgent ? mainChatSubagentConfig.spawnableAgentNames : spawnableAgentNames
+    }
+
+    /// The model ids currently in this editor's `spawn_model` pool.
+    private var selectedSpawnableModelNames: [String] {
+        isDefaultAgent ? mainChatSubagentConfig.spawnableModelNames : spawnableModelNames
+    }
+
+    /// Per-agent `spawn_agent` allow-list: the OTHER agents this agent may
+    /// launch (it can't spawn itself), shown selected-first as removable chips
+    /// with a searchable "Add" popover. Writes the pool + debounce/store-saves,
+    /// mirroring the global Main Chat editor.
     private var spawnableAgentsPicker: some View {
         let candidates = agentManager.agents.filter { $0.id != agent.id }
+        let selected = selectedSpawnableAgentNames
+        let addable = candidates.filter { cand in
+            !selected.contains { $0.caseInsensitiveCompare(cand.name) == .orderedSame }
+        }
         return VStack(alignment: .leading, spacing: 8) {
             AgentSheetSectionLabel("Allowed agents")
             if candidates.isEmpty {
-                Text(
-                    "No other agents yet — create another agent to make it spawnable.",
-                    bundle: .module
-                )
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
+                spawnEmptyHint("No other agents yet — create another agent to make it spawnable.")
             } else {
-                ForEach(candidates) { candidate in
-                    spawnableAgentRow(candidate)
+                if selected.isEmpty {
+                    spawnEmptyHint(
+                        "None yet. Add an agent to delegate a task to it (using its own prompt + model)."
+                    )
+                } else {
+                    FlowLayout(spacing: 6) {
+                        ForEach(selected, id: \.self) { name in
+                            spawnRemovableChip(label: name) {
+                                spawnableMembership(name).wrappedValue = false
+                            }
+                        }
+                    }
+                }
+                spawnAddButton(
+                    title: "Add agent",
+                    isPresented: $spawnAgentPickerPresented,
+                    disabled: addable.isEmpty
+                ) {
+                    spawnAgentAddList()
                 }
             }
         }
     }
 
-    /// One agent row in the per-agent spawnable checklist. Borderless (it lives
-    /// inside `subagentConfigPanel`) and uses a plain `Text(candidate.name)` (NOT
-    /// the localized `featureCard`) because the name is runtime user data, not a
-    /// localization key.
-    private func spawnableAgentRow(_ candidate: Agent) -> some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(candidate.name)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.primaryText)
-                if !candidate.description.isEmpty {
-                    Text(candidate.description)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
-                        .fixedSize(horizontal: false, vertical: true)
+    /// Per-agent `spawn_model` allow-list: bare model ids this agent may hand a
+    /// task to directly (no persona), shown selected-first as rows with a
+    /// local/remote badge and an inline "when to use" note, plus a searchable,
+    /// source-grouped "Add" popover. Notes are pruned to the pool on save.
+    private var spawnableModelsPicker: some View {
+        let selected = selectedSpawnableModelNames
+        let addable = pickerItems.chatModelCandidates.filter { !selected.contains($0.id) }
+        return VStack(alignment: .leading, spacing: 8) {
+            AgentSheetSectionLabel("Allowed models")
+            if selected.isEmpty {
+                spawnEmptyHint(
+                    "None yet. Add a local or remote model to delegate to it directly, with no agent attached."
+                )
+            } else {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(selected, id: \.self) { id in
+                        spawnableModelRow(id)
+                    }
                 }
             }
-            Spacer(minLength: 12)
-            Toggle("", isOn: spawnableMembership(candidate.name))
-                .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
-                .labelsHidden()
+            spawnAddButton(
+                title: "Add model",
+                isPresented: $spawnModelPickerPresented,
+                disabled: addable.isEmpty
+            ) {
+                spawnModelAddList()
+            }
         }
+    }
+
+    /// One selected `spawn_model` row: display name + local/remote badge, an
+    /// inline optional note field, and a remove button.
+    private func spawnableModelRow(_ id: String) -> some View {
+        let item = spawnModelItem(id)
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Text(item?.displayName ?? id)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(theme.primaryText)
+                    .lineLimit(1)
+                if let badge = spawnModelBadge(item) {
+                    spawnBadgePill(badge)
+                }
+                Spacer(minLength: 8)
+                Button {
+                    spawnableModelMembership(id).wrappedValue = false
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 12))
+                        .foregroundColor(theme.tertiaryText)
+                }
+                .buttonStyle(PlainButtonStyle())
+            }
+            spawnModelNoteField(id)
+        }
+        .padding(8)
+        .background(roundedSurface(fill: theme.inputBackground, stroke: theme.inputBorder))
+    }
+
+    /// Inline optional note field for a selected spawnable model.
+    private func spawnModelNoteField(_ id: String) -> some View {
+        let binding = spawnableModelNoteBinding(id)
+        return ZStack(alignment: .leading) {
+            if binding.wrappedValue.isEmpty {
+                Text("When/how to use this model (optional)", bundle: .module)
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.placeholderText)
+                    .allowsHitTesting(false)
+            }
+            TextField("", text: binding)
+                .textFieldStyle(PlainTextFieldStyle())
+                .font(.system(size: 11))
+                .foregroundColor(theme.primaryText)
+        }
+    }
+
+    /// The picker item for a stored model id (for display name / badge), or nil
+    /// when the model is no longer in the cache.
+    private func spawnModelItem(_ id: String) -> ModelPickerItem? {
+        pickerItems.first { $0.id == id }
+    }
+
+    /// Short local/remote badge text for a model row (provider name for remote).
+    private func spawnModelBadge(_ item: ModelPickerItem?) -> String? {
+        guard let item else { return nil }
+        switch item.source {
+        case .remote(let providerName, _): return providerName
+        case .local, .foundation: return L("Local")
+        case .imageGeneration: return L("Image")
+        }
+    }
+
+    /// A small capsule badge (local/remote/provider) used in the model rows.
+    private func spawnBadgePill(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 9, weight: .semibold))
+            .foregroundColor(theme.tertiaryText)
+            .lineLimit(1)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Capsule().fill(theme.tertiaryBackground))
+    }
+
+    /// Empty-state / hint line shared by both spawn selectors.
+    private func spawnEmptyHint(_ text: LocalizedStringKey) -> some View {
+        Text(text, bundle: .module)
+            .font(.system(size: 11))
+            .foregroundColor(theme.tertiaryText)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    /// A removable chip (selected `spawn_agent` agent).
+    private func spawnRemovableChip(label: String, onRemove: @escaping () -> Void) -> some View {
+        HStack(spacing: 6) {
+            Text(label)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(theme.primaryText)
+                .lineLimit(1)
+            Button(action: onRemove) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundColor(theme.tertiaryText)
+            }
+            .buttonStyle(PlainButtonStyle())
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(Capsule().fill(theme.tertiaryBackground))
+        .overlay(Capsule().stroke(theme.inputBorder, lineWidth: 1))
+    }
+
+    /// The "+ Add …" button that reveals a searchable multi-select popover.
+    /// Disabled (greyed) when nothing remains to add.
+    private func spawnAddButton<Content: View>(
+        title: LocalizedStringKey,
+        isPresented: Binding<Bool>,
+        disabled: Bool,
+        @ViewBuilder content: @escaping () -> Content
+    ) -> some View {
+        Button {
+            isPresented.wrappedValue = true
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "plus").font(.system(size: 10, weight: .bold))
+                Text(title, bundle: .module).font(.system(size: 11, weight: .medium))
+            }
+            .foregroundColor(disabled ? theme.tertiaryText : theme.accentColor)
+        }
+        .buttonStyle(PlainButtonStyle())
+        .disabled(disabled)
+        .popover(isPresented: isPresented, arrowEdge: .bottom) {
+            content()
+        }
+    }
+
+    /// Multi-select popover body for adding spawnable agents. Recomputes its
+    /// addable list from live state so a tapped agent leaves the list while the
+    /// popover stays open for more picks.
+    private func spawnAgentAddList() -> some View {
+        let selected = selectedSpawnableAgentNames
+        let addable = agentManager.agents.filter { cand in
+            cand.id != agent.id
+                && !selected.contains { $0.caseInsensitiveCompare(cand.name) == .orderedSame }
+        }
+        let query = spawnAgentSearch.trimmingCharacters(in: .whitespacesAndNewlines)
+        let filtered = addable.filter { cand in
+            query.isEmpty
+                || cand.name.localizedCaseInsensitiveContains(query)
+                || cand.description.localizedCaseInsensitiveContains(query)
+        }
+        return VStack(alignment: .leading, spacing: 8) {
+            SearchField(
+                text: $spawnAgentSearch,
+                placeholder: "Search agents",
+                width: 264,
+                compact: true
+            )
+            ScrollView {
+                VStack(alignment: .leading, spacing: 2) {
+                    if filtered.isEmpty {
+                        spawnEmptyHint("No matching agents.").padding(.vertical, 6)
+                    } else {
+                        ForEach(filtered) { cand in
+                            spawnAddRow(
+                                title: cand.name,
+                                subtitle: cand.description.isEmpty ? nil : cand.description
+                            ) {
+                                spawnableMembership(cand.name).wrappedValue = true
+                            }
+                        }
+                    }
+                }
+            }
+            .frame(maxHeight: 220)
+        }
+        .padding(12)
+        .frame(width: 292)
+    }
+
+    /// Multi-select popover body for adding spawnable models, grouped by source
+    /// (Local / each provider) and searchable. Recomputes from live state.
+    private func spawnModelAddList() -> some View {
+        let selected = selectedSpawnableModelNames
+        let addable = pickerItems.chatModelCandidates.filter { !selected.contains($0.id) }
+        let filtered = addable.filter { $0.matches(searchQuery: spawnModelSearch) }
+        let grouped = filtered.groupedBySource()
+        return VStack(alignment: .leading, spacing: 8) {
+            SearchField(
+                text: $spawnModelSearch,
+                placeholder: "Search models",
+                width: 296,
+                compact: true
+            )
+            ScrollView {
+                VStack(alignment: .leading, spacing: 6) {
+                    if grouped.isEmpty {
+                        spawnEmptyHint("No matching models.").padding(.vertical, 6)
+                    } else {
+                        ForEach(Array(grouped.enumerated()), id: \.offset) { _, group in
+                            Text(group.source.displayName)
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundColor(theme.tertiaryText)
+                                .padding(.top, 4)
+                            ForEach(group.models) { item in
+                                spawnAddRow(
+                                    title: item.displayName,
+                                    subtitle: spawnModelSubtitle(item)
+                                ) {
+                                    spawnableModelMembership(item.id).wrappedValue = true
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            .frame(maxHeight: 260)
+        }
+        .padding(12)
+        .frame(width: 324)
+    }
+
+    /// One tappable add-row inside a spawn popover (title + optional subtitle +
+    /// a leading-to-trailing add affordance).
+    private func spawnAddRow(
+        title: String,
+        subtitle: String?,
+        onAdd: @escaping () -> Void
+    ) -> some View {
+        Button(action: onAdd) {
+            HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(theme.primaryText)
+                        .lineLimit(1)
+                    if let subtitle {
+                        Text(subtitle)
+                            .font(.system(size: 10))
+                            .foregroundColor(theme.tertiaryText)
+                            .lineLimit(1)
+                    }
+                }
+                Spacer(minLength: 8)
+                Image(systemName: "plus.circle.fill")
+                    .font(.system(size: 13))
+                    .foregroundColor(theme.accentColor)
+            }
+            .contentShape(Rectangle())
+            .padding(.vertical, 4)
+            .padding(.horizontal, 4)
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
+
+    /// Compact "size · quant · Vision" subtitle for a model add-row.
+    private func spawnModelSubtitle(_ item: ModelPickerItem) -> String? {
+        var parts: [String] = []
+        if let params = item.parameterCount, !params.isEmpty { parts.append(params) }
+        if let quant = item.quantization, !quant.isEmpty { parts.append(quant) }
+        if item.isVLM { parts.append(L("Vision")) }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
     /// Case-insensitive membership binding into the spawnable pool, de-duping on
@@ -3766,6 +4106,74 @@ struct AgentDetailView: View {
                 }
                 if isOn { names.append(name) }
                 spawnableAgentNames = names
+                debouncedSave()
+            }
+        )
+    }
+
+    /// Exact-match membership binding into the spawnable MODEL pool, de-duping on
+    /// insert. Matches `SubagentToolVisibility.spawnModelAllowed` (model ids are
+    /// canonical, so exact, not case-insensitive). Removing a model also drops
+    /// its note. Custom agents write `AgentSettings.spawnableModelNames`; the main
+    /// chat writes the global store's pool.
+    private func spawnableModelMembership(_ id: String) -> Binding<Bool> {
+        let trimmed = id.trimmingCharacters(in: .whitespacesAndNewlines)
+        if isDefaultAgent {
+            return Binding(
+                get: { mainChatSubagentConfig.spawnableModelNames.contains(trimmed) },
+                set: { isOn in
+                    var names = mainChatSubagentConfig.spawnableModelNames.filter { $0 != trimmed }
+                    if isOn {
+                        names.append(trimmed)
+                    } else {
+                        mainChatSubagentConfig.spawnableModelNotes.removeValue(forKey: trimmed)
+                    }
+                    mainChatSubagentConfig.spawnableModelNames = names
+                    saveMainChatSubagentConfig()
+                }
+            )
+        }
+        return Binding(
+            get: { spawnableModelNames.contains(trimmed) },
+            set: { isOn in
+                var names = spawnableModelNames.filter { $0 != trimmed }
+                if isOn {
+                    names.append(trimmed)
+                } else {
+                    spawnableModelNotes.removeValue(forKey: trimmed)
+                }
+                spawnableModelNames = names
+                debouncedSave()
+            }
+        )
+    }
+
+    /// Two-way binding into a spawnable model's note. A blank value clears the
+    /// note. Custom agents write `AgentSettings.spawnableModelNotes` (debounced);
+    /// the main chat writes the global store.
+    private func spawnableModelNoteBinding(_ id: String) -> Binding<String> {
+        let trimmed = id.trimmingCharacters(in: .whitespacesAndNewlines)
+        if isDefaultAgent {
+            return Binding(
+                get: { mainChatSubagentConfig.spawnableModelNotes[trimmed] ?? "" },
+                set: { newValue in
+                    if newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        mainChatSubagentConfig.spawnableModelNotes.removeValue(forKey: trimmed)
+                    } else {
+                        mainChatSubagentConfig.spawnableModelNotes[trimmed] = newValue
+                    }
+                    saveMainChatSubagentConfig()
+                }
+            )
+        }
+        return Binding(
+            get: { spawnableModelNotes[trimmed] ?? "" },
+            set: { newValue in
+                if newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    spawnableModelNotes.removeValue(forKey: trimmed)
+                } else {
+                    spawnableModelNotes[trimmed] = newValue
+                }
                 debouncedSave()
             }
         )
@@ -5616,6 +6024,8 @@ struct AgentDetailView: View {
         }
         computerUseCeiling = agent.settings.computerUseCeiling
         spawnableAgentNames = agent.settings.spawnableAgentNames
+        spawnableModelNames = agent.settings.spawnableModelNames
+        spawnableModelNotes = agent.settings.spawnableModelNotes
         imageGenerationModelId = agent.settings.imageGenerationModelId
         imageEditModelId = agent.settings.imageEditModelId
         subagentPermissions = agent.settings.subagentPermissions
@@ -5624,7 +6034,11 @@ struct AgentDetailView: View {
         // The main chat (Default agent) binds its Sub-agents tab to the global
         // store; load it and derive the UI-only spawn-enable from a non-empty pool.
         mainChatSubagentConfig = SubagentConfigurationStore.snapshot()
-        mainChatSpawnEnabled = !mainChatSubagentConfig.spawnableAgentNames.isEmpty
+        // Spawn is "on" for the main chat when EITHER pool (agents or models) has
+        // an entry, since both feed the spawn tools.
+        mainChatSpawnEnabled =
+            !mainChatSubagentConfig.spawnableAgentNames.isEmpty
+            || !mainChatSubagentConfig.spawnableModelNames.isEmpty
         hostWorkspacePath = agent.hostWorkspacePath
         generativeGreetingsEnabled = agent.settings.generativeGreetingsEnabled
         // Hydrate the Personality editor with the resolved default
@@ -5837,9 +6251,20 @@ struct AgentDetailView: View {
                 computerUseCeiling: computerUseEnabled ? computerUseCeiling : nil,
                 spawnDelegationEnabled: spawnDelegationEnabled,
                 imageEnabled: imageEnabled,
-                // Persist the allow-list only while spawn is on, so toggling
-                // spawn off doesn't silently retain a stale target list.
+                // Persist the allow-lists only while spawn is on, so toggling
+                // spawn off doesn't silently retain a stale target list. The
+                // model notes are pruned to the surviving model pool so a removed
+                // model never leaves a dangling note.
                 spawnableAgentNames: spawnDelegationEnabled ? spawnableAgentNames : [],
+                spawnableModelNames: spawnDelegationEnabled
+                    ? SubagentConfiguration.normalizedSpawnableModelNames(spawnableModelNames)
+                    : [],
+                spawnableModelNotes: spawnDelegationEnabled
+                    ? SubagentConfiguration.normalizedSpawnableModelNotes(
+                        spawnableModelNotes,
+                        names: SubagentConfiguration.normalizedSpawnableModelNames(spawnableModelNames)
+                    )
+                    : [:],
                 // Image models / permissions / budgets persist unconditionally —
                 // a stored model id is ignored while the capability is off, so a
                 // toggle round-trip keeps the user's choices (unlike the spawn

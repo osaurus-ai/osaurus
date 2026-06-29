@@ -71,7 +71,6 @@ struct AgentSettingsCodableTests {
         var settings = AgentSettings.defaultDisabled
         settings.subagentModelOverrides = [
             SubagentCapabilityRegistry.computerUse.id: "vision-model",
-            SubagentCapabilityRegistry.sandboxReduce.id: "reducer-model",
             SubagentCapabilityRegistry.spawn.id: "spawn-model",
         ]
 
@@ -81,10 +80,6 @@ struct AgentSettingsCodableTests {
         #expect(
             decoded.subagentModelOverrides[SubagentCapabilityRegistry.computerUse.id]
                 == "vision-model"
-        )
-        #expect(
-            decoded.subagentModelOverrides[SubagentCapabilityRegistry.sandboxReduce.id]
-                == "reducer-model"
         )
         #expect(
             decoded.subagentModelOverrides[SubagentCapabilityRegistry.spawn.id] == "spawn-model"
@@ -107,16 +102,46 @@ struct AgentSettingsCodableTests {
         // shape matches the global SubagentConfiguration normalization — never an
         // empty-string model id that would later resolve to a bogus override.
         let json = #"""
-            {"dbEnabled":false,"subagentModelOverrides":{"computer_use":"   ","spawn":"real-model","sandbox_reduce":""}}
+            {"dbEnabled":false,"subagentModelOverrides":{"computer_use":"   ","spawn":"real-model","image":""}}
             """#
         let decoded = try JSONDecoder().decode(AgentSettings.self, from: Data(json.utf8))
 
         #expect(decoded.subagentModelOverrides[SubagentCapabilityRegistry.computerUse.id] == nil)
-        #expect(decoded.subagentModelOverrides[SubagentCapabilityRegistry.sandboxReduce.id] == nil)
+        #expect(decoded.subagentModelOverrides[SubagentCapabilityRegistry.image.id] == nil)
         #expect(
             decoded.subagentModelOverrides[SubagentCapabilityRegistry.spawn.id] == "real-model"
         )
         #expect(decoded.subagentModelOverrides.count == 1)
+    }
+
+    @Test("the per-agent spawnable model pool + notes round-trip")
+    func roundTripsSpawnableModelPool() throws {
+        var settings = AgentSettings.defaultDisabled
+        settings.spawnDelegationEnabled = true
+        settings.spawnableModelNames = ["qwen3-4b-4bit", "openai/gpt-4o-mini"]
+        settings.spawnableModelNotes = [
+            "qwen3-4b-4bit": "Quick local edits",
+            "openai/gpt-4o-mini": "Frontier reasoning",
+        ]
+
+        let data = try JSONEncoder().encode(settings)
+        let decoded = try JSONDecoder().decode(AgentSettings.self, from: data)
+
+        #expect(decoded.spawnableModelNames == ["qwen3-4b-4bit", "openai/gpt-4o-mini"])
+        #expect(decoded.spawnableModelNotes["qwen3-4b-4bit"] == "Quick local edits")
+        #expect(decoded.spawnableModelNotes["openai/gpt-4o-mini"] == "Frontier reasoning")
+    }
+
+    @Test("legacy JSON without the spawnable model pool decodes to empty")
+    func backCompatSpawnableModelPoolEmpty() throws {
+        // An older agent file that predates the per-agent spawn_model pool.
+        let json = #"{"dbEnabled":false,"spawnableAgentNames":["Coder"]}"#
+        let decoded = try JSONDecoder().decode(AgentSettings.self, from: Data(json.utf8))
+
+        #expect(decoded.spawnableModelNames.isEmpty)
+        #expect(decoded.spawnableModelNotes.isEmpty)
+        // The agent-name pool still decodes (proves the model keys are additive).
+        #expect(decoded.spawnableAgentNames == ["Coder"])
     }
 
     @Test("legacy JSON without the new keys decodes to safe defaults")

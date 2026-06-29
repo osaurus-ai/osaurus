@@ -2,9 +2,9 @@
 
 End-to-end agentic evals that run the canonical `AgentToolLoop` against the
 **live Linux-VM sandbox** (Apple Containerization). Cases cover code
-execution, combined host-folder mode, plugin creation, secrets, the
-`sandbox_reduce` subagent, background processes, networking, and artifact
-delivery — the full autonomous-execution surface.
+execution, combined host-folder mode, plugin creation, secrets,
+background processes, networking, and artifact delivery — the full
+autonomous-execution surface.
 
 ## Requirements & gating
 

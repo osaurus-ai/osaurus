@@ -3,7 +3,7 @@
 //  OsaurusCore — Subagent framework
 //
 //  The one model-resolution path the chat-driven sub-agent kinds (spawn,
-//  computer_use, sandbox_reduce) share. Each kind previously repeated the same
+//  computer_use) share. Each kind previously repeated the same
 //  three steps inline: look up the per-agent model override, fall back to the
 //  kind's default model source, then run the live `SubagentResidency` decision
 //  and stash the plan for `makeHandoff()`. This folds that into one precedence
@@ -85,13 +85,24 @@ enum SubagentModelResolution {
     ///   shared `SubagentResidency.resolve` (reject-before-evict).
     ///
     /// `agentId` is the launching agent whose override map + settings are read
-    /// (spawn/computer_use pass `scope.agentId`; sandbox_reduce its own agent
-    /// id). `defaultModel` is the kind's default model source, evaluated on the
+    /// (spawn/computer_use pass `scope.agentId`). `defaultModel` is the kind's
+    /// default model source, evaluated on the
     /// main actor only when no usable override is present.
+    ///
+    /// `requestedModel` is an EXPLICIT run-model target the caller resolved
+    /// itself (the `spawn_model` tool's `model` argument). Unlike `evalModel` it
+    /// does NOT bypass residency — it is used as-is (trusted; the kind already
+    /// pool-gated it) and still runs the live `SubagentResidency` decision so a
+    /// local target evicts the resident chat model and a remote one does not. It
+    /// ranks above the per-agent override and the kind default, and deliberately
+    /// skips the `availableOverride` cache check so an explicit target isn't
+    /// silently swapped for a default — an unavailable id surfaces a real load
+    /// error from residency instead.
     static func resolve(
         capabilityId: String,
         agentId: UUID?,
         evalModel: String?,
+        requestedModel: String? = nil,
         idleWaitSeconds: Int,
         deniedMessage: String,
         unavailableMessage: String,
@@ -108,6 +119,9 @@ enum SubagentModelResolution {
         let config = SubagentConfigurationStore.snapshot()
         let isDefault = agentId == Agent.defaultId
         let model: String? = await MainActor.run {
+            // Explicit target (spawn_model) wins over the override/default, but
+            // still flows into the residency decision below (not a bypass).
+            if let requested = trimmedNonEmpty(requestedModel) { return requested }
             let settings = agentId.flatMap { AgentManager.shared.agent(for: $0)?.settings }
             let override = SubagentToolVisibility.effectiveSubagentModel(
                 capabilityId: capabilityId,

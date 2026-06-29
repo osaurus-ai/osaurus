@@ -1,0 +1,23 @@
+{
+  "id": "subagent.residency-dir-remote-remote",
+  "domain": "subagent",
+  "label": "Subagent • residency direction: remote→remote runs in place",
+  "query": "A remote orchestrator spawns a remote model.",
+  "notes": "LIVE RESIDENCY. PRODUCTION path: orchestrator and target are both REMOTE — nothing local is in play, so SubagentResidency runs in place → handoffWrapped=false. Requires the remote provider connected — run the suite with a remote --model (e.g. MODEL=xai/grok-4.3) + XAI_API_KEY so the CLI bootstraps it; SKIPS (unavailable) when the remote target isn't routable. Id is `residency-dir-*` so it stays OUT of FILTER=spawn; run with FILTER=residency-dir-.",
+  "fixtures": {},
+  "expect": {
+    "subagent": {
+      "lane": "spawn_model_residency",
+      "orchestrator": "xai/grok-4.3",
+      "model": "xai/grok-4.3",
+      "handoffEnabled": true,
+      "ensureResident": false,
+      "input": "Reply with a single short sentence confirming you received this task.",
+      "expectSuccess": true,
+      "expectEnvelopeKind": "success",
+      "expectResultKind": "spawn_result",
+      "expectFeedKinds": ["phase"],
+      "expectHandoffWrapped": false
+    }
+  }
+}

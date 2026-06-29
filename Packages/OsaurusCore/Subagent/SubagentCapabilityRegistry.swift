@@ -30,16 +30,16 @@ public struct SubagentCapability: Sendable {
     /// How a kind sources the model it runs — the local-vs-remote axis a future
     /// dedicated model-backed kind (e.g. an AppleScript generator) slots into.
     /// Documents whether a kind needs its own default-model picker + residency
-    /// handoff (`dedicatedConfigured` / `persona`) or simply reuses the parent
+    /// handoff (`dedicatedConfigured` / `agent`) or simply reuses the parent
     /// agent's model (`inheritsParent`).
     public enum ModelSource: Sendable, Equatable {
         /// A dedicated, separately-configured model (image: gen / edit defaults;
         /// coordinator owns residency).
         case dedicatedConfigured
-        /// The chosen persona's model (spawn) — local or remote; the kind runs
+        /// The chosen agent's own model (spawn) — local or remote; the kind runs
         /// the residency handoff when it clashes with a resident chat model.
-        case persona
-        /// The parent agent's own model (computer_use, sandbox_reduce) — no
+        case agent
+        /// The parent agent's own model (computer_use) — no
         /// residency change.
         case inheritsParent
     }
@@ -94,13 +94,13 @@ public struct SubagentCapability: Sendable {
         /// context is known. Off-by-default holds because every agent ships with
         /// the capability disabled until opted in from its Sub-agents tab.
         case delegation
-        /// Sandbox-scoped (sandbox_reduce): gated by sandbox registration +
-        /// execution mode, NOT stripped in `resolveTools` and not surfaced as a
-        /// per-agent / delegation toggle.
+        /// Sandbox-scoped: gated by sandbox registration + execution mode, NOT
+        /// stripped in `resolveTools` and not surfaced as a per-agent /
+        /// delegation toggle.
         case sandboxExec
     }
 
-    /// Stable id (`"computer_use"`, `"spawn"`, `"image"`, `"sandbox_reduce"`).
+    /// Stable id (`"computer_use"`, `"spawn"`, `"image"`).
     public let id: String
     /// Tool names this capability gates. `toolNames.first` is the primary tool
     /// whose presence in the resolved schema triggers the guidance section.
@@ -114,7 +114,7 @@ public struct SubagentCapability: Sendable {
     /// Whether this kind exposes the standard per-agent model-override picker
     /// (`subagentModelOverrides` → `effectiveSubagentModel` → the shared
     /// `SubagentModelResolution` layer). True for the chat-driven kinds
-    /// (computer_use, spawn, sandbox_reduce). False for `image`, which owns its
+    /// (computer_use, spawn). False for `image`, which owns its
     /// own dedicated gen/edit model system (`effectiveImageModel`) and renders
     /// its own pickers — see the `image` registration below. AgentsView renders
     /// the override row for any capability with this set, so a new chat-driven
@@ -184,16 +184,27 @@ public enum SubagentCapabilityRegistry {
         guidanceLabelKey: "Computer Use"
     )
 
-    /// The text-spawn family — just `spawn` now that `local_delegate` is gone.
-    /// No guidance section today. Names are declared here as the SSOT (the
-    /// registry is authoritative for sub-agent tool visibility); `ToolRegistry`'s
-    /// derived sets read these for its internal gating.
+    /// Stable tool name for the persona-context spawn (`spawn_agent(input,
+    /// agent)`). SSOT so the tool, registry gating, and visibility resolver agree.
+    public static let spawnAgentToolName = "spawn_agent"
+    /// Stable tool name for the model-only spawn (`spawn_model(input, model)`).
+    public static let spawnModelToolName = "spawn_model"
+
+    /// The text-spawn family — two sibling tools, one shared capability:
+    /// `spawn_agent` (delegate WITH a persona's system prompt + model) and
+    /// `spawn_model` (delegate to a bare model id, no persona). Splitting into two
+    /// single-required-target tools keeps each JSON contract enforceable (no
+    /// "exactly one of agent/model" the schema can't express). Each is gated
+    /// independently by its own pool (agents vs models). No static guidance — the
+    /// composer renders one dynamic spawn block enumerating the live agents /
+    /// models, so `guidance == nil` keeps the generic guidance loop off it. Names
+    /// are the SSOT here; `ToolRegistry`'s derived sets read these for gating.
     public static let spawn = SubagentCapability(
         id: "spawn",
-        toolNames: ["spawn"],
+        toolNames: [spawnAgentToolName, spawnModelToolName],
         gate: .delegation,
         perAgentFlag: .spawn,
-        modelSource: .persona,
+        modelSource: .agent,
         supportsModelOverride: true,
         displayLabel: "Subagent",
         iconName: "person.2.fill"
@@ -221,23 +232,9 @@ public enum SubagentCapabilityRegistry {
         guidanceLabelKey: "Image Generation"
     )
 
-    /// The reduction family — `sandbox_reduce` runs a read/search/exec-only
-    /// child loop inside the sandbox and hands back only a digest. Gated by
-    /// sandbox registration (NOT a per-agent / delegation toggle), so it never
-    /// strips in `resolveTools`; represented here for display + guidance + tests.
-    public static let sandboxReduce = SubagentCapability(
-        id: "sandbox_reduce",
-        toolNames: ["sandbox_reduce"],
-        gate: .sandboxExec,
-        modelSource: .inheritsParent,
-        supportsModelOverride: true,
-        displayLabel: "Investigation",
-        iconName: "doc.text.magnifyingglass"
-    )
-
     /// Every capability, in guidance-render order (computer_use, then image;
-    /// spawn / sandbox_reduce have no guidance and are skipped at render time).
-    public static let all: [SubagentCapability] = [computerUse, spawn, image, sandboxReduce]
+    /// spawn renders its own dynamic guidance block in the composer).
+    public static let all: [SubagentCapability] = [computerUse, spawn, image]
 
     /// The delegation-gated capabilities (spawn + image).
     public static let delegationFamily: [SubagentCapability] = [spawn, image]
@@ -305,19 +302,66 @@ public enum SubagentToolVisibility {
         return names
     }
 
-    /// Whether `spawn` is available for an agent. The Default / main chat is
-    /// governed by its own pool (`anyAgentSpawnable`); a custom agent by its
-    /// own toggle AND a non-empty per-agent allow-list (nothing to spawn → hide).
-    /// There is no global master switch — each agent opts in for itself.
-    static func spawnAvailable(
+    /// The agent personas effectively spawnable from a launching agent. Default /
+    /// main chat → its own global pool; a custom agent → its own per-agent
+    /// allow-list, but ONLY while its `spawn` toggle is on (off → nothing). The
+    /// SSOT both the `spawn_agent` visibility gate and the guidance enumerator
+    /// read, so the tool and its prompt block never list different agents.
+    static func effectiveSpawnableAgents(
+        isDefault: Bool,
+        config: SubagentConfiguration,
+        perAgentEnabled: Bool,
+        perAgentTargets: [String]
+    ) -> [String] {
+        if isDefault { return config.spawnableAgentNames }
+        return perAgentEnabled ? perAgentTargets : []
+    }
+
+    /// The bare model ids effectively spawnable from a launching agent (the
+    /// `spawn_model` pool). Same Default-vs-custom shape as
+    /// `effectiveSpawnableAgents`; a custom agent's list is live only while its
+    /// `spawn` toggle is on.
+    static func effectiveSpawnableModels(
+        isDefault: Bool,
+        config: SubagentConfiguration,
+        perAgentEnabled: Bool,
+        perAgentModelTargets: [String]
+    ) -> [String] {
+        if isDefault { return config.spawnableModelNames }
+        return perAgentEnabled ? perAgentModelTargets : []
+    }
+
+    /// Whether `spawn_agent` is available for an agent — i.e. it has at least one
+    /// spawnable persona (nothing to spawn → hide the tool). There is no global
+    /// master switch; each agent opts in for itself.
+    static func spawnAgentAvailable(
         isDefault: Bool,
         config: SubagentConfiguration,
         perAgentEnabled: Bool,
         perAgentTargets: [String]
     ) -> Bool {
-        isDefault
-            ? config.anyAgentSpawnable
-            : (perAgentEnabled && !perAgentTargets.isEmpty)
+        !effectiveSpawnableAgents(
+            isDefault: isDefault,
+            config: config,
+            perAgentEnabled: perAgentEnabled,
+            perAgentTargets: perAgentTargets
+        ).isEmpty
+    }
+
+    /// Whether `spawn_model` is available for an agent — i.e. it has at least one
+    /// spawnable model id.
+    static func spawnModelAvailable(
+        isDefault: Bool,
+        config: SubagentConfiguration,
+        perAgentEnabled: Bool,
+        perAgentModelTargets: [String]
+    ) -> Bool {
+        !effectiveSpawnableModels(
+            isDefault: isDefault,
+            config: config,
+            perAgentEnabled: perAgentEnabled,
+            perAgentModelTargets: perAgentModelTargets
+        ).isEmpty
     }
 
     /// Whether `image` is available for an agent. The Default / main chat is
@@ -331,9 +375,10 @@ public enum SubagentToolVisibility {
         isDefault ? config.imageDelegationActive : perAgentEnabled
     }
 
-    /// Whether a specific `spawn` TARGET persona is reachable from a launching
-    /// agent — the execution-time check the spawn kind enforces. Default / main
-    /// chat uses its own pool; a custom agent its own allow-list.
+    /// Whether a specific `spawn_agent` TARGET persona is reachable from a
+    /// launching agent — the execution-time check the spawn kind enforces.
+    /// Default / main chat uses its own pool; a custom agent its own allow-list.
+    /// Agent names match case-insensitively (display names are user-facing prose).
     static func spawnTargetAllowed(
         _ name: String,
         isDefault: Bool,
@@ -342,6 +387,25 @@ public enum SubagentToolVisibility {
     ) -> Bool {
         if isDefault { return config.isAgentSpawnable(name) }
         return perAgentTargets.contains { $0.caseInsensitiveCompare(name) == .orderedSame }
+    }
+
+    /// Whether a specific `spawn_model` TARGET model id is reachable from a
+    /// launching agent — the execution-time check the spawn kind enforces before
+    /// any residency handoff (reject-before-evict). Default / main chat uses its
+    /// own pool; a custom agent its own allow-list. Model ids are canonical, so
+    /// this matches exactly (trimmed), unlike the case-insensitive agent check.
+    static func spawnModelAllowed(
+        _ id: String,
+        isDefault: Bool,
+        config: SubagentConfiguration,
+        perAgentModelTargets: [String]
+    ) -> Bool {
+        let trimmed = id.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        if isDefault { return config.isModelSpawnable(trimmed) }
+        return perAgentModelTargets.contains {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines) == trimmed
+        }
     }
 
     /// The delegation tool names visible to a given agent, applying the master
@@ -355,13 +419,24 @@ public enum SubagentToolVisibility {
     ) -> Set<String> {
         let isDefault = (agentId == Agent.defaultId)
         var names = Set<String>()
-        if spawnAvailable(
+        // The two spawn tools gate independently: each appears only when its own
+        // pool is non-empty, so an agent with only models sees `spawn_model` and
+        // not `spawn_agent` (and vice versa).
+        if spawnAgentAvailable(
             isDefault: isDefault,
             config: config,
             perAgentEnabled: snapshot.spawnDelegationEnabled,
             perAgentTargets: snapshot.spawnableAgentNames
         ) {
-            names.formUnion(SubagentCapabilityRegistry.spawn.toolNames)
+            names.insert(SubagentCapabilityRegistry.spawnAgentToolName)
+        }
+        if spawnModelAvailable(
+            isDefault: isDefault,
+            config: config,
+            perAgentEnabled: snapshot.spawnDelegationEnabled,
+            perAgentModelTargets: snapshot.spawnableModelNames
+        ) {
+            names.insert(SubagentCapabilityRegistry.spawnModelToolName)
         }
         if imageAvailable(
             isDefault: isDefault,
@@ -401,7 +476,7 @@ public enum SubagentToolVisibility {
 
     /// The effective per-run model override for a subagent capability, or `nil`
     /// to inherit the kind's default model source (the parent agent's model for
-    /// computer_use / sandbox_reduce; the chosen persona's model for spawn). The
+    /// computer_use; the chosen persona's model for spawn). The
     /// Default / main chat reads the global override map; a custom agent its own.
     /// A blank stored value resolves to `nil` (inherit). This is the standard
     /// model-pick axis every chat-driven kind reads the same way.

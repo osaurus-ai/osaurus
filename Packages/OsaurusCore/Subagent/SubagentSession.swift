@@ -3,7 +3,7 @@
 //  OsaurusCore — Subagent framework
 //
 //  The shared host every nested sub-agent funnels through. Generalized from
-//  computer_use's scaffolding so spawn / image / computer_use / sandbox_reduce
+//  computer_use's scaffolding so spawn / image / computer_use
 //  share ONE lifecycle:
 //
 //    recursion guard → scope ids → resolve model (reject-before-evict)
@@ -34,9 +34,9 @@ enum SubagentTelemetry {
 
 public enum SubagentSession {
     /// Active-kind recursion guard. Set while ANY sub-agent kind runs so a
-    /// nested sub-agent call refuses (generalizes
-    /// `LocalTextDelegateContext` / `SandboxReduceContext` into one guard for
-    /// the whole family). Carries the running kind's id for the message.
+    /// nested sub-agent call refuses (generalizes the per-tool delegation
+    /// guards into one guard for the whole family). Carries the running kind's
+    /// id for the message.
     @TaskLocal public static var activeKindId: String?
 
     /// True when a sub-agent kind is currently running on this task tree.

@@ -11,8 +11,10 @@
 //      full control flow (resolve → permission → handoff → run → normalize
 //      → cleanup) plus the unified recursion guard and feed lifecycle, with
 //      no tokens. This is the CI-safe lane the eval-kit unit tests run.
-//    - spawn: invokes the real `SpawnTool` through the host (live text
-//      sub-agent on a user-configured spawnable persona).
+//    - spawn / spawn_model: drive the real `TextSubagentKind` through the host
+//      (the same path `spawn_agent` / `spawn_model` drive) — `spawn` against a
+//      user-configured spawnable persona, `spawn_model` against a bare
+//      spawnable model id with no persona.
 //    - image: invokes the real `ImageTool` through the host (live native
 //      image generation or, with `sourcePaths`, edit).
 //
@@ -225,14 +227,19 @@ public enum SubagentJobEvaluator {
             kindId: spec.kindId,
             toolCallId: toolCallId,
             latencyMs: latency,
-            handoffWrapped: spec.needsHandoff ? kind.handoffWrapped : nil,
+            // Always record for the scripted lane: a `needsHandoff: false` kind
+            // vends a `PassthroughHandoff`, so the recording handoff is never
+            // invoked and this reads `false` — the host-level proof that a
+            // same-model kind runs WITHOUT a residency wrap (the passthrough
+            // branch). `needsHandoff: true` reads `true` (the wrap branch).
+            handoffWrapped: kind.handoffWrapped,
             nestedRefused: spec.recurse ? kind.nestedRefused : nil
         )
     }
 
-    /// Run the live spawn lane through the host + `TextSubagentKind` (the same
-    /// path `SpawnTool` drives). The caller is responsible for skipping when
-    /// the persona/model is unavailable — the transcript's `envelopeKind`
+    /// Run the live spawn-agent lane through the host + `TextSubagentKind` (the
+    /// same path `spawn_agent` drives). The caller is responsible for skipping
+    /// when the persona/model is unavailable — the transcript's `envelopeKind`
     /// surfaces a `rejected`/`unavailable` envelope so the runner can decide
     /// skip vs. fail.
     ///
@@ -251,15 +258,195 @@ public enum SubagentJobEvaluator {
         let kind = TextSubagentKind(agentName: agent, input: input, modelOverride: modelId)
         let started = Date()
         let envelope = await withEvalScope(toolCallId: toolCallId) {
-            await SubagentSession.run(kind, tool: "spawn")
+            await SubagentSession.run(kind, tool: "spawn_agent")
         }
         let latency = Date().timeIntervalSince(started) * 1000
         return transcript(
             fromEnvelope: envelope,
-            tool: "spawn",
+            tool: "spawn_agent",
             kindId: "spawn",
             toolCallId: toolCallId,
             latencyMs: latency
+        )
+    }
+
+    /// Run the live spawn-model lane through the host + `TextSubagentKind` (the
+    /// same path `spawn_model` drives) — a bare model id with NO persona/system
+    /// prompt. `model` is both the pool-gated target AND the run model (the eval
+    /// seam forces it with residency passthrough, so the lane is a real
+    /// cross-model column without depending on GPU residency). The caller seeds
+    /// the model into the spawnable pool for happy-path cases; negative guards
+    /// (unseeded id) surface a `rejected` envelope so the runner skips vs. fails.
+    public static func runSpawnModel(
+        model: String,
+        input: String
+    ) async -> SubagentJobTranscript {
+        let toolCallId = freshToolCallId()
+        let kind = TextSubagentKind(model: model, input: input, modelOverride: model)
+        let started = Date()
+        let envelope = await withEvalScope(toolCallId: toolCallId) {
+            await SubagentSession.run(kind, tool: "spawn_model")
+        }
+        let latency = Date().timeIntervalSince(started) * 1000
+        return transcript(
+            fromEnvelope: envelope,
+            tool: "spawn_model",
+            kindId: "spawn",
+            toolCallId: toolCallId,
+            latencyMs: latency
+        )
+    }
+
+    /// Run the live RESIDENCY-DIRECTION lane: drive the PRODUCTION `spawn_model`
+    /// resolution (`modelOverride: nil`, so the eval passthrough seam is NOT
+    /// used) with an independently chosen `orchestrator` (the resident chat
+    /// model) and `target`, so the real `SubagentResidency.resolve` decision and
+    /// `ResidencyHandoff` middleware run end-to-end. This is the only lane that
+    /// proves the actual unload/reload, so it covers all four directions:
+    ///
+    ///   - orchestrator LOCAL + resident, target a DIFFERENT local + handoff ON
+    ///     → unload chat model → run target → reload (the real swap).
+    ///   - same pair, handoff OFF → rejected BEFORE evict (the gate).
+    ///   - local→local same / local→remote / remote→local / remote→remote
+    ///     → run in place (no swap).
+    ///
+    /// `ModelRuntime` residency is process-global, so this CLEAN-SLATES the
+    /// resident set before and after, making each direction order-independent.
+    /// It returns an `unavailable` envelope (so the runner SKIPS rather than
+    /// fails) when the host can't satisfy the case: a local orchestrator that
+    /// must be made resident isn't installed, or the target can neither run
+    /// locally (not installed) nor route remotely (no connected provider /
+    /// missing key). Peak RAM is sampled by the EVAL RUNNER around this call
+    /// (`ResourceSampler` lives in the eval kit, not OsaurusCore).
+    ///
+    /// `ensureResident` should be `true` for a local orchestrator and `false`
+    /// for a remote one (a remote orchestrator has no resident local chat model
+    /// to evict). `handoffEnabled` toggles the "Local Orchestrator Handoff"
+    /// switch for the run only; the prior config is restored after.
+    public static func runSpawnModelResidency(
+        orchestrator: String,
+        target: String,
+        handoffEnabled: Bool,
+        ensureResident: Bool,
+        input: String
+    ) async -> SubagentJobTranscript {
+        let toolCallId = freshToolCallId()
+        let started = Date()
+
+        // Classify by installation: a model the host has on disk is "local"
+        // (its run evicts/loads the GPU); anything else is remote and must be
+        // routable by a connected provider or there is nothing to run.
+        let orchestratorLocal = ModelManager.findInstalledModel(named: orchestrator) != nil
+        let targetLocal = ModelManager.findInstalledModel(named: target) != nil
+        let targetRoutableRemote: Bool =
+            targetLocal
+            ? false
+            : await MainActor.run { RemoteProviderManager.shared.findService(forModel: target) != nil }
+
+        // Availability SKIP (surface `unavailable`, which the runner skips on):
+        // can't make a non-installed local orchestrator resident, and can't run
+        // a target that is neither installed locally nor routable remotely.
+        let missingLocalOrchestrator = ensureResident && !orchestratorLocal
+        let targetUnrunnable = !targetLocal && !targetRoutableRemote
+        if missingLocalOrchestrator || targetUnrunnable {
+            let why =
+                missingLocalOrchestrator
+                ? "orchestrator '\(orchestrator)' is not installed locally"
+                : "target '\(target)' is neither installed locally nor routable via a connected provider"
+            let env = ToolEnvelope.failure(
+                kind: .unavailable,
+                message: "residency lane unavailable: \(why)",
+                tool: "spawn_model"
+            )
+            return transcript(
+                fromEnvelope: env,
+                tool: "spawn_model",
+                kindId: "spawn",
+                toolCallId: toolCallId,
+                latencyMs: Date().timeIntervalSince(started) * 1000
+            )
+        }
+
+        // Snapshot config so a developer's real settings are untouched. Only the
+        // two core-model strings are captured (the struct stays on the main
+        // actor); the whole delegation config is `Sendable` and captured whole.
+        let priorChat: (provider: String?, name: String?) = await MainActor.run {
+            let c = ChatConfigurationStore.load()
+            return (c.coreModelProvider, c.coreModelName)
+        }
+        let priorConfig: SubagentConfiguration = await MainActor.run {
+            SubagentConfigurationStore.snapshot()
+        }
+
+        // Clean slate: free any resident local model so the residency decision
+        // sees ONLY the orchestrator we set up next (order-independent cases).
+        await ModelRuntime.shared.unloadModelsNotIn([])
+
+        // Faithfully point the chat/core model at the orchestrator.
+        await MainActor.run {
+            var c = ChatConfigurationStore.load()
+            if let slash = orchestrator.firstIndex(of: "/") {
+                c.coreModelProvider = String(orchestrator[..<slash])
+                c.coreModelName = String(orchestrator[orchestrator.index(after: slash)...])
+            } else {
+                c.coreModelProvider = nil
+                c.coreModelName = orchestrator
+            }
+            ChatConfigurationStore.save(c)
+        }
+
+        // Make a local orchestrator actually resident so a DIFFERENT local
+        // target triggers the real unload/reload; a remote orchestrator stays
+        // non-resident (nothing local to evict).
+        if ensureResident && orchestratorLocal {
+            try? await ModelRuntime.shared.preload(name: orchestrator)
+        }
+
+        // Seed the target into the global spawnable MODEL pool and set the
+        // handoff gate to the case's value (OFF + a different local target ⇒
+        // reject-before-evict; ON ⇒ the swap is allowed).
+        await MainActor.run {
+            var updated = priorConfig
+            if !priorConfig.isModelSpawnable(target) {
+                updated.spawnableModelNames = priorConfig.spawnableModelNames + [target]
+            }
+            updated.localTextDelegationEnabled = handoffEnabled
+            SubagentConfigurationStore.save(updated)
+        }
+
+        // PRODUCTION path: `modelOverride: nil` ⇒ `requestedModel: target` ⇒
+        // live `SubagentResidency.resolve` (NOT the eval passthrough seam).
+        let kind = TextSubagentKind(model: target, input: input, modelOverride: nil)
+        let envelope = await withEvalScope(toolCallId: toolCallId) {
+            await SubagentSession.run(kind, tool: "spawn_model")
+        }
+        let latency = Date().timeIntervalSince(started) * 1000
+
+        // The success payload carries `handoff` (`residencyPlan.shouldUnload`) —
+        // the real "did the model swap happen" signal — so surface it as
+        // `handoffWrapped`. A rejected envelope (handoff-OFF gate) has no
+        // payload, leaving it `nil`, and the case asserts `rejected` instead.
+        let payload = (ToolEnvelope.successPayload(envelope) as? [String: Any]) ?? [:]
+        let handoffFlag = payload["handoff"] as? Bool
+
+        // Restore config + core model, then drop the (reloaded) orchestrator so
+        // the next case starts from a clean resident set.
+        await MainActor.run {
+            SubagentConfigurationStore.save(priorConfig)
+            var c = ChatConfigurationStore.load()
+            c.coreModelProvider = priorChat.provider
+            c.coreModelName = priorChat.name
+            ChatConfigurationStore.save(c)
+        }
+        await ModelRuntime.shared.unloadModelsNotIn([])
+
+        return transcript(
+            fromEnvelope: envelope,
+            tool: "spawn_model",
+            kindId: "spawn",
+            toolCallId: toolCallId,
+            latencyMs: latency,
+            handoffWrapped: handoffFlag
         )
     }
 
@@ -349,60 +536,6 @@ public enum SubagentJobEvaluator {
         )
     }
 
-    /// Run the live `sandbox_reduce` lane through the host + `SandboxReduceKind`
-    /// on the active run `modelId`. Pre-flights the sandbox child toolset: when
-    /// it isn't registered (no container on this host) the lane is genuinely
-    /// unavailable, so this returns an `unavailable` transcript that the runner
-    /// SKIPS — never a false failure, and never touching production error
-    /// classification in `SandboxReduceKind`.
-    public static func runSandboxReduce(
-        task: String,
-        modelId: String,
-        paths: [String] = [],
-        maxIterations: Int? = nil
-    ) async -> SubagentJobTranscript {
-        let toolsReady = await MainActor.run {
-            !ToolRegistry.shared.specs(forTools: SandboxReduceTool.childToolAllowlist).isEmpty
-        }
-        guard toolsReady else {
-            return SubagentJobTranscript(
-                tool: "sandbox_reduce",
-                kindId: "sandbox_reduce",
-                succeeded: false,
-                envelopeKind: "unavailable",
-                summary: "",
-                feedEventKinds: [],
-                feedPhases: [],
-                error: "sandbox child tools are not registered on this host (no container).",
-                latencyMs: 0
-            )
-        }
-        let toolCallId = freshToolCallId()
-        let iterations = min(
-            max(maxIterations ?? SandboxReduceTool.defaultIterations, 1),
-            SandboxReduceTool.maxIterations
-        )
-        let kind = SandboxReduceKind(
-            agentId: Agent.defaultId.uuidString,
-            task: task,
-            paths: paths,
-            iterations: iterations,
-            modelOverride: modelId
-        )
-        let started = Date()
-        let envelope = await withEvalScope(toolCallId: toolCallId) {
-            await SubagentSession.run(kind, tool: "sandbox_reduce")
-        }
-        let latency = Date().timeIntervalSince(started) * 1000
-        return transcript(
-            fromEnvelope: envelope,
-            tool: "sandbox_reduce",
-            kindId: "sandbox_reduce",
-            toolCallId: toolCallId,
-            latencyMs: latency
-        )
-    }
-
     // MARK: - Eval persona seeding
 
     /// Seed a spawnable persona named `name` for the duration of `body`, then
@@ -466,6 +599,40 @@ public enum SubagentJobEvaluator {
                 AgentStore.delete(id: id)
                 AgentManager.shared.refresh()
             }
+            if state.configChanged {
+                SubagentConfigurationStore.save(state.priorConfig)
+            }
+        }
+        return result
+    }
+
+    /// Seed a spawnable MODEL `id` for the duration of `body`, then restore — the
+    /// `spawn_model` analogue of `withSpawnablePersona`. Adds `id` to the Default
+    /// agent's GLOBAL spawnable model pool (`SubagentConfiguration
+    /// .spawnableModelNames`, which the Default/main-chat scope the eval uses
+    /// consults) and forces `localTextDelegationEnabled` ON so a LOCAL target can
+    /// hand off (unload/reload) instead of being denied. No `Agent` is created —
+    /// model spawns carry no persona. The whole `SubagentConfiguration` is
+    /// snapshotted and restored, leaving a developer's real config untouched.
+    /// `SubagentConfigurationStore` is nonisolated, but this hops to the main
+    /// actor to match `withSpawnablePersona`'s ordering against `AgentManager`.
+    public static func withSpawnableModel<T: Sendable>(
+        id: String,
+        _ body: @Sendable () async -> T
+    ) async -> T {
+        let state: (priorConfig: SubagentConfiguration, configChanged: Bool) = await MainActor.run {
+            let priorConfig = SubagentConfigurationStore.snapshot()
+            var updated = priorConfig
+            if !priorConfig.isModelSpawnable(id) {
+                updated.spawnableModelNames = priorConfig.spawnableModelNames + [id]
+            }
+            updated.localTextDelegationEnabled = true
+            let configChanged = updated != priorConfig
+            if configChanged { SubagentConfigurationStore.save(updated) }
+            return (priorConfig, configChanged)
+        }
+        let result = await body()
+        await MainActor.run {
             if state.configChanged {
                 SubagentConfigurationStore.save(state.priorConfig)
             }

@@ -1,0 +1,23 @@
+{
+  "id": "subagent.residency-dir-remote-local",
+  "domain": "subagent",
+  "label": "Subagent • residency direction: remote→local runs in place",
+  "query": "A remote orchestrator spawns a local model.",
+  "notes": "LIVE RESIDENCY (machine-specific). PRODUCTION path: the orchestrator is REMOTE (ensureResident=false → no local chat model resident), then spawns a LOCAL target. A remote orchestrator has no resident local model to evict, so SubagentResidency runs the local target in place → handoffWrapped=false. Needs NO remote key (the remote orchestrator is never run — only the local target generates); SKIPS (unavailable) when the local target isn't installed. Id is `residency-dir-*` so it stays OUT of FILTER=spawn; run with FILTER=residency-dir-.",
+  "fixtures": {},
+  "expect": {
+    "subagent": {
+      "lane": "spawn_model_residency",
+      "orchestrator": "xai/grok-4.3",
+      "model": "mlx-community/Qwen3.5-4B-OptiQ-4bit",
+      "handoffEnabled": true,
+      "ensureResident": false,
+      "input": "Reply with a single short sentence confirming you received this task.",
+      "expectSuccess": true,
+      "expectEnvelopeKind": "success",
+      "expectResultKind": "spawn_result",
+      "expectFeedKinds": ["phase"],
+      "expectHandoffWrapped": false
+    }
+  }
+}

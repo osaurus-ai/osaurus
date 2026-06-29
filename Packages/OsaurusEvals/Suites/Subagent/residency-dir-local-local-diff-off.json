@@ -1,0 +1,21 @@
+{
+  "id": "subagent.residency-dir-local-local-diff-off",
+  "domain": "subagent",
+  "label": "Subagent • residency direction: local→local (different, handoff OFF) rejected before evict",
+  "query": "Spawn a DIFFERENT local model with the Local Orchestrator Handoff disabled.",
+  "notes": "LIVE RESIDENCY (machine-specific) — the GATE. PRODUCTION path: preloads local orchestrator A, then spawns a DIFFERENT local model B with the Local Orchestrator Handoff OFF. SubagentResidency must REJECT before evicting anything (so the orchestrator is never stranded unloaded) → rejected envelope carrying the handoff-disabled message. Id is `residency-dir-*` so it stays OUT of FILTER=spawn; run with FILTER=residency-dir-. SKIPS when either local model isn't installed (surfaces unavailable, not rejected).",
+  "fixtures": {},
+  "expect": {
+    "subagent": {
+      "lane": "spawn_model_residency",
+      "orchestrator": "mlx-community/Qwen3.5-4B-OptiQ-4bit",
+      "model": "OsaurusAI/gemma-4-E4B-it-4bit",
+      "handoffEnabled": false,
+      "ensureResident": true,
+      "input": "Reply with a single short sentence confirming you received this task.",
+      "expectSuccess": false,
+      "expectEnvelopeKind": "rejected",
+      "summaryContains": ["Local Orchestrator Handoff"]
+    }
+  }
+}

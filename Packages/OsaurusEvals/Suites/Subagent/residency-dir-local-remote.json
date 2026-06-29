@@ -1,0 +1,23 @@
+{
+  "id": "subagent.residency-dir-local-remote",
+  "domain": "subagent",
+  "label": "Subagent • residency direction: local→remote runs in place",
+  "query": "A resident local orchestrator spawns a remote model.",
+  "notes": "LIVE RESIDENCY (machine-specific). PRODUCTION path: preloads a local orchestrator so it is GPU-resident, then spawns a REMOTE target. A remote target never touches the local GPU, so SubagentResidency runs it in place (no unload) → handoffWrapped=false. Requires the remote provider connected — run the suite with a remote --model (e.g. MODEL=xai/grok-4.3) + XAI_API_KEY so the CLI bootstraps it; SKIPS (unavailable) when the local orchestrator isn't installed or the remote target isn't routable. Id is `residency-dir-*` so it stays OUT of FILTER=spawn; run with FILTER=residency-dir-.",
+  "fixtures": {},
+  "expect": {
+    "subagent": {
+      "lane": "spawn_model_residency",
+      "orchestrator": "mlx-community/Qwen3.5-4B-OptiQ-4bit",
+      "model": "xai/grok-4.3",
+      "handoffEnabled": true,
+      "ensureResident": true,
+      "input": "Reply with a single short sentence confirming you received this task.",
+      "expectSuccess": true,
+      "expectEnvelopeKind": "success",
+      "expectResultKind": "spawn_result",
+      "expectFeedKinds": ["phase"],
+      "expectHandoffWrapped": false
+    }
+  }
+}

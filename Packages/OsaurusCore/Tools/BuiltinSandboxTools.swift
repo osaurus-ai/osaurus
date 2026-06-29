@@ -94,13 +94,6 @@ enum BuiltinSandboxTools {
             SandboxInstallTool(agentId: agentId, agentName: agentName, home: home),
             runtimeManaged: true
         )
-        // Reduction subagent: read-heavy investigation in a nested,
-        // context-isolated loop that returns only a digest. Gated with the
-        // exec tools because its child loop can run `sandbox_exec`.
-        registry.registerSandboxTool(
-            SandboxReduceTool(agentId: agentId, agentName: agentName, home: home),
-            runtimeManaged: true
-        )
 
         // Secret management tools
         registry.registerSandboxTool(

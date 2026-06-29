@@ -1,0 +1,19 @@
+{
+  "id": "subagent.spawn-model-live-digest",
+  "domain": "subagent",
+  "label": "Subagent • live spawn_model bare-model digest",
+  "query": "Spawn a bare model (no persona) and get back a compact digest.",
+  "notes": "LIVE. Runs the host + TextSubagentKind in MODEL mode (the spawn_model path) — a bare spawnable model id with NO persona/system prompt — on the RUN model, so the spawn_model text path is a real cross-model column. `seedSpawnableModel` adds the run model to the Default agent's global spawnable model pool (and enables the local handoff) for the run and tears it down after, so it runs on any host. SKIPS only when the run model itself isn't ready (e.g. a remote provider with no key).",
+  "fixtures": {},
+  "expect": {
+    "subagent": {
+      "lane": "spawn_model",
+      "input": "In one sentence, summarize what a bounded sub-agent is.",
+      "seedSpawnableModel": true,
+      "expectSuccess": true,
+      "expectEnvelopeKind": "success",
+      "expectResultKind": "spawn_result",
+      "expectFeedKinds": ["phase"]
+    }
+  }
+}

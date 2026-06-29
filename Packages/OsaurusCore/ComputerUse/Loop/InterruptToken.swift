@@ -11,8 +11,8 @@
 //      `SubagentInterruptCenter`, so a user can halt a run without tearing
 //      down the whole chat turn.
 //
-//  Shared by every sub-agent kind (spawn / image / computer_use /
-//  sandbox_reduce) through `SubagentSession`; the process-wide registry that
+//  Shared by every sub-agent kind (spawn / image / computer_use) through
+//  `SubagentSession`; the process-wide registry that
 //  maps a run's tool-call id to its token is `SubagentInterruptCenter`.
 //
 

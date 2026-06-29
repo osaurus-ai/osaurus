@@ -46,7 +46,7 @@ enum ToolDisplayName {
         if rawName == "image" {
             return imageLabel(running: running, arguments: arguments)
         }
-        // Other sub-agent tools (spawn, computer_use, sandbox_reduce) take their
+        // Other sub-agent tools (spawn, computer_use) take their
         // chip label from the capability registry (SSOT) so the chip and the
         // live-feed header always read the same word.
         if let label = SubagentCapabilityRegistry.displayLabel(forToolName: rawName) {

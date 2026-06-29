@@ -48,7 +48,7 @@ struct SubagentModelOverrideResolverTests {
         // Absent entirely.
         #expect(
             SubagentToolVisibility.effectiveSubagentModel(
-                capabilityId: "sandbox_reduce",
+                capabilityId: "computer_use",
                 isDefault: false,
                 config: .default,
                 settings: AgentSettings.defaultDisabled
@@ -58,10 +58,10 @@ struct SubagentModelOverrideResolverTests {
         // Blank value — `AgentSettings` does not normalize its map, so the
         // resolver must trim and treat whitespace as "inherit".
         var settings = AgentSettings.defaultDisabled
-        settings.subagentModelOverrides = ["sandbox_reduce": "   "]
+        settings.subagentModelOverrides = ["computer_use": "   "]
         #expect(
             SubagentToolVisibility.effectiveSubagentModel(
-                capabilityId: "sandbox_reduce",
+                capabilityId: "computer_use",
                 isDefault: false,
                 config: .default,
                 settings: settings

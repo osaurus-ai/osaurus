@@ -927,6 +927,64 @@ public struct SystemPromptComposer: Sendable {
             }
         }
 
+        // Spawn guidance is DYNAMIC — it enumerates the launching agent's ACTUAL
+        // spawnable agents + models — so it can't ride the generic guidance loop
+        // above (whose `spawn` entry intentionally keeps `guidance == nil`).
+        // Render a dedicated block whenever either spawn tool reached the schema,
+        // listing only the tool(s) that resolved and reading the same pools
+        // (`SubagentToolVisibility` + the snapshot/config) the visibility gate
+        // used, so the prompt and the callable tools can never disagree. It joins
+        // the cached prefix until a pool edit re-renders it (a one-time bust, like
+        // the other config-driven sections). HTTP parity is automatic: both
+        // surfaces compose through here.
+        if !effectiveToolsOff {
+            let agentToolResolved = resolvedNames.contains(
+                SubagentCapabilityRegistry.spawnAgentToolName
+            )
+            let modelToolResolved = resolvedNames.contains(
+                SubagentCapabilityRegistry.spawnModelToolName
+            )
+            if agentToolResolved || modelToolResolved {
+                let config = SubagentConfigurationStore.snapshot()
+                let isDefault = snapshot.agentId == Agent.defaultId
+                let agentNames =
+                    agentToolResolved
+                    ? SubagentToolVisibility.effectiveSpawnableAgents(
+                        isDefault: isDefault,
+                        config: config,
+                        perAgentEnabled: snapshot.spawnDelegationEnabled,
+                        perAgentTargets: snapshot.spawnableAgentNames
+                    )
+                    : []
+                let modelNames =
+                    modelToolResolved
+                    ? SubagentToolVisibility.effectiveSpawnableModels(
+                        isDefault: isDefault,
+                        config: config,
+                        perAgentEnabled: snapshot.spawnDelegationEnabled,
+                        perAgentModelTargets: snapshot.spawnableModelNames
+                    )
+                    : []
+                let modelNotes =
+                    isDefault ? config.spawnableModelNotes : snapshot.spawnableModelNotes
+                let descriptors = SpawnDescriptors.resolve(
+                    agentNames: agentNames,
+                    modelNames: modelNames,
+                    modelNotes: modelNotes
+                )
+                composer.append(
+                    .static(
+                        id: "spawn",
+                        label: L("Subagents"),
+                        content: SystemPromptTemplates.spawnGuidance(
+                            agents: descriptors.agents,
+                            models: descriptors.models
+                        )
+                    )
+                )
+            }
+        }
+
         // Agent-loop guidance: short cheat-sheet for the chat-layer-
         // intercepted tools (todo / complete / clarify / share_artifact).
         // Always rendered when any loop tool resolves into the schema:
@@ -2027,8 +2085,8 @@ public struct SystemPromptComposer: Sendable {
         //     per-agent toggle + spawnable allow-list). Computed ONCE here and
         //     reused by the default-agent allowlist below; the HTTP agent-run
         //     path reads the same resolver (BUG E parity guard).
-        //   * .sandboxExec (sandbox_reduce): never stripped here (gated by sandbox
-        //     registration, not the schema strip).
+        //   * .sandboxExec: never stripped here (gated by sandbox registration,
+        //     not the schema strip).
         let visibleDelegation = SubagentToolVisibility.visibleDelegationToolNames(
             agentId: snapshot.agentId,
             snapshot: snapshot,
@@ -2141,9 +2199,10 @@ public struct SystemPromptComposer: Sendable {
         let resolved = canonicalToolOrder(Array(byName.values))
 
         // Debug aid for the delegation tool surfacing: confirms whether the
-        // `spawn` / `image` tools actually reached the model's schema, per the
-        // per-agent visibility resolved above.
-        let hasSpawn = resolved.contains { $0.function.name == "spawn" }
+        // spawn (`spawn_agent` / `spawn_model`) / `image` tools actually reached
+        // the model's schema, per the per-agent visibility resolved above.
+        let spawnToolNames = SubagentCapabilityRegistry.spawn.toolNames
+        let hasSpawn = resolved.contains { spawnToolNames.contains($0.function.name) }
         let hasImage = resolved.contains { $0.function.name == "image" }
         toolResolveLog.debug(
             "resolveTools agent=\(snapshot.agentId.uuidString, privacy: .public) spawn_in_schema=\(hasSpawn, privacy: .public) image_in_schema=\(hasImage, privacy: .public) toolCount=\(resolved.count, privacy: .public)"

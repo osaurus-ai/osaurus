@@ -6,10 +6,11 @@
 //  (spawn, image). When a kind resolves a DIFFERENT local model than the
 //  resident orchestrator, the chat model must be unloaded so the sub-agent
 //  model takes the GPU exclusively, then reloaded after the run. Same-model
-//  kinds (computer_use, sandbox_reduce) use `PassthroughHandoff` instead.
+//  kinds (computer_use) use `PassthroughHandoff` instead.
 //
-//  Generalized from the residency flow `NativeImageJobCoordinator` and
-//  `SpawnTool` each open-coded. The actual unload/restore/preflight live in
+//  Generalized from the residency flow `NativeImageJobCoordinator` and the
+//  spawn kind (`TextSubagentKind`) each open-coded. The actual
+//  unload/restore/preflight live in
 //  `ChatResidencyHandoff`; this wraps them as the host's "around" combinator so
 //  restore is guaranteed even when the run throws. The operations are
 //  injectable so the control flow (refuse-before-evict → unload → run →

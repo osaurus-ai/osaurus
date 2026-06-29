@@ -780,7 +780,9 @@ extension AgentManager {
             computerUseEnabled: agent.settings.computerUseEnabled,
             spawnDelegationEnabled: agent.settings.spawnDelegationEnabled,
             imageEnabled: agent.settings.imageEnabled,
-            spawnableAgentNames: agent.settings.spawnableAgentNames
+            spawnableAgentNames: agent.settings.spawnableAgentNames,
+            spawnableModelNames: agent.settings.spawnableModelNames,
+            spawnableModelNotes: agent.settings.spawnableModelNotes
         )
     }
 

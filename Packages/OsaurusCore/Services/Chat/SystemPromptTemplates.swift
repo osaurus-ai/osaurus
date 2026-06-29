@@ -695,6 +695,78 @@ public enum SystemPromptTemplates {
         - The image renders inline automatically; don't call `share_artifact`. Then confirm briefly in one sentence.
         """
 
+    // MARK: - Spawn (delegation)
+
+    /// Dynamic guidance for the spawn family, rendered by the composer when
+    /// either spawn tool resolves into the schema. Unlike the static capability
+    /// guidance, this enumerates the launching agent's ACTUAL spawnable targets
+    /// (resolved into `SpawnAgentDescriptor` / `SpawnModelDescriptor`) so the
+    /// model sees what `spawn_agent` / `spawn_model` can reach — names, locality,
+    /// provider, size/quant, vision, the persona description, and the user's
+    /// per-model note. Each tool's block is included only when that tool is
+    /// available (its pool is non-empty), so the prompt never advertises a spawn
+    /// path the model can't invoke. Editing a pool re-renders this block (a
+    /// one-time cached-prefix bust), matching the other config-driven sections.
+    public static func spawnGuidance(
+        agents: [SpawnAgentDescriptor],
+        models: [SpawnModelDescriptor]
+    ) -> String {
+        var lines: [String] = ["## Delegating subtasks (spawn)", ""]
+        lines.append(
+            "- You can hand a bounded, self-contained subtask to another worker and get back ONLY a "
+                + "compact result digest (not its transcript). Use it to offload focused "
+                + "text/coding/analysis work; keep the orchestration and the final answer to the user here."
+        )
+        if !agents.isEmpty {
+            lines.append(
+                "- `spawn_agent(input, agent)` runs the task on a configured persona (its own system "
+                    + "prompt + model). Available agents:"
+            )
+            for agent in agents { lines.append("  - " + agentLine(agent)) }
+        }
+        if !models.isEmpty {
+            lines.append(
+                "- `spawn_model(input, model)` runs the task on a bare model id, no persona attached. "
+                    + "Available models:"
+            )
+            for model in models { lines.append("  - " + modelLine(model)) }
+        }
+        lines.append(
+            "- `input` must be the COMPLETE task as a self-contained prompt — the worker sees only that, "
+                + "not this conversation. Pick the target whose description or note best fits the task; "
+                + "if none clearly fits, just do it yourself rather than guessing."
+        )
+        return lines.joined(separator: "\n")
+    }
+
+    /// One `spawn_agent` target line: `` `name` `` — description (meta).
+    private static func agentLine(_ agent: SpawnAgentDescriptor) -> String {
+        var line = "`\(agent.name)`"
+        if let description = agent.description, !description.isEmpty {
+            line += " — \(description)"
+        }
+        var meta: [String] = []
+        if let isLocal = agent.isLocal { meta.append(isLocal ? "local" : "remote") }
+        if let provider = agent.providerName, !provider.isEmpty { meta.append(provider) }
+        if let modelId = agent.modelId, !modelId.isEmpty { meta.append("model: \(modelId)") }
+        if !meta.isEmpty { line += " (" + meta.joined(separator: " · ") + ")" }
+        return line
+    }
+
+    /// One `spawn_model` target line: `` `id` `` (meta) — note.
+    private static func modelLine(_ model: SpawnModelDescriptor) -> String {
+        var line = "`\(model.id)`"
+        var meta: [String] = []
+        if let isLocal = model.isLocal { meta.append(isLocal ? "local" : "remote") }
+        if let provider = model.providerName, !provider.isEmpty { meta.append(provider) }
+        if let params = model.parameterCount, !params.isEmpty { meta.append(params) }
+        if let quant = model.quantization, !quant.isEmpty { meta.append(quant) }
+        if model.isVLM { meta.append("vision") }
+        if !meta.isEmpty { line += " (" + meta.joined(separator: " · ") + ")" }
+        if let note = model.note, !note.isEmpty { line += " — \(note)" }
+        return line
+    }
+
     // MARK: - Soul
 
     /// Renders the SOUL section — agent-authored, sandbox-only identity

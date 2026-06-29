@@ -4,8 +4,8 @@
 //
 //  The unified legibility surface for any nested sub-agent run. Generalized
 //  from `ComputerUseFeed`/`FeedEvent`/`ComputerUseFeedRegistry`/
-//  `ComputerUseInterruptCenter` so spawn, image, computer_use, and
-//  sandbox_reduce all emit onto ONE feed type and the chat row binds ONE
+//  `ComputerUseInterruptCenter` so spawn, image, and computer_use all
+//  emit onto ONE feed type and the chat row binds ONE
 //  surface (`NativeToolCallGroupView`) for every sub-agent row.
 //
 //  `SubagentActivityEvent` is a superset of the old computer-use `FeedEvent`:

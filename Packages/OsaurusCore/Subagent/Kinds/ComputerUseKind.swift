@@ -6,7 +6,7 @@
 //  the unchanged `ComputerUseLoop` (perceive → decide → gate → act → verify)
 //  on the shared `SubagentSession` host so the recursion guard, the live
 //  `SubagentFeed`, the interrupt token, and the compact-result contract are
-//  shared with spawn / image / sandbox_reduce.
+//  shared with spawn / image.
 //
 //  What stays computer-use specific (NOT generalized):
 //    - The per-action `ComputerUseGate` + the `ComputerUsePromptQueue` confirm

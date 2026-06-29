@@ -2,11 +2,11 @@
 //  AgentSubagentRunner.swift
 //  osaurus
 //
-//  Shared bounded runner for the text/tool subagent KINDs: a context-isolated
+//  Shared bounded runner for the text subagent KINDs: a context-isolated
 //  `AgentToolLoop` on a chosen model that returns a compact digest only (the
-//  orchestrator never sees the transcript). Serves both `spawn` (text-only, no
-//  child tools) and `sandbox_reduce` (an allowlisted read/search/exec child
-//  toolset). The host (`SubagentSession`) owns the recursion guard, feed,
+//  orchestrator never sees the transcript). Serves `spawn` (text-only, no child
+//  tools); the optional child toolset hook remains for future tool-capable
+//  kinds. The host (`SubagentSession`) owns the recursion guard, feed,
 //  permission, and residency handoff; this owns only the loop + digest.
 //
 

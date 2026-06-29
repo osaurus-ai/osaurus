@@ -106,7 +106,7 @@ private enum ToolSpecTokenEstimator {
 }
 
 @MainActor
-final class ToolRegistry: ObservableObject {
+public final class ToolRegistry: ObservableObject {
     static let shared = ToolRegistry()
 
     @Published private var toolsByName: [String: OsaurusTool] = [:]
@@ -202,10 +202,15 @@ final class ToolRegistry: ObservableObject {
             SearchMemoryTool(),
             // Inline data visualization rendered as a chart card.
             RenderChartTool(),
+            // Text-delegation family: `spawn_agent` hands a task to a configured
+            // persona (its prompt + model); `spawn_model` hands a task to a bare
+            // spawnable model id. Both gate per-agent (their pools) in
+            // `SystemPromptComposer.resolveTools` via `SubagentToolVisibility`.
+            SpawnAgentTool(),
+            SpawnModelTool(),
             // Native local image generation/editing (one `image` tool; source_paths
             // → edit). Tool body enforces the separate Agent Delegation permission
             // defaults and low-RAM unload policy.
-            SpawnTool(),
             ImageTool(),
             // Agent DB feature (spec §6). The system prompt composer
             // gates these per-agent via `Agent.settings.dbEnabled`;
@@ -1781,8 +1786,10 @@ final class ToolRegistry: ObservableObject {
 extension ToolRegistry {
     /// Write tools across every registered `ConfigurationDomain`.
     /// Computed live so adding a new domain at runtime expands the
-    /// set without an extra step.
-    static var configureWriteToolNames: Set<String> {
+    /// set without an extra step. `public` so the out-of-process eval kit
+    /// (`EvalRunner`, plain `import OsaurusCore`) can reuse the exact
+    /// production set for its compact-model `capabilities_load` exemption.
+    public static var configureWriteToolNames: Set<String> {
         var union: Set<String> = []
         for domain in ConfigurationDomainRegistry.shared.domains {
             union.formUnion(domain.writeToolNames)

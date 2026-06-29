@@ -86,7 +86,8 @@ struct SystemPromptComposerToolResolutionTests {
         computerUseEnabled: Bool = false,
         spawnDelegationEnabled: Bool = false,
         imageEnabled: Bool = false,
-        spawnableAgentNames: [String] = []
+        spawnableAgentNames: [String] = [],
+        spawnableModelNames: [String] = []
     ) -> AgentConfigSnapshot {
         AgentConfigSnapshot(
             agentId: UUID(),
@@ -101,7 +102,8 @@ struct SystemPromptComposerToolResolutionTests {
             computerUseEnabled: computerUseEnabled,
             spawnDelegationEnabled: spawnDelegationEnabled,
             imageEnabled: imageEnabled,
-            spawnableAgentNames: spawnableAgentNames
+            spawnableAgentNames: spawnableAgentNames,
+            spawnableModelNames: spawnableModelNames
         )
     }
 
@@ -649,17 +651,20 @@ struct SystemPromptComposerToolResolutionTests {
             )
             #expect(names.contains("image"))
             // No spawn toggle / list → spawn stays hidden even though image is on.
-            #expect(!names.contains("spawn"))
+            #expect(!names.contains("spawn_agent"))
+            #expect(!names.contains("spawn_model"))
         }
     }
 
-    /// A custom agent surfaces `spawn` only with its own toggle AND a non-empty
-    /// per-agent spawnable list (nothing to spawn ⇒ hidden); `image` stays hidden
-    /// when its own toggle is off.
+    /// A custom agent surfaces `spawn_agent` only with its own toggle AND a
+    /// non-empty per-agent AGENT list, and `spawn_model` only with a non-empty
+    /// MODEL list — each spawn tool gates independently on its own pool. `image`
+    /// stays hidden when its own toggle is off.
     @Test
     func autoMode_customAgentSurfacesSpawnOnlyWithToggleAndTargets() async {
         await withSubagentSandbox {
-            let withTargets = Set(
+            // Agent pool only → spawn_agent, not spawn_model.
+            let withAgents = Set(
                 SystemPromptComposer.resolveTools(
                     snapshot: makeSnapshot(
                         spawnDelegationEnabled: true,
@@ -668,10 +673,24 @@ struct SystemPromptComposerToolResolutionTests {
                     executionMode: .none
                 ).map { $0.function.name }
             )
-            #expect(withTargets.contains("spawn"))
-            #expect(!withTargets.contains("image"))
+            #expect(withAgents.contains("spawn_agent"))
+            #expect(!withAgents.contains("spawn_model"))
+            #expect(!withAgents.contains("image"))
 
-            // Toggle on but EMPTY list → nothing to spawn → spawn hidden.
+            // Model pool only → spawn_model, not spawn_agent.
+            let withModels = Set(
+                SystemPromptComposer.resolveTools(
+                    snapshot: makeSnapshot(
+                        spawnDelegationEnabled: true,
+                        spawnableModelNames: ["qwen3-4b-4bit"]
+                    ),
+                    executionMode: .none
+                ).map { $0.function.name }
+            )
+            #expect(withModels.contains("spawn_model"))
+            #expect(!withModels.contains("spawn_agent"))
+
+            // Toggle on but BOTH lists empty → nothing to spawn → both hidden.
             let noTargets = Set(
                 SystemPromptComposer.resolveTools(
                     snapshot: makeSnapshot(
@@ -681,7 +700,8 @@ struct SystemPromptComposerToolResolutionTests {
                     executionMode: .none
                 ).map { $0.function.name }
             )
-            #expect(!noTargets.contains("spawn"))
+            #expect(!noTargets.contains("spawn_agent"))
+            #expect(!noTargets.contains("spawn_model"))
         }
     }
 
@@ -707,7 +727,8 @@ struct SystemPromptComposerToolResolutionTests {
             ).map { $0.function.name }
         )
         #expect(!names.contains("image"))
-        #expect(!names.contains("spawn"))
+        #expect(!names.contains("spawn_agent"))
+        #expect(!names.contains("spawn_model"))
     }
 
     // MARK: - canonicalToolOrder

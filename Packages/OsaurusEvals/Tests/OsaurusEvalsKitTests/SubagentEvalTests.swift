@@ -289,7 +289,7 @@ struct SubagentEvalTests {
         // Every model-free scenario must pass deterministically: the `scripted`
         // host lane AND the `computer_use` cases that ship `scriptedActions`
         // (driven by the in-memory `ScriptedCUDriver`, no model). Live lanes
-        // (spawn/image, model-driven computer_use, sandbox_reduce) are
+        // (spawn/image, model-driven computer_use) are
         // decode-guarded only — they SKIP without a configured host, which is
         // not a pass/fail signal here.
         func isModelFree(_ exp: EvalCase.SubagentExpectations) -> Bool {

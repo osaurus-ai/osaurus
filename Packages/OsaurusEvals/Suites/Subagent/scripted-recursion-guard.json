@@ -3,7 +3,7 @@
   "domain": "subagent",
   "label": "Subagent • unified recursion guard refuses nesting",
   "query": "A scripted sub-agent that tries to start another sub-agent mid-run.",
-  "notes": "Model-free. While the outer scripted kind runs, it calls SubagentSession.run for a nested kind; the unified guard (activeKindId) must refuse it with a `rejected` envelope. Pins the single recursion guard that replaced the per-tool LocalTextDelegateContext / SandboxReduceContext guards.",
+  "notes": "Model-free. While the outer scripted kind runs, it calls SubagentSession.run for a nested kind; the unified guard (activeKindId) must refuse it with a `rejected` envelope. Pins the single recursion guard that replaced the per-tool delegation guards.",
   "fixtures": {},
   "expect": {
     "subagent": {

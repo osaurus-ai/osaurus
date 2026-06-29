@@ -221,7 +221,7 @@ The OpenAI-compatible HTTP endpoint is **stateless** — there's no Osaurus sess
 
 ## The Canonical Loop Driver (`AgentToolLoop`)
 
-All agent loops in Osaurus run on **one driver**: [`AgentToolLoop`](../Packages/OsaurusCore/Services/Chat/AgentToolLoop.swift). The chat UI, the HTTP `/v1/chat/completions` agent path, the plugin completion loop, the `sandbox_reduce` nested reduction subagent (see [REDUCTION_SUBAGENT.md](REDUCTION_SUBAGENT.md)), and the eval harness each supply surface-specific hooks (`buildMessages`, `modelStep`, `executeTool` / `executeBatch`, …) but share the iteration loop itself: budget bookkeeping, dedupe, next-step bias, notice staging, batch ordering, and the exit taxonomy live in exactly one place.
+All agent loops in Osaurus run on **one driver**: [`AgentToolLoop`](../Packages/OsaurusCore/Services/Chat/AgentToolLoop.swift). The chat UI, the HTTP `/v1/chat/completions` agent path, the plugin completion loop, the nested sub-agent runner (`SubagentSession`), and the eval harness each supply surface-specific hooks (`buildMessages`, `modelStep`, `executeTool` / `executeBatch`, …) but share the iteration loop itself: budget bookkeeping, dedupe, next-step bias, notice staging, batch ordering, and the exit taxonomy live in exactly one place.
 
 Where the surfaces deliberately diverge, the difference is a named [`AgentLoopPolicy`](../Packages/OsaurusCore/Services/Chat/AgentToolLoop.swift) knob rather than a forked loop:
 

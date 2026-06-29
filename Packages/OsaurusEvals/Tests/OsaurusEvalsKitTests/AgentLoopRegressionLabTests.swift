@@ -94,6 +94,44 @@ struct AgentLoopRegressionLabTests {
         #expect(summary.removedCases.isEmpty)
     }
 
+    @Test func loadDirectorySkipsDerivedNonReportJSON() throws {
+        // A loop run dir holds per-suite reports AND derived artifacts
+        // (matrix.json, diff.json, notes). A directory load must SKIP the
+        // non-report JSONs instead of throwing on the first one — otherwise
+        // every `diff <prev-run-dir> <this-run-dir>` fails, because the loop
+        // always writes its own matrix.json into the baseline dir.
+        let fixtures = try fixturesURL()
+        let realReport = try Data(contentsOf: fixtures.appendingPathComponent("baseline.json"))
+
+        let tmp = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("agentloop-load-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        try realReport.write(to: tmp.appendingPathComponent("llm-foundation-Subagent.json"))
+        // Derived artifacts the optimization loop drops in the same dir:
+        try Data(#"{"models":[]}"#.utf8).write(to: tmp.appendingPathComponent("matrix.json"))
+        try Data(#"{"verdict":"PASS"}"#.utf8).write(to: tmp.appendingPathComponent("diff.json"))
+
+        let set = try AgentLoopRegressionReportSet.load(from: tmp, label: "tmp")
+        #expect(set.reports.count == 1)
+        #expect(set.reports.first?.name == "llm-foundation-Subagent")
+    }
+
+    @Test func loadExplicitNonReportFileStillThrows() throws {
+        // An explicitly NAMED single file must still fail loudly (a typo or a
+        // caller pointing `diff` straight at matrix.json), so the lenient
+        // directory skip can't mask a genuine bad path.
+        let tmp = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("agentloop-bad-\(UUID().uuidString).json")
+        try Data(#"{"models":[]}"#.utf8).write(to: tmp)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        #expect(throws: (any Error).self) {
+            _ = try AgentLoopRegressionReportSet.load(from: tmp, label: "bad")
+        }
+    }
+
     private func fixturesURL() throws -> URL {
         try #require(Bundle.module.resourceURL)
             .appendingPathComponent("Fixtures/AgentLoopRegressionLab", isDirectory: true)

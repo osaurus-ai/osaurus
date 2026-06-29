@@ -1,0 +1,23 @@
+{
+  "id": "subagent.residency-dir-local-local-diff-on",
+  "domain": "subagent",
+  "label": "Subagent • residency direction: local→local (different, handoff ON) unloads + reloads",
+  "query": "Spawn a DIFFERENT local model than the resident orchestrator, handoff enabled.",
+  "notes": "LIVE RESIDENCY (RAM-real, machine-specific) — the one direction that does real work. PRODUCTION path (no eval passthrough seam): preloads local orchestrator A so it is GPU-resident, then spawns a DIFFERENT local model B with the Local Orchestrator Handoff ON. SubagentResidency must unload the resident chat model, run B, then reload A → handoffWrapped=true. Peak RAM is captured by the resource-sampled subagent dispatch (the AGENTS.md RAM gate; reviewed, not a tight machine gate). Id is `residency-dir-*` so it stays OUT of FILTER=spawn; run with FILTER=residency-dir-. SKIPS when either local model isn't installed.",
+  "fixtures": {},
+  "expect": {
+    "subagent": {
+      "lane": "spawn_model_residency",
+      "orchestrator": "mlx-community/Qwen3.5-4B-OptiQ-4bit",
+      "model": "OsaurusAI/gemma-4-E4B-it-4bit",
+      "handoffEnabled": true,
+      "ensureResident": true,
+      "input": "Reply with a single short sentence confirming you received this task.",
+      "expectSuccess": true,
+      "expectEnvelopeKind": "success",
+      "expectResultKind": "spawn_result",
+      "expectFeedKinds": ["phase"],
+      "expectHandoffWrapped": true
+    }
+  }
+}

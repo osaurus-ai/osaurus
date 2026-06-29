@@ -576,7 +576,7 @@ extension Array where Element == ModelPickerItem {
     }
 
     /// Chat-capable candidates for the per-agent subagent model picker
-    /// (`computer_use` / `sandbox_reduce` / `spawn` override). Filters via
+    /// (`computer_use` / `spawn` override). Filters via
     /// `isLikelyChatCapable` so embedding / image-only items are excluded.
     var chatModelCandidates: [ModelPickerItem] {
         filter(\.isLikelyChatCapable)

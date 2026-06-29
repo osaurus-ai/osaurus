@@ -46,7 +46,7 @@ public protocol SubagentKind: Sendable {
     ) async throws -> SubagentResult
 
     /// The optional model-residency handoff this kind wraps its run with.
-    /// Same-model kinds (computer_use, sandbox_reduce) use the default
+    /// Same-model kinds (computer_use) use the default
     /// passthrough; model-swapping kinds (spawn, image) override this to vend a
     /// `ResidencyHandoff` configured with their per-run plan (the kind owns the
     /// policy + size source, so the middleware stays generic).
@@ -75,7 +75,7 @@ public protocol SubagentHandoff: Sendable {
     ) async throws -> SubagentResult
 }
 
-/// No-op handoff: same-model kinds (computer_use, sandbox_reduce) run the
+/// No-op handoff: same-model kinds (computer_use) run the
 /// body directly with no preflight / unload / restore.
 public struct PassthroughHandoff: SubagentHandoff {
     public init() {}

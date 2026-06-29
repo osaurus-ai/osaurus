@@ -3,8 +3,8 @@
 //  OsaurusCore — Subagent framework
 //
 //  Foundation value types shared by every nested sub-agent KIND (spawn,
-//  image, computer_use, sandbox_reduce). Generalized from the most-mature
-//  computer_use scaffolding so all four paths funnel through one host
+//  image, computer_use). Generalized from the most-mature
+//  computer_use scaffolding so all paths funnel through one host
 //  (`SubagentSession`) and one compact-result contract (`SubagentResult`)
 //  instead of four bespoke implementations.
 //

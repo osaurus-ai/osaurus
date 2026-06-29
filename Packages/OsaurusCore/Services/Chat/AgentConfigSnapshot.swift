@@ -111,9 +111,17 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
     /// unless the agent opted in (custom agents) / the global image switch is on
     /// (Default agent).
     public let imageEnabled: Bool
-    /// Personas this agent may launch via `spawn`. Drives the "is there anything
-    /// to spawn?" half of the spawn visibility gate for custom agents.
+    /// Personas this agent may launch via `spawn_agent`. Drives the "is there
+    /// anything to spawn?" half of the `spawn_agent` visibility gate for custom
+    /// agents.
     public let spawnableAgentNames: [String]
+    /// Raw model ids this agent may hand a task to via `spawn_model`. Drives the
+    /// "is there anything to spawn?" half of the `spawn_model` visibility gate
+    /// for custom agents.
+    public let spawnableModelNames: [String]
+    /// Optional "when/how to use" note per spawnable model id, surfaced in the
+    /// spawn guidance descriptor (gate stays on `spawnableModelNames`).
+    public let spawnableModelNotes: [String: String]
 
     public init(
         agentId: UUID,
@@ -133,7 +141,9 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
         computerUseEnabled: Bool = false,
         spawnDelegationEnabled: Bool = false,
         imageEnabled: Bool = false,
-        spawnableAgentNames: [String] = []
+        spawnableAgentNames: [String] = [],
+        spawnableModelNames: [String] = [],
+        spawnableModelNotes: [String: String] = [:]
     ) {
         self.agentId = agentId
         self.toolsDisabled = toolsDisabled
@@ -153,6 +163,8 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
         self.spawnDelegationEnabled = spawnDelegationEnabled
         self.imageEnabled = imageEnabled
         self.spawnableAgentNames = spawnableAgentNames
+        self.spawnableModelNames = spawnableModelNames
+        self.spawnableModelNotes = spawnableModelNotes
     }
 
     /// Read every `effective*` field in one MainActor batch.
@@ -193,7 +205,9 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
             computerUseEnabled: caps.computerUseEnabled,
             spawnDelegationEnabled: caps.spawnDelegationEnabled,
             imageEnabled: caps.imageEnabled,
-            spawnableAgentNames: caps.spawnableAgentNames
+            spawnableAgentNames: caps.spawnableAgentNames,
+            spawnableModelNames: caps.spawnableModelNames,
+            spawnableModelNotes: caps.spawnableModelNotes
         )
     }
 }

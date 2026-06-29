@@ -3,7 +3,7 @@
 //  OsaurusCoreTests — Subagent framework
 //
 //  Coverage for the shared model-resolution layer every chat-driven kind
-//  (spawn / computer_use / sandbox_reduce) routes through. The pure
+//  (spawn / computer_use) routes through. The pure
 //  `pickModel` precedence (eval seam → available override → default, with
 //  blanks treated as absent) and the `availableOverride` trimming are
 //  GPU-free; two `resolve` cases pin the eval-bypasses-residency invariant and

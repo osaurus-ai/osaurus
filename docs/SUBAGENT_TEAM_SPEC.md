@@ -30,9 +30,10 @@ This file is the spec + wiring contract for the current build.
 > `[capabilityId: modelId]` map mirroring `subagentPermissions` — supersedes the
 > kind's default model source. One resolver reads it:
 > `SubagentToolVisibility.effectiveSubagentModel(capabilityId:isDefault:config:settings:)`
-> (blank/absent → inherit). Scope: `computer_use` + `sandbox_reduce` get new
-> pickers; `spawn` gets an optional override that supersedes the persona's model;
-> `image` keeps its own gen/edit pickers.
+> (blank/absent → inherit). Scope: `computer_use` gets a picker; `spawn` gets an
+> optional override that supersedes the agent's model (the `spawn_agent` path —
+> `spawn_model` targets a chosen model id directly); `image` keeps its own gen/edit
+> pickers.
 >
 > **Hardening (2026-06-27).** The three chat-driven kinds now share ONE
 > resolution path, `Subagent/SubagentModelResolution.swift`, instead of repeating
@@ -52,15 +53,14 @@ This file is the spec + wiring contract for the current build.
 >   `spawn` (reject-before-evict if Local Orchestrator Handoff is off).
 >
 > The picker is **registry-driven**: `SubagentCapability.supportsModelOverride`
-> (true for `computer_use` / `spawn` / `sandbox_reduce`; false for `image`) makes
+> (true for `computer_use` / `spawn`; false for `image`) makes
 > AgentsView render the standard override row automatically, with the empty-tag
-> label derived from `modelSource` ("Use persona's model" for `spawn`, else
+> label derived from `modelSource` ("Use the agent's model" for `spawn`, else
 > "Inherit parent model"). A new chat-driven kind gets a picker by only flipping
 > the flag. `image` sets it false because it owns its own model system (separate
 > gen/edit ids via `effectiveImageModel`, readiness + "first ready" fallback,
 > coordinator-owned residency) and is NOT a `SubagentModelResolution` client.
-> Pickers live in each agent's **Sub-agents** tab (`sandbox_reduce` via a
-> non-toggle "Investigation" panel shown when the sandbox is on). §1's table + the
+> Pickers live in each agent's **Sub-agents** tab. §1's table + the
 > `modelSource` note below reflect this.
 
 > **No master switch + no Spawn tab (2026-06-26, supersedes every "master switch /
@@ -77,6 +77,30 @@ This file is the spec + wiring contract for the current build.
 > Settings tab** (`SubagentSettingsSection` hosted by `ConfigurationView`). Read "master
 > enable / Settings → Spawn" below as "Settings → Sub-agents card, no master enable."
 
+> **Spawn split + model pool, `sandbox_reduce` removed (2026-06-28, supersedes the
+> single-`spawn`-tool and every `sandbox_reduce` reference below).** The one
+> `spawn(agent, input)` tool is replaced by **two sibling tools** sharing the one
+> `spawn` capability + `TextSubagentKind`: **`spawn_agent(input, agent)`** (run a
+> spawnable persona on ITS prompt + model) and **`spawn_model(input, model)`** (run a
+> bare spawnable model id with NO persona/system prompt). Each tool gates
+> **independently** on its own non-empty pool, so an agent with only models sees just
+> `spawn_model`. Alongside the persona pool, agents now have a user-configurable
+> **spawnable-MODEL pool** — `spawnableModelNames` + a per-model `spawnableModelNotes`
+> sidecar (a `[modelId: note]` map of "when/how to use it" hints) — on both
+> `SubagentConfiguration` (main chat) and `AgentSettings` (custom agents), with the
+> same execution-time allow-list check (`SubagentToolVisibility.spawnModelAllowed`,
+> exact/trimmed match, reject-before-evict). When either spawn tool is visible the
+> composer injects a **dynamic `spawn` guidance block** (a dedicated `.static` section
+> in `SystemPromptComposer.appendGatedSections`, HTTP-parity) built from
+> `SpawnDescriptors.resolve` → `SystemPromptTemplates.spawnGuidance`, enumerating the
+> reachable agents (description · model · local/remote) and models (display name ·
+> local/remote · provider · size/quant · the user's note). **`sandbox_reduce` (kind,
+> tool, eval suites, `REDUCTION_SUBAGENT.md`) is deleted** — it wasn't earning its
+> context cost; `computer_use` + `spawn` are the chat-driven kinds. The `spawn`
+> selection UI in AgentsView is now a **selected-first** view (removable chips/rows +
+> a searchable, grouped "Add" popover; models show a local/remote badge + an inline
+> note field). §1/§2/§4/§6 below read in light of this.
+
 ---
 
 ## 1. What it is
@@ -90,28 +114,27 @@ conforms to `SubagentKind` and runs through `SubagentSession`, sharing one lifec
 (scope ids → recursion guard → resolve → permission → [handoff] → run → compact
 result → defer-cleanup):
 
-| Kind | Tool | Runner | Returns | `modelSource` → handoff |
+| Kind | Tool(s) | Runner | Returns | `modelSource` → handoff |
 |------|------|--------|---------|--------------------------|
-| `TextSubagentKind` | `spawn` | `AgentSubagentRunner` → `AgentToolLoop` on a persona's model | text digest | `.persona` default (+ optional `spawn` override); a DIFFERENT local model unloads/reloads the local orchestrator via the shared `SubagentResidency` layer |
+| `TextSubagentKind` | `spawn_agent` + `spawn_model` | `AgentSubagentRunner` → `AgentToolLoop` on the agent's model (`spawn_agent`) or a bare spawnable model id, no agent (`spawn_model`) | text digest | `.agent` default (+ optional `spawn` override for `spawn_agent`; `spawn_model` runs the chosen id); a DIFFERENT local model unloads/reloads the local orchestrator via the shared `SubagentResidency` layer |
 | `ImageSubagentKind` | `image` | `NativeImageJobCoordinator` → `ImageGenerationService` (vMLXFlux); `source_paths` ⇒ edit | artifact | `.dedicatedConfigured` — the coordinator owns image-model residency (kind keeps the passthrough default) |
 | `ComputerUseKind` | `computer_use` | `ComputerUseLoop` (+ per-action confirm gate) | summary | `.inheritsParent` default (+ optional `computer_use` override); a DIFFERENT local model unloads/reloads via the shared `SubagentResidency` layer |
-| `SandboxReduceKind` | `sandbox_reduce` | `AgentToolLoop` with a read/search/exec allowlist | digest | `.inheritsParent` default (+ optional `sandbox_reduce` override); a DIFFERENT local model unloads/reloads via the shared `SubagentResidency` layer |
 | privacy loop · code exec · browser · … | — | their own kind | their result | future |
 
 > **`modelSource` axis (the DEFAULT source, not the final model).** A kind declares
 > how it DEFAULTS to sourcing its model: `.dedicatedConfigured` (own configured
-> default + coordinator-owned residency), `.persona` (a chosen persona's
+> default + coordinator-owned residency), `.agent` (a chosen agent's
 > local/remote model), or `.inheritsParent` (reuses the parent agent's model). It
 > documents the local-vs-remote axis a future dedicated model-backed kind (e.g. an
 > AppleScript generator) slots into. The **resolved** model is now override-aware
 > (`effectiveSubagentModel` > the `modelSource` default), and the handoff is driven
 > by that resolved model through the shared `SubagentResidency` layer — NOT by the
-> static `modelSource`. So `computer_use` / `sandbox_reduce` keep `.inheritsParent`
-> (their default, preserving the registry assertions) yet now vend a
+> static `modelSource`. So `computer_use` keeps `.inheritsParent`
+> (its default, preserving the registry assertions) yet now vends a
 > `ResidencyHandoff` when an override picks a different local model.
 
 Reuse, don't reinvent: `AgentToolLoop` (`Services/Chat/AgentToolLoop.swift`),
-`sandbox_reduce` (`docs/REDUCTION_SUBAGENT.md`), Computer Use Subagent (PR #1578).
+Computer Use Subagent (PR #1578).
 **Add a kind = one descriptor + one kind + one thin tool, register, done:**
 1. **Descriptor** — add a `SubagentCapability` to `SubagentCapabilityRegistry`
    (`id`, `toolNames`, `gate`, optional `perAgentFlag`, `modelSource`,
@@ -133,20 +156,25 @@ Reuse, don't reinvent: `AgentToolLoop` (`Services/Chat/AgentToolLoop.swift`),
    base set stays a superset and the per-agent narrowing happens where the agent is known.
 2. **Per-capability, resolved per agent** by `SubagentToolVisibility` (each ANDed with
    the master switch):
-   - **`spawn`** — *Default / main chat:* governed by the global pool
-     (`SubagentConfiguration.spawnableAgentNames`, edited in the main chat's Sub-agents
-     tab); visible when the pool is non-empty. *Custom agent:* its own
-     `AgentSettings.spawnDelegationEnabled` **and** a non-empty per-agent
-     `AgentSettings.spawnableAgentNames` (its Sub-agents tab) — nothing to spawn ⇒ hidden.
+   - **`spawn`** (two tools, each gated independently on its OWN pool) —
+     **`spawn_agent`** is visible iff the AGENT pool is non-empty; **`spawn_model`** iff
+     the MODEL pool is non-empty. *Default / main chat:* the global pools
+     (`SubagentConfiguration.spawnableAgentNames` / `.spawnableModelNames`, edited in
+     the main chat's Sub-agents tab). *Custom agent:* its own
+     `AgentSettings.spawnDelegationEnabled` **and** a non-empty per-agent pool of the
+     matching kind (`AgentSettings.spawnableAgentNames` / `.spawnableModelNames`, its
+     Sub-agents tab) — nothing to spawn ⇒ that tool hidden (both empty ⇒ neither).
    - **`image`** — *Default / main chat:* the global `imageDelegationEnabled` switch.
      *Custom agent:* its own `AgentSettings.imageEnabled` toggle.
    - **`computer_use`** — authoritative per-agent flag (`AgentSettings.computerUseEnabled`),
      stripped in both auto + manual mode; the Default agent never enables it.
 
-Spawn *targets* are validated again at execution time (`TextSubagentKind.resolveModel` →
-`SubagentToolVisibility.spawnTargetAllowed`): the Default agent checks the global pool, a
-custom agent its OWN allow-list. A model can never reach an arbitrary local model — only
-opted-in agents, scoped to the launching agent.
+Spawn *targets* are validated again at execution time (`TextSubagentKind.resolveModel`):
+`spawn_agent` checks `SubagentToolVisibility.spawnTargetAllowed` (persona names,
+case-insensitive) and `spawn_model` checks `spawnModelAllowed` (model ids, exact/trimmed),
+each before any residency handoff (reject-before-evict). The Default agent checks the
+global pool, a custom agent its OWN allow-list. A model can never reach an arbitrary
+agent or local model — only opted-in targets, scoped to the launching agent.
 
 Both the native chat composer (`SystemPromptComposer.resolveTools`) and the HTTP
 agent-run surface (`HTTPHandler.enrichWithAgentContext`) resolve the visible sub-agent
@@ -182,14 +210,14 @@ restore-on-failure (orchestrator never left unloaded).
 - **`Subagent/SubagentKind.swift`** + **`Subagent/Kinds/`** — the `SubagentKind`
   protocol (`capability`, `resolveModel`, `permission`, `run`, and an optional
   `makeHandoff()` that defaults to passthrough) and its conformers:
-  `TextSubagentKind`, `ImageSubagentKind`, `ComputerUseKind`, `SandboxReduceKind`.
+  `TextSubagentKind` (both spawn tools), `ImageSubagentKind`, `ComputerUseKind`.
   Each kind's `capability` IS its `SubagentCapabilityRegistry` entry, so kind and
   descriptor are one value. (`needsHandoff` is gone — intent is the descriptor's
   `modelSource`, and the actual swap is whether the kind overrides `makeHandoff()`.)
 - **`Subagent/ResidencyHandoff.swift`** — the optional handoff middleware
   (`SubagentHandoff`); model-swapping kinds override `makeHandoff()` to vend a real
-  `ResidencyHandoff`. Today every chat-driven kind (`spawn`, `computer_use`,
-  `sandbox_reduce`) can, because the model is override-aware. It builds on
+  `ResidencyHandoff`. Today every chat-driven kind (`spawn`, `computer_use`) can,
+  because the model is override-aware. It builds on
   `Services/AgentDelegation/ChatResidencyHandoff.swift` (wait-idle → unload resident
   chat models → memoryPreflight → reload). A kind vends `PassthroughHandoff` when no
   swap is needed (parent/persona model, a remote override, or the same local model
@@ -204,17 +232,19 @@ restore-on-failure (orchestrator never left unloaded).
   installed bundle + resident chat models and feeds it. `handoff(for:)` maps the
   resolved plan onto the middleware (a real `ResidencyHandoff` or `PassthroughHandoff`).
 - **`Subagent/SubagentModelResolution.swift`** — the **shared model-resolution
-  path** for the chat-driven kinds (`spawn`, `computer_use`, `sandbox_reduce`), so
+  path** for the chat-driven kinds (`spawn`, `computer_use`), so
   they no longer repeat the override-lookup → default → residency block inline. A
   pure `pickModel(eval, availableOverride, default)` (eval > available override >
   default, blanks-as-absent; unit-testable), a `@MainActor availableOverride(_:)`
   that drops a stored override that's no longer installed / not in
   `ModelPickerItemCache` (cold cache ⇒ trust the id) so a deleted model gracefully
   inherits the default, and a live `resolve(...)` that folds in the per-agent
-  override + the **eval-bypasses-residency** invariant (eval seam ⇒
-  `(isLocal:false, plan:.none)`) then calls `SubagentResidency.resolve`. Returns
-  `(model, decision)`; the kind stores `decision.plan` for `makeHandoff()`. `image`
-  is NOT a client (own model system).
+  override + an optional **`requestedModel`** (the `spawn_model` explicit target —
+  ranked above the override + default, but still run through the live residency
+  decision, NOT the eval bypass) + the **eval-bypasses-residency** invariant (eval
+  seam ⇒ `(isLocal:false, plan:.none)`) then calls `SubagentResidency.resolve`.
+  Returns `(model, decision)`; the kind stores `decision.plan` for `makeHandoff()`.
+  `image` is NOT a client (own model system).
 - **`Subagent/SubagentFeed.swift`** — `SubagentFeed` / `SubagentActivityEvent` /
   `SubagentFeedRegistry` / `SubagentInterruptCenter`: one live progress + interrupt
   surface for all kinds (text spawn included). `NativeToolCallGroupView` binds it.
@@ -226,20 +256,28 @@ restore-on-failure (orchestrator never left unloaded).
   maps a toggle to its descriptor), the feed header + tool chip, and the prompt
   guidance loop, plus the `SubagentToolVisibility` resolver shared by the composer
   and the HTTP surface. `supportsModelOverride` is true for `computer_use` / `spawn`
-  / `sandbox_reduce` and false for `image` (which owns its own gen/edit model
-  system, so it is not a `SubagentModelResolution` client).
+  and false for `image` (which owns its own gen/edit model
+  system, so it is not a `SubagentModelResolution` client). The single `spawn`
+  capability carries BOTH tool names (`toolNames == ["spawn_agent", "spawn_model"]`).
+- **`Subagent/SpawnDescriptors.swift`** — `SpawnAgentDescriptor` /
+  `SpawnModelDescriptor` value types + a `@MainActor SpawnDescriptors.resolve` that
+  turns the launching agent's spawnable AGENT names + MODEL ids (+ the user's
+  per-model notes) into render-ready descriptors (locality, provider, size/quant,
+  vision, persona description, note) for the dynamic guidance block. Pure values
+  except the resolver, which reads `AgentManager` + `ModelPickerItemCache`.
 
 ### Dispatch / runners
-- **`Tools/SpawnTool.swift`** — the `spawn(agent, input)` tool → `TextSubagentKind`.
-  Resolves the named Agent persona, checks the gates, resolves the model, runs it.
+- **`Tools/SpawnAgentTool.swift`** — the `spawn_agent(input, agent)` tool →
+  `TextSubagentKind` in `.agent` mode. Resolves the named spawnable Agent persona
+  (its prompt + model), checks the gates, resolves the model, runs it.
+- **`Tools/SpawnModelTool.swift`** — the `spawn_model(input, model)` tool →
+  `TextSubagentKind` in `.model` mode. Runs a bare spawnable model id with NO
+  persona/system prompt, gated by the model pool (`spawnModelAllowed`). Both tools
+  set `bypassRegistryTimeout` (the nested loop owns its deadline).
 - **`Services/AgentDelegation/AgentSubagentRunner.swift`** — shared bounded text
   runner: resolve model → handoff (if local) → `AgentToolLoop.run` with the persona's
   prompt/model/tools → compact envelope. Used by `TextSubagentKind` (`local_delegate`
   is gone — its body lived here and is now spawn's only path).
-- **`Tools/SandboxReduceTool.swift`** — the `sandbox_reduce` tool → `SandboxReduceKind`
-  (read/search/exec allowlist on `AgentToolLoop`, `modelSource = .inheritsParent`
-  default + optional `sandbox_reduce` override → shared `SubagentResidency` handoff;
-  the eval `modelOverride` seam keeps the prior passthrough).
 - `Services/Chat/AgentToolLoop.swift` — the bounded loop driver (reused).
 
 ### Image kind (engine-specific, same handoff/progress)
@@ -263,14 +301,17 @@ restore-on-failure (orchestrator never left unloaded).
 - `Models/Agent/Agent.swift` + `Managers/AgentManager.swift` — persona name/model
   (local or remote)/prompt/tool-policy; `effectiveModel(for:)`. Per-agent sub-agent
   fields on `AgentSettings` (custom agents): `computerUseEnabled` + `computerUseCeiling`,
-  `spawnDelegationEnabled` + `spawnableAgentNames` (this agent's own spawn allow-list),
+  `spawnDelegationEnabled` + `spawnableAgentNames` (its `spawn_agent` allow-list) +
+  `spawnableModelNames` + `spawnableModelNotes` (its `spawn_model` allow-list + the
+  per-model `[modelId: note]` usage hints),
   `imageEnabled` (image is its own per-agent toggle, no longer riding the spawn flag),
   and — added 2026-06-26 — `imageGenerationModelId` / `imageEditModelId` (`String?`),
   `subagentPermissions` (`SubagentPermissionDefaults`), and `subagentBudgets`
   (`SubagentBudgets`); added 2026-06-27 — `subagentModelOverrides`
   (`[capabilityId: modelId]`, the per-capability model picker, mirroring
   `subagentPermissions`). `effectiveCapabilities(for:)` carries `imageEnabled` +
-  `spawnableAgentNames` through to the snapshot the visibility resolvers read; the model /
+  `spawnableAgentNames` + `spawnableModelNames` + `spawnableModelNotes` through to the
+  snapshot the visibility resolvers + the guidance builder read; the model /
   permission / budget fields are read live at the kind via the effective-settings
   resolvers (below).
 - `Models/AgentDelegation/SubagentConfiguration.swift` + `SubagentConfigurationStore.swift`
@@ -280,9 +321,12 @@ restore-on-failure (orchestrator never left unloaded).
   (`SubagentPermissionDefaults` is a `[kindId: policy]` map keyed by `capability.id`,
   ask/deny/always — a kind absent from the map defaults to `.ask`, so a new permissioned
   kind needs no new struct field), budgets, `imageDelegationEnabled`,
-  `spawnableAgentNames` (the main chat's pool), and — added 2026-06-27 —
+  `spawnableAgentNames` (the main chat's `spawn_agent` pool), — added 2026-06-28 —
+  `spawnableModelNames` + `spawnableModelNotes` (the main chat's `spawn_model` pool +
+  per-model usage notes; both normalized to drop blanks, notes pruned to live ids),
+  and — added 2026-06-27 —
   `subagentModelOverrides` (the main chat's `[capabilityId: modelId]` map, used by
-  `spawn`; normalized to drop blanks). These also back the REST `/v1/images`
+  `spawn_agent`; normalized to drop blanks). These also back the REST `/v1/images`
   default. Custom agents override the model / permission / budget values from their own
   `AgentSettings`. Persists to `agent-delegation.json`; broadcasts
   `.subagentConfigurationChanged`.
@@ -303,18 +347,20 @@ restore-on-failure (orchestrator never left unloaded).
 - `Views/Agent/AgentsView.swift` — per-agent sub-agent controls live in the dedicated
   **`DetailTab.subagents`** ("Sub-agents") tab, rendered registry-driven (one card per
   `SubagentCapabilityRegistry.perAgentToggleFlags` entry: `computer_use` → autonomy
-  ceiling, `spawn` → per-agent spawnable checklist + permission picker + budget steppers,
-  `image` → gen/edit model pickers + permission picker) with each card's config in an
-  inline panel. The standard model-override row is rendered **generically** above each
-  card's kind-specific config whenever its descriptor sets `supportsModelOverride`
-  (resolved via `capability(forPerAgentFlag:)`), so the per-kind arms no longer hand-wire
-  it — a new chat-driven kind gets the picker for free. One
-  `subagentModelOverrideRow(_ capability:)` draws it (chat candidates from
+  ceiling, `spawn` → permission picker + budget steppers + **two selected-first
+  pickers** (spawnable agents + spawnable models), `image` → gen/edit model pickers +
+  permission picker) with each card's config in an inline panel. Each spawn picker
+  shows the current selection as removable chips/rows with an **"Add" button** that
+  opens a searchable, grouped multi-select popover (`SearchField` + `FlowLayout`);
+  spawnable-model rows carry a local/remote badge + an inline **note** field
+  (`spawnableModelNotes`). The standard model-override row is rendered **generically**
+  above each card's kind-specific config whenever its descriptor sets
+  `supportsModelOverride` (resolved via `capability(forPerAgentFlag:)`), so the
+  per-kind arms no longer hand-wire it — a new chat-driven kind gets the picker for
+  free. One `subagentModelOverrideRow(_ capability:)` draws it (chat candidates from
   `pickerItems.chatModelCandidates`; the empty-tag label is derived from `modelSource` —
-  "Use persona's model" for `spawn`, else "Inherit parent model"). `sandbox_reduce` has
-  no per-agent toggle, so it gets a non-toggle "Investigation" panel reusing the same row,
-  shown when the agent's sandbox (`effectiveAutonomousExec`) is on AND
-  `sandboxReduce.supportsModelOverride`. The tab is **shown for the Default agent too** (2026-06-26):
+  "Use the agent's model" for `spawn`, else "Inherit parent model"). The tab is
+  **shown for the Default agent too** (2026-06-26):
   it renders only the Spawn + Image cards (no `computer_use`), bound to the global
   `SubagentConfiguration` via `SubagentConfigurationStore` (the main chat's settings still
   live there). Custom-agent cards write `AgentSettings` via `debouncedSave()`; the main
@@ -339,13 +385,18 @@ denoise step counter (k/N). Re-entrancy: a subprocess cannot `spawn`.
 ## 6. Usage
 
 - **User:** open an agent's **Sub-agents** tab to configure its sub-agents end-to-end —
-  toggle `computer_use` / `spawn` / `image`, pick which personas `spawn` may call (its own
-  allow-list), set the `spawn` permission + budgets, and pick the `image` gen/edit models +
-  permission. The **main chat (Default agent)** has the same tab (Spawn + Image cards). Only
-  true system controls — master enable, "Local Orchestrator Handoff", RAM-Safety, and Image
-  Load Policy — live in Settings → Spawn.
-- **Model:** sees `spawn` (and any alias tools) only when enabled. `spawn("sparky",
-  "do x y z")`. Image: one `image` tool — `image({"prompt": …})` to generate, add
+  toggle `computer_use` / `spawn` / `image`, pick which personas `spawn_agent` may call
+  AND which models `spawn_model` may run (two selected-first pickers; each spawnable
+  model can carry a "when/how to use it" note), set the `spawn` permission + budgets, and
+  pick the `image` gen/edit models + permission. The **main chat (Default agent)** has the
+  same tab (Spawn + Image cards). Only true system controls — master enable, "Local
+  Orchestrator Handoff", RAM-Safety, and Image Load Policy — live in Settings → Spawn.
+- **Model:** sees `spawn_agent` (when an agent pool exists) and/or `spawn_model` (when a
+  model pool exists) only when enabled, plus a dynamic **spawn guidance** block listing
+  the reachable agents + models (locality/provider/size + the user's note). Call
+  `spawn_agent({"agent": "sparky", "input": "do x y z"})` to delegate to a persona, or
+  `spawn_model({"model": "qwen3-4b-4bit", "input": "do x y z"})` to run a bare model with
+  no persona. Image: one `image` tool — `image({"prompt": …})` to generate, add
   `source_paths` to edit.
 - **Contributor:** a new KIND = one `SubagentCapability` descriptor in
   `SubagentCapabilityRegistry` (the SSOT that drives gating + the per-agent toggle +
@@ -359,6 +410,6 @@ denoise step counter (k/N). Re-entrancy: a subprocess cannot `spawn`.
   resolving through `SubagentModelResolution.resolve(...)` (precedence + availability
   fallback + the eval-bypasses-residency invariant + the shared residency handoff); a
   dedicated model-backed kind (e.g. an AppleScript generator on a local or remote model)
-  is exactly this recipe with `modelSource = .dedicatedConfigured` or `.persona`. Do NOT
+  is exactly this recipe with `modelSource = .dedicatedConfigured` or `.agent`. Do NOT
   add recursive agents, helper LLMs, or shell workers inside a kind — it is normal Swift
   service code driving one bounded job.
