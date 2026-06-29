@@ -295,6 +295,10 @@ public actor ImageGenerationService {
                         continuation.yield(.loadingModel(model: requestedModel))
                         try await self.ensureLoaded(requestedModel, expected: kind)
                     }
+                    // Honor a cancel that arrived during the (uninterruptible)
+                    // weight load so generation never starts. The gate-drain
+                    // tail below still runs on every path.
+                    if cancelRequested() { cancelled = true }
                     let engine = self.ensureEngine()
                     let outputDir = OsaurusPaths.generatedImages()
                     OsaurusPaths.ensureExistsSilent(outputDir)

@@ -524,6 +524,69 @@ actor HuggingFaceService {
         }
     }
 
+    // MARK: - Org / author model listing
+
+    /// One row from the `/api/models?author=…` listing endpoint. Lightweight
+    /// (no file sizes — the listing endpoint omits them); callers resolve
+    /// sizes lazily via the tree API when needed.
+    struct OrgModelListing: Sendable {
+        let id: String
+        let pipelineTag: String?
+        let tags: [String]
+        let downloads: Int?
+        let lastModified: String?
+    }
+
+    private struct OrgModelRow: Decodable {
+        let id: String
+        let pipeline_tag: String?
+        let tags: [String]?
+        let downloads: Int?
+        let lastModified: String?
+    }
+
+    /// List public models published by an HF org/author, sorted by downloads
+    /// (most-popular first). Returns `[]` on any failure (network, non-2xx,
+    /// decode) so callers can treat it as "nothing found". `full=1` includes
+    /// `pipeline_tag` + `tags`, which callers use to classify repos (image vs
+    /// LLM).
+    func fetchModels(author: String, limit: Int = 200) async -> [OrgModelListing] {
+        let trimmed = author.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return [] }
+        var comps = URLComponents()
+        comps.scheme = "https"
+        comps.host = "huggingface.co"
+        comps.path = "/api/models"
+        comps.queryItems = [
+            URLQueryItem(name: "author", value: trimmed),
+            URLQueryItem(name: "full", value: "1"),
+            URLQueryItem(name: "sort", value: "downloads"),
+            URLQueryItem(name: "limit", value: String(limit)),
+        ]
+        guard let url = comps.url else { return [] }
+
+        var req = URLRequest(url: url)
+        req.setValue("application/json", forHTTPHeaderField: "Accept")
+        do {
+            let (data, response) = try await GlobalProxySettings.sharedSession().data(for: req)
+            guard let http = response as? HTTPURLResponse, (200 ..< 300).contains(http.statusCode) else {
+                return []
+            }
+            let rows = try JSONDecoder().decode([OrgModelRow].self, from: data)
+            return rows.map {
+                OrgModelListing(
+                    id: $0.id,
+                    pipelineTag: $0.pipeline_tag,
+                    tags: $0.tags ?? [],
+                    downloads: $0.downloads,
+                    lastModified: $0.lastModified
+                )
+            }
+        } catch {
+            return []
+        }
+    }
+
     /// Extract license identifier from HF tags
     private func extractLicenseFromTags(_ tags: [String]) -> String? {
         // HF tags often include license: prefix

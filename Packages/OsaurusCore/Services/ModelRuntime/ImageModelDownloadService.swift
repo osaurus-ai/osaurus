@@ -42,24 +42,20 @@ final class ImageModelDownloadService: ObservableObject {
 
     @Published private(set) var states: [String: DownloadState] = [:]
     @Published private(set) var metrics: [String: ModelDownloadService.DownloadMetrics] = [:]
+    /// Image bundles published under the OsaurusAI HF org, fetched at runtime.
+    /// This is the sole source for the Available list — empty until
+    /// `refreshCatalog()` succeeds, and left untouched on a fetch failure so a
+    /// previously-loaded listing keeps showing. Users can still stage any other
+    /// mflux bundle by pasting its repo id via the UI's Import field.
+    @Published private(set) var fetchedCatalog: [ImageModelDownload] = []
+    /// True while the OsaurusAI org listing fetch is in flight.
+    @Published private(set) var isLoadingCatalog = false
 
-    /// Curated, known-public mirrors. Most users will paste a repo id via the
-    /// UI's custom field instead — any mflux bundle works as long as its repo
-    /// name carries a recognizable family token (z-image, flux1-schnell,
-    /// qwen-image, ideogram, …). Seeded with the Ideogram mirrors named in the
-    /// vMLX integration spec; extend as more public mflux repos are verified.
-    static let catalog: [ImageModelDownload] = [
-        ImageModelDownload(
-            repoId: "cocktailpeanut/ideogram-4-fp8",
-            displayName: "Ideogram 4 (fp8)",
-            note: "Strong typography renderer."
-        ),
-        ImageModelDownload(
-            repoId: "cocktailpeanut/ideogram-4-nf4",
-            displayName: "Ideogram 4 (NF4)",
-            note: "4-bit; smaller footprint."
-        ),
-    ]
+    /// HF org whose published image bundles populate the Available list.
+    static let osaurusOrgAuthor = "OsaurusAI"
+    /// HF `pipeline_tag` values that denote a runnable on-device image bundle
+    /// (excludes `image-text-to-text` VLMs/LLMs published in the same org).
+    private static let imagePipelineTags: Set<String> = ["text-to-image", "image-to-image"]
 
     /// File patterns to stage. Matched against each file's name across all
     /// subdirectories, so nested `transformer/*.safetensors` etc. are included.
@@ -97,7 +93,7 @@ final class ImageModelDownloadService: ObservableObject {
     }
 
     /// Source HF repo a staged bundle was downloaded from. Reads the hidden
-    /// marker; falls back to a curated catalog entry with the same id. `nil`
+    /// marker; falls back to a fetched-catalog entry with the same id. `nil`
     /// when neither is known (e.g. an old imported bundle), in which case
     /// re-download is unavailable and only delete is offered.
     func sourceRepoId(for id: String) -> String? {
@@ -108,7 +104,7 @@ final class ImageModelDownloadService: ObservableObject {
             let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty { return trimmed }
         }
-        return Self.catalog.first { $0.id == id }?.repoId
+        return fetchedCatalog.first { $0.id == id }?.repoId
     }
 
     /// Delete a staged bundle from disk, cancel any in-flight download, and
@@ -172,6 +168,38 @@ final class ImageModelDownloadService: ObservableObject {
 
     func download(_ entry: ImageModelDownload) {
         download(repoId: entry.repoId, displayName: entry.displayName)
+    }
+
+    /// Fetch the OsaurusAI org listing from Hugging Face and refresh
+    /// `fetchedCatalog` with its image bundles (text-to-image / image-to-image
+    /// pipelines). Best-effort: a failed or empty fetch leaves any
+    /// previously-loaded listing intact rather than blanking the list.
+    func refreshCatalog() async {
+        isLoadingCatalog = true
+        defer { isLoadingCatalog = false }
+        let rows = await HuggingFaceService.shared.fetchModels(author: Self.osaurusOrgAuthor)
+        guard !rows.isEmpty else { return }
+        let entries =
+            rows
+            .filter { Self.imagePipelineTags.contains(($0.pipelineTag ?? "").lowercased()) }
+            .map(Self.makeCatalogEntry(from:))
+        // Listing is already sorted by downloads (most popular first).
+        fetchedCatalog = entries
+    }
+
+    /// Map an HF org listing row to a downloadable catalog entry. The display
+    /// name is the repo's last path component (the quant pill in the row is
+    /// derived from the repo id separately).
+    private static func makeCatalogEntry(
+        from row: HuggingFaceService.OrgModelListing
+    ) -> ImageModelDownload {
+        let isEdit = (row.pipelineTag ?? "").lowercased() == "image-to-image"
+        let tail = row.id.split(separator: "/").last.map(String.init) ?? row.id
+        return ImageModelDownload(
+            repoId: row.id,
+            displayName: tail,
+            note: isEdit ? "Image edit · mflux" : "Text-to-image · mflux"
+        )
     }
 
     /// Start downloading any HuggingFace mflux repo into the image models root.

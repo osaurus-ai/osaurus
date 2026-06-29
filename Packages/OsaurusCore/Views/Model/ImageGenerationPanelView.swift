@@ -33,9 +33,25 @@ final class ImageGenerationPanelModel: ObservableObject {
     @Published var phase: Phase = .idle
     @Published var resultURL: URL?
     @Published var resultSeed: UInt64?
+    /// `true` between a user Cancel press and the terminal event that resolves
+    /// the job. The actual weight load inside vMLXFlux is not interruptible, so
+    /// this drives immediate UI feedback while the soft cancel settles.
+    @Published var isCancelling = false
+    /// Live elapsed wall-clock for the current job (Generate press → finish),
+    /// updated ~10x/sec while busy so the panel can show a running timer.
+    @Published var elapsed: TimeInterval = 0
+    /// Final elapsed of the most recent finished job (any outcome), for the
+    /// "Done in Xs" readout.
+    @Published private(set) var lastDuration: TimeInterval?
+    /// Estimate carried over from the last *successful* run with the same
+    /// model + size + mode, shown before/while the next run finishes.
+    @Published private(set) var estimate: TimeInterval?
 
     private var job: Task<Void, Never>?
     private let jobID = UUID().uuidString
+    private var startDate: Date?
+    private var timerTask: Task<Void, Never>?
+    private var durationKey: String?
 
     var isBusy: Bool {
         switch phase {
@@ -45,14 +61,20 @@ final class ImageGenerationPanelModel: ObservableObject {
     }
 
     func generate(_ params: ImageGenerationParameters) {
+        durationKey = ImageGenerationDurationStore.key(
+            model: params.model, width: params.width, height: params.height, isEdit: false)
         start { await ImageGenerationService.shared.generate(params, jobID: self.jobID) }
     }
 
     func edit(_ params: ImageEditParameters) {
+        durationKey = ImageGenerationDurationStore.key(
+            model: params.model, width: params.width, height: params.height, isEdit: true)
         start { await ImageGenerationService.shared.edit(params, jobID: self.jobID) }
     }
 
     func cancel() {
+        guard isBusy, !isCancelling else { return }
+        isCancelling = true
         Task { await ImageGenerationService.shared.cancel(jobID: jobID) }
     }
 
@@ -62,7 +84,11 @@ final class ImageGenerationPanelModel: ObservableObject {
         job?.cancel()
         resultURL = nil
         resultSeed = nil
+        isCancelling = false
+        lastDuration = nil
+        estimate = durationKey.flatMap { ImageGenerationDurationStore.lastDuration(for: $0) }
         phase = .loadingModel("")
+        startTiming()
         job = Task { [weak self] in
             guard let self else { return }
             do {
@@ -71,9 +97,17 @@ final class ImageGenerationPanelModel: ObservableObject {
                     await self.apply(event)
                 }
             } catch is CancellationError {
-                await MainActor.run { self.phase = .cancelled }
+                await MainActor.run {
+                    self.isCancelling = false
+                    self.finishTiming(persist: false)
+                    self.phase = .cancelled
+                }
             } catch {
-                await MainActor.run { self.phase = .failed(String(describing: error)) }
+                await MainActor.run {
+                    self.isCancelling = false
+                    self.finishTiming(persist: false)
+                    self.phase = .failed(String(describing: error))
+                }
             }
         }
     }
@@ -91,12 +125,70 @@ final class ImageGenerationPanelModel: ObservableObject {
                 resultURL = first.url
                 resultSeed = first.seed
             }
+            isCancelling = false
+            finishTiming(persist: true)
             phase = .done
         case .failed(let message, _):
+            isCancelling = false
+            finishTiming(persist: false)
             phase = .failed(message)
         case .cancelled:
+            isCancelling = false
+            finishTiming(persist: false)
             phase = .cancelled
         }
+    }
+
+    private func startTiming() {
+        startDate = Date()
+        elapsed = 0
+        timerTask?.cancel()
+        timerTask = Task { [weak self] in
+            while let self, self.isBusy {
+                self.elapsed = Date().timeIntervalSince(self.startDate ?? Date())
+                try? await Task.sleep(nanoseconds: 100_000_000)
+            }
+        }
+    }
+
+    /// Stop the timer, freeze the final elapsed, and (on success) persist it as
+    /// the estimate for the next run with the same key.
+    private func finishTiming(persist: Bool) {
+        timerTask?.cancel()
+        timerTask = nil
+        guard let start = startDate else { return }
+        let total = Date().timeIntervalSince(start)
+        startDate = nil
+        elapsed = total
+        lastDuration = total
+        if persist, let key = durationKey {
+            ImageGenerationDurationStore.record(total, for: key)
+            estimate = total
+        }
+    }
+}
+
+/// Persists the most recent successful end-to-end duration (Generate press →
+/// finished image) per model + size + mode, so the panel can offer a rough
+/// "~Xs" estimate before the next run. Backed by a plist dictionary in
+/// `UserDefaults`.
+enum ImageGenerationDurationStore {
+    private static let defaultsKey = "osaurus.imageGeneration.lastDurations"
+
+    static func key(model: String, width: Int?, height: Int?, isEdit: Bool) -> String {
+        let size = (width != nil && height != nil) ? "\(width!)x\(height!)" : "auto"
+        return "\(model)|\(size)|\(isEdit ? "edit" : "gen")"
+    }
+
+    static func lastDuration(for key: String) -> TimeInterval? {
+        (UserDefaults.standard.dictionary(forKey: defaultsKey) as? [String: Double])?[key]
+    }
+
+    static func record(_ duration: TimeInterval, for key: String) {
+        guard duration.isFinite, duration > 0 else { return }
+        var dict = (UserDefaults.standard.dictionary(forKey: defaultsKey) as? [String: Double]) ?? [:]
+        dict[key] = duration
+        UserDefaults.standard.set(dict, forKey: defaultsKey)
     }
 }
 
@@ -273,28 +365,62 @@ struct ImageGenerationPanelView: View {
 
     private var statusCard: some View {
         Group {
-            switch model.phase {
-            case .idle:
-                EmptyView()
-            case .loadingModel(let m):
-                statusRow(spinner: true, text: m.isEmpty ? L("Loading model…") : "Loading \(m)…")
-            case .running(let step, let total, let eta):
-                VStack(alignment: .leading, spacing: 6) {
-                    statusRow(
-                        spinner: true,
-                        text: "Step \(step)/\(total)" + (eta.map { String(format: " · ~%.0fs", $0) } ?? "")
-                    )
-                    ProgressView(value: Double(step), total: Double(max(total, 1)))
-                        .tint(theme.accentColor)
+            if model.isCancelling {
+                statusRow(
+                    spinner: true,
+                    text: L("Cancelling…") + " · " + Self.formatDuration(model.elapsed),
+                    color: theme.warningColor
+                )
+            } else {
+                switch model.phase {
+                case .idle:
+                    EmptyView()
+                case .loadingModel(let m):
+                    let base = m.isEmpty ? L("Loading model…") : "Loading \(m)…"
+                    statusRow(spinner: true, text: base + busyTimingSuffix)
+                case .running(let step, let total, let eta):
+                    VStack(alignment: .leading, spacing: 6) {
+                        statusRow(
+                            spinner: true,
+                            text: "Step \(step)/\(total)"
+                                + (eta.map { String(format: " · ~%.0fs", $0) } ?? "")
+                                + " · " + Self.formatDuration(model.elapsed)
+                        )
+                        ProgressView(value: Double(step), total: Double(max(total, 1)))
+                            .tint(theme.accentColor)
+                    }
+                case .done:
+                    let text = model.lastDuration.map {
+                        L("Done") + " · " + Self.formatDuration($0)
+                    } ?? L("Done")
+                    statusRow(spinner: false, text: text, color: theme.successColor)
+                case .failed(let message):
+                    statusRow(spinner: false, text: message, color: theme.errorColor)
+                case .cancelled:
+                    statusRow(spinner: false, text: L("Cancelled"), color: theme.warningColor)
                 }
-            case .done:
-                statusRow(spinner: false, text: L("Done"), color: theme.successColor)
-            case .failed(let message):
-                statusRow(spinner: false, text: message, color: theme.errorColor)
-            case .cancelled:
-                statusRow(spinner: false, text: L("Cancelled"), color: theme.warningColor)
             }
         }
+    }
+
+    /// " · 12.3s" plus " / ~25s" when a prior-run estimate is known.
+    private var busyTimingSuffix: String {
+        var suffix = " · " + Self.formatDuration(model.elapsed)
+        if let estimate = model.estimate {
+            suffix += " / " + Self.formatEstimate(estimate)
+        }
+        return suffix
+    }
+
+    private static func formatDuration(_ t: TimeInterval) -> String {
+        if t < 60 { return String(format: "%.1fs", t) }
+        return String(format: "%dm %02ds", Int(t) / 60, Int(t) % 60)
+    }
+
+    private static func formatEstimate(_ t: TimeInterval) -> String {
+        let r = t.rounded()
+        if r < 60 { return String(format: "~%.0fs", r) }
+        return String(format: "~%dm %02ds", Int(r) / 60, Int(r) % 60)
     }
 
     private func resultCard(_ url: URL) -> some View {
@@ -342,7 +468,11 @@ struct ImageGenerationPanelView: View {
             }
             .buttonStyle(PlainButtonStyle())
             Spacer()
-            if model.isBusy {
+            if model.isCancelling {
+                Text("Cancelling…", bundle: .module)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+            } else if model.isBusy {
                 Button(action: { model.cancel() }) {
                     Text("Cancel", bundle: .module)
                         .font(.system(size: 13, weight: .medium))

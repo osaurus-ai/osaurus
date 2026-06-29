@@ -15081,6 +15081,28 @@
         }
       }
     },
+    "Cancelling…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wird abgebrochen…"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "취소 중…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在取消…"
+          }
+        }
+      }
+    },
     "Cannot access file" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -16571,6 +16593,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "检查中"
+          }
+        }
+      }
+    },
+    "Checking Hugging Face for more models…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hugging Face wird nach weiteren Modellen durchsucht…"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hugging Face에서 더 많은 모델을 확인하는 중…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在 Hugging Face 上查找更多模型…"
           }
         }
       }

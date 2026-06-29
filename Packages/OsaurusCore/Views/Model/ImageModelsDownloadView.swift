@@ -44,9 +44,9 @@ struct ImageModelsDownloadView: View {
 
     private var installedIds: Set<String> { Set(installed.map(\.id)) }
 
-    /// Curated catalog entries not yet on disk.
+    /// OsaurusAI org image bundles (fetched from HF) not yet on disk.
     private var availableEntries: [ImageModelDownload] {
-        ImageModelDownloadService.catalog.filter { !installedIds.contains($0.id) }
+        downloads.fetchedCatalog.filter { !installedIds.contains($0.id) }
     }
 
     // MARK: - Body
@@ -54,18 +54,24 @@ struct ImageModelsDownloadView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
-                if installed.isEmpty && availableEntries.isEmpty {
+                if installed.isEmpty && availableEntries.isEmpty && !downloads.isLoadingCatalog {
                     emptyState
                 } else {
                     if !installed.isEmpty { installedSection }
-                    if !availableEntries.isEmpty { availableSection }
+                    if !availableEntries.isEmpty || downloads.isLoadingCatalog { availableSection }
                 }
             }
             .padding(.horizontal, 24)
             .padding(.vertical, 24)
             .frame(maxWidth: .infinity, alignment: .top)
         }
-        .task { await refreshInstalled() }
+        .task {
+            // Start the org fetch and the local scan together so the loading
+            // state engages immediately (no empty-state flash before the list).
+            async let installedRefresh: Void = refreshInstalled()
+            async let catalogRefresh: Void = downloads.refreshCatalog()
+            _ = await (installedRefresh, catalogRefresh)
+        }
         .onReceive(NotificationCenter.default.publisher(for: .localModelsChanged)) { _ in
             Task { await refreshInstalled() }
         }
@@ -128,8 +134,20 @@ struct ImageModelsDownloadView: View {
                         onCancel: { downloads.cancel(entry.id) }
                     )
                 }
+                if downloads.isLoadingCatalog { catalogLoadingRow }
             }
         }
+    }
+
+    private var catalogLoadingRow: some View {
+        HStack(spacing: 8) {
+            ProgressView().controlSize(.small)
+            Text("Checking Hugging Face for more models…", bundle: .module)
+                .font(.system(size: 11))
+                .foregroundColor(theme.secondaryText)
+            Spacer()
+        }
+        .padding(12)
     }
 
     private var emptyState: some View {
