@@ -59,51 +59,37 @@ public enum AppleScriptExecutionMode: String, Codable, Sendable, Equatable, Case
     }
 }
 
-/// The curated AppleScript model repos, as `MLXModel` entries. Sizes are the
-/// HF Hub `usedStorage` for each repo (the real download footprint); the UI
+/// The curated AppleScript model repo, as an `MLXModel` entry. The size is the
+/// HF Hub `usedStorage` for the repo (the real download footprint); the UI
 /// folds in any live size refresh on top. `modelType` is intentionally left
-/// `nil` even though the bundles are `zaya` / `gemma4` — the runtime
-/// auto-detects the real architecture (and its native tool-call format) from
-/// the downloaded `config.json`, and leaving it nil keeps these text-only
-/// AppleScript bundles from ever being mis-detected as VLMs pre-download.
+/// `nil` even though the bundle is `gemma4` — the runtime auto-detects the
+/// real architecture (and its native tool-call format) from the downloaded
+/// `config.json`, and leaving it nil keeps this text-only AppleScript bundle
+/// from ever being mis-detected as a VLM pre-download.
 enum AppleScriptModelCatalog {
     /// Repo-id prefix shared by every curated AppleScript bundle. Used to keep
     /// these repos out of the general chat model picker (they only ever emit
     /// AppleScript, so they aren't useful as a chat model).
     static let repoIdPrefix = "OsaurusAI/Osaurus-AppleScript-"
 
-    /// The smaller, broadly-compatible default (ZAYA 8B, ~6 GB).
-    static let model8BId = "OsaurusAI/Osaurus-AppleScript-8B-JANG_4M"
-    /// The larger, higher-quality MoE build (Gemma-4 16B-A4B, ~12 GB).
+    /// The curated AppleScript model: a Gemma-4 16B-A4B MoE build (~12 GB).
     static let model16BId = "OsaurusAI/Osaurus-AppleScript-16B-A4B-JANG_4M"
 
-    /// Curated catalog, smallest first (the 8B is the Top Pick — it runs on
-    /// base-RAM Macs and is the seamless default for AppleScript automation).
+    /// Curated catalog: a single Gemma-4 16B-A4B MoE model (the Top Pick and
+    /// seamless default for on-device AppleScript automation).
     static let models: [MLXModel] = [
-        MLXModel(
-            id: model8BId,
-            name: "Osaurus AppleScript 8B",
-            description:
-                "On-device model fine-tuned to write executable AppleScript for macOS automation. "
-                + "Runs comfortably on base-RAM Macs.",
-            downloadURL: "https://huggingface.co/\(model8BId)",
-            isTopSuggestion: true,
-            downloadSizeBytes: 5_988_147_241,
-            modelType: nil,
-            useCase: .coding
-        ),
         MLXModel(
             id: model16BId,
             name: "Osaurus AppleScript 16B",
             description:
-                "Larger mixture-of-experts AppleScript model for harder automation tasks and more "
-                + "reliable scripts. Needs more memory and disk than the 8B.",
+                "On-device mixture-of-experts model fine-tuned to write executable AppleScript for "
+                + "macOS automation. Built for reliable scripts on harder automation tasks.",
             downloadURL: "https://huggingface.co/\(model16BId)",
-            isTopSuggestion: false,
+            isTopSuggestion: true,
             downloadSizeBytes: 11_687_493_907,
             modelType: nil,
             useCase: .coding
-        ),
+        )
     ]
 
     /// Whether a repo id is one of the curated AppleScript models. Matches the

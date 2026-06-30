@@ -8,8 +8,7 @@
 //  `AgentAction` contract (strict schema + coercion/validation via
 //  `SchemaValidator` + a model-readable re-ask reason on a shape miss) so the
 //  loop drives a parsed call with NO new tool-call parser — the runtime already
-//  emits this from the bundle's native format (ZAYA `<zyphra_tool_call>` for the
-//  8B, Gemma-4 for the 16B).
+//  emits this from the bundle's native Gemma-4 tool-call format.
 //
 
 import Foundation
