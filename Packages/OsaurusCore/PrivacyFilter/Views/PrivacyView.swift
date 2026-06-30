@@ -218,6 +218,8 @@ struct PrivacyView: View {
                 save: save,
                 isModelReady: isModelReady,
                 onInstallModel: { selectedTab = .model },
+                rampartState: rampartManager.state,
+                onInstallRampart: { rampartManager.startDownload() },
                 forgetActionMessage: forgetActionMessage,
                 forgetAllRedactions: forgetAllRedactions
             )
@@ -612,6 +614,11 @@ private struct PrivacyOverviewTab: View {
     let isModelReady: Bool
     /// Jump to the Model tab so the user can install the bundle.
     let onInstallModel: () -> Void
+    /// Rampart backend download state + inline install trigger (the
+    /// Rampart bundle is tiny, so it downloads in place rather than
+    /// via the Model tab).
+    let rampartState: RampartDownloadState
+    let onInstallRampart: () -> Void
     /// Read-only — the parent owns this `@State` and re-renders the
     /// tab when it changes; the tab never writes back to it.
     let forgetActionMessage: String?
@@ -793,13 +800,16 @@ private struct PrivacyOverviewTab: View {
                 )
             )
         } else {
+            let isRampart = configuration.aiDetectionBackend == .rampart
             HStack(alignment: .top, spacing: 12) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("AI detection (on-device model)", bundle: .module)
                         .font(.system(size: 13, weight: .medium))
                         .foregroundColor(theme.primaryText)
                     Text(
-                        "Install the ~2.8 GB on-device model to also catch names, addresses, dates, and secrets. Pattern rules in the Rules tab already work without it.",
+                        isRampart
+                            ? "Install the ~37 MB on-device model to also catch names, addresses, and secrets. Pattern rules in the Rules tab already work without it."
+                            : "Install the ~2.8 GB on-device model to also catch names, addresses, dates, and secrets. Pattern rules in the Rules tab already work without it.",
                         bundle: .module
                     )
                     .font(.system(size: 11))
@@ -807,15 +817,56 @@ private struct PrivacyOverviewTab: View {
                     .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer()
-                Button(action: onInstallModel) {
+                if isRampart {
+                    rampartInstallControl
+                } else {
+                    Button(action: onInstallModel) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "arrow.down.circle")
+                            Text("Install", bundle: .module)
+                        }
+                    }
+                    .buttonStyle(SettingsButtonStyle())
+                }
+            }
+            .settingsRowCard()
+        }
+    }
+
+    /// Inline install/progress control for the Rampart backend. Downloads
+    /// in place (the bundle is tiny) instead of routing to the Model tab.
+    @ViewBuilder
+    private var rampartInstallControl: some View {
+        switch rampartState {
+        case .downloading(let progress):
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text(verbatim: "\(Int(progress * 100))%")
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.tertiaryText)
+            }
+        case .failed(let message):
+            VStack(alignment: .trailing, spacing: 2) {
+                Button(action: onInstallRampart) {
                     HStack(spacing: 4) {
-                        Image(systemName: "arrow.down.circle")
-                        Text("Install", bundle: .module)
+                        Image(systemName: "arrow.clockwise")
+                        Text("Retry", bundle: .module)
                     }
                 }
                 .buttonStyle(SettingsButtonStyle())
+                Text(verbatim: message)
+                    .font(.system(size: 10))
+                    .foregroundColor(theme.tertiaryText)
+                    .lineLimit(1)
             }
-            .settingsRowCard()
+        default:
+            Button(action: onInstallRampart) {
+                HStack(spacing: 4) {
+                    Image(systemName: "arrow.down.circle")
+                    Text("Install", bundle: .module)
+                }
+            }
+            .buttonStyle(SettingsButtonStyle())
         }
     }
 
