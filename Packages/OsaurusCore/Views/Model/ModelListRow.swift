@@ -210,7 +210,7 @@ struct ModelListRow: View {
             } else {
                 HStack(spacing: 6) {
                     ProgressView().controlSize(.small)
-                    Text(verbatim: detail ?? L("Working…"))
+                    Text(verbatim: detail ?? L("Loading…"))
                         .font(.system(size: 11))
                         .foregroundColor(theme.tertiaryText)
                 }
