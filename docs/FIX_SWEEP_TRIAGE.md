@@ -44,3 +44,43 @@ exact code path and confirming the fixing commit is an ancestor.
   connect/discovery timeout. Currently masked by `withTimeout`.
 - **#1228 release** — cut a release tag pinning vmlx ≥ `6b77b1e` so users off the
   current tagged build stop hitting the (already-fixed) Metal SIGABRT.
+
+## Regression audit (past ~2 weeks) — chat template / loading / reasoning / tools
+
+Audited the recent Mistral template overhaul (#85–#88), Gemma tool/attention
+changes (#60/#61/#76), Qwen3 (#78), LFM2 (#90), Laguna (#77) for regressions in
+incoherence/looping, chat templates, reasoning leak, tool use, system prompt,
+and window/cache.
+
+**Fixed (vmlx-swift #100 + #101, in the repin):**
+- Mistral chat looping/incoherence — `convertTokenToId` unk-pitfall misrouted
+  tool-bearing Mistral to a ChatML/Gemma template (#100, reroute ladder).
+- Mistral catch-path fallback — a Mistral whose native template *throws* fell to
+  the Gemma/Nemotron `orderedFallbacks`; added a Mistral arm (#101, F1).
+- Mistral3/Pixtral image-token resolution round-trip-guarded (#101, F2).
+
+**Verified CLEAN (no regression):** reasoning-leak gating (all fallbacks gate an
+open `<think>` on `enable_thinking` with safe defaults), system-prompt doubling
+(Mistral injects default once), strip-tool-markers (#62 control-token only),
+Mistral tool-call render↔parse round-trip, Gemma routing/template/reasoning/tools
+(channel→reasoning strip, `.gemma4` parser handles #61/#76/#62), Gemma SWA cache
+(generic, no JANG dependency).
+
+**Proper Gemma loading (the specific concern):** NOT neglected — plain bf16,
+`q4_0-unquantized` (standard affine), MXFP4, JANG_4M all route to the same VLM
+`Gemma4` class and inherit identical quant/upcast/template/cache handling.
+
+**Documented gaps (not fixed — latent / low-priority, for follow-up):**
+- **`Gemma4TextModel` (text-only LLM path) lacks the #60 fp32 long-context
+  upcast** that its VLM sibling has → a text-only `gemma4_text` export would emit
+  `<pad>` past ~26k tokens. Latent (no current bundle ships that top-level type).
+  Fix: mirror `needsUpcast = fp16 || (bf16 && !isSliding)` into `Gemma4Text.swift`.
+- gemma-3n could mis-fall-back to the Gemma-4 `<|turn>` template if its native
+  template ever failed to parse (the `bos=="<bos>"` sniff matches both); not
+  currently triggered.
+- MiniMax-M2 fallback sits outside the `VMLX_CHAT_TEMPLATE_FALLBACK_DISABLE` guard
+  in one macro copy (asymmetric opt-out); a dead duplicate Nemotron branch exists
+  (cleanup).
+- `#87` `[SYSTEM_PROMPT]`-marker gate could skip tool-grounding for a legacy
+  Mistral bundle whose template uses `[INST]` without `[SYSTEM_PROMPT]` (modern
+  Mistral all ship it; low risk).
