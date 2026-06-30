@@ -149,14 +149,16 @@ public final class PrivacyFilterEngine {
         in text: String,
         map: RedactionMap,
         skipCodeBlocks: Bool = true,
-        useModel: Bool = true
+        useModel: Bool = true,
+        backend: PrivacyAIBackend = .openai
     ) async throws -> [DetectedEntity] {
         try await detect(
             in: text,
             map: map,
             skipCodeBlocks: skipCodeBlocks,
             ruleset: .allBuiltins(),
-            useModel: useModel
+            useModel: useModel,
+            backend: backend
         )
     }
 
@@ -176,10 +178,20 @@ public final class PrivacyFilterEngine {
         map: RedactionMap,
         skipCodeBlocks: Bool,
         ruleset: RegexEntityDetector.EffectiveRuleSet,
-        useModel: Bool
+        useModel: Bool,
+        backend: PrivacyAIBackend = .openai
     ) async throws -> [DetectedEntity] {
+        // Fail closed if AI detection is requested but its backend isn't
+        // ready (the user opted into model detection and expects it).
         if useModel {
-            guard kit != nil else { throw PrivacyFilterEngineError.notLoaded }
+            switch backend {
+            case .openai:
+                guard kit != nil else { throw PrivacyFilterEngineError.notLoaded }
+            case .rampart:
+                guard RampartModelManager.bundleExists() else {
+                    throw PrivacyFilterEngineError.notLoaded
+                }
+            }
         }
 
         let (scanText, restore): (String, (Range<String.Index>) -> Range<String.Index>?)
@@ -192,19 +204,48 @@ public final class PrivacyFilterEngine {
             restore = { range in range }
         }
 
-        let entities: [Entity]
-        if useModel, let kit {
-            do {
-                entities = try await kit.extractEntities(from: scanText)
-            } catch {
-                throw PrivacyFilterEngineError.detectionFailed(error.localizedDescription)
+        // Model NER layer, routed to the configured backend. Produces
+        // model-sourced spans in the same shape the regex layer feeds
+        // into the merge step below. Empty when AI detection is off —
+        // the classifier-only categories (person / address / date /
+        // secret) then rely on regex/preset/custom rules.
+        var modelPending: [PendingMatch] = []
+        if useModel {
+            switch backend {
+            case .openai:
+                guard let kit else { throw PrivacyFilterEngineError.notLoaded }
+                let entities: [Entity]
+                do {
+                    entities = try await kit.extractEntities(from: scanText)
+                } catch {
+                    throw PrivacyFilterEngineError.detectionFailed(error.localizedDescription)
+                }
+                for entity in entities {
+                    guard let category = EntityCategory(entity.type) else { continue }
+                    modelPending.append(
+                        PendingMatch(
+                            category: category,
+                            original: entity.text,
+                            range: entity.range,
+                            source: .model,
+                            label: nil
+                        )
+                    )
+                }
+            case .rampart:
+                let spans = await RampartModelManager.shared.modelSpans(in: scanText)
+                for span in spans {
+                    modelPending.append(
+                        PendingMatch(
+                            category: span.category,
+                            original: String(scanText[span.range]),
+                            range: span.range,
+                            source: .model,
+                            label: nil
+                        )
+                    )
+                }
             }
-        } else {
-            // Regex-only path: no model pass. The classifier-only
-            // categories (person / address / date / secret) simply
-            // won't be detected unless a regex/preset/custom rule
-            // covers them.
-            entities = []
         }
 
         // Run the deterministic regex layer on the same scan text so
@@ -216,19 +257,8 @@ public final class PrivacyFilterEngine {
         let regexMatches = RegexEntityDetector.detect(in: scanText, ruleset: ruleset)
 
         var pending: [PendingMatch] = []
-        pending.reserveCapacity(entities.count + regexMatches.count)
-        for entity in entities {
-            guard let category = EntityCategory(entity.type) else { continue }
-            pending.append(
-                PendingMatch(
-                    category: category,
-                    original: entity.text,
-                    range: entity.range,
-                    source: .model,
-                    label: nil
-                )
-            )
-        }
+        pending.reserveCapacity(modelPending.count + regexMatches.count)
+        pending.append(contentsOf: modelPending)
         for match in regexMatches {
             pending.append(
                 PendingMatch(
@@ -293,6 +323,13 @@ public final class PrivacyFilterEngine {
         async -> [(category: EntityCategory, range: Range<String.Index>)]
     {
         guard !text.isEmpty else { return [] }
+
+        // Honor the configured backend so a screenshot scrub masks the
+        // same model categories the text pipeline would.
+        if PrivacyFilterStore.snapshot().aiDetectionBackend == .rampart {
+            return await RampartModelManager.shared.modelSpans(in: text)
+        }
+
         if kit == nil {
             let bundleDir = PrivacyFilterModelBundle.directoryURL()
             if PrivacyFilterModelBundle.exists(at: bundleDir) {

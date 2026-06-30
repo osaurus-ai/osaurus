@@ -297,46 +297,56 @@ enum PrivacyFilterPipeline {
         // layer (built-ins / presets / custom rules) runs standalone,
         // so the filter is fully usable without the ~2.8 GB download.
         let useModel = config.aiDetectionEnabled
+        let backend = config.aiDetectionBackend
         if useModel {
-            // PrivacyFilterEngine is @MainActor; the await hops to main
-            // for one property read + one detect() per outbound call.
-            var isLoaded = await PrivacyFilterEngine.shared.isLoaded
+            // Warm the configured backend, bounded to a single lazy-load
+            // attempt per call so a corrupt bundle can't trap every
+            // outbound request in a load loop.
+            var ready = false
             var loadError: String?
-            if !isLoaded {
-                // Engine not warm yet. If the bundle is on disk we try one
-                // synchronous lazy load here so the user doesn't see a
-                // bypass on the first chat after launch. We bound this to
-                // a single attempt per call so a corrupt bundle can't trap
-                // every outbound request in a load loop.
-                let bundleDir = PrivacyFilterModelBundle.directoryURL()
-                if PrivacyFilterModelBundle.exists(at: bundleDir) {
-                    do {
-                        try await PrivacyFilterEngine.shared.loadIfNeeded(bundle: bundleDir)
-                        isLoaded = await PrivacyFilterEngine.shared.isLoaded
-                        if isLoaded {
-                            print("[PrivacyFilter] Engine lazy-loaded for first outbound call.")
+            switch backend {
+            case .openai:
+                // PrivacyFilterEngine is @MainActor; the await hops to main
+                // for one property read + one detect() per outbound call.
+                var isLoaded = await PrivacyFilterEngine.shared.isLoaded
+                if !isLoaded {
+                    let bundleDir = PrivacyFilterModelBundle.directoryURL()
+                    if PrivacyFilterModelBundle.exists(at: bundleDir) {
+                        do {
+                            try await PrivacyFilterEngine.shared.loadIfNeeded(bundle: bundleDir)
+                            isLoaded = await PrivacyFilterEngine.shared.isLoaded
+                        } catch {
+                            loadError = error.localizedDescription
                         }
+                    } else {
+                        loadError = "model bundle missing at \(bundleDir.path)"
+                    }
+                }
+                ready = isLoaded
+            case .rampart:
+                if RampartModelManager.bundleExists() {
+                    do {
+                        try await RampartModelManager.shared.loadIfNeeded()
+                        ready = true
                     } catch {
                         loadError = error.localizedDescription
-                        print("[PrivacyFilter] Lazy load failed: \(error.localizedDescription).")
                     }
                 } else {
-                    loadError = "model bundle missing at \(bundleDir.path)"
+                    loadError = "rampart model bundle missing"
                 }
             }
             // Fail-CLOSED: the user enabled AI detection expecting their
             // PII to be scrubbed before reaching cloud providers. If we
             // can't actually run the model, blocking the send (with an
             // explanation) is the safer default than silently sending
-            // raw text. Previously this branch returned `(messages, nil)`
-            // which the chat layer rendered as a successful send.
-            guard isLoaded else {
+            // raw text.
+            guard ready else {
                 let detail = loadError ?? "engine not loaded"
                 print("[PrivacyFilter] BLOCKING send: \(detail).")
                 throw PrivacyFilterPipelineError.engineUnavailable(detail)
             }
             print(
-                "[PrivacyFilter] Outbound: filter ENABLED (AI + regex) for provider \(providerId.uuidString); running detection."
+                "[PrivacyFilter] Outbound: filter ENABLED (AI [\(backend.rawValue)] + regex) for provider \(providerId.uuidString); running detection."
             )
         } else {
             print(
@@ -389,7 +399,8 @@ enum PrivacyFilterPipeline {
                     map: map,
                     skipCodeBlocks: config.skipCodeBlocks,
                     ruleset: ruleset,
-                    useModel: useModel
+                    useModel: useModel,
+                    backend: backend
                 )
                 // Stamp the source segment onto every detection
                 // before append so the review sheet can render the
