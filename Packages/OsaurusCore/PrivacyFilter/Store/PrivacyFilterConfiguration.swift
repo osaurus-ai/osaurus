@@ -15,6 +15,16 @@
 
 import Foundation
 
+/// Which on-device model backend powers AI detection.
+/// - `openai`: the ~2.8 GB `mlx-community/openai-privacy-filter-bf16` MoE
+///   classifier (highest coverage, large download).
+/// - `rampart`: the ~37 MB `OsaurusAI/rampart-mlx` BERT token classifier
+///   (tiny download, no `date` category, person/address/secret/account focus).
+public enum PrivacyAIBackend: String, Codable, Sendable, CaseIterable {
+    case openai
+    case rampart
+}
+
 /// Top-level privacy-filter preference shape. `Codable` so it
 /// round-trips through `JSONEncoder` / `JSONDecoder` directly.
 /// Decoder is hand-rolled (rather than synthesised) so new fields
@@ -57,6 +67,11 @@ public struct PrivacyFilterConfiguration: Codable, Equatable, Sendable {
     /// and expects it. When false the model is never touched and
     /// detection runs regex-only (never blocks on a missing model).
     public var aiDetectionEnabled: Bool
+
+    /// Which model backend AI detection uses when `aiDetectionEnabled`.
+    /// Defaults to `.openai` for backward compatibility with installs
+    /// that already downloaded that bundle.
+    public var aiDetectionBackend: PrivacyAIBackend
 
     /// Per-provider enable map keyed by `RemoteProvider.id.uuidString`.
     /// Missing keys fall back to `defaultForCloudProvider` (true).
@@ -107,6 +122,7 @@ public struct PrivacyFilterConfiguration: Codable, Equatable, Sendable {
     public init(
         enabled: Bool = false,
         aiDetectionEnabled: Bool = false,
+        aiDetectionBackend: PrivacyAIBackend = .openai,
         providerOverrides: [String: Bool] = [:],
         skipCodeBlocks: Bool = true,
         alwaysApproveByDefault: Bool = false,
@@ -118,6 +134,7 @@ public struct PrivacyFilterConfiguration: Codable, Equatable, Sendable {
         self.schemaVersion = Self.currentSchemaVersion
         self.enabled = enabled
         self.aiDetectionEnabled = aiDetectionEnabled
+        self.aiDetectionBackend = aiDetectionBackend
         self.providerOverrides = providerOverrides
         self.skipCodeBlocks = skipCodeBlocks
         self.alwaysApproveByDefault = alwaysApproveByDefault
@@ -167,6 +184,7 @@ public struct PrivacyFilterConfiguration: Codable, Equatable, Sendable {
         case schemaVersion
         case enabled
         case aiDetectionEnabled
+        case aiDetectionBackend
         case providerOverrides
         case skipCodeBlocks
         case alwaysApproveByDefault
@@ -192,6 +210,10 @@ public struct PrivacyFilterConfiguration: Codable, Equatable, Sendable {
         // regex-only without trying to download the bundle.
         self.aiDetectionEnabled =
             try c.decodeIfPresent(Bool.self, forKey: .aiDetectionEnabled) ?? true
+        // Default `.openai` on decode (key absent) so existing installs
+        // keep their current backend; new configs come through `init`.
+        self.aiDetectionBackend =
+            try c.decodeIfPresent(PrivacyAIBackend.self, forKey: .aiDetectionBackend) ?? .openai
         self.providerOverrides =
             try c.decodeIfPresent([String: Bool].self, forKey: .providerOverrides) ?? [:]
         self.skipCodeBlocks =
@@ -246,6 +268,7 @@ public struct PrivacyFilterConfiguration: Codable, Equatable, Sendable {
         try c.encode(Self.currentSchemaVersion, forKey: .schemaVersion)
         try c.encode(enabled, forKey: .enabled)
         try c.encode(aiDetectionEnabled, forKey: .aiDetectionEnabled)
+        try c.encode(aiDetectionBackend, forKey: .aiDetectionBackend)
         try c.encode(providerOverrides, forKey: .providerOverrides)
         try c.encode(skipCodeBlocks, forKey: .skipCodeBlocks)
         try c.encode(alwaysApproveByDefault, forKey: .alwaysApproveByDefault)
