@@ -102,14 +102,15 @@ struct ImageModelsDownloadView: View {
         SettingsSection(title: "Installed", icon: "checkmark.seal.fill") {
             VStack(spacing: 8) {
                 ForEach(installed) { model in
-                    ImageModelRow(
+                    ModelListRow(
                         title: model.info.displayName,
                         subtitle: installedSubtitle(model.info),
                         leading: leadingStyle(for: model.info),
-                        kindLabel: kindLabel(model.info.kind),
-                        quantLabel: quantText(bits: model.info.quantizationBits, id: model.info.id),
-                        state: state(model.id),
-                        metrics: downloads.metrics[model.id],
+                        badges: badges(
+                            kind: kindLabel(model.info.kind),
+                            quant: quantText(bits: model.info.quantizationBits, id: model.info.id)
+                        ),
+                        status: rowStatus(model.id),
                         primary: installedPrimaryAction(model),
                         menuItems: installedMenuItems(model),
                         onViewHuggingFace: huggingFaceAction(model.repoId),
@@ -124,15 +125,13 @@ struct ImageModelsDownloadView: View {
         SettingsSection(title: "Available", icon: "square.and.arrow.down") {
             VStack(spacing: 8) {
                 ForEach(availableEntries) { entry in
-                    ImageModelRow(
+                    ModelListRow(
                         title: entry.displayName,
                         subtitle: availableSubtitle(entry),
-                        leading: ImageModelRow.Leading(icon: "photo", tint: theme.accentColor),
-                        kindLabel: nil,
-                        quantLabel: quantText(bits: nil, id: entry.repoId),
-                        state: state(entry.id),
-                        metrics: downloads.metrics[entry.id],
-                        primary: ImageModelRow.Action(title: "Download", icon: "arrow.down.circle") {
+                        leading: ModelListRow.Leading(icon: "photo", tint: theme.accentColor),
+                        badges: badges(kind: nil, quant: quantText(bits: nil, id: entry.repoId)),
+                        status: rowStatus(entry.id),
+                        primary: ModelListRow.Action(title: "Download", icon: "arrow.down.circle") {
                             downloads.download(entry)
                         },
                         onViewHuggingFace: huggingFaceAction(entry.repoId),
@@ -173,12 +172,12 @@ struct ImageModelsDownloadView: View {
 
     // MARK: - Row models
 
-    private func installedPrimaryAction(_ model: InstalledModel) -> ImageModelRow.Action? {
+    private func installedPrimaryAction(_ model: InstalledModel) -> ModelListRow.Action? {
         let info = model.info
         // Ready + runnable kind → prominent Generate/Edit (opens the manual panel).
         if info.ready, info.kind == "imageGen" || info.kind == "imageEdit" {
             let isEdit = info.kind == "imageEdit"
-            return ImageModelRow.Action(
+            return ModelListRow.Action(
                 title: isEdit ? "Edit" : "Generate",
                 icon: isEdit ? "wand.and.stars" : "sparkles",
                 role: .primary
@@ -189,33 +188,60 @@ struct ImageModelsDownloadView: View {
         // Not ready → surface Re-download as the primary fix (when the source repo
         // is known); otherwise the only action is delete, left to the menu.
         if !info.ready, let repo = model.repoId {
-            return ImageModelRow.Action(title: "Re-download", icon: "arrow.clockwise") {
+            return ModelListRow.Action(title: "Re-download", icon: "arrow.clockwise") {
                 downloads.download(repoId: repo, displayName: info.displayName)
             }
         }
         return nil
     }
 
-    private func installedMenuItems(_ model: InstalledModel) -> [ImageModelRow.Action] {
+    private func installedMenuItems(_ model: InstalledModel) -> [ModelListRow.Action] {
         let info = model.info
-        var items: [ImageModelRow.Action] = []
+        var items: [ModelListRow.Action] = []
         // Re-download for ready models lives in the menu (not-ready exposes it as
         // the primary action instead, so it isn't duplicated).
         if info.ready, let repo = model.repoId {
             items.append(
-                ImageModelRow.Action(title: "Re-download", icon: "arrow.clockwise") {
+                ModelListRow.Action(title: "Re-download", icon: "arrow.clockwise") {
                     downloads.download(repoId: repo, displayName: info.displayName)
                 }
             )
         }
-        // "View on Hugging Face" now lives inline as an always-visible link
-        // button (see ImageModelRow), so the overflow menu keeps only the
-        // heavier actions: Re-download (for ready bundles) and Delete.
+        // "View on Hugging Face" lives inline as an always-visible link button
+        // (see ModelListRow), so the overflow menu keeps only the heavier
+        // actions: Re-download (for ready bundles) and Delete.
         items.append(
-            ImageModelRow.Action(title: "Delete", icon: "trash", role: .destructive) {
+            ModelListRow.Action(title: "Delete", icon: "trash", role: .destructive) {
                 downloads.delete(info.id)
             }
         )
+        return items
+    }
+
+    /// Map the shared `DownloadState` (+ live metrics) onto the row's
+    /// presentation status. Paused mirrors downloading here since the image
+    /// tab exposes Cancel (not Resume) while a transfer is staged.
+    private func rowStatus(_ id: String) -> ModelListRow.Status {
+        switch state(id) {
+        case .notStarted:
+            return .idle
+        case .downloading(let progress):
+            return .inProgress(progress: progress, detail: downloads.metrics[id]?.formattedLine)
+        case .paused(let progress):
+            return .inProgress(progress: progress, detail: downloads.metrics[id]?.formattedLine)
+        case .completed:
+            return .ready
+        case .failed(let error):
+            return .failed(error)
+        }
+    }
+
+    /// Build the row's leading badges from the optional capability (kind) and
+    /// quantization labels. Both are already localized / formatted by callers.
+    private func badges(kind: String?, quant: String?) -> [ModelBadge.Item] {
+        var items: [ModelBadge.Item] = []
+        if let kind { items.append(ModelBadge.Item(text: kind, style: .accent)) }
+        if let quant { items.append(ModelBadge.Item(text: quant, style: .neutral)) }
         return items
     }
 
@@ -244,10 +270,10 @@ struct ImageModelsDownloadView: View {
         return parts.isEmpty ? L("Not downloaded yet") : parts.joined(separator: " · ")
     }
 
-    private func leadingStyle(for info: ImageModelInfo) -> ImageModelRow.Leading {
+    private func leadingStyle(for info: ImageModelInfo) -> ModelListRow.Leading {
         info.ready
-            ? ImageModelRow.Leading(icon: "checkmark.seal.fill", tint: theme.successColor)
-            : ImageModelRow.Leading(icon: "exclamationmark.triangle.fill", tint: theme.warningColor)
+            ? ModelListRow.Leading(icon: "checkmark.seal.fill", tint: theme.successColor)
+            : ModelListRow.Leading(icon: "exclamationmark.triangle.fill", tint: theme.warningColor)
     }
 
     /// A short capability pill for non-default image kinds; plain generation
@@ -306,238 +332,5 @@ struct ImageModelsDownloadView: View {
         if lower.contains("6bit") || lower.contains("6-bit") { return "6-bit" }
         if lower.contains("4bit") || lower.contains("4-bit") { return "4-bit" }
         return nil
-    }
-}
-
-// MARK: - Image Model Row
-
-/// One clean list row for an image bundle, on the shared 10pt input-card chrome
-/// (the same surface `SettingsToggle` and the Privacy rows use). The row is
-/// static like the Privacy rows; inline controls surface the primary action
-/// (Download / Generate / Edit / Re-download / Cancel), live download progress,
-/// an always-visible "View on Hugging Face" link, and an overflow menu for the
-/// remaining heavier actions (Re-download / Delete) when present.
-private struct ImageModelRow: View {
-    @Environment(\.theme) private var theme
-
-    struct Leading {
-        let icon: String
-        let tint: Color
-    }
-
-    enum ActionRole { case normal, primary, destructive }
-
-    struct Action: Identifiable {
-        let id = UUID()
-        let title: String
-        let icon: String
-        var role: ActionRole = .normal
-        let handler: () -> Void
-    }
-
-    let title: String
-    let subtitle: String
-    let leading: Leading
-    var kindLabel: String? = nil
-    var quantLabel: String? = nil
-    let state: DownloadState
-    let metrics: ModelDownloadService.DownloadMetrics?
-    var primary: Action? = nil
-    var menuItems: [Action] = []
-    /// Always-visible inline "View on Hugging Face" link (when the source repo
-    /// is known). Pulled out of the overflow menu so it stays reachable while a
-    /// download is in flight and isn't the lone item behind a 3-dot affordance.
-    var onViewHuggingFace: (() -> Void)? = nil
-    let onCancel: () -> Void
-
-    private var isActive: Bool {
-        switch state {
-        case .downloading, .paused: return true
-        default: return false
-        }
-    }
-
-    var body: some View {
-        HStack(spacing: 12) {
-            leadingIcon
-
-            VStack(alignment: .leading, spacing: 4) {
-                titleRow
-                if isActive {
-                    progressRow
-                } else {
-                    Text(verbatim: subtitle)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.secondaryText)
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-
-            Spacer(minLength: 12)
-
-            trailing
-        }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(theme.inputBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(theme.inputBorder, lineWidth: 1)
-                )
-        )
-    }
-
-    // MARK: Pieces
-
-    private var leadingIcon: some View {
-        Image(systemName: leading.icon)
-            .font(.system(size: 14, weight: .semibold))
-            .foregroundColor(leading.tint)
-            .frame(width: 32, height: 32)
-            .background(RoundedRectangle(cornerRadius: 8).fill(leading.tint.opacity(0.12)))
-    }
-
-    private var titleRow: some View {
-        HStack(spacing: 6) {
-            Text(verbatim: title)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(theme.primaryText)
-                .lineLimit(1)
-                .truncationMode(.tail)
-            if let kindLabel { pill(kindLabel, tint: theme.accentColor) }
-            if let quantLabel { pill(quantLabel, tint: theme.secondaryText) }
-        }
-    }
-
-    private func pill(_ text: String, tint: Color) -> some View {
-        Text(verbatim: text)
-            .font(.system(size: 10, weight: .semibold))
-            .foregroundColor(tint)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(Capsule().fill(tint.opacity(0.12)))
-            .overlay(Capsule().stroke(tint.opacity(0.22), lineWidth: 0.5))
-    }
-
-    private var progressRow: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    RoundedRectangle(cornerRadius: 2).fill(theme.tertiaryBackground)
-                    RoundedRectangle(cornerRadius: 2)
-                        .fill(theme.accentColor)
-                        .frame(width: max(0, geo.size.width * progressValue))
-                        .animation(.easeOut(duration: 0.3), value: progressValue)
-                }
-            }
-            .frame(height: 4)
-
-            HStack(spacing: 6) {
-                Text(verbatim: "\(Int(progressValue * 100))%")
-                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                    .foregroundColor(theme.secondaryText)
-                if let line = metrics?.formattedLine {
-                    Text(verbatim: "·").foregroundColor(theme.tertiaryText)
-                    Text(verbatim: line)
-                        .font(.system(size: 10, design: .monospaced))
-                        .foregroundColor(theme.tertiaryText)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                }
-            }
-        }
-    }
-
-    private var progressValue: Double {
-        switch state {
-        case .downloading(let p), .paused(let p): return p
-        default: return 0
-        }
-    }
-
-    private var trailing: some View {
-        // The Hugging Face link is rendered first in both states so it never
-        // disappears mid-download. Active downloads then show Cancel; idle rows
-        // show the primary action plus an overflow menu only when real items
-        // remain (Installed: Re-download / Delete).
-        HStack(spacing: 8) {
-            if let onViewHuggingFace {
-                huggingFaceButton(onViewHuggingFace)
-            }
-
-            if isActive {
-                Button(action: onCancel) {
-                    Text("Cancel", bundle: .module)
-                }
-                .buttonStyle(SettingsButtonStyle())
-            } else {
-                if let primary {
-                    Button(action: primary.handler) {
-                        HStack(spacing: 4) {
-                            Image(systemName: primary.icon)
-                            Text(LocalizedStringKey(primary.title), bundle: .module)
-                        }
-                    }
-                    .buttonStyle(
-                        SettingsButtonStyle(
-                            isPrimary: primary.role == .primary,
-                            isDestructive: primary.role == .destructive
-                        )
-                    )
-                }
-                if !menuItems.isEmpty { overflowMenu }
-            }
-        }
-    }
-
-    /// Compact link button (Hugging Face mark) sharing the overflow menu's
-    /// chrome so the two trailing controls read as one family.
-    private func huggingFaceButton(_ action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            controlChrome {
-                Text(verbatim: "🤗")
-                    .font(.system(size: 13))
-            }
-            .contentShape(RoundedRectangle(cornerRadius: 8))
-        }
-        .buttonStyle(.plain)
-        .localizedHelp("View on Hugging Face")
-    }
-
-    private var overflowMenu: some View {
-        Menu {
-            ForEach(menuItems) { item in
-                Button(role: item.role == .destructive ? .destructive : nil, action: item.handler) {
-                    Label {
-                        Text(LocalizedStringKey(item.title), bundle: .module)
-                    } icon: {
-                        Image(systemName: item.icon)
-                    }
-                }
-            }
-        } label: {
-            controlChrome {
-                Image(systemName: "ellipsis")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.secondaryText)
-            }
-        }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
-    }
-
-    /// Shared 28x28 rounded-square chrome for the trailing icon controls
-    /// (Hugging Face link + overflow menu) so they read as one family.
-    private func controlChrome<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
-        content()
-            .frame(width: 28, height: 28)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(theme.tertiaryBackground)
-                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(theme.inputBorder, lineWidth: 1))
-            )
     }
 }

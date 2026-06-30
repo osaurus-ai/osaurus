@@ -242,20 +242,17 @@ struct PrivacyView: View {
                 onOpenProviders: { ManagementStateManager.shared.selectedTab = .providers }
             )
         case .model:
-            VStack(alignment: .leading, spacing: 24) {
-                SettingsSection(title: L("Detection Models"), icon: "cube.box.fill") {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text(
-                            "Choose the on-device model that powers AI detection. Pattern rules in the Rules tab work without any model.",
-                            bundle: .module
-                        )
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
-                        .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 16) {
+                Text(
+                    "Choose the on-device model that powers AI detection. Pattern rules in the Rules tab work without any model.",
+                    bundle: .module
+                )
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 4)
 
-                        PrivacyModelSelector(configuration: $configuration, save: save)
-                    }
-                }
+                PrivacyModelSelector(configuration: $configuration, save: save, layout: .sections)
             }
         }
     }
@@ -359,51 +356,115 @@ private enum PrivacyTab: String, CaseIterable, AnimatedTabItem {
     }
 }
 
-// MARK: - Model selector (radio cards, shared by Overview + Models tabs)
+// MARK: - Model selector (shared by Overview + Models tabs)
 
-/// Radio-style chooser between the available on-device detection models.
-/// Self-contained: reads/writes `configuration.aiDetectionBackend` and
-/// drives each model's download/manage lifecycle through its manager
-/// singleton, so both the Overview and Models tabs can render the same
-/// control with just a configuration binding.
+/// Chooser between the available on-device detection models, rendered on the
+/// shared `ModelListRow`. Self-contained: reads/writes
+/// `configuration.aiDetectionBackend` and drives each model's download/manage
+/// lifecycle through its manager singleton. The Overview tab renders the rows
+/// flat (`.flat`); the Models tab groups them into Installed / Available
+/// sections (`.sections`) to match the Voice and Images tabs.
 private struct PrivacyModelSelector: View {
+    enum Layout { case flat, sections }
+
     @Environment(\.theme) private var theme
+    @Environment(\.openURL) private var openURL
     @Binding var configuration: PrivacyFilterConfiguration
     let save: () -> Void
+    var layout: Layout = .flat
 
     @ObservedObject private var downloader = PrivacyFilterModelDownloader.shared
     @ObservedObject private var rampart = RampartModelManager.shared
     @State private var pendingRemoval: PrivacyAIBackend?
 
+    /// Rampart first (the lightweight default suggestion), then OpenAI.
+    private let backends: [PrivacyAIBackend] = [.rampart, .openai]
+
+    private var installedBackends: [PrivacyAIBackend] { backends.filter(isInstalled) }
+    private var availableBackends: [PrivacyAIBackend] { backends.filter { !isInstalled($0) } }
+
     var body: some View {
-        VStack(spacing: 10) {
-            card(.rampart)
-            card(.openai)
-        }
-        .confirmationDialog(
-            Text("Remove model?", bundle: .module),
-            isPresented: Binding(
-                get: { pendingRemoval != nil },
-                set: { if !$0 { pendingRemoval = nil } }
-            ),
-            titleVisibility: .visible
-        ) {
-            Button(role: .destructive) {
-                if let backend = pendingRemoval { remove(backend) }
-                pendingRemoval = nil
-            } label: {
-                Text("Remove Model", bundle: .module)
+        content
+            .confirmationDialog(
+                Text("Remove model?", bundle: .module),
+                isPresented: Binding(
+                    get: { pendingRemoval != nil },
+                    set: { if !$0 { pendingRemoval = nil } }
+                ),
+                titleVisibility: .visible
+            ) {
+                Button(role: .destructive) {
+                    if let backend = pendingRemoval { remove(backend) }
+                    pendingRemoval = nil
+                } label: {
+                    Text("Remove Model", bundle: .module)
+                }
+                Button(role: .cancel) { pendingRemoval = nil } label: {
+                    Text("Cancel", bundle: .module)
+                }
+            } message: {
+                Text(
+                    "This deletes the on-disk model. Detection for it stops until you re-download.",
+                    bundle: .module
+                )
             }
-            Button(role: .cancel) { pendingRemoval = nil } label: {
-                Text("Cancel", bundle: .module)
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        switch layout {
+        case .flat:
+            VStack(spacing: 8) {
+                ForEach(backends, id: \.self) { row($0) }
             }
-        } message: {
-            Text(
-                "This deletes the on-disk model. Detection for it stops until you re-download.",
-                bundle: .module
-            )
+        case .sections:
+            VStack(alignment: .leading, spacing: 24) {
+                if !installedBackends.isEmpty {
+                    SettingsSection(title: "Installed", icon: "checkmark.seal.fill") {
+                        VStack(spacing: 8) {
+                            ForEach(installedBackends, id: \.self) { row($0) }
+                        }
+                    }
+                }
+                if !availableBackends.isEmpty {
+                    SettingsSection(title: "Available", icon: "square.and.arrow.down") {
+                        VStack(spacing: 8) {
+                            ForEach(availableBackends, id: \.self) { row($0) }
+                        }
+                    }
+                }
+            }
         }
     }
+
+    // MARK: Row
+
+    private func row(_ backend: PrivacyAIBackend) -> ModelListRow {
+        let info = meta(backend)
+        let installed = isInstalled(backend)
+        let active = installed && configuration.aiDetectionBackend == backend
+        return ModelListRow(
+            title: info.name,
+            subtitle: "\(info.size) · \(info.summary)",
+            leading: leading(backend, installed: installed),
+            isDefault: active,
+            status: status(backend),
+            primary: primaryAction(backend, installed: installed, active: active),
+            menuItems: menuItems(backend, installed: installed),
+            onViewHuggingFace: { openHuggingFace(repoId(backend)) },
+            onCancel: cancelAction(backend)
+        )
+    }
+
+    private func leading(_ backend: PrivacyAIBackend, installed: Bool) -> ModelListRow.Leading {
+        if installed { return .init(icon: "checkmark.seal.fill", tint: theme.successColor) }
+        if case .failed = status(backend) {
+            return .init(icon: "exclamationmark.triangle.fill", tint: theme.warningColor)
+        }
+        return .init(icon: "cube.box.fill", tint: theme.accentColor)
+    }
+
+    // MARK: Metadata
 
     private func meta(_ backend: PrivacyAIBackend) -> (name: String, size: String, summary: String) {
         switch backend {
@@ -422,6 +483,13 @@ private struct PrivacyModelSelector: View {
         }
     }
 
+    private func repoId(_ backend: PrivacyAIBackend) -> String {
+        switch backend {
+        case .openai: return PrivacyFilterModelDownloader.repoId
+        case .rampart: return RampartModelManager.repoId
+        }
+    }
+
     private func isInstalled(_ backend: PrivacyAIBackend) -> Bool {
         switch backend {
         case .openai:
@@ -433,153 +501,95 @@ private struct PrivacyModelSelector: View {
         }
     }
 
-    @ViewBuilder
-    private func card(_ backend: PrivacyAIBackend) -> some View {
-        let selected = configuration.aiDetectionBackend == backend
-        let info = meta(backend)
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top, spacing: 10) {
-                Image(systemName: selected ? "largecircle.fill.circle" : "circle")
-                    .font(.system(size: 16))
-                    .foregroundColor(selected ? theme.accentColor : theme.tertiaryText)
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 6) {
-                        Text(verbatim: info.name)
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundColor(theme.primaryText)
-                        Text(verbatim: info.size)
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundColor(theme.secondaryText)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 1)
-                            .background(theme.tertiaryBackground, in: Capsule())
-                        if isInstalled(backend) {
-                            HStack(spacing: 3) {
-                                Image(systemName: "checkmark.seal.fill").font(.system(size: 9))
-                                Text("Installed", bundle: .module).font(.system(size: 10, weight: .medium))
-                            }
-                            .foregroundColor(theme.successColor)
-                        }
-                    }
-                    Text(verbatim: info.summary)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                Spacer()
+    // MARK: Status mapping
+
+    private func status(_ backend: PrivacyAIBackend) -> ModelListRow.Status {
+        switch backend {
+        case .openai:
+            switch downloader.state {
+            case .idle: return .idle
+            case .enumerating: return .inProgress(progress: nil, detail: L("Preparing…"))
+            case let .downloading(_, _, _, done, total):
+                let progress = total > 0 ? Double(done) / Double(total) : nil
+                return .inProgress(progress: progress, detail: nil)
+            case .verifying: return .inProgress(progress: nil, detail: L("Verifying…"))
+            case .ready: return .ready
+            case .failed(let message): return .failed(message)
             }
-            HStack { Spacer(); controls(backend) }
+        case .rampart:
+            switch rampart.state {
+            case .idle:
+                return RampartModelManager.bundleExists() ? .ready : .idle
+            case .downloading(let progress):
+                return .inProgress(progress: progress, detail: nil)
+            case .ready: return .ready
+            case .failed(let message): return .failed(message)
+            }
         }
-        .padding(12)
-        .background(theme.cardBackground, in: RoundedRectangle(cornerRadius: 10))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(
-                    selected ? theme.accentColor : theme.cardBorder,
-                    lineWidth: selected ? 1.5 : 1
-                )
-        )
-        .contentShape(Rectangle())
-        .onTapGesture {
-            if configuration.aiDetectionBackend != backend {
+    }
+
+    // MARK: Actions
+
+    private func primaryAction(_ backend: PrivacyAIBackend, installed: Bool, active: Bool)
+        -> ModelListRow.Action?
+    {
+        if installed {
+            // The active model shows the Default badge; other installed models
+            // offer Set as Default. The active one needs no primary action.
+            guard !active else { return nil }
+            return ModelListRow.Action(title: "Set as Default", icon: "checkmark.circle") {
                 configuration.aiDetectionBackend = backend
                 save()
             }
         }
+        // Not installed: Install, or Retry after a failed attempt.
+        if case .failed = status(backend) {
+            return ModelListRow.Action(title: "Retry", icon: "arrow.clockwise") {
+                startDownload(backend)
+            }
+        }
+        return ModelListRow.Action(title: "Install", icon: "arrow.down.circle") {
+            startDownload(backend)
+        }
     }
 
-    @ViewBuilder
-    private func controls(_ backend: PrivacyAIBackend) -> some View {
+    private func menuItems(_ backend: PrivacyAIBackend, installed: Bool) -> [ModelListRow.Action] {
+        guard installed else { return [] }
+        var items: [ModelListRow.Action] = []
+        // Re-verify recomputes the OpenAI bundle manifest; Rampart has no
+        // verify step, so it only offers Remove.
+        if backend == .openai {
+            items.append(
+                ModelListRow.Action(title: "Re-verify", icon: "arrow.clockwise") {
+                    downloader.reverify()
+                }
+            )
+        }
+        items.append(
+            ModelListRow.Action(title: "Remove", icon: "trash", role: .destructive) {
+                pendingRemoval = backend
+            }
+        )
+        return items
+    }
+
+    private func startDownload(_ backend: PrivacyAIBackend) {
         switch backend {
-        case .openai: openAIControls
-        case .rampart: rampartControls
+        case .openai: PrivacyFilterModelDownloader.shared.startDownload()
+        case .rampart: RampartModelManager.shared.startDownload()
         }
     }
 
-    private func actionLabel(_ icon: String, _ text: String) -> some View {
-        HStack(spacing: 4) {
-            Image(systemName: icon)
-            Text(verbatim: text)
+    private func cancelAction(_ backend: PrivacyAIBackend) -> () -> Void {
+        switch backend {
+        case .openai: return { downloader.cancel() }
+        case .rampart: return { rampart.cancel() }
         }
     }
 
-    @ViewBuilder
-    private var openAIControls: some View {
-        switch downloader.state {
-        case .ready:
-            HStack(spacing: 6) {
-                Button(action: downloader.reverify) {
-                    actionLabel("arrow.clockwise", L("Re-verify"))
-                }
-                .buttonStyle(SettingsButtonStyle())
-                Button(role: .destructive) { pendingRemoval = .openai } label: {
-                    actionLabel("trash", L("Remove"))
-                }
-                .buttonStyle(SettingsButtonStyle(isDestructive: true))
-            }
-        case .idle, .failed:
-            Button(action: { PrivacyFilterModelDownloader.shared.startDownload() }) {
-                actionLabel("arrow.down.circle", L("Install"))
-            }
-            .buttonStyle(SettingsButtonStyle())
-        default:
-            HStack(spacing: 6) {
-                ProgressView().controlSize(.small)
-                Text(verbatim: openAIProgressText)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
-                Button(action: downloader.cancel) { Text("Cancel", bundle: .module) }
-                    .buttonStyle(SettingsButtonStyle())
-            }
-        }
-    }
-
-    private var openAIProgressText: String {
-        switch downloader.state {
-        case let .downloading(_, _, _, done, total):
-            return total > 0 ? "\(Int(Double(done) / Double(total) * 100))%" : "…"
-        case .verifying:
-            return L("Verifying…")
-        default:
-            return L("Preparing…")
-        }
-    }
-
-    @ViewBuilder
-    private var rampartControls: some View {
-        switch rampart.state {
-        case .ready:
-            Button(role: .destructive) { pendingRemoval = .rampart } label: {
-                actionLabel("trash", L("Remove"))
-            }
-            .buttonStyle(SettingsButtonStyle(isDestructive: true))
-        case .downloading(let progress):
-            HStack(spacing: 6) {
-                ProgressView().controlSize(.small)
-                Text(verbatim: "\(Int(progress * 100))%")
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
-                Button(action: rampart.cancel) { Text("Cancel", bundle: .module) }
-                    .buttonStyle(SettingsButtonStyle())
-            }
-        case .failed:
-            Button(action: { RampartModelManager.shared.startDownload() }) {
-                actionLabel("arrow.clockwise", L("Retry"))
-            }
-            .buttonStyle(SettingsButtonStyle())
-        case .idle:
-            if RampartModelManager.bundleExists() {
-                Button(role: .destructive) { pendingRemoval = .rampart } label: {
-                    actionLabel("trash", L("Remove"))
-                }
-                .buttonStyle(SettingsButtonStyle(isDestructive: true))
-            } else {
-                Button(action: { RampartModelManager.shared.startDownload() }) {
-                    actionLabel("arrow.down.circle", L("Install"))
-                }
-                .buttonStyle(SettingsButtonStyle())
-            }
-        }
+    private func openHuggingFace(_ repoId: String) {
+        guard let url = URL(string: "https://huggingface.co/\(repoId)") else { return }
+        openURL(url)
     }
 
     private func remove(_ backend: PrivacyAIBackend) {
