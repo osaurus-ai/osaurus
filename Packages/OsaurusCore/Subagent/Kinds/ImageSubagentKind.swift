@@ -2,7 +2,7 @@
 //  ImageSubagentKind.swift
 //  OsaurusCore — Subagent framework
 //
-//  The native-image sub-agent kind that serves the single `image` tool:
+//  The native-image subagent kind that serves the single `image` tool:
 //  generate when `source_paths` is empty, edit when it is set. Resolves the
 //  configured local image model (separate gen vs edit defaults), runs the job
 //  through `NativeImageJobCoordinator`, bridges the job's live progress onto the
@@ -123,7 +123,7 @@ final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
         // Per-agent permission: Default / main chat → global permission map; a
         // custom agent → its own `subagentPermissions`, resolved from the
         // launching agent (`scope`). The model is now chosen in the agent's
-        // Sub-agents tab, so the prompt is a plain allow / deny (the `.ask`
+        // Subagents tab, so the prompt is a plain allow / deny (the `.ask`
         // policy); `.alwaysAllow` is set per-agent in that tab.
         let isDefault = scope.agentId == Agent.defaultId
         let settings = await MainActor.run {

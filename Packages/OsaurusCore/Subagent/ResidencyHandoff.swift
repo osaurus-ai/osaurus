@@ -2,9 +2,9 @@
 //  ResidencyHandoff.swift
 //  OsaurusCore — Subagent framework
 //
-//  The single optional handoff middleware for model-swapping sub-agent kinds
+//  The single optional handoff middleware for model-swapping subagent kinds
 //  (spawn, image). When a kind resolves a DIFFERENT local model than the
-//  resident orchestrator, the chat model must be unloaded so the sub-agent
+//  resident orchestrator, the chat model must be unloaded so the subagent
 //  model takes the GPU exclusively, then reloaded after the run. Same-model
 //  kinds (computer_use) use `PassthroughHandoff` instead.
 //
@@ -34,11 +34,11 @@ struct ResidencyPlan: Sendable {
     /// residency). `false` skips unload/restore entirely (e.g. cloud
     /// orchestrator with nothing resident, or a keep-loaded policy).
     var shouldUnload: Bool
-    /// On-disk size of the sub-agent model, for the refuse-before-evict
+    /// On-disk size of the subagent model, for the refuse-before-evict
     /// preflight. `0` skips the size check.
     var requiredBytes: Int64
     /// Whether the RAM-safety preflight is enabled (refuse before evicting if
-    /// the sub-agent model would not fit once the chat model is freed).
+    /// the subagent model would not fit once the chat model is freed).
     var ramSafetyEnabled: Bool
     /// Idle-wait budget (seconds) before the unload gives up on chat going idle.
     var maxElapsedSeconds: Int

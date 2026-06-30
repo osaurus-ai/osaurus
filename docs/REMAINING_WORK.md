@@ -7,7 +7,7 @@ other docs where they disagree. Each item: severity, where it lives, documented-
 (most were **undocumented** until this audit), and what to build.
 
 > **Unified-architecture rename (2026-06-25).** The backlog below predates the
-> sub-agent unification and references old names/paths. Map: `local_delegate` /
+> subagent unification and references old names/paths. Map: `local_delegate` /
 > `LocalTextDelegateTool` are **removed** (the text path is `spawn` →
 > `AgentSubagentRunner` only); `image_generate` + `image_edit` are merged into one
 > **`image`** tool (`ImageTool` in `NativeImageTools.swift`, `source_paths` ⇒ edit);

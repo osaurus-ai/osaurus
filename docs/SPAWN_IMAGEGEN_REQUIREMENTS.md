@@ -2,9 +2,9 @@
 Owner: Eric. Last updated 2026-06-25. SSOT for the user-facing feature.
 (Engineering status/log lives in SUBAGENT_ORCHESTRATION_STATUS.md.)
 
-> **Unified surface (2026-06-25).** The sub-agent paths were unified onto one shared
+> **Unified surface (2026-06-25).** The subagent paths were unified onto one shared
 > `SubagentSession` host + `SubagentKind` framework (see
-> SUBAGENT_ORCHESTRATION_STATUS.md → "Unified Sub-agent Architecture"). The tool
+> SUBAGENT_ORCHESTRATION_STATUS.md → "Unified Subagent Architecture"). The tool
 > surface changed: **`local_delegate` is removed (folded into `spawn`)** and
 > **`image_generate` + `image_edit` are merged into one `image` tool** (passing
 > `source_paths` switches it to edit). Config/services renamed
@@ -14,7 +14,7 @@ Owner: Eric. Last updated 2026-06-25. SSOT for the user-facing feature.
 > read them through that map.
 
 > **Per-agent settings + unified main-chat tab (2026-06-26).** Image models,
-> permissions, and budgets are now **per-agent**, configured in each agent's **Sub-agents
+> permissions, and budgets are now **per-agent**, configured in each agent's **Subagents
 > tab** — including the **main chat**, which gets the same tab (Spawn + Image cards) bound
 > to the global config. A capability is now **fully configured where you turn it on**:
 > you pick the `image` gen/edit model, the `spawn`/`image` permission, and `spawn` budgets
@@ -28,12 +28,12 @@ Owner: Eric. Last updated 2026-06-25. SSOT for the user-facing feature.
 > own tab.
 
 ## 1. Vision — spawn is a TOOL every main chat can use
-The main osaurus chat model — **cloud OR local** — can call sub-agent tools to
+The main osaurus chat model — **cloud OR local** — can call subagent tools to
 run a bounded sub-process, get a compact result back, and continue its own turn:
 - **image gen / edit** → one `image` tool (vMLXFlux engine); `source_paths` ⇒ edit.
-- **text model / coder** → `spawn(agent,input)` (a named persona sub-agent, or the
+- **text model / coder** → `spawn(agent,input)` (a named persona subagent, or the
   default text model when no persona is given).
-Sub-agent tools join the SAME tool surface the chat already uses, alongside computer-use,
+Subagent tools join the SAME tool surface the chat already uses, alongside computer-use,
 file, and capability tools — so the model reaches for them naturally. They must be
 present as callable **schemas** in the chat's `<tools>` block, not just a prompt hint.
 

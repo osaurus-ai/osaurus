@@ -9,7 +9,7 @@
     "subagent": {
       "lane": "spawn",
       "agent": "sparky",
-      "input": "In one sentence, summarize what a bounded sub-agent is.",
+      "input": "In one sentence, summarize what a bounded subagent is.",
       "seedSpawnableAgent": true,
       "expectSuccess": true,
       "expectEnvelopeKind": "success",

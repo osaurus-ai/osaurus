@@ -797,7 +797,7 @@ public struct AgentSettings: Codable, Sendable, Equatable {
     /// image-edit model at run time). The Default agent uses the global
     /// `SubagentConfiguration.defaultImageEditModelId` instead.
     public var imageEditModelId: String?
-    /// Per-agent permission policies for the delegation sub-agents (`spawn`,
+    /// Per-agent permission policies for the delegation subagents (`spawn`,
     /// `image`), keyed by capability id. A kind absent from the map resolves to
     /// the safe `.ask` default. The Default agent uses the global
     /// `SubagentConfiguration.permissionDefaults` instead.

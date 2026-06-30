@@ -8,7 +8,7 @@
 //  local-orchestrator residency handoff when the target is local and clashes
 //  with the resident chat model) and returns only a compact digest. Sibling of
 //  `spawn_agent`, which delegates to a configured agent. Default OFF; each
-//  agent opts in from its Sub-agents tab (`spawnableModelNames`). See
+//  agent opts in from its Subagents tab (`spawnableModelNames`). See
 //  docs/SUBAGENT_PORTABLE_DESIGN.md.
 //
 

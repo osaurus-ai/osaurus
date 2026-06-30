@@ -2,12 +2,12 @@
 //  SubagentCapabilityRegistry.swift
 //  OsaurusCore — Subagent framework
 //
-//  One per-agent capability registry for the nested sub-agent family. Each
+//  One per-agent capability registry for the nested subagent family. Each
 //  capability declares its gate, the tool name(s) it gates, and the
 //  system-prompt guidance to inject when the capability is live. Both the
 //  native `SystemPromptComposer` and the HTTP `enrichWithAgentContext` path
 //  consume `SubagentToolVisibility` so the two surfaces can never drift on
-//  which sub-agent tools an agent sees (the standing BUG E regression guard).
+//  which subagent tools an agent sees (the standing BUG E regression guard).
 //
 //  Replaces the parallel hand-written `computerUseEnabled` / `spawnDelegationEnabled`
 //  gate blocks + guidance sections in the composer and the hardcoded
@@ -17,9 +17,9 @@
 
 import Foundation
 
-/// The single per-kind descriptor (SSOT) for one nested sub-agent capability.
+/// The single per-kind descriptor (SSOT) for one nested subagent capability.
 ///
-/// Every sub-agent surface reads this one value: the `resolveTools` strip + the
+/// Every subagent surface reads this one value: the `resolveTools` strip + the
 /// `ToolRegistry` family gate (`gate`), the AgentsView per-agent toggle
 /// (`perAgentFlag`), the live-feed header + tool chip (`displayLabel` /
 /// `iconName`), and the system-prompt guidance loop (`guidance*`). It is also
@@ -92,7 +92,7 @@ public struct SubagentCapability: Sendable {
         /// per-agent toggle + allow-list). The base schema always carries the
         /// family (superset); the per-agent narrowing happens where the agent
         /// context is known. Off-by-default holds because every agent ships with
-        /// the capability disabled until opted in from its Sub-agents tab.
+        /// the capability disabled until opted in from its Subagents tab.
         case delegation
         /// Sandbox-scoped: gated by sandbox registration + execution mode, NOT
         /// stripped in `resolveTools` and not surfaced as a per-agent /
@@ -165,10 +165,10 @@ public struct SubagentCapability: Sendable {
     }
 }
 
-/// The registry of sub-agent capabilities, in a stable order (so the guidance
+/// The registry of subagent capabilities, in a stable order (so the guidance
 /// sections render in a KV-cache-stable sequence). Each `SubagentKind` exposes
 /// its matching entry here as its `capability`, so this is the one place a
-/// surface needs to read to gate, render, or describe any sub-agent.
+/// surface needs to read to gate, render, or describe any subagent.
 public enum SubagentCapabilityRegistry {
     public static let computerUse = SubagentCapability(
         id: "computer_use",
@@ -241,7 +241,7 @@ public enum SubagentCapabilityRegistry {
 
     /// Distinct per-agent toggle flags, in registry order (computer_use, spawn,
     /// image). One entry per *toggle* (deduped, so a future kind that shares a
-    /// flag would collapse) — the AgentsView Sub-agents tab renders exactly one
+    /// flag would collapse) — the AgentsView Subagents tab renders exactly one
     /// card per flag, driven by the registry instead of hand-built groups.
     public static var perAgentToggleFlags: [SubagentCapability.PerAgentFlag] {
         var seen = Set<SubagentCapability.PerAgentFlag>()
@@ -259,7 +259,7 @@ public enum SubagentCapabilityRegistry {
     }
 
     /// The descriptor bound to a per-agent toggle flag — lets the AgentsView
-    /// Sub-agents tab render the standard model-override row generically
+    /// Subagents tab render the standard model-override row generically
     /// (`supportsModelOverride`) instead of hand-wiring it per kind.
     public static func capability(forPerAgentFlag flag: SubagentCapability.PerAgentFlag)
         -> SubagentCapability?
@@ -277,20 +277,20 @@ public enum SubagentCapabilityRegistry {
         capability(forKindId: id)?.displayLabel
     }
 
-    /// Tool-chip label for a sub-agent tool name (`nil` for non-sub-agent tools).
+    /// Tool-chip label for a subagent tool name (`nil` for non-subagent tools).
     public static func displayLabel(forToolName name: String) -> String? {
         capability(forToolName: name)?.displayLabel
     }
 
-    /// Tool-chip icon for a sub-agent tool name (`nil` for non-sub-agent tools).
+    /// Tool-chip icon for a subagent tool name (`nil` for non-subagent tools).
     public static func iconName(forToolName name: String) -> String? {
         capability(forToolName: name)?.iconName
     }
 }
 
-/// Shared sub-agent tool-visibility resolver used by BOTH the native
+/// Shared subagent tool-visibility resolver used by BOTH the native
 /// `SystemPromptComposer.resolveTools` and the HTTP `enrichWithAgentContext`
-/// path, so the two surfaces always agree on which sub-agent tools an agent
+/// path, so the two surfaces always agree on which subagent tools an agent
 /// sees. This is the single point that previously diverged (BUG E).
 public enum SubagentToolVisibility {
     /// SSOT for the delegation-family tool names both surfaces gate together.
@@ -460,7 +460,7 @@ public enum SubagentToolVisibility {
     // MARK: - Per-agent effective settings
 
     // Image models, permissions, and budgets are configured per-agent (each
-    // agent's Sub-agents tab) for custom agents and in the global config for the
+    // agent's Subagents tab) for custom agents and in the global config for the
     // Default / main chat. These pure resolvers concentrate that Default-vs-custom
     // branch so every execution path (the kinds) reads it the same way; they take
     // the launching agent's `AgentSettings` (nil-safe) plus the global `config`,

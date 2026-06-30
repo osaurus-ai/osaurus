@@ -30,7 +30,7 @@ public enum WhatsNewAction: Hashable, Sendable {
     case openCredits
     /// Open Management → Image Generation.
     case openImageGeneration
-    /// Open Settings (where the Sub-agents / Spawn card lives).
+    /// Open Settings (where the Subagents / Spawn card lives).
     case openSubagentSettings
 }
 
@@ -193,9 +193,9 @@ public enum WhatsNewContent {
 
     /// First-launch announcement for 0.21.0's two headline features.
     /// Two pages each: on-device Image Generation (lineup + the in-chat
-    /// `image` tool, CTA → Image Generation) and Spawn sub-agents (delegate
+    /// `image` tool, CTA → Image Generation) and Spawn subagents (delegate
     /// to a local/remote model or a saved agent + the RAM-safe handoff,
-    /// CTA → Settings where the Sub-agents card lives).
+    /// CTA → Settings where the Subagents card lives).
     private static let imageAndSpawn_0_21_0 = WhatsNewRelease(
         version: "0.21.0",
         pages: [
@@ -217,7 +217,7 @@ public enum WhatsNewContent {
             ),
             WhatsNewPage(
                 id: "spawn-0.21.0:summary",
-                title: "Spawn a sub-agent",
+                title: "Spawn a subagent",
                 description:
                     "Your chat can hand a bounded task to another model — local or remote — or to one of your saved agents, and get a compact result back. Perfect for offloading research, coding, or analysis to a specialist without derailing the conversation.",
                 systemImage: "person.2.fill"
@@ -226,9 +226,9 @@ public enum WhatsNewContent {
                 id: "spawn-0.21.0:safety",
                 title: "Memory-safe and in your control",
                 description:
-                    "When a sub-agent runs on a local model, Osaurus unloads your chat model, runs the job, then reloads and continues — so two large models never fight for memory. Off by default: you approve the first spawn, and pick models and permissions per agent.",
+                    "When a subagent runs on a local model, Osaurus unloads your chat model, runs the job, then reloads and continues — so two large models never fight for memory. Off by default: you approve the first spawn, and pick models and permissions per agent.",
                 systemImage: "memorychip",
-                actionLabel: "Open Sub-agent settings",
+                actionLabel: "Open Subagent settings",
                 action: .openSubagentSettings
             ),
         ]

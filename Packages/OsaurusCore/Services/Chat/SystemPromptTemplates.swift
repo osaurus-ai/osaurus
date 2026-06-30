@@ -667,7 +667,7 @@ public enum SystemPromptTemplates {
         ## Computer use
 
         - You can operate macOS apps for the user with `computer_use` — it drives a real app from the on-screen accessibility tree (clicking, typing, reading on-screen text), falling back to a screenshot only when an element can't be resolved.
-        - Describe the WHOLE task in a single `goal`. It runs a self-contained sub-agent that perceives, acts, and verifies each step on its own and returns a summary — do not try to script individual clicks from here.
+        - Describe the WHOLE task in a single `goal`. It runs a self-contained subagent that perceives, acts, and verifies each step on its own and returns a summary — do not try to script individual clicks from here.
         - Reads and navigation run automatically; edits and anything consequential pause for the user to approve. Write the goal plainly and let that gate handle confirmation — don't ask the user for permission yourself first.
         - Use it for desktop UI automation (filling a form, navigating an app, extracting on-screen content), NOT for shell, files, or web requests — those have dedicated tools.
         """

@@ -2,7 +2,7 @@
 //  SubagentCore.swift
 //  OsaurusCore — Subagent framework
 //
-//  Foundation value types shared by every nested sub-agent KIND (spawn,
+//  Foundation value types shared by every nested subagent KIND (spawn,
 //  image, computer_use). Generalized from the most-mature
 //  computer_use scaffolding so all paths funnel through one host
 //  (`SubagentSession`) and one compact-result contract (`SubagentResult`)
@@ -17,14 +17,14 @@ import Foundation
 
 // MARK: - Scope
 
-/// Identifies one nested sub-agent run and the chat scope it belongs to.
+/// Identifies one nested subagent run and the chat scope it belongs to.
 ///
 /// Resolved once from `ChatExecutionContext` (with fresh fallbacks outside
 /// chat — HTTP / eval — so the loop still runs, just without the row
-/// binding). Every sub-agent kind binds to its chat row the same way
+/// binding). Every subagent kind binds to its chat row the same way
 /// `computer_use` does today.
 public struct SubagentScope: Sendable, Equatable {
-    /// The chat session whose tool call started this sub-agent.
+    /// The chat session whose tool call started this subagent.
     public let sessionId: String
     /// The originating tool-call id — the key the live feed/interrupt and
     /// the chat row are addressed by.
@@ -40,7 +40,7 @@ public struct SubagentScope: Sendable, Equatable {
 
     /// Resolve from the active chat execution context. Outside chat we fall
     /// back to fresh ids and the default agent (mirrors
-    /// `ComputerUseTool.execute`), so a sub-agent still runs from HTTP / eval
+    /// `ComputerUseTool.execute`), so a subagent still runs from HTTP / eval
     /// surfaces — it just won't bind to a chat row.
     public static func current() -> SubagentScope {
         SubagentScope(
@@ -91,7 +91,7 @@ public enum SubagentDecision: Sendable, Equatable {
 // MARK: - Result
 
 /// The compact result a kind hands back. One shape across the whole
-/// sub-agent family: a structured `payload` (the success `result` object the
+/// subagent family: a structured `payload` (the success `result` object the
 /// inline-render bridge + agent-loop nudge read), plus a `summary` mirror
 /// for surfaces that only want prose.
 ///

@@ -5,7 +5,7 @@ Audience: osaurus contributors. **Canonical design + operational nuances:**
 matrix:** [`SUBAGENT_ORCHESTRATION_STATUS.md`](SUBAGENT_ORCHESTRATION_STATUS.md).
 This file is the spec + wiring contract for the current build.
 
-> **Unified framework (2026-06-25).** All four nested sub-agent paths now run through
+> **Unified framework (2026-06-25).** All four nested subagent paths now run through
 > one shared host — `SubagentSession` (`Subagent/SubagentSession.swift`) + a
 > `SubagentKind` protocol (`Subagent/SubagentKind.swift`, kinds in `Subagent/Kinds/`).
 > Tool surface: **`local_delegate` removed (folded into `spawn`)**, and
@@ -15,7 +15,7 @@ This file is the spec + wiring contract for the current build.
 > below have been updated to the shipped types.
 
 > **Per-agent settings (2026-06-26).** Image models, permissions, and budgets are now
-> **per-agent** — configured in each agent's **Sub-agents** tab (custom agents store them
+> **per-agent** — configured in each agent's **Subagents** tab (custom agents store them
 > on `AgentSettings`; the **main chat** edits the global `SubagentConfiguration` from its
 > own un-hidden tab). Global Settings → Spawn is **system-only** (master enable · handoff ·
 > RAM-safety · image load policy). The kinds read effective settings through pure resolvers
@@ -23,7 +23,7 @@ This file is the spec + wiring contract for the current build.
 > default→global / custom→`AgentSettings`). The in-prompt first-use image-model picker is
 > gone (model lives in the tab). §2/§4/§6 below reflect this.
 
-> **Standard sub-agent model picker (2026-06-27).** Picking the model a sub-agent
+> **Standard subagent model picker (2026-06-27).** Picking the model a subagent
 > runs on is now a **standard axis** of the framework, not a per-kind special case.
 > A per-capability override — `subagentModelOverrides[capabilityId]` on
 > `AgentSettings` (custom agents) / `SubagentConfiguration` (main chat), a
@@ -60,7 +60,7 @@ This file is the spec + wiring contract for the current build.
 > the flag. `image` sets it false because it owns its own model system (separate
 > gen/edit ids via `effectiveImageModel`, readiness + "first ready" fallback,
 > coordinator-owned residency) and is NOT a `SubagentModelResolution` client.
-> Pickers live in each agent's **Sub-agents** tab. §1's table + the
+> Pickers live in each agent's **Subagents** tab. §1's table + the
 > `modelSource` note below reflect this.
 
 > **No master switch + no Spawn tab (2026-06-26, supersedes every "master switch /
@@ -73,9 +73,9 @@ This file is the spec + wiring contract for the current build.
 > schema **always** carries the delegation family (a superset); `resolveTools` does all
 > the narrowing. The **dedicated Spawn sidebar tab + `SpawnSettingsView` are deleted**;
 > the three shared runtime knobs (Local Orchestrator Handoff — now **default ON** —
-> RAM-Safety Preflight, Image Load Policy) live in a **"Sub-agents" card in the general
+> RAM-Safety Preflight, Image Load Policy) live in a **"Subagents" card in the general
 > Settings tab** (`SubagentSettingsSection` hosted by `ConfigurationView`). Read "master
-> enable / Settings → Spawn" below as "Settings → Sub-agents card, no master enable."
+> enable / Settings → Spawn" below as "Settings → Subagents card, no master enable."
 
 > **Spawn split + model pool, `sandbox_reduce` removed (2026-06-28, supersedes the
 > single-`spawn`-tool and every `sandbox_reduce` reference below).** The one
@@ -106,10 +106,10 @@ This file is the spec + wiring contract for the current build.
 ## 1. What it is
 
 A chat turn's **orchestrator** model (local OR cloud) can run a bounded nested
-**sub-agent** behind a tool call and fold its result back into the turn — input →
-output, the orchestrator never sees the sub-agent transcript (only the digest/artifact).
+**subagent** behind a tool call and fold its result back into the turn — input →
+output, the orchestrator never sees the subagent transcript (only the digest/artifact).
 
-Sub-agents are a **general framework**, not a fixed set of tools. Each **KIND**
+Subagents are a **general framework**, not a fixed set of tools. Each **KIND**
 conforms to `SubagentKind` and runs through `SubagentSession`, sharing one lifecycle
 (scope ids → recursion guard → resolve → permission → [handoff] → run → compact
 result → defer-cleanup):
@@ -160,10 +160,10 @@ Computer Use Subagent (PR #1578).
      **`spawn_agent`** is visible iff the AGENT pool is non-empty; **`spawn_model`** iff
      the MODEL pool is non-empty. *Default / main chat:* the global pools
      (`SubagentConfiguration.spawnableAgentNames` / `.spawnableModelNames`, edited in
-     the main chat's Sub-agents tab). *Custom agent:* its own
+     the main chat's Subagents tab). *Custom agent:* its own
      `AgentSettings.spawnDelegationEnabled` **and** a non-empty per-agent pool of the
      matching kind (`AgentSettings.spawnableAgentNames` / `.spawnableModelNames`, its
-     Sub-agents tab) — nothing to spawn ⇒ that tool hidden (both empty ⇒ neither).
+     Subagents tab) — nothing to spawn ⇒ that tool hidden (both empty ⇒ neither).
    - **`image`** — *Default / main chat:* the global `imageDelegationEnabled` switch.
      *Custom agent:* its own `AgentSettings.imageEnabled` toggle.
    - **`computer_use`** — authoritative per-agent flag (`AgentSettings.computerUseEnabled`),
@@ -177,7 +177,7 @@ global pool, a custom agent its OWN allow-list. A model can never reach an arbit
 agent or local model — only opted-in targets, scoped to the launching agent.
 
 Both the native chat composer (`SystemPromptComposer.resolveTools`) and the HTTP
-agent-run surface (`HTTPHandler.enrichWithAgentContext`) resolve the visible sub-agent
+agent-run surface (`HTTPHandler.enrichWithAgentContext`) resolve the visible subagent
 tool set through the SAME `SubagentToolVisibility.visibleDelegationToolNames` resolver, so
 the two surfaces can never drift (the BUG E regression guard).
 
@@ -201,7 +201,7 @@ restore-on-failure (orchestrator never left unloaded).
 ## 4. Components & wiring (current)
 
 ### Shared host & framework (`Subagent/`)
-- **`Subagent/SubagentSession.swift`** — the host every sub-agent tool funnels
+- **`Subagent/SubagentSession.swift`** — the host every subagent tool funnels
   through: resolves scope ids (`sessionId`/`toolCallId`/`agentId` via
   `ChatExecutionContext`), holds the recursion guard (`SubagentContext`), registers a
   feed + interrupt token, runs the kind, normalizes to a compact `ToolEnvelope`, and
@@ -299,7 +299,7 @@ restore-on-failure (orchestrator never left unloaded).
 
 ### Agents / config / runtime (reused, existing)
 - `Models/Agent/Agent.swift` + `Managers/AgentManager.swift` — agent name/model
-  (local or remote)/prompt/tool-policy; `effectiveModel(for:)`. Per-agent sub-agent
+  (local or remote)/prompt/tool-policy; `effectiveModel(for:)`. Per-agent subagent
   fields on `AgentSettings` (custom agents): `computerUseEnabled` + `computerUseCeiling`,
   `spawnDelegationEnabled` + `spawnableAgentNames` (its `spawn_agent` allow-list) +
   `spawnableModelNames` + `spawnableModelNotes` (its `spawn_model` allow-list + the
@@ -344,8 +344,8 @@ restore-on-failure (orchestrator never left unloaded).
   master gate to the base schema (so the base set is a superset); per-agent narrowing of
   `spawn` / `image` happens downstream in `resolveTools` / the HTTP path. The delegation
   tool-name sets are DERIVED from `SubagentCapabilityRegistry` (no hand-maintained list).
-- `Views/Agent/AgentsView.swift` — per-agent sub-agent controls live in the dedicated
-  **`DetailTab.subagents`** ("Sub-agents") tab, rendered registry-driven (one card per
+- `Views/Agent/AgentsView.swift` — per-agent subagent controls live in the dedicated
+  **`DetailTab.subagents`** ("Subagents") tab, rendered registry-driven (one card per
   `SubagentCapabilityRegistry.perAgentToggleFlags` entry: `computer_use` → autonomy
   ceiling, `spawn` → permission picker + budget steppers + **two selected-first
   pickers** (spawnable agents + spawnable models), `image` → gen/edit model pickers +
@@ -368,7 +368,7 @@ restore-on-failure (orchestrator never left unloaded).
 - `Views/Settings/SubagentSettingsSection.swift` — the global Spawn tab is **system-only**
   (2026-06-26): master enable, Local Orchestrator Handoff, RAM-Safety preflight, Image
   Load Policy, and the "How it works" explainer. The Main Chat block and the per-agent
-  image-model / permission / budget controls moved to the main chat's Sub-agents tab. It
+  image-model / permission / budget controls moved to the main chat's Subagents tab. It
   still binds the one store and syncs via `.subagentConfigurationChanged`;
   `SettingsSearchIndex` indexes the slimmed layout.
 
@@ -384,7 +384,7 @@ denoise step counter (k/N). Re-entrancy: a subprocess cannot `spawn`.
 
 ## 6. Usage
 
-- **User:** open an agent's **Sub-agents** tab to configure its sub-agents end-to-end —
+- **User:** open an agent's **Subagents** tab to configure its subagents end-to-end —
   toggle `computer_use` / `spawn` / `image`, pick which agents `spawn_agent` may call
   AND which models `spawn_model` may run (two selected-first pickers; each spawnable
   model can carry a "when/how to use it" note), set the `spawn` permission + budgets, and

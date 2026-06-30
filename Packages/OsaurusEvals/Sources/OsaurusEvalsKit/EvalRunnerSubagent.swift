@@ -5,12 +5,12 @@
 //  Runner for the `subagent` domain: drives the shared `SubagentSession`
 //  host through `SubagentJobEvaluator` and scores the compact result
 //  envelope + the unified `SubagentFeed`. Three lanes mirror the four
-//  sub-agent paths the unified framework collapsed onto one host:
+//  subagent paths the unified framework collapsed onto one host:
 //
 //    - scripted: model-free. The full host lifecycle (resolve → permission
 //      → handoff → run → normalize → cleanup), the unified recursion guard,
 //      and the feed lifecycle run in CI with no tokens — the deterministic
-//      seam the whole sub-agent family rides on. This lane also runs as
+//      seam the whole subagent family rides on. This lane also runs as
 //      eval-kit unit tests (mirror `ComputerUseLoopEvalTests`).
 //    - spawn: live. The real `spawn_agent` path (host + `TextSubagentKind`)
 //      against a user-configured spawnable agent — the text-subagent path.
@@ -34,7 +34,7 @@ import OsaurusCore
 
 extension EvalRunner {
 
-    /// Sub-agent host evaluator for `domain == "subagent"`.
+    /// Subagent host evaluator for `domain == "subagent"`.
     static func runSubagentCase(
         _ testCase: EvalCase,
         modelId: String

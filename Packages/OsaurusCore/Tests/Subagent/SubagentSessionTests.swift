@@ -3,7 +3,7 @@
 //  OsaurusCoreTests — Subagent framework
 //
 //  Model-free coverage of the shared host (`SubagentSession`) via a scripted
-//  kind. This is the deterministic seam the whole sub-agent family rides on:
+//  kind. This is the deterministic seam the whole subagent family rides on:
 //  resolve → permission → handoff → run → normalize → cleanup, with no
 //  tokens burned. Exercises the success path, the unified recursion guard,
 //  permission refusal, reject-before-evict, the optional handoff middleware,
@@ -106,7 +106,7 @@ struct SubagentSessionTests {
         #expect(payload?["summary"] as? String == "done")
     }
 
-    @Test("the unified recursion guard refuses a nested sub-agent of any kind")
+    @Test("the unified recursion guard refuses a nested subagent of any kind")
     func recursionGuard() async {
         // Inside the running kind, a second SubagentSession.run must be refused.
         let inner = ScriptedKind(id: "inner")
@@ -124,7 +124,7 @@ struct SubagentSessionTests {
         let nested = nestedEnvelopeBox.value ?? ""
         #expect(ToolEnvelope.isError(nested))
         #expect(decode(nested)["kind"] as? String == "rejected")
-        #expect(ToolEnvelope.failureMessage(nested).contains("running sub-agent"))
+        #expect(ToolEnvelope.failureMessage(nested).contains("running subagent"))
     }
 
     @Test("policy denial maps to a rejected envelope")

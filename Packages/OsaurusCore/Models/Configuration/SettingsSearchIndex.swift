@@ -444,28 +444,28 @@ public enum SettingsSearchIndex {
             subTab: "Models"
         ),
 
-        // MARK: Sub-agents (runtime knobs in the Settings tab)
+        // MARK: Subagents (runtime knobs in the Settings tab)
         // There is no global master switch and no dedicated Spawn tab anymore.
         // What remains are the shared runtime knobs (local handoff, RAM-safety),
-        // folded into the Settings tab as a "Sub-agents" card. Per-agent
+        // folded into the Settings tab as a "Subagents" card. Per-agent
         // spawn/image config (targets, models, permissions, budgets) — including
-        // the built-in main chat — is configured in each agent's Sub-agents tab
+        // the built-in main chat — is configured in each agent's Subagents tab
         // (not indexed here). Global image-generation settings live in the
         // Image Generation tab (indexed above).
         .init(
             id: "settings.subagents",
             tab: .settings,
-            section: "Sub-agents",
-            title: "Sub-agents",
+            section: "Subagents",
+            title: "Subagents",
             keywords: [
-                "spawn", "delegate", "delegation", "sub-agent", "subagent",
+                "spawn", "delegate", "delegation", "subagent",
                 "helper jobs", "agent delegation",
             ]
         ),
         .init(
             id: "settings.subagents.handoff",
             tab: .settings,
-            section: "Sub-agents",
+            section: "Subagents",
             title: "Local Handoff & RAM Safety",
             keywords: ["handoff", "ram safety", "residency", "unload", "preflight"]
         ),

@@ -576,7 +576,7 @@ public actor ModelRuntime {
         // synchronizing only afterwards (below) lets that queued buffer execute
         // against already-freed weights — observed SIGSEGV in
         // `Gemma4.prepare → metal::Device::end_encoding` when the OCR/spawn
-        // residency handoff loads the sub-agent model on top of it. Draining
+        // residency handoff loads the subagent model on top of it. Draining
         // here forces the buffer to complete while its weights are still valid.
         Stream.gpu.synchronize()
 

@@ -7,11 +7,11 @@
 //    - The parent chat run's Stop/Terminate cancels the tool `Task`; the
 //      loop also honors `Task.isCancelled` directly (the BackgroundTaskManager
 //      path).
-//    - The sub-agent activity-feed pane's stop button flips this token via
+//    - The subagent activity-feed pane's stop button flips this token via
 //      `SubagentInterruptCenter`, so a user can halt a run without tearing
 //      down the whole chat turn.
 //
-//  Shared by every sub-agent kind (spawn / image / computer_use) through
+//  Shared by every subagent kind (spawn / image / computer_use) through
 //  `SubagentSession`; the process-wide registry that
 //  maps a run's tool-call id to its token is `SubagentInterruptCenter`.
 //

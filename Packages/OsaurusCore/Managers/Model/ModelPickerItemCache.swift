@@ -22,7 +22,7 @@ final class ModelPickerItemCache: ObservableObject {
     @Published private(set) var isLoaded = false
 
     /// Whether at least one ready text-to-image model is installed. A synchronous
-    /// read off the already-warmed picker cache, used by the sub-agent gate to
+    /// read off the already-warmed picker cache, used by the subagent gate to
     /// decide whether the `image` tool is injected at all (no image model ->
     /// no tool, so the model is never told it can make images it can't).
     var hasReadyImageGenerationModel: Bool {

@@ -2,9 +2,9 @@
 //  AgentSettingsCodableTests.swift
 //  OsaurusCoreTests — Agent
 //
-//  Pins the Codable contract for the per-agent sub-agent settings (image
+//  Pins the Codable contract for the per-agent subagent settings (image
 //  models, delegation permissions, spawn budgets). These fields back the
-//  per-agent Sub-agents tab; a decode regression would silently drop a user's
+//  per-agent Subagents tab; a decode regression would silently drop a user's
 //  model / permission / budget choices, so the round-trip + the back-compat
 //  defaults are guarded here.
 //
@@ -14,7 +14,7 @@ import Testing
 
 @testable import OsaurusCore
 
-@Suite("AgentSettings per-agent sub-agent fields codable")
+@Suite("AgentSettings per-agent subagent fields codable")
 struct AgentSettingsCodableTests {
 
     @Test("the per-agent image / permission / budget fields round-trip")

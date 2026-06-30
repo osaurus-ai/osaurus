@@ -271,7 +271,7 @@ struct ComputerUseSettingsView: View {
     /// shows what any enabled agent would freeze and share.
     private var screenContextPerAgentNote: some View {
         hintText(
-            "Turn this on per agent: open the agent's Sub-agents tab, enable Computer Use, and use the Share screen context option (on by default). Requires Accessibility."
+            "Turn this on per agent: open the agent's Subagents tab, enable Computer Use, and use the Share screen context option (on by default). Requires Accessibility."
         )
     }
 

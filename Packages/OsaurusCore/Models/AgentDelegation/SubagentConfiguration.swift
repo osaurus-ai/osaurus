@@ -43,7 +43,7 @@ enum SubagentModelKind: String, Codable, CaseIterable, Sendable {
     case imageEdit = "image_edit"
 }
 
-/// Per-kind permission gates for the delegation sub-agents, keyed by each kind's
+/// Per-kind permission gates for the delegation subagents, keyed by each kind's
 /// capability id (`"spawn"`, `"image"`, …). Stored as a generic `[kindId:
 /// policy]` map — NOT one field per kind — so a future permissioned kind needs
 /// no new struct field: it reads/writes its own `capability.id`. A kind absent
@@ -132,7 +132,7 @@ public struct SubagentBudgets: Codable, Equatable, Sendable {
     public var maxElapsedSeconds: Int
 
     /// Accepted bounds for each budget — the single source of truth shared by
-    /// `normalized` (the save-time clamp) and the Sub-agents UI steppers, so the
+    /// `normalized` (the save-time clamp) and the Subagents UI steppers, so the
     /// editor can never offer a value the store would silently clamp away.
     public static let tokenBounds: ClosedRange<Int> = 256 ... 32_768
     public static let turnBounds: ClosedRange<Int> = 1 ... 8
@@ -176,7 +176,7 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
     /// The DEFAULT / main-chat agent's spawnable agents (its `spawn` pool).
     /// Empty by default → the main chat has nothing to spawn until opted in.
     /// Custom agents carry their OWN per-agent list in `AgentSettings`; this
-    /// field governs the main chat only (edited in the main chat's Sub-agents tab).
+    /// field governs the main chat only (edited in the main chat's Subagents tab).
     var spawnableAgentNames: [String]
     /// The DEFAULT / main-chat agent's `image` enable. Custom agents carry their
     /// own `AgentSettings.imageEnabled`; this governs the main chat only.

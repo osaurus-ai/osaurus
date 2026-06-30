@@ -134,7 +134,7 @@ struct ImageSubagentKindTests {
 
     /// The complementary always-allow path: a `.alwaysAllow` policy proceeds
     /// straight to `.allow` with no interactive prompt (the "always allow" the
-    /// agent set in its Sub-agents tab).
+    /// agent set in its Subagents tab).
     @Test("main chat image .alwaysAllow → allow without a prompt")
     func mainChatImagePermissionAlwaysAllow() async {
         let lease = await acquireSubagentStoreSandbox("image-permission-always")

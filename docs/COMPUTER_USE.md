@@ -14,7 +14,7 @@ action passes through a **safe-by-default autonomy gate** before it runs.
 ## Mental model
 
 The parent agent calls one tool — `computer_use(goal:)` — exactly once. That
-tool spins up a **nested sub-agent** (the same `sandbox_reduce` pattern used
+tool spins up a **nested subagent** (the same `sandbox_reduce` pattern used
 elsewhere) that runs a `perceive → decide → gate → act → verify` loop and
 returns a single summary. The inner per-step decisions never leak into the
 parent chat transcript; they surface only through the live `ComputerUseFeed`
@@ -23,7 +23,7 @@ rendered in the chat row.
 ```mermaid
 flowchart TD
     parent["Parent chat turn"] -->|"computer_use(goal)"| tool["ComputerUseTool"]
-    tool -->|"awaits"| loop["ComputerUseLoop (nested sub-agent)"]
+    tool -->|"awaits"| loop["ComputerUseLoop (nested subagent)"]
     loop -->|"forced agent_action"| model["model: one verb / step"]
     loop -->|"perceive"| driver["NativeMacDriver (AX / SOM / Vision)"]
     loop -->|"classify + gate"| gate["ComputerUseGate (policy + ceiling)"]
@@ -223,7 +223,7 @@ perception ladder has escalated past `ax`.
 
 Separate from the `computer_use` tool, **Screen context** gives the assistant
 ambient awareness of what you're doing *without driving anything*. It's a
-**per-agent** option nested under Computer Use (Agents → Configure → Sub-agents →
+**per-agent** option nested under Computer Use (Agents → Configure → Subagents →
 *Computer Use* → *Share screen context*), **on by default** once an agent has
 Computer Use enabled. The effective value is gated by the per-agent
 `computerUseEnabled` (`screenContextEnabled && computerUseEnabled`), so an agent
@@ -368,7 +368,7 @@ Vivaldi / Opera).
   Recording dependency, the **Screen context** explainer + live preview (the
   on/off control is per-agent — see below), Accessibility / Screen Recording
   permission rows, and an "Enabling Computer Use" explainer.
-- **Per-agent** (Agents → Configure → Sub-agents → *Computer Use*) — the
+- **Per-agent** (Agents → Configure → Subagents → *Computer Use*) — the
   `computerUseEnabled` toggle, and nested under it the **Share screen context**
   toggle (`screenContextEnabled`, on by default) and the per-agent autonomy
   **ceiling** picker. Custom agents only.

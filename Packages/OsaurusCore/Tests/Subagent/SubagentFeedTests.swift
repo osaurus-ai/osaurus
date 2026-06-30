@@ -2,10 +2,10 @@
 //  SubagentFeedTests.swift
 //  OsaurusCoreTests — Subagent framework
 //
-//  Coverage for the generalized feed surface that every sub-agent kind emits
+//  Coverage for the generalized feed surface that every subagent kind emits
 //  onto: the feed event stream + terminal status, the process-wide registry
 //  lookup, and the interrupt center. Generalized from the computer-use feed
-//  tests so the four sub-agent paths share one verified surface.
+//  tests so the four subagent paths share one verified surface.
 //
 
 import Combine

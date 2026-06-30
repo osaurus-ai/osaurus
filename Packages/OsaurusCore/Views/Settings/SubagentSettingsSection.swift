@@ -5,7 +5,7 @@
 //  System runtime knobs for bounded local helper jobs (spawn / image): the
 //  local-handoff / RAM-safety behavior. There is no global master switch — each
 //  agent (including the built-in main chat) opts into spawn / image and picks
-//  its own models, permissions, and budgets from its Sub-agents tab. The global
+//  its own models, permissions, and budgets from its Subagents tab. The global
 //  image-generation settings (default models, permission, image load policy)
 //  live in the dedicated Image Generation tab. This card hosts only the shared
 //  GPU-residency / RAM knobs and lives inside the general Settings tab.
@@ -19,12 +19,12 @@ struct SubagentSettingsSection: View {
     var body: some View {
         // System runtime knobs only. Per-agent spawn/image config (targets,
         // models, permissions, budgets) — including the built-in main chat —
-        // lives in each agent's Sub-agents tab, not here.
+        // lives in each agent's Subagents tab, not here.
         systemSection
     }
 
     private var systemSection: some View {
-        SettingsSection(title: "Sub-agents", icon: "wand.and.stars") {
+        SettingsSection(title: "Subagents", icon: "wand.and.stars") {
             VStack(alignment: .leading, spacing: 16) {
                 SettingsSubsection(label: "Local Handoff & RAM Safety") {
                     VStack(alignment: .leading, spacing: 12) {

@@ -1358,7 +1358,7 @@ The post-scrub invariant only re-scans categories whose built-in regex toggle is
 
 **Purpose:** Let a custom agent operate a macOS app on the user's behalf to accomplish a natural-language goal — working primarily from the **accessibility tree**, with a **screenshot** fallback only when an element can't be resolved. Off by default, enabled **per agent** (custom agents only), with a **safe-by-default autonomy gate** on every action. See [COMPUTER_USE.md](COMPUTER_USE.md) for the full architecture.
 
-**Mental model:** the parent agent calls one tool — `computer_use(goal:)` — exactly once. It spins up a **nested sub-agent** (the `sandbox_reduce` pattern) that runs a `perceive → decide → gate → act → verify` loop and returns a single summary. The model only proposes the next intent (one `agent_action` per step, forced `tool_choice`); the harness owns every deterministic decision. Inner steps never enter the parent transcript — they surface only through the live `ComputerUseFeed` in the chat row.
+**Mental model:** the parent agent calls one tool — `computer_use(goal:)` — exactly once. It spins up a **nested subagent** (the `sandbox_reduce` pattern) that runs a `perceive → decide → gate → act → verify` loop and returns a single summary. The model only proposes the next intent (one `agent_action` per step, forced `tool_choice`); the harness owns every deterministic decision. Inner steps never enter the parent transcript — they surface only through the live `ComputerUseFeed` in the chat row.
 
 **Components:**
 

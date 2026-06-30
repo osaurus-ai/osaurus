@@ -56,7 +56,7 @@ struct AgentsView: View {
     @State private var consumedDeeplinkAgentId: UUID?
     /// One-shot inner-tab target paired with an agent id, set by the
     /// `.agentDetailDeeplink` handler so the detail view opens on a specific
-    /// tab (e.g. Sub-agents). Applied at `AgentDetailView` construction so it
+    /// tab (e.g. Subagents). Applied at `AgentDetailView` construction so it
     /// survives a cold window open; matched on id so it only affects the
     /// deep-linked agent, and cleared on back.
     @State private var deeplinkTab: (agentId: UUID, tab: DetailTab)?
@@ -824,9 +824,9 @@ private struct AgentCard: View {
 private enum DetailTab: String, CaseIterable {
     case configure
     case capabilities
-    /// Per-agent sub-agent helpers (Computer Use, spawn, image) and their
+    /// Per-agent subagent helpers (Computer Use, spawn, image) and their
     /// inline config, bound to `AgentSettings`. Custom agents only — the built-in
-    /// Default agent has no detail view, so it never configures sub-agents here.
+    /// Default agent has no detail view, so it never configures subagents here.
     case subagents
     case customization
     case network
@@ -867,7 +867,7 @@ private enum DetailTab: String, CaseIterable {
         switch self {
         case .configure: return L("Configure")
         case .capabilities: return L("Capabilities")
-        case .subagents: return L("Sub-agents")
+        case .subagents: return L("Subagents")
         case .customization: return L("Customization")
         case .network: return L("Network")
         case .connections: return L("Remote Connections")
@@ -985,7 +985,7 @@ struct AgentDetailView: View {
         self.onSwitchRemoteAgent = onSwitchRemoteAgent
         self.showSuccess = showSuccess
         // Seed the inner tab at construction so a deep-link (e.g. the What's New
-        // "Open Sub-agent settings" CTA) lands on the right tab even on a cold
+        // "Open Subagent settings" CTA) lands on the right tab even on a cold
         // window open, where a post-mount notification would race the view.
         let resolvedInitialTab = initialTab.flatMap(DetailTab.init(rawValue:)) ?? .configure
         _selectedTab = State(initialValue: .builtIn(resolvedInitialTab))
@@ -1019,11 +1019,11 @@ struct AgentDetailView: View {
     @State private var speakEnabled: Bool = false
     @State private var searchMemoryEnabled: Bool = false
     @State private var selfSchedulingEnabled: Bool = false
-    /// Per-agent sub-agent capability toggles, keyed by the capability
+    /// Per-agent subagent capability toggles, keyed by the capability
     /// registry's `PerAgentFlag` (computer_use, spawn, image). Hydrated in
     /// `loadAgent` by looping the registry and folded back into `AgentSettings`
     /// in `saveAgent`, so adding a per-agent kind needs no new `@State` here.
-    /// Custom agents only; the Sub-agents tab renders one card per flag.
+    /// Custom agents only; the Subagents tab renders one card per flag.
     @State private var subagentToggles: [SubagentCapability.PerAgentFlag: Bool] = [:]
     /// Convenience reads over `subagentToggles` so the save path and the
     /// inline config rows keep their existing call sites.
@@ -1077,7 +1077,7 @@ struct AgentDetailView: View {
     /// Read-only snapshot of the global `SubagentConfiguration`, loaded in
     /// `loadAgentData`. Used only by `spawnHandoffDisabledWarning` to surface the
     /// Local Orchestrator Handoff state while configuring an agent's spawn pool;
-    /// the handoff toggle itself lives in Settings → Sub-agents.
+    /// the handoff toggle itself lives in Settings → Subagents.
     @State private var globalSubagentConfig: SubagentConfiguration = .default
     /// Display mirror of `Agent.hostWorkspacePath`. Drives the Host Files row
     /// so the selected folder updates immediately after the user picks/clears
@@ -3148,7 +3148,7 @@ struct AgentDetailView: View {
         LocalAgentBridge.shared.forget(agentId: agentId)
     }
 
-    /// Editor presentation for one per-agent sub-agent capability toggle. The
+    /// Editor presentation for one per-agent subagent capability toggle. The
     /// SET + order of toggles is registry-driven (`perAgentToggleFlags`); only
     /// the copy lives here in the view layer.
     private struct PerAgentFeature {
@@ -3157,7 +3157,7 @@ struct AgentDetailView: View {
         let subtitle: LocalizedStringKey
     }
 
-    /// The per-agent capability cards to render in the Sub-agents tab, derived
+    /// The per-agent capability cards to render in the Subagents tab, derived
     /// from the registry's distinct per-agent flags so a new per-agent kind
     /// surfaces here automatically (the exhaustive switch forces its copy to be
     /// supplied). The inline config under each toggle is rendered by
@@ -3177,7 +3177,7 @@ struct AgentDetailView: View {
                     flag: .spawn,
                     title: "Spawn",
                     subtitle:
-                        "Let this agent hand a bounded task to another agent or model you allow below — the sub-agent runs it and returns just the result."
+                        "Let this agent hand a bounded task to another agent or model you allow below — the subagent runs it and returns just the result."
                 )
             case .image:
                 return PerAgentFeature(
@@ -3207,9 +3207,9 @@ struct AgentDetailView: View {
         )
     }
 
-    // MARK: - Sub-agents tab
+    // MARK: - Subagents tab
 
-    /// The Sub-agents tab: one card per per-agent capability (Computer Use,
+    /// The Subagents tab: one card per per-agent capability (Computer Use,
     /// spawn, image), each with its full config (model / targets / permission /
     /// budgets) revealed inline when the toggle is on. Every card binds to this
     /// agent's `AgentSettings` (custom agents only — the built-in Default agent
@@ -3218,7 +3218,7 @@ struct AgentDetailView: View {
     private var subagentsTabContent: some View {
         tabHelperText(DetailTab.subagents.helperText)
         AgentDetailSection(
-            title: L("Sub-agents"),
+            title: L("Subagents"),
             icon: "person.2.wave.2",
             subtitle: L(
                 "Each helper is off by default. Turn one on to set it up."
@@ -3254,7 +3254,7 @@ struct AgentDetailView: View {
         }
     }
 
-    /// Capability toggle card for the Sub-agents tab. Mirrors `featureCard`'s
+    /// Capability toggle card for the Subagents tab. Mirrors `featureCard`'s
     /// chrome so it matches the Features tab, but binds directly to the
     /// per-capability enable binding (which routes the right save) and tints its
     /// border with the accent color when on, so an active capability is
@@ -3310,7 +3310,7 @@ struct AgentDetailView: View {
     }
 
     /// Small footnote line (system-setting pointers, permission requirements)
-    /// inside a sub-agent config panel.
+    /// inside a subagent config panel.
     private func subagentFootnote(_ text: LocalizedStringKey) -> some View {
         Text(text, bundle: .module)
             .font(.system(size: 11))
@@ -3324,7 +3324,7 @@ struct AgentDetailView: View {
     /// (only remote targets and the already-loaded model run). Showing it here
     /// means the limit is visible while configuring targets, not just as a
     /// runtime error. Reads the global store snapshot (`globalSubagentConfig`)
-    /// loaded for every agent; the toggle itself lives in Settings → Sub-agents.
+    /// loaded for every agent; the toggle itself lives in Settings → Subagents.
     @ViewBuilder
     private var spawnHandoffDisabledWarning: some View {
         if !globalSubagentConfig.localTextDelegationEnabled {
@@ -3333,7 +3333,7 @@ struct AgentDetailView: View {
                     .font(.system(size: 11))
                     .foregroundColor(theme.warningColor)
                 Text(
-                    "Local Orchestrator Handoff is off (Settings → Sub-agents). Spawning a local agent or model whose model differs from the current chat model will be refused — only remote targets and the loaded model run.",
+                    "Local Orchestrator Handoff is off (Settings → Subagents). Spawning a local agent or model whose model differs from the current chat model will be refused — only remote targets and the loaded model run.",
                     bundle: .module
                 )
                 .font(.system(size: 11))
@@ -3375,7 +3375,7 @@ struct AgentDetailView: View {
     }
 
     /// Rounded fill plus a hairline border — the shared surface chrome for the
-    /// Sub-agents capability cards, the nested config panel, and the ceiling
+    /// Subagents capability cards, the nested config panel, and the ceiling
     /// menu button.
     private func roundedSurface(
         fill: Color,
@@ -3390,7 +3390,7 @@ struct AgentDetailView: View {
             )
     }
 
-    /// The inline config panel revealed under a sub-agent toggle when it is on.
+    /// The inline config panel revealed under a subagent toggle when it is on.
     /// One arm per per-agent flag: computer_use → autonomy ceiling + permission
     /// note; spawn → spawnable allow-list + permission + budgets; image → gen /
     /// edit model pickers + permission. Each control binds to `AgentSettings`
@@ -3424,7 +3424,7 @@ struct AgentDetailView: View {
             subagentPanelDivider
             subagentBudgetRows
             subagentFootnote(
-                "Local handoff and RAM-safety for spawn jobs are system settings in Settings → Sub-agents."
+                "Local handoff and RAM-safety for spawn jobs are system settings in Settings → Subagents."
             )
         case .image:
             imageModelPickerRows
@@ -3439,7 +3439,7 @@ struct AgentDetailView: View {
         }
     }
 
-    // MARK: - Sub-agent inline config: model / permission / budget controls
+    // MARK: - Subagent inline config: model / permission / budget controls
 
     /// Generation + edit model pickers for the Image card. `nil` (Choose
     /// automatically) resolves to the first ready model at run time.
@@ -3622,7 +3622,7 @@ struct AgentDetailView: View {
         }
     }
 
-    // MARK: - Sub-agent inline config: bindings
+    // MARK: - Subagent inline config: bindings
 
     // These bind to `AgentSettings`; the global image settings (defaults,
     // permission, load policy) live in the Image Generation tab.
@@ -4064,7 +4064,7 @@ struct AgentDetailView: View {
 
     /// Binding-backed feature toggle row. Thin wrapper over `featureCard`
     /// that writes the binding and triggers the debounced agent save. Used for
-    /// every per-agent `AgentSettings` flag in the Features and Sub-agents tabs.
+    /// every per-agent `AgentSettings` flag in the Features and Subagents tabs.
     private func featureToggleRow(title: LocalizedStringKey, subtitle: LocalizedStringKey, isOn: Binding<Bool>)
         -> some View
     {
@@ -5967,7 +5967,7 @@ struct AgentDetailView: View {
         subagentPermissions = agent.settings.subagentPermissions
         subagentBudgets = agent.settings.subagentBudgets
         subagentModelOverrides = agent.settings.subagentModelOverrides
-        // Snapshot the global sub-agent config for the spawn-handoff warning.
+        // Snapshot the global subagent config for the spawn-handoff warning.
         globalSubagentConfig = SubagentConfigurationStore.snapshot()
         hostWorkspacePath = agent.hostWorkspacePath
         generativeGreetingsEnabled = agent.settings.generativeGreetingsEnabled

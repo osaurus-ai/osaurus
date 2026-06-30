@@ -8,7 +8,7 @@
   "expect": {
     "subagent": {
       "lane": "spawn_model",
-      "input": "In one sentence, summarize what a bounded sub-agent is.",
+      "input": "In one sentence, summarize what a bounded subagent is.",
       "seedSpawnableModel": true,
       "expectSuccess": true,
       "expectEnvelopeKind": "success",

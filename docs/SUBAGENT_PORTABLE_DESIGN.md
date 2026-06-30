@@ -42,7 +42,7 @@ configurable primitive. Almost everything needed already exists.
 > (default `PassthroughHandoff`).
 >
 > **Standard model picker + shared residency (2026-06-27).** `modelSource` is the
-> kind's **default** source only; picking the model a sub-agent runs on is now a
+> kind's **default** source only; picking the model a subagent runs on is now a
 > standard, override-aware axis. A per-capability override map —
 > `subagentModelOverrides[capabilityId]` on `AgentSettings` (custom) /
 > `SubagentConfiguration` (main chat), read by the single resolver
@@ -81,9 +81,9 @@ configurable primitive. Almost everything needed already exists.
 > by `capability.id` (legacy top-level `spawn`/`image` keys migrate on decode), so a
 > new permissioned kind needs no new config field — it reads/writes its own id.
 >
-> **IA reorg + per-capability per-agent split (2026-06-25).** The per-agent sub-agent
+> **IA reorg + per-capability per-agent split (2026-06-25).** The per-agent subagent
 > controls moved out of the crowded Configure → Features list into a dedicated
-> **`DetailTab.subagents`** ("Sub-agents") tab, rendered registry-driven (one card per
+> **`DetailTab.subagents`** ("Subagents") tab, rendered registry-driven (one card per
 > `SubagentCapabilityRegistry.perAgentToggleFlags` entry, config inline in a
 > DisclosureGroup); the tab is hidden for the Default agent. Each capability is now
 > **independently per-agent**: `image` got its own `PerAgentFlag.image` /
@@ -107,7 +107,7 @@ configurable primitive. Almost everything needed already exists.
 > `imageGenerationModelId` / `imageEditModelId` / `subagentPermissions` /
 > `subagentBudgets`, read live at the kind through pure resolvers
 > (`SubagentToolVisibility.effectiveImageModel` / `effectivePermission` /
-> `effectiveBudgets`: Default → global config, custom → `AgentSettings`). The Sub-agents
+> `effectiveBudgets`: Default → global config, custom → `AgentSettings`). The Subagents
 > tab is **un-hidden for the Default agent** and renders Spawn + Image cards bound to the
 > global `SubagentConfiguration` (a UI move — the main chat's settings still persist
 > there), so the main chat is consistent with custom agents. Global Settings → Spawn is
@@ -127,7 +127,7 @@ configurable primitive. Almost everything needed already exists.
 > always carries the delegation family (a superset narrowed per-agent in
 > `resolveTools`). The **dedicated "Spawn" sidebar tab + `SpawnSettingsView` are
 > deleted**; the three remaining shared runtime knobs (Local Orchestrator Handoff,
-> RAM-Safety Preflight, Image Load Policy) live in a small **"Sub-agents" card inside
+> RAM-Safety Preflight, Image Load Policy) live in a small **"Subagents" card inside
 > the general Settings tab** (`SubagentSettingsSection` hosted by `ConfigurationView`).
 > **Local Orchestrator Handoff now defaults ON** (RAM-Safety preflight guards it) so
 > enabling a capability on a local-model agent works without hunting for a second
@@ -331,7 +331,7 @@ text (`AgentToolLoop`) and image (`vMLXFlux`) jobs.
 |---|------------------|-------|--------------|---------------|
 | 1 | `received` | tool dispatch | parse args, resolve agent/job | bad args |
 | 2 | `resolving_model` | resolver | resolve subagent model; **reject stale/incomplete/wrong-kind BEFORE touching residency** (no pointless eviction) | model missing/incomplete |
-| 3 | `permission` | permission policy | ask/deny/always (the policy is the agent's own `effectivePermission`); the prompt shows the *resolved* model. (The first-use in-prompt model picker was removed 2026-06-26 — the model is set in the agent's Sub-agents tab.) | denied |
+| 3 | `permission` | permission policy | ask/deny/always (the policy is the agent's own `effectivePermission`); the prompt shows the *resolved* model. (The first-use in-prompt model picker was removed 2026-06-26 — the model is set in the agent's Subagents tab.) | denied |
 | 4 | `waiting_for_chat_idle` | `InferenceLoadCoordinator.waitForChatIdle` | wait for the orchestrator's in-flight generation to fully drain | chat-busy timeout |
 | 5 | `unloading_chat_models` | `ChatResidencyHandoff` | unload resident orchestrator model(s) — **local orchestrator only** | — |
 | 6 | `loading_subagent` | `ModelRuntime.load` / engine load | weight dequant + kernel compile under `MetalGate("load:<m>")`; **model-fit RAM refusal happens here** | won't-fit refusal |

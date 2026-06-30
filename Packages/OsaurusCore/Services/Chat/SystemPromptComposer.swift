@@ -894,11 +894,11 @@ public struct SystemPromptComposer: Sendable {
             )
         }
 
-        // Sub-agent capability guidance (Computer Use, Image Generation): one
+        // Subagent capability guidance (Computer Use, Image Generation): one
         // registry-driven loop instead of parallel hand-written blocks. Each
         // capability's guidance is rendered only when its PRIMARY tool actually
         // resolved into the schema — the authoritative per-agent gate already
-        // ran in `resolveTools`, so a section can never advertise a sub-agent
+        // ran in `resolveTools`, so a section can never advertise a subagent
         // the model can't invoke. Schema-gated like codeStyle / riskAware /
         // agentLoopGuidance, so it stays session-constant + KV-cache stable,
         // and the registry's stable order keeps the rendered byte sequence
@@ -2089,7 +2089,7 @@ public struct SystemPromptComposer: Sendable {
             }
         }
 
-        // Authoritative per-agent sub-agent gates, driven by ONE loop over the
+        // Authoritative per-agent subagent gates, driven by ONE loop over the
         // capability registry (no per-kind branches here) so adding a kind needs
         // no edit to this strip. Each capability's `gate` decides the rule:
         //   * .perAgent (computer_use): stripped whenever the agent's own flag

@@ -29,7 +29,7 @@ final class ComputerUseTool: OsaurusTool, PermissionedTool, @unchecked Sendable 
         "Operate a macOS app on the user's behalf to accomplish a goal, working primarily from the "
         + "on-screen accessibility tree and falling back to a screenshot only when an element can't be "
         + "resolved. Describe the WHOLE task in `goal` as one instruction — "
-        + "this runs a self-contained sub-agent that perceives the screen, clicks, types, and "
+        + "this runs a self-contained subagent that perceives the screen, clicks, types, and "
         + "verifies each step on its own, then returns a summary. Reads and navigation happen "
         + "automatically; edits and anything consequential pause for the user to approve. Use this "
         + "for desktop UI automation (filling a form, navigating an app, extracting on-screen text), "

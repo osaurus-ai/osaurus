@@ -820,11 +820,11 @@ final class NativeToolCallRowView: NSView {
     /// Avoids re-subscribing on every layout-only `configure(item:)`
     /// pass for the same row.
     private var liveExecBoundCallId: String?
-    /// Fixed height for the sub-agent feed pane (header + a few visible rows;
+    /// Fixed height for the subagent feed pane (header + a few visible rows;
     /// the list scrolls internally). Kept constant so the row's
     /// `measuredHeight` is predictable as events stream in.
     private static let subagentPaneHeight: CGFloat = 220
-    /// Unified sub-agent activity feed pane. Mounts for ANY sub-agent row
+    /// Unified subagent activity feed pane. Mounts for ANY subagent row
     /// (spawn / image / computer_use) when
     /// `SubagentFeedRegistry` has a feed for this row's tool-call-id (live run
     /// or grace tail). A SwiftUI `SubagentFeedView` hosted in AppKit. Mutually
@@ -963,7 +963,7 @@ final class NativeToolCallRowView: NSView {
 
         // Node: category icon shape in the foreground. The icon/circle colors and
         // the running shimmer are applied in `applyStatusAndShimmer()` below.
-        // Sub-agent tools take their glyph from the capability registry (SSOT)
+        // Subagent tools take their glyph from the capability registry (SSOT)
         // instead of the generic gear the substring categorizer would assign.
         let toolName = item.call.function.name
         let category = ToolCategory.from(toolName: toolName)
@@ -1103,7 +1103,7 @@ final class NativeToolCallRowView: NSView {
             // dedups on toolCallId, so this is a no-op on the second
             // call for the same row.
             bindLiveOutputIfPresent(toolCallId: item.call.id, theme: theme)
-            // Every expanded row watches the unified sub-agent feed registry so
+            // Every expanded row watches the unified subagent feed registry so
             // spawn / image / computer_use rows mount the live
             // activity pane as the host registers and drops their feed.
             bindSubagentFeedIfPresent(toolCallId: item.call.id, theme: theme)
@@ -1166,7 +1166,7 @@ final class NativeToolCallRowView: NSView {
     private func applyResultOrLiveState(width: CGFloat, theme: any ThemeProtocol) {
         guard let item = currentItem else { return }
 
-        // 0) Unified sub-agent feed: any row whose tool-call-id has a live
+        // 0) Unified subagent feed: any row whose tool-call-id has a live
         //    (or grace-tail) `SubagentFeed` renders the shared activity pane.
         //    Drives spawn / image / computer_use live rows.
         //    Falls through to the markdown summary once the grace tail drops
@@ -1326,7 +1326,7 @@ final class NativeToolCallRowView: NSView {
         applyHeight()
     }
 
-    // MARK: - Unified sub-agent feed pane
+    // MARK: - Unified subagent feed pane
 
     /// Subscribe to `SubagentFeedRegistry` and re-run `applyResultOrLiveState`
     /// on every snapshot so the shared activity pane mounts when the host

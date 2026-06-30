@@ -2,7 +2,7 @@
 //  SubagentResidency.swift
 //  OsaurusCore — Subagent framework
 //
-//  The shared model-residency layer for the chat-driven sub-agent kinds
+//  The shared model-residency layer for the chat-driven subagent kinds
 //  (spawn, computer_use). When a kind resolves a model that is
 //  a DIFFERENT local bundle than the resident orchestrator, single-GPU
 //  residency requires unloading the chat model for the run and reloading it

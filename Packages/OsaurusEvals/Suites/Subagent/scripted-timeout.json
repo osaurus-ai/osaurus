@@ -2,7 +2,7 @@
   "id": "subagent.scripted-timeout",
   "domain": "subagent",
   "label": "Subagent • run timeout -> timeout (retryable)",
-  "query": "A scripted sub-agent that exceeds its time budget.",
+  "query": "A scripted subagent that exceeds its time budget.",
   "notes": "Model-free. The kind throws .timedOut inside run; the host maps it to a `timeout` envelope (retryable), the same shape a real spawn budget overrun produces. Pins the budget-exhaustion contract.",
   "fixtures": {},
   "expect": {

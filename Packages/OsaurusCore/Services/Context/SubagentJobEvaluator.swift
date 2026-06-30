@@ -67,7 +67,7 @@ public struct SubagentJobTranscript: Sendable, Codable {
     /// (asserts `needsHandoff` kinds go through the middleware). `nil` on the
     /// live lanes (the real handoff is internal to the kind).
     public let handoffWrapped: Bool?
-    /// Scripted lane: whether a nested sub-agent call was refused by the
+    /// Scripted lane: whether a nested subagent call was refused by the
     /// unified recursion guard (the BUG-class regression guard). `nil` unless
     /// the scripted spec asked to recurse.
     public let nestedRefused: Bool?
@@ -117,7 +117,7 @@ public struct SubagentJobTranscript: Sendable, Codable {
 /// from this exercises the host's whole lifecycle deterministically: pick
 /// the permission verdict, throw a typed `SubagentError` at resolve or run
 /// time, opt into the handoff middleware, and (optionally) attempt a nested
-/// sub-agent so the unified recursion guard can refuse it.
+/// subagent so the unified recursion guard can refuse it.
 public struct ScriptedSubagentSpec: Sendable {
     /// Permission verdict the scripted kind returns.
     public enum Decision: String, Sendable {
@@ -168,7 +168,7 @@ public struct ScriptedSubagentSpec: Sendable {
     public var resolveFailure: Failure?
     /// Throw inside `run`. `nil` = succeed.
     public var runFailure: Failure?
-    /// Attempt a nested sub-agent inside `run` (the recursion-guard probe).
+    /// Attempt a nested subagent inside `run` (the recursion-guard probe).
     public var recurse: Bool
     /// Lifecycle phases the scripted kind emits onto the feed.
     public var phases: [String]
@@ -211,7 +211,7 @@ public enum SubagentJobEvaluator {
     /// Run the model-free scripted lane: build a `ScriptedSubagentKind` from
     /// `spec`, drive it through the real `SubagentSession` host, and read back
     /// the envelope + feed + handoff/recursion observations. No tokens, no
-    /// model, CI-safe — this is the deterministic seam the whole sub-agent
+    /// model, CI-safe — this is the deterministic seam the whole subagent
     /// family rides on.
     public static func runScripted(_ spec: ScriptedSubagentSpec) async -> SubagentJobTranscript {
         let kind = ScriptedSubagentKind(spec: spec)
@@ -573,7 +573,7 @@ public enum SubagentJobEvaluator {
                         name: name,
                         description: "Seeded by OsaurusEvals for the spawn lane; safe to delete.",
                         systemPrompt:
-                            "You are a concise sub-agent. Answer the task directly and follow any "
+                            "You are a concise subagent. Answer the task directly and follow any "
                             + "formatting instructions exactly. Do not add preamble or commentary."
                     )
                     AgentStore.save(agent)
@@ -762,7 +762,7 @@ final class ScriptedSubagentKind: SubagentKind, @unchecked Sendable {
 
     /// Whether the residency-handoff middleware wrapped the run.
     var handoffWrapped: Bool { recordingHandoff.wrapped }
-    /// Whether the nested sub-agent attempt (when `spec.recurse`) was refused.
+    /// Whether the nested subagent attempt (when `spec.recurse`) was refused.
     var nestedRefused: Bool? { nestedBox.refused }
 
     var feedTitle: String { "scripted \(spec.kindId)" }
@@ -793,7 +793,7 @@ final class ScriptedSubagentKind: SubagentKind, @unchecked Sendable {
         for phase in spec.phases { feed.emitPhase(phase, detail: resolved.name) }
 
         if spec.recurse {
-            // A running sub-agent must not be able to start another: drive a
+            // A running subagent must not be able to start another: drive a
             // nested host run and record whether the unified guard refused it.
             let nested = await SubagentSession.run(
                 ScriptedSubagentKind(spec: ScriptedSubagentSpec(kindId: "scripted-nested")),

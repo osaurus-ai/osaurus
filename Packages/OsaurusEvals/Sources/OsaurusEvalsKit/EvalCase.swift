@@ -1648,7 +1648,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         public let resolveFailure: String?
         /// Typed failure thrown inside `run` (same value set as above).
         public let runFailure: String?
-        /// When true, the scripted run attempts a nested sub-agent so the
+        /// When true, the scripted run attempts a nested subagent so the
         /// unified recursion guard refuses it (paired with `expectNestedRefused`).
         public let recurse: Bool?
         /// Lifecycle phases the scripted kind emits onto the feed.
@@ -1748,7 +1748,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         public let expectPhasesInOrder: [String]?
         /// Scripted lane: assert the residency handoff wrapped the run.
         public let expectHandoffWrapped: Bool?
-        /// Scripted lane: assert the nested sub-agent attempt was refused.
+        /// Scripted lane: assert the nested subagent attempt was refused.
         public let expectNestedRefused: Bool?
         /// Image lane: expected mode (`"generate"` | `"edit"`).
         public let expectImageMode: String?

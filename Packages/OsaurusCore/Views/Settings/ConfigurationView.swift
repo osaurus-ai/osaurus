@@ -55,9 +55,9 @@ struct ConfigurationView: View {
     /// thread each (auto-)save.
     @State private var loadedServerConfig: ServerConfiguration = .default
 
-    /// System runtime knobs for sub-agent helper jobs (local handoff, RAM-safety
+    /// System runtime knobs for subagent helper jobs (local handoff, RAM-safety
     /// preflight, image load policy). Backed by `SubagentConfigurationStore`;
-    /// the per-agent spawn/image config lives in each agent's Sub-agents tab.
+    /// the per-agent spawn/image config lives in each agent's Subagents tab.
     /// Saved immediately on change (like the toast toggles), not through the
     /// debounced `saveConfiguration` path.
     @State private var subagentConfiguration = SubagentConfigurationStore.snapshot()
@@ -113,7 +113,7 @@ struct ConfigurationView: View {
         "Legal", "Terms", "Terms of Service", "Privacy", "Privacy Policy", "Policy", "About",
     ]
     private static let subagentKeywords = [
-        "Sub-agents", "subagent", "spawn", "delegate", "delegation", "helper jobs",
+        "subagent", "spawn", "delegate", "delegation", "helper jobs",
         "handoff", "ram safety", "residency", "unload", "preflight",
         "load policy", "image jobs",
     ]
@@ -318,7 +318,7 @@ struct ConfigurationView: View {
         }
     }
 
-    /// The relocated sub-agent runtime knobs (was the dedicated Spawn tab). The
+    /// The relocated subagent runtime knobs (was the dedicated Spawn tab). The
     /// component wraps itself in a `SettingsSection` card, so this only adds the
     /// search-visibility gate.
     @ViewBuilder private var subagentSection: some View {
@@ -343,7 +343,7 @@ struct ConfigurationView: View {
                             // MARK: - General Section
                             generalSection
 
-                            // MARK: - Sub-agents Section (relocated Spawn knobs)
+                            // MARK: - Subagents Section (relocated Spawn knobs)
                             subagentSection
 
                             // MARK: - Notifications Section
@@ -531,9 +531,9 @@ struct ConfigurationView: View {
         .onReceive(ModelPickerItemCache.shared.$items) { options in
             coreModelPickerItems = options
         }
-        // Sub-agent runtime knobs persist immediately (not via the debounced
+        // Subagent runtime knobs persist immediately (not via the debounced
         // `saveConfiguration`). The re-snapshot on the change notification keeps
-        // this in sync if an agent's Sub-agents tab edits the shared store.
+        // this in sync if an agent's Subagents tab edits the shared store.
         .onChange(of: subagentConfiguration) { _, newValue in
             SubagentConfigurationStore.save(newValue)
         }
