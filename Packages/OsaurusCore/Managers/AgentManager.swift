@@ -764,7 +764,8 @@ extension AgentManager {
                 speakEnabled: false,
                 searchMemoryEnabled: false,
                 selfSchedulingEnabled: false,
-                computerUseEnabled: false
+                computerUseEnabled: false,
+                screenContextEnabled: false
             )
         }
 
@@ -778,6 +779,10 @@ extension AgentManager {
             searchMemoryEnabled: agent.settings.searchMemoryEnabled,
             selfSchedulingEnabled: agent.settings.selfSchedulingEnabled,
             computerUseEnabled: agent.settings.computerUseEnabled,
+            // Screen context is a child of Computer Use: both the per-agent
+            // screen-context flag AND Computer Use itself must be on.
+            screenContextEnabled: agent.settings.computerUseEnabled
+                && agent.settings.screenContextEnabled,
             spawnDelegationEnabled: agent.settings.spawnDelegationEnabled,
             imageEnabled: agent.settings.imageEnabled,
             spawnableAgentNames: agent.settings.spawnableAgentNames,

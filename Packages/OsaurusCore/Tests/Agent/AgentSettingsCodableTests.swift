@@ -95,6 +95,35 @@ struct AgentSettingsCodableTests {
         #expect(decoded.subagentModelOverrides.isEmpty)
     }
 
+    @Test("screenContextEnabled defaults to true when absent (back-compat)")
+    func backCompatScreenContextDefaultsOn() throws {
+        // Older agents (the feature was a global, default-off switch before)
+        // have no `screenContextEnabled` key. It must decode to `true` so an
+        // agent with Computer Use on gets ambient screen context by default,
+        // matching the new "default on with Computer Use" contract.
+        let json = #"{"dbEnabled":false,"computerUseEnabled":true}"#
+        let decoded = try JSONDecoder().decode(AgentSettings.self, from: Data(json.utf8))
+
+        #expect(decoded.screenContextEnabled == true)
+        // The fresh-agent default also opts in.
+        #expect(AgentSettings.defaultDisabled.screenContextEnabled == true)
+    }
+
+    @Test("screenContextEnabled round-trips both on and off")
+    func roundTripsScreenContext() throws {
+        var settings = AgentSettings.defaultDisabled
+        settings.screenContextEnabled = false
+
+        let data = try JSONEncoder().encode(settings)
+        let decoded = try JSONDecoder().decode(AgentSettings.self, from: data)
+        #expect(decoded.screenContextEnabled == false)
+
+        settings.screenContextEnabled = true
+        let dataOn = try JSONEncoder().encode(settings)
+        let decodedOn = try JSONDecoder().decode(AgentSettings.self, from: dataOn)
+        #expect(decodedOn.screenContextEnabled == true)
+    }
+
     @Test("a blank / whitespace model override entry is dropped on decode")
     func blankModelOverrideDroppedOnDecode() throws {
         // A cleared picker an older build may have persisted as "" (or a stray

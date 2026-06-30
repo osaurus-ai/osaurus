@@ -41,6 +41,9 @@ struct DefaultAgentIsolationContractTests {
         #expect(caps.searchMemoryEnabled == false)
         #expect(caps.selfSchedulingEnabled == false)
         #expect(caps.computerUseEnabled == false)
+        // Screen context is a child of Computer Use, which the Default agent
+        // can never enable, so it must always resolve off here too.
+        #expect(caps.screenContextEnabled == false)
     }
 
     @Test

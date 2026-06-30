@@ -474,6 +474,10 @@ public struct AgentCapabilities: Sendable, Equatable {
     public var selfSchedulingEnabled: Bool
     /// Computer Use (`computer_use` entry tool) exposed to the model.
     public var computerUseEnabled: Bool
+    /// Resolved screen-context injection for this agent. A child of Computer
+    /// Use: `computerUseEnabled && AgentSettings.screenContextEnabled`, so it
+    /// is always false when Computer Use is off (including the Default agent).
+    public var screenContextEnabled: Bool
     /// Spawn (`spawn`) exposed to the model — per-agent opt-in.
     public var spawnDelegationEnabled: Bool
     /// Image (`image`) exposed to the model — per-agent opt-in, split from
@@ -502,6 +506,7 @@ public struct AgentCapabilities: Sendable, Equatable {
         searchMemoryEnabled: Bool,
         selfSchedulingEnabled: Bool,
         computerUseEnabled: Bool = false,
+        screenContextEnabled: Bool = false,
         spawnDelegationEnabled: Bool = false,
         imageEnabled: Bool = false,
         spawnableAgentNames: [String] = [],
@@ -516,6 +521,7 @@ public struct AgentCapabilities: Sendable, Equatable {
         self.searchMemoryEnabled = searchMemoryEnabled
         self.selfSchedulingEnabled = selfSchedulingEnabled
         self.computerUseEnabled = computerUseEnabled
+        self.screenContextEnabled = screenContextEnabled
         self.spawnDelegationEnabled = spawnDelegationEnabled
         self.imageEnabled = imageEnabled
         self.spawnableAgentNames = spawnableAgentNames
@@ -753,6 +759,12 @@ public struct AgentSettings: Codable, Sendable, Equatable {
     /// This is the spec's "SOUL.md ceiling" expressed as settings rather
     /// than parsed prose.
     public var computerUseCeiling: AutonomyCeiling?
+    /// Per-agent screen-context injection, nested under Computer Use. Defaults
+    /// `true`, so enabling Computer Use also turns on ambient screen context
+    /// unless the user opts out here. The *effective* value is gated by
+    /// `computerUseEnabled` (see `AgentManager.effectiveCapabilities`), so it is
+    /// inert while Computer Use is off — including the Default agent.
+    public var screenContextEnabled: Bool
     /// Per-agent opt-in for the `spawn` tool. Default off; gated
     /// authoritatively in `resolveTools` (stripped unless enabled AND the agent
     /// has at least one spawnable agent). The global `SubagentConfiguration`
@@ -814,6 +826,7 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         selfSchedulingEnabled: Bool = false,
         computerUseEnabled: Bool = false,
         computerUseCeiling: AutonomyCeiling? = nil,
+        screenContextEnabled: Bool = true,
         spawnDelegationEnabled: Bool = false,
         imageEnabled: Bool = false,
         spawnableAgentNames: [String] = [],
@@ -836,6 +849,7 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         self.selfSchedulingEnabled = selfSchedulingEnabled
         self.computerUseEnabled = computerUseEnabled
         self.computerUseCeiling = computerUseCeiling
+        self.screenContextEnabled = screenContextEnabled
         self.spawnDelegationEnabled = spawnDelegationEnabled
         self.imageEnabled = imageEnabled
         self.spawnableAgentNames = spawnableAgentNames
@@ -882,6 +896,10 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         selfSchedulingEnabled = try c.decodeIfPresent(Bool.self, forKey: .selfSchedulingEnabled) ?? false
         // Default off; back-compat for agents that predate the feature.
         computerUseEnabled = try c.decodeIfPresent(Bool.self, forKey: .computerUseEnabled) ?? false
+        // Default true so an agent with Computer Use on gets ambient screen
+        // context unless explicitly turned off. Older agent JSON predates the
+        // flag (the feature was global), so missing decodes to on.
+        screenContextEnabled = try c.decodeIfPresent(Bool.self, forKey: .screenContextEnabled) ?? true
         spawnDelegationEnabled =
             try c.decodeIfPresent(Bool.self, forKey: .spawnDelegationEnabled) ?? false
         // Default off; spawn/image delegation is pre-release so there is no
@@ -948,6 +966,7 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         case selfSchedulingEnabled
         case computerUseEnabled
         case computerUseCeiling
+        case screenContextEnabled
         case spawnDelegationEnabled
         case imageEnabled
         case spawnableAgentNames
@@ -975,6 +994,7 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         try c.encode(selfSchedulingEnabled, forKey: .selfSchedulingEnabled)
         try c.encode(computerUseEnabled, forKey: .computerUseEnabled)
         try c.encodeIfPresent(computerUseCeiling, forKey: .computerUseCeiling)
+        try c.encode(screenContextEnabled, forKey: .screenContextEnabled)
         try c.encode(spawnDelegationEnabled, forKey: .spawnDelegationEnabled)
         try c.encode(imageEnabled, forKey: .imageEnabled)
         try c.encode(spawnableAgentNames, forKey: .spawnableAgentNames)
@@ -1000,7 +1020,8 @@ public struct AgentSettings: Codable, Sendable, Equatable {
             speakEnabled: false,
             searchMemoryEnabled: false,
             selfSchedulingEnabled: false,
-            computerUseEnabled: false
+            computerUseEnabled: false,
+            screenContextEnabled: true
         )
     }
 }

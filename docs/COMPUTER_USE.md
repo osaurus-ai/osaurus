@@ -222,9 +222,14 @@ perception ladder has escalated past `ax`.
 ## Screen context (chat)
 
 Separate from the `computer_use` tool, **Screen context** gives the assistant
-ambient awareness of what you're doing *without driving anything*. It's a global
-**opt-in** (off by default) under Settings → Computer Use → *Screen context*,
-independent of the per-agent `computer_use` toggle.
+ambient awareness of what you're doing *without driving anything*. It's a
+**per-agent** option nested under Computer Use (Agents → Configure → Sub-agents →
+*Computer Use* → *Share screen context*), **on by default** once an agent has
+Computer Use enabled. The effective value is gated by the per-agent
+`computerUseEnabled` (`screenContextEnabled && computerUseEnabled`), so an agent
+without Computer Use — including the built-in Default agent — never injects screen
+context. Settings → Computer Use → *Screen context* keeps an explainer and a live
+preview, but the on/off control lives on each agent.
 
 When enabled, a distilled, text-only snapshot of your screen is **frozen** on the
 **first send** of a chat session and reused unchanged for the rest of that
@@ -360,11 +365,13 @@ Vivaldi / Opera).
   silently no-op), app allowlist, the **Cloud vision** consent toggle (off by
   default) plus a **Mask only detected sensitive text** toggle (off = `.allText`,
   the safest) and copy disclosing the on-device scrub's limits and the Screen
-  Recording dependency, the **Screen context** opt-in + live preview (see above),
-  Accessibility / Screen Recording permission rows, and an "Enabling Computer
-  Use" explainer.
-- **Per-agent** (Agents → Configure → Features) — the `computerUseEnabled`
-  toggle and the per-agent autonomy **ceiling** picker. Custom agents only.
+  Recording dependency, the **Screen context** explainer + live preview (the
+  on/off control is per-agent — see below), Accessibility / Screen Recording
+  permission rows, and an "Enabling Computer Use" explainer.
+- **Per-agent** (Agents → Configure → Sub-agents → *Computer Use*) — the
+  `computerUseEnabled` toggle, and nested under it the **Share screen context**
+  toggle (`screenContextEnabled`, on by default) and the per-agent autonomy
+  **ceiling** picker. Custom agents only.
 - **Live activity** (`Views/Chat/ComputerUseFeedView.swift`) — the
   `ComputerUseFeed` renders each perceive/decide/gate/act/verify step in the
   chat row; the inner steps never enter the parent transcript.
@@ -398,8 +405,7 @@ sends.
 | `~/.osaurus/config/computer-use.json` | `AutonomyPolicy` (global preset + per-app overrides + allowlist), via `ComputerUsePolicyStore`. |
 | `UserDefaults` `ai.osaurus.computeruse.cloudVisionConsent` | Persisted cloud-vision opt-in (default `false`). |
 | `UserDefaults` `ai.osaurus.computeruse.cloudVisionPIIOnly` | Cloud screenshot redaction mode: `false` (default) = `.allText` (mask everything), `true` = `.pii` (mask only detected sensitive text). |
-| `UserDefaults` `ai.osaurus.computeruse.screenContextInjection` | Persisted screen-context opt-in (default `false`), via `ScreenContextSettings`. |
-| `Agent.settings.computerUseEnabled` / `computerUseCeiling` | Per-agent enablement + autonomy ceiling (in the agent JSON). |
+| `Agent.settings.computerUseEnabled` / `computerUseCeiling` / `screenContextEnabled` | Per-agent enablement + autonomy ceiling + screen-context opt-in (in the agent JSON). `screenContextEnabled` defaults `true` and is gated by `computerUseEnabled`. |
 
 ## Testing & evals
 
@@ -424,7 +430,7 @@ OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1 OSAURUS_TEST_ROOT=/tmp/osaurus-test make te
 | Driver | `ComputerUse/Driver/MacDriver.swift`, `NativeMacDriver.swift`, `MockMacDriver.swift`, `Driver/Mac/*` |
 | Target resolution | `ComputerUse/Resolver/TargetResolver.swift` |
 | Perception / vision | `ComputerUse/Perception/CaptureRouter.swift`, `CloudVisionConsent.swift`, `FrameScrubber.swift`, `VisionAttachment.swift` |
-| Screen context (chat) | `ComputerUse/Perception/ScreenContextDistiller.swift`, `ScreenContextSnapshot.swift`, `ScreenContextSettings.swift`, `FrontmostAppTracker.swift`, `Services/Chat/SystemPromptComposer.swift` (`injectScreenContextPrefix`) |
+| Screen context (chat) | `ComputerUse/Perception/ScreenContextDistiller.swift`, `ScreenContextSnapshot.swift`, `FrontmostAppTracker.swift`, `Services/Chat/SystemPromptComposer.swift` (`injectScreenContextPrefix`); per-agent gate `Agent.settings.screenContextEnabled` resolved in `AgentManager.effectiveCapabilities` |
 | Policy / gate | `ComputerUse/Policy/EffectClass.swift`, `EffectClassifier.swift`, `AutonomyPolicy.swift`, `Gate.swift`, `ComputerUseGate.swift`, `ComputerUsePolicyStore.swift` |
 | Recipes | `ComputerUse/Recipes/AppRecipe.swift` |
 | Feed / prompts | `ComputerUse/Feed/ComputerUseFeed.swift`, `ComputerUseFeedRegistry.swift`, `ComputerUsePromptQueue.swift` |

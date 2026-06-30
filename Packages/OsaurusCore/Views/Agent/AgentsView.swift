@@ -1054,6 +1054,13 @@ struct AgentDetailView: View {
     /// Per-agent autonomy ceiling for Computer Use (PR2). `nil` means no
     /// ceiling. Mirrored from / into `AgentSettings.computerUseCeiling`.
     @State private var computerUseCeiling: AutonomyCeiling? = nil
+    /// Per-agent screen-context toggle, nested under Computer Use. Default on;
+    /// the effective value is gated by Computer Use, so it only matters while
+    /// Computer Use is enabled. Mirrored from / into
+    /// `AgentSettings.screenContextEnabled`.
+    @State private var screenContextEnabled: Bool = true
+    /// Drives the "Preview screen context" popover under the toggle (UI-only).
+    @State private var showScreenContextPreview = false
     /// Per-agent image model bundle ids (generation / edit). `nil` resolves to
     /// the first ready model at run time. Mirrored from / into
     /// `AgentSettings.imageGenerationModelId` / `imageEditModelId`.
@@ -3395,6 +3402,8 @@ struct AgentDetailView: View {
             // The model-override row is rendered generically above (registry
             // `supportsModelOverride`); this arm holds only computer-use-specific
             // config.
+            screenContextToggleRow
+            subagentPanelDivider
             computerUseCeilingRow
             subagentFootnote(
                 "Requires Accessibility permission. Grant it and review status in Settings > Computer Use."
@@ -4104,6 +4113,58 @@ struct AgentDetailView: View {
                 )
         )
         .opacity(interactive ? 1 : 0.55)
+    }
+
+    /// Per-agent screen-context toggle, nested under Computer Use. Defaults on
+    /// with Computer Use; the effective value is gated by Computer Use, so this
+    /// row only shows (and only matters) while Computer Use is enabled. What it
+    /// captures is described in the row subtitle, and the Preview link below
+    /// shows exactly what a new chat would freeze and share.
+    private var screenContextToggleRow: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            subagentControlRow(
+                "Share screen context",
+                subtitle:
+                    "Freeze a text-only snapshot of your screen at the start of each chat and share it as background context. No screenshots; scrubbed by the Privacy Filter before cloud sends."
+            ) {
+                Toggle(
+                    "",
+                    isOn: Binding(
+                        get: { screenContextEnabled },
+                        set: {
+                            screenContextEnabled = $0
+                            debouncedSave()
+                        }
+                    )
+                )
+                .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
+                .labelsHidden()
+            }
+            screenContextPreviewLink
+        }
+    }
+
+    /// A quiet link that opens the live screen-context preview in a popover, so
+    /// the user can confirm what this agent would share without leaving the
+    /// sheet. The preview is read-only and independent of the toggle state.
+    private var screenContextPreviewLink: some View {
+        Button {
+            showScreenContextPreview = true
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "eye")
+                    .font(.system(size: 10))
+                Text(L("Preview screen context"))
+                    .font(.system(size: 11, weight: .medium))
+            }
+            .foregroundColor(theme.accentColor)
+        }
+        .buttonStyle(PlainButtonStyle())
+        .popover(isPresented: $showScreenContextPreview, arrowEdge: .bottom) {
+            ScreenContextPreview(previewHeight: 220)
+                .frame(width: 440)
+                .padding(16)
+        }
     }
 
     /// Per-agent autonomy ceiling picker for Computer Use. The ceiling caps
@@ -5897,6 +5958,7 @@ struct AgentDetailView: View {
             acc[flag] = flag.read(from: agent.settings)
         }
         computerUseCeiling = agent.settings.computerUseCeiling
+        screenContextEnabled = agent.settings.screenContextEnabled
         spawnableAgentNames = agent.settings.spawnableAgentNames
         spawnableModelNames = agent.settings.spawnableModelNames
         spawnableModelNotes = agent.settings.spawnableModelNotes
@@ -6097,6 +6159,7 @@ struct AgentDetailView: View {
                 selfSchedulingEnabled: selfSchedulingEnabled,
                 computerUseEnabled: computerUseEnabled,
                 computerUseCeiling: computerUseEnabled ? computerUseCeiling : nil,
+                screenContextEnabled: screenContextEnabled,
                 spawnDelegationEnabled: spawnDelegationEnabled,
                 imageEnabled: imageEnabled,
                 // Persist the allow-lists only while spawn is on, so toggling

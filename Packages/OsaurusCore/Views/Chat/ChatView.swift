@@ -615,14 +615,16 @@ final class ChatSession: ObservableObject {
                 Task { @MainActor in self?.refreshPreviewEstimate() }
             }
 
-        // Screen-context preview: re-capture when the user toggles the feature
-        // or switches foreground apps, so the "Screen Context" budget line and
-        // the composer chip stay exact before the first send locks the
-        // snapshot. Kept off the pipeline above because the capture is an
-        // Accessibility walk; debounced harder to coalesce rapid app switches.
+        // Screen-context preview: re-capture when the agent's per-agent
+        // screen-context option changes (`.agentUpdated`), the active agent
+        // switches (`.activeAgentChanged`), or the user switches foreground
+        // apps, so the "Screen Context" budget line and the composer chip stay
+        // exact before the first send locks the snapshot. Kept off the pipeline
+        // above because the capture is an Accessibility walk; debounced harder
+        // to coalesce rapid app switches.
         let screenContextSignals: [AnyPublisher<Void, Never>] = [
-            ScreenContextSettings.shared.$injectionEnabled
-                .map { _ in () }.eraseToAnyPublisher(),
+            voidNotification(.agentUpdated),
+            voidNotification(.activeAgentChanged),
             FrontmostAppTracker.shared.$lastNonSelfAppName
                 .map { _ in () }.eraseToAnyPublisher(),
         ]
@@ -1892,7 +1894,9 @@ final class ChatSession: ObservableObject {
     /// has locked the snapshot (`isScreenContextFrozen`), the block is kept and
     /// only its token count is reconciled.
     private func refreshScreenContextPreview() async -> Bool {
-        guard ScreenContextSettings.shared.injectionEnabled else {
+        let screenContextEnabled = AgentManager.shared
+            .effectiveCapabilities(for: agentId ?? Agent.defaultId).screenContextEnabled
+        guard screenContextEnabled else {
             let changed =
                 cachedScreenContextTokens != 0
                 || (!isScreenContextFrozen && frozenScreenContext != nil)
@@ -3341,6 +3345,12 @@ final class ChatSession: ObservableObject {
                     // turn's agent id; we just alias it locally for the calls
                     // below that want a plain UUID.
                     let effectiveAgentId = turnAgentId
+                    // Per-agent screen context (a child of Computer Use). Read
+                    // once here so the freeze gate below and the inject gate in
+                    // `loopHooks.buildMessages` agree on a single value for the
+                    // whole turn.
+                    let screenContextEnabled = AgentManager.shared
+                        .effectiveCapabilities(for: effectiveAgentId).screenContextEnabled
                     ttftTrace?.mark("prepare_exec_mode_start")
                     let executionMode = await prepareChatExecutionMode(agentId: effectiveAgentId)
                     ttftTrace?.mark("prepare_exec_mode_done")
@@ -3382,7 +3392,7 @@ final class ChatSession: ObservableObject {
                     // flows through the Privacy Filter — in
                     // `loopHooks.buildMessages` below.
                     if !isRemoteAgentTarget,
-                        ScreenContextSettings.shared.injectionEnabled,
+                        screenContextEnabled,
                         !self.isScreenContextFrozen
                     {
                         // A welcome-screen preview may have already captured the
@@ -4152,7 +4162,7 @@ final class ChatSession: ObservableObject {
                             // Keeps the system prefix KV-stable and routes the
                             // snapshot through the Privacy Filter on cloud sends.
                             // Skipped in Mode 2 (no local context leaves the client).
-                            if !self.isRemoteAgentTarget, ScreenContextSettings.shared.injectionEnabled {
+                            if !self.isRemoteAgentTarget, screenContextEnabled {
                                 SystemPromptComposer.injectScreenContextPrefix(
                                     self.frozenScreenContext,
                                     into: &msgs
