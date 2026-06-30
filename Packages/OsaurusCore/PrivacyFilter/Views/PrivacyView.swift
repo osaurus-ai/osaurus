@@ -72,6 +72,7 @@ final class PrivacyViewSaveDebouncer: ObservableObject {
 struct PrivacyView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
     @ObservedObject private var downloader = PrivacyFilterModelDownloader.shared
+    @ObservedObject private var rampartManager = RampartModelManager.shared
     @ObservedObject private var providerManager = RemoteProviderManager.shared
     @StateObject private var saveDebouncer = PrivacyViewSaveDebouncer()
 
@@ -90,8 +91,14 @@ struct PrivacyView: View {
     /// dry-run tester may use the model. The tabbed surface itself
     /// always renders since the regex layer needs no bundle.
     private var isModelReady: Bool {
-        if case .ready = downloader.state { return true }
-        return false
+        switch configuration.aiDetectionBackend {
+        case .openai:
+            if case .ready = downloader.state { return true }
+            return false
+        case .rampart:
+            if case .ready = rampartManager.state { return true }
+            return RampartModelManager.bundleExists()
+        }
     }
 
     /// Tabs whose content is a centered full-screen state rather than a
@@ -638,6 +645,10 @@ private struct PrivacyOverviewTab: View {
                             )
                         )
 
+                        if configuration.enabled {
+                            aiBackendRow
+                        }
+
                         aiDetectionRow
 
                         if configuration.enabled && !hasActiveDetector {
@@ -734,6 +745,37 @@ private struct PrivacyOverviewTab: View {
     /// When it isn't: a disabled-looking row with an Install affordance
     /// pointing at the Model tab — you can't enable AI without the
     /// bundle.
+    /// Picker for which on-device model powers AI detection. Always
+    /// visible while the master toggle is on so the user can switch
+    /// backends before installing either bundle; `isModelReady` (and the
+    /// install affordance below) then reflect the chosen backend.
+    @ViewBuilder
+    private var aiBackendRow: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Detection model", bundle: .module)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(theme.primaryText)
+            Picker(
+                "",
+                selection: Binding(
+                    get: { configuration.aiDetectionBackend },
+                    set: { newValue in
+                        configuration.aiDetectionBackend = newValue
+                        save()
+                    }
+                )
+            ) {
+                Text("OpenAI filter (~2.8 GB)", bundle: .module)
+                    .tag(PrivacyAIBackend.openai)
+                Text("Rampart (~37 MB)", bundle: .module)
+                    .tag(PrivacyAIBackend.rampart)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+        }
+        .settingsRowCard()
+    }
+
     @ViewBuilder
     private var aiDetectionRow: some View {
         if isModelReady {
