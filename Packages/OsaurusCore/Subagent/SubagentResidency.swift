@@ -74,7 +74,8 @@ enum SubagentResidency {
         modelName: String,
         config: SubagentConfiguration,
         idleWaitSeconds: Int,
-        deniedMessage: String
+        deniedMessage: String,
+        handoffEnabledOverride: Bool? = nil
     ) async throws -> SubagentResidencyDecision {
         let installed = ModelManager.findInstalledModel(named: modelName)
         let isLocal = installed != nil
@@ -97,7 +98,12 @@ enum SubagentResidency {
             isLocal: isLocal,
             modelName: canonicalName,
             residentChatModels: residentChatModels,
-            handoffEnabled: config.localOrchestratorTextHandoffActive,
+            // A dedicated-model kind (AppleScript) always loads a DIFFERENT
+            // bundle than the chat model, so requiring the global "Local
+            // Orchestrator Handoff" toggle would make it unusable; such kinds
+            // pass `true` to force the handoff. Chat-driven kinds (spawn,
+            // computer_use) pass `nil` and honor the user's global toggle.
+            handoffEnabled: handoffEnabledOverride ?? config.localOrchestratorTextHandoffActive,
             ramSafetyEnabled: config.ramSafetyPreflightEnabled,
             requiredBytes: isLocal
                 ? ChatResidencyHandoff.estimatedChatModelBytes(named: modelName) : 0,

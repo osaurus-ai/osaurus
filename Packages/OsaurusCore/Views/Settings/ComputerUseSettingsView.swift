@@ -13,6 +13,23 @@
 
 import SwiftUI
 
+// MARK: - Computer Use Tab Enum
+
+/// Sub-tabs of the Computer Use panel. `setup` is the existing
+/// permissions/autonomy content; `models` hosts the downloadable on-device
+/// AppleScript models that power the `applescript` subagent.
+enum ComputerUseTab: String, CaseIterable, AnimatedTabItem {
+    case setup = "Setup"
+    case models = "Models"
+
+    var title: String {
+        switch self {
+        case .setup: return L("Setup")
+        case .models: return L("Models")
+        }
+    }
+}
+
 struct ComputerUseSettingsView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
     @ObservedObject private var permissionService = SystemPermissionService.shared
@@ -32,6 +49,14 @@ struct ComputerUseSettingsView: View {
     /// approachable for a first read.
     @State private var showAdvanced = false
 
+    /// Sub-tab: the existing setup/permissions/autonomy cards vs the AppleScript
+    /// models browser. AppleScript automation is a Computer-Use-family feature,
+    /// so its downloadable models live here under a Models sub-tab.
+    @State private var selectedTab: ComputerUseTab = .setup
+    /// Installed curated AppleScript model count, for the Models tab badge.
+    /// Refreshed on appear and whenever local models change.
+    @State private var appleScriptInstalledCount = 0
+
     var body: some View {
         VStack(spacing: 0) {
             headerView
@@ -39,26 +64,23 @@ struct ComputerUseSettingsView: View {
                 .offset(y: hasAppeared ? 0 : -10)
                 .animation(.spring(response: 0.4, dampingFraction: 0.8), value: hasAppeared)
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    aboutCard
-                    setupCard
-                    enableCard
-                        .settingsLandingAnchor("computerUse.enable")
-                    consentCard
-                    screenContextCard
-                    policyCard
-                    advancedCard
+            Group {
+                switch selectedTab {
+                case .setup:
+                    setupTab
+                case .models:
+                    AppleScriptModelsView()
                 }
-                .padding(.horizontal, 24)
-                .padding(.vertical, 24)
-                .frame(maxWidth: .infinity)
             }
             .opacity(hasAppeared ? 1 : 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(theme.primaryBackground)
         .environment(\.theme, themeManager.currentTheme)
+        .task { await refreshAppleScriptInstalledCount() }
+        .onReceive(NotificationCenter.default.publisher(for: .localModelsChanged)) { _ in
+            Task { await refreshAppleScriptInstalledCount() }
+        }
         .onAppear {
             policy = ComputerUsePolicyStore.load()
             permissionService.startPeriodicRefresh(interval: 2.0)
@@ -71,17 +93,48 @@ struct ComputerUseSettingsView: View {
         }
     }
 
+    /// The original Computer Use content: about, setup/permissions, per-agent
+    /// enable steps, the consent model, screen context, and autonomy controls.
+    private var setupTab: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                aboutCard
+                setupCard
+                enableCard
+                    .settingsLandingAnchor("computerUse.enable")
+                consentCard
+                screenContextCard
+                policyCard
+                advancedCard
+            }
+            .padding(.horizontal, 24)
+            .padding(.vertical, 24)
+            .frame(maxWidth: .infinity)
+        }
+    }
+
+    private func refreshAppleScriptInstalledCount() async {
+        appleScriptInstalledCount = AppleScriptModelCatalog.installedModels().count
+    }
+
     // MARK: - Header
 
     private var headerView: some View {
-        ManagerHeaderWithActions(
+        ManagerHeaderWithTabs(
             title: L("Computer Use"),
             subtitle: L("Let agents operate macOS apps on your behalf")
         ) {
-            HeaderSecondaryButton("Refresh", icon: "arrow.clockwise") {
-                permissionService.refreshAllPermissions()
+            if selectedTab == .setup {
+                HeaderSecondaryButton("Refresh", icon: "arrow.clockwise") {
+                    permissionService.refreshAllPermissions()
+                }
+                .localizedHelp("Refresh permission status")
             }
-            .localizedHelp("Refresh permission status")
+        } tabsRow: {
+            HeaderTabsRow(
+                selection: $selectedTab,
+                counts: appleScriptInstalledCount > 0 ? [.models: appleScriptInstalledCount] : nil
+            )
         }
     }
 

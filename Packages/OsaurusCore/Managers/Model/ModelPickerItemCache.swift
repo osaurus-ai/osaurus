@@ -44,6 +44,16 @@ final class ModelPickerItemCache: ObservableObject {
         hasReadyImageGenerationModel || hasReadyImageEditModel
     }
 
+    /// Whether at least one curated AppleScript model is installed. AppleScript
+    /// bundles are discovered as ordinary `.local` MLX models (so they sit in
+    /// `items`) but are hidden from the chat picker via the grouping helpers;
+    /// this reads them off the already-warmed `items` so the `applescript`
+    /// subagent gate can withhold the tool until a model exists — the model is
+    /// never offered automation the runtime can't satisfy.
+    var hasReadyAppleScriptModel: Bool {
+        items.contains(where: \.isAppleScriptCatalogModel)
+    }
+
     private var observersRegistered = false
 
     /// The currently running rebuild Task, if any. All callers join this task

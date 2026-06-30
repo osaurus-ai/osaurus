@@ -52,6 +52,7 @@ public struct SubagentCapability: Sendable {
         case computerUse
         case spawn
         case image
+        case appleScript
 
         /// The resolved per-agent flag for the `resolveTools` strip.
         public func enabled(in snapshot: AgentConfigSnapshot) -> Bool {
@@ -59,6 +60,7 @@ public struct SubagentCapability: Sendable {
             case .computerUse: return snapshot.computerUseEnabled
             case .spawn: return snapshot.spawnDelegationEnabled
             case .image: return snapshot.imageEnabled
+            case .appleScript: return snapshot.appleScriptEnabled
             }
         }
 
@@ -68,6 +70,7 @@ public struct SubagentCapability: Sendable {
             case .computerUse: return settings.computerUseEnabled
             case .spawn: return settings.spawnDelegationEnabled
             case .image: return settings.imageEnabled
+            case .appleScript: return settings.appleScriptEnabled
             }
         }
 
@@ -77,6 +80,7 @@ public struct SubagentCapability: Sendable {
             case .computerUse: settings.computerUseEnabled = value
             case .spawn: settings.spawnDelegationEnabled = value
             case .image: settings.imageEnabled = value
+            case .appleScript: settings.appleScriptEnabled = value
             }
         }
     }
@@ -232,17 +236,40 @@ public enum SubagentCapabilityRegistry {
         guidanceLabelKey: "Image Generation"
     )
 
-    /// Every capability, in guidance-render order (computer_use, then image;
-    /// spawn renders its own dynamic guidance block in the composer).
-    public static let all: [SubagentCapability] = [computerUse, spawn, image]
+    /// The AppleScript family — one `applescript` tool driven by a dedicated
+    /// on-device AppleScript model (the curated `AppleScriptModelCatalog`).
+    /// `supportsModelOverride = false` like `image`: AppleScript owns its own
+    /// model system (per-agent / global `appleScriptModelId` + first-installed
+    /// fallback) and renders its own picker + execution-mode control instead of
+    /// the shared override row. The guidance renders when `applescript` resolves.
+    public static let appleScript = SubagentCapability(
+        id: "applescript",
+        toolNames: [AppleScriptTool.toolName],
+        gate: .delegation,
+        perAgentFlag: .appleScript,
+        modelSource: .dedicatedConfigured,
+        supportsModelOverride: false,
+        displayLabel: "AppleScript",
+        iconName: "applescript",
+        guidance: SystemPromptTemplates.appleScriptGuidance,
+        guidanceCompact: SystemPromptTemplates.appleScriptGuidanceCompact,
+        guidanceSectionId: "appleScript",
+        guidanceLabelKey: "AppleScript"
+    )
 
-    /// The delegation-gated capabilities (spawn + image).
-    public static let delegationFamily: [SubagentCapability] = [spawn, image]
+    /// Every capability, in guidance-render order (computer_use, then image,
+    /// then applescript; spawn renders its own dynamic guidance block in the
+    /// composer).
+    public static let all: [SubagentCapability] = [computerUse, spawn, image, appleScript]
+
+    /// The delegation-gated capabilities (spawn + image + applescript).
+    public static let delegationFamily: [SubagentCapability] = [spawn, image, appleScript]
 
     /// Distinct per-agent toggle flags, in registry order (computer_use, spawn,
-    /// image). One entry per *toggle* (deduped, so a future kind that shares a
-    /// flag would collapse) — the AgentsView Subagents tab renders exactly one
-    /// card per flag, driven by the registry instead of hand-built groups.
+    /// image, applescript). One entry per *toggle* (deduped, so a future kind
+    /// that shares a flag would collapse) — the AgentsView Subagents tab renders
+    /// exactly one card per flag, driven by the registry instead of hand-built
+    /// groups.
     public static var perAgentToggleFlags: [SubagentCapability.PerAgentFlag] {
         var seen = Set<SubagentCapability.PerAgentFlag>()
         var ordered: [SubagentCapability.PerAgentFlag] = []
@@ -375,6 +402,19 @@ public enum SubagentToolVisibility {
         isDefault ? config.imageDelegationActive : perAgentEnabled
     }
 
+    /// Whether `applescript` is available for an agent. The Default / main chat
+    /// is governed by its own AppleScript switch (`appleScriptDelegationActive`);
+    /// a custom agent by its own toggle. There is no global master switch. The
+    /// installed-model gate is applied separately (`hasReadyAppleScriptModel` in
+    /// `visibleDelegationToolNames`), mirroring `image`.
+    static func appleScriptAvailable(
+        isDefault: Bool,
+        config: SubagentConfiguration,
+        perAgentEnabled: Bool
+    ) -> Bool {
+        isDefault ? config.appleScriptDelegationActive : perAgentEnabled
+    }
+
     /// Whether a specific `spawn_agent` TARGET agent is reachable from a
     /// launching agent — the execution-time check the spawn kind enforces.
     /// Default / main chat uses its own pool; a custom agent its own allow-list.
@@ -422,7 +462,8 @@ public enum SubagentToolVisibility {
         agentId: UUID,
         snapshot: AgentConfigSnapshot,
         config: SubagentConfiguration,
-        hasReadyImageModel: Bool
+        hasReadyImageModel: Bool,
+        hasReadyAppleScriptModel: Bool = false
     ) -> Set<String> {
         let isDefault = (agentId == Agent.defaultId)
         var names = Set<String>()
@@ -454,6 +495,18 @@ public enum SubagentToolVisibility {
         {
             names.formUnion(SubagentCapabilityRegistry.image.toolNames)
         }
+        // AppleScript gates like image: the per-agent / global switch can be ON,
+        // but the tool is withheld until a curated AppleScript model is installed
+        // (so the model is never offered a capability the runtime can't satisfy).
+        if hasReadyAppleScriptModel,
+            appleScriptAvailable(
+                isDefault: isDefault,
+                config: config,
+                perAgentEnabled: snapshot.appleScriptEnabled
+            )
+        {
+            names.formUnion(SubagentCapabilityRegistry.appleScript.toolNames)
+        }
         return names
     }
 
@@ -481,6 +534,32 @@ public enum SubagentToolVisibility {
             return isEdit ? config.defaultImageEditModelId : config.defaultImageGenerationModelId
         }
         return isEdit ? settings?.imageEditModelId : settings?.imageGenerationModelId
+    }
+
+    /// The configured AppleScript model id for an agent — Default / main chat
+    /// uses the global default; a custom agent uses its own. `nil` falls through
+    /// to the catalog's first-installed fallback (so an agent that enabled
+    /// AppleScript without picking a model still works).
+    static func effectiveAppleScriptModel(
+        isDefault: Bool,
+        config: SubagentConfiguration,
+        settings: AgentSettings?
+    ) -> String? {
+        let raw = isDefault ? config.defaultAppleScriptModelId : settings?.appleScriptModelId
+        let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return (trimmed?.isEmpty ?? true) ? nil : trimmed
+    }
+
+    /// The AppleScript execution mode for an agent — Default / main chat uses
+    /// the global default; a custom agent uses its own. Defaults to the safe
+    /// `confirmEach` when unset.
+    static func effectiveAppleScriptExecutionMode(
+        isDefault: Bool,
+        config: SubagentConfiguration,
+        settings: AgentSettings?
+    ) -> AppleScriptExecutionMode {
+        if isDefault { return config.defaultAppleScriptExecutionMode }
+        return settings?.appleScriptExecutionMode ?? .default
     }
 
     /// The effective per-run model override for a subagent capability, or `nil`

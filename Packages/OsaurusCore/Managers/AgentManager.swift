@@ -785,6 +785,7 @@ extension AgentManager {
                 && agent.settings.screenContextEnabled,
             spawnDelegationEnabled: agent.settings.spawnDelegationEnabled,
             imageEnabled: agent.settings.imageEnabled,
+            appleScriptEnabled: agent.settings.appleScriptEnabled,
             spawnableAgentNames: agent.settings.spawnableAgentNames,
             spawnableModelNames: agent.settings.spawnableModelNames,
             spawnableModelNotes: agent.settings.spawnableModelNotes

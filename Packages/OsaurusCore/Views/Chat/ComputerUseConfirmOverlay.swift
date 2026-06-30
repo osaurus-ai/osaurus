@@ -90,6 +90,10 @@ struct ComputerUseConfirmOverlay: View {
                     }
                 }
 
+                if let script = preview.scriptBody, !script.isEmpty {
+                    scriptField(script)
+                }
+
                 if let note = preview.note, !note.isEmpty {
                     Text(note)
                         .font(.system(size: 11))
@@ -169,6 +173,36 @@ struct ComputerUseConfirmOverlay: View {
                 .buttonStyle(PlainButtonStyle())
                 .padding(.leading, 60)
             }
+        }
+    }
+
+    /// The generated AppleScript shown on the confirm card, in a scrollable
+    /// monospaced block so the user reads exactly what will run before
+    /// approving. Bounded in height so a long script doesn't push the buttons
+    /// off-screen.
+    @ViewBuilder
+    private func scriptField(_ script: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Script", bundle: .module)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(theme.tertiaryText)
+            ScrollView {
+                Text(script)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(theme.primaryText)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(8)
+            }
+            .frame(maxHeight: 160)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(theme.tertiaryBackground)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8).stroke(theme.inputBorder, lineWidth: 1)
+                    )
+            )
         }
     }
 

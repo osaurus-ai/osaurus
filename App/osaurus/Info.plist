@@ -13,7 +13,7 @@
 	<key>SUPublicEDKey</key>
 	<string>HBRBQ8QQOhmvMKnSxQxqb3upTjyirdx0xkHSSRqn7aI=</string>
 	<key>NSAppleEventsUsageDescription</key>
-	<string>Osaurus plugins may use automation to control other applications on your behalf.</string>
+	<string>Osaurus uses automation to control other applications on your behalf — including agents that write and run AppleScript to automate tasks on this Mac, and plugins that use automation.</string>
 	<key>NSCalendarsUsageDescription</key>
 	<string>Osaurus plugins may access your calendar to read and create events.</string>
 	<key>NSCalendarsFullAccessUsageDescription</key>

@@ -258,6 +258,14 @@ public final class ToolRegistry: ObservableObject {
             // PermissionedTool: execution preflights Accessibility +
             // Screen Recording before the loop runs.
             ComputerUseTool(),
+            // AppleScript subagent. Like the other delegation-family tools it
+            // is registered as a built-in so the runtime can execute it and
+            // ChatView can intercept its feed, but the composer strips it
+            // unless the agent has AppleScript enabled AND a model installed
+            // (gated via `SubagentToolVisibility`). Its on-device AppleScript
+            // model generates the script; macOS prompts for Automation consent
+            // at script-send time.
+            AppleScriptTool(),
         ]
         var configChanged = false
         for tool in builtIns {

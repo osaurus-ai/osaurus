@@ -24,6 +24,11 @@ public struct ActionPreview: Sendable, Equatable {
     /// confirm card so a long string isn't hidden behind the feed's 40-char
     /// truncation. `nil` for actions that type nothing.
     public let typedText: String?
+    /// The full AppleScript body for an `applescript` subagent confirmation,
+    /// rendered monospaced (and scrollable) on the confirm card so the user
+    /// sees exactly what will run before approving. `nil` for Computer Use
+    /// actions, which carry no script.
+    public let scriptBody: String?
 
     public init(
         appName: String?,
@@ -31,7 +36,8 @@ public struct ActionPreview: Sendable, Equatable {
         targetLabel: String?,
         effect: EffectClass,
         note: String?,
-        typedText: String? = nil
+        typedText: String? = nil,
+        scriptBody: String? = nil
     ) {
         self.appName = appName
         self.actionLabel = actionLabel
@@ -39,6 +45,7 @@ public struct ActionPreview: Sendable, Equatable {
         self.effect = effect
         self.note = note
         self.typedText = typedText
+        self.scriptBody = scriptBody
     }
 
     /// One-line summary for the feed / prompt.

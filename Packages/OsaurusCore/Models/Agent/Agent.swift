@@ -484,6 +484,10 @@ public struct AgentCapabilities: Sendable, Equatable {
     /// `spawnDelegationEnabled` so an agent can spawn without image (or vice
     /// versa).
     public var imageEnabled: Bool
+    /// AppleScript (`applescript`) exposed to the model — per-agent opt-in.
+    /// Like `image`, the effective tool is additionally gated on an installed
+    /// AppleScript model (see `SubagentToolVisibility`).
+    public var appleScriptEnabled: Bool
     /// Agents this agent may launch via `spawn_agent`. Empty → the
     /// `spawn_agent` tool stays hidden (nothing to spawn). The Default agent
     /// ignores this and uses the global
@@ -509,6 +513,7 @@ public struct AgentCapabilities: Sendable, Equatable {
         screenContextEnabled: Bool = false,
         spawnDelegationEnabled: Bool = false,
         imageEnabled: Bool = false,
+        appleScriptEnabled: Bool = false,
         spawnableAgentNames: [String] = [],
         spawnableModelNames: [String] = [],
         spawnableModelNotes: [String: String] = [:]
@@ -524,6 +529,7 @@ public struct AgentCapabilities: Sendable, Equatable {
         self.screenContextEnabled = screenContextEnabled
         self.spawnDelegationEnabled = spawnDelegationEnabled
         self.imageEnabled = imageEnabled
+        self.appleScriptEnabled = appleScriptEnabled
         self.spawnableAgentNames = spawnableAgentNames
         self.spawnableModelNames = spawnableModelNames
         self.spawnableModelNotes = spawnableModelNotes
@@ -776,6 +782,18 @@ public struct AgentSettings: Codable, Sendable, Equatable {
     /// The Default agent ignores this and uses the global image enable in
     /// `SubagentConfiguration`.
     public var imageEnabled: Bool
+    /// Per-agent opt-in for the `applescript` tool. Default off; the effective
+    /// tool is additionally gated on an installed AppleScript model. The Default
+    /// agent ignores this and uses the global enable in `SubagentConfiguration`.
+    public var appleScriptEnabled: Bool
+    /// Per-agent AppleScript model bundle id (`nil` → resolve to the first
+    /// installed catalog model at run time). The Default agent uses the global
+    /// `SubagentConfiguration.defaultAppleScriptModelId` instead.
+    public var appleScriptModelId: String?
+    /// Per-agent AppleScript execution mode (confirm each script vs auto-run
+    /// with a warning). The Default agent uses the global
+    /// `SubagentConfiguration.defaultAppleScriptExecutionMode` instead.
+    public var appleScriptExecutionMode: AppleScriptExecutionMode
     /// Agents this agent may launch via `spawn_agent` (per-agent allow-list).
     /// Empty → the `spawn_agent` tool stays hidden (nothing to spawn). The
     /// Default agent ignores this and uses the global pool in
@@ -829,6 +847,9 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         screenContextEnabled: Bool = true,
         spawnDelegationEnabled: Bool = false,
         imageEnabled: Bool = false,
+        appleScriptEnabled: Bool = false,
+        appleScriptModelId: String? = nil,
+        appleScriptExecutionMode: AppleScriptExecutionMode = .default,
         spawnableAgentNames: [String] = [],
         spawnableModelNames: [String] = [],
         spawnableModelNotes: [String: String] = [:],
@@ -852,6 +873,9 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         self.screenContextEnabled = screenContextEnabled
         self.spawnDelegationEnabled = spawnDelegationEnabled
         self.imageEnabled = imageEnabled
+        self.appleScriptEnabled = appleScriptEnabled
+        self.appleScriptModelId = appleScriptModelId
+        self.appleScriptExecutionMode = appleScriptExecutionMode
         self.spawnableAgentNames = spawnableAgentNames
         self.spawnableModelNames = spawnableModelNames
         self.spawnableModelNotes = spawnableModelNotes
@@ -906,6 +930,14 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         // legacy shape to migrate (image was previously gated by the shared
         // spawn flag, which stays the spawn-only enable now).
         imageEnabled = try c.decodeIfPresent(Bool.self, forKey: .imageEnabled) ?? false
+        // Per-agent AppleScript opt-in + model / execution-mode. Default off and
+        // the safe `confirmEach`; the enum uses `try?` so a renamed/invalid raw
+        // value falls back to the default instead of failing the whole decode.
+        appleScriptEnabled = try c.decodeIfPresent(Bool.self, forKey: .appleScriptEnabled) ?? false
+        appleScriptModelId = try c.decodeIfPresent(String.self, forKey: .appleScriptModelId)
+        appleScriptExecutionMode =
+            (try? c.decodeIfPresent(AppleScriptExecutionMode.self, forKey: .appleScriptExecutionMode))
+            ?? .default
         spawnableAgentNames =
             try c.decodeIfPresent([String].self, forKey: .spawnableAgentNames) ?? []
         // Raw model ids for `spawn_model` + their notes. Lenient (`try?`) so a
@@ -969,6 +1001,9 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         case screenContextEnabled
         case spawnDelegationEnabled
         case imageEnabled
+        case appleScriptEnabled
+        case appleScriptModelId
+        case appleScriptExecutionMode
         case spawnableAgentNames
         case spawnableModelNames
         case spawnableModelNotes
@@ -997,6 +1032,9 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         try c.encode(screenContextEnabled, forKey: .screenContextEnabled)
         try c.encode(spawnDelegationEnabled, forKey: .spawnDelegationEnabled)
         try c.encode(imageEnabled, forKey: .imageEnabled)
+        try c.encode(appleScriptEnabled, forKey: .appleScriptEnabled)
+        try c.encodeIfPresent(appleScriptModelId, forKey: .appleScriptModelId)
+        try c.encode(appleScriptExecutionMode, forKey: .appleScriptExecutionMode)
         try c.encode(spawnableAgentNames, forKey: .spawnableAgentNames)
         try c.encode(spawnableModelNames, forKey: .spawnableModelNames)
         try c.encode(spawnableModelNotes, forKey: .spawnableModelNotes)

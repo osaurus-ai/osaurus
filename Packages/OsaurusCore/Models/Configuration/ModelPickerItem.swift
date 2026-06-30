@@ -331,7 +331,9 @@ extension ModelPickerItem {
             // catalog, so an embedding repo can appear here. The flag is
             // detected from the bundle's config.json at item construction.
             // Non-MLX bundles can't load locally, so never auto-pick one.
-            return !isEmbedding && isMLXFormat
+            // AppleScript bundles only ever emit AppleScript (a dedicated
+            // subagent model), so they are never a chat pick either.
+            return !isEmbedding && isMLXFormat && !isAppleScriptCatalogModel
         case .imageGeneration:
             // Image models produce images, not chat completions — never a
             // default chat pick (but still selectable to enter image mode).
@@ -339,6 +341,19 @@ extension ModelPickerItem {
         case .remote:
             return !Self.isLikelyEmbeddingOrRerankerID(id)
         }
+    }
+
+    /// True when this is one of the curated on-device AppleScript models (a
+    /// `.local` MLX bundle whose repo id matches `AppleScriptModelCatalog`).
+    /// These bundles only emit AppleScript, so they're hidden from the chat
+    /// model picker and never auto-selected as a chat model — they're chosen in
+    /// the dedicated AppleScript model picker instead. Their installed-ness
+    /// still drives `ModelPickerItemCache.hasReadyAppleScriptModel`.
+    var isAppleScriptCatalogModel: Bool {
+        if case .local = source {
+            return AppleScriptModelCatalog.isAppleScriptModel(id: id)
+        }
+        return false
     }
 
     var isImageGenerationDelegateCandidate: Bool {
@@ -620,6 +635,9 @@ extension Array where Element == ModelPickerItem {
         var groups: [ModelPickerItem.Source: [ModelPickerItem]] = [:]
 
         for model in self {
+            // AppleScript bundles surface only in the dedicated AppleScript
+            // model picker, never the chat model picker.
+            if model.isAppleScriptCatalogModel { continue }
             groups[model.source, default: []].append(model)
         }
 
@@ -642,6 +660,9 @@ extension Array where Element == ModelPickerItem {
         var remoteOrder: [(key: String, title: String)] = []
 
         for model in self {
+            // AppleScript bundles surface only in the dedicated AppleScript
+            // model picker, never the chat model picker's Local tab.
+            if model.isAppleScriptCatalogModel { continue }
             switch model.source {
             case .foundation:
                 foundationModels.append(model)

@@ -111,6 +111,10 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
     /// unless the agent opted in (custom agents) / the global image switch is on
     /// (Default agent).
     public let imageEnabled: Bool
+    /// Per-agent opt-in for `applescript`. Enforced in `resolveTools` — stripped
+    /// unless the agent opted in (custom agents) / the global AppleScript switch
+    /// is on (Default agent), AND a curated AppleScript model is installed.
+    public let appleScriptEnabled: Bool
     /// Agents this agent may launch via `spawn_agent`. Drives the "is there
     /// anything to spawn?" half of the `spawn_agent` visibility gate for custom
     /// agents.
@@ -141,6 +145,7 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
         computerUseEnabled: Bool = false,
         spawnDelegationEnabled: Bool = false,
         imageEnabled: Bool = false,
+        appleScriptEnabled: Bool = false,
         spawnableAgentNames: [String] = [],
         spawnableModelNames: [String] = [],
         spawnableModelNotes: [String: String] = [:]
@@ -162,6 +167,7 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
         self.computerUseEnabled = computerUseEnabled
         self.spawnDelegationEnabled = spawnDelegationEnabled
         self.imageEnabled = imageEnabled
+        self.appleScriptEnabled = appleScriptEnabled
         self.spawnableAgentNames = spawnableAgentNames
         self.spawnableModelNames = spawnableModelNames
         self.spawnableModelNotes = spawnableModelNotes
@@ -205,6 +211,7 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
             computerUseEnabled: caps.computerUseEnabled,
             spawnDelegationEnabled: caps.spawnDelegationEnabled,
             imageEnabled: caps.imageEnabled,
+            appleScriptEnabled: caps.appleScriptEnabled,
             spawnableAgentNames: caps.spawnableAgentNames,
             spawnableModelNames: caps.spawnableModelNames,
             spawnableModelNotes: caps.spawnableModelNotes

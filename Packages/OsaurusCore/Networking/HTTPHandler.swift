@@ -2887,7 +2887,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 agentId: agentUUID,
                 snapshot: snapshot,
                 config: SubagentConfigurationStore.snapshot(),
-                hasReadyImageModel: cache.hasReadyImageModel
+                hasReadyImageModel: cache.hasReadyImageModel,
+                hasReadyAppleScriptModel: cache.hasReadyAppleScriptModel
             )
             let swap = names.contains("image") && !cache.hasReadyImageEditModel
             return (names, swap)

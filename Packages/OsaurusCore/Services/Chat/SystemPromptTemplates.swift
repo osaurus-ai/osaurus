@@ -718,6 +718,30 @@ public enum SystemPromptTemplates {
         - The result renders inline automatically; don't call `share_artifact`. Confirm briefly.
         """
 
+    /// AppleScript automation grounding. Rendered only when the `applescript`
+    /// tool actually resolves into the schema (per-agent enable + an installed
+    /// AppleScript model), so the prompt never advertises automation the model
+    /// can't invoke. Mirrors the tool's contract: one whole-task `task`, an
+    /// on-device subagent that writes + runs the script, and the user's
+    /// execution-mode gate — stated plainly, not coerced.
+    public static let appleScriptGuidance = """
+        ## AppleScript
+
+        - You can automate this Mac with `applescript` — it uses an on-device model to write and run AppleScript for tasks like controlling Finder, Safari, Mail, Notes, Music, Calendar, or System Events, and reading or setting app state.
+        - Describe the WHOLE task in a single `task`. It runs a self-contained subagent that writes the script, runs it, reads the result, and iterates on errors, then returns a summary — do not try to write AppleScript yourself from here.
+        - Depending on the user's setting, each generated script is either shown for approval or auto-run with a warning. Write the task plainly and let that gate handle confirmation — don't ask the user for permission yourself first.
+        - Use it for AppleScript / Apple Events automation of macOS apps, NOT for shell, files, or web requests — those have dedicated tools.
+        """
+
+    /// Compact AppleScript directive for small local models: same behavior at a
+    /// fraction of the tokens (whole-task delegation, the execution-mode gate,
+    /// and the not-for-shell/files/web boundary).
+    public static let appleScriptGuidanceCompact = """
+        ## AppleScript
+        - Use `applescript` to automate this Mac (Finder, Safari, Mail, Notes, System Events, app state): pass the WHOLE task as `task`; an on-device subagent writes + runs the AppleScript and returns a summary. Don't write AppleScript yourself here.
+        - Each script is shown for approval or auto-run with a warning per the user's setting. Not for shell, files, or web — those have dedicated tools.
+        """
+
     // MARK: - Spawn (delegation)
 
     /// Dynamic guidance for the spawn family, rendered by the composer when

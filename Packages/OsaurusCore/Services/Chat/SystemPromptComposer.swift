@@ -2115,7 +2115,11 @@ public struct SystemPromptComposer: Sendable {
             agentId: snapshot.agentId,
             snapshot: snapshot,
             config: SubagentConfigurationStore.snapshot(),
-            hasReadyImageModel: imageCache.hasReadyImageModel
+            hasReadyImageModel: imageCache.hasReadyImageModel,
+            // AppleScript gates like image: the per-agent / global switch can be
+            // on, but the tool stays hidden until a curated AppleScript model is
+            // installed. Read off the same warmed picker cache.
+            hasReadyAppleScriptModel: imageCache.hasReadyAppleScriptModel
         )
         for capability in SubagentCapabilityRegistry.all {
             switch capability.gate {

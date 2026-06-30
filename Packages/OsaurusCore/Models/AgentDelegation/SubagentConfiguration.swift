@@ -184,6 +184,18 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
     var defaultImageGenerationModelId: String?
     var defaultImageEditModelId: String?
     var imageJobLoadPolicy: SubagentImageLoadPolicy
+    /// The DEFAULT / main-chat agent's `applescript` enable. Custom agents carry
+    /// their own `AgentSettings.appleScriptEnabled`; this governs the main chat
+    /// only.
+    var appleScriptDelegationEnabled: Bool
+    /// The DEFAULT / main-chat agent's chosen AppleScript model id (`nil` →
+    /// resolve to the first installed catalog model at run time). Custom agents
+    /// use their own `AgentSettings.appleScriptModelId`.
+    var defaultAppleScriptModelId: String?
+    /// The DEFAULT / main-chat agent's AppleScript execution-mode (confirm each
+    /// script vs auto-run with a warning). Custom agents use their own
+    /// `AgentSettings.appleScriptExecutionMode`.
+    var defaultAppleScriptExecutionMode: AppleScriptExecutionMode
     var permissionDefaults: SubagentPermissionDefaults
     var budgets: SubagentBudgets
     /// When true (default), a subagent/image job runs a refuse-before-evict RAM
@@ -214,6 +226,9 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
         defaultImageGenerationModelId: String? = nil,
         defaultImageEditModelId: String? = nil,
         imageJobLoadPolicy: SubagentImageLoadPolicy = .agentSingleResidency,
+        appleScriptDelegationEnabled: Bool = false,
+        defaultAppleScriptModelId: String? = nil,
+        defaultAppleScriptExecutionMode: AppleScriptExecutionMode = .default,
         permissionDefaults: SubagentPermissionDefaults = SubagentPermissionDefaults(),
         budgets: SubagentBudgets = SubagentBudgets(),
         ramSafetyPreflightEnabled: Bool = true,
@@ -227,6 +242,9 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
         self.defaultImageGenerationModelId = defaultImageGenerationModelId
         self.defaultImageEditModelId = defaultImageEditModelId
         self.imageJobLoadPolicy = imageJobLoadPolicy
+        self.appleScriptDelegationEnabled = appleScriptDelegationEnabled
+        self.defaultAppleScriptModelId = Self.normalizedModelId(defaultAppleScriptModelId)
+        self.defaultAppleScriptExecutionMode = defaultAppleScriptExecutionMode
         self.permissionDefaults = permissionDefaults
         self.budgets = budgets.normalized
         self.ramSafetyPreflightEnabled = ramSafetyPreflightEnabled
@@ -291,6 +309,13 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
         imageDelegationEnabled
     }
 
+    /// Whether `applescript` is active for the DEFAULT / main chat (its
+    /// AppleScript switch). Custom agents gate on their own
+    /// `AgentSettings.appleScriptEnabled`.
+    var appleScriptDelegationActive: Bool {
+        appleScriptDelegationEnabled
+    }
+
     /// Whether an agent-launched image job must evict resident chat models for
     /// the duration of the job (single-GPU-residency handoff). The other load
     /// policies keep the chat model resident. Single source for the image
@@ -307,6 +332,9 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
             defaultImageGenerationModelId: Self.normalizedModelId(defaultImageGenerationModelId),
             defaultImageEditModelId: Self.normalizedModelId(defaultImageEditModelId),
             imageJobLoadPolicy: imageJobLoadPolicy,
+            appleScriptDelegationEnabled: appleScriptDelegationEnabled,
+            defaultAppleScriptModelId: Self.normalizedModelId(defaultAppleScriptModelId),
+            defaultAppleScriptExecutionMode: defaultAppleScriptExecutionMode,
             permissionDefaults: permissionDefaults,
             budgets: budgets.normalized,
             // Preserve the user's RAM-safety choice across the save/load round-trip.
@@ -328,6 +356,9 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
         case defaultImageGenerationModelId
         case defaultImageEditModelId
         case imageJobLoadPolicy
+        case appleScriptDelegationEnabled
+        case defaultAppleScriptModelId
+        case defaultAppleScriptExecutionMode
         case permissionDefaults
         case budgets
         case ramSafetyPreflightEnabled
@@ -357,6 +388,21 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
                 SubagentImageLoadPolicy.self,
                 forKey: .imageJobLoadPolicy
             )) ?? .agentSingleResidency,
+            appleScriptDelegationEnabled: try container.decodeIfPresent(
+                Bool.self,
+                forKey: .appleScriptDelegationEnabled
+            ) ?? false,
+            defaultAppleScriptModelId: try container.decodeIfPresent(
+                String.self,
+                forKey: .defaultAppleScriptModelId
+            ),
+            // Enum field: `(try? …) ?? default` so an invalid/renamed raw value
+            // falls back to the safe `confirmEach` rather than discarding the
+            // whole delegation config.
+            defaultAppleScriptExecutionMode: (try? container.decodeIfPresent(
+                AppleScriptExecutionMode.self,
+                forKey: .defaultAppleScriptExecutionMode
+            )) ?? .default,
             permissionDefaults: (try? container.decodeIfPresent(
                 SubagentPermissionDefaults.self,
                 forKey: .permissionDefaults

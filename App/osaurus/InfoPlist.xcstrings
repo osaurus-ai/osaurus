@@ -79,31 +79,31 @@
       "localizations" : {
         "de" : {
           "stringUnit" : {
-            "state" : "translated",
+            "state" : "needs_review",
             "value" : "Osaurus-Plugins können Automatisierung nutzen, um andere Anwendungen in deinem Auftrag zu steuern."
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "Osaurus plugins may use automation to control other applications on your behalf."
+            "value" : "Osaurus uses automation to control other applications on your behalf — including agents that write and run AppleScript to automate tasks on this Mac, and plugins that use automation."
           }
         },
         "ko" : {
           "stringUnit" : {
-            "state" : "translated",
+            "state" : "needs_review",
             "value" : "Osaurus 플러그인이 사용자를 대신하여 다른 응용 프로그램을 제어하기 위해 자동화를 사용할 수 있습니다."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
-            "state" : "translated",
+            "state" : "needs_review",
             "value" : "Osaurus 插件可能会使用自动化代表你控制其他应用。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
-            "state" : "translated",
+            "state" : "needs_review",
             "value" : "Osaurus 插件可能會用自動化來代表你控制其他應用。"
           }
         }
