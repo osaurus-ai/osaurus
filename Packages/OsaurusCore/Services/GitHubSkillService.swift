@@ -899,10 +899,17 @@ public final class GitHubSkillService: ObservableObject {
         return GlobalProxySettings.makeSession(base: config)
     }
 
-    /// A GitHub API token from the environment, if present and non-empty.
-    /// Read once per session; never logged. Honors GITHUB_TOKEN then GH_TOKEN.
+    /// A GitHub API token from the process environment, if present and
+    /// non-empty. Never logged. Honors GITHUB_TOKEN then GH_TOKEN.
     nonisolated static func gitHubToken() -> String? {
-        let env = ProcessInfo.processInfo.environment
+        gitHubToken(from: ProcessInfo.processInfo.environment)
+    }
+
+    /// Pure token resolution over an explicit environment, so the precedence
+    /// and trimming rules are unit-testable without mutating the process env.
+    /// GITHUB_TOKEN wins over GH_TOKEN; values are whitespace-trimmed; blank or
+    /// whitespace-only values are treated as absent.
+    nonisolated static func gitHubToken(from env: [String: String]) -> String? {
         for key in ["GITHUB_TOKEN", "GH_TOKEN"] {
             if let v = env[key]?.trimmingCharacters(in: .whitespacesAndNewlines), !v.isEmpty {
                 return v
