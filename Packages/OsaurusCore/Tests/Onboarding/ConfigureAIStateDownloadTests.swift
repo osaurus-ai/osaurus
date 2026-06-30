@@ -104,54 +104,29 @@ struct ConfigureAIStateDownloadTests {
         #expect(after == .notStarted)
     }
 
-    /// The step is local-first: a fresh state lands on the home screen with the
-    /// local card selected (hosted off), so the recommended "Run on your Mac"
-    /// card is the default and the Osaurus Router stays gated behind an explicit
-    /// Cloud choice.
+    /// The step is local-first: a fresh state lands on the home screen with no
+    /// brain committed yet, so the recommended "Run on your Mac" card is the
+    /// default.
     @Test func defaultsToLocalHomeScreen() {
         let state = ConfigureAIState()
         #expect(state.screen == .home)
-        #expect(state.isHostedSelected == false)
         #expect(state.apiSubstate == .picker)
         #expect(state.selectedBrainSource == nil)
 
-        // `ensureLocalSelection` pre-picks a model without flipping to hosted.
+        // `ensureLocalSelection` pre-picks a model without leaving home.
         state.ensureLocalSelection(totalMemoryGB: 24)
-        #expect(state.isHostedSelected == false)
+        #expect(state.selectedModel != nil)
         #expect(state.screen == .home)
     }
 
-    /// The router gate in `finishOnboarding` keys off `selectedBrainSource`:
-    /// hosted -> router enabled, everything else -> disabled. Confirm the home
-    /// card selectors feed that signal correctly.
-    @Test func selectingHostedVsLocalDrivesBrainSourceForRouterGate() {
-        let state = ConfigureAIState()
-
-        // Tapping the cloud card selects hosted (radio).
-        state.selectHostedOsaurus()
-        #expect(state.isHostedSelected == true)
-
-        // Tapping the local card flips back to local.
-        state.selectLocalBrain()
-        #expect(state.isHostedSelected == false)
-
-        // Committing hosted records the hosted brain source -> router enabled.
-        state.selectHostedAndContinue(onComplete: {})
-        #expect(state.selectedBrainSource == .hostedOsaurus)
-    }
-
-    /// Drilling into bring-your-own-key drops the hosted selection so the
-    /// footer Continue doesn't advance the hosted path, and backing out returns
-    /// to the home screen.
+    /// Drilling into bring-your-own-key moves to the BYOK picker, and backing
+    /// out returns to the home screen.
     @Test func byokDrillInAndBackReturnsHome() {
         let state = ConfigureAIState()
-        state.selectHostedOsaurus()
-        #expect(state.isHostedSelected == true)
 
         state.showBYOK()
         #expect(state.screen == .byok)
         #expect(state.apiSubstate == .picker)
-        #expect(state.isHostedSelected == false)
 
         state.popBYOKToHome()
         #expect(state.screen == .home)
@@ -191,7 +166,7 @@ struct ConfigureAIStateDownloadTests {
     /// `finishOnboarding` reads `localDefaultModelIdToPin` to pin the agent's
     /// default model. It must only surface the selected id when the user
     /// actually committed to the Local path — a sticky `selectedModel` left
-    /// over after switching to hosted must not be pinned.
+    /// over after switching to a non-local source must not be pinned.
     @Test func localDefaultModelIdToPin_returnsSelectedIdOnlyForLocalBrainSource() {
         let (state, model) = makeStateWithModel()
         defer { clear(model) }
@@ -203,9 +178,9 @@ struct ConfigureAIStateDownloadTests {
         state.selectedBrainSource = .local
         #expect(state.localDefaultModelIdToPin == model.id)
 
-        // Switched to hosted (selection stays sticky) -> nil, so the local
-        // model isn't mis-pinned when the user proceeds via Cloud.
-        state.selectedBrainSource = .hostedOsaurus
+        // Switched to a bring-your-own-key source (selection stays sticky) ->
+        // nil, so the local model isn't mis-pinned when the user proceeds.
+        state.selectedBrainSource = .providerKey(.openai)
         #expect(state.localDefaultModelIdToPin == nil)
     }
 
@@ -218,8 +193,6 @@ struct ConfigureAIStateDownloadTests {
         state.addedProviderId = providerId
 
         // No / non-provider brain source -> nil even with a captured provider.
-        #expect(state.providerModelPinTarget == nil)
-        state.selectedBrainSource = .hostedOsaurus
         #expect(state.providerModelPinTarget == nil)
         state.selectedBrainSource = .local
         #expect(state.providerModelPinTarget == nil)
@@ -273,15 +246,11 @@ struct ConfigureAIStateDownloadTests {
         #expect(state.isChoosingModel == true)
     }
 
-    /// "Use this model" applies the draft as the active local brain (which also
-    /// clears any hosted selection) and closes the dialog.
-    @Test func commitModelChooser_appliesDraftClearsHostedAndCloses() {
+    /// "Use this model" applies the draft as the active local brain and closes
+    /// the dialog.
+    @Test func commitModelChooser_appliesDraftAndCloses() {
         let (state, model) = makeStateWithModel()
         defer { clear(model) }
-
-        // User had the cloud card selected before opening the chooser.
-        state.selectHostedOsaurus()
-        #expect(state.isHostedSelected == true)
 
         state.openModelChooser()
         let picked = makeModel("picked")
@@ -289,7 +258,6 @@ struct ConfigureAIStateDownloadTests {
         state.commitModelChooser()
 
         #expect(state.selectedModel?.id == picked.id)
-        #expect(state.isHostedSelected == false)
         #expect(state.isChoosingModel == false)
         #expect(state.draftModel?.id == picked.id)
     }

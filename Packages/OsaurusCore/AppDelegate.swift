@@ -998,7 +998,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
     #if DEBUG
         @objc private func dockResetOnboarding() {
             OnboardingService.shared.resetOnboarding()
-            showOnboardingWindow(forceShowIdentity: true)
+            showOnboardingWindow(forceFresh: true)
         }
 
         @objc private func dockPreviewWhatsNew() {
@@ -1933,25 +1933,24 @@ extension AppDelegate {
 extension AppDelegate {
     private static var onboardingWindow: NSWindow?
 
-    @MainActor public func showOnboardingWindow(forceShowIdentity: Bool = false) {
+    @MainActor public func showOnboardingWindow(forceFresh: Bool = false) {
         closePopoverAndPerform { [weak self] in
             guard let self = self else { return }
-            // Reuse existing window if already open (unless forcing full flow)
-            if !forceShowIdentity, let existingWindow = Self.onboardingWindow, existingWindow.isVisible {
+            // Reuse existing window if already open (unless forcing a fresh flow)
+            if !forceFresh, let existingWindow = Self.onboardingWindow, existingWindow.isVisible {
                 existingWindow.makeKeyAndOrderFront(nil)
                 NSApp.activate(ignoringOtherApps: true)
                 return
             }
 
             // Close existing window when forcing a fresh flow
-            if forceShowIdentity {
+            if forceFresh {
                 Self.onboardingWindow?.close()
                 Self.onboardingWindow = nil
             }
 
             let themeManager = ThemeManager.shared
             let contentView = OnboardingView(
-                forceShowIdentity: forceShowIdentity,
                 onPreferredSizeChange: { [weak self] newSize in
                     self?.resizeOnboardingWindow(to: newSize)
                 },

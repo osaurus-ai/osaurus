@@ -67,7 +67,7 @@ public final class RemoteProviderManager: ObservableObject {
     private var ephemeralProviderIds: Set<UUID> = []
 
     /// Per-model metadata for the managed Osaurus Router, keyed by unprefixed
-    /// model id (e.g. "venice/model-b"). Captured from `/models` on
+    /// model id (e.g. "<upstream>/model-b"). Captured from `/models` on
     /// connect/refetch so the picker can show provider, pricing, and context
     /// without a second request. Empty until the router connects.
     private var osaurusRouterModelCatalog: [String: OsaurusRouterModel] = [:]
@@ -754,25 +754,6 @@ public final class RemoteProviderManager: ObservableObject {
         return result
     }
 
-    /// The first hosted (Osaurus Router) Venice model id, prefixed exactly as
-    /// the model picker lists it (e.g. "osaurus/venice/model-b"). `nil` until
-    /// the managed router connects and its catalog is discovered.
-    ///
-    /// Used to pin the new agent's default model when the user picked the
-    /// hosted brain in onboarding. Prefers a Venice-backed model so the hosted
-    /// privacy copy holds, but falls back to the first router model so the
-    /// hosted path still routes if the catalog ever exposes a different
-    /// upstream.
-    public func firstHostedVeniceModelId() -> String? {
-        guard
-            let entry = cachedAvailableModels().first(where: {
-                $0.providerId == Self.osaurusRouterProviderId
-            })
-        else { return nil }
-        return entry.models.first { $0.lowercased().contains("/venice/") }
-            ?? entry.models.first
-    }
-
     /// The first chat-capable model id for `providerId`, prefixed exactly as the
     /// model picker lists it (e.g. "openai-chatgpt/gpt-5.5"). Skips embedding /
     /// reranker ids via the same heuristic the picker uses. `nil` until the
@@ -793,7 +774,7 @@ public final class RemoteProviderManager: ObservableObject {
     }
 
     /// Metadata for an Osaurus Router model by its unprefixed id (the id as it
-    /// appears in `discoveredModels`, e.g. "venice/model-b"). Returns nil for
+    /// appears in `discoveredModels`, e.g. "<upstream>/model-b"). Returns nil for
     /// non-router models or before the router has connected.
     ///
     /// Intentionally `internal`: `OsaurusRouterModel` is an internal type, and

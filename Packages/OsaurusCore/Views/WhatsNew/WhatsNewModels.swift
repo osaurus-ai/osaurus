@@ -139,10 +139,10 @@ public enum WhatsNewContent {
                 systemImage: "cloud.fill"
             ),
             WhatsNewPage(
-                id: "osaurus-cloud-0.20.1:venice",
-                title: "Private inferencing through Venice AI",
+                id: "osaurus-cloud-0.20.1:privacy",
+                title: "Private by design",
                 description:
-                    "Osaurus Cloud routes inference through Venice AI, a privacy-first provider. Your chats stay on your Mac, while hosted requests use Router credits instead of separate provider accounts.",
+                    "Osaurus Cloud doesn't store the content of your prompts or responses — only the usage metadata needed to bill credits. Your chats stay on your Mac, and requests are served by the upstream provider for the model you pick, under its own policy.",
                 systemImage: "lock.shield.fill"
             ),
             WhatsNewPage(

@@ -82,26 +82,6 @@ struct OnboardingTelemetryEventTests {
         #expect(event.props["step_index"] as? Int == OnboardingStep.configureAI.rawValue)
     }
 
-    @Test func brainSourceSelected_hosted_carries_source_and_privacy_tier() {
-        let (service, rec, cleanup) = makeRecordingService()
-        defer { cleanup() }
-
-        OnboardingTelemetry.brainSourceSelected(
-            .hostedOsaurus,
-            privacyTier: .privateZeroRetention,
-            service: service
-        )
-
-        #expect(rec.events.count == 1)
-        let event = rec.events[0]
-        #expect(event.name == "brain_source_selected")
-        #expect(business(event.props).count == 2)
-        #expect(event.props["source"] as? String == "hosted")
-        #expect(event.props["privacy_tier"] as? String == "private_zero_retention")
-        // Hosted is keyless, so no `provider` dimension.
-        #expect(event.props["provider"] == nil)
-    }
-
     @Test func brainSourceSelected_providerKey_carries_provider_type() {
         let (service, rec, cleanup) = makeRecordingService()
         defer { cleanup() }

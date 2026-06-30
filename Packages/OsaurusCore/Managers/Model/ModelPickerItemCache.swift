@@ -232,7 +232,7 @@ final class ModelPickerItemCache: ObservableObject {
     }
 
     /// Strip the provider-name prefix that `cachedAvailableModels()` prepends
-    /// (e.g. "osaurus/venice/model-b" -> "venice/model-b") so it matches the
+    /// (e.g. "osaurus/<upstream>/model-b" -> "<upstream>/model-b") so it matches the
     /// catalog key, which is the model's unprefixed id.
     private static func unprefixedRouterModelId(_ prefixedId: String) -> String {
         guard let slashIndex = prefixedId.firstIndex(of: "/") else { return prefixedId }
