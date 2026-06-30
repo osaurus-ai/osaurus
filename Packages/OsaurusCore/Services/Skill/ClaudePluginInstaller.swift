@@ -600,6 +600,12 @@ public final class ClaudePluginInstaller {
                                 summary.skippedStdioMCPServers.append(server.name)
                                 continue
                             }
+                            guard let safeURL = Self.validImportedMCPServerURL(url) else {
+                                summary.errors.append(
+                                    "mcp \(server.name): rejected unsafe URL"
+                                )
+                                continue
+                            }
                             let classified = classifyMCPEntries(
                                 server.headers,
                                 scope: .header
@@ -612,7 +618,7 @@ public final class ClaudePluginInstaller {
                             )
                             let provider = MCPProvider(
                                 name: "\(manifest.name): \(server.name)",
-                                url: url,
+                                url: safeURL,
                                 enabled: false,
                                 customHeaders: classified.regular,
                                 secretHeaderKeys: Array(classified.realSecrets.keys)
@@ -652,6 +658,12 @@ public final class ClaudePluginInstaller {
                                 summary.skippedStdioMCPServers.append(server.name)
                                 continue
                             }
+                            guard let safeURL = Self.validImportedMCPServerURL(url) else {
+                                summary.errors.append(
+                                    "mcp \(server.name): rejected unsafe URL"
+                                )
+                                continue
+                            }
                             let classified = classifyMCPEntries(
                                 server.headers,
                                 scope: .header
@@ -663,7 +675,7 @@ public final class ClaudePluginInstaller {
                                 || !classified.placeholderSecrets.isEmpty
                             let provider = MCPProvider(
                                 name: "\(manifest.name): \(server.name)",
-                                url: url,
+                                url: safeURL,
                                 enabled: false,
                                 customHeaders: classified.regular,
                                 secretHeaderKeys: Array(classified.realSecrets.keys)
@@ -1049,6 +1061,40 @@ public final class ClaudePluginInstaller {
     /// templates and similar binaries — anything bigger than ~2 MiB is
     /// almost certainly something the user wants to fetch themselves.
     nonisolated private static let maxAssetBytes: Int = 2 * 1024 * 1024
+
+    /// Remote `.mcp.json` is part of a supply-chain boundary. Imported
+    /// HTTP/SSE providers must target public HTTPS endpoints and must not
+    /// smuggle credentials in the URL itself; tokens belong in headers/Keychain.
+    nonisolated internal static func validImportedMCPServerURL(_ raw: String) -> String? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = URL(string: trimmed),
+            MCPOAuthURLPolicy.isAbsoluteHTTPURL(url),
+            MCPOAuthURLPolicy.hasNoUserInfoOrFragment(url),
+            url.scheme?.lowercased() == "https",
+            !MCPOAuthURLPolicy.isLocalOrPrivateHost(url.host),
+            !importedURLContainsSecretQuery(url)
+        else {
+            return nil
+        }
+        return url.absoluteString
+    }
+
+    nonisolated private static func importedURLContainsSecretQuery(_ url: URL) -> Bool {
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return true
+        }
+        guard let queryItems = components.queryItems else { return false }
+        return queryItems.contains { item in
+            let name = item.name.lowercased()
+            return name == "authorization"
+                || name == "api_key"
+                || name == "apikey"
+                || name == "api-key"
+                || name.contains("token")
+                || name.contains("secret")
+                || name.contains("password")
+        }
+    }
 
     /// Decide whether a file should land under `references/` (indexed and
     /// loaded into context by `SkillManager.loadReferenceContents`) or

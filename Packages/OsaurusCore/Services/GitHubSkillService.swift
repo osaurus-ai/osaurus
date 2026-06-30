@@ -153,6 +153,121 @@ public enum GitHubSecretRedactor {
     }
 }
 
+private enum GitHubImportInputValidator {
+    private static let repoComponentAllowed = CharacterSet(
+        charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-"
+    )
+
+    static func parseRepoURL(_ urlOrSlug: String) -> GitHubRepo? {
+        var s = urlOrSlug.trimmingCharacters(in: .whitespacesAndNewlines)
+        if s.hasSuffix(".git") { s = String(s.dropLast(4)) }
+        while s.hasSuffix("/") { s = String(s.dropLast()) }
+        guard !s.isEmpty, !s.contains("\0") else { return nil }
+
+        if s.lowercased().hasPrefix("github.com/") {
+            return parseRepoURL("https://\(s)")
+        }
+
+        if let url = URL(string: s), let scheme = url.scheme?.lowercased() {
+            guard scheme == "https",
+                url.host?.lowercased() == "github.com",
+                url.user == nil,
+                url.password == nil,
+                url.query == nil,
+                url.fragment == nil
+            else {
+                return nil
+            }
+            let components = url.pathComponents.filter { $0 != "/" }
+            return repo(fromPathComponents: components)
+        }
+
+        guard !s.contains("://"), !s.contains("?"), !s.contains("#"), !s.contains("@") else {
+            return nil
+        }
+        let components = s.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+        guard components.count == 2 else { return nil }
+        return repo(fromPathComponents: components)
+    }
+
+    static func validateRepo(_ repo: GitHubRepo) -> Bool {
+        isValidRepoComponent(repo.owner) && isValidRepoComponent(repo.name)
+    }
+
+    static func normalizedSourcePath(_ source: String) throws -> String {
+        var s = source.trimmingCharacters(in: .whitespacesAndNewlines)
+        while s.hasPrefix("./") { s = String(s.dropFirst(2)) }
+        s = s.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        if s == "." { return "" }
+        guard !s.contains("\0"), !s.contains("\\") else {
+            throw GitHubSkillError.invalidURL(source)
+        }
+        guard !s.isEmpty else { return "" }
+        let components = s.split(separator: "/", omittingEmptySubsequences: false)
+        guard components.allSatisfy({ component in
+            !component.isEmpty && component != "." && component != ".."
+        }) else {
+            throw GitHubSkillError.invalidURL(source)
+        }
+        return components.map(String.init).joined(separator: "/")
+    }
+
+    static func normalizedGitRef(_ ref: String) -> String? {
+        let s = ref.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !s.isEmpty,
+            !s.contains("\0"),
+            !s.hasPrefix("/"),
+            !s.hasSuffix("/"),
+            !s.contains("//"),
+            !s.contains(".."),
+            !s.contains("@{"),
+            s != "@",
+            !s.hasSuffix(".")
+        else {
+            return nil
+        }
+        let invalid = CharacterSet.controlCharacters.union(
+            CharacterSet(charactersIn: " ~^:?*[\\")
+        )
+        guard s.unicodeScalars.allSatisfy({ !invalid.contains($0) }) else {
+            return nil
+        }
+        guard s.split(separator: "/").allSatisfy({ !$0.hasSuffix(".lock") }) else {
+            return nil
+        }
+        return s
+    }
+
+    static func encodedGitRefPathComponent(_ ref: String) -> String? {
+        let allowed = CharacterSet.urlPathAllowed.subtracting(
+            CharacterSet(charactersIn: "/?#%")
+        )
+        return normalizedGitRef(ref)?.addingPercentEncoding(withAllowedCharacters: allowed)
+    }
+
+    static func encodedGitRefQueryValue(_ ref: String) -> String? {
+        let allowed = CharacterSet.urlQueryAllowed.subtracting(
+            CharacterSet(charactersIn: "/&=?#%")
+        )
+        return normalizedGitRef(ref)?.addingPercentEncoding(withAllowedCharacters: allowed)
+    }
+
+    private static func repo(fromPathComponents components: [String]) -> GitHubRepo? {
+        guard components.count == 2 else { return nil }
+        let owner = components[0]
+        var repo = components[1]
+        if repo.hasSuffix(".git") { repo = String(repo.dropLast(4)) }
+        guard isValidRepoComponent(owner), isValidRepoComponent(repo) else { return nil }
+        return GitHubRepo(owner: owner, name: repo, branch: "main")
+    }
+
+    private static func isValidRepoComponent(_ value: String) -> Bool {
+        guard !value.isEmpty, value != ".", value != ".." else { return false }
+        guard !value.contains("\0") else { return false }
+        return value.unicodeScalars.allSatisfy { repoComponentAllowed.contains($0) }
+    }
+}
+
 /// Marketplace.json owner field
 public struct MarketplaceOwner: Codable, Sendable {
     public let name: String?
@@ -221,7 +336,7 @@ public enum MarketplaceSource: Sendable {
         let path = try? container.decode(String.self, forKey: .path)
         // Prefer a pinned sha over a moving ref for reproducibility.
         let pinned = sha ?? ref
-        guard let parsed = Self.parseRepoURL(urlOrSlug) else {
+        guard let parsed = GitHubImportInputValidator.parseRepoURL(urlOrSlug) else {
             throw DecodingError.dataCorruptedError(
                 forKey: .url,
                 in: container,
@@ -273,32 +388,6 @@ public enum MarketplaceSource: Sendable {
         }
     }
 
-    /// Parse an `https://github.com/owner/repo.git` URL or a bare `owner/repo`
-    /// slug into a `GitHubRepo` with branch defaulting to `main`.
-    private static func parseRepoURL(_ urlOrSlug: String) -> GitHubRepo? {
-        var s = urlOrSlug.trimmingCharacters(in: .whitespacesAndNewlines)
-        if s.hasSuffix(".git") { s = String(s.dropLast(4)) }
-        while s.hasSuffix("/") { s = String(s.dropLast()) }
-
-        var components: [String] = []
-        if s.contains("github.com") {
-            if let url = URL(string: s.hasPrefix("http") ? s : "https://\(s)") {
-                components = url.pathComponents.filter { $0 != "/" }
-            } else {
-                let parts = s.components(separatedBy: "github.com/")
-                if parts.count == 2 {
-                    components = parts[1].components(separatedBy: "/")
-                }
-            }
-        } else if s.contains("/") {
-            components = s.components(separatedBy: "/")
-        }
-
-        guard components.count >= 2, !components[0].isEmpty, !components[1].isEmpty else {
-            return nil
-        }
-        return GitHubRepo(owner: components[0], name: components[1], branch: "main")
-    }
 }
 
 extension MarketplaceSource: Codable {}
@@ -1335,6 +1424,9 @@ public final class GitHubSkillService: ObservableObject {
     }
 
     private nonisolated func repoAPIURL(_ repo: GitHubRepo) throws -> URL {
+        guard GitHubImportInputValidator.validateRepo(repo) else {
+            throw GitHubSkillError.invalidURL(repo.slug)
+        }
         guard let url = URL(string: repo.apiURL) else {
             throw GitHubSkillError.invalidURL(repo.apiURL)
         }
@@ -1342,10 +1434,18 @@ public final class GitHubSkillService: ObservableObject {
     }
 
     private nonisolated func contentsAPIURL(repo: GitHubRepo, path: String) throws -> URL {
-        let clean = Self.normalizedSourceStatic(path)
+        guard GitHubImportInputValidator.validateRepo(repo),
+            let ref = GitHubImportInputValidator.normalizedGitRef(repo.branch)
+        else {
+            throw GitHubSkillError.invalidURL(repo.slug)
+        }
+        let clean = try GitHubImportInputValidator.normalizedSourcePath(path)
+        let allowed = CharacterSet.urlPathAllowed.subtracting(
+            CharacterSet(charactersIn: "/?#%")
+        )
         let encodedPath = clean.split(separator: "/")
             .map { component in
-                String(component).addingPercentEncoding(withAllowedCharacters: .urlPathAllowed)
+                String(component).addingPercentEncoding(withAllowedCharacters: allowed)
                     ?? String(component)
             }
             .joined(separator: "/")
@@ -1354,7 +1454,7 @@ public final class GitHubSkillService: ObservableObject {
         guard var components = URLComponents(string: urlString) else {
             throw GitHubSkillError.invalidURL(urlString)
         }
-        components.queryItems = [URLQueryItem(name: "ref", value: repo.branch)]
+        components.queryItems = [URLQueryItem(name: "ref", value: ref)]
         guard let url = components.url else {
             throw GitHubSkillError.invalidURL(components.string ?? urlString)
         }
@@ -1362,10 +1462,11 @@ public final class GitHubSkillService: ObservableObject {
     }
 
     private nonisolated func treeAPIURL(repo: GitHubRepo) throws -> URL {
-        let allowed = CharacterSet.urlPathAllowed.subtracting(CharacterSet(charactersIn: "/"))
-        let encodedRef =
-            repo.branch.addingPercentEncoding(withAllowedCharacters: allowed)
-            ?? repo.branch
+        guard GitHubImportInputValidator.validateRepo(repo),
+            let encodedRef = GitHubImportInputValidator.encodedGitRefPathComponent(repo.branch)
+        else {
+            throw GitHubSkillError.invalidURL(repo.slug)
+        }
         let urlString =
             "https://api.github.com/repos/\(repo.owner)/\(repo.name)/git/trees/\(encodedRef)"
         guard var components = URLComponents(string: urlString) else {
@@ -1395,50 +1496,10 @@ public final class GitHubSkillService: ObservableObject {
     /// - `github.com/owner/repo`
     /// - `owner/repo`
     public func parseGitHubURL(_ urlString: String) throws -> GitHubRepo {
-        var cleaned = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        // Remove .git suffix if present
-        if cleaned.hasSuffix(".git") {
-            cleaned = String(cleaned.dropLast(4))
-        }
-
-        // Remove trailing slashes
-        while cleaned.hasSuffix("/") {
-            cleaned = String(cleaned.dropLast())
-        }
-
-        // Handle different URL formats
-        var pathComponents: [String] = []
-
-        if cleaned.contains("github.com") {
-            // Full URL format
-            if let url = URL(string: cleaned.hasPrefix("http") ? cleaned : "https://\(cleaned)") {
-                pathComponents = url.pathComponents.filter { $0 != "/" }
-            } else {
-                // Try parsing as path
-                let parts = cleaned.components(separatedBy: "github.com/")
-                if parts.count == 2 {
-                    pathComponents = parts[1].components(separatedBy: "/")
-                }
-            }
-        } else if cleaned.contains("/") {
-            // owner/repo format
-            pathComponents = cleaned.components(separatedBy: "/")
-        }
-
-        // We need at least owner and repo
-        guard pathComponents.count >= 2 else {
+        guard let repo = GitHubImportInputValidator.parseRepoURL(urlString) else {
             throw GitHubSkillError.invalidURL(urlString)
         }
-
-        let owner = pathComponents[0]
-        let repo = pathComponents[1]
-
-        guard !owner.isEmpty, !repo.isEmpty else {
-            throw GitHubSkillError.invalidURL(urlString)
-        }
-
-        return GitHubRepo(owner: owner, name: repo)
+        return repo
     }
 
     // MARK: - Fetching
@@ -2082,7 +2143,7 @@ public final class GitHubSkillService: ObservableObject {
     ) async throws -> ClaudePluginManifest {
         // Resolve where this plugin's files actually live (could be the
         // marketplace repo, or an external repo entirely).
-        let resolved = await resolveSource(
+        let resolved = try await resolveSource(
             rootRepo: rootRepo,
             source: plugin.source,
             pluginName: plugin.name
@@ -2095,8 +2156,8 @@ public final class GitHubSkillService: ObservableObject {
         // resolved sourceRepo so external-source legacy plugins (if anyone
         // ever ships them) keep working.
         if let declared = plugin.skills, !declared.isEmpty {
-            let entries = declared.map { decl -> ClaudeSkillEntry in
-                let p = normalizedSource(decl)
+            let entries = try declared.map { decl -> ClaudeSkillEntry in
+                let p = try GitHubImportInputValidator.normalizedSourcePath(decl)
                 let rebased: String
                 if source.isEmpty || p.hasPrefix("\(source)/") || p == source {
                     rebased = p
@@ -2287,15 +2348,24 @@ public final class GitHubSkillService: ObservableObject {
         repo: GitHubRepo,
         path: String?
     ) async -> String? {
+        guard GitHubImportInputValidator.validateRepo(repo),
+            let encodedRef = GitHubImportInputValidator.encodedGitRefQueryValue(repo.branch)
+        else {
+            return nil
+        }
         var urlString = "https://api.github.com/repos/\(repo.owner)/\(repo.name)/commits"
-        var queryItems: [String] = ["per_page=1", "sha=\(repo.branch)"]
+        let queryAllowed = CharacterSet.urlQueryAllowed.subtracting(
+            CharacterSet(charactersIn: "&=?#%")
+        )
+        var queryItems: [String] = ["per_page=1", "sha=\(encodedRef)"]
         if let path, !path.isEmpty {
+            guard let cleanPath = try? GitHubImportInputValidator.normalizedSourcePath(path) else {
+                return nil
+            }
             // Percent-encode the path so directories with characters like
             // `+` / spaces round-trip safely through GitHub's query parser.
-            let allowed = CharacterSet.urlQueryAllowed.subtracting(
-                CharacterSet(charactersIn: "&=?")
-            )
-            let encoded = path.addingPercentEncoding(withAllowedCharacters: allowed) ?? path
+            let encoded = cleanPath.addingPercentEncoding(withAllowedCharacters: queryAllowed)
+                ?? cleanPath
             queryItems.append("path=\(encoded)")
         }
         urlString += "?" + queryItems.joined(separator: "&")
@@ -2328,22 +2398,22 @@ public final class GitHubSkillService: ObservableObject {
         rootRepo: GitHubRepo,
         source: MarketplaceSource?,
         pluginName: String
-    ) async -> (repo: GitHubRepo, basePath: String) {
+    ) async throws -> (repo: GitHubRepo, basePath: String) {
         guard let source else {
             // No source declared at all → treat the plugin's name as the
             // directory (mirrors the legacy `plugin.source ?? plugin.name`
             // fallback).
-            return (rootRepo, normalizedSource(pluginName))
+            return (rootRepo, try GitHubImportInputValidator.normalizedSourcePath(pluginName))
         }
         switch source {
         case .localDirectory(let dir):
-            return (rootRepo, normalizedSource(dir))
+            return (rootRepo, try GitHubImportInputValidator.normalizedSourcePath(dir))
         case .externalRepo(let repo, _):
             let pinned = await pinnedExternalRepo(repo)
             return (pinned, "")
         case .externalSubdir(let repo, let path, _):
             let pinned = await pinnedExternalRepo(repo)
-            return (pinned, normalizedSource(path))
+            return (pinned, try GitHubImportInputValidator.normalizedSourcePath(path))
         }
     }
 

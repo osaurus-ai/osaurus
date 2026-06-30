@@ -63,6 +63,173 @@ struct GitHubSkillServiceImportTests {
         #expect(log.requests().allSatisfy { $0.value(forHTTPHeaderField: "Authorization") == nil })
     }
 
+    @Test func rejectsAmbiguousOrNonGitHubImportURLs() throws {
+        let service = makeService { _ in .notFound() }
+        defer { service.invalidateForTests() }
+
+        for raw in [
+            "https://github.com.evil.test/acme/widgets",
+            "https://evil.test/github.com/acme/widgets",
+            "http://github.com/acme/widgets",
+            "https://user:pass@github.com/acme/widgets",
+            "https://github.com/acme/widgets?tab=readme",
+            "https://github.com/acme/widgets#fragment",
+            "https://github.com/acme/widgets/tree/main/plugin",
+        ] {
+            #expect(throws: GitHubSkillError.self) {
+                try service.parseGitHubURL(raw)
+            }
+        }
+
+        let repo = try service.parseGitHubURL("https://github.com/acme/widgets")
+        #expect(repo.slug == "acme/widgets")
+    }
+
+    @Test func rejectsExternalMarketplaceSourcesThatAreNotGitHub() throws {
+        let raw = #"""
+            {
+              "name": "fixture",
+              "plugins": [
+                {
+                  "name": "evil",
+                  "source": {
+                    "source": "url",
+                    "url": "https://github.com.evil.test/acme/plugin"
+                  }
+                }
+              ]
+            }
+            """#
+        let marketplace = try JSONDecoder().decode(
+            GitHubMarketplace.self,
+            from: Data(raw.utf8)
+        )
+
+        #expect(marketplace.plugins.isEmpty)
+    }
+
+    @Test func rejectsMarketplaceSourcePathTraversalBeforeTreeFetch() async throws {
+        let log = RequestLog()
+        let service = makeService(log: log) { request in
+            switch request.url?.path {
+            case "/repos/acme/widgets":
+                return .json(#"{"default_branch":"main"}"#)
+            case "/repos/acme/widgets/contents/.claude-plugin/marketplace.json":
+                return .text(
+                    #"""
+                    {"name":"fixture","plugins":[{"name":"escape","source":"../escape"}]}
+                    """#
+                )
+            case "/repos/acme/widgets/git/trees/main":
+                Issue.record("Importer fetched the tree after rejecting source traversal")
+                return .json(#"{"sha":"root","truncated":false,"tree":[]}"#)
+            default:
+                return .notFound()
+            }
+        }
+        defer { service.invalidateForTests() }
+
+        do {
+            _ = try await service.fetchPlugins(from: "acme/widgets")
+            Issue.record("Expected invalid source path")
+        } catch let error as GitHubSkillError {
+            guard case .invalidURL(let rejected) = error else {
+                Issue.record("Expected invalidURL, got \(error)")
+                return
+            }
+            #expect(rejected.contains(".."))
+        }
+
+        #expect(!log.requests().contains { $0.url?.path.contains("/git/trees/") == true })
+    }
+
+    @Test func rejectsInvalidGitRefBeforeSourceSHAFetch() async {
+        let log = RequestLog()
+        let service = makeService(log: log) { _ in
+            Issue.record("Invalid refs must fail before network fetch")
+            return .notFound()
+        }
+        defer { service.invalidateForTests() }
+
+        let sha = await service.fetchSourceSHANonIsolated(
+            owner: "acme",
+            repo: "widgets",
+            branch: "bad?ref",
+            path: nil
+        )
+
+        #expect(sha == nil)
+        #expect(log.requests().isEmpty)
+    }
+
+    @Test func percentEncodesGitRefWhenFetchingSourceSHA() async {
+        let log = RequestLog()
+        let service = makeService(log: log) { request in
+            #expect(request.url?.path == "/repos/acme/widgets/commits")
+            #expect(request.url?.fragment == nil)
+            #expect(request.url?.query?.contains("sha=feature%2Ffoo%23bar") == true)
+            return .json(#"[{"sha":"abc123"}]"#)
+        }
+        defer { service.invalidateForTests() }
+
+        let sha = await service.fetchSourceSHANonIsolated(
+            owner: "acme",
+            repo: "widgets",
+            branch: "feature/foo#bar",
+            path: nil
+        )
+
+        #expect(sha == "abc123")
+        #expect(log.requests().count == 1)
+    }
+
+    @Test func rejectsMarketplaceExternalRefWithInvalidGitRefBeforeTreeFetch() async throws {
+        let log = RequestLog()
+        let service = makeService(log: log) { request in
+            switch request.url?.path {
+            case "/repos/acme/widgets":
+                return .json(#"{"default_branch":"main"}"#)
+            case "/repos/acme/widgets/contents/.claude-plugin/marketplace.json":
+                return .text(
+                    #"""
+                    {
+                      "name": "fixture",
+                      "plugins": [
+                        {
+                          "name": "external",
+                          "source": {
+                            "source": "url",
+                            "url": "https://github.com/acme/plugin.git",
+                            "ref": "bad?ref"
+                          }
+                        }
+                      ]
+                    }
+                    """#
+                )
+            case "/repos/acme/plugin/git/trees/bad":
+                Issue.record("Invalid external refs must fail before tree fetch")
+                return .notFound()
+            default:
+                return .notFound()
+            }
+        }
+        defer { service.invalidateForTests() }
+
+        do {
+            _ = try await service.fetchPlugins(from: "acme/widgets")
+            Issue.record("Expected invalid external ref")
+        } catch let error as GitHubSkillError {
+            guard case .invalidURL(let rejected) = error else {
+                Issue.record("Expected invalidURL, got \(error)")
+                return
+            }
+            #expect(rejected == "acme/plugin")
+        }
+
+        #expect(!log.requests().contains { $0.url?.path.contains("/repos/acme/plugin/git/trees") == true })
+    }
+
     @Test func rateLimitDiagnosticsCover403And429() async throws {
         let reset = Int(Date().addingTimeInterval(3600).timeIntervalSince1970)
         let authenticated = makeService(
