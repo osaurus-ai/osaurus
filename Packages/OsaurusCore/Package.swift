@@ -30,11 +30,11 @@ let package = Package(
         // MLXLMCommon, MLXLLM, MLXVLM, Tokenizers, Jinja, cache, parser,
         // MTP, and media-runtime surfaces Osaurus previously pulled from
         // separate MLX, inference, tokenizer, template, and transformer pins.
-        // Keep this revision pinned until the package-switch gate has
-        // live model, cache, parser, API, and UI evidence.
+        // Pinned to the Rampart PII branch head until its PR merges to main,
+        // then bump to the merged revision.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "9e0b60f8288ca682913e0e33c20287af6f57281d"
+            revision: "843987bfc22c0b5163d3a2beeb221db637981c11"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
@@ -172,6 +172,7 @@ let package = Package(
                 .product(name: "MLXVLM", package: "vmlx-swift"),
                 .product(name: "MLXLMCommon", package: "vmlx-swift"),
                 .product(name: "MLXEmbedders", package: "vmlx-swift"),
+                .product(name: "RampartPII", package: "vmlx-swift"),
                 .product(name: "VMLXTokenizers", package: "vmlx-swift"),
                 // Native on-device image generation (mFLUX). Umbrella import
                 // `import vMLXFlux`; shares the one MLX runtime above and is
