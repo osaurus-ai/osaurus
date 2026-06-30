@@ -635,7 +635,7 @@ struct RuntimePolicySourceTests {
         // attention falls back to flat rope_theta and the processor config
         // accepts both nested and flat image-processor layouts (fixes the
         // Sentry EXC_BREAKPOINT on Mistral-Small / Ministral / Pixtral).
-        let expectedRuntimeHardenedRevision = "9e0b60f8288ca682913e0e33c20287af6f57281d"
+        let expectedRuntimeHardenedRevision = "7ca7be3a883efe376bce43fe063f27cd3c7a3ad3"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
         let appRevision = try Self.vmlxPinRevision(in: appResolved)
