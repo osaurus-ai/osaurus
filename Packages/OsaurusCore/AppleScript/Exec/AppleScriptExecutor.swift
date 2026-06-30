@@ -189,7 +189,7 @@ enum AppleScriptExecutor {
         let count = descriptor.numberOfItems
         if count > 0 {
             var parts: [String] = []
-            for index in 1...count {
+            for index in 1 ... count {
                 if let item = descriptor.atIndex(index)?.stringValue, !item.isEmpty {
                     parts.append(item)
                 }

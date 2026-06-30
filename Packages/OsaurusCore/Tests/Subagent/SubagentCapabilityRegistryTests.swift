@@ -353,8 +353,8 @@ struct SubagentCapabilityRegistryTests {
         #expect(
             ToolRegistry.agentDelegationAllToolNames
                 == ToolRegistry.agentDelegationSpawnToolNames
-                    .union(ToolRegistry.agentDelegationImageToolNames)
-                    .union(ToolRegistry.agentDelegationAppleScriptToolNames)
+                .union(ToolRegistry.agentDelegationImageToolNames)
+                .union(ToolRegistry.agentDelegationAppleScriptToolNames)
         )
     }
 

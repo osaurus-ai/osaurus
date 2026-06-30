@@ -369,7 +369,10 @@ public enum AppleScriptLoop {
             let message = result.errorMessage ?? "syntax error"
             feed.emit(
                 SubagentActivityEvent(
-                    step: step, kind: .error, title: "Script did not compile", detail: message,
+                    step: step,
+                    kind: .error,
+                    title: "Script did not compile",
+                    detail: message,
                     success: false
                 )
             )
@@ -380,8 +383,11 @@ public enum AppleScriptLoop {
             let code = result.errorNumber.map { " (error \($0))" } ?? ""
             feed.emit(
                 SubagentActivityEvent(
-                    step: step, kind: .error, title: "Script failed at runtime",
-                    detail: message + code, success: false
+                    step: step,
+                    kind: .error,
+                    title: "Script failed at runtime",
+                    detail: message + code,
+                    success: false
                 )
             )
             return
@@ -390,7 +396,10 @@ public enum AppleScriptLoop {
             let message = result.errorMessage ?? "Automation permission is required."
             feed.emit(
                 SubagentActivityEvent(
-                    step: step, kind: .error, title: "Automation permission needed", detail: message,
+                    step: step,
+                    kind: .error,
+                    title: "Automation permission needed",
+                    detail: message,
                     success: false
                 )
             )
@@ -403,7 +412,11 @@ public enum AppleScriptLoop {
             let message = result.errorMessage ?? "The script timed out."
             feed.emit(
                 SubagentActivityEvent(
-                    step: step, kind: .error, title: "Script timed out", detail: message, success: false
+                    step: step,
+                    kind: .error,
+                    title: "Script timed out",
+                    detail: message,
+                    success: false
                 )
             )
             return
@@ -416,7 +429,8 @@ public enum AppleScriptLoop {
     /// (the confirm overlay shows the full body). Collapses whitespace runs and
     /// caps the length so the activity row stays readable.
     private static func scriptPreview(_ source: String) -> String {
-        let collapsed = source
+        let collapsed =
+            source
             .replacingOccurrences(of: "\n", with: " ")
             .replacingOccurrences(of: "\t", with: " ")
         let squeezed = collapsed.split(whereSeparator: { $0 == " " }).joined(separator: " ")
