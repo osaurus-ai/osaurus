@@ -1460,9 +1460,14 @@ public final class ToolRegistry: ObservableObject {
     static var agentDelegationImageToolNames: Set<String> {
         Set(SubagentCapabilityRegistry.image.toolNames)
     }
-    /// All agent-delegation tool names (spawn + image), derived from the
-    /// registry's delegation family. Used by the authoritative per-agent
-    /// `spawnDelegationEnabled` gate in `SystemPromptComposer.resolveTools`.
+    /// AppleScript-family tool names, derived from the capability registry.
+    static var agentDelegationAppleScriptToolNames: Set<String> {
+        Set(SubagentCapabilityRegistry.appleScript.toolNames)
+    }
+    /// All agent-delegation tool names (spawn + image + applescript), derived
+    /// from the registry's delegation family. Used by the authoritative
+    /// per-agent `spawnDelegationEnabled` gate in
+    /// `SystemPromptComposer.resolveTools`.
     static var agentDelegationAllToolNames: Set<String> {
         SubagentToolVisibility.delegationToolNames
     }

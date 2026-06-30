@@ -277,7 +277,7 @@ struct SubagentCapabilityRegistryTests {
     @Test("the registry represents every shipped kind")
     func allRepresentsEveryKind() {
         let ids = Set(SubagentCapabilityRegistry.all.map(\.id))
-        #expect(ids == ["computer_use", "spawn", "image"])
+        #expect(ids == ["computer_use", "spawn", "image", "applescript"])
     }
 
     @Test("the modelSource axis records how each kind resolves its model")
@@ -309,6 +309,9 @@ struct SubagentCapabilityRegistryTests {
         )
         #expect(SubagentCapabilityRegistry.capability(forPerAgentFlag: .spawn)?.id == "spawn")
         #expect(SubagentCapabilityRegistry.capability(forPerAgentFlag: .image)?.id == "image")
+        #expect(
+            SubagentCapabilityRegistry.capability(forPerAgentFlag: .appleScript)?.id == "applescript"
+        )
     }
 
     @Test("every descriptor carries a display label + icon for the feed and chip")
@@ -319,12 +322,16 @@ struct SubagentCapabilityRegistryTests {
         }
     }
 
-    @Test("per-agent toggle flags are computer_use, spawn, image (each independent)")
+    @Test("per-agent toggle flags are computer_use, spawn, image, applescript (each independent)")
     func perAgentToggleFlagsAreDistinct() {
-        // One card per *flag*: computer_use, spawn, and image are now each their
-        // own per-agent toggle (image split out of the old shared spawn flag), so
-        // the Subagents tab renders exactly three cards in registry order.
-        #expect(SubagentCapabilityRegistry.perAgentToggleFlags == [.computerUse, .spawn, .image])
+        // One card per *flag*: computer_use, spawn, image, and applescript are
+        // each their own per-agent toggle (image split out of the old shared
+        // spawn flag; applescript is its own kind), so the Subagents tab renders
+        // exactly four cards in registry order.
+        #expect(
+            SubagentCapabilityRegistry.perAgentToggleFlags
+                == [.computerUse, .spawn, .image, .appleScript]
+        )
     }
 
     /// Drift guard: the registry SSOT (consumed by both visibility surfaces)
@@ -338,10 +345,16 @@ struct SubagentCapabilityRegistryTests {
         #expect(SubagentToolVisibility.delegationToolNames == ToolRegistry.agentDelegationAllToolNames)
         #expect(ToolRegistry.agentDelegationSpawnToolNames == Set(SubagentCapabilityRegistry.spawn.toolNames))
         #expect(ToolRegistry.agentDelegationImageToolNames == Set(SubagentCapabilityRegistry.image.toolNames))
+        #expect(
+            ToolRegistry.agentDelegationAppleScriptToolNames
+                == Set(SubagentCapabilityRegistry.appleScript.toolNames)
+        )
         // The "all" set is exactly the union of the per-family sets.
         #expect(
             ToolRegistry.agentDelegationAllToolNames
-                == ToolRegistry.agentDelegationSpawnToolNames.union(ToolRegistry.agentDelegationImageToolNames)
+                == ToolRegistry.agentDelegationSpawnToolNames
+                    .union(ToolRegistry.agentDelegationImageToolNames)
+                    .union(ToolRegistry.agentDelegationAppleScriptToolNames)
         )
     }
 
