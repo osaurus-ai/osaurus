@@ -174,7 +174,11 @@ public final class SpeechModelManager: ObservableObject {
 
         downloadStates[model.id] = .downloading(progress: 0.0)
 
-        let task = Task { [weak self] in
+        // Pin the download consumer to the main actor: it resumes after an
+        // `await` on FluidAudio's downloader (off-main) and then mutates the
+        // @Published `downloadStates` — an un-annotated Task would write them
+        // off-main ("Updating ObservedObject from background threads").
+        let task = Task { @MainActor [weak self] in
             guard let self else { return }
 
             do {

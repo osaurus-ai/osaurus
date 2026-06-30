@@ -806,6 +806,17 @@ public class ThemeManager: ObservableObject {
     }
 
     @objc private func systemAppearanceChanged() {
+        // `DistributedNotificationCenter` delivers this selector on an arbitrary
+        // thread, so hop to the main actor before touching any @Published theme
+        // state. Mutating it on the delivery thread is the "Updating
+        // ObservedObject<ThemeManager> from background threads will cause
+        // undefined behavior" hazard observed in the crash log.
+        Task { @MainActor [weak self] in
+            self?.applySystemAppearanceChange()
+        }
+    }
+
+    private func applySystemAppearanceChange() {
         // Only update if we're following system appearance and no user-selected theme is active
         guard appearanceMode == .system, activeCustomTheme == nil else { return }
 

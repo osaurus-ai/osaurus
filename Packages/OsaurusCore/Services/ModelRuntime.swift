@@ -557,6 +557,16 @@ public actor ModelRuntime {
             await cancelAndDrainLoadingTasks([(name, record)])
         }
 
+        // Serialize the GPU teardown against every other Metal producer via the
+        // exclusive teardown gate. Acquired here — AFTER the lease/idle drains
+        // above, so we never hold the gate while waiting for in-flight requests
+        // — and released only after the final synchronize below, so "teardown
+        // gate released" provably means "this model's GPU work is idle",
+        // symmetric with the load and image lanes. Without it the next admitted
+        // producer (a model load, image job, or embedder) starts the moment this
+        // function returns and races the async buffer frees/fences the weight
+        // release enqueues — the chat→image handoff `Gather::eval_gpu` abort.
+        await MetalGate.shared.enterModelTeardown(model: name)
         modelCache[name]?.container.disableCaching()
 
         // Drain the GPU BEFORE releasing the weight arrays. The lease/idle
@@ -588,6 +598,7 @@ public actor ModelRuntime {
         Stream.gpu.synchronize()
         Memory.clearCache()
         Stream.gpu.synchronize()
+        await MetalGate.shared.exitModelTeardown(model: name)
     }
 
     /// Evict `other` for the strict-single-model policy WITHOUT cancelling an
@@ -682,6 +693,12 @@ public actor ModelRuntime {
             return
         }
 
+        // Normal (non-quit) teardown serializes against other GPU producers via
+        // the teardown gate, symmetric with `unload(name:)`. The quit path
+        // deliberately skips it: `cancelAllGenerations` already shut every engine
+        // down, and blocking on a wedged gate holder must never hang the quit
+        // chain (the stuck-lease guard above already chose to let the OS reclaim).
+        if !quit { await MetalGate.shared.enterModelTeardown(model: "all-models") }
         for holder in modelCache.values {
             holder.container.disableCaching()
         }
@@ -701,6 +718,7 @@ public actor ModelRuntime {
         Memory.cacheLimit = mlxCacheLimit()
         Stream.gpu.synchronize()
         Memory.clearCache()
+        if !quit { await MetalGate.shared.exitModelTeardown(model: "all-models") }
     }
 
     /// Invalidates the cached RuntimeConfig so the next request reads fresh values.
