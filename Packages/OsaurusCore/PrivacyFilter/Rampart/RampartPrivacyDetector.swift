@@ -36,7 +36,7 @@ actor RampartPrivacyDetector {
     /// `Character`, matching `String.index(_:offsetBy:)`).
     func modelSpans(in text: String) -> [(category: EntityCategory, range: Range<String.Index>)] {
         guard !text.isEmpty, let model else { return [] }
-        var out: [(category: EntityCategory, range: Range<String.Index>)] = []
+        var raw: [(category: EntityCategory, range: Range<String.Index>)] = []
         for span in model.detect(text) {
             guard let category = Self.category(for: span.type) else { continue }
             guard
@@ -45,7 +45,37 @@ actor RampartPrivacyDetector {
                 let hi = text.index(
                     text.startIndex, offsetBy: span.range.upperBound, limitedBy: text.endIndex)
             else { continue }
-            out.append((category, lo..<hi))
+            raw.append((category, lo..<hi))
+        }
+        return Self.coalesce(raw, in: text)
+    }
+
+    /// Merge adjacent spans of the SAME category separated only by
+    /// whitespace/punctuation into one span. Rampart emits a separate
+    /// span per fine-grained type (e.g. GIVEN_NAME + SURNAME, or
+    /// BUILDING_NUMBER + STREET_NAME + CITY + STATE + ZIP_CODE), which
+    /// all collapse to one category here — without coalescing, "Jonathan
+    /// Reyes" would mint two `[PERSON_*]` tokens and a street address
+    /// five `[ADDR_*]` tokens. This makes the placeholder granularity
+    /// match the OpenAI backend's single-span person/address output.
+    static func coalesce(
+        _ spans: [(category: EntityCategory, range: Range<String.Index>)],
+        in text: String
+    ) -> [(category: EntityCategory, range: Range<String.Index>)] {
+        let sorted = spans.sorted { $0.range.lowerBound < $1.range.lowerBound }
+        var out: [(category: EntityCategory, range: Range<String.Index>)] = []
+        for span in sorted {
+            if var last = out.last,
+                last.category == span.category,
+                last.range.upperBound <= span.range.lowerBound,
+                text[last.range.upperBound..<span.range.lowerBound]
+                    .allSatisfy({ $0.isWhitespace || $0.isPunctuation })
+            {
+                last.range = last.range.lowerBound..<span.range.upperBound
+                out[out.count - 1] = last
+            } else {
+                out.append(span)
+            }
         }
         return out
     }
