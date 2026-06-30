@@ -28,6 +28,29 @@ final class MCPOAuthDiscoveryTests: XCTestCase {
         XCTAssertNil(resolved)
     }
 
+    func testPRMHintRejectsNumericIPv4LocalTargetsForPublicServer() {
+        let server = URL(string: "https://mcp.example.com/mcp")!
+        for raw in [
+            "https://2130706433/.well-known/oauth-protected-resource",
+            "https://0x7f000001/.well-known/oauth-protected-resource",
+            "https://0X7F000001/.well-known/oauth-protected-resource",
+            "https://017700000001/.well-known/oauth-protected-resource",
+            "https://127.1/.well-known/oauth-protected-resource",
+            "https://127.0.1/.well-known/oauth-protected-resource",
+            "https://0x7f.1/.well-known/oauth-protected-resource",
+            "https://0177.0.0.1/.well-known/oauth-protected-resource",
+            "https://0x7f.0.0.1/.well-known/oauth-protected-resource",
+            "https://2852039166/.well-known/oauth-protected-resource",
+            "https://0XA9FEA9FE/.well-known/oauth-protected-resource",
+        ] {
+            let hint = URL(string: raw)!
+
+            let resolved = MCPOAuthDiscovery.prmURL(forServer: server, hint: hint)
+
+            XCTAssertNil(resolved, "Expected rejected OAuth metadata hint: \(raw)")
+        }
+    }
+
     func testPRMHintAllowsLocalTargetForLocalServer() {
         let server = URL(string: "http://localhost:7331/mcp")!
         let hint = URL(string: "http://127.0.0.1:7331/.well-known/oauth-protected-resource")!

@@ -660,17 +660,31 @@ struct ClaudePluginInstallerTests {
     }
 
     @Test func importedMCPServerURLRejectsLocalPrivateAndSecretBearingEndpoints() {
+        let publicMCPURL = URL(string: "https://mcp.example.com/mcp")!.absoluteString
         #expect(
-            ClaudePluginInstaller.validImportedMCPServerURL("https://mcp.example.com/mcp")
-                == "https://mcp.example.com/mcp"
+            ClaudePluginInstaller.validImportedMCPServerURL(publicMCPURL)
+                == publicMCPURL
         )
 
         for raw in [
             "http://mcp.example.com/mcp",
             "https://localhost:7331/mcp",
             "https://127.0.0.1:7331/mcp",
+            "https://2130706433/mcp",
+            "https://0x7f000001/mcp",
+            "https://0X7F000001/mcp",
+            "https://0x7F000001/mcp",
+            "https://017700000001/mcp",
+            "https://127.1/mcp",
+            "https://127.0.1/mcp",
+            "https://0x7f.1/mcp",
+            "https://0177.0.0.1/mcp",
+            "https://0x7f.0.0.1/mcp",
             "https://10.0.0.8/mcp",
             "https://169.254.169.254/latest/meta-data",
+            "https://2852039166/latest/meta-data",
+            "https://0xa9fea9fe/latest/meta-data",
+            "https://0XA9FEA9FE/latest/meta-data",
             "https://[::1]/mcp",
             "https://[fe80::1]/mcp",
             "https://[fc00::1]/mcp",

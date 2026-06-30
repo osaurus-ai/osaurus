@@ -81,7 +81,8 @@ struct GitHubSkillServiceImportTests {
             }
         }
 
-        let repo = try service.parseGitHubURL("https://github.com/acme/widgets")
+        let repoURL = URL(string: "https://github.com/acme/widgets")!.absoluteString
+        let repo = try service.parseGitHubURL(repoURL)
         #expect(repo.slug == "acme/widgets")
     }
 
@@ -314,6 +315,249 @@ struct GitHubSkillServiceImportTests {
         }
     }
 
+    @Test func duplicateRecursiveTreePathsStopImportWithoutTrapping() async throws {
+        let service = makeService { request in
+            switch request.url?.path {
+            case "/repos/acme/widgets":
+                return .json(#"{"default_branch":"main"}"#)
+            case "/repos/acme/widgets/contents/.claude-plugin/marketplace.json":
+                return .text(#"{"name":"fixture","plugins":[{"name":"one","source":"./one"}]}"#)
+            case "/repos/acme/widgets/git/trees/main":
+                return .json(
+                    #"""
+                    {
+                      "sha": "root",
+                      "truncated": false,
+                      "tree": [
+                        {"path":"one","type":"tree","sha":"one-a"},
+                        {"path":"one","type":"tree","sha":"one-b"}
+                      ]
+                    }
+                    """#
+                )
+            default:
+                return .notFound()
+            }
+        }
+        defer { service.invalidateForTests() }
+
+        do {
+            _ = try await service.fetchPlugins(from: "acme/widgets")
+            Issue.record("Expected duplicate tree path to stop import")
+        } catch let error as GitHubSkillError {
+            guard case .importTooLarge(let reason) = error else {
+                Issue.record("Expected importTooLarge, got \(error)")
+                return
+            }
+            #expect(reason.contains("duplicate tree path"))
+        }
+    }
+
+    @Test func importBoundsRejectTooManyTreeEntries() async throws {
+        let entries = (0..<101)
+            .map { #"{"path":"one/file\#($0).md","type":"blob","size":1,"sha":"s\#($0)"}"# }
+            .joined(separator: ",")
+        let service = makeService { request in
+            switch request.url?.path {
+            case "/repos/acme/widgets":
+                return .json(#"{"default_branch":"main"}"#)
+            case "/repos/acme/widgets/contents/.claude-plugin/marketplace.json":
+                return .text(#"{"name":"fixture","plugins":[{"name":"one","source":"./one"}]}"#)
+            case "/repos/acme/widgets/git/trees/main":
+                return .json(#"{"sha":"root","truncated":false,"tree":[\#(entries)]}"#)
+            default:
+                return .notFound()
+            }
+        }
+        defer { service.invalidateForTests() }
+
+        do {
+            _ = try await service.fetchPlugins(from: "acme/widgets")
+            Issue.record("Expected tree entry bound to stop import")
+        } catch let error as GitHubSkillError {
+            guard case .importTooLarge(let reason) = error else {
+                Issue.record("Expected importTooLarge, got \(error)")
+                return
+            }
+            #expect(reason.contains("101 tree entries"))
+        }
+    }
+
+    @Test func importBoundsRejectTooManyPluginFiles() async throws {
+        let files = (0..<21)
+            .map { #"{"path":"one/file\#($0).md","type":"blob","size":1,"sha":"s\#($0)"}"# }
+            .joined(separator: ",")
+        let service = makeService { request in
+            switch request.url?.path {
+            case "/repos/acme/widgets":
+                return .json(#"{"default_branch":"main"}"#)
+            case "/repos/acme/widgets/contents/.claude-plugin/marketplace.json":
+                return .text(#"{"name":"fixture","plugins":[{"name":"one","source":"./one"}]}"#)
+            case "/repos/acme/widgets/git/trees/main":
+                return .json(#"{"sha":"root","truncated":false,"tree":[{"path":"one","type":"tree","sha":"one-sha"},\#(files)]}"#)
+            default:
+                return .notFound()
+            }
+        }
+        defer { service.invalidateForTests() }
+
+        do {
+            _ = try await service.fetchPlugins(from: "acme/widgets")
+            Issue.record("Expected file-count bound to stop import")
+        } catch let error as GitHubSkillError {
+            guard case .importTooLarge(let reason) = error else {
+                Issue.record("Expected importTooLarge, got \(error)")
+                return
+            }
+            #expect(reason.contains("21 files"))
+        }
+    }
+
+    @Test func importBoundsRejectUnknownAndExcessiveDeclaredSizes() async throws {
+        let unknownSizeService = makeService { request in
+            switch request.url?.path {
+            case "/repos/acme/widgets":
+                return .json(#"{"default_branch":"main"}"#)
+            case "/repos/acme/widgets/contents/.claude-plugin/marketplace.json":
+                return .text(#"{"name":"fixture","plugins":[{"name":"one","source":"./one"}]}"#)
+            case "/repos/acme/widgets/git/trees/main":
+                return .json(
+                    #"""
+                    {
+                      "sha":"root",
+                      "truncated":false,
+                      "tree":[
+                        {"path":"one","type":"tree","sha":"one-sha"},
+                        {"path":"one/skills","type":"tree","sha":"skills-sha"},
+                        {"path":"one/skills/alpha","type":"tree","sha":"alpha-sha"},
+                        {"path":"one/skills/alpha/SKILL.md","type":"blob","sha":"skill-sha"}
+                      ]
+                    }
+                    """#
+                )
+            default:
+                return .notFound()
+            }
+        }
+        defer { unknownSizeService.invalidateForTests() }
+
+        do {
+            _ = try await unknownSizeService.fetchPlugins(from: "acme/widgets")
+            Issue.record("Expected unknown file size to stop import")
+        } catch let error as GitHubSkillError {
+            guard case .importTooLarge(let reason) = error else {
+                Issue.record("Expected importTooLarge, got \(error)")
+                return
+            }
+            #expect(reason.contains("unknown sizes"))
+        }
+
+        let overTotalService = makeService { request in
+            switch request.url?.path {
+            case "/repos/acme/widgets":
+                return .json(#"{"default_branch":"main"}"#)
+            case "/repos/acme/widgets/contents/.claude-plugin/marketplace.json":
+                return .text(#"{"name":"fixture","plugins":[{"name":"one","source":"./one"}]}"#)
+            case "/repos/acme/widgets/git/trees/main":
+                return .json(
+                    #"""
+                    {
+                      "sha":"root",
+                      "truncated":false,
+                      "tree":[
+                        {"path":"one","type":"tree","sha":"one-sha"},
+                        {"path":"one/skills","type":"tree","sha":"skills-sha"},
+                        {"path":"one/skills/alpha","type":"tree","sha":"alpha-sha"},
+                        {"path":"one/skills/alpha/SKILL.md","type":"blob","size":700000,"sha":"skill-sha"},
+                        {"path":"one/references/manual.md","type":"blob","size":700000,"sha":"manual-sha"}
+                      ]
+                    }
+                    """#
+                )
+            default:
+                return .notFound()
+            }
+        }
+        defer { overTotalService.invalidateForTests() }
+
+        do {
+            _ = try await overTotalService.fetchPlugins(from: "acme/widgets")
+            Issue.record("Expected total byte bound to stop import")
+        } catch let error as GitHubSkillError {
+            guard case .importTooLarge(let reason) = error else {
+                Issue.record("Expected importTooLarge, got \(error)")
+                return
+            }
+            #expect(reason.contains("declares 1400000 bytes"))
+        }
+    }
+
+    @Test func importBoundsRejectDeepPluginTreesAndLargeFetchedFiles() async throws {
+        let deepTreeService = makeService { request in
+            switch request.url?.path {
+            case "/repos/acme/widgets":
+                return .json(#"{"default_branch":"main"}"#)
+            case "/repos/acme/widgets/contents/.claude-plugin/marketplace.json":
+                return .text(#"{"name":"fixture","plugins":[{"name":"one","source":"./one"}]}"#)
+            case "/repos/acme/widgets/git/trees/main":
+                return .json(
+                    #"""
+                    {
+                      "sha":"root",
+                      "truncated":false,
+                      "tree":[
+                        {"path":"one","type":"tree","sha":"one-sha"},
+                        {"path":"one/a/b/c/d/e/f/g/file.md","type":"blob","size":1,"sha":"deep-sha"}
+                      ]
+                    }
+                    """#
+                )
+            default:
+                return .notFound()
+            }
+        }
+        defer { deepTreeService.invalidateForTests() }
+
+        do {
+            _ = try await deepTreeService.fetchPlugins(from: "acme/widgets")
+            Issue.record("Expected tree-depth bound to stop import")
+        } catch let error as GitHubSkillError {
+            guard case .importTooLarge(let reason) = error else {
+                Issue.record("Expected importTooLarge, got \(error)")
+                return
+            }
+            #expect(reason.contains("levels deep"))
+        }
+
+        let largeFileService = makeService { request in
+            switch request.url?.path {
+            case "/repos/acme/widgets/contents/one/skills/alpha/SKILL.md":
+                return .init(
+                    status: 200,
+                    body: Data(repeating: UInt8(ascii: "a"), count: 1_048_577),
+                    headers: ["Content-Type": "text/plain; charset=utf-8"]
+                )
+            default:
+                return .notFound()
+            }
+        }
+        defer { largeFileService.invalidateForTests() }
+
+        do {
+            _ = try await largeFileService.fetchFileContent(
+                from: GitHubRepo(owner: "acme", name: "widgets", branch: "main"),
+                path: "one/skills/alpha/SKILL.md"
+            )
+            Issue.record("Expected max file byte bound to stop fetch")
+        } catch let error as GitHubSkillError {
+            guard case .importTooLarge(let reason) = error else {
+                Issue.record("Expected importTooLarge, got \(error)")
+                return
+            }
+            #expect(reason.contains("1048577 bytes"))
+        }
+    }
+
     @Test func resumesFromManifestCheckpointAndDeletesItAfterSuccess() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
             "osaurus-github-import-checkpoint-\(UUID().uuidString)",
@@ -342,6 +586,7 @@ struct GitHubSkillServiceImportTests {
                 repo: repo,
                 marketplacePluginNames: ["one", "two"],
                 marketplaceFingerprint: GitHubImportCheckpoint.fingerprint(for: checkpointMarketplace),
+                sourceFingerprints: ["one": "acme/widgets@main:one:one-sha"],
                 manifests: [cached]
             )
         )
@@ -373,6 +618,10 @@ struct GitHubSkillServiceImportTests {
                       "sha": "rootsha",
                       "truncated": false,
                       "tree": [
+                        {"path":"one","type":"tree","sha":"one-sha"},
+                        {"path":"one/skills","type":"tree","sha":"one-skills-sha"},
+                        {"path":"one/skills/alpha","type":"tree","sha":"alpha-sha"},
+                        {"path":"one/skills/alpha/SKILL.md","type":"blob","size":42,"sha":"alpha-skill-sha"},
                         {"path":"two","type":"tree","sha":"two-sha"},
                         {"path":"two/skills","type":"tree","sha":"skills-sha"},
                         {"path":"two/skills/beta","type":"tree","sha":"beta-sha"},
@@ -394,6 +643,74 @@ struct GitHubSkillServiceImportTests {
         #expect(result.plugins[1].skills.map(\.path) == ["two/skills/beta"])
         #expect(store.load(repo: repo) == nil)
         #expect(log.requests().filter { $0.url?.path == "/repos/acme/widgets/git/trees/main" }.count == 1)
+    }
+
+    @Test func staleCheckpointIsIgnoredWhenSourceTreeChanges() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "osaurus-github-import-stale-checkpoint-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let store = GitHubImportCheckpointStore(directory: directory)
+        let repo = GitHubRepo(owner: "acme", name: "widgets", branch: "main")
+        let marketplace = GitHubMarketplace(
+            name: "fixture",
+            owner: nil,
+            metadata: nil,
+            plugins: [MarketplacePlugin(name: "one", source: .localDirectory("./one"))]
+        )
+        store.save(
+            GitHubImportCheckpoint(
+                repo: repo,
+                marketplacePluginNames: ["one"],
+                marketplaceFingerprint: GitHubImportCheckpoint.fingerprint(for: marketplace),
+                sourceFingerprints: ["one": "acme/widgets@main:one:old-sha"],
+                manifests: [
+                    ClaudePluginManifest(
+                        name: "one",
+                        description: "cached",
+                        source: "one",
+                        sourceRepo: repo,
+                        skills: [ClaudeSkillEntry(path: "one/skills/stale")]
+                    )
+                ]
+            )
+        )
+        defer {
+            try? FileManager.default.removeItem(at: directory)
+        }
+
+        let service = makeService(checkpointStore: store) { request in
+            switch request.url?.path {
+            case "/repos/acme/widgets":
+                return .json(#"{"default_branch":"main"}"#)
+            case "/repos/acme/widgets/contents/.claude-plugin/marketplace.json":
+                return .text(#"{"name":"fixture","plugins":[{"name":"one","source":"./one"}]}"#)
+            case "/repos/acme/widgets/git/trees/main":
+                return .json(
+                    #"""
+                    {
+                      "sha": "rootsha",
+                      "truncated": false,
+                      "tree": [
+                        {"path":"one","type":"tree","sha":"new-sha"},
+                        {"path":"one/skills","type":"tree","sha":"skills-sha"},
+                        {"path":"one/skills/fresh","type":"tree","sha":"fresh-sha"},
+                        {"path":"one/skills/fresh/SKILL.md","type":"blob","size":42,"sha":"skill-sha"}
+                      ]
+                    }
+                    """#
+                )
+            default:
+                return .notFound()
+            }
+        }
+        defer { service.invalidateForTests() }
+
+        let result = try await service.fetchPlugins(from: "acme/widgets")
+
+        #expect(result.plugins.map(\.name) == ["one"])
+        #expect(result.plugins[0].skills.map(\.path) == ["one/skills/fresh"])
+        #expect(store.load(repo: repo) == nil)
     }
 
     @Test func checkpointCompatibilityRejectsChangedMarketplaceSources() {
@@ -428,12 +745,14 @@ struct GitHubSkillServiceImportTests {
     }
 
     @Test func redactsGitHubTokensAndSecretBearingURLs() {
+        let legacyPAT = String(repeating: "a", count: 40)
         let raw =
-            "Authorization: Bearer github_pat_1234567890abcdef1234567890 https://api.github.com/x?access_token=ghp_1234567890abcdef1234567890&ok=1"
+            "Authorization: Bearer github_pat_1234567890abcdef1234567890 Bearer \(legacyPAT) https://api.github.com/x?access_token=ghp_1234567890abcdef1234567890&ok=1"
         let redacted = GitHubSecretRedactor.redact(raw)
 
         #expect(!redacted.contains("github_pat_"))
         #expect(!redacted.contains("ghp_"))
+        #expect(!redacted.contains(legacyPAT))
         #expect(redacted.contains("[REDACTED]"))
 
         let error = GitHubSkillError.invalidURL(

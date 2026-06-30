@@ -24,6 +24,7 @@ public struct GitHubRepo: Codable, Hashable, Sendable {
     }
 
     /// Raw content URL base
+    @available(*, deprecated, message: "Use GitHub API request helpers so auth and rate-limit handling stay centralized.")
     public var rawBaseURL: String {
         "https://raw.githubusercontent.com/\(owner)/\(name)/\(branch)"
     }
@@ -66,8 +67,8 @@ public protocol GitHubAuthTokenProviding: Sendable {
 /// Preference order:
 /// 1. An explicitly supplied token closure (for future user-config wiring and
 ///    focused tests).
-/// 2. `GH_TOKEN`.
-/// 3. `GITHUB_TOKEN`.
+/// 2. `GITHUB_TOKEN`.
+/// 3. `GH_TOKEN`.
 public struct GitHubImportTokenProvider: GitHubAuthTokenProviding {
     private let explicitToken: @Sendable () -> String?
     private let environment: @Sendable () -> [String: String]
@@ -86,11 +87,7 @@ public struct GitHubImportTokenProvider: GitHubAuthTokenProviding {
         if let token = normalized(explicitToken()) {
             return GitHubAuthToken(value: token, source: .explicit)
         }
-        let env = environment()
-        if let token = normalized(env["GH_TOKEN"]) {
-            return GitHubAuthToken(value: token, source: .environment)
-        }
-        if let token = normalized(env["GITHUB_TOKEN"]) {
+        if let token = GitHubSkillService.gitHubToken(from: environment()) {
             return GitHubAuthToken(value: token, source: .environment)
         }
         return nil
@@ -136,6 +133,7 @@ public enum GitHubSecretRedactor {
         let patterns: [(String, String)] = [
             (#"(?i)(authorization\s*[:=]\s*bearer\s+)[^\s,;\]\)"]+"#, "$1[REDACTED]"),
             (#"(?i)(bearer\s+)(gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+)"#, "$1[REDACTED]"),
+            (#"(?i)(bearer\s+)[0-9a-f]{40}\b"#, "$1[REDACTED]"),
             (#"\bgh[pousr]_[A-Za-z0-9_]{16,}\b"#, "[REDACTED]"),
             (#"\bgithub_pat_[A-Za-z0-9_]{16,}\b"#, "[REDACTED]"),
             (#"(?i)([?&](?:access_token|token|client_secret|authorization)=)[^&#\s]+"#, "$1[REDACTED]"),
@@ -165,7 +163,8 @@ private enum GitHubImportInputValidator {
         guard !s.isEmpty, !s.contains("\0") else { return nil }
 
         if s.lowercased().hasPrefix("github.com/") {
-            return parseRepoURL("https://\(s)")
+            let normalizedURL = "https://\(s)"
+            return parseRepoURL(normalizedURL)
         }
 
         if let url = URL(string: s), let scheme = url.scheme?.lowercased() {
@@ -1074,21 +1073,50 @@ public struct GitHubImportCheckpoint: Codable, Sendable {
     public let repo: GitHubRepo
     public let marketplacePluginNames: [String]
     public let marketplaceFingerprint: String?
+    public var sourceFingerprints: [String: String]
     public var manifests: [ClaudePluginManifest]
     public var updatedAt: Date
+
+    private enum CodingKeys: String, CodingKey {
+        case repo
+        case marketplacePluginNames
+        case marketplaceFingerprint
+        case sourceFingerprints
+        case manifests
+        case updatedAt
+    }
 
     public init(
         repo: GitHubRepo,
         marketplacePluginNames: [String],
         marketplaceFingerprint: String? = nil,
+        sourceFingerprints: [String: String] = [:],
         manifests: [ClaudePluginManifest],
         updatedAt: Date = Date()
     ) {
         self.repo = repo
         self.marketplacePluginNames = marketplacePluginNames
         self.marketplaceFingerprint = marketplaceFingerprint
+        self.sourceFingerprints = sourceFingerprints
         self.manifests = manifests
         self.updatedAt = updatedAt
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.repo = try container.decode(GitHubRepo.self, forKey: .repo)
+        self.marketplacePluginNames = try container.decode(
+            [String].self,
+            forKey: .marketplacePluginNames
+        )
+        self.marketplaceFingerprint = try container.decodeIfPresent(
+            String.self,
+            forKey: .marketplaceFingerprint
+        )
+        self.sourceFingerprints =
+            (try? container.decode([String: String].self, forKey: .sourceFingerprints)) ?? [:]
+        self.manifests = try container.decode([ClaudePluginManifest].self, forKey: .manifests)
+        self.updatedAt = try container.decode(Date.self, forKey: .updatedAt)
     }
 
     public func isCompatible(repo: GitHubRepo, marketplace: GitHubMarketplace) -> Bool {
@@ -1108,8 +1136,13 @@ public struct GitHubImportCheckpoint: Codable, Sendable {
         return encoded
     }
 
-    public func manifest(named name: String) -> ClaudePluginManifest? {
-        manifests.first { $0.name == name }
+    public func manifest(named name: String, sourceFingerprint: String?) -> ClaudePluginManifest? {
+        guard let sourceFingerprint,
+            sourceFingerprints[name] == sourceFingerprint
+        else {
+            return nil
+        }
+        return manifests.first { $0.name == name }
     }
 }
 
@@ -1180,11 +1213,20 @@ private struct GitHubTreeSnapshot: Sendable {
     let entries: [GitHubTreeEntry]
     let entriesByPath: [String: GitHubTreeEntry]
 
-    init(repo: GitHubRepo, rootSHA: String?, entries: [GitHubTreeEntry]) {
+    init(repo: GitHubRepo, rootSHA: String?, entries: [GitHubTreeEntry]) throws {
         self.repo = repo
         self.rootSHA = rootSHA
         self.entries = entries
-        self.entriesByPath = Dictionary(uniqueKeysWithValues: entries.map { ($0.path, $0) })
+        var entriesByPath: [String: GitHubTreeEntry] = [:]
+        for entry in entries {
+            guard entriesByPath[entry.path] == nil else {
+                throw GitHubSkillError.importTooLarge(
+                    "\(repo.slug) returned duplicate tree path '\(entry.path)'"
+                )
+            }
+            entriesByPath[entry.path] = entry
+        }
+        self.entriesByPath = entriesByPath
     }
 
     func containsFile(_ path: String) -> Bool {
@@ -1390,6 +1432,27 @@ public final class GitHubSkillService: ObservableObject {
         config.timeoutIntervalForRequest = 30
         config.timeoutIntervalForResource = 60
         return GlobalProxySettings.makeSession(base: config)
+    }
+
+    /// A GitHub API token from the process environment, if present and
+    /// non-empty. Never logged. Honors GITHUB_TOKEN then GH_TOKEN.
+    nonisolated static func gitHubToken() -> String? {
+        gitHubToken(from: ProcessInfo.processInfo.environment)
+    }
+
+    /// Pure token resolution over an explicit environment, so the precedence
+    /// and trimming rules are unit-testable without mutating the process env.
+    /// GITHUB_TOKEN wins over GH_TOKEN; values are whitespace-trimmed; blank or
+    /// whitespace-only values are treated as absent.
+    nonisolated static func gitHubToken(from env: [String: String]) -> String? {
+        for key in ["GITHUB_TOKEN", "GH_TOKEN"] {
+            if let token = env[key]?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !token.isEmpty
+            {
+                return token
+            }
+        }
+        return nil
     }
 
     private nonisolated func githubRequest(
@@ -1619,7 +1682,14 @@ public final class GitHubSkillService: ObservableObject {
                 resumedFromCheckpoint: false
             )
             for plugin in marketplace.plugins {
-                if let cached = checkpoint?.manifest(named: plugin.name) {
+                let sourceFingerprint = try? await pluginSourceFingerprint(
+                    rootRepo: repo,
+                    plugin: plugin
+                )
+                if let cached = checkpoint?.manifest(
+                    named: plugin.name,
+                    sourceFingerprint: sourceFingerprint
+                ) {
                     manifests.append(cached)
                     resumedFromCheckpoint = true
                     importProgress = GitHubImportProgress(
@@ -1633,6 +1703,9 @@ public final class GitHubSkillService: ObservableObject {
                 let manifest = try await buildManifest(rootRepo: repo, plugin: plugin)
                 manifests.append(manifest)
                 checkpoint?.manifests = manifests
+                if let sourceFingerprint {
+                    checkpoint?.sourceFingerprints[plugin.name] = sourceFingerprint
+                }
                 checkpoint?.updatedAt = Date()
                 if let checkpoint {
                     checkpointStore.save(checkpoint)
@@ -2098,7 +2171,7 @@ public final class GitHubSkillService: ObservableObject {
             )
         }
 
-        return GitHubTreeSnapshot(
+        return try GitHubTreeSnapshot(
             repo: repo,
             rootSHA: decoded.sha,
             entries: decoded.tree
@@ -2117,7 +2190,13 @@ public final class GitHubSkillService: ObservableObject {
             )
         }
 
-        let totalBytes = files.reduce(0) { $0 + max($1.size ?? 0, 0) }
+        guard files.allSatisfy({ ($0.size ?? -1) >= 0 }) else {
+            throw GitHubSkillError.importTooLarge(
+                "\(snapshot.repo.slug)/\(source) has files with unknown sizes"
+            )
+        }
+
+        let totalBytes = files.reduce(0) { $0 + ($1.size ?? 0) }
         guard totalBytes <= limits.maxTotalBytesPerPlugin else {
             throw GitHubSkillError.importTooLarge(
                 "\(snapshot.repo.slug)/\(source) declares \(totalBytes) bytes; limit is \(limits.maxTotalBytesPerPlugin) bytes"
@@ -2130,6 +2209,25 @@ public final class GitHubSkillService: ObservableObject {
                 "\(snapshot.repo.slug)/\(source) is \(deepest) levels deep; limit is \(limits.maxDepthBelowPluginRoot)"
             )
         }
+    }
+
+    private nonisolated func pluginSourceFingerprint(
+        rootRepo: GitHubRepo,
+        plugin: MarketplacePlugin
+    ) async throws -> String? {
+        let resolved = try await resolveSource(
+            rootRepo: rootRepo,
+            source: plugin.source,
+            pluginName: plugin.name
+        )
+        let snapshot = try await recursiveTreeSnapshot(repo: resolved.repo)
+        let sourceSHA =
+            (resolved.basePath.isEmpty ? snapshot.rootSHA : snapshot.sha(forPath: resolved.basePath))
+            ?? snapshot.rootSHA
+        guard let sourceSHA, !sourceSHA.isEmpty else {
+            return nil
+        }
+        return "\(resolved.repo.slug)@\(resolved.repo.branch):\(resolved.basePath):\(sourceSHA)"
     }
 
     /// Build the full manifest of importable artifacts for one plugin.

@@ -41,6 +41,22 @@ struct SSRFProtectionTests {
         #expect(check("http://127.255.255.255/") != nil)
     }
 
+    @Test func blocksNonDottedLoopbackAndMetadataIPv4Encodings() {
+        #expect(check("http://2130706433/") != nil)
+        #expect(check("http://0x7f000001/") != nil)
+        #expect(check("http://0X7F000001/") != nil)
+        #expect(check("http://0x7F000001/") != nil)
+        #expect(check("http://017700000001/") != nil)
+        #expect(check("http://127.1/") != nil)
+        #expect(check("http://127.0.1/") != nil)
+        #expect(check("http://0x7f.1/") != nil)
+        #expect(check("http://0177.0.0.1/") != nil)
+        #expect(check("http://0x7f.0.0.1/") != nil)
+        #expect(check("http://2852039166/latest/meta-data/") != nil)
+        #expect(check("http://0xa9fea9fe/latest/meta-data/") != nil)
+        #expect(check("http://0XA9FEA9FE/latest/meta-data/") != nil)
+    }
+
     @Test func blocks10Range() {
         #expect(check("http://10.0.0.1/") != nil)
         #expect(check("http://10.255.255.255/") != nil)

@@ -159,20 +159,80 @@ enum MCPOAuthURLPolicy {
 
     private static func ipv4Octets(_ host: String) -> [UInt8]? {
         let parts = host.split(separator: ".", omittingEmptySubsequences: false)
-        guard parts.count == 4 else { return nil }
-        var octets: [UInt8] = []
-        octets.reserveCapacity(4)
-        for part in parts {
-            guard
-                !part.isEmpty,
-                part.allSatisfy(\.isNumber),
-                let value = UInt8(part)
-            else {
+        guard (1...4).contains(parts.count) else { return nil }
+        let values = parts.compactMap { parseIPv4Number(String($0)) }
+        guard values.count == parts.count else { return nil }
+        switch values.count {
+        case 1:
+            let value = values[0]
+            return [
+                UInt8((value >> 24) & 0xff),
+                UInt8((value >> 16) & 0xff),
+                UInt8((value >> 8) & 0xff),
+                UInt8(value & 0xff),
+            ]
+        case 2:
+            guard values[0] <= 0xff, values[1] <= 0x00ff_ffff else { return nil }
+            return [
+                UInt8(values[0]),
+                UInt8((values[1] >> 16) & 0xff),
+                UInt8((values[1] >> 8) & 0xff),
+                UInt8(values[1] & 0xff),
+            ]
+        case 3:
+            guard values[0] <= 0xff, values[1] <= 0xff, values[2] <= 0xffff else {
                 return nil
             }
-            octets.append(value)
+            return [
+                UInt8(values[0]),
+                UInt8(values[1]),
+                UInt8((values[2] >> 8) & 0xff),
+                UInt8(values[2] & 0xff),
+            ]
+        case 4:
+            guard values.allSatisfy({ $0 <= 0xff }) else { return nil }
+            return values.map(UInt8.init)
+        default:
+            return nil
         }
-        return octets
+    }
+
+    private static func parseIPv4Number(_ host: String) -> UInt32? {
+        guard !host.isEmpty else { return nil }
+        let text: String
+        let radix: Int
+        let normalized = host.lowercased()
+        if normalized.hasPrefix("0x") {
+            text = String(host.dropFirst(2))
+            radix = 16
+        } else if normalized.hasPrefix("0o") {
+            text = String(host.dropFirst(2))
+            radix = 8
+        } else if normalized.count > 1, normalized.hasPrefix("0") {
+            text = String(host.dropFirst())
+            radix = 8
+        } else {
+            text = host
+            radix = 10
+        }
+        let normalizedText = text.lowercased()
+        guard !text.isEmpty else { return nil }
+        let allowed: CharacterSet
+        switch radix {
+        case 16:
+            allowed = CharacterSet(charactersIn: "0123456789abcdef")
+        case 8:
+            allowed = CharacterSet(charactersIn: "01234567")
+        default:
+            allowed = .decimalDigits
+        }
+        guard normalizedText.unicodeScalars.allSatisfy({ allowed.contains($0) }),
+            let value = UInt64(normalizedText, radix: radix),
+            value <= UInt64(UInt32.max)
+        else {
+            return nil
+        }
+        return UInt32(value)
     }
 
     private static func isLocalOrPrivateIPv6Literal(_ host: String) -> Bool {
