@@ -52,6 +52,7 @@ release-candidate needs a durable comparison against main.
 Each watcher run writes:
 
 - `build/evals/watcher/<channel>/<timestamp>/report/manifest.json`
+- `build/evals/watcher/<channel>/<timestamp>/report/evidence-registry.json`
 - `build/evals/watcher/<channel>/<timestamp>/report/summary.json`
 - `build/evals/watcher/<channel>/<timestamp>/report/summary.md`
 - `build/evals/watcher/<channel>/<timestamp>/report/reports/<model>/<suite>.json`
@@ -61,7 +62,20 @@ Each watcher run writes:
 The scoreboard refresh writes:
 
 - `build/evals/watcher/<channel>/scoreboard/latest/scoreboard.json`
+- `build/evals/watcher/<channel>/scoreboard/latest/evidence-registry.json`
 - `build/evals/watcher/<channel>/scoreboard/latest/scoreboard.md`
+
+## Sharing Artifacts
+
+Watcher artifacts are maintainer evidence, not automatically public-safe
+uploads. `summary.md`, `manifest.json`, and `watcher-status.json` include local
+artifact paths and command provenance. Raw files under `reports/<model>/` are
+the full `EvalReport` payloads and may include case prompts, failure notes, and
+other run context. Before attaching artifacts to a public PR or issue, prefer
+sharing the generated Markdown summary plus any intentionally redacted
+scoreboard excerpt. Upload the full artifact directory only when the run
+environment and report contents have been reviewed for local paths, secrets,
+private prompts, and provider identifiers.
 
 To rebuild a scoreboard without running models:
 
@@ -71,6 +85,12 @@ make evals-scoreboard \
   EVALS_SCOREBOARD_OUT=build/evals/scoreboard/main \
   EVALS_MAX_REGRESSIONS=0
 ```
+
+Scoreboard rebuilds use the unified evidence registry snapshots as the report
+discovery layer. `summary.json` remains the eval report artifact payload, but a
+bundle is not consumed by the watcher scoreboard unless its
+`evidence-registry.json` registers that artifact with the eval review report
+source.
 
 The scoreboard includes:
 
@@ -92,7 +112,7 @@ make evals-watcher-report \
 ```
 
 This reads existing `EvalReport` JSON, builds the same report bundle shape, and
-refreshes the same scoreboard files.
+refreshes the same registry-backed scoreboard files.
 
 ## Stop and Cancel
 
@@ -130,6 +150,9 @@ Use these controls to keep frontier spend bounded:
 - `PLAN_ONLY=1` prints the watcher commands without executing them.
 - `BASELINE_DIR=<dir>` reuses a stored baseline instead of repeating it.
 - `EVALS_MAX_REGRESSIONS=<n>` changes only the scoreboard threshold report and
-  exit status; it does not hide the underlying comparison counts.
+  exit status; it does not hide the underlying comparison counts. If the report
+  bundle records failures but the relaxed threshold allows the scoreboard to
+  pass, automation should still inspect the report summary before treating the
+  run as release evidence.
 - Leave `INCLUDE_SANDBOX_FRONTIER` unset unless the runner has the sandbox
   prerequisites and budget for those cases.

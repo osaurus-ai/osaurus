@@ -263,12 +263,19 @@ extension OsaurusEvalsCLI {
         try FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        let summaryURL = outDir.appendingPathComponent(EvalReviewReportBundle.summaryFileName)
 
         try encoder.encode(bundle.manifest).write(
-            to: outDir.appendingPathComponent("manifest.json")
+            to: outDir.appendingPathComponent("manifest.json"),
+            options: .atomic
         )
         try bundle.toJSON(prettyPrinted: true).write(
-            to: outDir.appendingPathComponent("summary.json")
+            to: summaryURL,
+            options: .atomic
+        )
+        try bundle.evidenceRegistryJSON(summaryPath: summaryURL.path).write(
+            to: outDir.appendingPathComponent(EvalReviewReportBundle.evidenceRegistryFileName),
+            options: .atomic
         )
         try bundle.formatMarkdown().write(
             to: outDir.appendingPathComponent("summary.md"),
@@ -295,6 +302,7 @@ extension OsaurusEvalsCLI {
         print("")
         print("wrote eval review report bundle to \(outDir.path)")
         print("  manifest: \(outDir.appendingPathComponent("manifest.json").path)")
+        print("  registry: \(outDir.appendingPathComponent(EvalReviewReportBundle.evidenceRegistryFileName).path)")
         print("  summary:  \(outDir.appendingPathComponent("summary.md").path)")
         if bundle.comparison != nil {
             print("  compare:  \(outDir.appendingPathComponent("compare.md").path)")
@@ -366,6 +374,7 @@ extension OsaurusEvalsCLI {
 
             ARTIFACTS:
                 manifest.json
+                evidence-registry.json
                 summary.md
                 summary.json
                 reports/<model>/<suite>.json

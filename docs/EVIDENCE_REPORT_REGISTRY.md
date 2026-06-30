@@ -38,3 +38,16 @@ Metadata is redacted before it reaches the registry. Sensitive keys such as API
 keys, authorization headers, passwords, private keys, credentials, and token
 fields are replaced with `<redacted>`. Values that look like common bearer,
 OpenAI, GitHub, or Slack-style secrets are also replaced.
+
+## Eval Watcher Usage
+
+`osaurus-evals report` writes the eval-specific report bundle as before, then
+emits `evidence-registry.json` next to `summary.json`. That snapshot registers
+the report summary as an `eval` artifact with source
+`osaurus-evals-review-report`.
+
+`osaurus-evals scoreboard` consumes those registry snapshots when rebuilding a
+watcher scoreboard. It does not scan arbitrary `summary.json` files as a second
+report source; it follows registry summaries, fails closed when a registered
+artifact is unavailable or invalid, and writes its own scoreboard registry
+snapshot with source `osaurus-evals-scoreboard`.

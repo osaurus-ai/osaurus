@@ -179,6 +179,8 @@ and frontier lanes. It writes `build/evals/pr-report/<timestamp>/` unless
 - `summary.md` — maintainer-readable totals, failures, skips, regressions, and
   the exact commands used.
 - `summary.json` — machine-readable aggregate summary.
+- `evidence-registry.json` — unified evidence registry snapshot pointing at
+  the report `summary.json` artifact.
 - `reports/<model>/<suite>.json` — raw `EvalReport` output for each lane.
 - `compare.md` / `compare.json` — baseline-vs-current diff when a baseline is
   supplied.
@@ -226,11 +228,14 @@ make evals-watcher-report \
 Each run stores a report bundle under
 `build/evals/watcher/<channel>/<timestamp>/report/` and refreshes
 `build/evals/watcher/<channel>/scoreboard/latest/scoreboard.json` plus
-`scoreboard.md`. The manifest carries the artifact ID, and the scoreboard
-summarizes the latest release-candidate run, local/frontier model presets,
-baseline comparison counts, and the no-regression threshold
+`scoreboard.md`. Report and scoreboard directories also write
+`evidence-registry.json`; the scoreboard rebuild discovers eval report bundles
+through those registry snapshots and then reads their registered `summary.json`
+artifacts. The manifest carries the artifact ID, and the scoreboard summarizes
+the latest release-candidate run, local/frontier model presets, baseline
+comparison counts, and the no-regression threshold
 (`EVALS_MAX_REGRESSIONS`, default `0`). The scoreboard can also be rebuilt from
-existing bundles without running a model:
+existing registry-backed bundles without running a model:
 
 ```bash
 make evals-scoreboard \
@@ -872,7 +877,18 @@ The pure-data domains (`schema`, `tool_envelope`, `prefix_hash`, `argument_coerc
 
 ## CI isolation
 
-This package is a **separate Swift package** — the eval *suites* never run on CI (they burn tokens and need local models). The harness's own unit tests DO run on CI: `Tests/OsaurusEvalsKitTests` covers fixture decode, scorer contracts, the regression/scorecard labs, and judge resolution — all deterministic and token-free (no LLM calls, no model loads). Run them locally with `make evals-test` (plain `swift test --package-path Packages/OsaurusEvals` works too); the `test-evals` job in `.github/workflows/ci.yml` runs the same thing on every PR. Tests that need live resources stay behind env-var gates (`OSAURUS_EVALS_ENABLED=1`, `OSAURUS_RUN_SANDBOX_INTEGRATION_TESTS=1`) so nothing burns tokens unintentionally. Suite decode smokes assert **floor** counts (`>=`), so adding cases never breaks them — only deletions or schema drift do.
+This package is a **separate Swift package** — the eval *suites* never run on
+CI because they burn tokens and need local models. The harness's own unit tests
+do run on CI: `Tests/OsaurusEvalsKitTests` covers fixture decode, scorer
+contracts, regression/scorecard labs, report/scoreboard rendering, and judge
+resolution. Those tests are deterministic and token-free: no LLM calls and no
+model loads. Run them locally with `make evals-test` or plain
+`swift test --package-path Packages/OsaurusEvals`; the `test-evals` job in
+`.github/workflows/ci.yml` runs the same thing on every PR. Tests that need
+live resources stay behind env-var gates (`OSAURUS_EVALS_ENABLED=1`,
+`OSAURUS_RUN_SANDBOX_INTEGRATION_TESTS=1`) so nothing burns tokens
+unintentionally. Suite decode smokes assert **floor** counts (`>=`), so adding
+cases never breaks them — only deletions or schema drift do.
 
 ## Future hooks (deliberately stubbed)
 

@@ -6,8 +6,13 @@
 //
 
 import Foundation
+import OsaurusCore
 
 public struct EvalScoreboardBundle: Sendable, Codable, Equatable {
+    public static let evidenceRegistryFileName = "evidence-registry.json"
+    public static let evidenceSource = "osaurus-evals-scoreboard"
+    public static let jsonFileName = "scoreboard.json"
+
     public let generatedAt: String
     public let sourceRoots: [String]
     public let releaseCandidate: EvalReleaseCandidateScoreSummary?
@@ -36,6 +41,74 @@ public struct EvalScoreboardBundle: Sendable, Codable, Equatable {
             ? [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
             : [.sortedKeys, .withoutEscapingSlashes]
         return try encoder.encode(self)
+    }
+
+    public func evidenceReportDescriptor(scoreboardPath: String) -> EvidenceReportDescriptor {
+        var metadata: [String: String] = [
+            "runs": String(runs.count),
+            "source_roots": sourceRoots.joined(separator: ","),
+            "verdict": verdictLabel(),
+            "allowed_regressions": String(noRegression.allowedRegressions),
+            "observed_regressions": String(noRegression.observedRegressions),
+        ]
+        if let releaseCandidate {
+            metadata["release_candidate_artifact_id"] = releaseCandidate.artifactId
+            metadata["release_candidate_branch"] = releaseCandidate.branch
+            metadata["release_candidate_commit"] = releaseCandidate.commit
+            metadata["release_candidate_channel"] = releaseCandidate.channel ?? "unknown"
+        }
+        return EvidenceReportDescriptor(
+            kind: .eval,
+            source: Self.evidenceSource,
+            artifactPath: scoreboardPath,
+            status: hasBlockingRegressions || hasRunFailures ? .failed : .passed,
+            counts: evidenceCounts,
+            startedAt: parseEvalScoreboardEvidenceDate(generatedAt),
+            completedAt: parseEvalScoreboardEvidenceDate(generatedAt),
+            metadata: metadata
+        )
+    }
+
+    public func evidenceReportSummary(
+        scoreboardPath: String,
+        registeredAt: Date = Date(),
+        fileManager: FileManager = .default
+    ) -> EvidenceReportSummary {
+        let registry = EvidenceReportRegistryService(
+            fileManager: fileManager,
+            now: { registeredAt }
+        )
+        return registry.register(evidenceReportDescriptor(scoreboardPath: scoreboardPath))
+    }
+
+    public func evidenceRegistrySnapshot(
+        scoreboardPath: String,
+        registeredAt: Date = Date(),
+        fileManager: FileManager = .default
+    ) -> EvidenceReportRegistrySnapshot {
+        EvidenceReportRegistrySnapshot(
+            reports: [
+                evidenceReportSummary(
+                    scoreboardPath: scoreboardPath,
+                    registeredAt: registeredAt,
+                    fileManager: fileManager
+                ),
+            ]
+        )
+    }
+
+    public func evidenceRegistryJSON(
+        scoreboardPath: String,
+        prettyPrinted: Bool = true,
+        registeredAt: Date = Date(),
+        fileManager: FileManager = .default
+    ) throws -> Data {
+        try evidenceRegistrySnapshot(
+            scoreboardPath: scoreboardPath,
+            registeredAt: registeredAt,
+            fileManager: fileManager
+        )
+        .stableJSONData(prettyPrinted: prettyPrinted)
     }
 
     public func formatMarkdown() -> String {
@@ -140,6 +213,21 @@ public struct EvalScoreboardBundle: Sendable, Codable, Equatable {
         if hasBlockingRegressions { return "REGRESSED" }
         if hasRunFailures { return "EVAL FAILURES PRESENT" }
         return "PASS"
+    }
+
+    private var evidenceCounts: EvidenceReportCounts {
+        models.reduce(EvidenceReportCounts()) { partial, model in
+            let counts = model.counts.evidenceCounts
+            return EvidenceReportCounts(
+                total: partial.total + counts.total,
+                passed: partial.passed + counts.passed,
+                failed: partial.failed + counts.failed,
+                errored: partial.errored + counts.errored,
+                skipped: partial.skipped + counts.skipped,
+                blocked: partial.blocked + counts.blocked,
+                warnings: partial.warnings + counts.warnings
+            )
+        }
     }
 
     private func formatRate(_ rate: Double?) -> String {
@@ -370,9 +458,55 @@ public enum EvalScoreboardBuilder {
     }
 
     public static func loadBundlesRecursively(from roots: [URL]) throws -> [EvalScoreboardInput] {
+        let summaries = try loadEvidenceSummariesRecursively(from: roots)
+            .filter {
+                $0.kind == .eval && $0.source == EvalReviewReportBundle.evidenceSource
+            }
+        guard !summaries.isEmpty else {
+            throw EvalScoreboardError.noBundles(roots.map(\.path).joined(separator: ", "))
+        }
+
         let fm = FileManager.default
         let decoder = JSONDecoder()
         var inputs: [EvalScoreboardInput] = []
+        for summary in summaries.sorted(by: evidenceSummarySort) {
+            let url = URL(fileURLWithPath: summary.artifact.path)
+            guard summary.artifact.availability == .available,
+                  fm.fileExists(atPath: url.path)
+            else {
+                throw EvalScoreboardError.unavailableArtifact(
+                    url.path,
+                    summary.artifact.message ?? "registered artifact is unavailable"
+                )
+            }
+            let data: Data
+            do {
+                data = try Data(contentsOf: url)
+            } catch {
+                throw EvalScoreboardError.invalidBundle(url.path, error.localizedDescription)
+            }
+            let bundle: EvalReviewReportBundle
+            do {
+                bundle = try decoder.decode(EvalReviewReportBundle.self, from: data)
+            } catch {
+                throw EvalScoreboardError.invalidBundle(url.path, error.localizedDescription)
+            }
+            inputs.append(
+                EvalScoreboardInput(
+                    summaryPath: url.path,
+                    bundle: bundle,
+                    evidenceSummary: summary
+                )
+            )
+        }
+        return inputs
+    }
+
+    private static func loadEvidenceSummariesRecursively(from roots: [URL]) throws -> [EvidenceReportSummary] {
+        let fm = FileManager.default
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        var summariesByID: [String: EvidenceReportSummary] = [:]
         for root in roots {
             var isDirectory: ObjCBool = false
             guard fm.fileExists(atPath: root.path, isDirectory: &isDirectory) else {
@@ -385,16 +519,21 @@ public enum EvalScoreboardBuilder {
                     includingPropertiesForKeys: [.isRegularFileKey],
                     options: [.skipsHiddenFiles]
                 ) else {
-                    throw EvalScoreboardError.noBundles(root.path)
+                    throw EvalScoreboardError.noEvidenceRegistries(root.path)
                 }
                 urls = enumerator.compactMap { item in
-                    guard let url = item as? URL, url.lastPathComponent == "summary.json" else {
+                    guard let url = item as? URL,
+                          url.lastPathComponent == EvalReviewReportBundle.evidenceRegistryFileName
+                    else {
                         return nil
                     }
                     return url
                 }
                 .sorted { $0.path < $1.path }
             } else {
+                guard root.lastPathComponent == EvalReviewReportBundle.evidenceRegistryFileName else {
+                    throw EvalScoreboardError.expectedEvidenceRegistry(root.path)
+                }
                 urls = [root]
             }
 
@@ -403,21 +542,33 @@ public enum EvalScoreboardBuilder {
                 do {
                     data = try Data(contentsOf: url)
                 } catch {
-                    throw EvalScoreboardError.invalidBundle(url.path, error.localizedDescription)
+                    throw EvalScoreboardError.invalidEvidenceRegistry(url.path, error.localizedDescription)
                 }
-                let bundle: EvalReviewReportBundle
                 do {
-                    bundle = try decoder.decode(EvalReviewReportBundle.self, from: data)
+                    let snapshot = try decoder.decode(EvidenceReportRegistrySnapshot.self, from: data)
+                    for summary in snapshot.reports where summariesByID[summary.id] == nil {
+                        summariesByID[summary.id] = summary
+                    }
                 } catch {
-                    throw EvalScoreboardError.invalidBundle(url.path, error.localizedDescription)
+                    throw EvalScoreboardError.invalidEvidenceRegistry(url.path, error.localizedDescription)
                 }
-                inputs.append(EvalScoreboardInput(summaryPath: url.path, bundle: bundle))
             }
         }
-        guard !inputs.isEmpty else {
-            throw EvalScoreboardError.noBundles(roots.map(\.path).joined(separator: ", "))
+        let summaries = Array(summariesByID.values)
+        guard !summaries.isEmpty else {
+            throw EvalScoreboardError.noEvidenceRegistries(roots.map(\.path).joined(separator: ", "))
         }
-        return inputs
+        return summaries
+    }
+
+    private static func evidenceSummarySort(
+        _ lhs: EvidenceReportSummary,
+        _ rhs: EvidenceReportSummary
+    ) -> Bool {
+        if lhs.completedAt != rhs.completedAt {
+            return (lhs.completedAt ?? .distantPast) < (rhs.completedAt ?? .distantPast)
+        }
+        return lhs.artifact.path < rhs.artifact.path
     }
 
     private static func modelScoreboard(
@@ -641,26 +792,44 @@ public enum EvalScoreboardBuilder {
 public struct EvalScoreboardInput: Sendable, Equatable {
     public let summaryPath: String
     public let bundle: EvalReviewReportBundle
+    public let evidenceSummary: EvidenceReportSummary
 
-    public init(summaryPath: String, bundle: EvalReviewReportBundle) {
+    public init(
+        summaryPath: String,
+        bundle: EvalReviewReportBundle,
+        evidenceSummary: EvidenceReportSummary? = nil
+    ) {
         self.summaryPath = summaryPath
         self.bundle = bundle
+        self.evidenceSummary = evidenceSummary ?? bundle.evidenceReportSummary(summaryPath: summaryPath)
     }
 }
 
 public enum EvalScoreboardError: Error, LocalizedError, Equatable {
     case pathNotFound(String)
     case noBundles(String)
+    case noEvidenceRegistries(String)
+    case expectedEvidenceRegistry(String)
+    case invalidEvidenceRegistry(String, String)
     case invalidBundle(String, String)
+    case unavailableArtifact(String, String)
 
     public var errorDescription: String? {
         switch self {
         case .pathNotFound(let path):
             return "path does not exist: \(path)"
         case .noBundles(let path):
-            return "no eval review summary.json bundles found at: \(path)"
+            return "no eval review evidence reports found at: \(path)"
+        case .noEvidenceRegistries(let path):
+            return "no evidence registry snapshots found at: \(path)"
+        case .expectedEvidenceRegistry(let path):
+            return "expected evidence registry snapshot, got: \(path)"
+        case .invalidEvidenceRegistry(let path, let reason):
+            return "invalid evidence registry snapshot at \(path): \(reason)"
         case .invalidBundle(let path, let reason):
             return "invalid eval review summary.json at \(path): \(reason)"
+        case .unavailableArtifact(let path, let reason):
+            return "unavailable eval review artifact at \(path): \(reason)"
         }
     }
 }
@@ -680,4 +849,14 @@ private func isoNowForEvalScoreboard() -> String {
     let formatter = ISO8601DateFormatter()
     formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
     return formatter.string(from: Date())
+}
+
+private func parseEvalScoreboardEvidenceDate(_ value: String) -> Date? {
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    if let date = formatter.date(from: value) {
+        return date
+    }
+    formatter.formatOptions = [.withInternetDateTime]
+    return formatter.date(from: value)
 }

@@ -214,7 +214,7 @@ struct EvalScoreboardTests {
         #expect(!recoveredLatest.hasRunFailures)
     }
 
-    @Test func loadBundlesRecursivelyFindsSummaryJSONOnly() throws {
+    @Test func loadBundlesRecursivelyConsumesEvidenceRegistrySnapshots() throws {
         let baselineReport = try fixtureReport("baseline")
         let bundle = EvalReviewReportBuilder.build(
             manifest: manifest(
@@ -232,23 +232,50 @@ struct EvalScoreboardTests {
         )
         let root = try temporaryDirectory()
         let reportDir = root.appendingPathComponent("main/20260617T000000Z/report", isDirectory: true)
-        try FileManager.default.createDirectory(at: reportDir, withIntermediateDirectories: true)
-        try bundle.toJSON(prettyPrinted: true).write(to: reportDir.appendingPathComponent("summary.json"))
-        try Data("{}".utf8).write(to: reportDir.appendingPathComponent("not-a-summary.json"))
+        try writeBundle(bundle, to: reportDir)
+        let duplicateRegistryDir = root.appendingPathComponent("main/latest/report", isDirectory: true)
+        try FileManager.default.createDirectory(at: duplicateRegistryDir, withIntermediateDirectories: true)
+        try FileManager.default.copyItem(
+            at: reportDir.appendingPathComponent(EvalReviewReportBundle.evidenceRegistryFileName),
+            to: duplicateRegistryDir.appendingPathComponent(EvalReviewReportBundle.evidenceRegistryFileName)
+        )
+        let strayDir = root.appendingPathComponent("main/stray/report", isDirectory: true)
+        try FileManager.default.createDirectory(at: strayDir, withIntermediateDirectories: true)
+        try bundle.toJSON(prettyPrinted: true).write(to: strayDir.appendingPathComponent("summary.json"))
 
         let loaded = try EvalScoreboardBuilder.loadBundlesRecursively(from: [root])
         let scoreboard = EvalScoreboardBuilder.build(sourceRoots: [root], bundles: loaded)
 
         #expect(loaded.count == 1)
+        #expect(loaded.first?.evidenceSummary.source == EvalReviewReportBundle.evidenceSource)
         #expect(scoreboard.runs.first?.commit == "base123")
         #expect(scoreboard.models.first?.counts.total == 6)
     }
 
-    @Test func loadBundlesRecursivelyFailsOnInvalidSummaryJSON() throws {
+    @Test func loadBundlesRecursivelyFailsOnInvalidRegistryBackedSummaryJSON() throws {
+        let baselineReport = try fixtureReport("baseline")
+        let bundle = EvalReviewReportBuilder.build(
+            manifest: manifest(
+                generatedAt: "2026-06-17T00:00:00Z",
+                commit: "base123",
+                artifactPath: "build/evals/watcher/main/invalid/report"
+            ),
+            reports: [
+                input(
+                    suite: "AgentLoop",
+                    reportPath: "watcher/main/invalid/report/AgentLoop.json",
+                    report: baselineReport
+                ),
+            ]
+        )
         let root = try temporaryDirectory()
         let reportDir = root.appendingPathComponent("main/invalid/report", isDirectory: true)
         try FileManager.default.createDirectory(at: reportDir, withIntermediateDirectories: true)
-        try Data("{".utf8).write(to: reportDir.appendingPathComponent("summary.json"))
+        let summaryURL = reportDir.appendingPathComponent(EvalReviewReportBundle.summaryFileName)
+        try Data("{".utf8).write(to: summaryURL)
+        try bundle.evidenceRegistryJSON(summaryPath: summaryURL.path).write(
+            to: reportDir.appendingPathComponent(EvalReviewReportBundle.evidenceRegistryFileName)
+        )
 
         #expect(throws: EvalScoreboardError.self) {
             _ = try EvalScoreboardBuilder.loadBundlesRecursively(from: [root])
@@ -336,5 +363,15 @@ struct EvalScoreboardTests {
             .appendingPathComponent("osaurus-eval-scoreboard-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
+    }
+
+    private func writeBundle(_ bundle: EvalReviewReportBundle, to reportDir: URL) throws {
+        try FileManager.default.createDirectory(at: reportDir, withIntermediateDirectories: true)
+        let summaryURL = reportDir.appendingPathComponent(EvalReviewReportBundle.summaryFileName)
+        try bundle.toJSON(prettyPrinted: true).write(to: summaryURL, options: .atomic)
+        try bundle.evidenceRegistryJSON(summaryPath: summaryURL.path).write(
+            to: reportDir.appendingPathComponent(EvalReviewReportBundle.evidenceRegistryFileName),
+            options: .atomic
+        )
     }
 }

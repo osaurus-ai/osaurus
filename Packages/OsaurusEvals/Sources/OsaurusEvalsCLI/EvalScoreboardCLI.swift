@@ -31,7 +31,8 @@ extension OsaurusEvalsCLI {
             )
             try writeEvalScoreboard(scoreboard, outDir: opts.outDir)
             print("wrote eval watcher scoreboard to \(opts.outDir.path)")
-            print("  json: \(opts.outDir.appendingPathComponent("scoreboard.json").path)")
+            print("  json: \(opts.outDir.appendingPathComponent(EvalScoreboardBundle.jsonFileName).path)")
+            print("  registry: \(opts.outDir.appendingPathComponent(EvalScoreboardBundle.evidenceRegistryFileName).path)")
             print("  markdown: \(opts.outDir.appendingPathComponent("scoreboard.md").path)")
             print("  verdict: \(scoreboard.hasBlockingRegressions ? "REGRESSED" : (scoreboard.hasRunFailures ? "EVAL FAILURES PRESENT" : "PASS"))")
             return scoreboard.hasBlockingRegressions || scoreboard.hasRunFailures ? 1 : 0
@@ -48,8 +49,13 @@ extension OsaurusEvalsCLI {
         outDir: URL
     ) throws {
         try FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
+        let scoreboardURL = outDir.appendingPathComponent(EvalScoreboardBundle.jsonFileName)
         try scoreboard.toJSON(prettyPrinted: true).write(
-            to: outDir.appendingPathComponent("scoreboard.json"),
+            to: scoreboardURL,
+            options: .atomic
+        )
+        try scoreboard.evidenceRegistryJSON(scoreboardPath: scoreboardURL.path).write(
+            to: outDir.appendingPathComponent(EvalScoreboardBundle.evidenceRegistryFileName),
             options: .atomic
         )
         try scoreboard.formatMarkdown().write(
@@ -69,14 +75,15 @@ extension OsaurusEvalsCLI {
                                          [--max-regressions <n>]
 
             FLAGS:
-                --reports-root <dir>  Directory or summary.json file. May be repeated.
-                                      Directories are scanned recursively for summary.json.
+                --reports-root <dir>  Directory or evidence-registry.json file. May be repeated.
+                                      Directories are scanned recursively for registry snapshots.
                 --out-dir <dir>       Output directory. Defaults to
                                       build/evals/scoreboard/<timestamp>.
                 --max-regressions <n> No-regression threshold. Defaults to 0.
 
             ARTIFACTS:
                 scoreboard.json
+                evidence-registry.json
                 scoreboard.md
 
             EXAMPLES:

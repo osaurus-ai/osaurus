@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import OsaurusCore
 
 public enum EvalReviewModelRole: String, Sendable, Codable, Equatable, Comparable {
     case local
@@ -165,6 +166,16 @@ public struct EvalReviewOutcomeCounts: Sendable, Codable, Equatable {
             errored: errored + other.errored
         )
     }
+
+    public var evidenceCounts: EvidenceReportCounts {
+        EvidenceReportCounts(
+            total: total,
+            passed: passed,
+            failed: failed,
+            errored: errored,
+            skipped: skipped
+        )
+    }
 }
 
 public struct EvalReviewCaseSummary: Sendable, Codable, Equatable {
@@ -278,6 +289,11 @@ public struct EvalReviewComparisonSummary: Sendable, Codable, Equatable {
 }
 
 public struct EvalReviewReportBundle: Sendable, Codable, Equatable {
+    public static let evidenceRegistryFileName = "evidence-registry.json"
+    public static let evidenceSource = "osaurus-evals-review-report"
+    public static let manifestFileName = "manifest.json"
+    public static let summaryFileName = "summary.json"
+
     public let manifest: EvalReviewManifest
     public let models: [EvalReviewModelSummary]
     public let comparison: EvalReviewComparisonSummary?
@@ -297,6 +313,92 @@ public struct EvalReviewReportBundle: Sendable, Codable, Equatable {
             ? [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
             : [.sortedKeys, .withoutEscapingSlashes]
         return try encoder.encode(self)
+    }
+
+    public func evidenceReportDescriptor(summaryPath: String? = nil) -> EvidenceReportDescriptor {
+        let path = summaryPath ?? URL(fileURLWithPath: manifest.artifactPath, isDirectory: true)
+            .appendingPathComponent(Self.summaryFileName)
+            .path
+        var metadata: [String: String] = [
+            "artifact_dir": manifest.artifactPath,
+            "branch": manifest.branch,
+            "commit": manifest.commit,
+            "runner": manifest.runner,
+            "verdict": verdictLabel(),
+            "blocking_regressions": String(comparison?.regressions.count ?? 0),
+            "new_failures": String(comparison?.newFailures.count ?? 0),
+        ]
+        if let artifactId = manifest.artifactId {
+            metadata["artifact_id"] = artifactId
+        }
+        if let baselinePath = manifest.baselinePath {
+            metadata["baseline_path"] = baselinePath
+        }
+        if let judgeModel = manifest.environment.judgeModel {
+            metadata["judge_model"] = judgeModel
+        }
+        metadata["models"] = models
+            .map { "\($0.role.rawValue):\($0.modelId)" }
+            .sorted()
+            .joined(separator: ",")
+        metadata["suites"] = manifest.suites
+            .map(\.name)
+            .sorted()
+            .joined(separator: ",")
+
+        return EvidenceReportDescriptor(
+            id: manifest.artifactId.map { "\(Self.evidenceSource):\($0)" },
+            kind: .eval,
+            source: Self.evidenceSource,
+            artifactPath: path,
+            status: evidenceStatus,
+            counts: evidenceCounts,
+            startedAt: parseEvalReviewEvidenceDate(manifest.generatedAt),
+            completedAt: parseEvalReviewEvidenceDate(manifest.generatedAt),
+            metadata: metadata
+        )
+    }
+
+    public func evidenceReportSummary(
+        summaryPath: String? = nil,
+        registeredAt: Date = Date(),
+        fileManager: FileManager = .default
+    ) -> EvidenceReportSummary {
+        let registry = EvidenceReportRegistryService(
+            fileManager: fileManager,
+            now: { registeredAt }
+        )
+        return registry.register(evidenceReportDescriptor(summaryPath: summaryPath))
+    }
+
+    public func evidenceRegistrySnapshot(
+        summaryPath: String? = nil,
+        registeredAt: Date = Date(),
+        fileManager: FileManager = .default
+    ) -> EvidenceReportRegistrySnapshot {
+        EvidenceReportRegistrySnapshot(
+            reports: [
+                evidenceReportSummary(
+                    summaryPath: summaryPath,
+                    registeredAt: registeredAt,
+                    fileManager: fileManager
+                ),
+            ]
+        )
+    }
+
+    public func evidenceRegistryJSON(
+        summaryPath: String? = nil,
+        prettyPrinted: Bool = true,
+        registeredAt: Date = Date(),
+        fileManager: FileManager = .default
+    ) throws -> Data {
+        try evidenceRegistrySnapshot(
+            summaryPath: summaryPath,
+            registeredAt: registeredAt,
+            fileManager: fileManager
+        )
+        .stableJSONData(prettyPrinted: prettyPrinted)
     }
 
     public func formatMarkdown() -> String {
@@ -391,6 +493,37 @@ public struct EvalReviewReportBundle: Sendable, Codable, Equatable {
         if hasBlockingRegressions { return "REGRESSED" }
         if hasRunFailures { return "EVAL FAILURES PRESENT" }
         return "PASS"
+    }
+
+    private var evidenceStatus: EvidenceReportStatus {
+        if hasBlockingRegressions || hasRunFailures {
+            return .failed
+        }
+        return .passed
+    }
+
+    private var evidenceCounts: EvidenceReportCounts {
+        let totals = models.reduce(EvidenceReportCounts()) { partial, model in
+            let counts = model.counts.evidenceCounts
+            return EvidenceReportCounts(
+                total: partial.total + counts.total,
+                passed: partial.passed + counts.passed,
+                failed: partial.failed + counts.failed,
+                errored: partial.errored + counts.errored,
+                skipped: partial.skipped + counts.skipped,
+                blocked: partial.blocked + counts.blocked,
+                warnings: partial.warnings + counts.warnings
+            )
+        }
+        return EvidenceReportCounts(
+            total: totals.total,
+            passed: totals.passed,
+            failed: totals.failed,
+            errored: totals.errored,
+            skipped: totals.skipped,
+            blocked: totals.blocked,
+            warnings: totals.warnings + (comparison?.warnings.count ?? 0)
+        )
     }
 
     private func appendPREvidence(into lines: inout [String]) {
@@ -610,6 +743,7 @@ public enum EvalReviewReportBuilder {
         }
 
         let decoder = JSONDecoder()
+        let roleHints = roleHintsByModelId(from: urls, decoder: decoder)
         let reports = urls.compactMap { url -> EvalReviewReportInput? in
             guard let data = try? Data(contentsOf: url),
                   let report = try? decoder.decode(EvalReport.self, from: data)
@@ -617,7 +751,7 @@ public enum EvalReviewReportBuilder {
                 return nil
             }
             return EvalReviewReportInput(
-                role: roleFromPath(url, fallback: role),
+                role: roleHints[report.modelId] ?? roleFromPath(url, fallback: role),
                 suite: url.deletingPathExtension().lastPathComponent,
                 suitePath: url.path,
                 reportPath: url.path,
@@ -725,6 +859,33 @@ public enum EvalReviewReportBuilder {
         if parts.contains(EvalReviewModelRole.local.rawValue) { return .local }
         return fallback
     }
+
+    private static func roleHintsByModelId(
+        from urls: [URL],
+        decoder: JSONDecoder
+    ) -> [String: EvalReviewModelRole] {
+        var hints: [String: EvalReviewModelRole] = [:]
+        var conflicts = Set<String>()
+
+        for url in urls where url.lastPathComponent == EvalReviewReportBundle.manifestFileName {
+            guard let data = try? Data(contentsOf: url),
+                  let manifest = try? decoder.decode(EvalReviewManifest.self, from: data)
+            else {
+                continue
+            }
+
+            for model in manifest.models where !conflicts.contains(model.modelId) {
+                if let existing = hints[model.modelId], existing != model.role {
+                    hints.removeValue(forKey: model.modelId)
+                    conflicts.insert(model.modelId)
+                } else {
+                    hints[model.modelId] = model.role
+                }
+            }
+        }
+
+        return hints
+    }
 }
 
 public enum EvalReviewReportError: Error, LocalizedError, Equatable {
@@ -763,4 +924,14 @@ private func isoNowForEvalReviewReport() -> String {
     let formatter = ISO8601DateFormatter()
     formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
     return formatter.string(from: Date())
+}
+
+private func parseEvalReviewEvidenceDate(_ value: String) -> Date? {
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    if let date = formatter.date(from: value) {
+        return date
+    }
+    formatter.formatOptions = [.withInternetDateTime]
+    return formatter.date(from: value)
 }

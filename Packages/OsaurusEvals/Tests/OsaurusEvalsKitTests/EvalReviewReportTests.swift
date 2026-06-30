@@ -1,4 +1,5 @@
 import Foundation
+import OsaurusCore
 import Testing
 
 @testable import OsaurusEvalsKit
@@ -170,6 +171,80 @@ struct EvalReviewReportTests {
         #expect(decoded.counts.errored == 1)
     }
 
+    @Test func evidenceRegistrySnapshotUsesUnifiedEvidenceRegistry() throws {
+        let root = try temporaryDirectory()
+        let summaryURL = root.appendingPathComponent(EvalReviewReportBundle.summaryFileName)
+        let bundle = EvalReviewReportBuilder.build(
+            manifest: manifest(
+                artifactPath: root.path,
+                artifactId: "eval-smoke-1",
+                judgeModel: "sk-secret-value"
+            ),
+            reports: [
+                input(
+                    role: .local,
+                    suite: "AgentLoop",
+                    report: report(
+                        modelId: "foundation",
+                        rows: [
+                            ("agent_loop.pass", .passed, []),
+                            ("agent_loop.fail", .failed, ["missing edit"]),
+                        ]
+                    )
+                ),
+            ]
+        )
+        try bundle.toJSON(prettyPrinted: true).write(to: summaryURL)
+
+        let data = try bundle.evidenceRegistryJSON(
+            summaryPath: summaryURL.path,
+            registeredAt: Date(timeIntervalSince1970: 1_750_000_000)
+        )
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let snapshot = try decoder.decode(EvidenceReportRegistrySnapshot.self, from: data)
+        let report = try #require(snapshot.reports.first)
+
+        #expect(snapshot.reports.count == 1)
+        #expect(report.kind == .eval)
+        #expect(report.source == EvalReviewReportBundle.evidenceSource)
+        #expect(report.status == .failed)
+        #expect(report.artifact.path == summaryURL.path)
+        #expect(report.artifact.availability == .available)
+        #expect(report.counts.total == 2)
+        #expect(report.counts.passed == 1)
+        #expect(report.counts.failed == 1)
+        #expect(report.metadata["artifact_id"] == "eval-smoke-1")
+        #expect(report.metadata["judge_model"] == "<redacted>")
+    }
+
+    @Test func loadingStoredBundleUsesManifestModelRoles() throws {
+        let root = try temporaryDirectory()
+        let reportsDir = root
+            .appendingPathComponent("reports", isDirectory: true)
+            .appendingPathComponent("openai_gpt-4o-mini", isDirectory: true)
+        try FileManager.default.createDirectory(at: reportsDir, withIntermediateDirectories: true)
+
+        let manifestURL = root.appendingPathComponent(EvalReviewReportBundle.manifestFileName)
+        let manifestData = try JSONEncoder().encode(manifest(artifactPath: root.path))
+        try manifestData.write(to: manifestURL)
+
+        let reportURL = reportsDir.appendingPathComponent("AgentLoop.json")
+        let frontierReport = report(
+            modelId: "openai/gpt-4o-mini",
+            rows: [("agent_loop.frontier-pass", .passed, [])]
+        )
+        try frontierReport.toJSON(prettyPrinted: true).write(to: reportURL)
+
+        let loaded = try EvalReviewReportBuilder.loadReportsRecursively(from: root)
+        let input = try #require(loaded.first)
+
+        #expect(loaded.count == 1)
+        #expect(input.role == .frontier)
+        #expect(input.report.modelId == "openai/gpt-4o-mini")
+        #expect(input.suite == "AgentLoop")
+    }
+
     private func input(
         role: EvalReviewModelRole,
         suite: String,
@@ -208,14 +283,18 @@ struct EvalReviewReportTests {
 
     private func manifest(
         baselinePath: String? = nil,
-        commands: [EvalReviewCommandRecord] = []
+        commands: [EvalReviewCommandRecord] = [],
+        artifactPath: String = "build/evals/pr-report",
+        artifactId: String? = nil,
+        judgeModel: String? = "openai/gpt-4o-mini"
     ) -> EvalReviewManifest {
         EvalReviewManifest(
             generatedAt: "2026-06-18T12:00:00Z",
             branch: "feature/eval-report",
             commit: "abc123",
             runner: "osaurus-evals report",
-            artifactPath: "build/evals/pr-report",
+            artifactPath: artifactPath,
+            artifactId: artifactId,
             suites: [
                 EvalReviewSuiteRef(name: "AgentLoop", path: "Suites/AgentLoop"),
                 EvalReviewSuiteRef(name: "AgentLoopFrontier", path: "Suites/AgentLoopFrontier"),
@@ -228,10 +307,17 @@ struct EvalReviewReportTests {
             environment: EvalReviewEnvironmentSummary(
                 operatingSystem: "macOS",
                 ci: false,
-                judgeModel: "openai/gpt-4o-mini",
+                judgeModel: judgeModel,
                 sandboxFrontierIncluded: false
             ),
             baselinePath: baselinePath
         )
+    }
+
+    private func temporaryDirectory() throws -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("osaurus-eval-review-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
     }
 }
