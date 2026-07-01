@@ -242,7 +242,7 @@ extension ModelPickerItem {
     }
 
     /// Short display name from a (possibly provider-prefixed) model id: the
-    /// segment after the last "/", e.g. "osaurus/venice/model-b" -> "model-b".
+    /// segment after the last "/", e.g. "osaurus/<upstream>/model-b" -> "model-b".
     private static func displayName(fromModelId id: String) -> String {
         guard let slashIndex = id.lastIndex(of: "/") else { return id }
         return String(id[id.index(after: slashIndex)...])
@@ -254,7 +254,7 @@ extension ModelPickerItem {
 extension OsaurusRouterModel {
     /// Compact one-line summary for the model picker: underlying provider,
     /// input/output price, and context window. e.g.
-    /// "venice · $2.00/M in · $4.00/M out · 131K ctx".
+    /// "<upstream> · $2.00/M in · $4.00/M out · 131K ctx".
     var pickerDescription: String? {
         var parts: [String] = []
 

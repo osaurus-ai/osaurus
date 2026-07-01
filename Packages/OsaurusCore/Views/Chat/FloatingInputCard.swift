@@ -187,9 +187,9 @@ struct FloatingInputCard: View {
     /// Drives the composer credits chip (balance + low-balance tinting) for
     /// Osaurus Router sessions.
     @ObservedObject private var accountService = OsaurusRouterAccountService.shared
-    /// Opt-in gate + frontmost-app source + Accessibility status for the
-    /// read-only screen-context chip (shown only on the empty/welcome screen).
-    @ObservedObject private var screenContext = ScreenContextSettings.shared
+    /// Frontmost-app source + Accessibility status for the read-only
+    /// screen-context chip (shown only on the empty/welcome screen). The opt-in
+    /// gate is now per-agent (a child of Computer Use), read via `agentManager`.
     @ObservedObject private var frontmostApp = FrontmostAppTracker.shared
     @ObservedObject private var permissionService = SystemPermissionService.shared
 
@@ -3021,7 +3021,7 @@ extension FloatingInputCard {
         // Mode 2 never injects local screen context (the remote agent runs its
         // own context server-side), so don't promise a snapshot we won't send.
         !isRemoteAgentRun
-            && screenContext.injectionEnabled
+            && agentManager.effectiveCapabilities(for: effectiveAgentId).screenContextEnabled
             && isEmptyChat
             && isAccessibilityGranted
             && frontmostApp.lastNonSelfAppName != nil

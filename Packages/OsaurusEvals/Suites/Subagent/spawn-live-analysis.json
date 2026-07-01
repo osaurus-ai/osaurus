@@ -9,7 +9,7 @@
     "subagent": {
       "lane": "spawn",
       "agent": "sparky",
-      "input": "List exactly three distinct, concrete use cases for a bounded sub-agent. Output one numbered line per use case and nothing else.",
+      "input": "List exactly three distinct, concrete use cases for a bounded subagent. Output one numbered line per use case and nothing else.",
       "seedSpawnableAgent": true,
       "expectSuccess": true,
       "expectEnvelopeKind": "success",

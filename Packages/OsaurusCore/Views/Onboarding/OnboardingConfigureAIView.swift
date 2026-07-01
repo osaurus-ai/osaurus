@@ -4,9 +4,8 @@
 //
 //  Onboarding step 3 — "Give your dino a brain". Local-first: a single home
 //  screen leads with "Run on your Mac" (the recommended default — a curated
-//  MLX model that runs locally), demotes the managed "Osaurus Cloud" option to
-//  a secondary "want more power?" card, and tucks bring-your-own-key behind a
-//  quiet drill-in row.
+//  MLX model that runs locally) and tucks bring-your-own-key behind a quiet
+//  drill-in row.
 //
 //  Apple Intelligence was removed from this step: it's too limited (no tools,
 //  no web, no agent work) to be a first-class first-run option. Users with
@@ -14,10 +13,10 @@
 //  from Settings.
 //
 //  Split into:
-//   - `ConfigureAIState`: ObservableObject holding the home selection (local
-//     vs hosted), the drilled-in screen (download / bring-your-own-key),
-//     connection-test progress, and the slide direction (lives at the
-//     OnboardingView level so it survives step transitions).
+//   - `ConfigureAIState`: ObservableObject holding the committed brain source,
+//     the drilled-in screen (download / bring-your-own-key), connection-test
+//     progress, and the slide direction (lives at the OnboardingView level so
+//     it survives step transitions).
 //   - `ConfigureAIBody`: the body slot — a two-column shell whose right column
 //     is the home screen, sliding direction-aware into the download and
 //     bring-your-own-key sub-screens.
@@ -28,9 +27,9 @@ import SwiftUI
 
 // MARK: - Screen / substates
 
-/// The top-level screen within the Configure AI step. `home` shows the local +
-/// cloud cards and the bring-your-own-key entry row; the other two are
-/// drilled-in sub-screens reached from home.
+/// The top-level screen within the Configure AI step. `home` shows the local
+/// "Run on your Mac" card and the bring-your-own-key entry row; the other two
+/// are drilled-in sub-screens reached from home.
 enum ConfigureScreen: Equatable {
     case home
     case downloading
@@ -107,20 +106,13 @@ struct CustomProviderForm {
 
 @MainActor
 final class ConfigureAIState: ObservableObject {
-    /// The screen currently shown. Starts at `home` (local + cloud cards plus
-    /// the bring-your-own-key entry row).
+    /// The screen currently shown. Starts at `home` (the recommended local card
+    /// plus the bring-your-own-key entry row).
     @Published var screen: ConfigureScreen = .home
 
     /// Bring-your-own-key drill-in depth. Only meaningful while
     /// `screen == .byok`.
     @Published var apiSubstate: APISubstate = .picker
-
-    /// Whether the managed "Osaurus Cloud" card is the active brain selection.
-    /// Defaults to `false`: the step is local-first, so "Run on your Mac" is the
-    /// pre-selected recommended default. Flipped on by tapping the cloud card,
-    /// and off by tapping the local card, picking a local model, or drilling
-    /// into a bring-your-own-key provider.
-    @Published var isHostedSelected: Bool = false
 
     /// The brain the user committed to on this step. Recorded at the proceed
     /// moment for each path (with no payment side effect) and read by
@@ -129,11 +121,11 @@ final class ConfigureAIState: ObservableObject {
     @Published var selectedBrainSource: BrainSource? = nil
 
     /// The local model id to record as the active agent's default when the user
-    /// finishes onboarding on the Local path. `nil` for hosted / provider-key
-    /// sources, so `finishOnboarding` only pins the model the user actually
-    /// committed to locally. The bundle may still be downloading; the id is
-    /// durable and `ChatView.refreshPickerItems` re-resolves it once the
-    /// download lands.
+    /// finishes onboarding on the Local path. `nil` for the bring-your-own-key
+    /// source (or none committed), so `finishOnboarding` only pins the model the
+    /// user actually committed to locally. The bundle may still be downloading;
+    /// the id is durable and `ChatView.refreshPickerItems` re-resolves it once
+    /// the download lands.
     var localDefaultModelIdToPin: String? {
         guard case .local = selectedBrainSource else { return nil }
         return selectedModel?.id
@@ -323,18 +315,10 @@ final class ConfigureAIState: ObservableObject {
     }
 
     /// Tapping a local model row (in the "Change" popover) makes it the active
-    /// brain, superseding the hosted card. Kept side-effect-light (no
-    /// `withAnimation`) so the footer CTA doesn't morph through the shared
-    /// transaction.
+    /// local brain. Kept side-effect-light (no `withAnimation`) so the footer
+    /// CTA doesn't morph through the shared transaction.
     func selectLocalModel(_ model: MLXModel) {
-        isHostedSelected = false
         selectedModel = model
-    }
-
-    /// Tapping the "Run on your Mac" card selects the local brain without
-    /// changing which model is picked.
-    func selectLocalBrain() {
-        isHostedSelected = false
     }
 
     // MARK: Model chooser (centered modal)
@@ -423,11 +407,9 @@ final class ConfigureAIState: ObservableObject {
         isChoosingModel = false
     }
 
-    /// Home → bring-your-own-key flow (forward slide). Drilling into BYOK drops
-    /// the hosted selection so Continue doesn't advance the hosted path.
+    /// Home → bring-your-own-key flow (forward slide).
     func showBYOK() {
         substateDirection = .forward
-        isHostedSelected = false
         apiSubstate = .picker
         screen = .byok
         isChoosingModel = false
@@ -511,9 +493,6 @@ final class ConfigureAIState: ObservableObject {
     /// API-key sub-list).
     func showAPIKeyPicker() {
         substateDirection = .forward
-        // Drilling into a bring-your-own-key flow drops the hosted selection so
-        // Continue doesn't advance the hosted path by mistake.
-        isHostedSelected = false
         apiSubstate = .apiKeyPicker
     }
 
@@ -549,8 +528,6 @@ final class ConfigureAIState: ObservableObject {
     /// is no in-form fork, so we pin the auth mode here at selection time.
     func selectAPIPreset(_ preset: ProviderPreset, preferAPIKey: Bool = false) {
         substateDirection = .forward
-        // Choosing a bring-your-own-key provider supersedes the hosted card.
-        isHostedSelected = false
         if let entry = ProviderCatalog.entry(for: preset) {
             selectedAuthMethod = preferAPIKey ? .apiKey : (entry.authMethods.first ?? .apiKey)
         }
@@ -559,29 +536,6 @@ final class ConfigureAIState: ObservableObject {
         } else {
             apiSubstate = .keyForm(preset)
         }
-    }
-
-    // MARK: Hosted (Osaurus, Venice-backed)
-
-    /// Tapping the "Osaurus Cloud" card makes hosted the active brain selection,
-    /// superseding any local model the user had picked.
-    func selectHostedOsaurus() {
-        isHostedSelected = true
-        screen = .home
-    }
-
-    /// Commit the hosted brain and advance. Selection is intentionally NOT a
-    /// payment event: no balance check, no checkout sheet. Funding is gated
-    /// later at or before first send (handled by the existing router
-    /// insufficient-funds flow once the routed model is in use).
-    func selectHostedAndContinue(onComplete: () -> Void) {
-        isHostedSelected = true
-        selectedBrainSource = .hostedOsaurus
-        OnboardingTelemetry.brainSourceSelected(
-            .hostedOsaurus,
-            privacyTier: HostedOption.default.privacyTier
-        )
-        onComplete()
     }
 
     func resolvedAPIConfig() -> ResolvedProviderConfig? {
@@ -860,8 +814,6 @@ struct ConfigureAIBody: View {
     private var homeView: some View {
         VStack(spacing: 12) {
             runOnYourMacCard
-            wantMorePowerDivider
-            osaurusCloudCard
             useYourOwnKeyRow
         }
     }
@@ -871,7 +823,7 @@ struct ConfigureAIBody: View {
     /// The recommended local card. Tapping the upper region selects the local
     /// brain; the model inset's "Change" control opens the model popover.
     private var runOnYourMacCard: some View {
-        OnboardingGlassCard(isSelected: !state.isHostedSelected) {
+        OnboardingGlassCard(isSelected: true) {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(alignment: .top, spacing: 14) {
                     localBrainIcon
@@ -893,38 +845,33 @@ struct ConfigureAIBody: View {
                         .foregroundColor(theme.secondaryText)
                         .fixedSize(horizontal: false, vertical: true)
                     }
-                    selectionRadio(!state.isHostedSelected)
+                    selectionRadio(true)
                 }
-                .contentShape(Rectangle())
-                .onTapGesture { state.selectLocalBrain() }
 
                 localModelInset
             }
             .padding(.horizontal, OnboardingMetrics.cardPaddingH)
             .padding(.vertical, OnboardingMetrics.cardPaddingV)
         }
-        .animation(.spring(response: 0.35, dampingFraction: 0.9), value: state.isHostedSelected)
     }
 
     /// Leading accent badge for the local card, mirroring `OnboardingRowCard`'s
     /// selected-icon treatment (accent fill + glow when selected).
     private var localBrainIcon: some View {
         ZStack {
-            if !state.isHostedSelected {
-                Circle()
-                    .fill(theme.accentColor)
-                    .blur(radius: 8)
-                    .frame(
-                        width: OnboardingMetrics.cardIcon - 8,
-                        height: OnboardingMetrics.cardIcon - 8
-                    )
-            }
             Circle()
-                .fill(!state.isHostedSelected ? theme.accentColor : theme.cardBackground)
+                .fill(theme.accentColor)
+                .blur(radius: 8)
+                .frame(
+                    width: OnboardingMetrics.cardIcon - 8,
+                    height: OnboardingMetrics.cardIcon - 8
+                )
+            Circle()
+                .fill(theme.accentColor)
                 .frame(width: OnboardingMetrics.cardIcon, height: OnboardingMetrics.cardIcon)
             Image(systemName: "cpu")
                 .font(.system(size: 18, weight: .medium))
-                .foregroundColor(!state.isHostedSelected ? .white : theme.secondaryText)
+                .foregroundColor(.white)
         }
     }
 
@@ -983,96 +930,6 @@ struct ConfigureAIBody: View {
         }
         .buttonStyle(.plain)
         .localizedHelp("Change model")
-    }
-
-    // MARK: Divider
-
-    /// Thin "Want more power?" rule separating the recommended local card from
-    /// the upgrade options beneath it.
-    private var wantMorePowerDivider: some View {
-        HStack(spacing: 10) {
-            dividerRule
-            Text("Want more power?", bundle: .module)
-                .font(theme.font(size: 11, weight: .medium))
-                .foregroundColor(theme.tertiaryText)
-                .fixedSize()
-            dividerRule
-        }
-        .padding(.vertical, 2)
-    }
-
-    private var dividerRule: some View {
-        Rectangle()
-            .fill(theme.primaryBorder.opacity(0.6))
-            .frame(height: 1)
-            .frame(maxWidth: .infinity)
-    }
-
-    // MARK: Osaurus Cloud (secondary, hosted)
-
-    private var osaurusCloudCard: some View {
-        Button {
-            state.selectHostedOsaurus()
-        } label: {
-            OnboardingGlassCard(isSelected: state.isHostedSelected) {
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack(alignment: .top, spacing: 14) {
-                        cloudIcon
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("Osaurus Cloud", bundle: .module)
-                                .font(theme.font(size: 14, weight: .semibold))
-                                .foregroundColor(theme.primaryText)
-                                .lineLimit(1)
-                            Text(
-                                "Frontier models like Claude, ChatGPT, and more. No setup or API key. Pay as you go.",
-                                bundle: .module
-                            )
-                            .font(theme.font(size: 12))
-                            .foregroundColor(theme.secondaryText)
-                            .fixedSize(horizontal: false, vertical: true)
-                        }
-                        Spacer(minLength: 8)
-                        selectionRadio(state.isHostedSelected)
-                    }
-                    poweredByVeniceLine
-                        .padding(.leading, OnboardingMetrics.cardIcon + 14)
-                }
-                .padding(.horizontal, OnboardingMetrics.cardPaddingH)
-                .padding(.vertical, OnboardingMetrics.cardPaddingV)
-            }
-        }
-        .buttonStyle(.plain)
-        .animation(.spring(response: 0.35, dampingFraction: 0.9), value: state.isHostedSelected)
-    }
-
-    private var cloudIcon: some View {
-        ZStack {
-            Circle()
-                .fill(state.isHostedSelected ? theme.accentColor : theme.cardBackground)
-                .frame(width: OnboardingMetrics.cardIcon, height: OnboardingMetrics.cardIcon)
-            Image(systemName: "cloud")
-                .font(.system(size: 18, weight: .medium))
-                .foregroundColor(state.isHostedSelected ? .white : theme.secondaryText)
-        }
-    }
-
-    /// "Powered by Venice" attribution with the privacy posture, prefixed with a
-    /// lock glyph so the zero-data-retention claim reads as the trust anchor it
-    /// is.
-    private var poweredByVeniceLine: some View {
-        HStack(alignment: .top, spacing: 6) {
-            Image(systemName: "lock")
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
-            Text(
-                "Powered by Venice — zero data retention. Privacy first.",
-                bundle: .module
-            )
-            .font(theme.font(size: 11))
-            .foregroundColor(theme.tertiaryText)
-            .lineSpacing(2)
-            .fixedSize(horizontal: false, vertical: true)
-        }
     }
 
     // MARK: Use your own key (BYOK entry)
@@ -1363,8 +1220,7 @@ struct ConfigureAIBody: View {
     // MARK: - API picker
 
     /// The bring-your-own-key body: OAuth-first sign-in rows plus the "Use an
-    /// API key" drill-in. The managed Osaurus Cloud option is not here — it
-    /// leads the home screen as a card.
+    /// API key" drill-in.
     private var apiPickerView: some View {
         VStack(alignment: .leading, spacing: OnboardingMetrics.cardSpacing) {
             ForEach(ProviderPreset.oauthProviders, id: \.id) { preset in
@@ -1428,11 +1284,6 @@ struct ConfigureAIBody: View {
         switch preset {
         case .custom:
             return L("Custom / OpenAI-compatible")
-        case .venice:
-            // Disambiguate the bring-your-own-key Venice row from the hosted
-            // cloud card (which also routes through Venice). Onboarding-local —
-            // Settings keeps the plain `Venice AI` name.
-            return L("Venice (your key)")
         default:
             return preset.name
         }
@@ -1976,9 +1827,8 @@ struct ConfigureModelChooserModal: View {
 // MARK: - CTA
 
 /// Primary CTA for the Configure AI step, dispatched per screen:
-///   - Home (local selected): Download & Install / Continue, enabled once a
-///     model is selected.
-///   - Home (hosted selected): Continue (commits the hosted brain).
+///   - Home (local): Download & Install / Continue, enabled once a model is
+///     selected.
 ///   - Downloading: a single adaptive "Continue in Background" → "Continue"
 ///     button (plus "Try Again" on failure).
 ///   - BYOK picker / API-key hub: cards drill in on tap, so a quiet hint
@@ -2029,20 +1879,12 @@ struct ConfigureAICTA: View {
     private var primaryButton: some View {
         switch state.screen {
         case .home:
-            if state.isHostedSelected {
-                OnboardingBrandButton(
-                    title: "Continue",
-                    action: { state.selectHostedAndContinue(onComplete: onComplete) }
-                )
-                .fixedSize(horizontal: true, vertical: false)
-            } else {
-                OnboardingBrandButton(
-                    title: state.selectedModel?.isDownloaded == true ? "Continue" : "Download & Install",
-                    action: { state.startLocalDownloadOrContinue(onComplete: onComplete) },
-                    isEnabled: state.selectedModel != nil
-                )
-                .fixedSize(horizontal: true, vertical: false)
-            }
+            OnboardingBrandButton(
+                title: state.selectedModel?.isDownloaded == true ? "Continue" : "Download & Install",
+                action: { state.startLocalDownloadOrContinue(onComplete: onComplete) },
+                isEnabled: state.selectedModel != nil
+            )
+            .fixedSize(horizontal: true, vertical: false)
 
         case .downloading:
             localDownloadingCTA

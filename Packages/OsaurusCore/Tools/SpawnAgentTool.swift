@@ -7,7 +7,7 @@
 //  model (with the local-orchestrator residency handoff when needed)
 //  and returns only a compact digest. Sibling of `spawn_model`, which delegates
 //  to a bare model with no agent. Default OFF; each agent opts in from its
-//  Sub-agents tab (`spawnableAgentNames`). See docs/SUBAGENT_PORTABLE_DESIGN.md.
+//  Subagents tab (`spawnableAgentNames`). See docs/SUBAGENT_PORTABLE_DESIGN.md.
 //
 
 import Foundation

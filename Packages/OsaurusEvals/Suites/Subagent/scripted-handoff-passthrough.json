@@ -2,7 +2,7 @@
   "id": "subagent.scripted-handoff-passthrough",
   "domain": "subagent",
   "label": "Subagent • residency handoff passthrough for same-model kinds",
-  "query": "A scripted same-model sub-agent that does NOT need the residency handoff.",
+  "query": "A scripted same-model subagent that does NOT need the residency handoff.",
   "notes": "Model-free. The kind sets needsHandoff=false and vends a PassthroughHandoff; the host must run the body WITHOUT a residency wrap (no unload/reload). The negative complement of scripted-handoff-wraps — together they prove BOTH host branches (wrap + passthrough) deterministically, mirroring the live local→local-same / local→remote / remote→* directions that run in place.",
   "fixtures": {},
   "expect": {

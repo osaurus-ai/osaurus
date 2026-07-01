@@ -21,8 +21,6 @@ public enum OnboardingStep: Int, CaseIterable {
     case welcome
     case createAgent
     case configureAI
-    case identitySetup
-    case sandboxSetup
     case choosePlugins
     case walkthrough
     case consent
@@ -40,7 +38,6 @@ enum OnboardingDirection {
 public struct OnboardingView: View {
     let onComplete: () -> Void
     let onPreferredSizeChange: ((CGSize) -> Void)?
-    let forceShowIdentity: Bool
 
     @Environment(\.theme) private var theme
     @State private var currentStep: OnboardingStep
@@ -51,27 +48,21 @@ public struct OnboardingView: View {
     @StateObject private var welcomeState = WelcomeState()
     @StateObject private var createAgentState = CreateAgentState()
     @StateObject private var configureAIState = ConfigureAIState()
-    @StateObject private var identityState = IdentityState()
-    @StateObject private var sandboxSetupState = SandboxSetupState()
     @StateObject private var choosePluginsState = ChoosePluginsState()
     @StateObject private var walkthroughState = WalkthroughState()
     @StateObject private var consentState = ConsentState()
 
-    // Identity and sandbox are no longer surfaced as their own steps —
-    // they're configured implicitly on completion (see `finishOnboarding`).
-    // The `.identitySetup` / `.sandboxSetup` cases are kept in the enum and
-    // the step switches so the DEBUG `forceShowIdentity` reset flow still
-    // works, but they're absent from the normal forward flow.
+    // Identity and sandbox are configured implicitly on completion (see
+    // `configureImplicitDefaults`) rather than shown as their own steps — the
+    // crypto/sandbox vocabulary read as jargon to non-technical users.
 
     public init(
-        forceShowIdentity: Bool = false,
         onPreferredSizeChange: ((CGSize) -> Void)? = nil,
         onComplete: @escaping () -> Void
     ) {
-        self.forceShowIdentity = forceShowIdentity
         self.onPreferredSizeChange = onPreferredSizeChange
         self.onComplete = onComplete
-        _currentStep = State(initialValue: forceShowIdentity ? .identitySetup : .welcome)
+        _currentStep = State(initialValue: .welcome)
     }
 
     public var body: some View {
@@ -223,10 +214,6 @@ public struct OnboardingView: View {
             CreateAgentBody(state: createAgentState)
         case .configureAI:
             ConfigureAIBody(state: configureAIState)
-        case .identitySetup:
-            IdentityBody(state: identityState)
-        case .sandboxSetup:
-            SandboxSetupBody(state: sandboxSetupState)
         case .choosePlugins:
             ChoosePluginsBody(state: choosePluginsState)
         case .walkthrough:
@@ -282,16 +269,6 @@ public struct OnboardingView: View {
                 )
                 Spacer(minLength: 0)
             }
-        case .identitySetup:
-            IdentityCTA(
-                state: identityState,
-                onComplete: { advanceFromIdentity() }
-            )
-        case .sandboxSetup:
-            SandboxSetupCTA(
-                state: sandboxSetupState,
-                onComplete: { advance(to: .choosePlugins) }
-            )
         case .choosePlugins:
             // Centered, content-hugging pill. "Skip" is folded into this CTA
             // when nothing is ticked, so there's no separate secondary link.
@@ -347,19 +324,6 @@ public struct OnboardingView: View {
             // The download escape hatch now lives in the primary CTA
             // ("Continue in Background"), so there's no secondary slot.
             EmptyView()
-        case .identitySetup:
-            IdentitySecondary(
-                state: identityState,
-                onSkip: {
-                    OnboardingTelemetry.stepSkipped(.identitySetup)
-                    advanceFromIdentity()
-                }
-            )
-        case .sandboxSetup:
-            SandboxSetupSecondary(onSkip: {
-                OnboardingTelemetry.stepSkipped(.sandboxSetup)
-                advance(to: .choosePlugins)
-            })
         case .choosePlugins:
             // Skip is folded into the primary CTA when nothing is selected.
             EmptyView()
@@ -380,8 +344,6 @@ public struct OnboardingView: View {
         case .welcome: return nil
         case .createAgent: return "Meet your dino"
         case .configureAI: return "Give your dino a brain"
-        case .identitySetup: return "Make this yours"
-        case .sandboxSetup: return "Add a safety net"
         case .choosePlugins: return "Add a few tools"
         case .walkthrough: return "A quick tour"
         case .consent: return "One last thing"
@@ -393,8 +355,6 @@ public struct OnboardingView: View {
         case .welcome: return nil
         case .createAgent: return "You can rename and customize your dino anytime in Settings."
         case .configureAI: return configureAIState.footerCaption
-        case .identitySetup: return identityState.footerCaption
-        case .sandboxSetup: return nil
         case .choosePlugins: return nil
         case .walkthrough: return nil
         case .consent: return nil
@@ -409,10 +369,6 @@ public struct OnboardingView: View {
             return { advance(to: .welcome, direction: .backward) }
         case .configureAI:
             return { configureAIState.handleBack { advance(to: .createAgent, direction: .backward) } }
-        case .identitySetup:
-            return { advance(to: .configureAI, direction: .backward) }
-        case .sandboxSetup:
-            return { advance(to: .identitySetup, direction: .backward) }
         case .choosePlugins:
             return { advance(to: .configureAI, direction: .backward) }
         case .walkthrough:
@@ -424,21 +380,15 @@ public struct OnboardingView: View {
         }
     }
 
-    // MARK: - Conditional sandbox step
+    // MARK: - Sandbox availability
 
-    /// The sandbox step is sandboxed (heh) behind macOS 26+ /
-    /// Containerization availability. On unsupported machines we skip
-    /// straight from identity to plugins so the user never sees a
-    /// dead-end "not available" card. `SandboxManager.State.shared`
-    /// publishes this synchronously on app launch via its seeded
-    /// `initialAvailability`, so the gate is always reliable by the
-    /// time the user reaches identity.
-    private var sandboxStepAvailable: Bool {
+    /// Whether this machine supports the sandbox (macOS 26+ / Containerization).
+    /// The sandbox no longer has its own onboarding step; this now only gates
+    /// whether `configureImplicitDefaults` persists the default sandbox config.
+    /// `SandboxManager.State.shared` publishes this synchronously on app launch
+    /// via its seeded `initialAvailability`, so the gate is always reliable.
+    private var sandboxAvailable: Bool {
         SandboxManager.State.shared.availability.isAvailable
-    }
-
-    private func advanceFromIdentity() {
-        advance(to: sandboxStepAvailable ? .sandboxSetup : .choosePlugins)
     }
 
     // MARK: - Slide Transition (pure horizontal)
@@ -528,16 +478,12 @@ public struct OnboardingView: View {
             configureAIState.selectedBrainSource?.telemetryValue
         )
 
-        // Gate the managed Osaurus Router on an explicit Cloud choice. The
-        // router defaults on (`OsaurusRouter.isEnabled`), so without this it
-        // would be injected for everyone — including local / bring-your-own-key
-        // users who never opted into hosted routing. Enable it only when the
-        // user picked Osaurus Cloud; otherwise turn it off (reversible later via
-        // the Credits/Dashboard toggle). Must run before `pinSelectedBrainModel`
-        // so the hosted path's `connectOsaurusRouterIfPossible` sees it enabled.
-        RemoteProviderManager.shared.setOsaurusRouterEnabled(
-            configureAIState.selectedBrainSource == .hostedOsaurus
-        )
+        // The managed Osaurus Router is intentionally left at its persisted
+        // default (on for fresh installs via `OsaurusRouter.isEnabled`) so the
+        // hosted models are available in everyone's picker. Onboarding no longer
+        // writes the flag, so a user's explicit opt-out in Credits sticks and is
+        // never silently re-enabled. Routing is not forced: each agent still
+        // runs whatever model `pinSelectedBrainModel` pins below.
 
         // Pin the new/active agent's default model to the brain the user chose
         // on the Configure AI step, so the first chat respects their selection.
@@ -548,18 +494,12 @@ public struct OnboardingView: View {
     }
 
     /// Pin the new/active agent's default model to the brain source the user
-    /// committed to on the Configure AI step. The three paths are mutually
-    /// exclusive (the brain source is recorded at the proceed moment), so a
-    /// single switch covers them.
+    /// committed to on the Configure AI step (local or bring-your-own-key). The
+    /// hosted router is on by default and surfaces its models in the picker, but
+    /// it's never forced as the active brain here.
     private func pinSelectedBrainModel() {
         let agentId = createAgentState.createdAgentId ?? Agent.defaultId
         switch configureAIState.selectedBrainSource {
-        case .hostedOsaurus:
-            // Wait for the implicit identity + managed router, then pin a Venice
-            // router model so the first message routes through Osaurus hosted.
-            // Selecting hosted triggered no payment; funding is gated later at
-            // first send via the existing router insufficient-funds flow.
-            pinHostedRouterModel(forAgent: agentId)
         case .local:
             // The model may still be downloading; the id is durable and
             // `ChatView.refreshPickerItems` re-resolves it once the bundle lands.
@@ -577,31 +517,6 @@ public struct OnboardingView: View {
         }
     }
 
-    /// After onboarding finishes with the hosted brain selected, wait for the
-    /// implicitly-created identity to land, connect the managed Osaurus Router,
-    /// then set the agent's default model to a Venice router model. Bounded
-    /// polling keeps this from ever hanging; it gives up quietly if the router
-    /// can't be reached (the user can still pick a model in chat).
-    private func pinHostedRouterModel(forAgent agentId: UUID) {
-        Task { @MainActor in
-            // `configureImplicitDefaults` kicks identity setup off detached;
-            // wait (bounded) for it so the managed router can connect.
-            for _ in 0 ..< 20 {
-                if OsaurusIdentity.exists() { break }
-                try? await Task.sleep(nanoseconds: 300_000_000)
-            }
-            guard OsaurusIdentity.exists() else { return }
-
-            await RemoteProviderManager.shared.connectOsaurusRouterIfPossible()
-
-            // The router's model catalog populates asynchronously after the
-            // connect resolves; poll briefly for the first Venice model.
-            await pinModelWhenAvailable(forAgent: agentId, attempts: 12) {
-                RemoteProviderManager.shared.firstHostedVeniceModelId()
-            }
-        }
-    }
-
     /// After onboarding finishes on the BYOK / OAuth path, wait (bounded) for
     /// the just-connected provider's catalog to populate, then pin the agent's
     /// default model to its first chat-capable model. Gives up quietly if the
@@ -615,10 +530,10 @@ public struct OnboardingView: View {
     }
 
     /// Poll (bounded) for a model id via `lookup`, pinning it as `agentId`'s
-    /// default the moment one resolves. Shared by the hosted-router and
-    /// BYOK/OAuth paths, whose catalogs both populate asynchronously after
-    /// onboarding finishes. Polls every 500ms up to `attempts` times, then
-    /// gives up quietly so it never hangs (the user can still pick in chat).
+    /// default the moment one resolves. Used by the BYOK/OAuth path, whose
+    /// catalog populates asynchronously after onboarding finishes. Polls every
+    /// 500ms up to `attempts` times, then gives up quietly so it never hangs
+    /// (the user can still pick in chat).
     @MainActor
     private func pinModelWhenAvailable(
         forAgent agentId: UUID,
@@ -656,7 +571,7 @@ public struct OnboardingView: View {
         // the first time it's needed (Sandbox tab / first sandboxed run),
         // exactly as the old "Skip for now" path behaved — no surprise
         // multi-GB download for every new user.
-        if sandboxStepAvailable {
+        if sandboxAvailable {
             SandboxConfigurationStore.save(SandboxConfigurationStore.load())
         }
     }

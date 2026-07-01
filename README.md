@@ -114,9 +114,9 @@ Expose agents to the internet via secure WebSocket tunnels through `agent.osauru
 
 When two Osaurus agents talk -- across your LAN or across the world through the relay -- the conversation is **end-to-end encrypted**: a forward-secret X25519 handshake authenticated by each agent's crypto identity, with every request, streamed token, and access key sealed in ChaCha20-Poly1305. The relay becomes a blind pipe that forwards ciphertext it cannot open; a man-in-the-middle cannot complete a handshake; replayed or truncated traffic is detected and refused; and there is no plaintext fallback an attacker can force. Zero configuration -- pairing is all it takes. See the [Secure Channel docs](docs/SECURE_CHANNEL.md).
 
-### Sub-agents (Spawn)
+### Subagents (Spawn)
 
-Let a chat delegate a bounded task to another model -- **local or remote** -- or to one of your saved agents, and get a compact result back without cluttering the conversation. Perfect for offloading research, coding, or analysis to a specialist mid-turn. When the sub-agent runs on a local model, Osaurus does a **single-residency handoff**: it unloads your chat model, runs the job, then reloads and continues, so two large models never fight for memory. Off by default, approved on first use, and configured per agent.
+Let a chat delegate a bounded task to another model -- **local or remote** -- or to one of your saved agents, and get a compact result back without cluttering the conversation. Perfect for offloading research, coding, or analysis to a specialist mid-turn. When the subagent runs on a local model, Osaurus does a **single-residency handoff**: it unloads your chat model, runs the job, then reloads and continues, so two large models never fight for memory. Off by default, approved on first use, and configured per agent.
 
 ### Image Generation
 
@@ -140,7 +140,7 @@ On macOS 26+, use Apple's on-device model as a first-class provider. Pass `model
 
 ### Cloud
 
-Connect to OpenAI, Anthropic, Gemini, xAI/Grok, [Venice AI](https://venice.ai), OpenRouter, Ollama, LM Studio, or Osaurus Router. Venice provides uncensored, privacy-focused inference with no data retention. Context and memory persist across all providers. See [Remote Providers](docs/REMOTE_PROVIDERS.md) and [Osaurus Router](docs/OSAURUS_ROUTER.md).
+Connect to OpenAI, Anthropic, Gemini, xAI/Grok, [Venice AI](https://venice.ai), OpenRouter, Ollama, LM Studio, or Osaurus Router. Osaurus Router is the hosted path — pay-as-you-go with credits and no separate provider account; Osaurus doesn't store your prompt or response content (only the usage metadata needed for billing), and upstream providers process requests under their own policies. Context and memory persist across all providers. See [Remote Providers](docs/REMOTE_PROVIDERS.md) and [Osaurus Router](docs/OSAURUS_ROUTER.md).
 
 ## MCP
 

@@ -7,7 +7,7 @@
 //  one piece of the Computer Use legibility surface that stays computer-use
 //  specific — the streaming activity list is now the shared `SubagentFeedView`
 //  bound by `SubagentFeedRegistry`, since `computer_use` runs on the shared
-//  `SubagentSession` host like every other sub-agent.
+//  `SubagentSession` host like every other subagent.
 //
 
 import Combine

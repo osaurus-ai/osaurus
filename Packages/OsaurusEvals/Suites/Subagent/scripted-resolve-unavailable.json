@@ -2,7 +2,7 @@
   "id": "subagent.scripted-resolve-unavailable",
   "domain": "subagent",
   "label": "Subagent • reject-before-evict (resolve unavailable)",
-  "query": "A scripted sub-agent whose model cannot be resolved.",
+  "query": "A scripted subagent whose model cannot be resolved.",
   "notes": "Model-free. The kind throws .unavailable in resolveModel, BEFORE permission/handoff/run — proving reject-before-evict: nothing is evicted when the model can't be resolved. The host maps it to an `unavailable` envelope and no feed is registered.",
   "fixtures": {},
   "expect": {

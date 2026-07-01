@@ -2,15 +2,15 @@
 //  SubagentFeedView.swift
 //  OsaurusCore — Subagent framework
 //
-//  The unified inline legibility surface for ANY nested sub-agent run
+//  The unified inline legibility surface for ANY nested subagent run
 //  (spawn, image, computer_use). Mounted in the expanded
-//  sub-agent tool-call row (via NSHostingView) and bound to the run's
+//  subagent tool-call row (via NSHostingView) and bound to the run's
 //  `SubagentFeed`, it streams each lifecycle / progress / activity event as
-//  the sub-agent works, with a Stop control that trips the run's interrupt
+//  the subagent works, with a Stop control that trips the run's interrupt
 //  token via `SubagentInterruptCenter`.
 //
 //  Generalized from the old Computer Use activity list so the four
-//  sub-agent paths render one consistent surface. The per-action
+//  subagent paths render one consistent surface. The per-action
 //  confirmation overlay stays computer-use specific (it depends on the
 //  ComputerUse gate) and is hosted separately.
 //
@@ -81,7 +81,7 @@ final class SubagentFeedObserver: ObservableObject {
     }
 }
 
-/// Live activity feed for one sub-agent run.
+/// Live activity feed for one subagent run.
 struct SubagentFeedView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
     @StateObject private var observer: SubagentFeedObserver

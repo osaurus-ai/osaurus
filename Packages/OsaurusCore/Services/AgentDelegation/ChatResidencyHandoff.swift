@@ -53,6 +53,7 @@ enum ChatResidencyHandoff {
     enum HandoffError: Error, CustomStringConvertible {
         case chatBusy
         case insufficientMemory(neededGB: Double, availableGB: Double)
+        case restoreFailed(models: [String])
         var description: String {
             switch self {
             case .chatBusy:
@@ -64,6 +65,10 @@ enum ChatResidencyHandoff {
                     neededGB,
                     availableGB
                 )
+            case let .restoreFailed(models):
+                return
+                    "failed to reload the chat model(s) after the subagent job (the orchestrator may need to be re-selected): "
+                    + models.joined(separator: ", ")
             }
         }
     }
@@ -185,11 +190,56 @@ enum ChatResidencyHandoff {
     ) async throws -> [String] {
         guard !lease.isEmpty else { return [] }
         onPhase("restoring_chat_models", lease.unloadedModelNames.joined(separator: ", "))
+
+        // Surface the reload in the chat input's "Loading Model…" indicator.
+        // `preload` bypasses `generateEventStream` (which is what normally bumps
+        // this counter), so without this the post-job restore looks like a
+        // frozen, empty chat while the orchestrator weights reload. Balanced by
+        // the `defer` across every exit (success, retry, throw).
+        InferenceProgressManager.shared.modelLoadWillStartAsync()
+        defer { InferenceProgressManager.shared.modelLoadDidFinishAsync() }
+
         var restored: [String] = []
+        var failures: [String] = []
         for name in lease.unloadedModelNames {
-            try await ModelRuntime.shared.preload(name: name)
-            restored.append(name)
+            if await reloadAndVerify(name) {
+                restored.append(name)
+                continue
+            }
+            // One retry before giving up: a transient reload failure (the GPU
+            // still settling behind the just-released image/teardown lane, or a
+            // racing evict) must not strand the orchestrator unloaded with no
+            // resident model and only a log to show for it.
+            onPhase("restoring_chat_models_retry", name)
+            if await reloadAndVerify(name) {
+                restored.append(name)
+            } else {
+                failures.append(name)
+            }
+        }
+
+        guard failures.isEmpty else {
+            onPhase("restore_failed", failures.joined(separator: ", "))
+            throw HandoffError.restoreFailed(models: failures)
         }
         return restored
+    }
+
+    /// Preload `name` and confirm it is actually resident afterwards. A bare
+    /// `preload` that throws — or silently loads nothing — would otherwise be
+    /// reported as a successful restore while the chat window has no model
+    /// loaded. Returns `true` only when the model is in the live runtime cache
+    /// after the load. Never throws: callers branch on the Bool and retry.
+    private static func reloadAndVerify(_ name: String) async -> Bool {
+        do {
+            try await ModelRuntime.shared.preload(name: name)
+        } catch {
+            logger.error(
+                "Orchestrator restore: preload threw for \(name, privacy: .public): \(error.localizedDescription, privacy: .public)"
+            )
+            return false
+        }
+        let resident = await ModelRuntime.shared.cachedModelSummaries().map(\.name)
+        return resident.contains(name)
     }
 }

@@ -19,8 +19,8 @@ struct SpawnToolTests {
 
     @Test func refusesRecursion() async throws {
         // The recursion guard is the unified host guard
-        // (`SubagentSession.activeKindId`), shared across the whole sub-agent
-        // family — a running sub-agent of ANY kind blocks a nested spawn.
+        // (`SubagentSession.activeKindId`), shared across the whole subagent
+        // family — a running subagent of ANY kind blocks a nested spawn.
         let agentResult = try await SubagentSession.$activeKindId.withValue("image") {
             try await SpawnAgentTool().execute(
                 argumentsJSON: #"{"agent":"helper","input":"summarize"}"#
@@ -122,7 +122,7 @@ struct SpawnToolTests {
                     .resolveModel(SubagentScope.current())
                 Issue.record("custom agent spawn of an unlisted target should be denied")
             } catch let SubagentError.denied(message) {
-                // The custom-agent message points at the agent's own Sub-agents
+                // The custom-agent message points at the agent's own Subagents
                 // tab, not the global Main Chat pool.
                 #expect(message.contains("not spawnable from this agent"))
             } catch {

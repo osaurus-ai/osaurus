@@ -1302,7 +1302,11 @@ public final class SpeechService: ObservableObject {
 
     private func startWorkerProcessing() {
         guard let worker = transcriptionWorker else { return }
-        Task {
+        // `TranscriptionWorker` is a separate actor whose AsyncStream resumes on
+        // the cooperative pool, so consume it on the main actor — otherwise these
+        // @Published writes land off-main ("Updating ObservedObject from
+        // background threads will cause undefined behavior").
+        Task { @MainActor in
             print("[SpeechService] Starting to consume worker updates")
             for await update in await worker.start() {
                 switch update {

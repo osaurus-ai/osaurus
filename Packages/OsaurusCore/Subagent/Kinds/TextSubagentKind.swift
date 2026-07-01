@@ -2,7 +2,7 @@
 //  TextSubagentKind.swift
 //  OsaurusCore — Subagent framework
 //
-//  The text/coding/analysis sub-agent kind behind the spawn family. It serves
+//  The text/coding/analysis subagent kind behind the spawn family. It serves
 //  BOTH spawn tools through one bounded text loop:
 //
 //   • `spawn_agent` → `.agent(name:)`: resolve a user-configured spawnable
@@ -98,8 +98,8 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
     func resolveModel(_ scope: SubagentScope) async throws -> ResolvedModel {
         let config = SubagentConfigurationStore.snapshot()
         // Per-agent allow-lists: the Default / main chat uses its own pools
-        // (edited in the main chat's Sub-agents tab); a custom agent uses its own
-        // lists (its Sub-agents tab), resolved from the launching agent (`scope`).
+        // (edited in the main chat's Subagents tab); a custom agent uses its own
+        // lists (its Subagents tab), resolved from the launching agent (`scope`).
         // There is no global master switch.
         let isDefault = scope.agentId == Agent.defaultId
         // One launching-agent lookup feeds the per-agent spawn allow-lists,
@@ -196,7 +196,7 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
             idleWaitSeconds: self.budgets.maxElapsedSeconds,
             deniedMessage:
                 "Spawning a different local agent requires \"Local Orchestrator Handoff\" enabled "
-                + "in Settings → Sub-agents (so the chat model can unload to make room).",
+                + "in Settings → Subagents (so the chat model can unload to make room).",
             unavailableMessage: "Agent '\(agentName)' has no model configured.",
             defaultModel: { AgentManager.shared.effectiveModel(for: targetAgentId) }
         )
@@ -244,7 +244,7 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
             idleWaitSeconds: self.budgets.maxElapsedSeconds,
             deniedMessage:
                 "Spawning a local model requires \"Local Orchestrator Handoff\" enabled in "
-                + "Settings → Sub-agents (so the chat model can unload to make room).",
+                + "Settings → Subagents (so the chat model can unload to make room).",
             unavailableMessage: "Model '\(modelId)' is not available.",
             defaultModel: { nil }
         )
@@ -339,8 +339,8 @@ final class TextSubagentKind: SubagentKind, @unchecked Sendable {
     /// "Model"); the tab pointer differs for the main chat vs a custom agent.
     private static func notSpawnableMessage(kind: String, name: String, isDefault: Bool) -> String {
         isDefault
-            ? "\(kind) '\(name)' is not spawnable. Add it in the main chat's Sub-agents tab."
-            : "\(kind) '\(name)' is not spawnable from this agent. Add it in the agent's Sub-agents tab."
+            ? "\(kind) '\(name)' is not spawnable. Add it in the main chat's Subagents tab."
+            : "\(kind) '\(name)' is not spawnable from this agent. Add it in the agent's Subagents tab."
     }
 
     private func seedMessages(systemPrompt: String, input: String) -> [ChatMessage] {

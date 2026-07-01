@@ -56,10 +56,26 @@ public actor ImageGenerationService {
     /// pressure handoffs. Manual image-panel flows may choose to keep the
     /// engine warm and skip this through `SubagentImageLoadPolicy`.
     public func unload() async {
-        if let engine {
-            await engine.unload()
+        guard let engine else {
+            loadedDirectoryName = nil
+            return
         }
+        // Image-model teardown is a GPU producer (freeing the FLUX weights
+        // enqueues Metal allocator frees/fences). Hold the exclusive image lane
+        // across it and drain the device before releasing — symmetric with the
+        // `drive()` exit barrier and the `ModelRuntime` teardown gate. The agent
+        // image job calls this the instant generation finishes, immediately
+        // before the chat-model `restore` (`ModelRuntime.preload` →
+        // `enterModelLoad`); without the gate that reload starts while these
+        // frees are still settling and races them on the shared Metal command
+        // queue (the `MTLReleaseAssertionFailure` / `Gather::eval_gpu` class).
+        await MetalGate.shared.enterImageGeneration()
+        await engine.unload()
         loadedDirectoryName = nil
+        MLXCacheIOLock.withSerializedMLXCacheIO {
+            Memory.clearCache()
+        }
+        await MetalGate.shared.exitImageGeneration()
     }
 
     // MARK: - Model store root

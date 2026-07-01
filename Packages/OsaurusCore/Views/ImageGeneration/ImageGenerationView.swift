@@ -146,7 +146,7 @@ struct ImageGenerationView: View {
 /// The global image-generation defaults: the fallback generation/edit models,
 /// the permission gate, and the GPU residency (load) policy for image jobs.
 /// Whether image generation is *enabled* is a per-agent toggle (Agents →
-/// Sub-agents), so there is no master switch here. All persist to the shared
+/// Subagents), so there is no master switch here. All persist to the shared
 /// `SubagentConfiguration` store (`agent-delegation.json`).
 private struct ImageGenerationSettingsTab: View {
     @Environment(\.theme) private var theme
@@ -168,7 +168,7 @@ private struct ImageGenerationSettingsTab: View {
                 SettingsSection(title: "Default Models", icon: "photo.stack") {
                     VStack(alignment: .leading, spacing: 16) {
                         sectionBlurb(
-                            "The models image jobs fall back to. Each agent can override these in its own Sub-agents settings."
+                            "The models image jobs fall back to. Each agent can override these in its own Subagents settings."
                         )
 
                         controlRow("Generation model") {
@@ -248,7 +248,7 @@ private struct ImageGenerationSettingsTab: View {
             configuration = SubagentConfigurationStore.snapshot()
             DispatchQueue.main.async { hasLoaded = true }
         }
-        // Persist immediately on edit, mirroring the Settings → Sub-agents card.
+        // Persist immediately on edit, mirroring the Settings → Subagents card.
         // Gated on `hasLoaded` so only real user edits write back.
         .onChange(of: configuration) { _, newValue in
             guard hasLoaded else { return }
@@ -267,7 +267,7 @@ private struct ImageGenerationSettingsTab: View {
 
     /// One settings row: label (and optional hint) on the leading edge with the
     /// control pinned to the trailing edge — the same shape as `SettingsToggle`
-    /// and the per-agent Sub-agents rows. This lets the control sit naturally at
+    /// and the per-agent Subagents rows. This lets the control sit naturally at
     /// the right (filling the row) instead of in a narrow, left-pinned box.
     private func controlRow<Control: View>(
         _ label: String,

@@ -1444,7 +1444,7 @@ public final class ToolRegistry: ObservableObject {
     }
 
     /// Spawn-family tool names, DERIVED from the capability registry (the SSOT
-    /// for sub-agent tool visibility) — never hand-maintained here.
+    /// for subagent tool visibility) — never hand-maintained here.
     static var agentDelegationSpawnToolNames: Set<String> {
         Set(SubagentCapabilityRegistry.spawn.toolNames)
     }
@@ -1511,7 +1511,7 @@ public final class ToolRegistry: ObservableObject {
         // `SubagentToolVisibility`, where the launching agent is known. That is
         // what lets a custom agent surface `spawn` even when the main-chat pool
         // is empty. Off-by-default still holds: every agent ships with the
-        // capability disabled until opted in from its Sub-agents tab.
+        // capability disabled until opted in from its Subagents tab.
         return excluded
     }
 

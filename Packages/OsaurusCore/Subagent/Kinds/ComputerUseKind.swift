@@ -2,7 +2,7 @@
 //  ComputerUseKind.swift
 //  OsaurusCore — Subagent framework
 //
-//  The desktop-automation sub-agent kind that serves `computer_use`. It runs
+//  The desktop-automation subagent kind that serves `computer_use`. It runs
 //  the unchanged `ComputerUseLoop` (perceive → decide → gate → act → verify)
 //  on the shared `SubagentSession` host so the recursion guard, the live
 //  `SubagentFeed`, the interrupt token, and the compact-result contract are
@@ -124,7 +124,7 @@ final class ComputerUseKind: SubagentKind, @unchecked Sendable {
             idleWaitSeconds: Self.residencyIdleWaitSeconds,
             deniedMessage:
                 "Running Computer Use on a different local model requires \"Local Orchestrator "
-                + "Handoff\" enabled in Settings → Sub-agents (so the chat model can unload to "
+                + "Handoff\" enabled in Settings → Subagents (so the chat model can unload to "
                 + "make room).",
             unavailableMessage:
                 "No model is selected for this agent, so Computer Use can't run. Pick a model first.",
@@ -245,7 +245,7 @@ final class ComputerUseKind: SubagentKind, @unchecked Sendable {
         return try Self.mapOutcome(result, model: resolved.name)
     }
 
-    /// Map a finished `ComputerUseLoop` run onto the shared sub-agent result
+    /// Map a finished `ComputerUseLoop` run onto the shared subagent result
     /// contract: `done` → a compact success payload; `interrupted` → a
     /// `user_denied` envelope; every other non-completion → a non-retryable
     /// `execution_error` carrying the loop's own reason so the parent can

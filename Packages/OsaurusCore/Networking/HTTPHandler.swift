@@ -2865,7 +2865,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         // `resolveTools` strip). Without this, the explicit injection below would
         // re-add tools the per-agent gate just stripped.
         // Mirror the authoritative native-chat `resolveTools` surfacing so the
-        // HTTP agent-run path and the in-app chat agree on which sub-agent tools
+        // HTTP agent-run path and the in-app chat agree on which subagent tools
         // an agent sees: resolve the per-agent visible delegation set through the
         // shared `SubagentToolVisibility` resolver (the same SSOT the native
         // `resolveTools` strip reads) — Default → main-chat pool / image switch,

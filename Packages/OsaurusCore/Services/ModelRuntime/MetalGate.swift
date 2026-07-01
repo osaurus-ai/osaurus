@@ -140,6 +140,26 @@ public actor MetalGate {
         release("load:\(model)")
     }
 
+    // MARK: - Model teardown (weight free + GPU drain) — exclusive
+
+    /// Unloading a model is a GPU producer too: freeing the weight arrays
+    /// enqueues allocator frees + fences and the `Stream.gpu.synchronize` /
+    /// `Memory.clearCache` drains submit/settle device work. Like a load it must
+    /// not overlap any other producer — otherwise the next producer (a model
+    /// load, image job, or embedder) admitted the instant `unload` returns races
+    /// this model's still-in-flight teardown buffers on the shared Metal command
+    /// queue (observed as the chat→image handoff `Gather::eval_gpu` /
+    /// `computeCommandEncoderWithDispatchType:` abort). A distinct owner from
+    /// `load:` keeps teardown vs load distinguishable in telemetry; both are
+    /// mutually exclusive against every other owner.
+    public func enterModelTeardown(model: String) async {
+        await acquire("unload:\(model)", shared: false)
+    }
+
+    public func exitModelTeardown(model: String) {
+        release("unload:\(model)")
+    }
+
     // MARK: - Image generation (vMLXFlux engine) — exclusive
 
     /// The native image engine (vMLXFlux) is a second MLX graph on the same Metal

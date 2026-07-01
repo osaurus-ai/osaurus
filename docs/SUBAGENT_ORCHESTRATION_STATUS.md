@@ -1,5 +1,5 @@
 # Local Subagent Orchestration — Engineering Status & Design
-Branch: `feat/image-generation-vmlxflux`. Last updated 2026-06-25 (unified sub-agent architecture).
+Branch: `feat/image-generation-vmlxflux`. Last updated 2026-06-25 (unified subagent architecture).
 
 - **Product requirements (the vision/spec):** `docs/SPAWN_IMAGEGEN_REQUIREMENTS.md`.
 - This file is the **engineering log**: current state, architecture, live-matrix
@@ -32,7 +32,7 @@ Branch: `feat/image-generation-vmlxflux`. Last updated 2026-06-25 (unified sub-a
 > (`AgentSettings.imageEnabled`, no longer riding `spawnDelegationEnabled`), `spawn` gets
 > a per-agent `spawnableAgentNames` allow-list, and those matrix rows describe the
 > **Default / main chat** path (global config), which a custom agent now overrides from
-> its **Sub-agents** tab.
+> its **Subagents** tab.
 >
 > **Master switch removed + Spawn tab folded into Settings (2026-06-26).** The global
 > `SubagentConfiguration.agentDelegationEnabled` flag is **deleted** — in a per-agent
@@ -43,19 +43,19 @@ Branch: `feat/image-generation-vmlxflux`. Last updated 2026-06-25 (unified sub-a
 > always carries the delegation family and `resolveTools` narrows it per agent. The
 > dedicated **Spawn sidebar tab + `SpawnSettingsView` are deleted**: the three shared
 > runtime knobs (Local Orchestrator Handoff — now **default ON** — RAM-Safety Preflight,
-> Image Load Policy) live in a **"Sub-agents" card in the general Settings tab**
+> Image Load Policy) live in a **"Subagents" card in the general Settings tab**
 > (`SubagentSettingsSection` hosted by `ConfigurationView`). Where the log below says
-> "Spawn page / `SpawnSettingsView` / master enable," read "Settings → Sub-agents card,
+> "Spawn page / `SpawnSettingsView` / master enable," read "Settings → Subagents card,
 > no master enable."
 
 ---
 
-## 🧩 Unified Sub-agent Architecture (2026-06-25) — one host, four kinds
+## 🧩 Unified Subagent Architecture (2026-06-25) — one host, four kinds
 
 This is now the **authoritative** architecture and supersedes the per-path
 descriptions in the dated log below. Pre-release, so the rename/merge carries **no
 back-compat shims**. Goal: one consistent machinery across **all four** nested
-sub-agent paths (`spawn`, `image`, `computer_use`, `sandbox_reduce`) instead of
+subagent paths (`spawn`, `image`, `computer_use`, `sandbox_reduce`) instead of
 four bespoke re-implementations of the same "bounded nested job → compact result,
 inner steps never leak into the parent transcript" contract. `computer_use` was the
 most-mature path, so its scaffolding (scope ids, live feed, interrupt, defer-cleanup,
@@ -63,8 +63,8 @@ compact result) was generalized into the shared `Subagent*` framework that the o
 three adopt.
 
 ### Tool surface (what users/models see now)
-- **`spawn`** — the only text sub-agent tool. `local_delegate` is **deleted**; its
-  loop was a copy of spawn's. Persona-or-default text sub-agent, dedicated `spawn`
+- **`spawn`** — the only text subagent tool. `local_delegate` is **deleted**; its
+  loop was a copy of spawn's. Persona-or-default text subagent, dedicated `spawn`
   permission key.
 - **`image`** — one tool. `image_generate` + `image_edit` are **merged**: pass
   `prompt` (+ optional `negative_prompt`, `strength`); supplying `source_paths`
@@ -80,7 +80,7 @@ three adopt.
 tool entry (spawn | image | computer_use | sandbox_reduce)
   └─ SubagentSession host        Subagent/SubagentSession.swift
        ├─ scope ids (sessionId/toolCallId/agentId via ChatExecutionContext)
-       ├─ recursion guard (one SubagentContext; no nested sub-agents)
+       ├─ recursion guard (one SubagentContext; no nested subagents)
        ├─ kind.resolveModel  → reject-before-evict
        ├─ kind.permission    → ask / deny / always   (computer_use: rich per-action gate)
        ├─ kind.makeHandoff() → ResidencyHandoff (spawn; image residency is coordinator-owned)   Subagent/ResidencyHandoff.swift
@@ -91,7 +91,7 @@ tool entry (spawn | image | computer_use | sandbox_reduce)
        └─ normalize → compact ToolEnvelope ; defer: unregister feed/interrupt, restore, telemetry
 ```
 
-1. **Host — `SubagentSession`** (`Subagent/SubagentSession.swift`): every sub-agent
+1. **Host — `SubagentSession`** (`Subagent/SubagentSession.swift`): every subagent
    tool funnels through it. Resolves scope ids, holds the recursion guard, registers a
    feed + interrupt token, runs the kind, normalizes to a compact `ToolEnvelope`, and
    `defer`s cleanup + telemetry. A deterministic scripted seam (`ScriptedSubagentKind`)
@@ -114,7 +114,7 @@ tool entry (spawn | image | computer_use | sandbox_reduce)
 - **One activity feed.** `SubagentFeed` / `SubagentActivityEvent` /
   `SubagentFeedRegistry` / `SubagentInterruptCenter` (`Subagent/SubagentFeed.swift`)
   replace the computer-use-only feed + the separate `NativeImageJobProgress`.
-  `NativeToolCallGroupView` binds ONE feed for every sub-agent row, so **text `spawn`
+  `NativeToolCallGroupView` binds ONE feed for every subagent row, so **text `spawn`
   now gets a live progress row** (fixes the old "frozen turn" gap) and image phase/step
   events map onto the same surface.
 - **One capability/gating registry.** `SubagentCapabilityRegistry`
@@ -133,7 +133,7 @@ tool entry (spawn | image | computer_use | sandbox_reduce)
 ### Config + settings
 > **Superseded in part by "Full per-agent settings + unified main-chat tab
 > (2026-06-26)" below** — image models, permissions, and budgets are now
-> **per-agent** (each agent's Sub-agents tab, including the main chat's), and the
+> **per-agent** (each agent's Subagents tab, including the main chat's), and the
 > global Spawn page is **system-only** (no Main Chat block). The
 > `SubagentConfiguration` fields below survive as the **Default / main-chat** values
 > (and the REST `/v1/images` default); custom agents carry their own on
@@ -150,18 +150,18 @@ tool entry (spawn | image | computer_use | sandbox_reduce)
 - Global Settings → Spawn (`SubagentSettingsSection`) is now **system-only**: master
   enable · Local Orchestrator Handoff · RAM-Safety preflight · Image Load Policy · the
   "How it works" explainer. Image models, permissions, budgets, and the Default's
-  spawn/image enable + pool moved to the **main chat's Sub-agents tab** (see
+  spawn/image enable + pool moved to the **main chat's Subagents tab** (see
   2026-06-26 below). `SettingsSearchIndex` indexes the slimmed layout; the old "Cloud
   Cost Saver" block + orphaned delegate picker are gone.
 
 ### Per-agent home + per-capability split (IA reorg, 2026-06-25)
-> **Updated 2026-06-26** — the Sub-agents tab is **no longer hidden for the Default
+> **Updated 2026-06-26** — the Subagents tab is **no longer hidden for the Default
 > agent** (the main chat configures spawn/image from its own tab now), and each card's
 > config grew from toggles-only to **model + permission + budget** controls. See "Full
 > per-agent settings + unified main-chat tab (2026-06-26)" below.
 
-- The per-agent sub-agent controls moved out of the crowded Configure → Features list
-  into a dedicated **`DetailTab.subagents`** ("Sub-agents") tab in the agent editor. It
+- The per-agent subagent controls moved out of the crowded Configure → Features list
+  into a dedicated **`DetailTab.subagents`** ("Subagents") tab in the agent editor. It
   is **registry-driven**: one card per `SubagentCapabilityRegistry.perAgentToggleFlags`
   entry (`computer_use` → autonomy ceiling, `spawn` → per-agent spawnable checklist +
   permission + budgets, `image` → gen/edit model pickers + permission), each with its
@@ -204,7 +204,7 @@ capability is fully configured where you turn it on.**
   `TextSubagentKind` reads `effectivePermission` + `effectiveBudgets`. The **in-prompt
   first-use image-model picker is removed** — the model is chosen in the tab, so the
   runtime prompt is a plain allow/deny (`.alwaysAllow` is set per-agent in the tab).
-- **Unified main chat.** The Sub-agents tab is un-hidden for the Default agent and renders
+- **Unified main chat.** The Subagents tab is un-hidden for the Default agent and renders
   only the Spawn + Image cards (no `computer_use`), bound to the global
   `SubagentConfiguration` via `SubagentConfigurationStore` (the main chat's settings still
   live there — it's a UI move, not a persistence migration). Custom agents write their
@@ -299,7 +299,7 @@ Our branch had diverged from `main` (107 ahead / 43 behind). Reconciled:
 ## ✅ Current state (2026-06-21)
 
 Spawn is a **tool** the orchestrator chat (local OR cloud) calls to run a bounded
-job: image gen/edit (vMLXFlux) or a local text/coder sub-agent. Working + live-proven:
+job: image gen/edit (vMLXFlux) or a local text/coder subagent. Working + live-proven:
 
 - **Image-job E2E (PASS):** orchestrator → `image_generate` → unload resident chat
   model → FLUX runs → **real PNG saved** → chat model reloads + is usable after.
@@ -401,7 +401,7 @@ process name + `osaurus://` aren't ambiguous. Verified by screenshot + accessibi
 model gpt-5.3-codex-spark) then drove the two surfaces my AppleScript couldn't reach, and
 PASSED both:
 - **Per-agent toggle (agent editor → Sparky → Features):** title `Spawn & Delegation`,
-  description read verbatim ("Let this agent spawn helper jobs and sub-agents. Give the
+  description read verbatim ("Let this agent spawn helper jobs and subagents. Give the
   agent the spawn / local_delegate / image_generate / image_edit tools …"), state ON.
 - **Image panel (Models → Images → FLUX.1 Schnell → Generate):** panel opened with Prompt,
   Negative prompt (optional), Size (512² / 1,024²), Seed (random), Generate, Close.
@@ -538,7 +538,7 @@ Piece #3 (inline render via `processNativeImageToolResult`) was already wired �
   (honor only explicit `cancelledJobIDs`), and/or yield produced images even on a soft cancel.
 - **Piece #2 — first-use permission + model picker** (~~still to build~~ → **DROPPED
   2026-06-26**): the in-prompt model picker was removed in favor of per-agent model
-  selection in the agent's Sub-agents tab (see "Full per-agent settings + unified
+  selection in the agent's Subagents tab (see "Full per-agent settings + unified
   main-chat tab"). The first-use prompt is now a plain Yes/No/Always; "Always" is the
   `.alwaysAllow` policy set per-agent in that tab.
 

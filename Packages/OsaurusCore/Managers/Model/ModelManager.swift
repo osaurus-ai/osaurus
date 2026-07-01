@@ -10,6 +10,7 @@ import Darwin
 import Foundation
 import MLXLLM
 import SwiftUI
+import os
 
 extension Notification.Name {
     /// Posted when local model list changes (download completed, model deleted)
@@ -44,6 +45,12 @@ enum ModelListTab: String, CaseIterable, AnimatedTabItem {
 @MainActor
 final class ModelManager: NSObject, ObservableObject {
     static let shared = ModelManager()
+
+    /// Diagnostics logger usable from the `nonisolated static` discovery paths.
+    nonisolated static let discoveryLog = Logger(
+        subsystem: "com.dinoki.osaurus",
+        category: "ModelManager.discovery"
+    )
 
     let downloadService = ModelDownloadService.shared
 
@@ -1668,6 +1675,18 @@ extension ModelManager {
         if let cached = cachedLocalModels {
             localModelsCacheCondition.unlock()
             return mergeExternalModels(into: cached)
+        }
+
+        // Cache miss: the call below parks on `localModelsCacheCondition.wait`
+        // (up to `localModelsScanWaitLimit`, ~10s) for the background scan. On
+        // the main thread that is a user-visible hang/beachball — UI and hot
+        // paths (chat greeting, residency planning) must call
+        // `discoverLocalModelsOffMain()` instead. Surface a regression loudly
+        // rather than letting it silently beachball; behavior is unchanged.
+        if Thread.isMainThread {
+            Self.discoveryLog.error(
+                "discoverLocalModels() called on the MAIN THREAD with a cold cache — it may block up to \(localModelsScanWaitLimitOverrideForTests ?? localModelsScanWaitLimit, privacy: .public)s. Use discoverLocalModelsOffMain() from UI/handoff paths."
+            )
         }
 
         if localModelsScanInFlight {

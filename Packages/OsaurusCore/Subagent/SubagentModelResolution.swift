@@ -2,7 +2,7 @@
 //  SubagentModelResolution.swift
 //  OsaurusCore — Subagent framework
 //
-//  The one model-resolution path the chat-driven sub-agent kinds (spawn,
+//  The one model-resolution path the chat-driven subagent kinds (spawn,
 //  computer_use) share. Each kind previously repeated the same
 //  three steps inline: look up the per-agent model override, fall back to the
 //  kind's default model source, then run the live `SubagentResidency` decision
@@ -21,7 +21,7 @@
 
 import Foundation
 
-/// The shared model-resolution layer for chat-driven sub-agent kinds. Stateless
+/// The shared model-resolution layer for chat-driven subagent kinds. Stateless
 /// and split into a pure precedence step (`pickModel`), a `@MainActor`
 /// availability gate (`availableOverride`), and a live `resolve` wrapper that
 /// folds in `SubagentResidency`. The pure pieces unit-test with no GPU / no

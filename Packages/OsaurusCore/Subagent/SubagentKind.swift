@@ -2,7 +2,7 @@
 //  SubagentKind.swift
 //  OsaurusCore — Subagent framework
 //
-//  The pluggable contract every nested sub-agent KIND conforms to. Adding a
+//  The pluggable contract every nested subagent KIND conforms to. Adding a
 //  future kind (privacy loop, code exec, browser) means writing ONE
 //  conformer — the host (`SubagentSession`), the live feed, the recursion
 //  guard, the compact-result normalization, and the optional model handoff
@@ -16,7 +16,7 @@
 
 import Foundation
 
-/// One nested sub-agent implementation. A value/reference type that has
+/// One nested subagent implementation. A value/reference type that has
 /// already captured its parsed request, so the host can run it uniformly.
 public protocol SubagentKind: Sendable {
     /// The kind's registry descriptor: gate + tool name(s) + guidance + display

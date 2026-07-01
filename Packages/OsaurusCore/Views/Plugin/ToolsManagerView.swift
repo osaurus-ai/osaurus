@@ -10,6 +10,12 @@ import Foundation
 import OsaurusRepository
 import SwiftUI
 
+/// Rows rendered per tool group/card before collapsing the rest behind a
+/// "Show all" disclosure. Bounds eager layout work when a single source
+/// exposes a very large number of tools. Shared by the flat groups in
+/// `ToolsManagerView` and the per-provider/per-plugin cards.
+let toolGroupRenderCapValue = 20
+
 struct ToolsManagerView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
     private let repoService = PluginRepositoryService.shared
@@ -17,10 +23,8 @@ struct ToolsManagerView: View {
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
-    /// Rows rendered per group before collapsing the rest behind a "Show all"
-    /// disclosure. Bounds eager layout work when a single source exposes a very
-    /// large number of tools.
-    private static let toolGroupRenderCap = 20
+    /// Per-group render cap. See `toolGroupRenderCapValue`.
+    static let toolGroupRenderCap = toolGroupRenderCapValue
     /// Group keys the user has chosen to fully expand past the render cap.
     @State private var expandedToolGroups: Set<String> = []
 
@@ -1690,6 +1694,12 @@ private struct ToolPluginCard: View {
     let onToolMutated: (String) -> Void
 
     @State private var isExpanded: Bool = false
+    @State private var showAllTools = false
+
+    private var visibleTools: [ToolRegistry.ToolEntry] {
+        let cap = toolGroupRenderCapValue
+        return (showAllTools || tools.count <= cap) ? tools : Array(tools.prefix(cap))
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -1806,7 +1816,7 @@ private struct ToolPluginCard: View {
                     .padding(.vertical, 4)
 
                 VStack(spacing: 8) {
-                    ForEach(tools, id: \.id) { entry in
+                    ForEach(visibleTools, id: \.id) { entry in
                         ToolEntryRow(
                             entry: entry,
                             policyInfo: policyInfoCache[entry.name],
@@ -1814,6 +1824,15 @@ private struct ToolPluginCard: View {
                             exposureRow: exposureRowsByName[entry.name],
                             onChange: { onToolMutated(entry.name) }
                         )
+                    }
+
+                    if tools.count > toolGroupRenderCapValue {
+                        ShowAllToolsButton(
+                            hiddenCount: tools.count - toolGroupRenderCapValue,
+                            isExpanded: showAllTools
+                        ) {
+                            showAllTools.toggle()
+                        }
                     }
                 }
                 .transition(.opacity)
@@ -1840,6 +1859,12 @@ private struct RemoteProviderToolsCard: View {
 
     @State private var isExpanded: Bool = false
     @State private var isMenuHovering = false
+    @State private var showAllTools = false
+
+    private var visibleTools: [ToolRegistry.ToolEntry] {
+        let cap = toolGroupRenderCapValue
+        return (showAllTools || tools.count <= cap) ? tools : Array(tools.prefix(cap))
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -1934,7 +1959,7 @@ private struct RemoteProviderToolsCard: View {
                     .padding(.vertical, 4)
 
                 VStack(spacing: 8) {
-                    ForEach(tools, id: \.id) { entry in
+                    ForEach(visibleTools, id: \.id) { entry in
                         RemoteToolRow(
                             entry: entry,
                             providerName: provider.name,
@@ -1943,6 +1968,15 @@ private struct RemoteProviderToolsCard: View {
                             exposureRow: exposureRowsByName[entry.name],
                             onChange: { onToolMutated(entry.name) }
                         )
+                    }
+
+                    if tools.count > toolGroupRenderCapValue {
+                        ShowAllToolsButton(
+                            hiddenCount: tools.count - toolGroupRenderCapValue,
+                            isExpanded: showAllTools
+                        ) {
+                            showAllTools.toggle()
+                        }
                     }
                 }
                 .transition(.opacity)

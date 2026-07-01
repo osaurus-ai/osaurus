@@ -3,6 +3,39 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.21.2</title>
+            <pubDate>Tue, 30 Jun 2026 14:25:45 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.21.2</sparkle:version>
+            <sparkle:shortVersionString>0.21.2</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.21.2/Osaurus-0.21.2.dmg" length="55613596" type="application/octet-stream" sparkle:edSignature="+AB5MhZLTJxcj2ldcRyUafMIoyQJV6ovp109NdmKCVQBKsE9Qi/nq5oXLGtPNix99UmI0ZKJqKDDqdsJaZlUCg=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Add unified evidence report registry (#1629) by @mimeding
+- Add Agent Channel security foundation (#1728) by @mimeding
+- Add Agent Channel async substrate (#1651) by @mimeding
+
+## 🚀 Features
+
+- added Rampart as a lightweight on-device PII detection model (#1764) by @RaajeevChandran
+
+## 🐛 Bug Fixes
+
+- Fix KV-cache prefill reset after capabilities\_load (#1760) by @tpae
+
+## 🧰 Maintenance
+
+- Make Osaurus Cloud available by default with a permanent opt-out (only during onboarding) (#1766) by @tpae
+- Make local↔image model handoffs crash-free and seamless (#1765) by @tpae
+- Make screen context a per-agent Computer Use option (#1763) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.21.1...0.21.2
+]]></description>
+        </item>
+        <item>
             <title>0.21.1</title>
             <pubDate>Mon, 29 Jun 2026 23:36:39 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>

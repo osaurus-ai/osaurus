@@ -7,6 +7,23 @@ contracts for billing, request deduplication, and upstream compatibility.
 This document captures the invariants that keep Router behavior reliable in the
 chat UI and agent loop.
 
+## Data Handling
+
+The Router proxies request and response content to the upstream provider that
+serves the selected model; it does not persist prompt, response, tool-argument,
+or tool-result content on Osaurus servers. Only billing metadata — model,
+provider slug, token counts, cost, status, and timestamps — is retained, which
+is what the credits system needs (see [Billing Reliability](#billing-reliability)
+and [On-Device Billing Ledger](#on-device-billing-ledger)). Chat history stays on
+the user's Mac.
+
+Upstream providers receive request content in order to generate a response and
+process it under their own privacy policies; the Router neither overrides nor
+extends those policies. The in-app and marketing copy must match this posture —
+"Osaurus Cloud doesn't store the content of your prompts or responses, only the
+usage metadata needed to bill credits" — with upstream providers disclaimed
+rather than guaranteed.
+
 ## Connection Lifecycle
 
 Router availability depends on the local Osaurus identity. When identity is

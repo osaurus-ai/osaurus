@@ -491,7 +491,7 @@ actor NativeImageJobCoordinator {
                 record(NativeImageJobProgress(jobID: jobID, phase: .unloading, model: model))
                 await imageService.unload()
             }
-            let restoredChatModels = try await self.restoreChatResidencyIfNeeded(
+            let restoredChatModels = await self.restoreChatResidencyIfNeeded(
                 lease: chatLease,
                 jobID: jobID,
                 record: record
@@ -514,7 +514,7 @@ actor NativeImageJobCoordinator {
                 await imageService.unload()
             }
             if !chatLease.unloadedModelNames.isEmpty {
-                _ = try? await self.restoreChatResidencyIfNeeded(
+                _ = await self.restoreChatResidencyIfNeeded(
                     lease: chatLease,
                     jobID: jobID,
                     record: record
@@ -565,11 +565,17 @@ actor NativeImageJobCoordinator {
         return lease
     }
 
+    /// Best-effort restore: the image has already been produced and written to
+    /// disk by the time this runs, so a reload hiccup must NOT fail the job and
+    /// lose the user's image. `restoreBestEffort` already retries + verifies
+    /// residency and logs a persistent failure; if the orchestrator still isn't
+    /// resident, the next chat turn reloads it on demand (cold load through the
+    /// gated `loadContainer`). Returns the names actually restored.
     private func restoreChatResidencyIfNeeded(
         lease: ChatResidencyLease,
         jobID: String,
         record: (NativeImageJobProgress) -> Void
-    ) async throws -> [String] {
+    ) async -> [String] {
         guard !lease.unloadedModelNames.isEmpty else { return [] }
         record(
             NativeImageJobProgress(
@@ -578,7 +584,7 @@ actor NativeImageJobCoordinator {
                 message: lease.unloadedModelNames.joined(separator: ", ")
             )
         )
-        return try await ChatResidencyHandoff.restore(lease)
+        return await ChatResidencyHandoff.restoreBestEffort(lease)
     }
 }
 

@@ -204,35 +204,47 @@ private struct VoiceHeaderStatusIndicator: View {
 // MARK: - Voice Models Tab
 
 private struct VoiceModelsTab: View {
-    @Environment(\.theme) private var theme
     @ObservedObject private var modelManager = SpeechModelManager.shared
 
-    /// All available speech models as a single flat list, recommended first so
-    /// the default model stays on top. The list is short enough that the old
-    /// search field + Recommended/All-Models section split were just noise.
-    /// Recomputed off `objectWillChange` rather than per body render so the
+    /// Curated speech models, recommended first so the default stays on top.
+    /// Recomputed off `objectWillChange` (not per body render) so the
     /// high-frequency download-progress publishes don't re-walk it each frame.
     @State private var orderedModels: [SpeechModel] = []
 
+    private func isInstalled(_ model: SpeechModel) -> Bool {
+        modelManager.effectiveDownloadState(for: model) == .completed
+    }
+
+    private var installed: [SpeechModel] { orderedModels.filter(isInstalled) }
+    private var available: [SpeechModel] { orderedModels.filter { !isInstalled($0) } }
+
     var body: some View {
         ScrollView {
-            VStack(spacing: 24) {
+            VStack(alignment: .leading, spacing: 24) {
                 // Legacy WhisperKit cleanup banner
                 if modelManager.legacyWhisperModelsExist {
                     LegacyWhisperBanner()
-                        .padding(.horizontal, 24)
                 }
 
-                VStack(spacing: 12) {
-                    ForEach(orderedModels) { model in
-                        SpeechModelRow(model: model)
+                if !installed.isEmpty {
+                    SettingsSection(title: "Installed", icon: "checkmark.seal.fill") {
+                        VStack(spacing: 8) {
+                            ForEach(installed) { SpeechModelListRow(model: $0) }
+                        }
                     }
                 }
-                .padding(.horizontal, 24)
 
-                Spacer(minLength: 24)
+                if !available.isEmpty {
+                    SettingsSection(title: "Available", icon: "square.and.arrow.down") {
+                        VStack(spacing: 8) {
+                            ForEach(available) { SpeechModelListRow(model: $0) }
+                        }
+                    }
+                }
             }
-            .padding(.top, 16)
+            .padding(.horizontal, 24)
+            .padding(.vertical, 24)
+            .frame(maxWidth: .infinity, alignment: .top)
         }
         .onAppear { refreshModels() }
         .onReceive(modelManager.objectWillChange) { _ in
@@ -313,195 +325,82 @@ private struct LegacyWhisperBanner: View {
 
 // MARK: - Speech Model Row
 
-private struct SpeechModelRow: View {
-    @Environment(\.theme) private var theme
+/// Adapts a Parakeet `SpeechModel` onto the shared `ModelListRow`: maps the
+/// speech-specific download state into the row's status, surfaces the EN /
+/// Default badges, and wires Download / Retry / Set as Default / Delete.
+private struct SpeechModelListRow: View {
     @ObservedObject private var modelManager = SpeechModelManager.shared
+    @Environment(\.theme) private var theme
 
     let model: SpeechModel
-
-    @State private var isHovering = false
 
     private var downloadState: SpeechDownloadState {
         modelManager.effectiveDownloadState(for: model)
     }
 
-    private var isSelected: Bool {
-        modelManager.selectedModelId == model.id
-    }
+    private var isCompleted: Bool { downloadState == .completed }
+    private var isSelected: Bool { modelManager.selectedModelId == model.id }
 
     var body: some View {
-        HStack(spacing: 16) {
-            // Icon
-            ZStack {
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(iconBackground)
-                Image(systemName: iconName)
-                    .font(.system(size: 18, weight: .medium))
-                    .foregroundColor(iconColor)
-            }
-            .frame(width: 48, height: 48)
-
-            // Info
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 8) {
-                    Text(model.name)
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
-
-                    if model.isEnglishOnly {
-                        Text("EN", bundle: .module)
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundColor(theme.secondaryText)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 2)
-                            .background(Capsule().fill(theme.tertiaryBackground))
-                    }
-
-                    if isSelected {
-                        Text("Default", bundle: .module)
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundColor(theme.successColor)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 2)
-                            .background(Capsule().fill(theme.successColor.opacity(0.1)))
-                    }
-                }
-
-                Text(model.description)
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.secondaryText)
-                    .lineLimit(1)
-
-                Text(model.size)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
-            }
-
-            Spacer()
-
-            // Actions
-            actionButton
-        }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 14)
-                .fill(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 14)
-                        .stroke(
-                            isSelected ? theme.successColor.opacity(0.3) : theme.cardBorder,
-                            lineWidth: 1
-                        )
-                )
+        ModelListRow(
+            title: model.name,
+            subtitle: "\(model.description) · \(model.size)",
+            leading: leading,
+            badges: model.isEnglishOnly ? [ModelBadge.Item(text: L("EN"), style: .neutral)] : [],
+            isDefault: isSelected && isCompleted,
+            status: status,
+            primary: primaryAction,
+            menuItems: menuItems,
+            onCancel: { modelManager.cancelDownload(model.id) }
         )
-        .scaleEffect(isHovering ? 1.005 : 1)
-        .animation(.easeOut(duration: 0.15), value: isHovering)
-        .onHover { hovering in
-            isHovering = hovering
+    }
+
+    private var leading: ModelListRow.Leading {
+        switch downloadState {
+        case .completed: return .init(icon: "waveform", tint: theme.successColor)
+        case .downloading: return .init(icon: "arrow.down.circle", tint: theme.accentColor)
+        case .failed: return .init(icon: "exclamationmark.triangle", tint: theme.errorColor)
+        case .notStarted: return .init(icon: "waveform.circle", tint: theme.secondaryText)
         }
     }
 
-    private var iconName: String {
+    private var status: ModelListRow.Status {
         switch downloadState {
-        case .completed: return "waveform"
-        case .downloading: return "arrow.down.circle"
-        case .failed: return "exclamationmark.triangle"
-        default: return "waveform.circle"
+        case .notStarted: return .idle
+        case .downloading(let progress): return .inProgress(progress: progress, detail: nil)
+        case .completed: return .ready
+        case .failed(let error): return .failed(error)
         }
     }
 
-    private var iconColor: Color {
+    private var primaryAction: ModelListRow.Action? {
         switch downloadState {
-        case .completed: return theme.successColor
-        case .downloading: return theme.accentColor
-        case .failed: return theme.errorColor
-        default: return theme.secondaryText
-        }
-    }
-
-    private var iconBackground: Color {
-        switch downloadState {
-        case .completed: return theme.successColor.opacity(0.15)
-        case .downloading: return theme.accentColor.opacity(0.15)
-        case .failed: return theme.errorColor.opacity(0.15)
-        default: return theme.tertiaryBackground
-        }
-    }
-
-    @ViewBuilder
-    private var actionButton: some View {
-        switch downloadState {
-        case .notStarted, .failed:
-            Button(action: { modelManager.downloadModel(model) }) {
-                Text("Download", bundle: .module)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(theme.isDark ? theme.primaryBackground : .white)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 8)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(theme.accentColor)
-                    )
+        case .notStarted:
+            return ModelListRow.Action(title: "Download", icon: "arrow.down.circle") {
+                modelManager.downloadModel(model)
             }
-            .buttonStyle(PlainButtonStyle())
-
-        case .downloading(let progress):
-            HStack(spacing: 12) {
-                // Progress indicator
-                ZStack {
-                    Circle()
-                        .stroke(theme.tertiaryBackground, lineWidth: 3)
-                    Circle()
-                        .trim(from: 0, to: progress)
-                        .stroke(theme.accentColor, style: StrokeStyle(lineWidth: 3, lineCap: .round))
-                        .rotationEffect(.degrees(-90))
-                        .animation(.easeOut(duration: 0.3), value: progress)
-                }
-                .frame(width: 28, height: 28)
-
-                Text("\(Int(progress * 100))%", bundle: .module)
-                    .font(.system(size: 12, weight: .medium, design: .monospaced))
-                    .foregroundColor(theme.secondaryText)
-                    .frame(width: 40)
-
-                Button(action: { modelManager.cancelDownload(model.id) }) {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 18))
-                        .foregroundColor(theme.tertiaryText)
-                }
-                .buttonStyle(PlainButtonStyle())
+        case .failed:
+            return ModelListRow.Action(title: "Retry", icon: "arrow.clockwise") {
+                modelManager.downloadModel(model)
             }
-
         case .completed:
-            HStack(spacing: 8) {
-                if !isSelected {
-                    Button(action: { modelManager.setDefaultModel(model.id) }) {
-                        Text("Set Default", bundle: .module)
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(theme.accentColor)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .background(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .stroke(theme.accentColor, lineWidth: 1)
-                            )
-                    }
-                    .buttonStyle(PlainButtonStyle())
+            return isSelected
+                ? nil
+                : ModelListRow.Action(title: "Set as Default", icon: "checkmark.circle") {
+                    modelManager.setDefaultModel(model.id)
                 }
-
-                Button(action: { Task { await modelManager.deleteModel(model) } }) {
-                    Image(systemName: "trash")
-                        .font(.system(size: 14))
-                        .foregroundColor(theme.tertiaryText)
-                        .padding(8)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(theme.tertiaryBackground)
-                        )
-                }
-                .buttonStyle(PlainButtonStyle())
-            }
+        case .downloading:
+            return nil
         }
+    }
+
+    private var menuItems: [ModelListRow.Action] {
+        guard isCompleted else { return [] }
+        return [
+            ModelListRow.Action(title: "Delete", icon: "trash", role: .destructive) {
+                modelManager.deleteModel(model)
+            }
+        ]
     }
 }
 

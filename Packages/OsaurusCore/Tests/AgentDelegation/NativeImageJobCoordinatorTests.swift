@@ -153,6 +153,26 @@ struct NativeImageJobCoordinatorTests {
         )
     }
 
+    @Test("post-job chat restore is best-effort so a produced image is never lost")
+    func restoreWiringIsBestEffort() throws {
+        let coreRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()  // AgentDelegation/
+            .deletingLastPathComponent()  // Tests/
+            .deletingLastPathComponent()  // OsaurusCore/
+        let coordinator = try String(
+            contentsOf: coreRoot.appendingPathComponent(
+                "Services/AgentDelegation/NativeImageJobCoordinator.swift"
+            ),
+            encoding: .utf8
+        )
+        // The image is generated and written to disk BEFORE the chat-model
+        // restore runs, so a reload hiccup must not throw and discard the user's
+        // image. Pin the best-effort wiring (and the absence of the throwing
+        // variant) so a future refactor can't silently reintroduce the loss.
+        #expect(coordinator.contains("await ChatResidencyHandoff.restoreBestEffort(lease)"))
+        #expect(!coordinator.contains("try await ChatResidencyHandoff.restore(lease)"))
+    }
+
     @Test func progressDictionaryIncludesChatToolContext() throws {
         let turnID = UUID()
         let progress = NativeImageJobProgress(

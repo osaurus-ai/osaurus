@@ -194,8 +194,18 @@ public final class VADService: ObservableObject {
     // MARK: - Private Methods
 
     private func setupObservers() {
-        // Observe configuration changes
+        // Observe configuration changes.
+        //
+        // Every sink below delivers on the main run loop before mutating this
+        // @MainActor object's @Published state. `SpeechService` publishes some
+        // of these (`currentTranscription`, `confirmedTranscription`,
+        // `audioLevel`, `isRecording`) from its transcription worker — a
+        // separate actor whose stream resumes off the main thread — so without
+        // `.receive(on: RunLoop.main)` the writes are the "Updating
+        // ObservedObject<VADService> from background threads" undefined behavior
+        // seen in the crash log.
         NotificationCenter.default.publisher(for: .voiceConfigurationChanged)
+            .receive(on: RunLoop.main)
             .sink { [weak self] _ in
                 self?.loadConfiguration()
             }
@@ -203,12 +213,14 @@ public final class VADService: ObservableObject {
 
         // Observe transcription changes from SpeechService
         speechService.$currentTranscription
+            .receive(on: RunLoop.main)
             .sink { [weak self] transcription in
                 self?.handleTranscription(transcription, isConfirmed: false)
             }
             .store(in: &cancellables)
 
         speechService.$confirmedTranscription
+            .receive(on: RunLoop.main)
             .sink { [weak self] transcription in
                 self?.handleTranscription(transcription, isConfirmed: true)
             }
@@ -216,6 +228,7 @@ public final class VADService: ObservableObject {
 
         // Observe audio level
         speechService.$audioLevel
+            .receive(on: RunLoop.main)
             .sink { [weak self] level in
                 guard let self = self, self.state == .listening else { return }
                 self.audioLevel = level
@@ -225,6 +238,7 @@ public final class VADService: ObservableObject {
         // Observe recording state - auto-restart if stopped unexpectedly
         speechService.$isRecording
             .dropFirst()  // Ignore initial value
+            .receive(on: RunLoop.main)
             .sink { [weak self] isRecording in
                 guard let self = self else { return }
 

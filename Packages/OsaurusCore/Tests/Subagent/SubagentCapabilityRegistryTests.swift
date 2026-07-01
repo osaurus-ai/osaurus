@@ -5,7 +5,7 @@
 //  The standing guard against the BUG E surface split: the native
 //  `SystemPromptComposer.resolveTools` strip and the HTTP
 //  `enrichWithAgentContext` inject now both read `SubagentToolVisibility`, so
-//  they can never drift on which sub-agent tools an agent sees. These tests
+//  they can never drift on which subagent tools an agent sees. These tests
 //  pin the shared resolver + the per-agent gate semantics, and assert the
 //  registry SSOT and `ToolRegistry`'s internal gating set stay in lockstep.
 //
@@ -34,7 +34,7 @@ struct SubagentCapabilityRegistryTests {
     }
 
     /// Minimal snapshot for the visibility resolver — only the per-agent
-    /// sub-agent fields matter here; everything else is inert.
+    /// subagent fields matter here; everything else is inert.
     private func snapshot(
         agentId: UUID,
         spawn: Bool = false,
@@ -323,7 +323,7 @@ struct SubagentCapabilityRegistryTests {
     func perAgentToggleFlagsAreDistinct() {
         // One card per *flag*: computer_use, spawn, and image are now each their
         // own per-agent toggle (image split out of the old shared spawn flag), so
-        // the Sub-agents tab renders exactly three cards in registry order.
+        // the Subagents tab renders exactly three cards in registry order.
         #expect(SubagentCapabilityRegistry.perAgentToggleFlags == [.computerUse, .spawn, .image])
     }
 
@@ -523,7 +523,7 @@ struct SubagentCapabilityRegistryTests {
     }
 
     /// The original BUG E was a *surface split*: the native composer strip and
-    /// the HTTP enrich path each decided sub-agent tool visibility from their
+    /// the HTTP enrich path each decided subagent tool visibility from their
     /// own hardcoded `["image_generate","image_edit","local_delegate","spawn"]`
     /// list, so they could disagree on what an agent sees. Both must now resolve
     /// from the single `SubagentToolVisibility` SSOT and never re-introduce a

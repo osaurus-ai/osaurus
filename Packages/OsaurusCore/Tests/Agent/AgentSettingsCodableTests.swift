@@ -2,9 +2,9 @@
 //  AgentSettingsCodableTests.swift
 //  OsaurusCoreTests — Agent
 //
-//  Pins the Codable contract for the per-agent sub-agent settings (image
+//  Pins the Codable contract for the per-agent subagent settings (image
 //  models, delegation permissions, spawn budgets). These fields back the
-//  per-agent Sub-agents tab; a decode regression would silently drop a user's
+//  per-agent Subagents tab; a decode regression would silently drop a user's
 //  model / permission / budget choices, so the round-trip + the back-compat
 //  defaults are guarded here.
 //
@@ -14,7 +14,7 @@ import Testing
 
 @testable import OsaurusCore
 
-@Suite("AgentSettings per-agent sub-agent fields codable")
+@Suite("AgentSettings per-agent subagent fields codable")
 struct AgentSettingsCodableTests {
 
     @Test("the per-agent image / permission / budget fields round-trip")
@@ -93,6 +93,35 @@ struct AgentSettingsCodableTests {
         let decoded = try JSONDecoder().decode(AgentSettings.self, from: Data(json.utf8))
 
         #expect(decoded.subagentModelOverrides.isEmpty)
+    }
+
+    @Test("screenContextEnabled defaults to true when absent (back-compat)")
+    func backCompatScreenContextDefaultsOn() throws {
+        // Older agents (the feature was a global, default-off switch before)
+        // have no `screenContextEnabled` key. It must decode to `true` so an
+        // agent with Computer Use on gets ambient screen context by default,
+        // matching the new "default on with Computer Use" contract.
+        let json = #"{"dbEnabled":false,"computerUseEnabled":true}"#
+        let decoded = try JSONDecoder().decode(AgentSettings.self, from: Data(json.utf8))
+
+        #expect(decoded.screenContextEnabled == true)
+        // The fresh-agent default also opts in.
+        #expect(AgentSettings.defaultDisabled.screenContextEnabled == true)
+    }
+
+    @Test("screenContextEnabled round-trips both on and off")
+    func roundTripsScreenContext() throws {
+        var settings = AgentSettings.defaultDisabled
+        settings.screenContextEnabled = false
+
+        let data = try JSONEncoder().encode(settings)
+        let decoded = try JSONDecoder().decode(AgentSettings.self, from: data)
+        #expect(decoded.screenContextEnabled == false)
+
+        settings.screenContextEnabled = true
+        let dataOn = try JSONEncoder().encode(settings)
+        let decodedOn = try JSONDecoder().decode(AgentSettings.self, from: dataOn)
+        #expect(decodedOn.screenContextEnabled == true)
     }
 
     @Test("a blank / whitespace model override entry is dropped on decode")

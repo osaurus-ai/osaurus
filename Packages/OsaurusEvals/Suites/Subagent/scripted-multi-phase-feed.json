@@ -2,7 +2,7 @@
   "id": "subagent.scripted-multi-phase-feed",
   "domain": "subagent",
   "label": "Subagent • multi-phase feed renders in order",
-  "query": "A scripted sub-agent that emits several lifecycle phases.",
+  "query": "A scripted subagent that emits several lifecycle phases.",
   "notes": "Model-free. The kind emits resolving -> running -> restoring; the unified feed must carry them in order (the live-progress proof that fixes the text-spawn 'frozen turn' gap). Asserts phase ordering as a subsequence.",
   "fixtures": {},
   "expect": {

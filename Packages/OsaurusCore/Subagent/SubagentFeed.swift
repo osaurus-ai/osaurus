@@ -2,11 +2,11 @@
 //  SubagentFeed.swift
 //  OsaurusCore — Subagent framework
 //
-//  The unified legibility surface for any nested sub-agent run. Generalized
+//  The unified legibility surface for any nested subagent run. Generalized
 //  from `ComputerUseFeed`/`FeedEvent`/`ComputerUseFeedRegistry`/
 //  `ComputerUseInterruptCenter` so spawn, image, and computer_use all
 //  emit onto ONE feed type and the chat row binds ONE
-//  surface (`NativeToolCallGroupView`) for every sub-agent row.
+//  surface (`NativeToolCallGroupView`) for every subagent row.
 //
 //  `SubagentActivityEvent` is a superset of the old computer-use `FeedEvent`:
 //  it keeps the rich perceive/propose/act/verify kinds AND adds generic
@@ -23,10 +23,10 @@ import Foundation
 
 // MARK: - Event
 
-/// One entry in a sub-agent run's activity feed.
+/// One entry in a subagent run's activity feed.
 public struct SubagentActivityEvent: Sendable, Identifiable, Equatable {
     public enum Kind: String, Sendable, Equatable {
-        // Generic lifecycle kinds (every sub-agent).
+        // Generic lifecycle kinds (every subagent).
         /// A lifecycle phase change (resolving / handoff / running / restoring).
         case phase
         /// Quantitative progress (image gen step %, loop iteration).
@@ -108,7 +108,7 @@ public struct SubagentActivityEvent: Sendable, Identifiable, Equatable {
 
 // MARK: - Status
 
-/// Terminal status of a sub-agent run, mirrored to the UI so the row can
+/// Terminal status of a subagent run, mirrored to the UI so the row can
 /// stop its spinner and show the final disposition.
 public enum SubagentRunStatus: Sendable, Equatable {
     case running
@@ -117,12 +117,12 @@ public enum SubagentRunStatus: Sendable, Equatable {
 
 // MARK: - Feed
 
-/// Observable activity feed for a single sub-agent run. Thread-safe: the
+/// Observable activity feed for a single subagent run. Thread-safe: the
 /// loop emits from whatever context it runs on; the UI subscribes on main.
 public final class SubagentFeed: @unchecked Sendable {
     /// The originating tool-call id — the key the chat row binds by.
     public let toolCallId: String
-    /// Stable kind id of the running sub-agent (`"spawn"`, `"image"`, …).
+    /// Stable kind id of the running subagent (`"spawn"`, `"image"`, …).
     public let kindId: String
     /// One-line human label for the row header (the goal / task / prompt).
     public let title: String
@@ -222,7 +222,7 @@ public final class SubagentFeed: @unchecked Sendable {
 
 // MARK: - Registry
 
-/// Process-wide map from a sub-agent tool-call id to its live `SubagentFeed`,
+/// Process-wide map from a subagent tool-call id to its live `SubagentFeed`,
 /// mirroring `LiveExecRegistry` for shell tools. The host registers the feed
 /// when a run starts; the chat row binds by tool-call id to render the inline
 /// activity pane, and unregisters after a short grace tail so a row that
@@ -245,7 +245,7 @@ public final class SubagentFeedRegistry: @unchecked Sendable {
     private static let dropGrace: TimeInterval = 5
 
     /// Live snapshot of every registered feed. The chat layer subscribes once
-    /// and attaches the matching feed to each sub-agent tool-call row by id.
+    /// and attaches the matching feed to each subagent tool-call row by id.
     public var feedsPublisher: AnyPublisher<[String: SubagentFeed], Never> {
         feedsSubject.eraseToAnyPublisher()
     }

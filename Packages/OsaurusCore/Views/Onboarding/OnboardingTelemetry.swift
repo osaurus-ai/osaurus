@@ -31,20 +31,15 @@ enum OnboardingTelemetry {
     }
 
     /// The user committed to a brain on the Configure AI step. `source` is the
-    /// low-cardinality path (`local` | `hosted` | `provider_key`); hosted
-    /// carries the Venice `privacy_tier`, and the bring-your-own-key path
-    /// carries the closed-enum `provider` type. No key, model id, or URL is
-    /// ever attached. Selection is payment-free — this fires at the proceed
-    /// moment, not on any checkout.
+    /// low-cardinality path (`local` | `provider_key`); the bring-your-own-key
+    /// path also carries the closed-enum `provider` type. No key, model id, or
+    /// URL is ever attached. Selection is payment-free — this fires at the
+    /// proceed moment, not on any checkout.
     static func brainSourceSelected(
         _ source: BrainSource,
-        privacyTier: VenicePrivacyTier? = nil,
         service: TelemetryService = .shared
     ) {
         var props: [String: Value] = ["source": source.telemetryValue]
-        if case .hostedOsaurus = source, let tier = privacyTier {
-            props["privacy_tier"] = tier.telemetryValue
-        }
         if let provider = source.providerTelemetryValue {
             props["provider"] = provider
         }
@@ -98,8 +93,6 @@ extension OnboardingStep {
         case .welcome: return "welcome"
         case .createAgent: return "create_agent"
         case .configureAI: return "configure_ai"
-        case .identitySetup: return "identity_setup"
-        case .sandboxSetup: return "sandbox_setup"
         case .choosePlugins: return "choose_plugins"
         case .walkthrough: return "walkthrough"
         case .consent: return "consent"

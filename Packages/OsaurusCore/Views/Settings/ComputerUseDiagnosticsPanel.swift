@@ -12,7 +12,6 @@ struct ComputerUseDiagnosticsPanel: View {
     @ObservedObject private var themeManager = ThemeManager.shared
     @ObservedObject private var permissionService = SystemPermissionService.shared
     @ObservedObject private var cloudVisionConsent = CloudVisionConsent.shared
-    @ObservedObject private var screenContext = ScreenContextSettings.shared
     @ObservedObject private var agentManager = AgentManager.shared
 
     let policy: AutonomyPolicy
@@ -111,7 +110,12 @@ struct ComputerUseDiagnosticsPanel: View {
                     isSessionGranted: cloudVisionConsent.isSessionGranted,
                     scrubMode: cloudVisionConsent.scrubMode
                 ),
-                screenContextEnabled: screenContext.injectionEnabled,
+                // Screen context is per-agent now (a child of Computer Use), so
+                // the global diagnostics row reflects whether ANY agent has it
+                // effectively enabled.
+                screenContextEnabled: agentManager.agents.contains {
+                    agentManager.effectiveCapabilities(for: $0.id).screenContextEnabled
+                },
                 agents: agentInputs
             )
         )

@@ -20,8 +20,6 @@ struct OnboardingTelemetryNamingTests {
         #expect(OnboardingStep.welcome.telemetryName == "welcome")
         #expect(OnboardingStep.createAgent.telemetryName == "create_agent")
         #expect(OnboardingStep.configureAI.telemetryName == "configure_ai")
-        #expect(OnboardingStep.identitySetup.telemetryName == "identity_setup")
-        #expect(OnboardingStep.sandboxSetup.telemetryName == "sandbox_setup")
         #expect(OnboardingStep.choosePlugins.telemetryName == "choose_plugins")
         #expect(OnboardingStep.walkthrough.telemetryName == "walkthrough")
         #expect(OnboardingStep.consent.telemetryName == "consent")

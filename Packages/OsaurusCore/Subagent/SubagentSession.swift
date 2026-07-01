@@ -2,7 +2,7 @@
 //  SubagentSession.swift
 //  OsaurusCore — Subagent framework
 //
-//  The shared host every nested sub-agent funnels through. Generalized from
+//  The shared host every nested subagent funnels through. Generalized from
 //  computer_use's scaffolding so spawn / image / computer_use
 //  share ONE lifecycle:
 //
@@ -21,7 +21,7 @@ import os
 
 private let subagentLog = Logger(subsystem: "ai.osaurus", category: "Subagent")
 
-/// Lightweight run-outcome telemetry for the sub-agent family. Kept as a log
+/// Lightweight run-outcome telemetry for the subagent family. Kept as a log
 /// hook so the host stays dependency-free; richer `FeatureTelemetry` rows are
 /// emitted by individual kinds where they already exist (computer_use).
 enum SubagentTelemetry {
@@ -33,30 +33,30 @@ enum SubagentTelemetry {
 }
 
 public enum SubagentSession {
-    /// Active-kind recursion guard. Set while ANY sub-agent kind runs so a
-    /// nested sub-agent call refuses (generalizes the per-tool delegation
+    /// Active-kind recursion guard. Set while ANY subagent kind runs so a
+    /// nested subagent call refuses (generalizes the per-tool delegation
     /// guards into one guard for the whole family). Carries the running kind's
     /// id for the message.
     @TaskLocal public static var activeKindId: String?
 
-    /// True when a sub-agent kind is currently running on this task tree.
+    /// True when a subagent kind is currently running on this task tree.
     public static var isActive: Bool { activeKindId != nil }
 
-    /// Run any sub-agent kind end to end and return a canonical envelope.
+    /// Run any subagent kind end to end and return a canonical envelope.
     /// `handoff` overrides the kind's own `makeHandoff()` (used by tests).
     public static func run(
         _ kind: any SubagentKind,
         tool: String,
         handoff: SubagentHandoff? = nil
     ) async -> String {
-        // 1. One recursion guard for the whole sub-agent family: a running
-        //    sub-agent (of any kind) cannot start another.
+        // 1. One recursion guard for the whole subagent family: a running
+        //    subagent (of any kind) cannot start another.
         if let active = activeKindId {
             return ToolEnvelope.failure(
                 kind: .rejected,
                 message:
-                    "\(tool) cannot be called from inside a running sub-agent (\(active)). "
-                    + "Finish the current sub-agent and return its result first.",
+                    "\(tool) cannot be called from inside a running subagent (\(active)). "
+                    + "Finish the current subagent and return its result first.",
                 tool: tool,
                 retryable: false
             )

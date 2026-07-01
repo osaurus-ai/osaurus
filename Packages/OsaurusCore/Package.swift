@@ -30,8 +30,7 @@ let package = Package(
         // MLXLMCommon, MLXLLM, MLXVLM, Tokenizers, Jinja, cache, parser,
         // MTP, and media-runtime surfaces Osaurus previously pulled from
         // separate MLX, inference, tokenizer, template, and transformer pins.
-        // Keep this revision pinned until the package-switch gate has
-        // live model, cache, parser, API, and UI evidence.
+        // Pinned to the merge of the Rampart PII PR on main.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
             revision: "6c52f72be45be3a988da4aeede804b4465387ed4"
@@ -172,6 +171,7 @@ let package = Package(
                 .product(name: "MLXVLM", package: "vmlx-swift"),
                 .product(name: "MLXLMCommon", package: "vmlx-swift"),
                 .product(name: "MLXEmbedders", package: "vmlx-swift"),
+                .product(name: "RampartPII", package: "vmlx-swift"),
                 .product(name: "VMLXTokenizers", package: "vmlx-swift"),
                 // Native on-device image generation (mFLUX). Umbrella import
                 // `import vMLXFlux`; shares the one MLX runtime above and is
