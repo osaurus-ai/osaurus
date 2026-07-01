@@ -193,6 +193,16 @@ public enum ProviderCredentialInstructionsCatalog {
                 storageAuthType: .apiKey,
                 presetId: preset.rawValue
             )
+        case .mistral:
+            return ProviderCredentialInstructions(
+                providerType: providerType,
+                displayName: L("Mistral"),
+                authMethod: .apiKey,
+                getKeyURL: getKeyURL,
+                keyFormatHint: L("Get a key from console.mistral.ai."),
+                storageAuthType: .apiKey,
+                presetId: preset.rawValue
+            )
         case .minimax:
             return ProviderCredentialInstructions(
                 providerType: providerType,
