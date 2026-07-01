@@ -412,7 +412,7 @@ private struct MCPServerHubPanel: View {
             }
 
             LazyVGrid(
-                columns: [GridItem(.adaptive(minimum: 86), spacing: 8, alignment: .leading)],
+                columns: [GridItem(.adaptive(minimum: 104), spacing: 8, alignment: .leading)],
                 alignment: .leading,
                 spacing: 8
             ) {
@@ -522,6 +522,8 @@ private struct MCPServerHubMetricPill: View {
             Text(title)
                 .font(.system(size: 11, weight: .medium))
                 .foregroundColor(theme.secondaryText)
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)

@@ -635,7 +635,11 @@ struct RuntimePolicySourceTests {
         // attention falls back to flat rope_theta and the processor config
         // accepts both nested and flat image-processor layouts (fixes the
         // Sentry EXC_BREAKPOINT on Mistral-Small / Ministral / Pixtral).
-        let expectedRuntimeHardenedRevision = "7ca7be3a883efe376bce43fe063f27cd3c7a3ad3"
+        // plus vmlx-swift#104: ImageIO.writePNG dropped its needless @MainActor
+        // isolation, so the MLX eval() it triggers no longer blocks the main
+        // thread during image generation (fixes the Sentry App Hanging report
+        // in ZImage.performGenerate).
+        let expectedRuntimeHardenedRevision = "5b8371b428f205bd7a4e91df901bfefefb71dfda"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
         let appRevision = try Self.vmlxPinRevision(in: appResolved)

@@ -7072,7 +7072,7 @@ private struct AgentEditorSheet: View {
                 } else {
                     HStack(spacing: 0) {
                         formColumn
-                            .frame(width: 440)
+                            .frame(width: 500)
                         Divider()
                         previewColumn
                             .frame(maxWidth: .infinity)
@@ -7091,7 +7091,7 @@ private struct AgentEditorSheet: View {
 
             footerView
         }
-        .frame(width: 760, height: 580)
+        .frame(width: 860, height: 580)
         .background(theme.primaryBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .overlay(
@@ -7180,6 +7180,7 @@ private struct AgentEditorSheet: View {
                     .font(.system(size: 13, weight: .semibold))
                 Text(LocalizedStringKey(template.label), bundle: .module)
                     .font(.system(size: 10, weight: isSelected ? .semibold : .medium))
+                    .lineLimit(1)
             }
             .foregroundColor(isSelected ? theme.accentColor : theme.secondaryText)
             .frame(maxWidth: .infinity)

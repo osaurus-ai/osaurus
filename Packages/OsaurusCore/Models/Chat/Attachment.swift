@@ -232,13 +232,44 @@ public struct Attachment: Codable, Sendable, Equatable, Identifiable {
 
     /// Newline-delimited line count for pasted-content attachments. Returns
     /// `nil` for any other kind (including non-pasted documents).
+    ///
+    /// Cached per attachment `id`: this is read from a SwiftUI body
+    /// (`DocumentChip`), which re-evaluates on every re-render. A large
+    /// paste made the `Character`-by-`Character` scan (plus, for spilled
+    /// `documentRef` attachments, the blob-store disk read it depends on)
+    /// expensive enough to hang the main thread when repeated on every
+    /// render (Sentry: "App Hanging" in this getter).
     public var pastedContentLineCount: Int? {
-        guard isPastedContent, let content = loadDocumentContent() else { return nil }
-        if content.isEmpty { return 0 }
-        var count = 1
-        for ch in content where ch == "\n" { count += 1 }
+        guard isPastedContent else { return nil }
+        let key = id.uuidString as NSString
+        if let cached = Attachment.lineCountCache.object(forKey: key) {
+            return cached == Attachment.nilSentinel ? nil : cached.intValue
+        }
+        guard let content = loadDocumentContent() else {
+            Attachment.lineCountCache.setObject(Attachment.nilSentinel, forKey: key)
+            return nil
+        }
+        let count: Int
+        if content.isEmpty {
+            count = 0
+        } else {
+            // Newlines are always a single UTF8 byte (0x0A) regardless of
+            // surrounding Unicode content, so scanning the UTF8 view gives
+            // the same count as scanning `Character`s without paying for
+            // grapheme-cluster segmentation over the whole document.
+            count = 1 + content.utf8.lazy.filter { $0 == 0x0A }.count
+        }
+        Attachment.lineCountCache.setObject(NSNumber(value: count), forKey: key)
         return count
     }
+
+    /// Sentinel stored in `lineCountCache` to distinguish "cached nil" from
+    /// "not yet cached" (`NSCache` can't store `Optional` directly).
+    private static let nilSentinel = NSNumber(value: -1)
+    // NSCache is documented thread-safe for concurrent access from multiple
+    // threads; the compiler just can't see that through `Sendable`.
+    nonisolated(unsafe) private static let lineCountCache = NSCache<NSString, NSNumber>()
+    nonisolated(unsafe) private static let tokenEstimateCache = NSCache<NSString, NSNumber>()
 
     public var isVideo: Bool {
         switch kind {
@@ -419,7 +450,19 @@ public struct Attachment: Codable, Sendable, Equatable, Identifiable {
             // per-image constant rather than the misleading byte-based figure.
             return Attachment.defaultImageTokenEstimate
         case .document(_, let content, _):
-            return TokenEstimator.estimate(content)
+            // Cached per attachment `id`: this is read from a SwiftUI body
+            // (`ChatSession.estimatedContextBreakdown`, re-evaluated on every
+            // re-render), and `TokenEstimator.estimate` counts `Character`s
+            // over the full document — expensive enough on a large paste to
+            // hang the main thread when repeated on every render (Sentry:
+            // "App Hanging" in this getter).
+            let key = id.uuidString as NSString
+            if let cached = Attachment.tokenEstimateCache.object(forKey: key) {
+                return cached.intValue
+            }
+            let estimate = TokenEstimator.estimate(content)
+            Attachment.tokenEstimateCache.setObject(NSNumber(value: estimate), forKey: key)
+            return estimate
         case .documentRef(_, _, let fileSize):
             return max(1, fileSize / TokenEstimator.charsPerToken)
         case .audio(let data, _, _):

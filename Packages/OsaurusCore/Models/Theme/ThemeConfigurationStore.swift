@@ -63,6 +63,30 @@ public enum ThemeConfigurationStore {
         }
     }
 
+    /// Decode installed theme files without touching the install-cache guard
+    /// or self-healing corrupted files. Callers must have already ensured the
+    /// themes directory and built-ins exist (e.g. via `installBuiltInThemesIfNeeded()`).
+    /// Marked `nonisolated` so it can be decoded off the main actor — the per-file
+    /// JSON decode this performs is the expensive part of `listThemes()`, and
+    /// running a directory's worth of decodes synchronously on the main actor
+    /// during startup is what produced the "App Hanging" reports for this path.
+    nonisolated static func listThemesFromDisk() -> [CustomTheme] {
+        let themesDir = themesDirectoryURL()
+        guard FileManager.default.fileExists(atPath: themesDir.path) else { return [] }
+
+        do {
+            let contents = try FileManager.default.contentsOfDirectory(at: themesDir, includingPropertiesForKeys: nil)
+            return
+                contents
+                .filter { $0.pathExtension == "json" }
+                .compactMap { url -> CustomTheme? in
+                    try? decodeTheme(from: url)
+                }
+        } catch {
+            return []
+        }
+    }
+
     static func loadTheme(id: UUID) -> CustomTheme? {
         let url = themeFileURL(for: id)
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
@@ -219,7 +243,7 @@ public enum ThemeConfigurationStore {
         }
     }
 
-    private static func themesDirectoryURL() -> URL {
+    nonisolated private static func themesDirectoryURL() -> URL {
         OsaurusPaths.resolvePath(new: OsaurusPaths.themes(), legacy: "Themes")
     }
 
@@ -227,7 +251,7 @@ public enum ThemeConfigurationStore {
         themesDirectoryURL().appendingPathComponent("\(id.uuidString).json")
     }
 
-    private static func decodeTheme(from url: URL) throws -> CustomTheme {
+    nonisolated private static func decodeTheme(from url: URL) throws -> CustomTheme {
         let data = try Data(contentsOf: url)
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601

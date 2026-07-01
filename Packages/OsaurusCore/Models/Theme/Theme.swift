@@ -613,7 +613,14 @@ public class ThemeManager: ObservableObject {
         let appearanceMode = config.appearanceMode
         Task { @MainActor [weak self] in
             ThemeConfigurationStore.installBuiltInThemesIfNeeded()
-            let loaded = ThemeConfigurationStore.listThemes()
+            // Decoding every installed theme's JSON synchronously on the main
+            // actor can take 3+ seconds on a cold disk with many themes
+            // installed, producing "App Hanging" reports at launch. Decode
+            // off the main actor; the install step above must still run here
+            // since it guards a main-actor install-cache flag + UserDefaults.
+            let loaded = await Task.detached(priority: .utility) {
+                ThemeConfigurationStore.listThemesFromDisk()
+            }.value
 
             guard let self else { return }
             print("[Osaurus] ThemeManager: Found \(loaded.count) installed themes (deferred)")

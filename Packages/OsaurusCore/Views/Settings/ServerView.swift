@@ -259,7 +259,7 @@ private struct AccessKeysSection: View {
 
                 Spacer()
 
-                Button(action: { reloadAccessKeys(readKeychain: true) }) {
+                Button(action: { Task { await reloadAccessKeys(readKeychain: true) } }) {
                     Text("Refresh", bundle: .module)
                         .font(.system(size: 12, weight: .medium))
                         .foregroundColor(theme.secondaryText)
@@ -562,9 +562,13 @@ private struct AccessKeysSection: View {
             .background(Capsule().fill(color.opacity(0.12)))
     }
 
-    private func reloadAccessKeys(readKeychain: Bool = false) {
+    private func reloadAccessKeys(readKeychain: Bool = false) async {
         if readKeychain {
-            APIKeyManager.shared.reload()
+            // Keychain reads block on the security daemon over XPC — keep
+            // them off the main actor so the UI stays responsive.
+            await Task.detached(priority: .userInitiated) {
+                APIKeyManager.shared.reload()
+            }.value
             didLoadAccessKeys = true
         }
         accessKeys = APIKeyManager.shared.listKeys().sorted { $0.createdAt > $1.createdAt }
@@ -604,7 +608,7 @@ private struct AccessKeysSection: View {
                 generatedKey = result.fullKey
                 showingKeyGenerator = false
                 newKeyLabel = ""
-                reloadAccessKeys()
+                await reloadAccessKeys()
                 restartServerForKeyChange()
             } catch {
                 keyGenError = error.localizedDescription
@@ -618,11 +622,11 @@ private struct AccessKeysSection: View {
         accessKeyError = nil
         do {
             try AccessKeyLifecycleService.shared.revokeAndRemove(id: id)
-            reloadAccessKeys(readKeychain: true)
+            Task { await reloadAccessKeys(readKeychain: true) }
             restartServerForKeyChange()
         } catch {
             accessKeyError = error.localizedDescription
-            reloadAccessKeys(readKeychain: true)
+            Task { await reloadAccessKeys(readKeychain: true) }
         }
     }
 

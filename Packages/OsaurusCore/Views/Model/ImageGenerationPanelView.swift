@@ -452,7 +452,14 @@ struct ImageGenerationPanelView: View {
                         .foregroundColor(theme.tertiaryText)
                 }
                 Spacer()
-                Button(action: { NSWorkspace.shared.activateFileViewerSelecting([url]) }) {
+                Button(action: {
+                    // `activateFileViewerSelecting` makes a synchronous Launch
+                    // Services round-trip to Finder that can block for
+                    // seconds, hanging the UI if run on the main thread.
+                    Task.detached(priority: .userInitiated) {
+                        NSWorkspace.shared.activateFileViewerSelecting([url])
+                    }
+                }) {
                     Label(L("Reveal"), systemImage: "folder")
                         .font(.system(size: 12, weight: .medium))
                 }

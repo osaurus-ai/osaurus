@@ -841,13 +841,20 @@ public enum GitHubSkillError: Error, LocalizedError {
         case .branchNotFound:
             return "Could not determine the default branch"
         case .rateLimited(let resetAt):
+            // #1719: when no token is configured we're on the 60/hr anonymous
+            // limit; tell the user how to raise it instead of only "wait an hour"
+            // (which, for a large repo, never finishes anyway).
+            let tokenHint =
+                GitHubSkillService.gitHubToken() == nil
+                ? " Set GITHUB_TOKEN or GH_TOKEN to raise the limit to 5,000/hr."
+                : ""
             if let resetAt {
                 let formatter = RelativeDateTimeFormatter()
                 formatter.unitsStyle = .short
                 let when = formatter.localizedString(for: resetAt, relativeTo: Date())
-                return "GitHub rate-limited this app. Try again \(when)."
+                return "GitHub rate-limited this app. Try again \(when).\(tokenHint)"
             }
-            return "GitHub rate-limited this app. Sign in or wait an hour to retry."
+            return "GitHub rate-limited this app. Wait an hour to retry.\(tokenHint)"
         case .noImportableComponents(let pluginName):
             return
                 "\(pluginName) has no components Osaurus can import (it only ships hooks, output styles, or other unsupported parts)."
@@ -874,7 +881,41 @@ public final class GitHubSkillService: ObservableObject {
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 30
         config.timeoutIntervalForResource = 60
+        // Optional GitHub auth (#1719): unauthenticated GitHub is capped at
+        // 60 req/hr per IP, so importing a large plugin/skill repo (e.g.
+        // anthropics/knowledge-work-plugins, ~200 SKILL.md across ~22 plugins)
+        // fans out enough Contents-API calls to trip a 403 mid-enumeration and
+        // never completes. Attach a token when GITHUB_TOKEN / GH_TOKEN is set to
+        // raise the limit to 5,000/hr. Absent ⇒ byte-identical prior behavior.
+        // This session is dedicated to GitHubSkillService and only contacts
+        // GitHub-controlled hosts (api.github.com / *.githubusercontent.com), so
+        // the header stays on GitHub. The token is never logged or surfaced in
+        // any error string.
+        if let token = Self.gitHubToken() {
+            var headers = config.httpAdditionalHeaders ?? [:]
+            headers["Authorization"] = "Bearer \(token)"
+            config.httpAdditionalHeaders = headers
+        }
         return GlobalProxySettings.makeSession(base: config)
+    }
+
+    /// A GitHub API token from the process environment, if present and
+    /// non-empty. Never logged. Honors GITHUB_TOKEN then GH_TOKEN.
+    nonisolated static func gitHubToken() -> String? {
+        gitHubToken(from: ProcessInfo.processInfo.environment)
+    }
+
+    /// Pure token resolution over an explicit environment, so the precedence
+    /// and trimming rules are unit-testable without mutating the process env.
+    /// GITHUB_TOKEN wins over GH_TOKEN; values are whitespace-trimmed; blank or
+    /// whitespace-only values are treated as absent.
+    nonisolated static func gitHubToken(from env: [String: String]) -> String? {
+        for key in ["GITHUB_TOKEN", "GH_TOKEN"] {
+            if let v = env[key]?.trimmingCharacters(in: .whitespacesAndNewlines), !v.isEmpty {
+                return v
+            }
+        }
+        return nil
     }
 
     // MARK: - URL Parsing
