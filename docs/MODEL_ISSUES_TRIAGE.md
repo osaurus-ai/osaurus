@@ -71,3 +71,25 @@ Legend: 🔴 not started · 🟡 investigating · 🟢 root-caused · ✅ fixed+
 - The marker-leak class (`</...>` in visible text) previously hit Gemma-4
   (`<channel|>` leak, osaurus #44) — the Zaya `zyphra_tool_call` leak may be the
   same missing-strip pattern for a different family.
+
+---
+
+## Live dev-app (osaurus API) results — build on pin d103e0cc
+
+Built the osaurus dev app on the fixed pin and drove its local API (port 1337):
+
+- **Issue 2 — Zaya VL WORKS end-to-end through osaurus.** Sent a real base64 image to
+  `zaya1-vl-8b-jangtq4`: it processed the image and described it correctly ("a blend of
+  blue, green, yellow, and pink hues…"), `finish=stop`, no error. So Zaya VL image-sending
+  is fine through the dev app. "Some VL models not working" must be a DIFFERENT VL family
+  (Mistral3/Pixtral/Gemma-4 VLM — not downloaded) — need the specific broken model named.
+  (Note: model ids are lowercased/de-org-prefixed, e.g. `zaya1-vl-8b-jangtq4`.)
+- **Issue 3 — single-turn tool context is CLEAN through osaurus.** `osaurus-applescript-8b-jang_4m`
+  with a tool + a 1-step tool-result context produced a coherent `run_applescript` tool call
+  (valid AppleScript), `finish=tool_calls`, NO `<pad>`, NO `</zyphra_tool_call>`/`</parameter>`
+  leak. So the degeneration + marker leak require the FULL multi-step agent loop (tpae had
+  scripts_run=5) — the accumulated long tool-transcript is the trigger, confirmed not a
+  single-turn issue. The marker-leak strip would be a symptom guard; the real fix is the
+  degeneration root cause, which needs a faithful 5+ step loop repro to trace.
+- **Issue 1 — JANGTQ crash fix is IN this dev build** (pin d103e0cc); MiniMax-M2.7-Small now
+  loads (proven in RunBench). Live multiturn UI confirm pending computer-use.
