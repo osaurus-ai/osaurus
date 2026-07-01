@@ -7075,6 +7075,8 @@ private struct AgentEditorSheet: View {
                     .font(.system(size: 13, weight: .semibold))
                 Text(LocalizedStringKey(template.label), bundle: .module)
                     .font(.system(size: 10, weight: isSelected ? .semibold : .medium))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
             }
             .foregroundColor(isSelected ? theme.accentColor : theme.secondaryText)
             .frame(maxWidth: .infinity)
