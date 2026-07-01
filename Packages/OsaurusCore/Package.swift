@@ -33,7 +33,7 @@ let package = Package(
         // Pinned to the merge of the Rampart PII PR on main.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "6c52f72be45be3a988da4aeede804b4465387ed4"
+            revision: "d103e0cc2d95d2aa3a984f93f61495ca0153107b"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the

@@ -31,7 +31,8 @@ Legend: 🔴 not started · 🟡 investigating · 🟢 root-caused · ✅ fixed+
 - **Next:** root-cause why the walk picks 16 (should honor declared bits=8 or exclude 16
   from `bitWidthsUsed` for packed-weight inference); fix in vmlx main; re-run decode to
   prove coherent; then live UI multiturn.
-- **Status:** 🟢 root-caused + live-reproduced; fix pending.
+- **Fix (vmlx-swift #103, in the repin):** filter shape-walk candidate bits to the valid affine set {2,3,4,5,6,8} so the fp16 sentinel `16` cannot be selected; qkv_proj re-resolves to (8,64). PROVEN at engine level: M2.7-Small now loads + decodes coherently ("288 - 17 = 271"), no crash.
+- **Status:** 🟢 engine-fixed + proven via RunBench. NOT yet "fixed" per acceptance rule — pending live dev-app UI multiturn (tools/reasoning on-off), which is TCC-blocked on Automation -> System Events.
 
 
 ## Issue 2 — Some VL models not working in osaurus (send images live)  🟡
