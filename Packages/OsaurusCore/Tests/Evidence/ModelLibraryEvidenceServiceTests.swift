@@ -194,6 +194,46 @@ struct ModelLibraryEvidenceServiceTests {
     }
 
     @Test
+    func failedProofOverridesPartialAndUnprovenPreflightStates() throws {
+        let fixture = try ModelEvidenceFixture()
+        let partial = try fixture.model(id: "org/partial-proof-failed", config: #"{"model_type":"dflash"}"#)
+        let notLocal = MLXModel(
+            id: "org/not-local-proof-failed",
+            name: "Not Local Proof Failed",
+            description: "",
+            downloadURL: "",
+            rootDirectory: fixture.root
+        )
+        let partialArtifact = try fixture.writeArtifact(named: "proof/partial-failed.json")
+        let notLocalArtifact = try fixture.writeArtifact(named: "proof/not-local-failed.json")
+
+        let service = ModelLibraryEvidenceService(
+            registry: EvidenceReportRegistryService(now: fixture.clock)
+        )
+        let snapshot = service.registerEvidence(
+            for: [partial, notLocal],
+            proofDescriptors: [
+                ModelEvidenceProofDescriptor(
+                    modelId: partial.id,
+                    kind: .runtime,
+                    artifactPath: partialArtifact.path,
+                    status: .failed
+                ),
+                ModelEvidenceProofDescriptor(
+                    modelId: notLocal.id,
+                    kind: .runtime,
+                    artifactPath: notLocalArtifact.path,
+                    status: .failed
+                ),
+            ]
+        )
+
+        #expect(snapshot.rows.first { $0.modelId == partial.id }?.supportState == .unsupported)
+        #expect(snapshot.rows.first { $0.modelId == notLocal.id }?.supportState == .unsupported)
+        #expect(snapshot.reports.filter { $0.kind == .runtime }.allSatisfy { $0.status == .failed })
+    }
+
+    @Test
     func registryMetadataAndRowsDoNotExposeFullBundlePaths() throws {
         let fixture = try ModelEvidenceFixture()
         let model = try fixture.model(id: "org/redacted", config: #"{"model_type":"qwen3"}"#)

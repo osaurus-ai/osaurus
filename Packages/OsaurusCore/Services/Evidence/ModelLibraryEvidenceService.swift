@@ -297,14 +297,14 @@ final class ModelLibraryEvidenceService {
         if preflightState == .unsupported {
             return .unsupported
         }
+        if proofAssessments.contains(where: { $0.status == .failed || $0.status == .error }) {
+            return .unsupported
+        }
         if preflightState == .partial {
             return .partial
         }
         if report.localBundle.kind != .available {
             return .unproven
-        }
-        if proofAssessments.contains(where: { $0.status == .failed || $0.status == .error }) {
-            return .unsupported
         }
 
         let runtimeProof = proofAssessments.contains {
