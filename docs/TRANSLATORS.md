@@ -14,6 +14,7 @@ We are actively looking for help with these languages:
 | German | `de` | Maintained |
 | Simplified Chinese | `zh-Hans` | Maintained |
 | Korean | `ko` | Maintained |
+| Russian | `ru` | Maintained |
 | English | `en` | Source language |
 
 All three "help wanted" locales are already enabled in the Xcode project, so you
