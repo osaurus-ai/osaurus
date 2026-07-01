@@ -1,0 +1,23 @@
+{
+  "id": "apple_script.scripted-multi-value-return",
+  "domain": "apple_script",
+  "label": "AppleScript • scripted multi-value return",
+  "query": "Report both the current output volume and the frontmost application name.",
+  "notes": "Model-free CI anchor for a structured multi-value return: one read script that `return`s two values in a single string. The canned executor stands in for the OS and returns a combined value; the loop coerces it and both values survive into the captured result. Proves the read path carries more than one value. No tokens.",
+  "fixtures": {},
+  "expect": {
+    "appleScript": {
+      "lane": "scripted",
+      "mode": "query",
+      "executor": { "kind": "mock", "mockResults": [ { "status": "success", "output": "volume: 42, frontmost: Safari" } ] },
+      "scriptedCalls": [
+        "{\"script\":\"return (output volume of (get volume settings)) & \\\" / \\\" & (name of first process whose frontmost is true)\"}"
+      ],
+      "expectStatus": "succeeded",
+      "expectEffects": ["read"],
+      "expectBlockedWrite": false,
+      "valuesContain": ["42", "Safari"],
+      "scoredMaxSteps": 1
+    }
+  }
+}

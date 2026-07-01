@@ -1,0 +1,33 @@
+{
+  "id": "apple_script.live-many-literals",
+  "domain": "apple_script",
+  "label": "AppleScript • live many-literal slot selection",
+  "query": "In Notes, create a note named 'Digest' and set its body to the provided intro followed by the provided summary.",
+  "notes": "Capability/scale lane: fifteen named literals are provided (more than the prompt's per-item preview cap of 12, so 'summary' and some snippets appear name-only). Among thirteen distractor 'snippet' blocks, the task names exactly two — 'intro' and 'summary' (summary is past the preview cap). Scores that the real 16B references those two via their {{name}} placeholders (mustUsePlaceholders) and composes them in order without grabbing the distractors or inventing text (Grok rubric). Skips when no AppleScript model is installed.",
+  "fixtures": {},
+  "expect": {
+    "appleScript": {
+      "lane": "live",
+      "mode": "automate",
+      "contents": {
+        "intro": "Weekly eng digest — cycle 14.",
+        "snippet01": "Item 1: shipped.", "snippet02": "Item 2: shipped.", "snippet03": "Item 3: shipped.",
+        "snippet04": "Item 4: shipped.", "snippet05": "Item 5: shipped.", "snippet06": "Item 6: shipped.",
+        "snippet07": "Item 7: shipped.", "snippet08": "Item 8: shipped.", "snippet09": "Item 9: shipped.",
+        "snippet10": "Item 10: shipped.", "snippet11": "Item 11: shipped.", "snippet12": "Item 12: shipped.",
+        "snippet13": "Item 13: shipped.",
+        "summary": "Bottom line: on track for the June release."
+      },
+      "executor": { "kind": "mock", "mockWorld": { "notes": {} } },
+      "expectStatus": "succeeded",
+      "expectOutcome": ["done"],
+      "expectEffects": ["edit"],
+      "mustUsePlaceholders": ["intro", "summary"],
+      "scoredMaxSteps": 5,
+      "rubric": [
+        "The note body is composed of the provided intro block followed by the provided summary block.",
+        "It uses those two provided blocks — not the distractor 'snippet' blocks — and does not invent body text."
+      ]
+    }
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "id": "apple_script.live-create-if-missing",
+  "domain": "apple_script",
+  "label": "AppleScript • live create-if-missing",
+  "query": "In Notes, put the provided body into a note named 'Sprint Log', creating the note if it doesn't already exist.",
+  "notes": "Capability lane for the A3 find-or-create rule: the target note is absent from the mock 'app world' (empty seed), so a script that blindly addresses `note \"Sprint Log\"` would be wrong on a real Mac. Scores that the real 16B handles the possibly-missing object — creating it or otherwise resolving it — instead of assuming it exists (Grok rubric), and that it used the {{content}} placeholder for the body. No side effects. Skips when no AppleScript model is installed.",
+  "fixtures": {},
+  "expect": {
+    "appleScript": {
+      "lane": "live",
+      "mode": "automate",
+      "content": "Sprint 14 log:\n- Landed identifier fidelity\n- Started the capability sweep",
+      "executor": { "kind": "mock", "mockWorld": { "notes": {} } },
+      "expectOutcome": ["done"],
+      "expectEffects": ["edit"],
+      "mustUsePlaceholders": ["content"],
+      "scoredMaxSteps": 5,
+      "rubric": [
+        "The AppleScript ensures the note named 'Sprint Log' exists — creating it (e.g. with `make new note`) or otherwise handling the case where it is absent — rather than assuming it is already there.",
+        "It sets that note's body to the provided content and targets the Notes application."
+      ]
+    }
+  }
+}

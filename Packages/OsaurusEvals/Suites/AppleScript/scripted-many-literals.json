@@ -1,0 +1,35 @@
+{
+  "id": "apple_script.scripted-many-literals",
+  "domain": "apple_script",
+  "label": "AppleScript • scripted many-literal decode + expand",
+  "query": "Set the body of the note 'Digest' to the provided summary.",
+  "notes": "Model-free CI anchor for scale: a 15-entry contents map decodes and a specific literal — 'summary', which sorts past the prompt's preview cap (maxPreviewed=12) so it is announced name-only — expands to the exact escaped text before execution. The mock 'app world' un-escapes it back to prove byte-fidelity. Guards the literal store + expansion at scale. No tokens.",
+  "fixtures": {},
+  "expect": {
+    "appleScript": {
+      "lane": "scripted",
+      "mode": "automate",
+      "harness": { "verifyReadBack": false },
+      "contents": {
+        "intro": "Weekly eng digest — cycle 14.",
+        "snippet01": "Item 1: shipped.", "snippet02": "Item 2: shipped.", "snippet03": "Item 3: shipped.",
+        "snippet04": "Item 4: shipped.", "snippet05": "Item 5: shipped.", "snippet06": "Item 6: shipped.",
+        "snippet07": "Item 7: shipped.", "snippet08": "Item 8: shipped.", "snippet09": "Item 9: shipped.",
+        "snippet10": "Item 10: shipped.", "snippet11": "Item 11: shipped.", "snippet12": "Item 12: shipped.",
+        "snippet13": "Item 13: shipped.",
+        "summary": "Bottom line: on track for the June release."
+      },
+      "executor": { "kind": "mock", "mockWorld": { "notes": { "Digest": "" } } },
+      "scriptedCalls": [
+        "{\"script\":\"set body of note \\\"Digest\\\" to \\\"{{summary}}\\\"\"}"
+      ],
+      "expectStatus": "succeeded",
+      "expectEffects": ["edit"],
+      "mustUsePlaceholders": ["summary"],
+      "finalState": [
+        { "key": "note:Digest", "equals": "Bottom line: on track for the June release." }
+      ],
+      "scoredMaxSteps": 1
+    }
+  }
+}

@@ -1884,6 +1884,11 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// Scripted lane only: `run_applescript` arguments-JSON strings, one per
         /// step, that drive the loop with no model call. Ignored on live lanes.
         public let scriptedCalls: [String]?
+        /// Optional desktop-context string injected into the run (e.g. a
+        /// frontmost / running-apps snapshot), so a case can prove the model
+        /// uses the injected context. Honored only when the harness
+        /// `includeDesktopContext` is on (the shipped default). nil → none.
+        public let environmentContext: String?
 
         // MARK: - Executor
 
@@ -2046,6 +2051,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             confirmApproves: Bool? = nil,
             maxSteps: Int? = nil,
             scriptedCalls: [String]? = nil,
+            environmentContext: String? = nil,
             executor: ExecutorSpec? = nil,
             harness: HarnessSpec? = nil,
             expectStatus: String? = nil,
@@ -2071,6 +2077,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.confirmApproves = confirmApproves
             self.maxSteps = maxSteps
             self.scriptedCalls = scriptedCalls
+            self.environmentContext = environmentContext
             self.executor = executor
             self.harness = harness
             self.expectStatus = expectStatus

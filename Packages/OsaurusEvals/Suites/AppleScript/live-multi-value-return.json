@@ -1,0 +1,23 @@
+{
+  "id": "apple_script.live-multi-value-return",
+  "domain": "apple_script",
+  "label": "AppleScript • live multi-value return",
+  "query": "In one answer, report the current system output volume and the name of the frontmost application.",
+  "notes": "Capability lane for structured output: the real 16B must write a single READ-ONLY script that returns BOTH values (a combined string or list), the shape needed when a task asks for several facts at once. The mock stands in for the OS and returns a combined value, so the Grok rubric grades whether the SCRIPT reads and returns both (robust to formatting), while the captured value confirms the plumbing carried both. Skips when no AppleScript model is installed.",
+  "fixtures": {},
+  "expect": {
+    "appleScript": {
+      "lane": "live",
+      "mode": "query",
+      "executor": { "kind": "mock", "mockResults": [ { "status": "success", "output": "volume: 42; frontmost app: Safari" } ] },
+      "expectOutcome": ["done"],
+      "expectEffects": ["read"],
+      "valuesContain": ["42", "Safari"],
+      "scoredMaxSteps": 3,
+      "rubric": [
+        "The AppleScript returns BOTH the system output volume AND the frontmost application's name as its final value (e.g. combined into one string or a list).",
+        "The script is read-only — it reads state and returns it without changing anything."
+      ]
+    }
+  }
+}

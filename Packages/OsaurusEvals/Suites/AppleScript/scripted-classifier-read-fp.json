@@ -1,0 +1,25 @@
+{
+  "id": "apple_script.scripted-classifier-read-fp",
+  "domain": "apple_script",
+  "label": "AppleScript • scripted read classification (no over-block)",
+  "query": "What is the current track name, and how many notes are there?",
+  "notes": "Model-free CI guard against classifier over-blocking. Reads that LOOK write-ish — a local `set <var> to <property> of …` assignment, and a `count of …` read — must classify as `read`, auto-run in query mode, and never be blocked as mutations. Guards the effect classifier's `set … to … of` (assignment, not property write) handling so a benign read isn't refused. No tokens.",
+  "fixtures": {},
+  "expect": {
+    "appleScript": {
+      "lane": "scripted",
+      "mode": "query",
+      "executor": { "kind": "mock", "mockResults": [ { "status": "success", "output": "Aja" }, { "status": "success", "output": "7" } ] },
+      "scriptedCalls": [
+        "{\"script\":\"set trackName to name of current track\\nreturn trackName\"}",
+        "{\"script\":\"return count of notes\"}"
+      ],
+      "expectStatus": "succeeded",
+      "expectEffects": ["read"],
+      "forbidEffects": ["edit", "consequential"],
+      "expectBlockedWrite": false,
+      "valuesContain": ["7"],
+      "scoredMaxSteps": 2
+    }
+  }
+}

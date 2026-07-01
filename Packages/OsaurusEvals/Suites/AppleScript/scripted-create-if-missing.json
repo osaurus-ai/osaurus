@@ -1,0 +1,28 @@
+{
+  "id": "apple_script.scripted-create-if-missing",
+  "domain": "apple_script",
+  "label": "AppleScript • scripted create-then-verify",
+  "query": "Add a note named 'Roadmap' with the provided body; create it if it doesn't exist.",
+  "notes": "Model-free CI anchor for the find-or-create mechanic (the A3 prompt rule's target behavior). Step 1 creates the note with `make new note` (body via {{content}}); the mock 'app world' records the new note under its name. Step 2 reads the body back, proving the created note is addressable and the body round-tripped. No tokens.",
+  "fixtures": {},
+  "expect": {
+    "appleScript": {
+      "lane": "scripted",
+      "mode": "automate",
+      "content": "Roadmap:\n1. Ship the evals\n2. Tune the harness",
+      "executor": { "kind": "mock", "mockWorld": { "notes": {} } },
+      "scriptedCalls": [
+        "{\"script\":\"tell application \\\"Notes\\\" to make new note with properties {name:\\\"Roadmap\\\", body:\\\"{{content}}\\\"}\"}",
+        "{\"script\":\"tell application \\\"Notes\\\" to return body of note \\\"Roadmap\\\"\"}"
+      ],
+      "expectStatus": "succeeded",
+      "expectEffects": ["edit", "read"],
+      "mustUsePlaceholders": ["content"],
+      "valuesContain": ["Ship the evals"],
+      "finalState": [
+        { "key": "note:Roadmap", "equals": "Roadmap:\n1. Ship the evals\n2. Tune the harness" }
+      ],
+      "scoredMaxSteps": 2
+    }
+  }
+}

@@ -198,11 +198,25 @@ public struct AppleScriptHarnessOptions: Sendable, Equatable {
     }
 
     /// How the provided-content placeholders are announced to the model.
-    /// `.namePreview` is the shipped announcement.
+    /// `.nameOnly` is the shipped announcement — the evidence-backed sweep
+    /// winner. Two independent capability sweeps put the leaner `.nameOnly` /
+    /// `.minimal` at ~82% vs the older `.namePreview` ~64%, and both reproduced
+    /// the MECHANISTIC reason to prefer it: at the ~15-literal ceiling
+    /// `.namePreview`'s per-literal content preview makes the model emit NO
+    /// script, while dropping the preview clears it (`live-many-literals` — all
+    /// namePreview variants fail, both lean styles pass, in both sweeps). The
+    /// preview is model-prompt-only (never user-visible) and does NOT affect the
+    /// verbatim `{{name}}` expansion, so removing it only removes the model's
+    /// "peek": redundant for a few well-named literals, decisive at scale. Other
+    /// mid-count cases still flip run-to-run (~3/11), so `.namePreview` is kept
+    /// as a sweep/regression option (`OSAURUS_AS_LITERAL_STYLE`) — keep sweeping
+    /// when the literal contract changes.
     public enum LiteralAnnouncementStyle: String, Sendable, Equatable, CaseIterable {
-        /// Shipped: name + length + a head/tail preview + a usage example.
+        /// Older style: name + length + a head/tail content preview + a usage
+        /// example. Retained as a sweep/regression option (was the shipped
+        /// default before the sweep promoted `.nameOnly`).
         case namePreview
-        /// Name + length (no preview) + a usage example.
+        /// Shipped: name + length (no preview) + a usage example.
         case nameOnly
         /// A single line naming the placeholders + a usage example.
         case minimal
@@ -216,14 +230,14 @@ public struct AppleScriptHarnessOptions: Sendable, Equatable {
     public var includeDesktopContext: Bool
     /// Which system-prompt phrasing to use (shipped: `.standard`).
     public var promptVariant: PromptVariant
-    /// How provided-content placeholders are announced (shipped: `.namePreview`).
+    /// How provided-content placeholders are announced (shipped: `.nameOnly`).
     public var literalAnnouncementStyle: LiteralAnnouncementStyle
 
     public init(
         verifyReadBack: Bool = true,
         includeDesktopContext: Bool = true,
         promptVariant: PromptVariant = .standard,
-        literalAnnouncementStyle: LiteralAnnouncementStyle = .namePreview
+        literalAnnouncementStyle: LiteralAnnouncementStyle = .nameOnly
     ) {
         self.verifyReadBack = verifyReadBack
         self.includeDesktopContext = includeDesktopContext
@@ -900,15 +914,15 @@ public enum AppleScriptLoop {
     // MARK: - Literal placeholders
 
     /// The system-prompt section announcing the verbatim content this run was
-    /// given. It lists each placeholder's NAME, length, and a head/tail preview
-    /// — never the full body, since the whole point is that the model
-    /// references it instead of reproducing it — plus how to use it. With
-    /// several literals the header reads in the plural; a task with MANY
-    /// literals shows previews for the first `maxPreviewed` and then names the
-    /// rest (still referenceable) so the prompt stays bounded.
+    /// given. It lists each placeholder's NAME and length (plus a head/tail
+    /// preview under `.namePreview`) — never the full body, since the whole
+    /// point is that the model references it instead of reproducing it — plus
+    /// how to use it. With several literals the header reads in the plural; a
+    /// task with MANY literals shows any previews for the first `maxPreviewed`
+    /// and then names the rest (still referenceable) so the prompt stays bounded.
     static func literalsPromptSection(
         _ literals: AppleScriptLiterals,
-        style: AppleScriptHarnessOptions.LiteralAnnouncementStyle = .namePreview
+        style: AppleScriptHarnessOptions.LiteralAnnouncementStyle = .nameOnly
     ) -> String {
         let names = literals.names
         guard !names.isEmpty else { return "" }
@@ -918,9 +932,11 @@ public enum AppleScriptLoop {
             : "Provided content — insert each block VERBATIM via its placeholder; do NOT re-type the text:"
         let example = names.first ?? "content"
         let usage =
-            "Write the placeholder token where the text value belongs (it expands to a complete, "
-            + "correctly-escaped AppleScript string — quotes/newlines handled for you). Example: "
-            + "set body of note \"Title\" to {{\(example)}}"
+            "Write the placeholder token exactly where its value belongs and do NOT re-type or rebuild "
+            + "the value yourself (it expands to a complete, correctly-escaped AppleScript string — "
+            + "quotes/newlines handled for you). This includes any NAME or identifier a value stands "
+            + "for — a note title, file path, mailbox, or URL: write the placeholder in that slot too "
+            + "instead of typing the name. Example: set body of note \"Title\" to {{\(example)}}"
 
         // `.minimal`: one line naming every placeholder, then the usage line.
         if style == .minimal {
@@ -1108,6 +1124,10 @@ public enum AppleScriptLoop {
                 "- After you change something, run ONE more read-only script that gets and `return`s "
                 + "the resulting state, so the result can be verified (e.g. after setting the volume, "
                 + "return the new volume).\n"
+                + "- When you address an app object by name (a note, file, mailbox, playlist), it may "
+                + "not exist yet or be named slightly differently; prefer a script that finds or "
+                + "creates it (e.g. `if not (exists note \"X\") then make new note`) instead of "
+                + "assuming it is there.\n"
                 + "- Only do what the task asks. Avoid destructive or irreversible actions (deleting, "
                 + "sending, purchasing) unless the user explicitly requested them."
         case .query:
@@ -1118,6 +1138,10 @@ public enum AppleScriptLoop {
             modeRules =
                 "- Every script must be read-only: use `get` / `return` / `count` and property reads "
                 + "only. A script that tries to modify state will be blocked, so rewrite it as a read.\n"
+                + "- Make your FIRST script a read — never `set`, `make`, `delete`, or click, even as an "
+                + "opening step. Read the value directly and `return` it, e.g. `return output volume of "
+                + "(get volume settings)` or `tell application \"Safari\" to return URL of front "
+                + "document`.\n"
                 + "- Always `return` the requested information as your final value."
         }
         return """
@@ -1154,14 +1178,18 @@ public enum AppleScriptLoop {
                 "You are Osaurus's AppleScript agent: accomplish the Mac task by writing and running "
                 + "one complete AppleScript at a time."
             modeRule =
-                "- After a change, run one read-only script that `return`s the resulting state. Avoid "
-                + "destructive/irreversible actions unless explicitly asked."
+                "- Address objects that may be missing with find-or-create (`if not (exists note \"X\") "
+                + "then make new note`), not by assuming. After a change, run one read-only script that "
+                + "`return`s the resulting state. Avoid destructive/irreversible actions unless "
+                + "explicitly asked."
         case .query:
             intro =
                 "You are Osaurus's AppleScript query agent: answer by writing a READ-ONLY AppleScript "
                 + "that `return`s the information. Never change anything."
             modeRule =
-                "- Reads only (`get`/`return`/`count`); a mutation is blocked, so rewrite it as a read."
+                "- Reads only (`get`/`return`/`count`) — make even the FIRST script a read, never "
+                + "`set`/`make`/`delete`; e.g. `return output volume of (get volume settings)`. A "
+                + "mutation is blocked, so rewrite it as a read."
         }
         return """
             \(intro)

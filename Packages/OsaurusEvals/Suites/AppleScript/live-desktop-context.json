@@ -1,0 +1,22 @@
+{
+  "id": "apple_script.live-desktop-context",
+  "domain": "apple_script",
+  "label": "AppleScript • live desktop-context handling",
+  "query": "Pause playback in the media player that is currently frontmost.",
+  "notes": "Desktop-context lane + primary sweep vehicle for the includeDesktopContext lever. The frontmost app (IINA) is named in the injected environment context. A correct solution EITHER targets that app from context OR discovers the frontmost app at runtime (AppleScript can query it), so the rubric accepts both — this case measures whether the model resolves the frontmost app at all and pauses it, without asking the user. Its real signal is the harness sweep delta (OSAURUS_AS_DESKTOP_CONTEXT on vs off): if injecting context does not change approach/steps, that argues the context is redundant for AppleScript. Skips when no AppleScript model is installed.",
+  "fixtures": {},
+  "expect": {
+    "appleScript": {
+      "lane": "live",
+      "mode": "automate",
+      "environmentContext": "Frontmost app: IINA\nRunning apps: IINA, Safari, Notes, Finder",
+      "executor": { "kind": "mock" },
+      "expectOutcome": ["done"],
+      "scoredMaxSteps": 5,
+      "rubric": [
+        "The AppleScript pauses playback in the frontmost app — either the IINA app named in the provided desktop context, or the app it determines to be frontmost at runtime (e.g. via System Events).",
+        "It resolves which app to control on its own and does not ask the user which app to use."
+      ]
+    }
+  }
+}

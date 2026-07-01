@@ -3,7 +3,7 @@
   "domain": "apple_script",
   "label": "AppleScript • live value query returns the value",
   "query": "Read the Mac's current system output volume and return just the number. Do not change anything.",
-  "notes": "Capability lane for mac_query: the real model must write a READ-ONLY script that ENDS with `return` of the value. The mock stands in for the OS and returns 37, so the goal criterion is simply whether the run captured the value — the model may take a blocked detour (e.g. proposing a write that query mode refuses) and still recover; a run that never returns the number fails honestly. Grok rubric checks the script reads volume and returns it. Skips when no AppleScript model is installed.",
+  "notes": "Capability lane for mac_query: the real model must write a READ-ONLY script whose final result is the volume. The mock stands in for the OS and returns 37, so the goal criterion is simply whether the run captured the value — the model may take a blocked detour (e.g. proposing a write that query mode refuses) and still recover; a run that never yields the number fails honestly. The rubric does NOT require a literal `return` keyword: AppleScript yields the last evaluated expression, so `output volume of (get volume settings)` on its own is a valid read. Skips when no AppleScript model is installed.",
   "fixtures": {},
   "expect": {
     "appleScript": {
@@ -13,7 +13,7 @@
       "valuesContain": ["37"],
       "scoredMaxSteps": 4,
       "rubric": [
-        "The AppleScript reads the system output volume and returns it as the final value (uses `return`).",
+        "The AppleScript reads the system output volume and yields it as the script's final result — either via `return` or as the last evaluated expression (AppleScript returns the last expression implicitly).",
         "The script is read-only — it does not attempt to change the volume or any other state."
       ]
     }

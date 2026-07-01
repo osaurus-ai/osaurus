@@ -1,0 +1,30 @@
+{
+  "id": "apple_script.scripted-identifier-literal",
+  "domain": "apple_script",
+  "label": "AppleScript • scripted identifier via {{target}}",
+  "query": "Set the body of the provided note to the provided body.",
+  "notes": "Model-free CI anchor for the identifier-fidelity path (the fix for the liveProof note-name typo). The exact, easily-mistyped note NAME is passed as the {{target}} literal alongside the {{body}} literal; the canned script references both placeholders, the loop expands them to correctly-escaped literals, and the mock 'app world' records the write under the exact seeded name. Proves an identifier — not just body text — can round-trip verbatim via a placeholder. No tokens.",
+  "fixtures": {},
+  "expect": {
+    "appleScript": {
+      "lane": "scripted",
+      "mode": "automate",
+      "contents": {
+        "target": "Q3 Planning — Notes (v2)",
+        "body": "Reviewed and approved."
+      },
+      "harness": { "verifyReadBack": false },
+      "executor": { "kind": "mock", "mockWorld": { "notes": { "Q3 Planning — Notes (v2)": "old draft" } } },
+      "scriptedCalls": [
+        "{\"script\":\"set body of note \\\"{{target}}\\\" to \\\"{{body}}\\\"\"}"
+      ],
+      "expectStatus": "succeeded",
+      "expectEffects": ["edit"],
+      "mustUsePlaceholders": ["target", "body"],
+      "finalState": [
+        { "key": "note:Q3 Planning — Notes (v2)", "equals": "Reviewed and approved." }
+      ],
+      "scoredMaxSteps": 1
+    }
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "id": "apple_script.live-identifier-literal",
+  "domain": "apple_script",
+  "label": "AppleScript • live identifier fidelity via {{target}}",
+  "query": "Set the body of the provided note to the provided body.",
+  "notes": "Capability lane for identifier fidelity — the class of failure that made the liveProof run mistype 'Osaurus Eval Scratch'. The exact note name is supplied as the {{target}} literal (not in the task text) and the body as {{body}}. Scores that the real 16B routed the identifier THROUGH its placeholder (mustUsePlaceholders proves it did not re-type the name) and set the body on that note (Grok rubric). Mock 'app world' answers so there are no side effects. Skips when no AppleScript model is installed.",
+  "fixtures": {},
+  "expect": {
+    "appleScript": {
+      "lane": "live",
+      "mode": "automate",
+      "contents": {
+        "target": "Q3 Planning — Notes (v2)",
+        "body": "Reviewed and approved on 2026-06-30."
+      },
+      "executor": { "kind": "mock", "mockWorld": { "notes": { "Q3 Planning — Notes (v2)": "old draft" } } },
+      "expectStatus": "succeeded",
+      "expectOutcome": ["done"],
+      "expectEffects": ["edit"],
+      "mustUsePlaceholders": ["target", "body"],
+      "scoredMaxSteps": 4,
+      "rubric": [
+        "The AppleScript sets the body of the note whose name is the provided target, matching that exact name rather than a different, shortened, or approximated name.",
+        "The script uses the provided body as the note's body and targets the Notes application."
+      ]
+    }
+  }
+}

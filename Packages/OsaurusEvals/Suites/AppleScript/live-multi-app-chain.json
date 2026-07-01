@@ -1,0 +1,22 @@
+{
+  "id": "apple_script.live-multi-app-chain",
+  "domain": "apple_script",
+  "label": "AppleScript • live chained read-then-record",
+  "query": "Look up the current system output volume, then record it in a note named 'Volume Log'.",
+  "notes": "Capability lane for a chained workflow: the real 16B must READ a system value and then PERSIST it into a note — the shape of genuinely useful automation (read from one place, write to another). The mock 'app world' answers the volume read (55) and accepts the note write, no side effects. Scored by a Grok rubric (reads the real volume, then records it) rather than a fixed step count, so a correct one-shot or two-step solution both pass. Skips when no AppleScript model is installed.",
+  "fixtures": {},
+  "expect": {
+    "appleScript": {
+      "lane": "live",
+      "mode": "automate",
+      "executor": { "kind": "mock", "mockWorld": { "notes": { "Volume Log": "" }, "volume": 55 } },
+      "expectOutcome": ["done"],
+      "scriptMustContain": ["volume"],
+      "scoredMaxSteps": 5,
+      "rubric": [
+        "The AppleScript reads the current system output volume from the system (not a hardcoded guess) and writes that value into the note named 'Volume Log'.",
+        "The workflow persists the read value into the note — it does not merely read the volume without recording it, nor merely write a placeholder without reading the real volume."
+      ]
+    }
+  }
+}

@@ -56,6 +56,11 @@ public struct MockAppleScriptWorld: Sendable, Equatable {
             writeLog.append("note:\(write.name)")
             return .success(nil)
         }
+        if let create = Self.parseNoteCreate(script) {
+            notes[create.name] = create.value
+            writeLog.append("note:\(create.name)")
+            return .success(nil)
+        }
         if let newVolume = Self.parseVolumeWrite(script) {
             volume = newVolume
             writeLog.append("volume")
@@ -92,6 +97,22 @@ public struct MockAppleScriptWorld: Sendable, Equatable {
         else { return nil }
         guard let value = firstStringLiteral(afterName[toRange.upperBound...]) else { return nil }
         return (name.value, value.value)
+    }
+
+    /// A note CREATE via `make new note with properties {name:"NAME", body:
+    /// "VALUE"}` (property order not significant, optional `at folder …`) → the
+    /// (NAME, un-escaped VALUE). Simulates the find-or-create path so a
+    /// create-if-missing script records the new note for a final-state check.
+    static func parseNoteCreate(_ script: String) -> (name: String, value: String)? {
+        let lower = script.lowercased()
+        guard lower.contains("make new note") else { return nil }
+        guard let nameKey = lower.range(of: #"name\s*:"#, options: .regularExpression),
+            let name = firstStringLiteral(script[nameKey.upperBound...])
+        else { return nil }
+        guard let bodyKey = lower.range(of: #"body\s*:"#, options: .regularExpression),
+            let body = firstStringLiteral(script[bodyKey.upperBound...])
+        else { return nil }
+        return (name.value, body.value)
     }
 
     /// A note-body READ (`return body of note "NAME"`, `get body of note

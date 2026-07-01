@@ -1,0 +1,27 @@
+{
+  "id": "apple_script.scripted-multi-app-chain",
+  "domain": "apple_script",
+  "label": "AppleScript • scripted chained read-then-record",
+  "query": "Read the current output volume and save it into the note 'Volume Log'.",
+  "notes": "Model-free CI anchor for a chained workflow that spans two domains: step 1 READS system state (volume), step 2 WRITES it into a Notes body. The mock 'app world' answers the volume read and records the note write, so both the read classification and the persisted state are proven. No tokens.",
+  "fixtures": {},
+  "expect": {
+    "appleScript": {
+      "lane": "scripted",
+      "mode": "automate",
+      "harness": { "verifyReadBack": false },
+      "executor": { "kind": "mock", "mockWorld": { "notes": { "Volume Log": "" }, "volume": 42 } },
+      "scriptedCalls": [
+        "{\"script\":\"return output volume of (get volume settings)\"}",
+        "{\"script\":\"set body of note \\\"Volume Log\\\" to \\\"Volume is 42\\\"\"}"
+      ],
+      "expectStatus": "succeeded",
+      "expectEffects": ["read", "edit"],
+      "valuesContain": ["42"],
+      "finalState": [
+        { "key": "note:Volume Log", "equals": "Volume is 42" }
+      ],
+      "scoredMaxSteps": 2
+    }
+  }
+}

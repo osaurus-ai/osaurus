@@ -1,0 +1,30 @@
+{
+  "id": "apple_script.scripted-permission-recovery",
+  "domain": "apple_script",
+  "label": "AppleScript • scripted permission recovery",
+  "query": "Set the body of the note 'Draft' to 'Approved'.",
+  "notes": "Model-free CI anchor for the Automation-permission feedback loop. The mock returns a genuine permission_required error for the first attempt (as macOS does before the user grants Automation access) and success for the retry. Proves the loop surfaces the real permission error and continues to a successful retry; the aggregate is honestly 'partial' (one blocked-by-permission attempt, one success). No tokens.",
+  "fixtures": {},
+  "expect": {
+    "appleScript": {
+      "lane": "scripted",
+      "mode": "automate",
+      "harness": { "verifyReadBack": false },
+      "executor": {
+        "kind": "mock",
+        "mockResults": [
+          { "status": "permissionRequired", "errorMessage": "Osaurus is not allowed to control Notes." },
+          { "status": "success" }
+        ]
+      },
+      "scriptedCalls": [
+        "{\"script\":\"tell application \\\"Notes\\\" to set body of note \\\"Draft\\\" to \\\"Approved\\\"\"}",
+        "{\"script\":\"tell application \\\"Notes\\\" to set body of note \\\"Draft\\\" to \\\"Approved\\\"\"}"
+      ],
+      "expectStatus": "partial",
+      "expectOutcome": ["done"],
+      "expectEffects": ["edit"],
+      "scoredMaxSteps": 2
+    }
+  }
+}

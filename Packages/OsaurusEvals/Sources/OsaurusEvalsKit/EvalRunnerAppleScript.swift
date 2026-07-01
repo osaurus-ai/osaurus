@@ -61,6 +61,7 @@ extension EvalRunner {
             harness: resolveHarness(exp.harness),
             maxSteps: exp.maxSteps ?? 12,
             model: lane == .scripted ? nil : modelId,
+            environmentContext: exp.environmentContext,
             confirmApproves: exp.confirmApproves ?? true,
             scriptedCalls: exp.scriptedCalls ?? [],
             executor: resolveExecutor(exp.executor)

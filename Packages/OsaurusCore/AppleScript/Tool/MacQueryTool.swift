@@ -58,10 +58,12 @@ final class MacQueryTool: OsaurusTool, @unchecked Sendable {
                 "type": .string("object"),
                 "additionalProperties": .object(["type": .string("string")]),
                 "description": .string(
-                    "Optional. Several EXACT verbatim texts as a { name: text } map, for a question "
-                        + "that must compare against more than one exact block. Reference each by its "
-                        + "own `{{name}}` placeholder; each is inserted verbatim. Use short, semantic "
-                        + "names. For a single block use `content`. This tool stays read-only regardless."
+                    "Optional. Several EXACT verbatim values as a { name: text } map, for a question "
+                        + "that must compare against more than one exact block or read a thing named "
+                        + "precisely (a note title, file path, mailbox, or URL). Reference each by its "
+                        + "own `{{name}}` placeholder; each is inserted verbatim, so an exact name is "
+                        + "never mistyped. Use short, semantic names. For a single block use `content`. "
+                        + "This tool stays read-only regardless."
                 ),
             ]),
             "max_steps": .object([

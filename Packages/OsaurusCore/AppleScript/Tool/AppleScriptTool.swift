@@ -67,10 +67,12 @@ final class AppleScriptTool: OsaurusTool, @unchecked Sendable {
                 "type": .string("object"),
                 "additionalProperties": .object(["type": .string("string")]),
                 "description": .string(
-                    "Optional. Several EXACT verbatim texts as a { name: text } map, for a task that "
-                        + "must insert more than one exact block (e.g. a subject AND a body). Each is "
-                        + "inserted character-for-character via its own `{{name}}` placeholder — never "
-                        + "re-typed. Use short, semantic names. Example: {\"subject\": \"…\", "
+                    "Optional. Several EXACT verbatim values as a { name: text } map, for a task that "
+                        + "must insert more than one exact block (e.g. a subject AND a body) or must "
+                        + "match an existing thing by its precise name (a note title, file path, "
+                        + "mailbox, or URL). Each value is inserted character-for-character via its own "
+                        + "`{{name}}` placeholder — never re-typed, so a long or unusual name can't be "
+                        + "mistyped. Use short, semantic names. Example: {\"target\": \"Q3 Planning\", "
                         + "\"body\": \"…\"}. For a single block use `content`."
                 ),
             ]),

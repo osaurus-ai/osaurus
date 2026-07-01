@@ -72,17 +72,29 @@ def build_scoreboard(out_dir, variant_names):
     variants = []
     case_order = []
     seen = set()
-    model_id = os.environ.get("MODEL", "")
+    # The model UNDER TEST is whatever GENERATED the scripts. Prefer the
+    # per-case `modelId` the runner actually resolved: the AppleScript loop
+    # loads the installed local model (e.g. the 16B) via its own catalog even
+    # when the harness's nominal `--model` is `auto`/keepCurrent and resolves to
+    # a remote judge (e.g. xai/grok-4.3, bootstrapped from JUDGE_MODEL). The
+    # report-level `modelId` is that nominal/judge label, so relying on it made
+    # the scoreboard wrongly credit the judge with writing the AppleScript.
+    # Fall back to the nominal id / MODEL env only when no case records a model.
+    nominal_model = os.environ.get("MODEL", "")
+    case_model = ""
 
     for name in variant_names:
         report = load_report(os.path.join(out_dir, f"{name}.json"))
         cases = (report or {}).get("cases", []) if report else []
         if report and report.get("modelId"):
-            model_id = report["modelId"]
+            nominal_model = report["modelId"]
         outcomes = {}
         for case in cases:
             cid = short_id(case.get("id", "?"))
             outcomes[cid] = case.get("outcome", "")
+            case_mid = case.get("modelId")
+            if case_mid and not case_model:
+                case_model = case_mid
             if cid not in seen:
                 seen.add(cid)
                 case_order.append(cid)
@@ -91,6 +103,8 @@ def build_scoreboard(out_dir, variant_names):
         entry["cases"] = outcomes
         entry["hasReport"] = report is not None
         variants.append(entry)
+
+    model_id = case_model or nominal_model
 
     scored_variants = [v for v in variants if v["scored"] > 0]
     best = None
@@ -104,6 +118,7 @@ def build_scoreboard(out_dir, variant_names):
         "kind": "applescript_capability_scoreboard",
         "generatedAt": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "model": model_id,
+        "nominalModel": nominal_model,
         "filter": os.environ.get("FILTER", ""),
         "judge": os.environ.get("JUDGE_MODEL", ""),
         "label": os.environ.get("LABEL", ""),
@@ -115,7 +130,14 @@ def build_scoreboard(out_dir, variant_names):
 
 def render_markdown(board):
     lines = ["# AppleScript capability scoreboard", ""]
-    lines.append(f"- model: `{board['model'] or '—'}`")
+    lines.append(f"- model (under test): `{board['model'] or '—'}`")
+    nominal = board.get("nominalModel", "")
+    if nominal and nominal != board.get("model"):
+        lines.append(
+            f"- harness nominal model: `{nominal}` "
+            "(the `--model auto`/keepCurrent label — usually the remote judge; "
+            "the AppleScript loop resolved its own local model above)"
+        )
     lines.append(f"- filter: `{board['filter'] or '<all>'}`")
     lines.append(f"- judge: `{board['judge'] or '—'}`")
     if board.get("label"):
@@ -166,6 +188,7 @@ def append_history(history_path, scoreboard_path):
         "commit": os.environ.get("COMMIT", ""),
         "label": os.environ.get("LABEL", "") or board.get("label", ""),
         "model": board.get("model", ""),
+        "nominalModel": board.get("nominalModel", ""),
         "filter": board.get("filter", ""),
         "judge": board.get("judge", ""),
         "best": board.get("best"),

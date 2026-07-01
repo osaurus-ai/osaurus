@@ -70,11 +70,14 @@ fi
 
 # Default sweep: each row isolates ONE lever against the shipped config so the
 # scoreboard reads as a clean A/B. "name|prompt|literal|verify|desktop".
-DEFAULT_VARIANTS="shipped|standard|namePreview|1|1
-concise-prompt|concise|namePreview|1|1
-name-only|standard|nameOnly|1|1
+# `-` leaves a field at the shipped default; the shipped literal style is now
+# `.nameOnly` (the sweep winner), so `shipped` inherits it and `name-preview`
+# keeps the older previewed style as a regression/comparison row.
+DEFAULT_VARIANTS="shipped|standard|-|1|1
+name-preview|standard|namePreview|1|1
+concise-prompt|concise|-|1|1
 minimal-literals|standard|minimal|1|1
-no-verify|standard|namePreview|0|1"
+no-verify|standard|-|0|1"
 
 VARIANTS_TEXT="${VARIANTS:-${DEFAULT_VARIANTS}}"
 
@@ -110,6 +113,12 @@ OUT="${LAB_OUT_ROOT}/${STAMP}"
 mkdir -p "${OUT}"
 log "Run dir:  ${OUT}"
 log "Model:    ${MODEL}   Filter: ${FILTER:-<all>}   Judge: ${JUDGE_MODEL}"
+# NOTE: AppleScript live cases ALWAYS generate with the installed catalog model
+# (resolveInstalledModelId), independent of --model. So with --model auto the
+# harness-nominal is just keepCurrent (often the remote judge), while the real
+# model under test is the local AppleScript bundle — the scoreboard's
+# "model (under test)" line reports that, with the nominal shown separately.
+log "  (model under test = installed AppleScript catalog model; see scoreboard)"
 
 filter_args=()
 [[ -n "${FILTER}" ]] && filter_args=(--filter "${FILTER}")
