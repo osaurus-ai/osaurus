@@ -222,6 +222,13 @@ struct RemoteReasoningPolicy {
         else {
             return (nil, nil)
         }
+        // Mistral's public API genuinely accepts `reasoning_effort: "none"` as a
+        // wire value (unlike DSV4's `instruct`/`no_think`/etc., which are local-
+        // only runtime aliases every other remote schema rejects) — exempt it
+        // before the generic direct-rail stripping below.
+        guard !host.lowercased().contains("mistral") else {
+            return (normalized, nil)
+        }
 
         let isDirectRailEffort: Bool
         switch normalized {

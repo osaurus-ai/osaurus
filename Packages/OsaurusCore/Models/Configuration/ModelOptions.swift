@@ -78,6 +78,7 @@ enum ModelProfileRegistry {
     static let profiles: [any ModelProfile.Type] = [
         VeniceModelProfile.self,
         OpenAIReasoningProfile.self,
+        MistralReasoningProfile.self,
         QwenThinkingProfile.self,
         NemotronThinkingProfile.self,
         LagunaThinkingProfile.self,
@@ -210,6 +211,39 @@ struct OpenAIReasoningProfile: ModelProfile {
             icon: "brain",
             kind: .segmented([
                 ModelOptionSegment(id: "minimal", label: L("Minimal")),
+                ModelOptionSegment(id: "low", label: L("Low")),
+                ModelOptionSegment(id: "medium", label: L("Medium")),
+                ModelOptionSegment(id: "high", label: L("High")),
+            ])
+        )
+    ]
+
+    static let defaults: [String: ModelOptionValue] = [
+        "reasoningEffort": .string("medium")
+    ]
+}
+
+// MARK: - Mistral Reasoning Profile
+
+/// Mistral's adjustable-reasoning models (mistral-small, mistral-medium-3.5+) —
+/// supports reasoning effort control via the `reasoning_effort` request field.
+struct MistralReasoningProfile: ModelProfile {
+    static let displayName = "Reasoning Effort"
+
+    static func matches(modelId: String) -> Bool {
+        let bare =
+            modelId.lowercased().split(separator: "/").last.map(String.init)
+            ?? modelId.lowercased()
+        return bare.hasPrefix("mistral-small") || bare.hasPrefix("mistral-medium")
+    }
+
+    static let options: [ModelOptionDefinition] = [
+        ModelOptionDefinition(
+            id: "reasoningEffort",
+            label: L("Reasoning Effort"),
+            icon: "brain",
+            kind: .segmented([
+                ModelOptionSegment(id: "none", label: L("None")),
                 ModelOptionSegment(id: "low", label: L("Low")),
                 ModelOptionSegment(id: "medium", label: L("Medium")),
                 ModelOptionSegment(id: "high", label: L("High")),
